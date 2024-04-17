@@ -119,11 +119,12 @@ contract CawName is
   }
 
   function spendAndDistribute(uint64 tokenId, uint256 amountToSpend, uint256 amountToDistribute) external {
-    require(cawActions == _msgSender(), "caller is not the cawActions contract");
+    spendAndDistributeWei(tokenId, amountToSpend * 10**18, amountToDistribute * 10**18);
+  }
 
+  function spendAndDistributeWei(uint64 tokenId, uint256 amountToSpend, uint256 amountToDistribute) public {
+    require(cawActions == _msgSender(), "caller is not the cawActions contract");
     uint256 balance = cawBalanceOf(tokenId);
-    amountToDistribute *= 10**18;
-    amountToSpend *= 10**18;
 
     require(balance >= amountToSpend, 'insufficent CAW balance');
     uint256 newCawBalance = balance - amountToSpend;
@@ -133,9 +134,13 @@ contract CawName is
   }
 
   function addToBalance(uint64 tokenId, uint256 amount) external {
+    addWeiToBalance(tokenId, amount * 10**18);
+  }
+
+  function addWeiToBalance(uint64 tokenId, uint256 amount) public {
     require(cawActions == _msgSender(), "caller is not the cawActions");
 
-    setCawBalance(tokenId, cawBalanceOf(tokenId) + (amount * 10**18));
+    setCawBalance(tokenId, cawBalanceOf(tokenId) + amount);
   }
 
   function setCawBalance(uint64 tokenId, uint256 newCawBalance) internal {

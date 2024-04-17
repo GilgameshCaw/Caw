@@ -14,8 +14,16 @@ interface ISpend {
     uint256 amountToDistribute
   ) external;
 
+  function spendAndDistributeWei(
+    uint64 tokenId,
+    uint256 amountToSpend,
+    uint256 amountToDistribute
+  ) external;
+
 
   function addToBalance(uint64 tokenId, uint256 amount) external;
+
+  function addWeiToBalance(uint64 tokenId, uint256 amount) external;
 
 
 }

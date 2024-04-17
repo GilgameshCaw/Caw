@@ -42,10 +42,11 @@ const dataTypes = {
   ],
   ActionData: [
     { name: 'actionType', type: 'uint8' },
-    { name: 'senderTokenId', type: 'uint64' },
-    { name: 'receiverTokenId', type: 'uint64' },
-    { name: 'tipAmount', type: 'uint256' },
+    { name: 'senderId', type: 'uint64' },
+    { name: 'receiverId', type: 'uint64' },
+    { name: 'tipRecipients', type: 'uint64[]' },
     { name: 'timestamp', type: 'uint64' },
+    { name: 'tips', type: 'uint256[]' },
     { name: 'sender', type: 'address' },
     { name: 'cawId', type: 'bytes32' },
     { name: 'text', type: 'string' },
@@ -102,7 +103,7 @@ async function processActions(actions, params) {
 
     console.log("Data", signedActions.map(function(action) {return action.data.message}))
 
-  t = await cawActions.processActions(params.senderTokenId || 1, {
+  t = await cawActions.processActions(params.senderId || 1, {
     v: signedActions.map(function(action) {return action.sigData.v}),
     r: signedActions.map(function(action) {return action.sigData.r}),
     s: signedActions.map(function(action) {return action.sigData.s}),
@@ -141,12 +142,13 @@ async function generateData(type, params = {}) {
     message: {
       actionType: actionType,
       sender: params.sender,
-      senderTokenId: params.senderTokenId,
-      receiverTokenId: params.receiverTokenId || 0,
-      tipAmount: params.tipAmount || 0,
+      senderId: params.senderId,
+      receiverId: params.receiverId || 0,
       timestamp: params.timestamp || (Math.floor(new Date().getTime() / 1000)),
       cawId: params.cawId || "0x0000000000000000000000000000000000000000000000000000000000000000",
       text: params.text || "",
+      tipRecipients: [],
+      tips: [],
     },
     domain: domain,
     types: {
@@ -168,8 +170,8 @@ async function verifyAndSplitSig(sig, user, data) {
   // console.log('r: ', r)
   // console.log('s: ', s)
   const recoverAddr = recoverTypedSignature({data: data, signature: sig, version: SignTypedDataVersion.V4 })
-  // console.log('recovered address', recoverAddr)
-  // console.log('account: ', user)
+  console.log('recovered address', recoverAddr)
+  console.log('account: ', user)
   expect(recoverAddr).to.equal(user.toLowerCase())
 
   return { r, s, v };
@@ -357,7 +359,7 @@ contract('CawNames', function(accounts, x) {
       actionType: 'caw',
       message: "the first caw message ever sent",
       sender: accounts[2],
-      senderTokenId: 1,
+      senderId: 1,
       timestamp: timestamp,
     }], {
       sender: accounts[2]
@@ -393,7 +395,7 @@ contract('CawNames', function(accounts, x) {
       message: "the first caw message ever sent",
       timestamp: timestamp,
       sender: accounts[2],
-      senderTokenId: 1,
+      senderId: 1,
     }], {
       sender: accounts[2]
     });
@@ -410,7 +412,7 @@ contract('CawNames', function(accounts, x) {
       actionType: 'caw',
       message: "the second caw message ever sent",
       sender: accounts[2],
-      senderTokenId: 2,
+      senderId: 2,
     }], {
       sender: accounts[2]
     });
@@ -441,8 +443,8 @@ contract('CawNames', function(accounts, x) {
       actionType: 'like',
       cawId: secondCawId,
       sender: accounts[2],
-      receiverTokenId: 2,
-      senderTokenId: 3,
+      receiverId: 2,
+      senderId: 3,
     }], {
       sender: accounts[2]
     });
@@ -467,8 +469,8 @@ contract('CawNames', function(accounts, x) {
       actionType: 'like',
       cawId: secondCawId,
       sender: accounts[2],
-      receiverTokenId: 2,
-      senderTokenId: 3,
+      receiverId: 2,
+      senderId: 3,
     }], {
       sender: accounts[2]
     });
@@ -486,8 +488,8 @@ contract('CawNames', function(accounts, x) {
       timestamp: timestamp,
       actionType: 'follow',
       sender: accounts[2],
-      receiverTokenId: 1,
-      senderTokenId: 2,
+      receiverId: 1,
+      senderId: 2,
     }], {
       sender: accounts[2]
     });
@@ -512,8 +514,8 @@ contract('CawNames', function(accounts, x) {
       timestamp: timestamp,
       actionType: 'follow',
       sender: accounts[2],
-      receiverTokenId: 1,
-      senderTokenId: 2,
+      receiverId: 1,
+      senderId: 2,
     }], {
       sender: accounts[2]
     });
@@ -533,8 +535,8 @@ contract('CawNames', function(accounts, x) {
       actionType: 'recaw',
       cawId: secondCawId,
       sender: accounts[2],
-      receiverTokenId: 2,
-      senderTokenId: 1,
+      receiverId: 2,
+      senderId: 1,
     }], {
       sender: accounts[2]
     });
@@ -559,8 +561,8 @@ contract('CawNames', function(accounts, x) {
       actionType: 'recaw',
       cawId: secondCawId,
       sender: accounts[2],
-      receiverTokenId: 2,
-      senderTokenId: 1,
+      receiverId: 2,
+      senderId: 1,
     }], {
       sender: accounts[2]
     });
@@ -579,12 +581,12 @@ contract('CawNames', function(accounts, x) {
       actionType: 'recaw',
       cawId: secondCawId,
       sender: accounts[2],
-      receiverTokenId: 2,
-      senderTokenId: 3,
+      receiverId: 2,
+      senderId: 3,
     }, {
       actionType: 'like',
       sender: accounts[2],
-      senderTokenId: 1,
+      senderId: 1,
       cawId: secondCawId,
     }]
 
@@ -592,7 +594,7 @@ contract('CawNames', function(accounts, x) {
       actionsToProcess.push({
         actionType: 'caw',
         sender: accounts[2],
-        senderTokenId: 2,
+        senderId: 2,
         text: "This is a caw processed in a list of processed actions. " + i,
       });
 

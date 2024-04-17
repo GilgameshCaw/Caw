@@ -12,11 +12,12 @@ contract CawActions is Context {
 
   struct ActionData {
     ActionType actionType;
-    uint64 senderTokenId;
-    uint64 receiverTokenId;
-    uint256 tipAmount;
+    uint64 senderId;
+    uint64 receiverId;
+    uint64[] tipRecipients;
     uint64 timestamp;
     address sender;
+    uint256[] tips;
     bytes32 cawId;
     string text;
   }
@@ -50,7 +51,7 @@ contract CawActions is Context {
     CawName = ISpend(_cawNames);
   }
 
-  function processAction(ActionData calldata action, uint8 v, bytes32 r, bytes32 s) external {
+  function processAction(uint64 validatorId, ActionData calldata action, uint8 v, bytes32 r, bytes32 s) external {
     require(address(this) == _msgSender(), "caller is not the CawActions contract");
 
     verifySignature(v, r, s, action);
@@ -63,8 +64,29 @@ contract CawActions is Context {
       reCaw(action);
     else if (action.actionType == ActionType.FOLLOW)
       followUser(action);
+    else revert("Invalid action type");
 
-    isVerified[action.senderTokenId][r] = true;
+    distributeTips(validatorId, action);
+    isVerified[action.senderId][r] = true;
+  }
+
+  function distributeTips(uint64 validatorId, ActionData calldata action) internal {
+    if (action.tips.length + action.tipRecipients.length == 0) return; // no tips
+
+    require(
+      action.tipRecipients.length == action.tips.length - 1,
+      'The tips list must have exactly one more value than the tipRecipients list'
+    ); // the last value in the tips array is given to the validator
+
+    uint256 tipTotal = action.tips[action.tips.length-1];
+
+    for (uint256 i = 0; i < action.tipRecipients.length; i++) {
+      CawName.addWeiToBalance(action.tipRecipients[i], action.tips[i]);
+      tipTotal += action.tips[i];
+    }
+
+    CawName.addWeiToBalance(validatorId, action.tips[action.tips.length-1]);
+    CawName.spendAndDistributeWei(action.senderId, tipTotal, 0);
   }
 
   function verifyActions(uint64[] calldata senderIds, bytes32[] calldata actionIds) external view returns (bool[] memory){
@@ -81,7 +103,7 @@ contract CawActions is Context {
     ActionData calldata data
   ) internal {
     require(bytes(data.text).length <= 420, 'text must be less than 420 characters');
-    CawName.spendAndDistribute(data.senderTokenId, 5000, 5000);
+    CawName.spendAndDistribute(data.senderId, 5000, 5000);
   }
 
 
@@ -89,46 +111,48 @@ contract CawActions is Context {
     ActionData calldata data
   ) internal {
     // Do we need this? it adds more gas to keep track. Should we allow users to 'unlike' as well?
-    // require(likedBy[likeData.ownerTokenId][likeData.cawId][likeData.senderTokenId] == false, 'Caw has already been liked');
+    // require(likedBy[likeData.ownerId][likeData.cawId][likeData.senderId] == false, 'Caw has already been liked');
 
     // Can a user like their own caw? 
     // if so, what happens with the funds?
 
-    CawName.spendAndDistribute(data.senderTokenId, 2000, 400);
-    CawName.addToBalance(data.receiverTokenId, 1600);
+    CawName.spendAndDistribute(data.senderId, 2000, 400);
+    CawName.addToBalance(data.receiverId, 1600);
 
-    likes[data.receiverTokenId][data.cawId] += 1;
+    likes[data.receiverId][data.cawId] += 1;
   }
 
   function reCaw(
     ActionData calldata data
   ) internal {
-    CawName.spendAndDistribute(data.senderTokenId, 4000, 2000);
-    CawName.addToBalance(data.receiverTokenId, 2000);
+    CawName.spendAndDistribute(data.senderId, 4000, 2000);
+    CawName.addToBalance(data.receiverId, 2000);
   }
 
   function followUser(
     ActionData calldata data
   ) internal {
-    CawName.spendAndDistribute(data.senderTokenId, 30000, 6000);
-    CawName.addToBalance(data.receiverTokenId, 24000);
+    CawName.spendAndDistribute(data.senderId, 30000, 6000);
+    CawName.addToBalance(data.receiverId, 24000);
 
-    followerCount[data.receiverTokenId] += 1;
+    followerCount[data.receiverId] += 1;
   }
 
   function verifySignature(
     uint8 v, bytes32 r, bytes32 s,
     ActionData calldata data
   ) internal view {
-    require(!isVerified[data.senderTokenId][r], 'this action has already been processed');
+    require(!isVerified[data.senderId][r], 'this action has already been processed');
     bytes memory hash = abi.encode(
-      keccak256("ActionData(uint8 actionType,uint64 senderTokenId,uint64 receiverTokenId,uint256 tipAmount,uint64 timestamp,address sender,bytes32 cawId,string text)"),
-      data.actionType, data.senderTokenId, data.receiverTokenId, data.tipAmount,
-      data.timestamp, data.sender, data.cawId, keccak256(bytes(data.text))
+      keccak256("ActionData(uint8 actionType,uint64 senderId,uint64 receiverId,uint64[] tipRecipients,uint64 timestamp,uint256[] tips,address sender,bytes32 cawId,string text)"),
+      data.actionType, data.senderId, data.receiverId,
+      keccak256(abi.encodePacked(data.tipRecipients)), data.timestamp, 
+      keccak256(abi.encodePacked(data.tips)),  data.sender, data.cawId,
+      keccak256(bytes(data.text))
     );
 
     address signer = getSigner(hash, v, r, s);
-    require(signer == CawName.ownerOf(data.senderTokenId), "signer is not owner of this CawName");
+    require(signer == CawName.ownerOf(data.senderId), "signer is not owner of this CawName");
   }
 
   function getSigner(
@@ -162,20 +186,20 @@ contract CawActions is Context {
     );
   }
 
-  function processActions(uint64 senderTokenId, MultiActionData calldata data) external {
+  function processActions(uint64 validatorId, MultiActionData calldata data) external {
     uint8[] calldata v = data.v;
     bytes32[] calldata r = data.r;
     bytes32[] calldata s = data.s;
     uint16 processed;
     for (uint16 i=0; i < data.actions.length; i++) {
-      try CawActions(this).processAction(data.actions[i], v[i], r[i], s[i]) {
-        emit ActionProcessed(data.actions[i].senderTokenId, r[i]);
+      try CawActions(this).processAction(validatorId, data.actions[i], v[i], r[i], s[i]) {
+        emit ActionProcessed(data.actions[i].senderId, r[i]);
         processed += 1;
       } catch Error(string memory _err) {
-        emit ActionRejected(data.actions[i].senderTokenId, r[i], _err);
+        emit ActionRejected(data.actions[i].senderId, r[i], _err);
       }
     }
-    processedActions[senderTokenId] += processed;
+    processedActions[validatorId] += processed;
   }
 
 }
