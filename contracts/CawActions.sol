@@ -73,8 +73,10 @@ contract CawActions is Context {
   function distributeTips(uint64 validatorId, ActionData calldata action) internal {
     if (action.tips.length + action.tipRecipients.length == 0) return; // no tips
 
-    // the last value in the tips array is given to the validator
-    require(action.tipRecipients.length == action.tips.length - 1, 'The tips list must have exactly one more value than the tipRecipients list');
+    require(
+      action.tipRecipients.length == action.tips.length - 1,
+      'The tips list must have exactly one more value than the tipRecipients list'
+    ); // the last value in the tips array is given to the validator
 
     uint256 tipTotal = action.tips[action.tips.length-1];
 
