@@ -2,7 +2,6 @@ const CawName = artifacts.require("CawName");
 const CawNameURI = artifacts.require("CawNameURI");
 const CawActions = artifacts.require("CawActions");
 const CawNameMinter = artifacts.require("CawNameMinter");
-const CAW = artifacts.require("MintableCAW");
 
 module.exports = async function (deployer) {
   var caw = '0xf3b9569F82B18aEf890De263B84189bd33EBe452';
