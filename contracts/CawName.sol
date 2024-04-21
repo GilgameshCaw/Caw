@@ -8,11 +8,14 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./CawNameURI.sol";
 
+import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
+
 // AccessControlEnumerable,
 contract CawName is 
   Context,
   ERC721Enumerable,
-  Ownable
+  Ownable,
+  OApp
 {
 
   IERC20 public immutable CAW;
@@ -37,7 +40,10 @@ contract CawName is
     string username;
   }
 
-  constructor(address _caw, address _gui) ERC721("CAW NAME", "cawNAME") {
+  constructor(address _caw, address _gui, address _endpoint)
+    ERC721("CAW NAME", "cawNAME")
+    OApp(_endpoint, msg.sender)
+  {
     uriGenerator = CawNameURI(_gui);
     CAW = IERC20(_caw);
     // CAW = IERC20(0xf3b9569F82B18aEf890De263B84189bd33EBe452);
@@ -145,6 +151,16 @@ contract CawName is
 
   function setCawBalance(uint64 tokenId, uint256 newCawBalance) internal {
     cawOwnership[tokenId] = precision * newCawBalance / rewardMultiplier;
+  }
+
+  function _lzReceive(
+    Origin calldata _origin, // struct containing info about the message sender
+    bytes32 _guid, // global packet identifier
+    bytes calldata payload, // encoded message payload being received
+    address _executor, // the Executor address.
+    bytes calldata _extraData // arbitrary data appended by the Executor
+  ) internal override {
+    // data = abi.decode(payload, (string)); // your logic here
   }
 
 }
