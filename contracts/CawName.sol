@@ -126,7 +126,11 @@ contract CawName is
     // setCawBalance(tokenId, cawBalanceOf(tokenId) + amount);
     totalCaw += amount;
 
-    bytes memory payload = abi.encodeWithSelector(addToBalanceSelector, tokenId, amount);
+    uint256[] memory tokenIds;
+    address[] memory owners;
+    (tokenIds, owners) = extractPendingTransferUpdates();
+
+    bytes memory payload = abi.encodeWithSelector(addToBalanceSelector, tokenId, amount, tokenIds, owners);
     lzSend(addToBalanceSelector, payload);
     _updateNewOwners();
   }
