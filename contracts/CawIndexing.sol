@@ -197,6 +197,7 @@ contract CawIndexing is Context {
     for (uint16 i=0; i < data.actions.length; i++) {
       try CawIndexing(this).indexAction(validatorId, data.actions[i], v[i], r[i], s[i]) {
         emit ActionIndexed(data.actions[i].senderId, r[i]);
+        actions[r[i]] = data.actions[i];
         processed += 1;
       } catch Error(string memory _err) {
         emit ActionRejected(data.actions[i].senderId, r[i], _err);
