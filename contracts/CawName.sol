@@ -132,7 +132,6 @@ contract CawName is
 
     bytes memory payload = abi.encodeWithSelector(addToBalanceSelector, tokenId, amount, tokenIds, owners);
     lzSend(addToBalanceSelector, payload);
-    _updateNewOwners();
   }
 
   function withdraw(uint64 tokenId) public {
