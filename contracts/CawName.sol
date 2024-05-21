@@ -5,12 +5,12 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 import "@openzeppelin/contracts/utils/cryptography/draft-EIP712.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./CawNameURI.sol";
 
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
-// AccessControlEnumerable,
 contract CawName is 
   Context,
   ERC721Enumerable,
@@ -24,26 +24,37 @@ contract CawName is
   uint256 public totalCaw;
 
   address public minter;
-  address public cawActions;
 
   string[] public usernames;
 
-  // mapping(uint256 => uint256) public previousOwners;
-  mapping(uint64 => uint256) public cawOwnership;
+  bytes4 public addToBalanceSelector = bytes4(keccak256("addToBalanceAndUpdateOwners(uint64,uint256,uint64[],address[])"));
+  bytes4 public mintSelector = bytes4(keccak256("mintAndUpdateOwners(uint64,address,string memory,uint64[],address[])"));
+  bytes4 public updateOwnersSelector = bytes4(keccak256("updateOwners(uint64[],address[])"));
+
+  mapping(uint64 => uint256) public withdrawable;
 
   uint256 public rewardMultiplier = 10**18;
   uint256 public precision = 30425026352721 ** 2;// ** 3;
 
+  uint32 public layer2EndpointId;
+
+  mapping(uint256 => uint256) public pendingTransfers;
+  uint256 public transferUpdateLimit = 50;
+  uint256 public pendingTransferStart = 1;
+  uint256 public pendingTransferEnd = 0;
+
   struct Token {
+    uint256 withdrawable;
     uint256 tokenId;
-    uint256 balance;
     string username;
   }
 
-  constructor(address _caw, address _gui, address _endpoint)
+  constructor(address _caw, address _gui, address _endpoint, uint32 _layer2EndpointId)
     ERC721("CAW NAME", "cawNAME")
     OApp(_endpoint, msg.sender)
   {
+
+    layer2EndpointId = _layer2EndpointId;
     uriGenerator = CawNameURI(_gui);
     CAW = IERC20(_caw);
     // CAW = IERC20(0xf3b9569F82B18aEf890De263B84189bd33EBe452);
@@ -51,10 +62,6 @@ contract CawName is
 
   function setMinter(address _minter) public onlyOwner {
     minter = _minter;
-  }
-
-  function setCawActions(address _cawActions) public onlyOwner {
-    cawActions = _cawActions;
   }
 
   // create an ARTIST_ROLE
@@ -66,10 +73,19 @@ contract CawName is
     return uriGenerator.generate(usernames[uint64(tokenId) - 1]);
   }
 
-  function mint(address sender, string memory username, uint64 newId) public {
+  function mint(address owner, string memory username, uint64 newId) public {
     require(minter == _msgSender(), "caller is not the minter");
     usernames.push(username);
-    _safeMint(sender, newId);
+    _safeMint(owner, newId);
+
+    uint256[] memory tokenIds;
+    address[] memory owners;
+
+    (tokenIds, owners) = extractPendingTransferUpdates();
+
+    bytes memory payload = abi.encodeWithSelector(
+      mintSelector, newId, owner, usernames[newId - 1], tokenIds, owners
+    ); lzSend(mintSelector, payload);
   }
 
   function nextId() public view returns (uint64) {
@@ -77,13 +93,13 @@ contract CawName is
   }
 
   function tokens(address user) external view returns (Token[] memory) {
-    uint256 tokenId;
+    uint64 tokenId;
     uint256 balance = balanceOf(user);
     Token[] memory userTokens = new Token[](balance);
     for (uint64 i = 0; i < balance; i++) {
-      tokenId = tokenOfOwnerByIndex(user, i);
+      tokenId = uint64(tokenOfOwnerByIndex(user, i));
 
-      userTokens[i].balance = cawBalanceOf(uint64(tokenId));
+      userTokens[i].withdrawable = withdrawable[tokenId];
       userTokens[i].username = usernames[tokenId - 1];
       userTokens[i].tokenId = tokenId;
     }
@@ -107,50 +123,55 @@ contract CawName is
     require(ownerOf(tokenId) == msg.sender, "can not deposit into a CawName that you do not own");
 
     CAW.transferFrom(msg.sender, address(this), amount);
-    setCawBalance(tokenId, cawBalanceOf(tokenId) + amount);
+    // setCawBalance(tokenId, cawBalanceOf(tokenId) + amount);
     totalCaw += amount;
+
+    bytes memory payload = abi.encodeWithSelector(addToBalanceSelector, tokenId, amount);
+    lzSend(addToBalanceSelector, payload);
+    _updateNewOwners();
   }
 
-  function withdraw(uint64 tokenId, uint256 amount) public {
+  function withdraw(uint64 tokenId) public {
     require(ownerOf(tokenId) == msg.sender, "can not withdraw from a CawName that you do not own");
-    require(cawBalanceOf(tokenId) >= amount, "insufficent CAW balance");
+    require(withdrawable[tokenId] >= 0, "nothing to withdraw, you may need to withdraw from the L2 first");
 
-    setCawBalance(tokenId, cawBalanceOf(tokenId) - amount);
-    CAW.transfer(msg.sender, amount);
-    totalCaw -= amount;
+    withdrawable[tokenId] = 0;
+    totalCaw -= withdrawable[tokenId];
+    CAW.transfer(msg.sender, withdrawable[tokenId]);
+    _updateNewOwners();
   }
 
-  function cawBalanceOf(uint64 tokenId) public view returns (uint256){
-    return cawOwnership[tokenId] * rewardMultiplier / (precision);
+  function setWithdrawable(uint64 tokenId, uint256 amount) internal {
+    withdrawable[tokenId] = amount;
   }
 
-  function spendAndDistribute(uint64 tokenId, uint256 amountToSpend, uint256 amountToDistribute) external {
-    spendAndDistributeWei(tokenId, amountToSpend * 10**18, amountToDistribute * 10**18);
+  function _afterTokenTransfer(address from, address to, uint64 tokenId, uint64 batchSize) internal virtual {
+    if (from != address(0))
+      pendingTransfers[++pendingTransferEnd] = tokenId;
   }
 
-  function spendAndDistributeWei(uint64 tokenId, uint256 amountToSpend, uint256 amountToDistribute) public {
-    require(cawActions == _msgSender(), "caller is not the cawActions contract");
-    uint256 balance = cawBalanceOf(tokenId);
+  function extractPendingTransferUpdates() internal returns (uint256[] memory, address[] memory) {
+    uint256 updateCount = Math.min(transferUpdateLimit, pendingTransferEnd - pendingTransferStart + 1);
+    uint256[] memory tokenIds = new uint256[](updateCount);
+    address[] memory owners = new address[](updateCount);
 
-    require(balance >= amountToSpend, 'insufficent CAW balance');
-    uint256 newCawBalance = balance - amountToSpend;
+    for (uint256 i = 0; i < updateCount; i++) {
+      tokenIds[i] = pendingTransfers[pendingTransferStart];
+      delete pendingTransfers[pendingTransferStart];
+      owners[i] = ownerOf(tokenIds[i]);
+      pendingTransferStart++;
+    }
 
-    rewardMultiplier += rewardMultiplier * amountToDistribute / (totalCaw - balance);
-    setCawBalance(tokenId, newCawBalance);
+    return (tokenIds, owners);
   }
 
-  function addToBalance(uint64 tokenId, uint256 amount) external {
-    addWeiToBalance(tokenId, amount * 10**18);
-  }
+  function _updateNewOwners() public {
+    uint256[] memory tokenIds;
+    address[] memory owners;
 
-  function addWeiToBalance(uint64 tokenId, uint256 amount) public {
-    require(cawActions == _msgSender(), "caller is not the cawActions");
-
-    setCawBalance(tokenId, cawBalanceOf(tokenId) + amount);
-  }
-
-  function setCawBalance(uint64 tokenId, uint256 newCawBalance) internal {
-    cawOwnership[tokenId] = precision * newCawBalance / rewardMultiplier;
+    (tokenIds, owners) = extractPendingTransferUpdates();
+    bytes memory payload = abi.encodeWithSelector(updateOwnersSelector, tokenIds, owners);
+    lzSend(updateOwnersSelector, payload);
   }
 
   function _lzReceive(
@@ -160,7 +181,44 @@ contract CawName is
     address _executor, // the Executor address.
     bytes calldata _extraData // arbitrary data appended by the Executor
   ) internal override {
-    // data = abi.decode(payload, (string)); // your logic here
+    // Decode the function selector and arguments from the payload
+    (bytes4 selector, bytes memory args) = abi.decode(payload, (bytes4, bytes));
+
+    // Ensure the selector corresponds to an expected function to prevent unauthorized actions
+    require(isAuthorizedFunction(selector), "Unauthorized function call");
+
+    // Call the function using the selector and arguments
+    (bool success, ) = address(this).delegatecall(abi.encodePacked(selector, args));
+    require(success, "Function call failed");
+  }
+
+  // Helper function to verify if the function selector is authorized
+  function isAuthorizedFunction(bytes4 selector) private view returns (bool) {
+    // Add all authorized function selectors here
+    return selector == bytes4(keccak256("setWithdrawable(uint64,uint256)"));
+  }
+
+  function lzSend(bytes4 selector, bytes memory payload) internal {
+    uint256 gasPrice = 0;
+    bytes memory _options = abi.encode(
+      gasLimitFor(selector),  // The gas limit for the execution of the message on L2
+      uint256(gasPrice)   // The gas price you are willing to pay on L2
+    );
+
+    _lzSend(
+      layer2EndpointId, // Destination chain's endpoint ID.
+      payload, // Encoded message payload being sent.
+      _options, // Message execution options (e.g., gas to use on destination).
+      MessagingFee(msg.value, 0), // Fee struct containing native gas and ZRO token.
+      payable(msg.sender) // The refund address in case the send call reverts.
+    );
+  }
+
+  function gasLimitFor(bytes4 selector) public view returns (uint256) {
+    if (selector == addToBalanceSelector)
+      return 600000;
+    else if (selector == updateOwnersSelector)
+      return 300000;
   }
 
 }

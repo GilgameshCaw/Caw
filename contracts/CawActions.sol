@@ -6,7 +6,9 @@ import "@openzeppelin/contracts/utils/Context.sol";
 import "@openzeppelin/contracts/utils/cryptography/draft-EIP712.sol";
 import "./interfaces/ISpend.sol";
 
-contract CawActions is Context {
+import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
+
+contract CawActions is Context, OApp {
 
   enum ActionType{ CAW, LIKE, RECAW, FOLLOW }
 
@@ -29,6 +31,8 @@ contract CawActions is Context {
     bytes32[] s;
   }
 
+  bytes4 public indexActionsSelector = bytes4(keccak256("indexActions(uint64,MultiActionData)"));
+
   bytes32 public eip712DomainHash;
 
   mapping(uint64 => uint64) public processedActions;
@@ -44,10 +48,15 @@ contract CawActions is Context {
   event ActionProcessed(uint64 senderId, bytes32 actionId);
   event ActionRejected(uint64 senderId, bytes32 actionId, string reason);
 
+  uint32 public layer3EndpointId;
+
   ISpend CawName;
 
-  constructor(address _cawNames) {
+  constructor(address _cawNames, address _endpoint, uint32 _layer3EndpointId)
+    OApp(_endpoint, msg.sender)
+  {
     eip712DomainHash = generateDomainHash();
+    layer3EndpointId = _layer3EndpointId;
     CawName = ISpend(_cawNames);
   }
 
@@ -81,12 +90,12 @@ contract CawActions is Context {
     uint256 tipTotal = action.tips[action.tips.length-1];
 
     for (uint256 i = 0; i < action.tipRecipients.length; i++) {
-      CawName.addWeiToBalance(action.tipRecipients[i], action.tips[i]);
+      CawName.addToBalance(action.tipRecipients[i], action.tips[i]);
       tipTotal += action.tips[i];
     }
 
-    CawName.addWeiToBalance(validatorId, action.tips[action.tips.length-1]);
-    CawName.spendAndDistributeWei(action.senderId, tipTotal, 0);
+    CawName.addToBalance(validatorId, action.tips[action.tips.length-1]);
+    CawName.spendAndDistribute(action.senderId, tipTotal, 0);
   }
 
   function verifyActions(uint64[] calldata senderIds, bytes32[] calldata actionIds) external view returns (bool[] memory){
@@ -103,7 +112,7 @@ contract CawActions is Context {
     ActionData calldata data
   ) internal {
     require(bytes(data.text).length <= 420, 'text must be less than 420 characters');
-    CawName.spendAndDistribute(data.senderId, 5000, 5000);
+    CawName.spendAndDistributeTokens(data.senderId, 5000, 5000);
   }
 
 
@@ -116,8 +125,8 @@ contract CawActions is Context {
     // Can a user like their own caw? 
     // if so, what happens with the funds?
 
-    CawName.spendAndDistribute(data.senderId, 2000, 400);
-    CawName.addToBalance(data.receiverId, 1600);
+    CawName.spendAndDistributeTokens(data.senderId, 2000, 400);
+    CawName.addTokensToBalance(data.receiverId, 1600);
 
     likes[data.receiverId][data.cawId] += 1;
   }
@@ -125,15 +134,15 @@ contract CawActions is Context {
   function reCaw(
     ActionData calldata data
   ) internal {
-    CawName.spendAndDistribute(data.senderId, 4000, 2000);
-    CawName.addToBalance(data.receiverId, 2000);
+    CawName.spendAndDistributeTokens(data.senderId, 4000, 2000);
+    CawName.addTokensToBalance(data.receiverId, 2000);
   }
 
   function followUser(
     ActionData calldata data
   ) internal {
-    CawName.spendAndDistribute(data.senderId, 30000, 6000);
-    CawName.addToBalance(data.receiverId, 24000);
+    CawName.spendAndDistributeTokens(data.senderId, 30000, 6000);
+    CawName.addTokensToBalance(data.receiverId, 24000);
 
     followerCount[data.receiverId] += 1;
   }
@@ -191,9 +200,24 @@ contract CawActions is Context {
     bytes32[] calldata r = data.r;
     bytes32[] calldata s = data.s;
     uint16 processed;
+    MultiActionData memory successfulActions;
+
+
+    successfulActions.v = new uint8[](data.actions.length);
+    successfulActions.r = new bytes32[](data.actions.length);
+    successfulActions.s = new bytes32[](data.actions.length);
+    successfulActions.actions = new ActionData[](data.actions.length);
+
+
     for (uint16 i=0; i < data.actions.length; i++) {
       try CawActions(this).processAction(validatorId, data.actions[i], v[i], r[i], s[i]) {
         emit ActionProcessed(data.actions[i].senderId, r[i]);
+
+        successfulActions.v[processed] = data.v[i];
+        successfulActions.r[processed] = data.r[i];
+        successfulActions.s[processed] = data.s[i];
+        successfulActions.actions[processed] = data.actions[i];
+
         processed += 1;
       } catch Error(string memory _err) {
         emit ActionRejected(data.actions[i].senderId, r[i], _err);
@@ -201,6 +225,52 @@ contract CawActions is Context {
     }
     processedActions[validatorId] += processed;
   }
+
+  function indexActions(uint64 validatorId, MultiActionData memory actions) internal {
+    bytes memory payload = abi.encodeWithSelector(indexActionsSelector, validatorId, actions);
+    lzSend(indexActionsSelector, payload);
+  }
+
+  // Will use to send withdrawable amount to L1
+  function lzSend(bytes4 selector, bytes memory payload) internal {
+    uint256 gasPrice = 0;
+    bytes memory _options = abi.encode(
+      gasLimitFor(selector),  // The gas limit for the execution of the message on L2
+      uint256(gasPrice)   // The gas price you are willing to pay on L2
+    );
+
+    _lzSend(
+      layer3EndpointId, // Destination chain's endpoint ID.
+      payload, // Encoded message payload being sent.
+      _options, // Message execution options (e.g., gas to use on destination).
+      MessagingFee(msg.value, 0), // Fee struct containing native gas and ZRO token.
+      payable(msg.sender) // The refund address in case the send call reverts.
+    );
+  }
+
+  function gasLimitFor(bytes4 selector) public view returns (uint256) {
+    if (selector == indexActionsSelector)
+      return 300000;
+    else revert('invalid selector');
+  }
+
+  function _lzReceive(
+    Origin calldata _origin, // struct containing info about the message sender
+    bytes32 _guid, // global packet identifier
+    bytes calldata payload, // encoded message payload being received
+    address _executor, // the Executor address.
+    bytes calldata _extraData // arbitrary data appended by the Executor
+	) internal override {
+   // Decode the function selector and arguments from the payload
+   (bytes4 selector, bytes memory args) = abi.decode(payload, (bytes4, bytes));
+
+   // Ensure the selector corresponds to an expected function to prevent unauthorized actions
+   // require(isAuthorizedFunction(selector), "Unauthorized function call");
+
+   // Call the function using the selector and arguments
+   (bool success, ) = address(this).delegatecall(abi.encodePacked(selector, args));
+   require(success, "Function call failed");
+	}
 
 }
 
