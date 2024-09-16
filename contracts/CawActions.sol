@@ -4,23 +4,24 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/utils/Context.sol";
 import "@openzeppelin/contracts/utils/cryptography/draft-EIP712.sol";
-import "./interfaces/ISpend.sol";
+import "./CawNameL2.sol";
 
-import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
+import { MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
-contract CawActions is Context, OApp {
+contract CawActions is Context {
 
-  enum ActionType{ CAW, LIKE, RECAW, FOLLOW }
+  enum ActionType{ CAW, LIKE, UNLIKE, RECAW, FOLLOW, UNFOLLOW, WITHDRAW  }
 
   struct ActionData {
     ActionType actionType;
     uint64 senderId;
     uint64 receiverId;
-    uint64[] tipRecipients;
+    uint64[] recipients;
     uint64 timestamp;
     address sender;
-    uint256[] tips;
+    uint256[] amounts;
     bytes32 cawId;
+    uint64 cawonce;
     string text;
   }
 
@@ -31,33 +32,22 @@ contract CawActions is Context, OApp {
     bytes32[] s;
   }
 
-  bytes4 public indexActionsSelector = bytes4(keccak256("indexActions(uint64,MultiActionData)"));
-
   bytes32 public eip712DomainHash;
 
+  bytes32 public currentHash = bytes32("genesis");
+
   mapping(uint64 => uint64) public processedActions;
+  mapping(uint64 => uint64) public cawonce;
 
-  // tokenID => reducedSig => action
-  mapping(uint64 => mapping(bytes32 => uint32)) public likes;
+  event ActionsProcessed(uint64 validatorId, MultiActionData actions);
+  event ActionRejected(uint64 validatorId, bytes32 actionId, string reason);
 
-  // tokenID => reducedSig => action
-  mapping(uint64 => mapping(bytes32 => bool)) public isVerified;
+  CawNameL2 CawName;
 
-  mapping(uint64 => uint64) public followerCount;
-
-  event ActionProcessed(uint64 senderId, bytes32 actionId);
-  event ActionRejected(uint64 senderId, bytes32 actionId, string reason);
-
-  uint32 public layer3EndpointId;
-
-  ISpend CawName;
-
-  constructor(address _cawNames, address _endpoint, uint32 _layer3EndpointId)
-    OApp(_endpoint, msg.sender)
+  constructor(address _cawNames)
   {
     eip712DomainHash = generateDomainHash();
-    layer3EndpointId = _layer3EndpointId;
-    CawName = ISpend(_cawNames);
+    CawName = CawNameL2(_cawNames);
   }
 
   function processAction(uint64 validatorId, ActionData calldata action, uint8 v, bytes32 r, bytes32 s) external {
@@ -69,43 +59,47 @@ contract CawActions is Context, OApp {
       caw(action);
     else if (action.actionType == ActionType.LIKE)
       likeCaw(action);
+    else if (action.actionType == ActionType.UNLIKE)
+      unlikeCaw(action);
     else if (action.actionType == ActionType.RECAW)
       reCaw(action);
     else if (action.actionType == ActionType.FOLLOW)
       followUser(action);
+    else if (action.actionType == ActionType.UNFOLLOW)
+      unfollowUser(action);
+    else if (action.actionType == ActionType.WITHDRAW)
+      withdraw(action);
     else revert("Invalid action type");
 
-    distributeTips(validatorId, action);
-    isVerified[action.senderId][r] = true;
+    distributeAmounts(validatorId, action);
+    cawonce[action.senderId] += 1;
+
+    currentHash = keccak256(abi.encodePacked(currentHash, r));
   }
 
-  function distributeTips(uint64 validatorId, ActionData calldata action) internal {
-    if (action.tips.length + action.tipRecipients.length == 0) return; // no tips
+  function distributeAmounts(uint64 validatorId, ActionData calldata action) internal {
+    if (action.amounts.length + action.recipients.length == 0) return; // no amounts
+    bool isWithdrawl = action.actionType == ActionType.WITHDRAW;
+
+    // If the user is trigging a withdraw, the first element should be skipped,
+    // because it will be the amount intending to be withdrawn
+    if (isWithdrawl && action.amounts.length == 1 && action.recipients.length == 1) return;
+    uint256 startIndex = isWithdrawl ? 1 : 0;
 
     require(
-      action.tipRecipients.length == action.tips.length - 1,
-      'The tips list must have exactly one more value than the tipRecipients list'
-    ); // the last value in the tips array is given to the validator
+      action.recipients.length == action.amounts.length - 1,
+      'The amounts list must have exactly one more value than the recipients list'
+    ); // the last value in the amounts array is given to the validator
 
-    uint256 tipTotal = action.tips[action.tips.length-1];
+    uint256 amountTotal = action.amounts[action.amounts.length-1];
 
-    for (uint256 i = 0; i < action.tipRecipients.length; i++) {
-      CawName.addToBalance(action.tipRecipients[i], action.tips[i]);
-      tipTotal += action.tips[i];
+    for (uint256 i = startIndex; i < action.recipients.length; i++) {
+      CawName.addToBalance(action.recipients[i], action.amounts[i]);
+      amountTotal += action.amounts[i];
     }
 
-    CawName.addToBalance(validatorId, action.tips[action.tips.length-1]);
-    CawName.spendAndDistribute(action.senderId, tipTotal, 0);
-  }
-
-  function verifyActions(uint64[] calldata senderIds, bytes32[] calldata actionIds) external view returns (bool[] memory){
-    require(senderIds.length == actionIds.length, "senderIds and actionIds must have the same number of elements");
-    bool[] memory verified;
-
-    for (uint16 i = 0; i < actionIds.length; i++) 
-      verified[i] = isVerified[senderIds[i]][actionIds[i]];
-
-    return verified;
+    CawName.addToBalance(validatorId, action.amounts[action.amounts.length-1]);
+    CawName.spendAndDistribute(action.senderId, amountTotal, 0);
   }
 
   function caw(
@@ -115,20 +109,30 @@ contract CawActions is Context, OApp {
     CawName.spendAndDistributeTokens(data.senderId, 5000, 5000);
   }
 
+  function withdraw(
+    ActionData calldata data
+  ) internal {
+    CawName.withdraw(data.senderId, data.amounts[0]);
+  }
 
   function likeCaw(
     ActionData calldata data
   ) internal {
-    // Do we need this? it adds more gas to keep track. Should we allow users to 'unlike' as well?
-    // require(likedBy[likeData.ownerId][likeData.cawId][likeData.senderId] == false, 'Caw has already been liked');
-
-    // Can a user like their own caw? 
-    // if so, what happens with the funds?
-
+    // This function can be called more than once from the same user to the same CAW.
+    // front ends should manage any duplicate likes as a no-op. Validators and front-ends
+    // should prevent users from calling this more than once, because nothing will happen
+    // except the actor will spend more CAW.
+    // 
+    // If a user likes their own caw, 400 caw will still be distributed among all stakers.
     CawName.spendAndDistributeTokens(data.senderId, 2000, 400);
     CawName.addTokensToBalance(data.receiverId, 1600);
+  }
 
-    likes[data.receiverId][data.cawId] += 1;
+  function unlikeCaw(
+    ActionData calldata data
+  ) internal {
+    // This is a no-op, but it should get processed nonetheless,
+    // so front-end clients can see that it was successful
   }
 
   function reCaw(
@@ -138,25 +142,31 @@ contract CawActions is Context, OApp {
     CawName.addTokensToBalance(data.receiverId, 2000);
   }
 
+  function unfollowUser(
+    ActionData calldata data
+  ) internal {
+    // This is a no-op, but it should get processed nonetheless,
+    // so front-end clients can see that it was successful
+  }
+
   function followUser(
     ActionData calldata data
   ) internal {
+    require(data.senderId != data.receiverId, 'cannot follow yourself');
     CawName.spendAndDistributeTokens(data.senderId, 30000, 6000);
     CawName.addTokensToBalance(data.receiverId, 24000);
-
-    followerCount[data.receiverId] += 1;
   }
 
   function verifySignature(
     uint8 v, bytes32 r, bytes32 s,
     ActionData calldata data
   ) internal view {
-    require(!isVerified[data.senderId][r], 'this action has already been processed');
+    require(cawonce[data.senderId] == data.cawonce, 'incorrect cawonce');
     bytes memory hash = abi.encode(
-      keccak256("ActionData(uint8 actionType,uint64 senderId,uint64 receiverId,uint64[] tipRecipients,uint64 timestamp,uint256[] tips,address sender,bytes32 cawId,string text)"),
+      keccak256("ActionData(uint8 actionType,uint64 senderId,uint64 receiverId,uint64[] recipients,uint64 timestamp,uint256[] amounts,address sender,bytes32 cawId,string text)"),
       data.actionType, data.senderId, data.receiverId,
-      keccak256(abi.encodePacked(data.tipRecipients)), data.timestamp, 
-      keccak256(abi.encodePacked(data.tips)),  data.sender, data.cawId,
+      keccak256(abi.encodePacked(data.recipients)), data.timestamp, 
+      keccak256(abi.encodePacked(data.amounts)),  data.sender, data.cawId,
       keccak256(bytes(data.text))
     );
 
@@ -195,82 +205,85 @@ contract CawActions is Context, OApp {
     );
   }
 
-  function processActions(uint64 validatorId, MultiActionData calldata data) external {
+  function processActions(uint64 validatorId, MultiActionData calldata data, uint256 lzTokenAmountForWithdraws) external payable {
     uint8[] calldata v = data.v;
     bytes32[] calldata r = data.r;
     bytes32[] calldata s = data.s;
-    uint16 processed;
-    MultiActionData memory successfulActions;
 
+    uint16 successCount;
+    uint16 withdrawCount;
 
-    successfulActions.v = new uint8[](data.actions.length);
-    successfulActions.r = new bytes32[](data.actions.length);
-    successfulActions.s = new bytes32[](data.actions.length);
-    successfulActions.actions = new ActionData[](data.actions.length);
+    // Bitmaps to track success and withdraw actions
+    uint256 successBitmap = 0;
+    uint256 withdrawBitmap = 0;
 
-
-    for (uint16 i=0; i < data.actions.length; i++) {
+    // First pass: Process actions and set success/withdraw bits
+    for (uint16 i = 0; i < data.actions.length; i++) {
       try CawActions(this).processAction(validatorId, data.actions[i], v[i], r[i], s[i]) {
-        emit ActionProcessed(data.actions[i].senderId, r[i]);
+        // Mark this action as successful in the bitmap
+        successBitmap |= (1 << i);  // Set the ith bit to 1
 
-        successfulActions.v[processed] = data.v[i];
-        successfulActions.r[processed] = data.r[i];
-        successfulActions.s[processed] = data.s[i];
-        successfulActions.actions[processed] = data.actions[i];
+        // Check if the action is a withdraw
+        if (data.actions[i].actionType == ActionType.WITHDRAW) {
+          withdrawBitmap |= (1 << i);  // Set the ith bit to 1
+          withdrawCount++;
+        }
 
-        processed += 1;
-      } catch Error(string memory _err) {
-        emit ActionRejected(data.actions[i].senderId, r[i], _err);
+        successCount += 1;
+      } catch Error(string memory reason) {
+        emit ActionRejected(validatorId, data.r[i], reason);
       }
     }
-    processedActions[validatorId] += processed;
+
+    // Only allocate arrays after counting successful actions
+    MultiActionData memory successfulActions;
+    if (successCount > 0) {
+      successfulActions.v = new uint8[](successCount);
+      successfulActions.r = new bytes32[](successCount);
+      successfulActions.s = new bytes32[](successCount);
+      successfulActions.actions = new ActionData[](successCount);
+    }
+
+    uint64[] memory withdrawIds;
+    uint256[] memory withdrawAmounts;
+    if (withdrawCount > 0) {
+      withdrawIds = new uint64[](withdrawCount);
+      withdrawAmounts = new uint256[](withdrawCount);
+    }
+
+    // Second pass: Populate arrays based on bitmaps
+    uint16 successIndex = 0;
+    uint16 withdrawIndex = 0;
+
+    for (uint16 i = 0; i < data.actions.length; i++) {
+      if ((successBitmap & (1 << i)) != 0) {
+        // This action was successful, so add it to the successfulActions array
+        successfulActions.v[successIndex] = data.v[i];
+        successfulActions.r[successIndex] = data.r[i];
+        successfulActions.s[successIndex] = data.s[i];
+        successfulActions.actions[successIndex] = data.actions[i];
+        successIndex++;
+      }
+
+      if ((withdrawBitmap & (1 << i)) != 0) {
+        // This action was a successful withdraw, so add it to the withdrawIds and withdrawAmounts arrays
+        withdrawIds[withdrawIndex] = data.actions[i].senderId;
+        withdrawAmounts[withdrawIndex] = data.actions[i].amounts[0];
+        withdrawIndex++;
+      }
+    }
+
+    // Emit the successful actions event if any were processed
+    if (successCount > 0) emit ActionsProcessed(validatorId, successfulActions);
+
+    // Call setWithdrawable with the withdraw tokens and amounts
+    if (withdrawCount > 0) CawName.setWithdrawable{value: msg.value}(withdrawIds, withdrawAmounts, lzTokenAmountForWithdraws);
   }
 
-  function indexActions(uint64 validatorId, MultiActionData memory actions) internal {
-    bytes memory payload = abi.encodeWithSelector(indexActionsSelector, validatorId, actions);
-    lzSend(indexActionsSelector, payload);
+  function withdrawQuote(uint64[] memory tokenIds, uint256[] memory amounts, bool payInLzToken) public view returns (MessagingFee memory quote) {
+    return CawName.withdrawQuote(tokenIds, amounts, payInLzToken);
   }
 
-  // Will use to send withdrawable amount to L1
-  function lzSend(bytes4 selector, bytes memory payload) internal {
-    uint256 gasPrice = 0;
-    bytes memory _options = abi.encode(
-      gasLimitFor(selector),  // The gas limit for the execution of the message on L2
-      uint256(gasPrice)   // The gas price you are willing to pay on L2
-    );
-
-    _lzSend(
-      layer3EndpointId, // Destination chain's endpoint ID.
-      payload, // Encoded message payload being sent.
-      _options, // Message execution options (e.g., gas to use on destination).
-      MessagingFee(msg.value, 0), // Fee struct containing native gas and ZRO token.
-      payable(msg.sender) // The refund address in case the send call reverts.
-    );
-  }
-
-  function gasLimitFor(bytes4 selector) public view returns (uint256) {
-    if (selector == indexActionsSelector)
-      return 300000;
-    else revert('invalid selector');
-  }
-
-  function _lzReceive(
-    Origin calldata _origin, // struct containing info about the message sender
-    bytes32 _guid, // global packet identifier
-    bytes calldata payload, // encoded message payload being received
-    address _executor, // the Executor address.
-    bytes calldata _extraData // arbitrary data appended by the Executor
-	) internal override {
-   // Decode the function selector and arguments from the payload
-   (bytes4 selector, bytes memory args) = abi.decode(payload, (bytes4, bytes));
-
-   // Ensure the selector corresponds to an expected function to prevent unauthorized actions
-   // require(isAuthorizedFunction(selector), "Unauthorized function call");
-
-   // Call the function using the selector and arguments
-   (bool success, ) = address(this).delegatecall(abi.encodePacked(selector, args));
-   require(success, "Function call failed");
-	}
 
 }
 

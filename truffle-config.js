@@ -4,6 +4,7 @@ var pems = [
   '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80', //hard hat #1
   '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d', //hard hat #2
   '0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6', //hard hat #3
+  '0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a', //hard hat #4
 ];
 /**
  * Use this file to configure your truffle project. It's seeded with some
@@ -70,6 +71,36 @@ module.exports = {
       //   return new HDWalletProvider(pem, "http://localhost:8545");
       // },
     },
+    testnetL1: {
+      provider: function() {
+        return new HDWalletProvider(
+          pems,
+          "https://1rpc.io/sepolia",
+          // "https://sepolia.drpc.org",
+          // "wss://sepolia.drpc.org",
+          0, // Active address index
+          pems.length,
+        );
+      },
+      network_id: 11155111,
+      // gas: 4500000,
+      // networkCheckTimeout: 1200000,
+      // gasPrice: 45000010000,
+    },
+    testnetL2: {
+      provider: function() {
+        return new HDWalletProvider(
+          pems,
+          "https://sepolia.base.org",
+          0, // Active address index
+          pems.length,
+        );
+      },
+      network_id: 84532,
+      // gas: 4500000,
+      // networkCheckTimeout: 1200000,
+      // gasPrice: 45000010000,
+    },
     rinkeby: {
       provider: function() {
         return new HDWalletProvider(
@@ -135,14 +166,14 @@ module.exports = {
   // Configure your compilers
   compilers: {
     solc: {
-      version: "0.8.20",    // Fetch exact version from solc-bin (default: truffle's version)
+      version: "0.8.22",    // Fetch exact version from solc-bin (default: truffle's version)
       // docker: true,        // Use "0.5.1" you've installed locally with docker (default: false)
       settings: {          // See the solidity docs for advice about optimization and evmVersion
        optimizer: {
          enabled: true,
          runs: 200
        },
-       // viaIR: true,
+       viaIR: true,
        // evmVersion: "byzantium"
       }
     }

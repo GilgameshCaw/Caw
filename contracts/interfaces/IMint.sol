@@ -9,8 +9,9 @@ interface IMint {
   function mint(
     address sender,
     string memory username,
-    uint64 newId
-  ) external;
+    uint64 newId,
+    uint256 lzTokenAmount
+  ) external payable;
 
 }
 
