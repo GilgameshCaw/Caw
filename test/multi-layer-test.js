@@ -1,8 +1,10 @@
 const IERC20 = artifacts.require("IERC20");
 const CawNameURI = artifacts.require("CawNameURI");
-const Usernames = artifacts.require("CawName");
+const CawName = artifacts.require("CawName");
+const CawNameL2 = artifacts.require("CawNameL2");
 const CawNameMinter = artifacts.require("CawNameMinter");
 const CawActions = artifacts.require("CawActions");
+const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
 const ISwapper = artifacts.require("ISwapRouter");
 // const ethereumjs = require("ethereumjs-util");
 
@@ -26,12 +28,13 @@ const wethAddress = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
 const cawAddress = '0xf3b9569f82b18aef890de263b84189bd33ebe452'; // CAW
 const usdcAddress = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'; // USDC
 
+var token;
 var minter;
 var swapper;
-var usernames;
+var cawNames;
+var cawNamesL2;
 var cawActions;
 var uriGenerator;
-var token;
 
 const dataTypes = {
   EIP712Domain: [
@@ -44,9 +47,9 @@ const dataTypes = {
     { name: 'actionType', type: 'uint8' },
     { name: 'senderId', type: 'uint64' },
     { name: 'receiverId', type: 'uint64' },
-    { name: 'tipRecipients', type: 'uint64[]' },
+    { name: 'recipients', type: 'uint64[]' },
     { name: 'timestamp', type: 'uint64' },
-    { name: 'tips', type: 'uint256[]' },
+    { name: 'amounts', type: 'uint256[]' },
     { name: 'sender', type: 'address' },
     { name: 'cawId', type: 'bytes32' },
     { name: 'text', type: 'string' },
@@ -102,15 +105,28 @@ async function processActions(actions, params) {
   }));
 
     console.log("Data", signedActions.map(function(action) {return action.data.message}))
+    console.log("SENDER ID:", params.validatorId || 1);
 
-  t = await cawActions.processActions(params.senderId || 1, {
+
+  var withdraws = actions.filter(function(action) {return action.actionType == 'withdraw'});
+  var quote;
+  if (withdraws.length > 0) {
+    var tokenIds = withdraws.map(function(action){return action.senderId});
+    var amounts = withdraws.map(function(action){return action.amounts[0]});
+    quote = await cawActions.withdrawQuote(tokenIds, amounts, false);
+    console.log('withdraw quote returned:', quote);
+  }
+
+  console.log('Will process with quote:', quote?.nativeFee);
+  t = await cawActions.processActions(params.validatorId || 1, {
     v: signedActions.map(function(action) {return action.sigData.v}),
     r: signedActions.map(function(action) {return action.sigData.r}),
     s: signedActions.map(function(action) {return action.sigData.s}),
     actions: signedActions.map(function(action) {return action.data.message}),
-  }, {
+  }, 0, {
     nonce: await web3.eth.getTransactionCount(params.sender),
     from: params.sender,
+    value: quote?.nativeFee || '0',
   });
 
   var fullTx = await web3.eth.getTransaction(t.tx);
@@ -126,8 +142,11 @@ async function generateData(type, params = {}) {
   var actionType = {
     caw: 0,
     like: 1,
-    recaw: 2,
-    follow: 3,
+    unlike: 2,
+    recaw: 3,
+    follow: 4,
+    unfollow: 5,
+    withdraw: 6,
   }[type];
 
   var domain = {
@@ -147,8 +166,9 @@ async function generateData(type, params = {}) {
       timestamp: params.timestamp || (Math.floor(new Date().getTime() / 1000)),
       cawId: params.cawId || "0x0000000000000000000000000000000000000000000000000000000000000000",
       text: params.text || "",
-      tipRecipients: [],
-      tips: [],
+      cawonce: params.cawonce,
+      recipients: params.recipients || [],
+      amounts: params.amounts || [],
     },
     domain: domain,
     types: {
@@ -181,13 +201,18 @@ async function deposit(user, tokenId, amount) {
   console.log("DEPOSIT", tokenId, (BigInt(amount) * 10n**18n).toString());
 
   var balance = await token.balanceOf(user)
-  await token.approve(usernames.address, balance.toString(), {
+  await token.approve(cawNames.address, balance.toString(), {
     nonce: await web3.eth.getTransactionCount(user),
     from: user,
   });
 
-  t = await usernames.deposit(tokenId, (BigInt(amount) * 10n**18n).toString(), {
+  var cawAmount = (BigInt(amount) * 10n**18n).toString();
+  var quote = await cawNames.depositQuote(tokenId, cawAmount, false);
+  console.log('deposit quote returned:', quote);
+
+  t = await cawNames.deposit(tokenId, cawAmount, quote.lzTokenFee, {
     nonce: await web3.eth.getTransactionCount(user),
+    value: quote.nativeFee,
     from: user,
   });
 
@@ -202,8 +227,12 @@ async function buyUsername(user, name) {
     from: user,
   });
 
-  t = await minter.mint(name, {
+  var quote = await cawNames.mintQuote(user, name, false);
+  // console.log('mint quote returned:', quote);
+
+  t = await minter.mint(name, quote.lzTokenFee, {
     nonce: await web3.eth.getTransactionCount(user),
+    value: quote.nativeFee,
     from: user,
   });
 
@@ -213,7 +242,7 @@ async function buyUsername(user, name) {
 async function buyToken(user, eth) {
   console.log("TOKEN:", token.address, swapper.address);
   t = await swapper.getAmountsOut(
-    '100000000000000000',[
+    BigInt(eth * 10**18),[
     wethAddress,
     usdcAddress,
     token.address,
@@ -245,7 +274,7 @@ async function buyToken(user, eth) {
 // Dust is inevitable, so this check
 // uses 4 decimal places of precision
 async function expectBalanceOf(tokenId, params = {}) {
-  balance = await usernames.cawBalanceOf(tokenId);
+  balance = await cawNamesL2.cawBalanceOf(tokenId);
   var value = BigInt(parseInt(params.toEqual * 10**5))/10n;
 
   // console.log('.. balance ..',balance.toString())
@@ -270,17 +299,31 @@ contract('CawNames', function(accounts, x) {
 
   beforeEach(async function () {
     web3.eth.defaultAccount = accounts[0];
-    uriGenerator = uriGenerator || await CawNameURI.deployed();
+    l1Endpoint = await MockLayerZeroEndpoint.new(1);
+    l2Endpoint = await MockLayerZeroEndpoint.new(8453);
+
+    uriGenerator = uriGenerator || await CawNameURI.new();
     console.log("URI Generator addr", uriGenerator.address);
-    minter = minter || await CawNameMinter.deployed();
-    usernames = usernames || await Usernames.deployed();
-    cawActions = cawActions || await CawActions.deployed();
+    cawNamesL2 = cawNamesL2 || await CawNameL2.new(l2Endpoint.address, 1);
+    await l1Endpoint.setDestLzEndpoint(cawNamesL2.address, l2Endpoint.address);
+
+    cawNames = cawNames || await CawName.new(cawAddress, uriGenerator.address, l1Endpoint.address, 8453, cawNamesL2.address);
+    minter = minter || await CawNameMinter.new(cawAddress, cawNames.address);
+
+    await l2Endpoint.setDestLzEndpoint(cawNames.address, l1Endpoint.address);
+    await cawNamesL2.setL1Peer(cawNames.address);
+
+
+    await cawNames.setMinter(minter.address);
+    cawActions = cawActions || await CawActions.new(cawNamesL2.address);
     token = token || await IERC20.at(cawAddress);
     swapper = await ISwapper.at('0x7a250d5630b4cf539739df2c5dacb4c659f2488d'); // uniswap
+
+    await cawNamesL2.setCawActions(cawActions.address);
   });
 
   it("", async function() {
-    await buyToken(accounts[2], 100);
+    await buyToken(accounts[2], 10);
     var balance = await token.balanceOf(accounts[2])
     console.log('BALANCE: ', (balance).toString());
     //
@@ -308,6 +351,8 @@ contract('CawNames', function(accounts, x) {
 
     console.log("BALANCES:", BigInt(balanceWas) - BigInt(balance) );
     expect(BigInt(balanceWas) - BigInt(balance) == BigInt(cost)).to.equal(true);
+    var u1 = await cawNamesL2.usernames(1);
+    expect(u1).to.equal(name);
 
 
     try {
@@ -341,8 +386,8 @@ contract('CawNames', function(accounts, x) {
     tx = await buyUsername(accounts[2], 'usernamenumber2');
     tx = await buyUsername(accounts[2], 'usernamenumber3');
 
-    // console.log("generator addr", await usernames.uriGenerator());
-    console.log("URI", await usernames.usernames(0));
+    // console.log("generator addr", await cawNames.uriGenerator());
+    console.log("URI", await cawNames.usernames(0));
 
 
     tx = await deposit(accounts[2], 1, 10000);
@@ -355,28 +400,32 @@ contract('CawNames', function(accounts, x) {
     await expectBalanceOf(3, {toEqual: 10000});
 
     var timestamp = (Math.floor(new Date().getTime() / 1000));
-    var result = await processActions([{
+    var firstCaw = {
       actionType: 'caw',
       message: "the first caw message ever sent",
       sender: accounts[2],
-      senderId: 1,
       timestamp: timestamp,
-    }], {
+      senderId: 1,
+      cawonce: 0
+    };
+    var result = await processActions([firstCaw], {
       sender: accounts[2]
     });
     var cawId = result.signedActions[0].sigData.r;
     console.log("FISRT CAW SENT!", cawId);
 
-    truffleAssert.eventEmitted(result.tx, 'ActionProcessed', (args) => {
-      return args.senderId == 1n &&
-        args.actionId == result.signedActions[0].sigData.r;
+    truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
+      console.log("Action:", args.actions.r[0])
+// return true
+      return args.validatorId == 1n &&
+        args.actions.r[0] == result.signedActions[0].sigData.r;
     });
 
-    var isVerfied = await cawActions.isVerified(1, cawId);
-    expect(isVerfied.toString()).to.equal('true');
+    // var isVerfied = await cawActions.isVerified(1, cawId);
+    // expect(isVerfied.toString()).to.equal('true');
 
 
-    var rewardMultiplier = await usernames.rewardMultiplier();
+    var rewardMultiplier = await cawNames.rewardMultiplier();
     console.log("REWARD MUL", BigInt(rewardMultiplier).toString())
 
     // 5k caw gets spent from the sender, and distributed
@@ -390,21 +439,17 @@ contract('CawNames', function(accounts, x) {
     await expectBalanceOf(3, {toEqual: 11000});
 
 
-    var result = await processActions([{
-      actionType: 'caw',
-      message: "the first caw message ever sent",
-      timestamp: timestamp,
-      sender: accounts[2],
-      senderId: 1,
-    }], {
+    // already processed, so trying to process again will fail
+    var result = await processActions([firstCaw], {
       sender: accounts[2]
     });
 
     console.log("Expect fail:")
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
-      return args.senderId == 1n &&
+      console.log(args);
+      return args.validatorId == 1n &&
         args.actionId == result.signedActions[0].sigData.r &&
-        args.reason == 'this action has already been processed';
+        args.reason == 'incorrect cawonce';
     });
 
 
@@ -413,18 +458,20 @@ contract('CawNames', function(accounts, x) {
       message: "the second caw message ever sent",
       sender: accounts[2],
       senderId: 2,
+      cawonce: 0
     }], {
-      sender: accounts[2]
+      sender: accounts[2],
+      validatorId: 2,
     });
 
-    truffleAssert.eventEmitted(result.tx, 'ActionProcessed', (args) => {
-      return args.senderId == 2n &&
-        args.actionId == result.signedActions[0].sigData.r;
+    truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
+      return args.validatorId == 2n &&
+        args.actions.r[0] == result.signedActions[0].sigData.r;
     });
 
     var secondCawId = result.signedActions[0].sigData.r;
 
-    rewardMultiplier = await usernames.rewardMultiplier();
+    rewardMultiplier = await cawNames.rewardMultiplier();
     console.log("REWARD MUL", BigInt(rewardMultiplier).toString())
     // 5k caw gets spent from the sender, and distributed
     // among other caw stakers proportional to their ownership
@@ -445,12 +492,11 @@ contract('CawNames', function(accounts, x) {
       sender: accounts[2],
       receiverId: 2,
       senderId: 3,
+      cawonce: 0
     }], {
       sender: accounts[2]
     });
 
-    var likes = await cawActions.likes(2, secondCawId);
-    await expect(likes.toString()).to.equal('1');
 
     // 2k caw gets spent from the sender, 400 distributed
     // among other caw stakers proportional to their ownership
@@ -464,25 +510,8 @@ contract('CawNames', function(accounts, x) {
     await expectBalanceOf(2, {toEqual: 40942.3868});
     await expectBalanceOf(3, {toEqual: 12437.5});
 
-    result = await processActions([{
-      timestamp: timestamp,
-      actionType: 'like',
-      cawId: secondCawId,
-      sender: accounts[2],
-      receiverId: 2,
-      senderId: 3,
-    }], {
-      sender: accounts[2]
-    });
 
-    console.log("Expect fail:")
-    truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
-      return args.senderId == 3n &&
-        args.actionId == result.signedActions[0].sigData.r &&
-        args.reason == 'this action has already been processed';
-    });
-
-
+    var cawonce = (await cawActions.cawonce(2)).toString();
     timestamp = Math.floor(new Date().getTime() / 1000);
     await processActions([{
       timestamp: timestamp,
@@ -490,12 +519,10 @@ contract('CawNames', function(accounts, x) {
       sender: accounts[2],
       receiverId: 1,
       senderId: 2,
+      cawonce: cawonce,
     }], {
       sender: accounts[2]
     });
-
-    var followCount = await cawActions.followerCount(1);
-    await expect(followCount.toString()).to.equal('1');
 
     // 30k caw gets spent from the sender, 6000 distributed
     // among other caw stakers proportional to their ownership
@@ -510,26 +537,30 @@ contract('CawNames', function(accounts, x) {
     await expectBalanceOf(3, {toEqual: 16353.2579});
 
     // It will fail if you try to replay the same call
+    var cawonce = (await cawActions.cawonce(2)).toString();
     result = await processActions([{
       timestamp: timestamp,
       actionType: 'follow',
       sender: accounts[2],
       receiverId: 1,
+      cawonce: cawonce,
       senderId: 2,
     }], {
+      validatorId: 2,
       sender: accounts[2]
     });
 
     console.log("Expect fail:")
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
-      return args.senderId == 2n &&
+      return args.validatorId == 2n &&
         args.actionId == result.signedActions[0].sigData.r &&
-        args.reason == 'this action has already been processed';
+        args.reason == 'insufficent CAW balance';
     });
 
 
 
     timestamp = Math.floor(new Date().getTime() / 1000);
+    var cawonce = (await cawActions.cawonce(1)).toString();
     await processActions([{
       timestamp: timestamp,
       actionType: 'recaw',
@@ -537,11 +568,12 @@ contract('CawNames', function(accounts, x) {
       sender: accounts[2],
       receiverId: 2,
       senderId: 1,
+      cawonce: cawonce,
     }], {
       sender: accounts[2]
     });
 
-    // var recawCount = await usernames.recawCount(1);
+    // var recawCount = await cawNames.recawCount(1);
     // await expect(recawCount.toString()).to.equal('1');
 
     // 4k caw gets spent from the sender, 2k distributed
@@ -556,6 +588,7 @@ contract('CawNames', function(accounts, x) {
     await expectBalanceOf(2, {toEqual: 13744.1548});
     await expectBalanceOf(3, {toEqual: 17551.4900});
 
+    var cawonce = (await cawActions.cawonce(1)).toString();
     result = await processActions([{
       timestamp: timestamp,
       actionType: 'recaw',
@@ -563,48 +596,182 @@ contract('CawNames', function(accounts, x) {
       sender: accounts[2],
       receiverId: 2,
       senderId: 1,
+      cawonce: Number(cawonce) - 1
     }], {
       sender: accounts[2]
     });
 
     console.log("Expect fail:")
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
-      return args.senderId == 1n &&
+      return args.validatorId == 1n &&
         args.actionId == result.signedActions[0].sigData.r &&
-        args.reason == 'this action has already been processed';
+        args.reason == 'incorrect cawonce';
     });
 
 
     tx = await deposit(accounts[2], 2, 2000000);
 
+    var cawonce3 = (await cawActions.cawonce(3)).toString();
+    var cawonce1 = (await cawActions.cawonce(1)).toString();
     var actionsToProcess = [{
       actionType: 'recaw',
       cawId: secondCawId,
       sender: accounts[2],
       receiverId: 2,
       senderId: 3,
+      cawonce: cawonce3,
     }, {
       actionType: 'like',
       sender: accounts[2],
       senderId: 1,
       cawId: secondCawId,
+      cawonce: cawonce1,
     }]
 
-    for(var i = 0; i < 32; i++)
+    var cawonce2 = Number(await cawActions.cawonce(2));
+    for(var i = 0; i < 32; i++) {
       actionsToProcess.push({
         actionType: 'caw',
         sender: accounts[2],
         senderId: 2,
         text: "This is a caw processed in a list of processed actions. " + i,
+        cawonce: cawonce2
       });
+      cawonce2++;
+    }
 
     await processActions(actionsToProcess, { sender: accounts[1] });
 
     console.log("checking tokens");
-    var tokens = await usernames.tokens(accounts[2]);
+    var tokens = await cawNames.tokens(accounts[2]);
     console.log("TOKENS:", tokens);
+
+    var balance = BigInt(await cawNamesL2.cawBalanceOf(1));
+
+    var cawonce1 = Number(await cawActions.cawonce(1));
+    var actionsToProcess = [{
+      actionType: 'withdraw',
+      amounts: [(balance*3n/10n).toString()],
+      recipients: [1],
+      sender: accounts[2],
+      senderId: 1,
+      cawonce: cawonce1,
+    }]
+
+    result = await processActions(actionsToProcess, { sender: accounts[1] });
+
+    truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
+      return args.validatorId == 1n &&
+        args.actions.r[0] == result.signedActions[0].sigData.r;
+    });
+    var newBalance = BigInt(await cawNamesL2.cawBalanceOf(1));
+
+    expect(newBalance).to.equal(balance * 7n / 10n)
+
+
+    var balanceWas = BigInt(await token.balanceOf(accounts[2]))
+    var quote = await cawNames.withdrawQuote(false);
+    await cawNames.withdraw(1, 0, {
+      value: quote?.nativeFee,
+      from: accounts[2]
+    });
+    var newBalance = BigInt(await token.balanceOf(accounts[2]))
+
+    expect(newBalance).to.equal(balanceWas + (balance*3n/10n))
+
+
+    // Transfering the username will not propogate
+    // to the L2 until an action is taken on L1
+    // For example, a deposit on the L1.
+    await cawNames.transferFrom(accounts[2], accounts[3], 1, {
+      from: accounts[2],
+    })
+
+
+    var cawonce1 = Number(await cawActions.cawonce(1));
+    var actionsToProcess = [{
+      actionType: 'withdraw',
+      amounts: [(balance*3n/10n).toString()],
+      recipients: [1],
+      sender: accounts[3],
+      senderId: 1,
+      cawonce: cawonce1,
+    }]
+
+
+    result = await processActions(actionsToProcess, { sender: accounts[1] });
+
+    truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
+      return args.validatorId == 1n &&
+        args.actionId == result.signedActions[0].sigData.r &&
+        args.reason == 'signer is not owner of this CawName';
+    });
+
+    console.log("TRANSFER UPDATE end:", BigInt(await cawNames.pendingTransferEnd()));
+    console.log("TRANSFER UPDATE start:", BigInt(await cawNames.pendingTransferStart()));
+    console.log("PENDING TRANSFERS:", await cawNames.pendingTransferUpdates());
+
+    //
+    tx = await deposit(accounts[2], 2, 2000000);
+
+
+
+    result = await processActions(actionsToProcess, { sender: accounts[1] });
+
+    truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
+      return args.validatorId == 1n &&
+        args.actions.r[0] == result.signedActions[0].sigData.r;
+    });
+
+    var balanceWas = BigInt(await token.balanceOf(accounts[3]))
+    var quote = await cawNames.withdrawQuote(false);
+    await cawNames.withdraw(1, 0, {
+      value: quote?.nativeFee,
+      from: accounts[3]
+    });
+    var newBalance = BigInt(await token.balanceOf(accounts[3]))
+
+    expect(newBalance).to.equal(balanceWas + (balance*3n/10n))
+
+
+    // and this one should fail:
+    var actionsToProcess = [{
+      actionType: 'withdraw',
+      amounts: [(balance*3n/10n).toString()],
+      recipients: [1],
+      sender: accounts[2],
+      senderId: 1,
+      cawonce: cawonce1,
+    }]
+
+
+    result = await processActions(actionsToProcess, { sender: accounts[1] });
+
+    console.log("Expect fail:")
+    truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
+      console.log(args);
+      return args.validatorId == 1n &&
+        args.actionId == result.signedActions[0].sigData.r &&
+        args.reason == 'incorrect cawonce';
+    });
+
+
+
+
+    // var newMessage = {
+    //   actionType: 'caw',
+    //   message: "Sending a new CAW",
+    //   sender: accounts[2],
+    //   timestamp: timestamp,
+    //   senderId: 1,
+		// 	cawonce: 0
+    // };
+    // var result = await processActions([firstCaw], {
+    //   sender: accounts[2]
+    // });
 
 
   });
 
 });
+

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
+import "@layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
 import "@openzeppelin/contracts/utils/cryptography/draft-EIP712.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
@@ -14,8 +15,7 @@ contract CawNameL2 is
   Ownable,
   OApp
 {
-
-  CawNameURI public uriGenerator;
+  using OptionsBuilder for bytes;
 
   uint256 public totalCaw;
 
@@ -35,8 +35,9 @@ contract CawNameL2 is
 
   uint32 public layer1EndpointId;
 
-  // at some point... use this selector:
-  bytes4 public setWithdrawableSelector = bytes4(keccak256("setWithdrawable(uint64,uint256)"));
+  bool private fromLZ;
+
+  bytes4 public setWithdrawableSelector = bytes4(keccak256("setWithdrawable(uint64[],uint256[])"));
 
   struct Token {
     uint256 tokenId;
@@ -44,24 +45,18 @@ contract CawNameL2 is
     string username;
   }
 
-  constructor(address _gui, address _endpoint, uint32 _layer1EndpointId)
+  constructor(address _endpoint, uint32 _layer1EndpointId)
     OApp(_endpoint, msg.sender)
   {
-    uriGenerator = CawNameURI(_gui);
     layer1EndpointId = _layer1EndpointId;
   }
 
-  function setCawActions(address _cawActions) public onlyOwner {
+  function setL1Peer(address peer) external onlyOwner {
+    setPeer(1, bytes32(uint256(uint160(peer))));
+  }
+
+  function setCawActions(address _cawActions) external onlyOwner {
     cawActions = _cawActions;
-  }
-
-  // create an ARTIST_ROLE
-  function setUriGenerator(address _gui) public onlyOwner {
-    uriGenerator = CawNameURI(_gui);
-  }
-
-  function tokenURI(uint256 tokenId, string calldata name) public view returns (string memory) {
-    return uriGenerator.generate(name);
   }
 
   function cawBalanceOf(uint64 tokenId) public view returns (uint256){
@@ -87,13 +82,15 @@ contract CawNameL2 is
     addToBalance(tokenId, amount * 10**18);
   }
 
-  function addToBalanceAndUpdateOwners(uint64 tokenId, uint256 amount, uint64[] calldata tokenIds, address[] calldata owners) public {
+  function depositAndUpdateOwners(uint64 tokenId, uint256 amount, uint64[] calldata tokenIds, address[] calldata owners) public {
+    require(fromLZ, "depositAndUpdateOwners only callable internally");
+    totalCaw += amount;
     addToBalance(tokenId, amount);
     updateOwners(tokenIds, owners);
   }
 
   function addToBalance(uint64 tokenId, uint256 amount) public {
-    require(cawActions == _msgSender(), "caller is not the cawActions");
+    require(fromLZ || cawActions == _msgSender(), "caller is not cawActions or LZ");
 
     setCawBalance(tokenId, cawBalanceOf(tokenId) + amount);
   }
@@ -102,12 +99,14 @@ contract CawNameL2 is
     cawOwnership[tokenId] = precision * newCawBalance / rewardMultiplier;
   }
 
-  function updateOwners(uint64[] calldata tokenIds, address[] calldata owners) internal {
+  function updateOwners(uint64[] calldata tokenIds, address[] calldata owners) public {
+    require(fromLZ, "updateOwners only callable internally");
     for (uint i = 0; i < tokenIds.length; i++)
       setOwnerOf(tokenIds[i], owners[i]);
   }
 
-  function mintAndUpdateOwners(uint64 tokenId, address owner, string memory username, uint64[] calldata tokenIds, address[] calldata owners) internal {
+  function mintAndUpdateOwners(uint64 tokenId, address owner, string memory username, uint64[] calldata tokenIds, address[] calldata owners) public {
+    require(fromLZ, "mintAndUpdateOwners only callable internally");
     usernames[tokenId] = username;
     ownerOf[tokenId] = owner;
 
@@ -124,47 +123,97 @@ contract CawNameL2 is
     bytes calldata payload, // encoded message payload being received
     address _executor, // the Executor address.
     bytes calldata _extraData // arbitrary data appended by the Executor
-	) internal override {
-		// Decode the function selector and arguments from the payload
-		(bytes4 selector, bytes memory args) = abi.decode(payload, (bytes4, bytes));
+  ) internal override {
+    // Declare selector and arguments as memory variables
+    bytes4 decodedSelector;
+    bytes memory args = new bytes(payload.length - 4); // Arguments excluding the first 4 bytes
 
-		// Ensure the selector corresponds to an expected function to prevent unauthorized actions
-		require(isAuthorizedFunction(selector), "Unauthorized function call");
+    assembly {
+      // Copy the selector (first 4 bytes) from calldata
+      decodedSelector := calldataload(payload.offset)
 
-		// Call the function using the selector and arguments
-		(bool success, ) = address(this).delegatecall(abi.encodePacked(selector, args));
-		require(success, "Function call failed");
-	}
+      // Copy the arguments from calldata to memory
+      calldatacopy(add(args, 32), add(payload.offset, 4), sub(payload.length, 4))
+    }
+
+    // Ensure the selector corresponds to an expected function to prevent unauthorized actions
+    require(isAuthorizedFunction(decodedSelector), "Unauthorized function call");
+
+    // Call the function using the selector and arguments
+    // (bool success, bytes memory returnData) = address(this).delegatecall(abi.encode(decodedSelector, args));
+    fromLZ = true;
+    (bool success, bytes memory returnData) = address(this).delegatecall(bytes.concat(decodedSelector, args));
+    fromLZ = false;
+
+    // Handle failure and revert with the error message
+    if (!success) {
+      // If the returndata is empty, use a generic error message
+      if (returnData.length == 0) {
+        revert("Delegatecall failed with no revert reason");
+      } else {
+        // Bubble up the revert reason
+        assembly {
+          let returndata_size := mload(returnData)
+          revert(add(32, returnData), returndata_size)
+        }
+      }
+    }
+  }
+
+  mapping(bytes4 => string) public functionSigs;
 
   // Helper function to verify if the function selector is authorized
   function isAuthorizedFunction(bytes4 selector) private view returns (bool) {
     // Add all authorized function selectors here
-    return selector == bytes4(keccak256("addToBalanceAndUpdateOwners(uint64,uint256,uint64[],address[])")) || 
-      selector == bytes4(keccak256("mintAndUpdateOwners(uint64,address,string memory,uint64[],address[])")) ||
+    return selector == bytes4(keccak256("depositAndUpdateOwners(uint64,uint256,uint64[],address[])")) || 
+      selector == bytes4(keccak256("mintAndUpdateOwners(uint64,address,string,uint64[],address[])")) ||
       selector == bytes4(keccak256("updateOwners(uint64[],address[])"));
   }
 
+  function withdraw(uint64 tokenId, uint256 amount) external {
+    require(cawActions == _msgSender(), "caller is not the cawActions contract");
+
+    uint256 balance = cawBalanceOf(tokenId);
+    require(balance >= amount, 'insufficent CAW balance');
+
+    totalCaw -= amount;
+    setCawBalance(tokenId, balance - amount);
+  }
+
+  function setWithdrawable(uint64[] memory tokenIds, uint256[] memory amounts, uint256 lzTokenAmount) external payable {
+    require(cawActions == _msgSender(), "caller is not CawActions");
+    bytes memory payload = abi.encodeWithSelector(setWithdrawableSelector, tokenIds, amounts);
+    lzSend(setWithdrawableSelector, payload, lzTokenAmount);
+  }
+
+  function withdrawQuote(uint64[] memory tokenIds, uint256[] memory amounts, bool payInLzToken) public view returns (MessagingFee memory quote) {
+    bytes memory payload = abi.encodeWithSelector(
+      setWithdrawableSelector, tokenIds, amounts
+    ); return lzQuote(setWithdrawableSelector, payload, payInLzToken);
+  }
+
+  function lzQuote(bytes4 selector, bytes memory payload, bool _payInLzToken) public view returns (MessagingFee memory quote) {
+    bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(selector), 0);
+    return _quote(layer1EndpointId, payload, _options, _payInLzToken);
+  }
 
   // Will use to send withdrawable amount to L1
-  function lzSend(bytes4 selector, bytes memory payload) internal {
-    uint256 gasPrice = 0;
-    bytes memory _options = abi.encode(
-      gasLimitFor(selector),  // The gas limit for the execution of the message on L2
-      uint256(gasPrice)   // The gas price you are willing to pay on L2
-    );
+  function lzSend(bytes4 selector, bytes memory payload, uint256 lzTokenAmount) internal {
+    bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(selector), 0);
 
     _lzSend(
       layer1EndpointId, // Destination chain's endpoint ID.
       payload, // Encoded message payload being sent.
       _options, // Message execution options (e.g., gas to use on destination).
-      MessagingFee(msg.value, 0), // Fee struct containing native gas and ZRO token.
+      MessagingFee(msg.value, lzTokenAmount), // Fee struct containing native gas and ZRO token.
       payable(msg.sender) // The refund address in case the send call reverts.
     );
   }
 
-  function gasLimitFor(bytes4 selector) public view returns (uint256) {
+  function gasLimitFor(bytes4 selector) public view returns (uint128) {
     if (selector == setWithdrawableSelector)
       return 300000;
+    else revert('unexpected selector');
   }
 
 }
