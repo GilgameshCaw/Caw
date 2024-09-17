@@ -33,7 +33,7 @@ contract CawNameL2 is
   uint256 public rewardMultiplier = 10**18;
   uint256 public precision = 30425026352721 ** 2;// ** 3;
 
-  uint32 public layer1EndpointId;
+  uint32 public layer1EndpointId = 1;
 
   bool private fromLZ;
 
@@ -45,10 +45,9 @@ contract CawNameL2 is
     string username;
   }
 
-  constructor(address _endpoint, uint32 _layer1EndpointId)
+  constructor(address _endpoint)
     OApp(_endpoint, msg.sender)
   {
-    layer1EndpointId = _layer1EndpointId;
   }
 
   function setL1Peer(address peer) external onlyOwner {

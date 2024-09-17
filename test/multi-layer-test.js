@@ -28,6 +28,7 @@ const wethAddress = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
 const cawAddress = '0xf3b9569f82b18aef890de263b84189bd33ebe452'; // CAW
 const usdcAddress = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'; // USDC
 
+const l2 = 8453;
 var token;
 var minter;
 var swapper;
@@ -207,10 +208,10 @@ async function deposit(user, tokenId, amount) {
   });
 
   var cawAmount = (BigInt(amount) * 10n**18n).toString();
-  var quote = await cawNames.depositQuote(tokenId, cawAmount, false);
+  var quote = await cawNames.depositQuote(tokenId, cawAmount, l2, false);
   console.log('deposit quote returned:', quote);
 
-  t = await cawNames.deposit(tokenId, cawAmount, quote.lzTokenFee, {
+  t = await cawNames.deposit(tokenId, cawAmount, l2, quote.lzTokenFee, {
     nonce: await web3.eth.getTransactionCount(user),
     value: quote.nativeFee,
     from: user,
@@ -227,10 +228,10 @@ async function buyUsername(user, name) {
     from: user,
   });
 
-  var quote = await cawNames.mintQuote(user, name, false);
+  var quote = await cawNames.mintQuote(user, name, l2, false);
   // console.log('mint quote returned:', quote);
 
-  t = await minter.mint(name, quote.lzTokenFee, {
+  t = await minter.mint(name, l2, quote.lzTokenFee, {
     nonce: await web3.eth.getTransactionCount(user),
     value: quote.nativeFee,
     from: user,
@@ -300,20 +301,21 @@ contract('CawNames', function(accounts, x) {
   beforeEach(async function () {
     web3.eth.defaultAccount = accounts[0];
     l1Endpoint = await MockLayerZeroEndpoint.new(1);
-    l2Endpoint = await MockLayerZeroEndpoint.new(8453);
+    l2Endpoint = await MockLayerZeroEndpoint.new(l2);
 
     uriGenerator = uriGenerator || await CawNameURI.new();
     console.log("URI Generator addr", uriGenerator.address);
-    cawNamesL2 = cawNamesL2 || await CawNameL2.new(l2Endpoint.address, 1);
+
+    cawNamesL2 = cawNamesL2 || await CawNameL2.new(l2Endpoint.address);
     await l1Endpoint.setDestLzEndpoint(cawNamesL2.address, l2Endpoint.address);
 
-    cawNames = cawNames || await CawName.new(cawAddress, uriGenerator.address, l1Endpoint.address, 8453, cawNamesL2.address);
-    minter = minter || await CawNameMinter.new(cawAddress, cawNames.address);
-
-    await l2Endpoint.setDestLzEndpoint(cawNames.address, l1Endpoint.address);
+    cawNames = cawNames || await CawName.new(cawAddress, uriGenerator.address, l1Endpoint.address);
     await cawNamesL2.setL1Peer(cawNames.address);
+    await l2Endpoint.setDestLzEndpoint(cawNames.address, l1Endpoint.address);
+    await cawNames.setL2Peer(l2, cawNamesL2.address);
 
 
+    minter = minter || await CawNameMinter.new(cawAddress, cawNames.address);
     await cawNames.setMinter(minter.address);
     cawActions = cawActions || await CawActions.new(cawNamesL2.address);
     token = token || await IERC20.at(cawAddress);
@@ -707,9 +709,9 @@ contract('CawNames', function(accounts, x) {
         args.reason == 'signer is not owner of this CawName';
     });
 
-    console.log("TRANSFER UPDATE end:", BigInt(await cawNames.pendingTransferEnd()));
-    console.log("TRANSFER UPDATE start:", BigInt(await cawNames.pendingTransferStart()));
-    console.log("PENDING TRANSFERS:", await cawNames.pendingTransferUpdates());
+    console.log("TRANSFER UPDATE end:", BigInt(await cawNames.pendingTransferEnd(l2)));
+    console.log("TRANSFER UPDATE start:", BigInt(await cawNames.pendingTransferStart(l2)));
+    console.log("PENDING TRANSFERS:", await cawNames.pendingTransferUpdates(l2));
 
     //
     tx = await deposit(accounts[2], 2, 2000000);
