@@ -10,6 +10,7 @@ interface IMint {
     address sender,
     string memory username,
     uint64 newId,
+    uint32 lzDestId,
     uint256 lzTokenAmount
   ) external payable;
 

@@ -5,6 +5,7 @@ pragma solidity ^0.8.0;
 import "@layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721Enumerable.sol";
 import "@openzeppelin/contracts/utils/cryptography/draft-EIP712.sol";
+import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
@@ -20,6 +21,7 @@ contract CawName is
   OApp
 {
   using OptionsBuilder for bytes;
+  using EnumerableSet for EnumerableSet.UintSet;
 
   IERC20 public immutable CAW;
   CawNameURI public uriGenerator;
@@ -39,12 +41,17 @@ contract CawName is
 
   uint256 public rewardMultiplier = 10**18;
 
-  uint32 public layer2EndpointId;
+  // tokenId => [lzDestId, lzDestId2, ...]
+  mapping(uint64 => EnumerableSet.UintSet) private chosenChainIds;
+  EnumerableSet.UintSet peerIds;
 
-  mapping(uint256 => uint64) public pendingTransfers;
+  // lzDestId => index => tokenId
+  mapping(uint32 => mapping(uint256 => uint64)) public pendingTransfers;
   uint256 public transferUpdateLimit = 50;
-  uint256 public pendingTransferStart = 0;
-  uint256 public pendingTransferEnd = 0;
+
+  // lzDestId => value
+  mapping(uint32 => uint256) public pendingTransferStart;
+  mapping(uint32 => uint256) public pendingTransferEnd;
 
   struct Token {
     uint256 withdrawable;
@@ -52,14 +59,17 @@ contract CawName is
     string username;
   }
 
-  constructor(address _caw, address _gui, address _endpoint, uint32 _layer2EndpointId, address peer)
+  constructor(address _caw, address _gui, address _endpoint)
     ERC721("CAW NAME", "cawNAME")
     OApp(_endpoint, msg.sender)
   {
-    setPeer(_layer2EndpointId, bytes32(uint256(uint160(peer))));
-    layer2EndpointId = _layer2EndpointId;
     uriGenerator = CawNameURI(_gui);
     CAW = IERC20(_caw);
+  }
+
+  function setL2Peer(uint32 _eid, address _peer) external onlyOwner {
+    peerIds.add(uint256(_eid));
+    setPeer(_eid, bytes32(uint256(uint160(_peer))));
   }
 
   function setMinter(address _minter) external onlyOwner {
@@ -74,7 +84,7 @@ contract CawName is
     return uriGenerator.generate(usernames[uint64(tokenId) - 1]);
   }
 
-  function mint(address owner, string memory username, uint64 newId, uint256 lzTokenAmount) public payable {
+  function mint(address owner, string memory username, uint64 newId, uint32 lzDestId, uint256 lzTokenAmount) public payable {
     require(minter == _msgSender(), "caller is not the minter");
     usernames.push(username);
     _safeMint(owner, newId);
@@ -82,11 +92,11 @@ contract CawName is
     uint64[] memory tokenIds;
     address[] memory owners;
 
-    (tokenIds, owners) = extractPendingTransferUpdates();
+    (tokenIds, owners) = extractPendingTransferUpdates(lzDestId);
 
     bytes memory payload = abi.encodeWithSelector(
       mintSelector, newId, owner, usernames[newId - 1], tokenIds, owners
-    ); lzSend(mintSelector, payload, lzTokenAmount);
+    ); lzSend(lzDestId, mintSelector, payload, lzTokenAmount);
   }
 
   function nextId() public view returns (uint64) {
@@ -120,18 +130,29 @@ contract CawName is
     return super.supportsInterface(interfaceId);
   }
 
-  function deposit(uint64 tokenId, uint256 amount, uint256 lzTokenAmount) public payable {
+  function deposit(uint64 tokenId, uint256 amount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
     require(ownerOf(tokenId) == msg.sender, "can not deposit into a CawName that you do not own");
+    chosenChainIds[tokenId].add(uint256(lzDestId));
 
     CAW.transferFrom(msg.sender, address(this), amount);
     totalCaw += amount;
 
     uint64[] memory tokenIds;
     address[] memory owners;
-    (tokenIds, owners) = extractPendingTransferUpdates();
+    (tokenIds, owners) = extractPendingTransferUpdates(lzDestId);
 
     bytes memory payload = abi.encodeWithSelector(addToBalanceSelector, tokenId, amount, tokenIds, owners);
-    lzSend(addToBalanceSelector, payload, lzTokenAmount);
+    lzSend(lzDestId, addToBalanceSelector, payload, lzTokenAmount);
+  }
+
+  function peerWithMaxPendingTransfers() public view returns (uint32) {
+    uint256 peer = peerIds.at(0); uint256 max;
+
+    for (uint256 i = 1; i < peerIds.length(); i++)
+      if (updatesNeededForPeer(uint32(peerIds.at(i))) > max)
+        peer = peerIds.at(i);
+
+    return uint32(peer);
   }
 
   function withdraw(uint64 tokenId, uint256 lzTokenAmount) public payable {
@@ -143,16 +164,17 @@ contract CawName is
     withdrawable[tokenId] = 0;
 
     CAW.transfer(msg.sender, amount);
-    _updateNewOwners(lzTokenAmount);
+    _updateNewOwners(peerWithMaxPendingTransfers(), lzTokenAmount);
   }
 
   function withdrawQuote(bool payInLzToken) public view returns (MessagingFee memory quote) {
     uint64[] memory tokenIds; address[] memory owners;
-    (tokenIds, owners) = pendingTransferUpdates();
+    uint32 lzDestId = peerWithMaxPendingTransfers();
+    (tokenIds, owners) = pendingTransferUpdates(lzDestId);
 
     bytes memory payload = abi.encodeWithSelector(
       updateOwnersSelector, tokenIds, owners
-    ); return lzQuote(updateOwnersSelector, payload, payInLzToken);
+    ); return lzQuote(updateOwnersSelector, payload, lzDestId, payInLzToken);
   }
 
   function setWithdrawable(uint64[] memory tokenIds, uint256[] memory amounts) external {
@@ -161,47 +183,60 @@ contract CawName is
       withdrawable[tokenIds[i]] += amounts[i];
   }
 
+  function getChosenChainId(uint64 token, uint256 index) public view returns (uint256) {
+    return chosenChainIds[token].at(index);
+  }
+
   function _afterTokenTransfer(address from, address to, uint256 tokenId, uint256 batchSize) internal virtual override {
+    uint64 token = uint64(tokenId);
     if (from != address(0)) {
-      pendingTransfers[pendingTransferEnd++] = uint64(tokenId);
+      EnumerableSet.UintSet storage chainIds = chosenChainIds[token];
+      for (uint256 i = 0; i < chainIds.length(); i++) {
+        uint32 chainId = uint32(chainIds.at(i));
+        pendingTransfers[chainId][pendingTransferEnd[chainId]++] = token;
+      }
     }
   }
 
-  function pendingTransferUpdates() public view returns (uint64[] memory, address[] memory) {
-    uint256 updateCount = Math.min(transferUpdateLimit, pendingTransferEnd - pendingTransferStart);
+  function updatesNeededForPeer(uint32 lzDestId) public view returns (uint256) {
+    return Math.min(transferUpdateLimit, pendingTransferEnd[lzDestId] - pendingTransferStart[lzDestId]);
+  }
+
+  function pendingTransferUpdates(uint32 lzDestId) public view returns (uint64[] memory, address[] memory) {
+    uint256 updateCount = updatesNeededForPeer(lzDestId);
     uint64[] memory tokenIds = new uint64[](updateCount);
     address[] memory owners = new address[](updateCount);
 
     for (uint256 i = 0; i < updateCount; i++) {
-      tokenIds[i] = pendingTransfers[pendingTransferStart + i];
+      tokenIds[i] = pendingTransfers[lzDestId][pendingTransferStart[lzDestId] + i];
       owners[i] = ownerOf(tokenIds[i]);
     }
 
     return (tokenIds, owners);
   }
 
-  function extractPendingTransferUpdates() internal returns (uint64[] memory, address[] memory) {
-    uint256 updateCount = Math.min(transferUpdateLimit, pendingTransferEnd - pendingTransferStart);
+  function extractPendingTransferUpdates(uint32 lzDestId) internal returns (uint64[] memory, address[] memory) {
+    uint256 updateCount = updatesNeededForPeer(lzDestId);
     uint64[] memory tokenIds = new uint64[](updateCount);
     address[] memory owners = new address[](updateCount);
 
     for (uint256 i = 0; i < updateCount; i++) {
-      tokenIds[i] = pendingTransfers[pendingTransferStart];
-      delete pendingTransfers[pendingTransferStart];
+      tokenIds[i] = pendingTransfers[lzDestId][pendingTransferStart[lzDestId]];
+      delete pendingTransfers[lzDestId][pendingTransferStart[lzDestId]];
       owners[i] = ownerOf(tokenIds[i]);
-      pendingTransferStart++;
+      pendingTransferStart[lzDestId]++;
     }
 
     return (tokenIds, owners);
   }
 
-  function _updateNewOwners(uint256 lzTokenAmount) public payable {
+  function _updateNewOwners(uint32 lzDestId, uint256 lzTokenAmount) public payable {
     uint64[] memory tokenIds;
     address[] memory owners;
 
-    (tokenIds, owners) = extractPendingTransferUpdates();
+    (tokenIds, owners) = extractPendingTransferUpdates(lzDestId);
     bytes memory payload = abi.encodeWithSelector(updateOwnersSelector, tokenIds, owners);
-    lzSend(updateOwnersSelector, payload, lzTokenAmount);
+    lzSend(lzDestId, updateOwnersSelector, payload, lzTokenAmount);
   }
 
   function _lzReceive(
@@ -253,11 +288,11 @@ contract CawName is
     return selector == bytes4(keccak256("setWithdrawable(uint64[],uint256[])"));
   }
 
-  function lzSend(bytes4 selector, bytes memory payload, uint256 lzTokenAmount) internal {
+  function lzSend(uint32 lzDestId, bytes4 selector, bytes memory payload, uint256 lzTokenAmount) internal {
     bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(selector), 0);
 
     _lzSend(
-      layer2EndpointId, // Destination chain's endpoint ID.
+      lzDestId, // Destination chain's endpoint ID.
       payload, // Encoded message payload being sent.
       _options, // Message execution options (e.g., gas to use on destination).
       MessagingFee(msg.value, lzTokenAmount), // Fee struct containing native gas and ZRO token.
@@ -265,27 +300,27 @@ contract CawName is
     );
   }
 
-  function depositQuote(uint64 tokenId, uint256 amount, bool payInLzToken) public view returns (MessagingFee memory quote) {
+  function depositQuote(uint64 tokenId, uint256 amount, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
     uint64[] memory tokenIds; address[] memory owners;
-    (tokenIds, owners) = pendingTransferUpdates();
+    (tokenIds, owners) = pendingTransferUpdates(lzDestId);
 
     bytes memory payload = abi.encodeWithSelector(
       addToBalanceSelector, tokenId, amount, tokenIds, owners
-    ); return lzQuote(addToBalanceSelector, payload, payInLzToken);
+    ); return lzQuote(addToBalanceSelector, payload, lzDestId, payInLzToken);
   }
 
-  function mintQuote(address owner, string memory username, bool payInLzToken) public view returns (MessagingFee memory quote) {
+  function mintQuote(address owner, string memory username, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
     uint64[] memory tokenIds; address[] memory owners;
-    (tokenIds, owners) = pendingTransferUpdates();
+    (tokenIds, owners) = pendingTransferUpdates(lzDestId);
 
     bytes memory payload = abi.encodeWithSelector(
       mintSelector, nextId(), owner, username, tokenIds, owners
-    ); return lzQuote(mintSelector, payload, payInLzToken);
+    ); return lzQuote(mintSelector, payload, lzDestId, payInLzToken);
   }
 
-  function lzQuote(bytes4 selector, bytes memory payload, bool _payInLzToken) public view returns (MessagingFee memory quote) {
+  function lzQuote(bytes4 selector, bytes memory payload, uint32 lzDestId, bool _payInLzToken) public view returns (MessagingFee memory quote) {
     bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(selector), 0);
-    return _quote(layer2EndpointId, payload, _options, _payInLzToken);
+    return _quote(lzDestId, payload, _options, _payInLzToken);
   }
 
   function gasLimitFor(bytes4 selector) public view returns (uint128) {
