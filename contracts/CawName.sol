@@ -11,6 +11,7 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
 import "./CawNameURI.sol";
+import "./CawNameL2.sol";
 
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
@@ -26,10 +27,13 @@ contract CawName is
   IERC20 public immutable CAW;
   CawNameURI public uriGenerator;
 
+  CawNameL2 cawNameL2;
+
   uint256 public totalCaw;
 
   address public minter;
 
+  uint32 public mainnetLzId = 30101;
   string[] public usernames;
   bool private fromLZ;
 
@@ -68,8 +72,10 @@ contract CawName is
   }
 
   function setL2Peer(uint32 _eid, address _peer) external onlyOwner {
-    peerIds.add(uint256(_eid));
-    setPeer(_eid, bytes32(uint256(uint160(_peer))));
+    if (_eid != mainnetLzId) {
+      peerIds.add(uint256(_eid));
+      setPeer(_eid, bytes32(uint256(uint160(_peer))));
+    } else cawNameL2 = CawNameL2(_peer);
   }
 
   function setMinter(address _minter) external onlyOwner {
@@ -94,9 +100,13 @@ contract CawName is
 
     (tokenIds, owners) = extractPendingTransferUpdates(lzDestId);
 
-    bytes memory payload = abi.encodeWithSelector(
-      mintSelector, newId, owner, usernames[newId - 1], tokenIds, owners
-    ); lzSend(lzDestId, mintSelector, payload, lzTokenAmount);
+    if (lzDestId == mainnetLzId)
+      cawNameL2.mintAndUpdateOwners(newId, owner,usernames[newId - 1], tokenIds, owners);
+    else {
+      bytes memory payload = abi.encodeWithSelector(
+        mintSelector, newId, owner, usernames[newId - 1], tokenIds, owners
+      ); lzSend(lzDestId, mintSelector, payload, lzTokenAmount);
+    }
   }
 
   function nextId() public view returns (uint64) {
@@ -141,8 +151,12 @@ contract CawName is
     address[] memory owners;
     (tokenIds, owners) = extractPendingTransferUpdates(lzDestId);
 
-    bytes memory payload = abi.encodeWithSelector(addToBalanceSelector, tokenId, amount, tokenIds, owners);
-    lzSend(lzDestId, addToBalanceSelector, payload, lzTokenAmount);
+    if (lzDestId == mainnetLzId)
+      cawNameL2.depositAndUpdateOwners(tokenId, amount, tokenIds, owners);
+    else {
+      bytes memory payload = abi.encodeWithSelector(addToBalanceSelector, tokenId, amount, tokenIds, owners);
+      lzSend(lzDestId, addToBalanceSelector, payload, lzTokenAmount);
+    }
   }
 
   function peerWithMaxPendingTransfers() public view returns (uint32) {
@@ -235,8 +249,12 @@ contract CawName is
     address[] memory owners;
 
     (tokenIds, owners) = extractPendingTransferUpdates(lzDestId);
-    bytes memory payload = abi.encodeWithSelector(updateOwnersSelector, tokenIds, owners);
-    lzSend(lzDestId, updateOwnersSelector, payload, lzTokenAmount);
+    if (lzDestId == mainnetLzId)
+      cawNameL2.updateOwners(tokenIds, owners);
+    else {
+      bytes memory payload = abi.encodeWithSelector(updateOwnersSelector, tokenIds, owners);
+      lzSend(lzDestId, updateOwnersSelector, payload, lzTokenAmount);
+    }
   }
 
   function _lzReceive(
