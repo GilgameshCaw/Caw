@@ -7,6 +7,7 @@ import "@openzeppelin/contracts/utils/cryptography/draft-EIP712.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./CawNameURI.sol";
+import "./CawName.sol";
 
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
@@ -37,6 +38,9 @@ contract CawNameL2 is
 
   bool private fromLZ;
 
+  bool public bypassLZ;
+  CawName public cawName;
+
   bytes4 public setWithdrawableSelector = bytes4(keccak256("setWithdrawable(uint64[],uint256[])"));
 
   struct Token {
@@ -50,8 +54,11 @@ contract CawNameL2 is
   {
   }
 
-  function setL1Peer(address peer) external onlyOwner {
-    setPeer(1, bytes32(uint256(uint160(peer))));
+  function setL1Peer(address peer, bool _bypassLZ) external onlyOwner {
+    if (_bypassLZ) {
+      bypassLZ = true;
+      cawName = CawName(peer);
+    } else setPeer(30101, bytes32(uint256(uint160(peer))));
   }
 
   function setCawActions(address _cawActions) external onlyOwner {
@@ -181,8 +188,12 @@ contract CawNameL2 is
 
   function setWithdrawable(uint64[] memory tokenIds, uint256[] memory amounts, uint256 lzTokenAmount) external payable {
     require(cawActions == _msgSender(), "caller is not CawActions");
-    bytes memory payload = abi.encodeWithSelector(setWithdrawableSelector, tokenIds, amounts);
-    lzSend(setWithdrawableSelector, payload, lzTokenAmount);
+    if (bypassLZ)
+      cawName.setWithdrawable(tokenIds, amounts);
+    else {
+      bytes memory payload = abi.encodeWithSelector(setWithdrawableSelector, tokenIds, amounts);
+      lzSend(setWithdrawableSelector, payload, lzTokenAmount);
+    }
   }
 
   function withdrawQuote(uint64[] memory tokenIds, uint256[] memory amounts, bool payInLzToken) public view returns (MessagingFee memory quote) {

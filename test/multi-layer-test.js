@@ -300,7 +300,7 @@ contract('CawNames', function(accounts, x) {
 
   beforeEach(async function () {
     web3.eth.defaultAccount = accounts[0];
-    l1Endpoint = await MockLayerZeroEndpoint.new(1);
+    l1Endpoint = await MockLayerZeroEndpoint.new(30101);
     l2Endpoint = await MockLayerZeroEndpoint.new(l2);
 
     uriGenerator = uriGenerator || await CawNameURI.new();
@@ -310,7 +310,7 @@ contract('CawNames', function(accounts, x) {
     await l1Endpoint.setDestLzEndpoint(cawNamesL2.address, l2Endpoint.address);
 
     cawNames = cawNames || await CawName.new(cawAddress, uriGenerator.address, l1Endpoint.address);
-    await cawNamesL2.setL1Peer(cawNames.address);
+    await cawNamesL2.setL1Peer(cawNames.address, false);
     await l2Endpoint.setDestLzEndpoint(cawNames.address, l1Endpoint.address);
     await cawNames.setL2Peer(l2, cawNamesL2.address);
 
