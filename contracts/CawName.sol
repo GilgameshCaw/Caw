@@ -90,23 +90,12 @@ contract CawName is
     return uriGenerator.generate(usernames[uint64(tokenId) - 1]);
   }
 
-  function mint(address owner, string memory username, uint64 newId, uint32 lzDestId, uint256 lzTokenAmount) public payable {
+  function mint(address owner, string memory username, uint64 newId, uint256 lzTokenAmount) public payable {
     require(minter == _msgSender(), "caller is not the minter");
     usernames.push(username);
     _safeMint(owner, newId);
 
-    uint64[] memory tokenIds;
-    address[] memory owners;
-
-    (tokenIds, owners) = extractPendingTransferUpdates(lzDestId);
-
-    if (lzDestId == mainnetLzId)
-      cawNameL2.mintAndUpdateOwners(newId, owner,usernames[newId - 1], tokenIds, owners);
-    else {
-      bytes memory payload = abi.encodeWithSelector(
-        mintSelector, newId, owner, usernames[newId - 1], tokenIds, owners
-      ); lzSend(lzDestId, mintSelector, payload, lzTokenAmount);
-    }
+    _updateNewOwners(peerWithMaxPendingTransfers(), lzTokenAmount);
   }
 
   function nextId() public view returns (uint64) {
@@ -142,29 +131,34 @@ contract CawName is
 
   function deposit(uint64 tokenId, uint256 amount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
     require(ownerOf(tokenId) == msg.sender, "can not deposit into a CawName that you do not own");
-    chosenChainIds[tokenId].add(uint256(lzDestId));
 
+    chosenChainIds[tokenId].add(uint256(lzDestId));
     CAW.transferFrom(msg.sender, address(this), amount);
     totalCaw += amount;
 
-    uint64[] memory tokenIds;
-    address[] memory owners;
-    (tokenIds, owners) = extractPendingTransferUpdates(lzDestId);
-
     if (lzDestId == mainnetLzId)
-      cawNameL2.depositAndUpdateOwners(tokenId, amount, tokenIds, owners);
+      cawNameL2.deposit(tokenId, amount);
     else {
+      uint64[] memory tokenIds;
+      address[] memory owners;
+      (tokenIds, owners) = extractPendingTransferUpdates(lzDestId, msg.sender, tokenId);
       bytes memory payload = abi.encodeWithSelector(addToBalanceSelector, tokenId, amount, tokenIds, owners);
       lzSend(lzDestId, addToBalanceSelector, payload, lzTokenAmount);
     }
   }
 
   function peerWithMaxPendingTransfers() public view returns (uint32) {
-    uint256 peer = peerIds.at(0); uint256 max;
+    uint256 updatesNeeded;
+    uint256 peer = peerIds.at(0);
+    uint256 max = updatesNeededForPeer(uint32(peer));
 
-    for (uint256 i = 1; i < peerIds.length(); i++)
-      if (updatesNeededForPeer(uint32(peerIds.at(i))) > max)
+    for (uint256 i = 1; i < peerIds.length(); i++) {
+      updatesNeeded = updatesNeededForPeer(uint32(peerIds.at(i)));
+      if (updatesNeeded > max) {
+        max = updatesNeeded;
         peer = peerIds.at(i);
+      }
+    }
 
     return uint32(peer);
   }
@@ -181,34 +175,23 @@ contract CawName is
     _updateNewOwners(peerWithMaxPendingTransfers(), lzTokenAmount);
   }
 
-  function withdrawQuote(bool payInLzToken) public view returns (MessagingFee memory quote) {
-    uint64[] memory tokenIds; address[] memory owners;
-    uint32 lzDestId = peerWithMaxPendingTransfers();
-    (tokenIds, owners) = pendingTransferUpdates(lzDestId);
-
-    bytes memory payload = abi.encodeWithSelector(
-      updateOwnersSelector, tokenIds, owners
-    ); return lzQuote(updateOwnersSelector, payload, lzDestId, payInLzToken);
-  }
-
   function setWithdrawable(uint64[] memory tokenIds, uint256[] memory amounts) external {
     require(fromLZ, "setWithdrawable only callable internally");
     for (uint256 i = 0; i < tokenIds.length; i++)
       withdrawable[tokenIds[i]] += amounts[i];
   }
 
-  function getChosenChainId(uint64 token, uint256 index) public view returns (uint256) {
+  function getChosenChainIdAtIndex(uint64 token, uint256 index) public view returns (uint256) {
     return chosenChainIds[token].at(index);
   }
 
   function _afterTokenTransfer(address from, address to, uint256 tokenId, uint256 batchSize) internal virtual override {
     uint64 token = uint64(tokenId);
-    if (from != address(0)) {
-      EnumerableSet.UintSet storage chainIds = chosenChainIds[token];
-      for (uint256 i = 0; i < chainIds.length(); i++) {
-        uint32 chainId = uint32(chainIds.at(i));
-        pendingTransfers[chainId][pendingTransferEnd[chainId]++] = token;
-      }
+    EnumerableSet.UintSet storage chainIds = chosenChainIds[token];
+    for (uint256 i = 0; i < chainIds.length(); i++) {
+      uint32 chainId = uint32(chainIds.at(i));
+      if (chainId == mainnetLzId) cawNameL2.setOwnerOf(token, to);
+      else pendingTransfers[chainId][pendingTransferEnd[chainId]++] = token;
     }
   }
 
@@ -217,28 +200,48 @@ contract CawName is
   }
 
   function pendingTransferUpdates(uint32 lzDestId) public view returns (uint64[] memory, address[] memory) {
+    return pendingTransferUpdates(lzDestId, address(0), 0);
+  }
+
+  function pendingTransferUpdates(uint32 lzDestId, address newOwner, uint64 tokenId) public view returns (uint64[] memory, address[] memory) {
     uint256 updateCount = updatesNeededForPeer(lzDestId);
-    uint64[] memory tokenIds = new uint64[](updateCount);
-    address[] memory owners = new address[](updateCount);
+    uint256 includeOwner = newOwner == address(0) && tokenId == 0 ? 0 : 1;
+    uint64[] memory tokenIds = new uint64[](updateCount + includeOwner);
+    address[] memory owners = new address[](updateCount + includeOwner);
 
     for (uint256 i = 0; i < updateCount; i++) {
       tokenIds[i] = pendingTransfers[lzDestId][pendingTransferStart[lzDestId] + i];
       owners[i] = ownerOf(tokenIds[i]);
     }
 
+    if (includeOwner == 1) {
+      tokenIds[updateCount] = tokenId;
+      owners[updateCount] = newOwner;
+    }
+
     return (tokenIds, owners);
   }
 
   function extractPendingTransferUpdates(uint32 lzDestId) internal returns (uint64[] memory, address[] memory) {
+    extractPendingTransferUpdates(lzDestId, address(0), 0);
+  }
+
+  function extractPendingTransferUpdates(uint32 lzDestId, address newOwner, uint64 tokenId) internal returns (uint64[] memory, address[] memory) {
     uint256 updateCount = updatesNeededForPeer(lzDestId);
-    uint64[] memory tokenIds = new uint64[](updateCount);
-    address[] memory owners = new address[](updateCount);
+    uint256 includeOwner = newOwner == address(0) && tokenId == 0 ? 0 : 1;
+    uint64[] memory tokenIds = new uint64[](updateCount + includeOwner);
+    address[] memory owners = new address[](updateCount + includeOwner);
 
     for (uint256 i = 0; i < updateCount; i++) {
       tokenIds[i] = pendingTransfers[lzDestId][pendingTransferStart[lzDestId]];
       delete pendingTransfers[lzDestId][pendingTransferStart[lzDestId]];
       owners[i] = ownerOf(tokenIds[i]);
       pendingTransferStart[lzDestId]++;
+    }
+
+    if (includeOwner == 1) {
+      tokenIds[updateCount] = tokenId;
+      owners[updateCount] = newOwner;
     }
 
     return (tokenIds, owners);
@@ -320,20 +323,29 @@ contract CawName is
 
   function depositQuote(uint64 tokenId, uint256 amount, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
     uint64[] memory tokenIds; address[] memory owners;
-    (tokenIds, owners) = pendingTransferUpdates(lzDestId);
+    (tokenIds, owners) = pendingTransferUpdates(lzDestId, msg.sender, tokenId);
 
     bytes memory payload = abi.encodeWithSelector(
       addToBalanceSelector, tokenId, amount, tokenIds, owners
     ); return lzQuote(addToBalanceSelector, payload, lzDestId, payInLzToken);
   }
 
-  function mintQuote(address owner, string memory username, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+  function mintQuote(bool payInLzToken) public view returns (MessagingFee memory quote) {
+    return updateOwnerQuote(payInLzToken);
+  }
+
+  function withdrawQuote(bool payInLzToken) public view returns (MessagingFee memory quote) {
+    return updateOwnerQuote(payInLzToken);
+  }
+
+  function updateOwnerQuote(bool payInLzToken) public view returns (MessagingFee memory quote) {
     uint64[] memory tokenIds; address[] memory owners;
+    uint32 lzDestId = peerWithMaxPendingTransfers();
     (tokenIds, owners) = pendingTransferUpdates(lzDestId);
 
     bytes memory payload = abi.encodeWithSelector(
-      mintSelector, nextId(), owner, username, tokenIds, owners
-    ); return lzQuote(mintSelector, payload, lzDestId, payInLzToken);
+      updateOwnersSelector, tokenIds, owners
+    ); return lzQuote(updateOwnersSelector, payload, lzDestId, payInLzToken);
   }
 
   function lzQuote(bytes4 selector, bytes memory payload, uint32 lzDestId, bool _payInLzToken) public view returns (MessagingFee memory quote) {

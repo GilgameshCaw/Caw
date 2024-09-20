@@ -29,12 +29,17 @@ const cawAddress = '0xf3b9569f82b18aef890de263b84189bd33ebe452'; // CAW
 const usdcAddress = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'; // USDC
 
 const l2 = 8453;
+const l1 = 30101;
 var token;
 var minter;
 var swapper;
 var cawNames;
 var cawNamesL2;
+var cawNamesL2Mainnet;
+
 var cawActions;
+var cawActionsMainnet;
+
 var uriGenerator;
 
 const dataTypes = {
@@ -198,7 +203,8 @@ async function verifyAndSplitSig(sig, user, data) {
   return { r, s, v };
 }
 
-async function deposit(user, tokenId, amount) {
+async function deposit(user, tokenId, amount, layer) {
+  layer ||= l2
   console.log("DEPOSIT", tokenId, (BigInt(amount) * 10n**18n).toString());
 
   var balance = await token.balanceOf(user)
@@ -208,10 +214,10 @@ async function deposit(user, tokenId, amount) {
   });
 
   var cawAmount = (BigInt(amount) * 10n**18n).toString();
-  var quote = await cawNames.depositQuote(tokenId, cawAmount, l2, false);
+  var quote = await cawNames.depositQuote(tokenId, cawAmount, layer, false);
   console.log('deposit quote returned:', quote);
 
-  t = await cawNames.deposit(tokenId, cawAmount, l2, quote.lzTokenFee, {
+  t = await cawNames.deposit(tokenId, cawAmount, layer, quote.lzTokenFee, {
     nonce: await web3.eth.getTransactionCount(user),
     value: quote.nativeFee,
     from: user,
@@ -228,10 +234,10 @@ async function buyUsername(user, name) {
     from: user,
   });
 
-  var quote = await cawNames.mintQuote(user, name, l2, false);
+  var quote = await cawNames.mintQuote(false);
   // console.log('mint quote returned:', quote);
 
-  t = await minter.mint(name, l2, quote.lzTokenFee, {
+  t = await minter.mint(name, quote.lzTokenFee, {
     nonce: await web3.eth.getTransactionCount(user),
     value: quote.nativeFee,
     from: user,
@@ -300,8 +306,11 @@ contract('CawNames', function(accounts, x) {
 
   beforeEach(async function () {
     web3.eth.defaultAccount = accounts[0];
-    l1Endpoint = await MockLayerZeroEndpoint.new(30101);
+    l1Endpoint = await MockLayerZeroEndpoint.new(l1);
     l2Endpoint = await MockLayerZeroEndpoint.new(l2);
+
+    token = token || await IERC20.at(cawAddress);
+    swapper = await ISwapper.at('0x7a250d5630b4cf539739df2c5dacb4c659f2488d'); // uniswap
 
     uriGenerator = uriGenerator || await CawNameURI.new();
     console.log("URI Generator addr", uriGenerator.address);
@@ -315,13 +324,19 @@ contract('CawNames', function(accounts, x) {
     await cawNames.setL2Peer(l2, cawNamesL2.address);
 
 
+    cawNamesL2Mainnet = cawNamesL2Mainnet || await CawNameL2.new(l1Endpoint.address);
+    await cawNamesL2Mainnet.setL1Peer(cawNames.address, true);
+    await cawNames.setL2Peer(l1, cawNamesL2Mainnet.address);
+
     minter = minter || await CawNameMinter.new(cawAddress, cawNames.address);
     await cawNames.setMinter(minter.address);
     cawActions = cawActions || await CawActions.new(cawNamesL2.address);
-    token = token || await IERC20.at(cawAddress);
-    swapper = await ISwapper.at('0x7a250d5630b4cf539739df2c5dacb4c659f2488d'); // uniswap
 
     await cawNamesL2.setCawActions(cawActions.address);
+
+
+    cawActionsMainnet = cawActionsMainnet || await CawActions.new(cawNamesL2Mainnet.address);
+    await cawNamesL2Mainnet.setCawActions(cawActions.address);
   });
 
   it("", async function() {
@@ -353,7 +368,7 @@ contract('CawNames', function(accounts, x) {
 
     console.log("BALANCES:", BigInt(balanceWas) - BigInt(balance) );
     expect(BigInt(balanceWas) - BigInt(balance) == BigInt(cost)).to.equal(true);
-    var u1 = await cawNamesL2.usernames(1);
+    var u1 = await cawNames.usernames(0);
     expect(u1).to.equal(name);
 
 
@@ -390,6 +405,7 @@ contract('CawNames', function(accounts, x) {
 
     // console.log("generator addr", await cawNames.uriGenerator());
     console.log("URI", await cawNames.usernames(0));
+    console.log("URI", await cawNames.tokenURI(1));
 
 
     tx = await deposit(accounts[2], 1, 10000);
