@@ -22,8 +22,6 @@ contract CawNameL2 is
 
   address public cawActions;
 
-  mapping(uint64 => string) public usernames;
-
   // In a normal ERC271, ownerOf reverts if there is no owner,
   // here, since it's not a real ERC721, just a pretender,
   // we return the zero addres... probably fine. Right?
@@ -34,7 +32,7 @@ contract CawNameL2 is
   uint256 public rewardMultiplier = 10**18;
   uint256 public precision = 30425026352721 ** 2;// ** 3;
 
-  uint32 public layer1EndpointId = 1;
+  uint32 public layer1EndpointId = 30101;
 
   bool private fromLZ;
 
@@ -108,18 +106,33 @@ contract CawNameL2 is
   function updateOwners(uint64[] calldata tokenIds, address[] calldata owners) public {
     require(fromLZ, "updateOwners only callable internally");
     for (uint i = 0; i < tokenIds.length; i++)
-      setOwnerOf(tokenIds[i], owners[i]);
+      _setOwnerOf(tokenIds[i], owners[i]);
   }
 
   function mintAndUpdateOwners(uint64 tokenId, address owner, string memory username, uint64[] calldata tokenIds, address[] calldata owners) public {
     require(fromLZ, "mintAndUpdateOwners only callable internally");
-    usernames[tokenId] = username;
     ownerOf[tokenId] = owner;
 
     updateOwners(tokenIds, owners);
   }
 
-  function setOwnerOf(uint64 tokenId, address newOwner) internal {
+  function deposit(uint64 tokenId, uint256 amount) public {
+    require(bypassLZ && msg.sender == address(cawName), "only callable on the mainnet, from mainnet CawName");
+    totalCaw += amount;
+    addToBalance(tokenId, amount);
+  }
+
+  function mint(uint64 tokenId, address owner, string memory username) public {
+    require(bypassLZ && msg.sender == address(cawName), "only callable on the mainnet, from mainnet CawName");
+    ownerOf[tokenId] = owner;
+  }
+
+  function setOwnerOf(uint64 tokenId, address newOwner) external {
+    require(bypassLZ && msg.sender == address(cawName), "only callable on the mainnet, from mainnet CawName");
+    _setOwnerOf(tokenId, newOwner);
+  }
+
+  function _setOwnerOf(uint64 tokenId, address newOwner) internal {
     ownerOf[tokenId] = newOwner;
   }
 

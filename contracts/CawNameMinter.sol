@@ -18,7 +18,7 @@ contract CawNameMinter is Context {
     CawName = IMint(_cawNames);
   }
 
-  function mint(string memory username, uint32 lzDestId, uint256 lzTokenAmount) public payable {
+  function mint(string memory username, uint256 lzTokenAmount) public payable {
     require(idByUsername[username] == 0, "Username has already been taken");
     require(isValidUsername(username), "Username must only consist of 1-255 lowercase letters and numbers");
     uint256 amount = costOfName(username);
@@ -30,7 +30,7 @@ contract CawNameMinter is Context {
     uint64 newId = CawName.nextId();
     idByUsername[username] = newId;
 
-    CawName.mint{value: msg.value}(msg.sender, username, newId, lzDestId, lzTokenAmount);
+    CawName.mint{value: msg.value}(msg.sender, username, newId, lzTokenAmount);
   }
 
   function isValidUsername(string memory _input) public pure returns (bool) {
