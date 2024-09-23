@@ -1,5 +1,6 @@
 const IERC20 = artifacts.require("IERC20");
 const CawNameURI = artifacts.require("CawNameURI");
+const CawClientManager = artifacts.require("CawClientManager");
 const CawName = artifacts.require("CawName");
 const CawNameL2 = artifacts.require("CawNameL2");
 const CawNameMinter = artifacts.require("CawNameMinter");
@@ -30,10 +31,12 @@ const usdcAddress = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'; // USDC
 
 const l2 = 8453;
 const l1 = 30101;
+var defaultClientId = 1;
 var token;
 var minter;
 var swapper;
 var cawNames;
+var buyAndBurnAddress;
 var cawNamesL2;
 var cawNamesL2Mainnet;
 
@@ -41,6 +44,7 @@ var cawActions;
 var cawActionsMainnet;
 
 var uriGenerator;
+var clientManager;
 
 const dataTypes = {
   EIP712Domain: [
@@ -203,8 +207,9 @@ async function verifyAndSplitSig(sig, user, data) {
   return { r, s, v };
 }
 
-async function deposit(user, tokenId, amount, layer) {
-  layer ||= l2
+async function deposit(user, tokenId, amount, layer, clientId) {
+  clientId ||= defaultClientId;
+  layer ||= l2;
   console.log("DEPOSIT", tokenId, (BigInt(amount) * 10n**18n).toString());
 
   var balance = await token.balanceOf(user)
@@ -214,10 +219,10 @@ async function deposit(user, tokenId, amount, layer) {
   });
 
   var cawAmount = (BigInt(amount) * 10n**18n).toString();
-  var quote = await cawNames.depositQuote(tokenId, cawAmount, layer, false);
+  var quote = await cawNames.depositQuote(defaultClientId, tokenId, cawAmount, layer, false);
   console.log('deposit quote returned:', quote);
 
-  t = await cawNames.deposit(tokenId, cawAmount, layer, quote.lzTokenFee, {
+  t = await cawNames.deposit(clientId, tokenId, cawAmount, layer, quote.lzTokenFee, {
     nonce: await web3.eth.getTransactionCount(user),
     value: quote.nativeFee,
     from: user,
@@ -234,12 +239,12 @@ async function buyUsername(user, name) {
     from: user,
   });
 
-  var quote = await cawNames.mintQuote(false);
-  // console.log('mint quote returned:', quote);
+  var quote = await cawNames.mintQuote(defaultClientId, false);
+  console.log('mint quote returned:', quote);
 
-  t = await minter.mint(name, quote.lzTokenFee, {
+  t = await minter.mint(defaultClientId, name, quote.lzTokenFee, {
     nonce: await web3.eth.getTransactionCount(user),
-    value: quote.nativeFee,
+    value: (BigInt(quote.nativeFee)).toString(),
     from: user,
   });
 
@@ -308,9 +313,12 @@ contract('CawNames', function(accounts, x) {
     web3.eth.defaultAccount = accounts[0];
     l1Endpoint = await MockLayerZeroEndpoint.new(l1);
     l2Endpoint = await MockLayerZeroEndpoint.new(l2);
+    buyAndBurnAddress = accounts[0];
 
     token = token || await IERC20.at(cawAddress);
     swapper = await ISwapper.at('0x7a250d5630b4cf539739df2c5dacb4c659f2488d'); // uniswap
+
+    clientManager = clientManager || await CawClientManager.new(buyAndBurnAddress);
 
     uriGenerator = uriGenerator || await CawNameURI.new();
     console.log("URI Generator addr", uriGenerator.address);
@@ -318,10 +326,12 @@ contract('CawNames', function(accounts, x) {
     cawNamesL2 = cawNamesL2 || await CawNameL2.new(l2Endpoint.address);
     await l1Endpoint.setDestLzEndpoint(cawNamesL2.address, l2Endpoint.address);
 
-    cawNames = cawNames || await CawName.new(cawAddress, uriGenerator.address, l1Endpoint.address);
+    cawNames = cawNames || await CawName.new(cawAddress, uriGenerator.address, buyAndBurnAddress, clientManager.address, l1Endpoint.address);
     await cawNamesL2.setL1Peer(cawNames.address, false);
     await l2Endpoint.setDestLzEndpoint(cawNames.address, l1Endpoint.address);
     await cawNames.setL2Peer(l2, cawNamesL2.address);
+
+    await clientManager.createClient(accounts[0], 1,1,1);
 
 
     cawNamesL2Mainnet = cawNamesL2Mainnet || await CawNameL2.new(l1Endpoint.address);
@@ -688,8 +698,8 @@ contract('CawNames', function(accounts, x) {
 
 
     var balanceWas = BigInt(await token.balanceOf(accounts[2]))
-    var quote = await cawNames.withdrawQuote(false);
-    await cawNames.withdraw(1, 0, {
+    var quote = await cawNames.withdrawQuote(defaultClientId, false);
+    await cawNames.withdraw(defaultClientId, 1, 0, {
       value: quote?.nativeFee,
       from: accounts[2]
     });
@@ -742,8 +752,8 @@ contract('CawNames', function(accounts, x) {
     });
 
     var balanceWas = BigInt(await token.balanceOf(accounts[3]))
-    var quote = await cawNames.withdrawQuote(false);
-    await cawNames.withdraw(1, 0, {
+    var quote = await cawNames.withdrawQuote(defaultClientId, false);
+    await cawNames.withdraw(defaultClientId, 1, 0, {
       value: quote?.nativeFee,
       from: accounts[3]
     });
