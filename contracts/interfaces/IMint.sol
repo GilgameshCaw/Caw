@@ -7,6 +7,7 @@ interface IMint {
   function nextId() external returns (uint64);
 
   function mint(
+    uint64 clientId,
     address sender,
     string memory username,
     uint64 newId,

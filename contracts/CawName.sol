@@ -14,6 +14,7 @@ import "./CawNameURI.sol";
 import "./CawNameL2.sol";
 
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
+import { CawClientManager } from "./CawClientManager.sol";
 
 contract CawName is 
   Context,
@@ -63,11 +64,16 @@ contract CawName is
     string username;
   }
 
-  constructor(address _caw, address _gui, address _endpoint)
+  CawClientManager clientManager;
+  address buyAndBurnCaw;
+
+  constructor(address _caw, address _gui, address _buyAndBurn, address _clientManager, address _endpoint)
     ERC721("CAW NAME", "cawNAME")
     OApp(_endpoint, msg.sender)
   {
+    clientManager = CawClientManager(_clientManager);
     uriGenerator = CawNameURI(_gui);
+    buyAndBurnCaw = _buyAndBurn;
     CAW = IERC20(_caw);
   }
 
@@ -90,12 +96,23 @@ contract CawName is
     return uriGenerator.generate(usernames[uint64(tokenId) - 1]);
   }
 
-  function mint(address owner, string memory username, uint64 newId, uint256 lzTokenAmount) public payable {
+  function mint(uint64 cawClientId, address owner, string memory username, uint64 newId, uint256 lzTokenAmount) public payable {
     require(minter == _msgSender(), "caller is not the minter");
     usernames.push(username);
     _safeMint(owner, newId);
 
-    _updateNewOwners(peerWithMaxPendingTransfers(), lzTokenAmount);
+    (uint256 fee, address feeAddress) = clientManager.getMintFeeAndAddress(cawClientId);
+    uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
+
+    _updateNewOwners(peerWithMaxPendingTransfers(), lzEthAmount, lzTokenAmount);
+  }
+
+  function payFee(uint256 fee, address feeAddress) internal returns (uint256) {
+    if (fee > 0) {
+      payable(feeAddress).transfer(fee);
+      payable(buyAndBurnCaw).transfer(fee);
+    }
+    return fee * 2;
   }
 
   function nextId() public view returns (uint64) {
@@ -129,12 +146,15 @@ contract CawName is
     return super.supportsInterface(interfaceId);
   }
 
-  function deposit(uint64 tokenId, uint256 amount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
+  function deposit(uint64 cawClientId, uint64 tokenId, uint256 amount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
     require(ownerOf(tokenId) == msg.sender, "can not deposit into a CawName that you do not own");
 
     chosenChainIds[tokenId].add(uint256(lzDestId));
     CAW.transferFrom(msg.sender, address(this), amount);
     totalCaw += amount;
+
+    (uint256 fee, address feeAddress) = clientManager.getDepositFeeAndAddress(cawClientId);
+    uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
 
     if (lzDestId == mainnetLzId)
       cawNameL2.deposit(tokenId, amount);
@@ -143,7 +163,7 @@ contract CawName is
       address[] memory owners;
       (tokenIds, owners) = extractPendingTransferUpdates(lzDestId, msg.sender, tokenId);
       bytes memory payload = abi.encodeWithSelector(addToBalanceSelector, tokenId, amount, tokenIds, owners);
-      lzSend(lzDestId, addToBalanceSelector, payload, lzTokenAmount);
+      lzSend(lzDestId, addToBalanceSelector, payload, lzEthAmount, lzTokenAmount);
     }
   }
 
@@ -163,7 +183,7 @@ contract CawName is
     return uint32(peer);
   }
 
-  function withdraw(uint64 tokenId, uint256 lzTokenAmount) public payable {
+  function withdraw(uint64 cawClientId, uint64 tokenId, uint256 lzTokenAmount) public payable {
     require(ownerOf(tokenId) == msg.sender, "can not withdraw from a CawName that you do not own");
     require(withdrawable[tokenId] >= 0, "nothing to withdraw, you may need to withdraw from the L2 first");
 
@@ -171,8 +191,11 @@ contract CawName is
     totalCaw -= withdrawable[tokenId];
     withdrawable[tokenId] = 0;
 
+    (uint256 fee, address feeAddress) = clientManager.getDepositFeeAndAddress(cawClientId);
+    uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
+
     CAW.transfer(msg.sender, amount);
-    _updateNewOwners(peerWithMaxPendingTransfers(), lzTokenAmount);
+    _updateNewOwners(peerWithMaxPendingTransfers(), lzEthAmount, lzTokenAmount);
   }
 
   function setWithdrawable(uint64[] memory tokenIds, uint256[] memory amounts) external {
@@ -247,7 +270,7 @@ contract CawName is
     return (tokenIds, owners);
   }
 
-  function _updateNewOwners(uint32 lzDestId, uint256 lzTokenAmount) public payable {
+  function _updateNewOwners(uint32 lzDestId, uint256 lzEthAmount, uint256 lzTokenAmount) public payable {
     uint64[] memory tokenIds;
     address[] memory owners;
 
@@ -256,7 +279,7 @@ contract CawName is
       cawNameL2.updateOwners(tokenIds, owners);
     else {
       bytes memory payload = abi.encodeWithSelector(updateOwnersSelector, tokenIds, owners);
-      lzSend(lzDestId, updateOwnersSelector, payload, lzTokenAmount);
+      lzSend(lzDestId, updateOwnersSelector, payload, lzEthAmount, lzTokenAmount);
     }
   }
 
@@ -309,33 +332,49 @@ contract CawName is
     return selector == bytes4(keccak256("setWithdrawable(uint64[],uint256[])"));
   }
 
-  function lzSend(uint32 lzDestId, bytes4 selector, bytes memory payload, uint256 lzTokenAmount) internal {
+
+  // Overriding this internal function because inherited LZ code requires msg.value == _nativeFee,
+  // which doesn't allow for clients to take native fees alongside LZ.
+  function _payNative(uint256 _nativeFee) internal virtual override returns (uint256 nativeFee) {
+    if (msg.value < _nativeFee) revert NotEnoughNative(msg.value);
+    return _nativeFee;
+  }
+
+  function lzSend(uint32 lzDestId, bytes4 selector, bytes memory payload, uint256 lzEthAmount, uint256 lzTokenAmount) internal {
     bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(selector), 0);
 
     _lzSend(
       lzDestId, // Destination chain's endpoint ID.
       payload, // Encoded message payload being sent.
       _options, // Message execution options (e.g., gas to use on destination).
-      MessagingFee(msg.value, lzTokenAmount), // Fee struct containing native gas and ZRO token.
-      payable(msg.sender) // The refund address in case the send call reverts.
+      MessagingFee(lzEthAmount, lzTokenAmount), // Fee struct containing native gas and ZRO token.
+      payable(address(this)) // The refund address in case the send call reverts.
     );
   }
 
-  function depositQuote(uint64 tokenId, uint256 amount, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+  function depositQuote(uint64 clientId, uint64 tokenId, uint256 amount, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
     uint64[] memory tokenIds; address[] memory owners;
     (tokenIds, owners) = pendingTransferUpdates(lzDestId, msg.sender, tokenId);
 
     bytes memory payload = abi.encodeWithSelector(
       addToBalanceSelector, tokenId, amount, tokenIds, owners
-    ); return lzQuote(addToBalanceSelector, payload, lzDestId, payInLzToken);
+    );
+
+    MessagingFee memory quote = lzQuote(addToBalanceSelector, payload, lzDestId, payInLzToken);
+    quote.nativeFee += clientManager.getDepositFee(clientId) * 2;
+    return quote;
   }
 
-  function mintQuote(bool payInLzToken) public view returns (MessagingFee memory quote) {
-    return updateOwnerQuote(payInLzToken);
+  function mintQuote(uint64 clientId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+    MessagingFee memory quote = updateOwnerQuote(payInLzToken);
+    quote.nativeFee += clientManager.getMintFee(clientId) * 2;
+    return quote;
   }
 
-  function withdrawQuote(bool payInLzToken) public view returns (MessagingFee memory quote) {
-    return updateOwnerQuote(payInLzToken);
+  function withdrawQuote(uint64 clientId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+    MessagingFee memory quote = updateOwnerQuote(payInLzToken);
+    quote.nativeFee += clientManager.getWithdrawFee(clientId) * 2;
+    return quote;
   }
 
   function updateOwnerQuote(bool payInLzToken) public view returns (MessagingFee memory quote) {
@@ -362,6 +401,9 @@ contract CawName is
       return 300000;
     else revert('unexpected selector');
   }
+
+  receive() external payable {}
+  fallback() external payable {}
 
 }
 
