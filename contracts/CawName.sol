@@ -38,9 +38,13 @@ contract CawName is
   string[] public usernames;
   bool private fromLZ;
 
-  bytes4 public addToBalanceSelector = bytes4(keccak256("depositAndUpdateOwners(uint64,uint256,uint64[],address[])"));
+  bytes4 public addToBalanceSelector = bytes4(keccak256("depositAndUpdateOwners(uint64,uint64,uint256,uint64[],address[])"));
   bytes4 public mintSelector = bytes4(keccak256("mintAndUpdateOwners(uint64,address,string,uint64[],address[])"));
+  bytes4 public authSelector = bytes4(keccak256("authenticateAndUpdateOwners(uint64,uint64,uint64[],address[])"));
   bytes4 public updateOwnersSelector = bytes4(keccak256("updateOwners(uint64[],address[])"));
+
+  // Keeping track of clients to which the user has authenticated
+  mapping(uint64 => mapping(uint64 => bool)) public authenticated;
 
   mapping(uint64 => uint256) public withdrawable;
 
@@ -146,6 +150,24 @@ contract CawName is
     return super.supportsInterface(interfaceId);
   }
 
+  function authenticate(uint64 cawClientId, uint64 tokenId, uint32 lzDestId, uint256 lzTokenAmount) external payable {
+    require(ownerOf(tokenId) == msg.sender, "can not authenticate with a CawName that you do not own");
+
+    (uint256 fee, address feeAddress) = clientManager.getAuthFeeAndAddress(cawClientId);
+    uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
+    authenticated[cawClientId][tokenId] = true;
+
+    if (lzDestId == mainnetLzId)
+      cawNameL2.auth(tokenId, cawClientId);
+    else {
+      uint64[] memory tokenIds;
+      address[] memory owners;
+      (tokenIds, owners) = extractPendingTransferUpdates(lzDestId, msg.sender, tokenId);
+      bytes memory payload = abi.encodeWithSelector(authSelector, cawClientId, tokenId, tokenIds, owners);
+      lzSend(lzDestId, authSelector, payload, lzEthAmount, lzTokenAmount);
+    }
+  }
+
   function deposit(uint64 cawClientId, uint64 tokenId, uint256 amount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
     require(ownerOf(tokenId) == msg.sender, "can not deposit into a CawName that you do not own");
 
@@ -154,15 +176,21 @@ contract CawName is
     totalCaw += amount;
 
     (uint256 fee, address feeAddress) = clientManager.getDepositFeeAndAddress(cawClientId);
+
+    if (!authenticated[cawClientId][tokenId]) {
+      fee += clientManager.getAuthFee(cawClientId);
+      authenticated[cawClientId][tokenId] = true;
+    }
+
     uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
 
     if (lzDestId == mainnetLzId)
-      cawNameL2.deposit(tokenId, amount);
+      cawNameL2.deposit(cawClientId, tokenId, amount);
     else {
       uint64[] memory tokenIds;
       address[] memory owners;
       (tokenIds, owners) = extractPendingTransferUpdates(lzDestId, msg.sender, tokenId);
-      bytes memory payload = abi.encodeWithSelector(addToBalanceSelector, tokenId, amount, tokenIds, owners);
+      bytes memory payload = abi.encodeWithSelector(addToBalanceSelector, cawClientId, tokenId, amount, tokenIds, owners);
       lzSend(lzDestId, addToBalanceSelector, payload, lzEthAmount, lzTokenAmount);
     }
   }
@@ -332,7 +360,6 @@ contract CawName is
     return selector == bytes4(keccak256("setWithdrawable(uint64[],uint256[])"));
   }
 
-
   // Overriding this internal function because inherited LZ code requires msg.value == _nativeFee,
   // which doesn't allow for clients to take native fees alongside LZ.
   function _payNative(uint256 _nativeFee) internal virtual override returns (uint256 nativeFee) {
@@ -352,16 +379,34 @@ contract CawName is
     );
   }
 
+
+  function authenticateQuote(uint64 clientId, uint64 tokenId, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+    uint64[] memory tokenIds; address[] memory owners;
+    (tokenIds, owners) = pendingTransferUpdates(lzDestId, msg.sender, tokenId);
+
+    bytes memory payload = abi.encodeWithSelector(
+      authSelector, clientId, tokenId, tokenIds, owners
+    );
+
+    MessagingFee memory quote = lzQuote(authSelector, payload, lzDestId, payInLzToken);
+    quote.nativeFee += clientManager.getAuthFee(clientId) * 2;
+    return quote;
+  }
+
   function depositQuote(uint64 clientId, uint64 tokenId, uint256 amount, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
     uint64[] memory tokenIds; address[] memory owners;
     (tokenIds, owners) = pendingTransferUpdates(lzDestId, msg.sender, tokenId);
 
     bytes memory payload = abi.encodeWithSelector(
-      addToBalanceSelector, tokenId, amount, tokenIds, owners
+      addToBalanceSelector, clientId, tokenId, amount, tokenIds, owners
     );
 
     MessagingFee memory quote = lzQuote(addToBalanceSelector, payload, lzDestId, payInLzToken);
     quote.nativeFee += clientManager.getDepositFee(clientId) * 2;
+
+    if (!authenticated[clientId][tokenId])
+      quote.nativeFee += clientManager.getAuthFee(clientId) * 2;
+
     return quote;
   }
 
@@ -398,6 +443,8 @@ contract CawName is
     else if (selector == mintSelector)
       return 600000;
     else if (selector == updateOwnersSelector)
+      return 300000;
+    else if (selector == authSelector)
       return 300000;
     else revert('unexpected selector');
   }

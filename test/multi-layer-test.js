@@ -102,11 +102,11 @@ async function signData(user, data) {
 async function processActions(actions, params) {
   console.log("---");
   console.log("PROCESS ACTIONS");
-  var signedActions = await Promise.all(actions.map(async function(params) {
-    var data = await generateData(params.actionType, params);
+  var signedActions = await Promise.all(actions.map(async function(action) {
+    var data = await generateData(action.actionType, action);
     // console.log("Signing with data:", data);
-    var sig = await signData(params.sender, data);
-    var sigData = await verifyAndSplitSig(sig, params.sender, data);
+    var sig = await signData(action.sender, data);
+    var sigData = await verifyAndSplitSig(sig, action.sender, data);
 
     return {
       data: data,
@@ -134,8 +134,8 @@ async function processActions(actions, params) {
     s: signedActions.map(function(action) {return action.sigData.s}),
     actions: signedActions.map(function(action) {return action.data.message}),
   }, 0, {
-    nonce: await web3.eth.getTransactionCount(params.sender),
-    from: params.sender,
+    nonce: await web3.eth.getTransactionCount(params.validator),
+    from: params.validator,
     value: quote?.nativeFee || '0',
   });
 
@@ -166,6 +166,10 @@ async function generateData(type, params = {}) {
     version: '1'
   };
 
+  var cawonce = params.cawonce;
+  if (cawonce == undefined)
+    cawonce = Number(await cawActions.cawonce(params.senderId));
+
   return {
     primaryType: 'ActionData',
     message: {
@@ -176,9 +180,10 @@ async function generateData(type, params = {}) {
       timestamp: params.timestamp || (Math.floor(new Date().getTime() / 1000)),
       cawId: params.cawId || "0x0000000000000000000000000000000000000000000000000000000000000000",
       text: params.text || "",
-      cawonce: params.cawonce,
+      cawonce: cawonce,
       recipients: params.recipients || [],
       amounts: params.amounts || [],
+      clientId: params.clientId || defaultClientId,
     },
     domain: domain,
     types: {
@@ -219,7 +224,7 @@ async function deposit(user, tokenId, amount, layer, clientId) {
   });
 
   var cawAmount = (BigInt(amount) * 10n**18n).toString();
-  var quote = await cawNames.depositQuote(defaultClientId, tokenId, cawAmount, layer, false);
+  var quote = await cawNames.depositQuote(clientId, tokenId, cawAmount, layer, false);
   console.log('deposit quote returned:', quote);
 
   t = await cawNames.deposit(clientId, tokenId, cawAmount, layer, quote.lzTokenFee, {
@@ -331,7 +336,7 @@ contract('CawNames', function(accounts, x) {
     await l2Endpoint.setDestLzEndpoint(cawNames.address, l1Endpoint.address);
     await cawNames.setL2Peer(l2, cawNamesL2.address);
 
-    await clientManager.createClient(accounts[0], 1,1,1);
+    await clientManager.createClient(accounts[0], 1,1,1,1);
 
 
     cawNamesL2Mainnet = cawNamesL2Mainnet || await CawNameL2.new(l1Endpoint.address);
@@ -437,7 +442,7 @@ contract('CawNames', function(accounts, x) {
       cawonce: 0
     };
     var result = await processActions([firstCaw], {
-      sender: accounts[2]
+      validator: accounts[2]
     });
     var cawId = result.signedActions[0].sigData.r;
     console.log("FISRT CAW SENT!", cawId);
@@ -469,7 +474,7 @@ contract('CawNames', function(accounts, x) {
 
     // already processed, so trying to process again will fail
     var result = await processActions([firstCaw], {
-      sender: accounts[2]
+      validator: accounts[2]
     });
 
     console.log("Expect fail:")
@@ -488,7 +493,7 @@ contract('CawNames', function(accounts, x) {
       senderId: 2,
       cawonce: 0
     }], {
-      sender: accounts[2],
+      validator: accounts[2],
       validatorId: 2,
     });
 
@@ -520,9 +525,8 @@ contract('CawNames', function(accounts, x) {
       sender: accounts[2],
       receiverId: 2,
       senderId: 3,
-      cawonce: 0
     }], {
-      sender: accounts[2]
+      validator: accounts[2]
     });
 
 
@@ -539,7 +543,6 @@ contract('CawNames', function(accounts, x) {
     await expectBalanceOf(3, {toEqual: 12437.5});
 
 
-    var cawonce = (await cawActions.cawonce(2)).toString();
     timestamp = Math.floor(new Date().getTime() / 1000);
     await processActions([{
       timestamp: timestamp,
@@ -547,9 +550,8 @@ contract('CawNames', function(accounts, x) {
       sender: accounts[2],
       receiverId: 1,
       senderId: 2,
-      cawonce: cawonce,
     }], {
-      sender: accounts[2]
+      validator: accounts[2]
     });
 
     // 30k caw gets spent from the sender, 6000 distributed
@@ -565,17 +567,15 @@ contract('CawNames', function(accounts, x) {
     await expectBalanceOf(3, {toEqual: 16353.2579});
 
     // It will fail if you try to replay the same call
-    var cawonce = (await cawActions.cawonce(2)).toString();
     result = await processActions([{
       timestamp: timestamp,
       actionType: 'follow',
       sender: accounts[2],
       receiverId: 1,
-      cawonce: cawonce,
       senderId: 2,
     }], {
       validatorId: 2,
-      sender: accounts[2]
+      validator: accounts[2]
     });
 
     console.log("Expect fail:")
@@ -588,7 +588,6 @@ contract('CawNames', function(accounts, x) {
 
 
     timestamp = Math.floor(new Date().getTime() / 1000);
-    var cawonce = (await cawActions.cawonce(1)).toString();
     await processActions([{
       timestamp: timestamp,
       actionType: 'recaw',
@@ -596,9 +595,8 @@ contract('CawNames', function(accounts, x) {
       sender: accounts[2],
       receiverId: 2,
       senderId: 1,
-      cawonce: cawonce,
     }], {
-      sender: accounts[2]
+      validator: accounts[2]
     });
 
     // var recawCount = await cawNames.recawCount(1);
@@ -626,7 +624,7 @@ contract('CawNames', function(accounts, x) {
       senderId: 1,
       cawonce: Number(cawonce) - 1
     }], {
-      sender: accounts[2]
+      validator: accounts[2]
     });
 
     console.log("Expect fail:")
@@ -668,7 +666,7 @@ contract('CawNames', function(accounts, x) {
       cawonce2++;
     }
 
-    await processActions(actionsToProcess, { sender: accounts[1] });
+    await processActions(actionsToProcess, { validator: accounts[1] });
 
     console.log("checking tokens");
     var tokens = await cawNames.tokens(accounts[2]);
@@ -686,7 +684,7 @@ contract('CawNames', function(accounts, x) {
       cawonce: cawonce1,
     }]
 
-    result = await processActions(actionsToProcess, { sender: accounts[1] });
+    result = await processActions(actionsToProcess, { validator: accounts[1] });
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
       return args.validatorId == 1n &&
@@ -727,7 +725,7 @@ contract('CawNames', function(accounts, x) {
     }]
 
 
-    result = await processActions(actionsToProcess, { sender: accounts[1] });
+    result = await processActions(actionsToProcess, { validator: accounts[1] });
 
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
       return args.validatorId == 1n &&
@@ -744,7 +742,7 @@ contract('CawNames', function(accounts, x) {
 
 
 
-    result = await processActions(actionsToProcess, { sender: accounts[1] });
+    result = await processActions(actionsToProcess, { validator: accounts[1] });
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
       return args.validatorId == 1n &&
@@ -773,7 +771,7 @@ contract('CawNames', function(accounts, x) {
     }]
 
 
-    result = await processActions(actionsToProcess, { sender: accounts[1] });
+    result = await processActions(actionsToProcess, { validator: accounts[1] });
 
     console.log("Expect fail:")
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
@@ -783,6 +781,89 @@ contract('CawNames', function(accounts, x) {
         args.reason == 'incorrect cawonce';
     });
 
+
+
+
+
+    await clientManager.createClient(accounts[0], 1,1,1,1);
+
+
+
+    var unauthedCaw = {
+      actionType: 'caw',
+      message: "Send Caw to a new client beofre authing",
+      sender: accounts[3],
+      timestamp: timestamp,
+      clientId: 2,
+      senderId: 1,
+    };
+    var result = await processActions([unauthedCaw], {
+      validator: accounts[2]
+    });
+
+    console.log("Expect fail:")
+    truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
+      console.log(args);
+      return args.validatorId == 1n &&
+        args.actionId == result.signedActions[0].sigData.r &&
+        args.reason == 'User has not authenticated with this client';
+    });
+
+    var quote = await cawNames.authenticateQuote(2, 1, l2, false);
+    await cawNames.authenticate(2, 1, l2, quote.lzTokenFee, {
+      value: quote?.nativeFee,
+      from: accounts[3]
+    });
+    var result = await processActions([unauthedCaw], {
+      validator: accounts[2]
+    });
+
+    truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
+      return args.validatorId == 1n &&
+        args.actions.r[0] == result.signedActions[0].sigData.r;
+    });
+
+
+
+    // Another unauthed caw that becomes authed by depositing:
+    await clientManager.createClient(accounts[0], 1,1,1,1);
+
+    var unauthedCaw = {
+      actionType: 'caw',
+      message: "Send Caw to a new client beofre authing",
+      sender: accounts[3],
+      timestamp: timestamp,
+      clientId: 3,
+      senderId: 1,
+    };
+    var result = await processActions([unauthedCaw], {
+      validator: accounts[2]
+    });
+
+    console.log("Expect fail:")
+    truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
+      console.log(args);
+      return args.validatorId == 1n &&
+        args.actionId == result.signedActions[0].sigData.r &&
+        args.reason == 'User has not authenticated with this client';
+    });
+
+    // depositing and specifying a new client ID is another way to authenticate with that client.
+    tx = await deposit(accounts[3], 1, 2000, l2, 3);
+
+    var quote = await cawNames.authenticateQuote(2, 1, l2, false);
+    await cawNames.authenticate(2, 1, l2, quote.lzTokenFee, {
+      value: quote?.nativeFee,
+      from: accounts[3]
+    });
+    var result = await processActions([unauthedCaw], {
+      validator: accounts[2]
+    });
+
+    truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
+      return args.validatorId == 1n &&
+        args.actions.r[0] == result.signedActions[0].sigData.r;
+    });
 
 
 

@@ -18,6 +18,11 @@ contract CawNameL2 is
 {
   using OptionsBuilder for bytes;
 
+  modifier onlyOnMainnet() {
+    require(bypassLZ && msg.sender == address(cawName), "only callable on the mainnet, from mainnet CawName");
+    _;
+  }
+
   uint256 public totalCaw;
 
   address public cawActions;
@@ -26,6 +31,9 @@ contract CawNameL2 is
   // here, since it's not a real ERC721, just a pretender,
   // we return the zero addres... probably fine. Right?
   mapping(uint256 => address) public ownerOf;
+
+  // Keeping track of clients to which the user has authenticated
+  mapping(uint64 => mapping(uint64 => bool)) public authenticated;
 
   mapping(uint64 => uint256) public cawOwnership;
 
@@ -86,11 +94,17 @@ contract CawNameL2 is
     addToBalance(tokenId, amount * 10**18);
   }
 
-  function depositAndUpdateOwners(uint64 tokenId, uint256 amount, uint64[] calldata tokenIds, address[] calldata owners) public {
+  function authenticateAndUpdateOwners(uint64 cawClientId, uint64 tokenId, uint64[] calldata tokenIds, address[] calldata owners) public {
+    require(fromLZ, "authenticateAndUpdateOwners only callable internally");
+    authenticated[cawClientId][tokenId] = true;
+    updateOwners(tokenIds, owners);
+  }
+
+  function depositAndUpdateOwners(uint64 cawClientId, uint64 tokenId, uint256 amount, uint64[] calldata tokenIds, address[] calldata owners) public {
     require(fromLZ, "depositAndUpdateOwners only callable internally");
     totalCaw += amount;
     addToBalance(tokenId, amount);
-    updateOwners(tokenIds, owners);
+    authenticateAndUpdateOwners(cawClientId, tokenId, tokenIds, owners);
   }
 
   function addToBalance(uint64 tokenId, uint256 amount) public {
@@ -116,19 +130,21 @@ contract CawNameL2 is
     updateOwners(tokenIds, owners);
   }
 
-  function deposit(uint64 tokenId, uint256 amount) public {
-    require(bypassLZ && msg.sender == address(cawName), "only callable on the mainnet, from mainnet CawName");
-    totalCaw += amount;
-    addToBalance(tokenId, amount);
+  function auth(uint64 cawClientId, uint64 tokenId) external onlyOnMainnet {
+    authenticated[cawClientId][tokenId] = true;
   }
 
-  function mint(uint64 tokenId, address owner, string memory username) public {
-    require(bypassLZ && msg.sender == address(cawName), "only callable on the mainnet, from mainnet CawName");
+  function deposit(uint64 cawClientId, uint64 tokenId, uint256 amount) external onlyOnMainnet {
+    totalCaw += amount;
+    addToBalance(tokenId, amount);
+    authenticated[cawClientId][tokenId] = true;
+  }
+
+  function mint(uint64 tokenId, address owner, string memory username) external onlyOnMainnet {
     ownerOf[tokenId] = owner;
   }
 
-  function setOwnerOf(uint64 tokenId, address newOwner) external {
-    require(bypassLZ && msg.sender == address(cawName), "only callable on the mainnet, from mainnet CawName");
+  function setOwnerOf(uint64 tokenId, address newOwner) external onlyOnMainnet {
     _setOwnerOf(tokenId, newOwner);
   }
 
@@ -184,7 +200,8 @@ contract CawNameL2 is
   // Helper function to verify if the function selector is authorized
   function isAuthorizedFunction(bytes4 selector) private view returns (bool) {
     // Add all authorized function selectors here
-    return selector == bytes4(keccak256("depositAndUpdateOwners(uint64,uint256,uint64[],address[])")) || 
+    return selector == bytes4(keccak256("depositAndUpdateOwners(uint64,uint64,uint256,uint64[],address[])")) || 
+      selector == bytes4(keccak256("authenticateAndUpdateOwners(uint64,uint64,uint64[],address[])")) ||
       selector == bytes4(keccak256("mintAndUpdateOwners(uint64,address,string,uint64[],address[])")) ||
       selector == bytes4(keccak256("updateOwners(uint64[],address[])"));
   }

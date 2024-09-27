@@ -20,6 +20,7 @@ contract CawActions is Context {
     uint64 timestamp;
     address sender;
     uint256[] amounts;
+    uint64 clientId;
     bytes32 cawId;
     uint64 cawonce;
     string text;
@@ -172,6 +173,8 @@ contract CawActions is Context {
 
     address signer = getSigner(hash, v, r, s);
     require(signer == CawName.ownerOf(data.senderId), "signer is not owner of this CawName");
+    if (!CawName.authenticated(data.clientId, data.senderId))
+      revert("User has not authenticated with this client");
   }
 
   function getSigner(
