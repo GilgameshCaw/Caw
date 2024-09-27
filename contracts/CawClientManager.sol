@@ -7,6 +7,7 @@ struct CawClient {
   uint256 withdrawFee;
   uint256 depositFee;
   uint256 mintFee;
+  uint256 authFee;
 }
 
 contract CawClientManager {
@@ -14,6 +15,8 @@ contract CawClientManager {
   address buyAndBurnAddress;
   uint64 public nextClientId = 1;
   mapping(uint64 => CawClient) public clients;
+
+  event ClientCreated(uint64 nextClientId, CawClient client);
 
   constructor(address _buyAndBurn) {
     buyAndBurnAddress = _buyAndBurn;
@@ -38,6 +41,11 @@ contract CawClientManager {
     return client.mintFee;
   }
 
+  function getAuthFee(uint64 clientId) public view returns (uint256) {
+    CawClient storage client = clients[clientId];
+    return client.authFee;
+  }
+
   function getDepositFee(uint64 clientId) public view returns (uint256) {
     CawClient storage client = clients[clientId];
     return client.depositFee;
@@ -51,6 +59,11 @@ contract CawClientManager {
   function getMintFeeAndAddress(uint64 clientId) public view returns (uint256, address) {
     CawClient storage client = clients[clientId];
     return (client.mintFee, client.feeAddress);
+  }
+
+  function getAuthFeeAndAddress(uint64 clientId) public view returns (uint256, address) {
+    CawClient storage client = clients[clientId];
+    return (client.authFee, client.feeAddress);
   }
 
   function getDepositFeeAndAddress(uint64 clientId) public view returns (uint256, address) {
@@ -67,16 +80,20 @@ contract CawClientManager {
    * @dev Creates a new CawClient with the caller as the owner.
    * @param feeAddress The address to receive fees.
    */
-  function createClient(address feeAddress, uint256 withdrawFee, uint256 depositFee, uint256 mintFee) public {
+  function createClient(address feeAddress, uint256 withdrawFee, uint256 depositFee, uint256 authFee, uint256 mintFee) public {
     clients[nextClientId] = CawClient({
       id: nextClientId,
       feeAddress: feeAddress,
       ownerAddress: msg.sender,
       withdrawFee: withdrawFee,
       depositFee: depositFee,
+      authFee: authFee,
       mintFee: mintFee
     });
+
+    emit ClientCreated(nextClientId, clients[nextClientId]);
     nextClientId++;
+
   }
 
   /**
@@ -95,6 +112,15 @@ contract CawClientManager {
       */
   function setWithdrawFee(uint64 clientId, uint256 fee) public onlyClientOwner(clientId) {
     clients[clientId].withdrawFee = fee;
+  }
+
+  /**
+   * @dev Sets the auth fee for a client. Only callable by the owner.
+   * @param clientId The ID of the client.
+   * @param fee The new auth fee.
+   */
+  function setAuthFee(uint64 clientId, uint256 fee) public onlyClientOwner(clientId) {
+    clients[clientId].authFee = fee;
   }
 
   /**
