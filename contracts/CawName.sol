@@ -28,13 +28,13 @@ contract CawName is
   IERC20 public immutable CAW;
   CawNameURI public uriGenerator;
 
-  CawNameL2 cawNameL2;
+  CawNameL2 public cawNameL2;
 
   uint256 public totalCaw;
 
   address public minter;
 
-  uint32 public mainnetLzId = 30101;
+  uint32 public mainnetLzId;
   string[] public usernames;
   bool private fromLZ;
 
@@ -71,7 +71,7 @@ contract CawName is
   CawClientManager clientManager;
   address buyAndBurnCaw;
 
-  constructor(address _caw, address _gui, address _buyAndBurn, address _clientManager, address _endpoint)
+  constructor(address _caw, address _gui, address _buyAndBurn, address _clientManager, address _endpoint, uint32 mainnetEid)
     ERC721("CAW NAME", "cawNAME")
     OApp(_endpoint, msg.sender)
   {
@@ -79,6 +79,7 @@ contract CawName is
     uriGenerator = CawNameURI(_gui);
     buyAndBurnCaw = _buyAndBurn;
     CAW = IERC20(_caw);
+    mainnetLzId = mainnetEid;
   }
 
   function setL2Peer(uint32 _eid, address _peer) external onlyOwner {

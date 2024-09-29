@@ -66,12 +66,35 @@ module.exports = {
           pems.length,
         );
       },
-      // gas: 5000000,
-      // provider: function() { 
-      //   return new HDWalletProvider(pem, "http://localhost:8545");
-      // },
+    },
+    devL2: {
+      host: "localhost",
+      port: 8546,
+      network_id: "*", // Match any network id
+      provider: function() {
+        return new HDWalletProvider(
+          pems,
+          "http://localhost:8546",
+          0, // Active address index
+          pems.length,
+        );
+      },
+    },
+    devL1: {
+      host: "localhost",
+      port: 8545,
+      network_id: "*", // Match any network id
+      provider: function() {
+        return new HDWalletProvider(
+          pems,
+          "http://localhost:8545",
+          0, // Active address index
+          pems.length,
+        );
+      },
     },
     testnetL1: {
+      network_id: 11155111,
       provider: function() {
         return new HDWalletProvider(
           pems,
@@ -82,7 +105,8 @@ module.exports = {
           pems.length,
         );
       },
-      network_id: 11155111,
+      // gas: 1000000,
+      // gasPrice: 500000000000,
       // gas: 4500000,
       // networkCheckTimeout: 1200000,
       // gasPrice: 45000010000,

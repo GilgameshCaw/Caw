@@ -4,6 +4,17 @@ This is a solidity repository focused on building a fully decentralized social n
 as described by the CAW Manifesto, found at https://caw.is
 
 
+# Deployment:
+
+## deploy mintable Caw (if not mainnnet)
+npx truffle deploy --network devL1
+
+## deploy CawNamesL2
+npx truffle deploy --network devL2
+
+## deploy 
+npx truffle deploy --network devL1
+
 # Goerli Testnet
 
 The current contracts have been deployed on the Goerli testnet.
