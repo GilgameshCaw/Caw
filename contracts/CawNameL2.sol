@@ -60,11 +60,11 @@ contract CawNameL2 is
   {
   }
 
-  function setL1Peer(address payable peer, bool _bypassLZ) external onlyOwner {
+  function setL1Peer(uint32 _eid, address payable peer, bool _bypassLZ) external onlyOwner {
     if (_bypassLZ) {
       bypassLZ = true;
       cawName = CawName(peer);
-    } else setPeer(30101, bytes32(uint256(uint160(address(peer)))));
+    } else setPeer(_eid, bytes32(uint256(uint160(address(peer)))));
   }
 
   function setCawActions(address _cawActions) external onlyOwner {

@@ -331,8 +331,8 @@ contract('CawNames', function(accounts, x) {
     cawNamesL2 = cawNamesL2 || await CawNameL2.new(l2Endpoint.address);
     await l1Endpoint.setDestLzEndpoint(cawNamesL2.address, l2Endpoint.address);
 
-    cawNames = cawNames || await CawName.new(cawAddress, uriGenerator.address, buyAndBurnAddress, clientManager.address, l1Endpoint.address);
-    await cawNamesL2.setL1Peer(cawNames.address, false);
+    cawNames = cawNames || await CawName.new(cawAddress, uriGenerator.address, buyAndBurnAddress, clientManager.address, l1Endpoint.address, l1);
+    await cawNamesL2.setL1Peer(l1, cawNames.address, false);
     await l2Endpoint.setDestLzEndpoint(cawNames.address, l1Endpoint.address);
     await cawNames.setL2Peer(l2, cawNamesL2.address);
 
@@ -340,7 +340,7 @@ contract('CawNames', function(accounts, x) {
 
 
     cawNamesL2Mainnet = cawNamesL2Mainnet || await CawNameL2.new(l1Endpoint.address);
-    await cawNamesL2Mainnet.setL1Peer(cawNames.address, true);
+    await cawNamesL2Mainnet.setL1Peer(l1, cawNames.address, true);
     await cawNames.setL2Peer(l1, cawNamesL2Mainnet.address);
 
     minter = minter || await CawNameMinter.new(cawAddress, cawNames.address);
