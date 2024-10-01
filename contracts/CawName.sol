@@ -304,11 +304,13 @@ contract CawName is
     address[] memory owners;
 
     (tokenIds, owners) = extractPendingTransferUpdates(lzDestId);
-    if (lzDestId == mainnetLzId)
-      cawNameL2.updateOwners(tokenIds, owners);
-    else {
-      bytes memory payload = abi.encodeWithSelector(updateOwnersSelector, tokenIds, owners);
-      lzSend(lzDestId, updateOwnersSelector, payload, lzEthAmount, lzTokenAmount);
+    if (tokenIds.length > 0) {
+      if (lzDestId == mainnetLzId)
+        cawNameL2.updateOwners(tokenIds, owners);
+      else {
+        bytes memory payload = abi.encodeWithSelector(updateOwnersSelector, tokenIds, owners);
+        lzSend(lzDestId, updateOwnersSelector, payload, lzEthAmount, lzTokenAmount);
+      }
     }
   }
 
@@ -428,6 +430,7 @@ contract CawName is
     uint32 lzDestId = peerWithMaxPendingTransfers();
     (tokenIds, owners) = pendingTransferUpdates(lzDestId);
 
+    if (tokenIds.length == 0) return MessagingFee(0, 0);
     bytes memory payload = abi.encodeWithSelector(
       updateOwnersSelector, tokenIds, owners
     ); return lzQuote(updateOwnersSelector, payload, lzDestId, payInLzToken);

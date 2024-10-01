@@ -86,7 +86,10 @@ contract CawNameL2 is
     require(balance >= amountToSpend, 'insufficent CAW balance');
     uint256 newCawBalance = balance - amountToSpend;
 
-    rewardMultiplier += rewardMultiplier * amountToDistribute / (totalCaw - balance);
+    if (totalCaw > balance)
+      rewardMultiplier += rewardMultiplier * amountToDistribute / (totalCaw - balance);
+    else newCawBalance += amountToDistribute;
+
     setCawBalance(tokenId, newCawBalance);
   }
 

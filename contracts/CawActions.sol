@@ -3,7 +3,9 @@
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/utils/Context.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
 import "@openzeppelin/contracts/utils/cryptography/draft-EIP712.sol";
+
 import "./CawNameL2.sol";
 
 import { MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
@@ -40,7 +42,7 @@ contract CawActions is Context {
   mapping(uint64 => uint64) public processedActions;
   mapping(uint64 => uint64) public cawonce;
 
-  event ActionsProcessed(uint64 validatorId, MultiActionData actions);
+  event ActionsProcessed(uint64 validatorId, bytes actions);
   event ActionRejected(uint64 validatorId, bytes32 actionId, string reason);
 
   CawNameL2 CawName;
@@ -161,7 +163,7 @@ contract CawActions is Context {
   function verifySignature(
     uint8 v, bytes32 r, bytes32 s,
     ActionData calldata data
-  ) internal view {
+  ) public view {
     require(cawonce[data.senderId] == data.cawonce, 'incorrect cawonce');
     bytes memory hash = abi.encode(
       keccak256("ActionData(uint8 actionType,uint64 senderId,uint64 receiverId,uint64[] recipients,uint64 timestamp,uint256[] amounts,address sender,bytes32 cawId,string text)"),
@@ -190,7 +192,7 @@ contract CawActions is Context {
     return ecrecover(hash, v,r,s);
   }
 
-  function generateDomainHash() internal view returns (bytes32) {
+  function generateDomainHash() public view returns (bytes32) {
     uint256 chainId;
     assembly {
       chainId := chainid()
@@ -235,6 +237,11 @@ contract CawActions is Context {
         successCount += 1;
       } catch Error(string memory reason) {
         emit ActionRejected(validatorId, data.r[i], reason);
+      } catch Panic(uint256 errorCode) {
+        string memory errorCodeStr = Strings.toString(errorCode);
+        emit ActionRejected(validatorId, data.r[i], string(abi.encodePacked("Panic error code: ", errorCodeStr)));
+      } catch (bytes memory lowLevelData) {
+        emit ActionRejected(validatorId, data.r[i], "low level exception");
       }
     }
 
@@ -277,7 +284,7 @@ contract CawActions is Context {
     }
 
     // Emit the successful actions event if any were processed
-    if (successCount > 0) emit ActionsProcessed(validatorId, successfulActions);
+    if (successCount > 0) emit ActionsProcessed(validatorId, abi.encode(successfulActions));
 
     // Call setWithdrawable with the withdraw tokens and amounts
     if (withdrawCount > 0) CawName.setWithdrawable{value: msg.value}(withdrawIds, withdrawAmounts, lzTokenAmountForWithdraws);
