@@ -28,6 +28,7 @@ module.exports = async function (deployer, network, accounts) {
   var clientManagerAddress;
   var cawNamesMinterAddress;
   var cawNamesL2MainnetAddress;
+  var cawActionsMainnetAddress;
   var buyAndBurnAddress = accounts[0];
 
 
@@ -53,22 +54,22 @@ module.exports = async function (deployer, network, accounts) {
 
 
   } else if (network.match(/testnet/)) {
-    // Second L1 Deploy
+    // First L1 Deploy
     cawAddress = "0x56817dc696448135203C0556f702c6a953260411";
 
-    // First L2 Deploy
-    cawNamesL2Address = '0x56817dc696448135203C0556f702c6a953260411';
-
-    // Second L1 Deploy
-    clientManagerAddress = '0x4C49b7B1F3b02Aa0a0121968a6bC30B593bE7a19';
-    uriGeneratorAddress = '0x02C45606453a0D59aE63a0C4dfb6286831A3b7a6';
-    cawNamesAddress = '0x0f63D789Ec19dc390f0e8544932EEA474D6F0BCE';
-    cawNamesMinterAddress = "0xd48D3859f77DB1240c8244b2ED9a218AF115eA7A";
-    cawNamesL2MainnetAddress = '0x77c997BcB5baa2eEe8f5c1C5236Bf19dB2c71D12';
-    cawActionsMainnetAddress = '0x6949149026a91779d4BCEc11dA7BaE506f5e6A93';
-
-    // Second L2 Deploy
-    cawActionsAddress = "0x4C49b7B1F3b02Aa0a0121968a6bC30B593bE7a19";
+    // // First L2 Deploy
+    cawNamesL2Address = '0x07E59E70A03cEB68f2d73CCFF479b6CEabBa165c';
+    // //
+    // // // Second L1 Deploy
+    clientManagerAddress = '0xea71Ef236fc57d83eaE1D9247572eda1eCEbE7fD';
+    uriGeneratorAddress = '0x4bA43B7aE0C0A1Cc44898DfCE12df7C98C5673c7';
+    cawNamesAddress = '0x330773a8443432A078af34984fF70ae2a032dacA';
+    cawNamesMinterAddress = "0x0bD9885e67b34F4f141Ed85AF3C2ca599c23AAf4";
+    cawNamesL2MainnetAddress = '0xf3FF3891332be3Cb0A28B94218b416454133b26f';
+    cawActionsMainnetAddress = '0xfEfc7E1Ef8866fF0B51a237b6CC6496541C7116b';
+    //
+    // // Second L2 Deploy
+    cawActionsAddress = "0xBab5E0ca318E713FB32675E6eE5e5eF6b3c877FF";
   } else {
     cawAddress = '0xf3b9569F82B18aEf890De263B84189bd33EBe452';
 
@@ -220,11 +221,15 @@ module.exports = async function (deployer, network, accounts) {
 
 
 
-  if (network.match(/L2/) && cawNamesL2Address && cawNamesAddress && !cawActionsAddress) {
+  if (network.match(/L2/) && cawNamesL2Address && cawNamesAddress) {
     var cawNamesL2 = await CawNameL2.at(cawNamesL2Address);
-    await cawNamesL2.setL1Peer(peerNetworkId, cawNamesAddress, false);
-    console.log("L1 peer set")
+    if (parseInt(await cawNamesL2.peers(peerNetworkId),16) == 0) {
+      await cawNamesL2.setL1Peer(peerNetworkId, cawNamesAddress, false);
+      console.log("L1 peer set")
+    }
+  }
 
+  if (network.match(/L2/) && cawNamesL2Address && cawNamesAddress && !cawActionsAddress) {
     await deployer.deploy(CawActions, cawNamesL2Address);
     var cawActions = await CawActions.deployed();
     console.log("DEPLOYed action ", cawActions.address)
