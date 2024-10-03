@@ -62,6 +62,7 @@ const dataTypes = {
     { name: 'amounts', type: 'uint256[]' },
     { name: 'sender', type: 'address' },
     { name: 'cawId', type: 'bytes32' },
+    { name: 'cawonce', type: 'uint32'},
     { name: 'text', type: 'string' },
   ],
 };
@@ -102,17 +103,26 @@ async function signData(user, data) {
 async function processActions(actions, params) {
   console.log("---");
   console.log("PROCESS ACTIONS");
-  var signedActions = await Promise.all(actions.map(async function(action) {
+  var cawonces = {}
+
+  var signedActions = []
+  for (var i = 0; i<actions.length; i++){
+    var action = actions[i];
+    if (action.cawonce == undefined && cawonces[action.senderId] != undefined)
+      action.cawonce = cawonces[action.senderId.toString()] + 1;
+
     var data = await generateData(action.actionType, action);
+    cawonces[data.message.senderId] = data.message.cawonce;
+
     // console.log("Signing with data:", data);
     var sig = await signData(action.sender, data);
     var sigData = await verifyAndSplitSig(sig, action.sender, data);
 
-    return {
+    signedActions.push({
       data: data,
       sigData: sigData,
-    };
-  }));
+    });
+  }
 
     console.log("Data", signedActions.map(function(action) {return action.data.message}))
     console.log("SENDER ID:", params.validatorId || 1);
@@ -168,7 +178,7 @@ async function generateData(type, params = {}) {
 
   var cawonce = params.cawonce;
   if (cawonce == undefined)
-    cawonce = Number(await cawActions.cawonce(params.senderId));
+    cawonce = Number(await cawActions.nextCawonce(params.senderId));
 
   return {
     primaryType: 'ActionData',
@@ -482,7 +492,7 @@ contract('CawNames', function(accounts, x) {
       console.log(args);
       return args.validatorId == 1n &&
         args.actionId == result.signedActions[0].sigData.r &&
-        args.reason == 'incorrect cawonce';
+        args.reason == 'cawonce used already';
     });
 
 
@@ -614,7 +624,7 @@ contract('CawNames', function(accounts, x) {
     await expectBalanceOf(2, {toEqual: 13744.1548});
     await expectBalanceOf(3, {toEqual: 17551.4900});
 
-    var cawonce = (await cawActions.cawonce(1)).toString();
+    var cawonce = (await cawActions.nextCawonce(1)).toString();
     result = await processActions([{
       timestamp: timestamp,
       actionType: 'recaw',
@@ -631,14 +641,14 @@ contract('CawNames', function(accounts, x) {
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
       return args.validatorId == 1n &&
         args.actionId == result.signedActions[0].sigData.r &&
-        args.reason == 'incorrect cawonce';
+        args.reason == 'cawonce used already';
     });
 
 
     tx = await deposit(accounts[2], 2, 2000000);
 
-    var cawonce3 = (await cawActions.cawonce(3)).toString();
-    var cawonce1 = (await cawActions.cawonce(1)).toString();
+    var cawonce3 = (await cawActions.nextCawonce(3)).toString();
+    var cawonce1 = (await cawActions.nextCawonce(1)).toString();
     var actionsToProcess = [{
       actionType: 'recaw',
       cawId: secondCawId,
@@ -654,7 +664,7 @@ contract('CawNames', function(accounts, x) {
       cawonce: cawonce1,
     }]
 
-    var cawonce2 = Number(await cawActions.cawonce(2));
+    var cawonce2 = Number(await cawActions.nextCawonce(2));
     for(var i = 0; i < 32; i++) {
       actionsToProcess.push({
         actionType: 'caw',
@@ -674,7 +684,7 @@ contract('CawNames', function(accounts, x) {
 
     var balance = BigInt(await cawNamesL2.cawBalanceOf(1));
 
-    var cawonce1 = Number(await cawActions.cawonce(1));
+    var cawonce1 = Number(await cawActions.nextCawonce(1));
     var actionsToProcess = [{
       actionType: 'withdraw',
       amounts: [(balance*3n/10n).toString()],
@@ -714,7 +724,7 @@ contract('CawNames', function(accounts, x) {
     })
 
 
-    var cawonce1 = Number(await cawActions.cawonce(1));
+    var cawonce1 = Number(await cawActions.nextCawonce(1));
     var actionsToProcess = [{
       actionType: 'withdraw',
       amounts: [(balance*3n/10n).toString()],
@@ -778,7 +788,7 @@ contract('CawNames', function(accounts, x) {
       console.log(args);
       return args.validatorId == 1n &&
         args.actionId == result.signedActions[0].sigData.r &&
-        args.reason == 'incorrect cawonce';
+        args.reason == 'cawonce used already';
     });
 
 

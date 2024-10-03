@@ -1,6 +1,6 @@
 // contracts/CawActions.sol
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.0;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/utils/Context.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
@@ -24,7 +24,7 @@ contract CawActions is Context {
     uint256[] amounts;
     uint64 clientId;
     bytes32 cawId;
-    uint64 cawonce;
+    uint32 cawonce;
     string text;
   }
 
@@ -39,8 +39,8 @@ contract CawActions is Context {
 
   bytes32 public currentHash = bytes32("genesis");
 
-  mapping(uint64 => uint64) public processedActions;
-  mapping(uint64 => uint64) public cawonce;
+  mapping(uint32 => mapping(uint256 => uint256)) public usedCawonce;
+  mapping(uint32 => uint256) public currentCawonceMap;
 
   event ActionsProcessed(uint64 validatorId, bytes actions);
   event ActionRejected(uint64 validatorId, bytes32 actionId, string reason);
@@ -55,6 +55,7 @@ contract CawActions is Context {
 
   function processAction(uint64 validatorId, ActionData calldata action, uint8 v, bytes32 r, bytes32 s) external {
     require(address(this) == _msgSender(), "caller is not the CawActions contract");
+    require(!isCawonceUsed(action.senderId, action.cawonce), 'cawonce used already');
 
     verifySignature(v, r, s, action);
 
@@ -75,7 +76,7 @@ contract CawActions is Context {
     else revert("Invalid action type");
 
     distributeAmounts(validatorId, action);
-    cawonce[action.senderId] += 1;
+    useCawonce(action.senderId, action.cawonce);
 
     currentHash = keccak256(abi.encodePacked(currentHash, r));
   }
@@ -164,19 +165,56 @@ contract CawActions is Context {
     uint8 v, bytes32 r, bytes32 s,
     ActionData calldata data
   ) public view {
-    require(cawonce[data.senderId] == data.cawonce, 'incorrect cawonce');
     bytes memory hash = abi.encode(
-      keccak256("ActionData(uint8 actionType,uint64 senderId,uint64 receiverId,uint64[] recipients,uint64 timestamp,uint256[] amounts,address sender,bytes32 cawId,string text)"),
+      keccak256("ActionData(uint8 actionType,uint64 senderId,uint64 receiverId,uint64[] recipients,uint64 timestamp,uint256[] amounts,address sender,bytes32 cawId,uint32 cawonce,string text)"),
       data.actionType, data.senderId, data.receiverId,
       keccak256(abi.encodePacked(data.recipients)), data.timestamp, 
       keccak256(abi.encodePacked(data.amounts)),  data.sender, data.cawId,
-      keccak256(bytes(data.text))
+      data.cawonce, keccak256(bytes(data.text))
     );
 
     address signer = getSigner(hash, v, r, s);
     require(signer == CawName.ownerOf(data.senderId), "signer is not owner of this CawName");
     if (!CawName.authenticated(data.clientId, data.senderId))
       revert("User has not authenticated with this client");
+  }
+
+  /**
+   * @dev Marks a cawonce as used for a specific senderId.
+   * @param senderId the id of the sender.
+   * @param cawonce The cawonce to mark as used.
+   */
+  function useCawonce(uint32 senderId, uint256 cawonce) internal {
+    uint256 word = cawonce / 256;
+    uint256 bit = cawonce % 256;
+    usedCawonce[senderId][word] |= (1 << bit);
+    while (usedCawonce[senderId][currentCawonceMap[senderId]] == type(uint256).max)
+      currentCawonceMap[senderId] += 1;
+  }
+
+  function nextCawonce(uint32 senderId) public view returns (uint256) {
+    uint256 currentMap = currentCawonceMap[senderId];
+    uint256 word = usedCawonce[senderId][currentMap];
+    if (word == 0) return (currentMap * 256);
+
+    uint256 nextSlot;
+    for (nextSlot = 1; nextSlot < 256; nextSlot++)
+      if (((1 << nextSlot) & word) == 0) break;
+
+    // Calculate the nonce: nonce = currentMap * 256 + bitIndex
+    return (currentCawonceMap[senderId] * 256) + nextSlot;
+  }
+
+  /**
+   * @dev Checks if a cawonce has been used for a specific senderId.
+   * @param senderId the id of the sender.
+   * @param cawonce The cawonce to check.
+   * @return True if the cawonce has been used, false otherwise.
+   */
+  function isCawonceUsed(uint32 senderId, uint256 cawonce) public view returns (bool) {
+    uint256 word = cawonce / 256;
+    uint256 bit = cawonce % 256;
+    return(usedCawonce[senderId][word] & (1 << bit)) != 0;
   }
 
   function getSigner(
