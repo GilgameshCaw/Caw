@@ -4,13 +4,13 @@ pragma solidity ^0.8.0;
 
 interface IMint {
 
-  function nextId() external returns (uint64);
+  function nextId() external returns (uint32);
 
   function mint(
-    uint64 clientId,
+    uint32 clientId,
     address sender,
     string memory username,
-    uint64 newId,
+    uint32 newId,
     uint256 lzTokenAmount
   ) external payable;
 
