@@ -9,21 +9,21 @@ interface ISpend {
   ) external view returns (address);
 
   function spendAndDistribute(
-    uint64 tokenId,
+    uint32 tokenId,
     uint256 amountToSpend,
     uint256 amountToDistribute
   ) external;
 
   function spendAndDistributeTokens(
-    uint64 tokenId,
+    uint32 tokenId,
     uint256 amountToSpend,
     uint256 amountToDistribute
   ) external;
 
 
-  function addToBalance(uint64 tokenId, uint256 amount) external;
+  function addToBalance(uint32 tokenId, uint256 amount) external;
 
-  function addTokensToBalance(uint64 tokenId, uint256 amount) external;
+  function addTokensToBalance(uint32 tokenId, uint256 amount) external;
 
 
 }

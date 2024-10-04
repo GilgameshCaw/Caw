@@ -33,9 +33,9 @@ contract CawNameL2 is
   mapping(uint256 => address) public ownerOf;
 
   // Keeping track of clients to which the user has authenticated
-  mapping(uint64 => mapping(uint64 => bool)) public authenticated;
+  mapping(uint32 => mapping(uint32 => bool)) public authenticated;
 
-  mapping(uint64 => uint256) public cawOwnership;
+  mapping(uint32 => uint256) public cawOwnership;
 
   uint256 public rewardMultiplier = 10**18;
   uint256 public precision = 30425026352721 ** 2;// ** 3;
@@ -47,7 +47,7 @@ contract CawNameL2 is
   bool public bypassLZ;
   CawName public cawName;
 
-  bytes4 public setWithdrawableSelector = bytes4(keccak256("setWithdrawable(uint64[],uint256[])"));
+  bytes4 public setWithdrawableSelector = bytes4(keccak256("setWithdrawable(uint32[],uint256[])"));
 
   struct Token {
     uint256 tokenId;
@@ -71,15 +71,15 @@ contract CawNameL2 is
     cawActions = _cawActions;
   }
 
-  function cawBalanceOf(uint64 tokenId) public view returns (uint256){
+  function cawBalanceOf(uint32 tokenId) public view returns (uint256){
     return cawOwnership[tokenId] * rewardMultiplier / (precision);
   }
 
-  function spendAndDistributeTokens(uint64 tokenId, uint256 amountToSpend, uint256 amountToDistribute) external {
+  function spendAndDistributeTokens(uint32 tokenId, uint256 amountToSpend, uint256 amountToDistribute) external {
     spendAndDistribute(tokenId, amountToSpend * 10**18, amountToDistribute * 10**18);
   }
 
-  function spendAndDistribute(uint64 tokenId, uint256 amountToSpend, uint256 amountToDistribute) public {
+  function spendAndDistribute(uint32 tokenId, uint256 amountToSpend, uint256 amountToDistribute) public {
     require(cawActions == _msgSender(), "caller is not the cawActions contract");
     uint256 balance = cawBalanceOf(tokenId);
 
@@ -93,65 +93,65 @@ contract CawNameL2 is
     setCawBalance(tokenId, newCawBalance);
   }
 
-  function addTokensToBalance(uint64 tokenId, uint256 amount) external {
+  function addTokensToBalance(uint32 tokenId, uint256 amount) external {
     addToBalance(tokenId, amount * 10**18);
   }
 
-  function authenticateAndUpdateOwners(uint64 cawClientId, uint64 tokenId, uint64[] calldata tokenIds, address[] calldata owners) public {
+  function authenticateAndUpdateOwners(uint32 cawClientId, uint32 tokenId, uint32[] calldata tokenIds, address[] calldata owners) public {
     require(fromLZ, "authenticateAndUpdateOwners only callable internally");
     authenticated[cawClientId][tokenId] = true;
     updateOwners(tokenIds, owners);
   }
 
-  function depositAndUpdateOwners(uint64 cawClientId, uint64 tokenId, uint256 amount, uint64[] calldata tokenIds, address[] calldata owners) public {
+  function depositAndUpdateOwners(uint32 cawClientId, uint32 tokenId, uint256 amount, uint32[] calldata tokenIds, address[] calldata owners) public {
     require(fromLZ, "depositAndUpdateOwners only callable internally");
     totalCaw += amount;
     addToBalance(tokenId, amount);
     authenticateAndUpdateOwners(cawClientId, tokenId, tokenIds, owners);
   }
 
-  function addToBalance(uint64 tokenId, uint256 amount) public {
+  function addToBalance(uint32 tokenId, uint256 amount) public {
     require(fromLZ || cawActions == _msgSender(), "caller is not cawActions or LZ");
 
     setCawBalance(tokenId, cawBalanceOf(tokenId) + amount);
   }
 
-  function setCawBalance(uint64 tokenId, uint256 newCawBalance) internal {
+  function setCawBalance(uint32 tokenId, uint256 newCawBalance) internal {
     cawOwnership[tokenId] = precision * newCawBalance / rewardMultiplier;
   }
 
-  function updateOwners(uint64[] calldata tokenIds, address[] calldata owners) public {
+  function updateOwners(uint32[] calldata tokenIds, address[] calldata owners) public {
     require(fromLZ, "updateOwners only callable internally");
     for (uint i = 0; i < tokenIds.length; i++)
       _setOwnerOf(tokenIds[i], owners[i]);
   }
 
-  function mintAndUpdateOwners(uint64 tokenId, address owner, string memory username, uint64[] calldata tokenIds, address[] calldata owners) public {
+  function mintAndUpdateOwners(uint32 tokenId, address owner, string memory username, uint32[] calldata tokenIds, address[] calldata owners) public {
     require(fromLZ, "mintAndUpdateOwners only callable internally");
     ownerOf[tokenId] = owner;
 
     updateOwners(tokenIds, owners);
   }
 
-  function auth(uint64 cawClientId, uint64 tokenId) external onlyOnMainnet {
+  function auth(uint32 cawClientId, uint32 tokenId) external onlyOnMainnet {
     authenticated[cawClientId][tokenId] = true;
   }
 
-  function deposit(uint64 cawClientId, uint64 tokenId, uint256 amount) external onlyOnMainnet {
+  function deposit(uint32 cawClientId, uint32 tokenId, uint256 amount) external onlyOnMainnet {
     totalCaw += amount;
     addToBalance(tokenId, amount);
     authenticated[cawClientId][tokenId] = true;
   }
 
-  function mint(uint64 tokenId, address owner, string memory username) external onlyOnMainnet {
+  function mint(uint32 tokenId, address owner, string memory username) external onlyOnMainnet {
     ownerOf[tokenId] = owner;
   }
 
-  function setOwnerOf(uint64 tokenId, address newOwner) external onlyOnMainnet {
+  function setOwnerOf(uint32 tokenId, address newOwner) external onlyOnMainnet {
     _setOwnerOf(tokenId, newOwner);
   }
 
-  function _setOwnerOf(uint64 tokenId, address newOwner) internal {
+  function _setOwnerOf(uint32 tokenId, address newOwner) internal {
     ownerOf[tokenId] = newOwner;
   }
 
@@ -160,7 +160,7 @@ contract CawNameL2 is
     bytes32 _guid, // global packet identifier
     bytes calldata payload, // encoded message payload being received
     address _executor, // the Executor address.
-    bytes calldata _extraData // arbitrary data appended by the Executor
+    bytes calldata // arbitrary data appended by the Executor
   ) internal override {
     // Declare selector and arguments as memory variables
     bytes4 decodedSelector;
@@ -201,15 +201,15 @@ contract CawNameL2 is
   mapping(bytes4 => string) public functionSigs;
 
   // Helper function to verify if the function selector is authorized
-  function isAuthorizedFunction(bytes4 selector) private view returns (bool) {
+  function isAuthorizedFunction(bytes4 selector) private pure returns (bool) {
     // Add all authorized function selectors here
-    return selector == bytes4(keccak256("depositAndUpdateOwners(uint64,uint64,uint256,uint64[],address[])")) || 
-      selector == bytes4(keccak256("authenticateAndUpdateOwners(uint64,uint64,uint64[],address[])")) ||
-      selector == bytes4(keccak256("mintAndUpdateOwners(uint64,address,string,uint64[],address[])")) ||
-      selector == bytes4(keccak256("updateOwners(uint64[],address[])"));
+    return selector == bytes4(keccak256("depositAndUpdateOwners(uint32,uint32,uint256,uint32[],address[])")) || 
+      selector == bytes4(keccak256("authenticateAndUpdateOwners(uint32,uint32,uint32[],address[])")) ||
+      selector == bytes4(keccak256("mintAndUpdateOwners(uint32,address,string,uint32[],address[])")) ||
+      selector == bytes4(keccak256("updateOwners(uint32[],address[])"));
   }
 
-  function withdraw(uint64 tokenId, uint256 amount) external {
+  function withdraw(uint32 tokenId, uint256 amount) external {
     require(cawActions == _msgSender(), "caller is not the cawActions contract");
 
     uint256 balance = cawBalanceOf(tokenId);
@@ -219,7 +219,7 @@ contract CawNameL2 is
     setCawBalance(tokenId, balance - amount);
   }
 
-  function setWithdrawable(uint64[] memory tokenIds, uint256[] memory amounts, uint256 lzTokenAmount) external payable {
+  function setWithdrawable(uint32[] memory tokenIds, uint256[] memory amounts, uint256 lzTokenAmount) external payable {
     require(cawActions == _msgSender(), "caller is not CawActions");
     if (bypassLZ)
       cawName.setWithdrawable(tokenIds, amounts);
@@ -229,7 +229,7 @@ contract CawNameL2 is
     }
   }
 
-  function withdrawQuote(uint64[] memory tokenIds, uint256[] memory amounts, bool payInLzToken) public view returns (MessagingFee memory quote) {
+  function withdrawQuote(uint32[] memory tokenIds, uint256[] memory amounts, bool payInLzToken) public view returns (MessagingFee memory quote) {
     bytes memory payload = abi.encodeWithSelector(
       setWithdrawableSelector, tokenIds, amounts
     ); return lzQuote(setWithdrawableSelector, payload, payInLzToken);
@@ -253,6 +253,8 @@ contract CawNameL2 is
     );
   }
 
+  // TODO:
+  // Find real values for these:
   function gasLimitFor(bytes4 selector) public view returns (uint128) {
     if (selector == setWithdrawableSelector)
       return 300000;

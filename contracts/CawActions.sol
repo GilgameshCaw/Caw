@@ -16,13 +16,13 @@ contract CawActions is Context {
 
   struct ActionData {
     ActionType actionType;
-    uint64 senderId;
-    uint64 receiverId;
-    uint64[] recipients;
+    uint32 senderId;
+    uint32 receiverId;
+    uint32[] recipients;
     uint64 timestamp;
     address sender;
     uint256[] amounts;
-    uint64 clientId;
+    uint32 clientId;
     bytes32 cawId;
     uint32 cawonce;
     string text;
@@ -42,8 +42,8 @@ contract CawActions is Context {
   mapping(uint32 => mapping(uint256 => uint256)) public usedCawonce;
   mapping(uint32 => uint256) public currentCawonceMap;
 
-  event ActionsProcessed(uint64 validatorId, bytes actions);
-  event ActionRejected(uint64 validatorId, bytes32 actionId, string reason);
+  event ActionsProcessed(bytes actions);
+  event ActionRejected(bytes32 actionId, string reason);
 
   CawNameL2 CawName;
 
@@ -53,7 +53,7 @@ contract CawActions is Context {
     CawName = CawNameL2(_cawNames);
   }
 
-  function processAction(uint64 validatorId, ActionData calldata action, uint8 v, bytes32 r, bytes32 s) external {
+  function processAction(uint32 validatorId, ActionData calldata action, uint8 v, bytes32 r, bytes32 s) external {
     require(address(this) == _msgSender(), "caller is not the CawActions contract");
     require(!isCawonceUsed(action.senderId, action.cawonce), 'cawonce used already');
 
@@ -81,11 +81,11 @@ contract CawActions is Context {
     currentHash = keccak256(abi.encodePacked(currentHash, r));
   }
 
-  function distributeAmounts(uint64 validatorId, ActionData calldata action) internal {
+  function distributeAmounts(uint32 validatorId, ActionData calldata action) internal {
     if (action.amounts.length + action.recipients.length == 0) return; // no amounts
     bool isWithdrawl = action.actionType == ActionType.WITHDRAW;
 
-    // If the user is trigging a withdraw, the first element should be skipped,
+    // If the user is triggering a withdraw, the first element should be skipped,
     // because it will be the amount intending to be withdrawn
     if (isWithdrawl && action.amounts.length == 1 && action.recipients.length == 1) return;
     uint256 startIndex = isWithdrawl ? 1 : 0;
@@ -166,7 +166,7 @@ contract CawActions is Context {
     ActionData calldata data
   ) public view {
     bytes memory hash = abi.encode(
-      keccak256("ActionData(uint8 actionType,uint64 senderId,uint64 receiverId,uint64[] recipients,uint64 timestamp,uint256[] amounts,address sender,bytes32 cawId,uint32 cawonce,string text)"),
+      keccak256("ActionData(uint8 actionType,uint32 senderId,uint32 receiverId,uint32[] recipients,uint64 timestamp,uint256[] amounts,address sender,bytes32 cawId,uint32 cawonce,string text)"),
       data.actionType, data.senderId, data.receiverId,
       keccak256(abi.encodePacked(data.recipients)), data.timestamp, 
       keccak256(abi.encodePacked(data.amounts)),  data.sender, data.cawId,
@@ -248,7 +248,8 @@ contract CawActions is Context {
     );
   }
 
-  function processActions(uint64 validatorId, MultiActionData calldata data, uint256 lzTokenAmountForWithdraws) external payable {
+  function processActions(uint32 validatorId, MultiActionData calldata data, uint256 lzTokenAmountForWithdraws) external payable {
+		require(data.actions.length <= 256, 'can only process 256 actions at once');
     uint8[] calldata v = data.v;
     bytes32[] calldata r = data.r;
     bytes32[] calldata s = data.s;
@@ -274,12 +275,12 @@ contract CawActions is Context {
 
         successCount += 1;
       } catch Error(string memory reason) {
-        emit ActionRejected(validatorId, data.r[i], reason);
+        emit ActionRejected(data.r[i], reason);
       } catch Panic(uint256 errorCode) {
         string memory errorCodeStr = Strings.toString(errorCode);
-        emit ActionRejected(validatorId, data.r[i], string(abi.encodePacked("Panic error code: ", errorCodeStr)));
+        emit ActionRejected(data.r[i], string(abi.encodePacked("Panic error code: ", errorCodeStr)));
       } catch (bytes memory lowLevelData) {
-        emit ActionRejected(validatorId, data.r[i], "low level exception");
+        emit ActionRejected(data.r[i], "low level exception");
       }
     }
 
@@ -292,10 +293,10 @@ contract CawActions is Context {
       successfulActions.actions = new ActionData[](successCount);
     }
 
-    uint64[] memory withdrawIds;
+    uint32[] memory withdrawIds;
     uint256[] memory withdrawAmounts;
     if (withdrawCount > 0) {
-      withdrawIds = new uint64[](withdrawCount);
+      withdrawIds = new uint32[](withdrawCount);
       withdrawAmounts = new uint256[](withdrawCount);
     }
 
@@ -322,13 +323,13 @@ contract CawActions is Context {
     }
 
     // Emit the successful actions event if any were processed
-    if (successCount > 0) emit ActionsProcessed(validatorId, abi.encode(successfulActions));
+    if (successCount > 0) emit ActionsProcessed(abi.encode(successfulActions));
 
     // Call setWithdrawable with the withdraw tokens and amounts
     if (withdrawCount > 0) CawName.setWithdrawable{value: msg.value}(withdrawIds, withdrawAmounts, lzTokenAmountForWithdraws);
   }
 
-  function withdrawQuote(uint64[] memory tokenIds, uint256[] memory amounts, bool payInLzToken) public view returns (MessagingFee memory quote) {
+  function withdrawQuote(uint32[] memory tokenIds, uint256[] memory amounts, bool payInLzToken) public view returns (MessagingFee memory quote) {
     return CawName.withdrawQuote(tokenIds, amounts, payInLzToken);
   }
 
