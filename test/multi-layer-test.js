@@ -59,6 +59,8 @@ const dataTypes = {
     { name: 'receiverId', type: 'uint32' },
     { name: 'clientId', type: 'uint32' },
     { name: 'cawonce', type: 'uint32'},
+    { name: 'recipients', type: 'uint32[]' },
+    { name: 'amounts', type: 'uint128[]' },
     { name: 'text', type: 'string' },
   ],
 };
@@ -218,167 +220,71 @@ function decodeActions(data) {
 }
 
  
-function bigIntToBytes(bigint, length) {
-  // Converts a BigInt to a Buffer of specified length in big-endian order
-  let hex = bigint.toString(16);
-  while (hex.length < length * 2) {
-    hex = '00' + hex;
-  }
-  return Buffer.from(hex, 'hex');
-}
-
-function packActionData(action) {
-  // **1. Initialize a 17-byte Buffer for Fixed-Size Data**
-  const fixedData = Buffer.alloc(17);
-
-  // **2. Write Fixed-Size Fields into the Buffer**
-
-  // Write actionType (1 byte at offset 0)
-  fixedData.writeUInt8(Number(action.actionType), 0);
-
-  // Write senderId (4 bytes at offset 1)
-  fixedData.writeUInt32BE(action.senderId, 1);
-
-  // Write receiverId (4 bytes at offset 5)
-  fixedData.writeUInt32BE(action.receiverId, 5);
-
-  // Write clientId (4 bytes at offset 9)
-  fixedData.writeUInt32BE(action.clientId, 9);
-
-  // Write cawonce (4 bytes at offset 13)
-  fixedData.writeUInt32BE(action.cawonce, 13);
-
-  // **3. Pack the Flag and Length into a Byte**
-
-  const isTippingValidator = action.amounts.length === action.recipients.length + 1;
-  const flagAndLength = ((isTippingValidator ? 1 : 0) << 3) | (action.recipients.length & 0x07);
-  const flagAndLengthData = Buffer.from([flagAndLength]);
-
-  // **4. Encode Recipients Array**
-
-  let recipientsData = Buffer.alloc(0);
-  for (let i = 0; i < action.recipients.length; i++) {
-    const recipientBuffer = Buffer.alloc(4);
-    recipientBuffer.writeUInt32BE(action.recipients[i], 0);
-    recipientsData = Buffer.concat([recipientsData, recipientBuffer]);
-  }
-
-  // **5. Encode Amounts Array**
-
-  let amountsData = Buffer.alloc(0);
-  for (let i = 0; i < action.amounts.length; i++) {
-    const amountBigInt = BigInt(action.amounts[i]);
-    const amountBuffer = Buffer.alloc(16);
-    amountBuffer.writeBigUInt64BE(amountBigInt >> 64n, 0); // High 64 bits
-    amountBuffer.writeBigUInt64BE(amountBigInt & 0xFFFFFFFFFFFFFFFFn, 8); // Low 64 bits
-    amountsData = Buffer.concat([amountsData, amountBuffer]);
-  }
-
-  // **6. Encode Text String**
-
-  const textBytes = Buffer.from(action.text, 'utf8');
-  if (textBytes.length > 420) {
-    throw new Error('Text exceeds maximum length of 420 bytes');
-  }
-  const textLengthBuffer = Buffer.alloc(2);
-  textLengthBuffer.writeUInt16BE(textBytes.length, 0);
-  const textData = Buffer.concat([textLengthBuffer, textBytes]);
-
-  // **7. Concatenate All Data**
-
-  const actionData = Buffer.concat([fixedData, flagAndLengthData, recipientsData, amountsData, textData]);
-
-  // **8. Log Packed Data Lengths for Debugging**
-
-  console.log('Packed Action Data Length:', actionData.length);
-  console.log('Text Length:', textBytes.length);
-
-  return actionData;
-}
-
-
-
-function packActions(actions) {
-  let packedData = Buffer.alloc(0);
-
-  for (let i = 0; i < actions.length; i++) {
-    const actionData = packActionData(actions[i]);
-    packedData = Buffer.concat([packedData, actionData]);
-  }
-
-  return packedData;
-}
-
-
 
 
 
 async function processActions(actions, params) {
   console.log("---");
   console.log("PROCESS ACTIONS");
-  const cawonces = {};
+  var cawonces = {}
 
-  const signedActions = [];
-  for (let i = 0; i < actions.length; i++) {
-    const action = actions[i];
-    if (action.cawonce == undefined && cawonces[action.senderId] != undefined) {
+  var signedActions = []
+  for (var i = 0; i<actions.length; i++){
+    var action = actions[i];
+    if (action.cawonce == undefined && cawonces[action.senderId] != undefined)
       action.cawonce = cawonces[action.senderId.toString()] + 1;
-    }
 
-    // Generate the data for signing
-    const data = await generateData(action.actionType, action);
+    var data = await generateData(action.actionType, action);
     cawonces[data.message.senderId] = data.message.cawonce;
 
-    // Sign the data
-    const sig = await signData(action.sender, data);
-    const sigData = await verifyAndSplitSig(sig, action.sender, data);
+    // console.log("Signing with data:", data);
+    var sig = await signData(action.sender, data);
+    var sigData = await verifyAndSplitSig(sig, action.sender, data);
 
-    // Store the action and signature data
     signedActions.push({
       data: data,
       sigData: sigData,
-      action: data.message, // Store the action data for packing
     });
   }
 
-  // Pack the actions into a bytes array
-  const packedActionsData = packActions(signedActions.map(sa => sa.action));
+    // console.log("Data", signedActions.map(function(action) {return action.data.message}))
+    // console.log("SENDER ID:", params.validatorId || 1);
 
-  // Prepare signature arrays
-  const vArray = signedActions.map(sa => sa.sigData.v);
-  const rArray = signedActions.map(sa => sa.sigData.r);
-  const sArray = signedActions.map(sa => sa.sigData.s);
 
-  // Get the quote for withdraws if needed
-  const withdraws = actions.filter(action => action.actionType === 'withdraw');
-  let quote;
+  var withdraws = actions.filter(function(action) {return action.actionType == 'withdraw'});
+  var quote;
   if (withdraws.length > 0) {
-    const tokenIds = withdraws.map(action => action.senderId);
-    const amounts = withdraws.map(action => action.amounts[0]);
+    var tokenIds = withdraws.map(function(action){return action.senderId});
+    var amounts = withdraws.map(function(action){return action.amounts[0]});
     quote = await cawActions.withdrawQuote(tokenIds, amounts, false);
     console.log('withdraw quote returned:', quote);
   }
 
   console.log('Will process with quote:', quote?.nativeFee);
 
-  // Send the transaction with the packed data
-  const txOptions = {
+	// console.log("Will Process: ", {
+	// 	v: signedActions.map(function(action) {return action.sigData.v}),
+	// 	r: signedActions.map(function(action) {return action.sigData.r}),
+	// 	s: signedActions.map(function(action) {return action.sigData.s}),
+	// 	actions: signedActions.map(function(action) {return action.data.message}),
+	// });
+
+  // signedActions.map(function(action) {
+  //   console.log("SIGNED:", action.sigData.r, action.sigData.v, action.sigData.s, action.data.message)
+  //   return action.sigData.v
+  // })
+  t = await cawActions.processActions(params.validatorId || 1, {
+    v: signedActions.map(function(action) {return action.sigData.v}),
+    r: signedActions.map(function(action) {return action.sigData.r}),
+    s: signedActions.map(function(action) {return action.sigData.s}),
+    actions: signedActions.map(function(action) {return action.data.message}),
+  }, 0, {
     nonce: await web3.eth.getTransactionCount(params.validator),
     from: params.validator,
     value: quote?.nativeFee || '0',
-  };
+  });
 
-  const t = await cawActions.processActions(
-    params.validatorId || 1,
-    '0x' + packedActionsData.toString('hex'),
-    vArray,
-    rArray,
-    sArray,
-    0, // lzTokenAmountForWithdraws
-    txOptions
-  );
-
-  const fullTx = await web3.eth.getTransaction(t.tx);
+  var fullTx = await web3.eth.getTransaction(t.tx);
   console.log("processed", signedActions.length, "actions. GAS units:", BigInt(t.receipt.gasUsed));
 
   return {
@@ -386,8 +292,6 @@ async function processActions(actions, params) {
     signedActions: signedActions
   };
 }
-
-
 
 async function generateData(type, params = {}) {
   var actionType = {
@@ -444,8 +348,8 @@ async function verifyAndSplitSig(sig, user, data) {
   // console.log('r: ', r)
   // console.log('s: ', s)
   const recoverAddr = recoverTypedSignature({data: data, signature: sig, version: SignTypedDataVersion.V4 })
-  console.log('recovered address', recoverAddr)
-  console.log('account: ', user)
+  // console.log('recovered address', recoverAddr)
+  // console.log('account: ', user)
   expect(recoverAddr).to.equal(user.toLowerCase())
 
   return { r, s, v };
@@ -687,14 +591,7 @@ contract('CawNames', function(accounts, x) {
       validator: accounts[2]
     });
     var cawId = computeCawId(result.signedActions[0].data.message);
-
-		truffleAssert.eventEmitted(result.tx, 'DebugActionData', (event) => {
-			console.log('Unpacked ActionData:', event);
-			// Compare each field with the original action
-			// Return true if they match, false otherwise
-			return false;
-		});
-
+    console.log("FISRT CAW SENT!", cawId);
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
       var actions = decodeActions(args.actions)
