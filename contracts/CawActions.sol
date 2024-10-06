@@ -12,19 +12,16 @@ import { MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.
 
 contract CawActions is Context {
 
-  enum ActionType{ CAW, LIKE, UNLIKE, RECAW, FOLLOW, UNFOLLOW, WITHDRAW  }
+  enum ActionType{ CAW, LIKE, UNLIKE, RECAW, FOLLOW, UNFOLLOW, WITHDRAW, NOOP  }
 
   struct ActionData {
     ActionType actionType;
     uint32 senderId;
     uint32 receiverId;
-    uint32[] recipients;
-    uint64 timestamp;
-    address sender;
-    uint256[] amounts;
     uint32 clientId;
-    bytes32 cawId;
     uint32 cawonce;
+    uint32[] recipients;
+    uint128[] amounts;
     string text;
   }
 
@@ -44,6 +41,17 @@ contract CawActions is Context {
 
   event ActionsProcessed(bytes actions);
   event ActionRejected(bytes32 actionId, string reason);
+
+event DebugActionData(
+    uint8 actionType,
+    uint32 senderId,
+    uint32 receiverId,
+    uint32 clientId,
+    uint32 cawonce,
+    uint32[] recipients,
+    uint128[] amounts,
+    string text
+);
 
   CawNameL2 CawName;
 
@@ -73,7 +81,8 @@ contract CawActions is Context {
       unfollowUser(action);
     else if (action.actionType == ActionType.WITHDRAW)
       withdraw(action);
-    else revert("Invalid action type");
+    else if (action.actionType != ActionType.NOOP)
+      revert("Invalid action type");
 
     distributeAmounts(validatorId, action);
     useCawonce(action.senderId, action.cawonce);
@@ -82,6 +91,7 @@ contract CawActions is Context {
   }
 
   function distributeAmounts(uint32 validatorId, ActionData calldata action) internal {
+    require(action.amounts.length < 8, 'Can not distribute more than 7 amounts at once');
     if (action.amounts.length + action.recipients.length == 0) return; // no amounts
     bool isWithdrawl = action.actionType == ActionType.WITHDRAW;
 
@@ -112,6 +122,10 @@ contract CawActions is Context {
     require(bytes(data.text).length <= 420, 'text must be less than 420 characters');
     CawName.spendAndDistributeTokens(data.senderId, 5000, 5000);
   }
+
+  function noop(
+    ActionData calldata data
+  ) internal { }
 
   function withdraw(
     ActionData calldata data
@@ -166,11 +180,9 @@ contract CawActions is Context {
     ActionData calldata data
   ) public view {
     bytes memory hash = abi.encode(
-      keccak256("ActionData(uint8 actionType,uint32 senderId,uint32 receiverId,uint32[] recipients,uint64 timestamp,uint256[] amounts,address sender,bytes32 cawId,uint32 cawonce,string text)"),
-      data.actionType, data.senderId, data.receiverId,
-      keccak256(abi.encodePacked(data.recipients)), data.timestamp, 
-      keccak256(abi.encodePacked(data.amounts)),  data.sender, data.cawId,
-      data.cawonce, keccak256(bytes(data.text))
+      keccak256("ActionData(uint8 actionType,uint32 senderId,uint32 receiverId,uint32 clientId,uint32 cawonce,uint32[] recipients,uint128[] amounts,string text)"),
+      data.actionType, data.senderId, data.receiverId, data.clientId, data.cawonce, 
+      keccak256(bytes(data.text))
     );
 
     address signer = getSigner(hash, v, r, s);
@@ -248,90 +260,243 @@ contract CawActions is Context {
     );
   }
 
-  function processActions(uint32 validatorId, MultiActionData calldata data, uint256 lzTokenAmountForWithdraws) external payable {
-		require(data.actions.length <= 256, 'can only process 256 actions at once');
-    uint8[] calldata v = data.v;
-    bytes32[] calldata r = data.r;
-    bytes32[] calldata s = data.s;
+function processActions(
+    uint32 validatorId,
+    bytes calldata data,
+    uint8[] calldata v,
+    bytes32[] calldata r,
+    bytes32[] calldata s,
+    uint256 lzTokenAmountForWithdraws
+) external payable {
+    uint256 offset = 0;
+    uint256 actionsCount = v.length;
+    require(actionsCount == r.length && actionsCount == s.length, "Mismatched signatures");
 
-    uint16 successCount;
-    uint16 withdrawCount;
+    bytes memory successfulActionsData;
+    uint32[] memory withdrawIds = new uint32[](actionsCount);
+    uint256[] memory withdrawAmounts = new uint256[](actionsCount);
+    uint256 withdrawCount = 0;
 
-    // Bitmaps to track success and withdraw actions
-    uint256 successBitmap = 0;
-    uint256 withdrawBitmap = 0;
+    for (uint256 i = 0; i < actionsCount; i++) {
+        (ActionData memory action, uint256 newOffset) = unpackActionData(data, offset);
 
-    // First pass: Process actions and set success/withdraw bits
-    for (uint16 i = 0; i < data.actions.length; i++) {
-      try CawActions(this).processAction(validatorId, data.actions[i], v[i], r[i], s[i]) {
-        // Mark this action as successful in the bitmap
-        successBitmap |= (1 << i);  // Set the ith bit to 1
+    emit DebugActionData(
+        uint8(action.actionType),
+        action.senderId,
+        action.receiverId,
+        action.clientId,
+        action.cawonce,
+        action.recipients,
+        action.amounts,
+        action.text
+    );
+        offset = newOffset;
 
-        // Check if the action is a withdraw
-        if (data.actions[i].actionType == ActionType.WITHDRAW) {
-          withdrawBitmap |= (1 << i);  // Set the ith bit to 1
-          withdrawCount++;
+        bool actionSuccess = _processAction(validatorId, action, v[i], r[i], s[i]);
+        if (actionSuccess) {
+            // Pack the action data and append to the successfulActionsData bytes array
+            bytes memory packedAction = packActionData(action);
+            successfulActionsData = abi.encodePacked(successfulActionsData, packedAction);
+
+            // Handle withdrawals
+            if (action.actionType == ActionType.WITHDRAW) {
+                withdrawIds[withdrawCount] = action.senderId;
+                withdrawAmounts[withdrawCount] = action.amounts[0];
+                withdrawCount++;
+            }
         }
-
-        successCount += 1;
-      } catch Error(string memory reason) {
-        emit ActionRejected(data.r[i], reason);
-      } catch Panic(uint256 errorCode) {
-        string memory errorCodeStr = Strings.toString(errorCode);
-        emit ActionRejected(data.r[i], string(abi.encodePacked("Panic error code: ", errorCodeStr)));
-      } catch (bytes memory lowLevelData) {
-        emit ActionRejected(data.r[i], "low level exception");
-      }
     }
 
-    // Only allocate arrays after counting successful actions
-    MultiActionData memory successfulActions;
-    if (successCount > 0) {
-      successfulActions.v = new uint8[](successCount);
-      successfulActions.r = new bytes32[](successCount);
-      successfulActions.s = new bytes32[](successCount);
-      successfulActions.actions = new ActionData[](successCount);
+    // Emit the successful actions in a single event
+    if (successfulActionsData.length > 0) {
+        emit ActionsProcessed(successfulActionsData);
     }
 
-    uint32[] memory withdrawIds;
-    uint256[] memory withdrawAmounts;
+    // Handle withdrawals after processing all actions
     if (withdrawCount > 0) {
-      withdrawIds = new uint32[](withdrawCount);
-      withdrawAmounts = new uint256[](withdrawCount);
+        // Create arrays of the exact size needed
+        uint32[] memory finalWithdrawIds = new uint32[](withdrawCount);
+        uint256[] memory finalWithdrawAmounts = new uint256[](withdrawCount);
+        for (uint256 j = 0; j < withdrawCount; j++) {
+            finalWithdrawIds[j] = withdrawIds[j];
+            finalWithdrawAmounts[j] = withdrawAmounts[j];
+        }
+        CawName.setWithdrawable{value: msg.value}(finalWithdrawIds, finalWithdrawAmounts, lzTokenAmountForWithdraws);
     }
+}
 
-    // Second pass: Populate arrays based on bitmaps
-    uint16 successIndex = 0;
-    uint16 withdrawIndex = 0;
 
-    for (uint16 i = 0; i < data.actions.length; i++) {
-      if ((successBitmap & (1 << i)) != 0) {
-        // This action was successful, so add it to the successfulActions array
-        successfulActions.v[successIndex] = data.v[i];
-        successfulActions.r[successIndex] = data.r[i];
-        successfulActions.s[successIndex] = data.s[i];
-        successfulActions.actions[successIndex] = data.actions[i];
-        successIndex++;
-      }
-
-      if ((withdrawBitmap & (1 << i)) != 0) {
-        // This action was a successful withdraw, so add it to the withdrawIds and withdrawAmounts arrays
-        withdrawIds[withdrawIndex] = data.actions[i].senderId;
-        withdrawAmounts[withdrawIndex] = data.actions[i].amounts[0];
-        withdrawIndex++;
-      }
+function _processAction(
+    uint32 validatorId,
+    ActionData memory action,
+    uint8 v,
+    bytes32 r,
+    bytes32 s
+) internal returns (bool success) {
+    try this.processAction(validatorId, action, v, r, s) {
+        return true;
+    } catch Error(string memory reason) {
+        emit ActionRejected(r, reason);
+        return false;
+    } catch {
+        emit ActionRejected(r, "Unknown error");
+        return false;
     }
+}
 
-    // Emit the successful actions event if any were processed
-    if (successCount > 0) emit ActionsProcessed(abi.encode(successfulActions));
 
-    // Call setWithdrawable with the withdraw tokens and amounts
-    if (withdrawCount > 0) CawName.setWithdrawable{value: msg.value}(withdrawIds, withdrawAmounts, lzTokenAmountForWithdraws);
-  }
+
 
   function withdrawQuote(uint32[] memory tokenIds, uint256[] memory amounts, bool payInLzToken) public view returns (MessagingFee memory quote) {
     return CawName.withdrawQuote(tokenIds, amounts, payInLzToken);
   }
+
+  function packActionData(ActionData memory action) internal pure returns (bytes memory) {
+    // **1. Pack Fixed-Size Variables into a Single `uint256`**
+    uint256 packed = (uint256(uint8(action.actionType)) << 248)
+      | (uint256(action.senderId) << 216)
+      | (uint256(action.receiverId) << 184)
+      | (uint256(action.clientId) << 152)
+      | (uint256(action.cawonce) << 120);
+
+      // **2. Encode Fixed-Size Data**
+      bytes memory fixedData = abi.encodePacked(packed);
+
+      // **3. Determine the isTippingValidator Flag**
+      // isTippingValidator is true if amounts.length == recipients.length + 1
+      bool isTippingValidator = (action.amounts.length == action.recipients.length + 1);
+
+      // **4. Pack the Flag and Length into a Byte**
+      // Bit 3: isTippingValidator flag (1 if tipping validator)
+      // Bits 2-0: recipientsLength (0-7)
+      uint8 flagAndLength = uint8((isTippingValidator ? 1 : 0) << 3) | uint8(action.recipients.length & 0x07);
+
+      // **5. Encode Flag and Length**
+      bytes memory flagAndLengthData = abi.encodePacked(flagAndLength);
+
+      // **6. Encode Recipients Array**
+      bytes memory recipientsData;
+      for (uint i = 0; i < action.recipients.length; i++)
+        recipientsData = abi.encodePacked(recipientsData, action.recipients[i]);
+
+      // **7. Encode Amounts Array**
+      bytes memory amountsData;
+      for (uint i = 0; i < action.amounts.length; i++)
+        amountsData = abi.encodePacked(amountsData, action.amounts[i]);
+
+      // **8. Encode Text String**
+      bytes memory textBytes = bytes(action.text);
+      bytes memory textData = abi.encodePacked(uint16(textBytes.length), textBytes);
+
+      // **10. Concatenate All Data**
+      return bytes.concat(fixedData, flagAndLengthData, recipientsData, amountsData, textData);
+  }
+
+
+function unpackActionData(bytes memory data, uint256 offset) internal pure returns (ActionData memory action, uint256 newOffset) {
+    // **1. Decode Fixed-Size Data**
+
+    require(offset + 17 <= data.length, "Not enough data for fixed-size variables");
+
+    // Read actionType (1 byte)
+    action.actionType = ActionType(uint8(data[offset]));
+    offset += 1;
+
+    // Read senderId (4 bytes)
+    action.senderId = readUint32(data, offset);
+    offset += 4;
+
+    // Read receiverId (4 bytes)
+    action.receiverId = readUint32(data, offset);
+    offset += 4;
+
+    // Read clientId (4 bytes)
+    action.clientId = readUint32(data, offset);
+    offset += 4;
+
+    // Read cawonce (4 bytes)
+    action.cawonce = readUint32(data, offset);
+    offset += 4;
+
+    // **2. Decode Flag and Length**
+
+    require(offset + 1 <= data.length, "Not enough data for flag and length");
+    uint8 flagAndLength = uint8(data[offset]);
+    offset += 1;
+
+    bool isTippingValidator = ((flagAndLength >> 3) & 0x01) == 1;
+    uint8 recipientsLength = flagAndLength & 0x07; // Bits 2-0
+
+    // **3. Decode Recipients Array**
+
+    action.recipients = new uint32[](recipientsLength);
+    for (uint256 i = 0; i < recipientsLength; i++) {
+        action.recipients[i] = readUint32(data, offset);
+        offset += 4;
+    }
+
+    // **4. Determine Amounts Length**
+
+    uint256 amountsLength = isTippingValidator ? recipientsLength + 1 : recipientsLength;
+    require(amountsLength <= 8, "Invalid amounts length");
+
+    // **5. Decode Amounts Array**
+
+    action.amounts = new uint128[](amountsLength);
+    for (uint256 i = 0; i < amountsLength; i++) {
+        action.amounts[i] = readUint128(data, offset);
+        offset += 16;
+    }
+
+    // **6. Decode Text String**
+
+    require(offset + 2 <= data.length, "Not enough data for text length");
+    uint16 textLength = (uint16(uint8(data[offset])) << 8) | uint16(uint8(data[offset + 1]));
+    offset += 2;
+
+    require(offset + textLength <= data.length, "Not enough data for text");
+
+    bytes memory textBytes = new bytes(textLength);
+    for (uint256 i = 0; i < textLength; i++) {
+        textBytes[i] = data[offset + i];
+    }
+    action.text = string(textBytes);
+    offset += textLength;
+
+    newOffset = offset;
+
+    // **7. Log Values for Debugging**
+
+    // emit DebugValue("Text Length", textLength);
+    // emit DebugBytes("Text Bytes", textBytes);
+    // Similarly, log recipients and amounts if needed
+}
+
+
+function readUint32(bytes memory data, uint256 offset) internal pure returns (uint32 result) {
+    require(offset + 4 <= data.length, "Not enough data for uint32");
+    result = (uint32(uint8(data[offset])) << 24) |
+             (uint32(uint8(data[offset + 1])) << 16) |
+             (uint32(uint8(data[offset + 2])) << 8) |
+             uint32(uint8(data[offset + 3]));
+}
+
+function readUint128(bytes memory data, uint256 offset) internal pure returns (uint128 result) {
+    require(offset + 16 <= data.length, "Not enough data for uint128");
+    for (uint256 i = 0; i < 16; i++) {
+        result = (result << 8) | uint128(uint8(data[offset + i]));
+    }
+}
+
+
+
+
+
+
+
+
+
+
 
 
 }

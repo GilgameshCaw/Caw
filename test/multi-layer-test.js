@@ -57,11 +57,7 @@ const dataTypes = {
     { name: 'actionType', type: 'uint8' },
     { name: 'senderId', type: 'uint32' },
     { name: 'receiverId', type: 'uint32' },
-    { name: 'recipients', type: 'uint32[]' },
-    { name: 'timestamp', type: 'uint64' },
-    { name: 'amounts', type: 'uint256[]' },
-    { name: 'sender', type: 'address' },
-    { name: 'cawId', type: 'bytes32' },
+    { name: 'clientId', type: 'uint32' },
     { name: 'cawonce', type: 'uint32'},
     { name: 'text', type: 'string' },
   ],
@@ -106,100 +102,283 @@ return s;
 function decodeActions(data) {
 	const multiActionDataABI = {
 		"components": [
-			{
-				"components": [
-					{ "internalType": "uint8", "name": "actionType", "type": "uint8" },
-					{ "internalType": "uint32", "name": "senderId", "type": "uint32" },
-					{ "internalType": "uint32", "name": "receiverId", "type": "uint32" },
-					{ "internalType": "uint32[]", "name": "recipients", "type": "uint32[]" },
-					{ "internalType": "uint64", "name": "timestamp", "type": "uint64" },
-					{ "internalType": "address", "name": "sender", "type": "address" },
-					{ "internalType": "uint256[]", "name": "amounts", "type": "uint256[]" },
-					{ "internalType": "uint32", "name": "clientId", "type": "uint32" },
-					{ "internalType": "bytes32", "name": "cawId", "type": "bytes32" },
-					{ "internalType": "uint32", "name": "cawonce", "type": "uint32" },
-					{ "internalType": "string", "name": "text", "type": "string" }
-				],
-				"internalType": "struct ActionData[]",
-				"name": "actions",
-				"type": "tuple[]"
-			},
-			{ "internalType": "uint8[]", "name": "v", "type": "uint8[]" },
-			{ "internalType": "bytes32[]", "name": "r", "type": "bytes32[]" },
-			{ "internalType": "bytes32[]", "name": "s", "type": "bytes32[]" }
+			{ "internalType": "uint8", "name": "actionType", "type": "uint8" },
+			{ "internalType": "uint32", "name": "senderId", "type": "uint32" },
+			{ "internalType": "uint32", "name": "receiverId", "type": "uint32" },
+			{ "internalType": "uint32", "name": "clientId", "type": "uint32" },
+			{ "internalType": "uint32", "name": "cawonce", "type": "uint32" },
+			{ "internalType": "uint32[]", "name": "recipients", "type": "uint32[]" },
+			{ "internalType": "uint128[]", "name": "amounts", "type": "uint128[]" },
+			{ "internalType": "string", "name": "text", "type": "string" }
 		],
-		"internalType": "struct MultiActionData",
-		"name": "",
-		"type": "tuple"
+		"internalType": "struct ActionData[]",
+		"name": "actions",
+		"type": "tuple[]"
 	};
 
 
 	const decodedData = web3.eth.abi.decodeParameter(multiActionDataABI, data);
   return decodedData;
+
+
+
+    const actions = [];
+    let offset = 0;
+
+    // Remove '0x' prefix if present
+    let dataString = data;
+    if (data.startsWith('0x')) {
+        dataString = data.slice(2);
+    }
+    const dataBuffer = Buffer.from(dataString, 'hex');
+
+    while (offset < dataBuffer.length) {
+        // **1. Decode Fixed-Size Data (32 bytes per action)**
+        const packedBytes = dataBuffer.slice(offset, offset + 32);
+        offset += 32;
+
+        const packed = BigInt('0x' + packedBytes.toString('hex'));
+
+        const actionType = Number((packed >> 248n) & 0xffn);
+        const senderId = Number((packed >> 216n) & 0xffffffffn);
+        const receiverId = Number((packed >> 184n) & 0xffffffffn);
+        const clientId = Number((packed >> 152n) & 0xffffffffn);
+        const cawonce = Number((packed >> 120n) & 0xffffffffn);
+
+        // **2. Decode Flag and Length**
+        const flagAndLength = dataBuffer.readUInt8(offset);
+        offset += 1;
+
+        const isTippingValidator = ((flagAndLength >> 3) & 0x01) === 1;
+        const recipientsLength = flagAndLength & 0x07; // Bits 2-0
+
+        // **3. Decode Recipients Array**
+        const recipients = [];
+        for (let i = 0; i < recipientsLength; i++) {
+            if (offset + 4 > dataBuffer.length) {
+                throw new Error('Not enough data for recipient');
+            }
+            const recipient = dataBuffer.readUInt32BE(offset);
+            offset += 4;
+            recipients.push(recipient);
+        }
+
+        // **4. Determine Amounts Length**
+        let amountsLength;
+        if (isTippingValidator) {
+            amountsLength = recipientsLength + 1;
+        } else {
+            amountsLength = recipientsLength;
+        }
+        if (amountsLength > 8) {
+            throw new Error('Invalid amounts length');
+        }
+
+        // **5. Decode Amounts Array**
+        const amounts = [];
+        for (let i = 0; i < amountsLength; i++) {
+            if (offset + 16 > dataBuffer.length) {
+                throw new Error('Not enough data for amount');
+            }
+            const amountBytes = dataBuffer.slice(offset, offset + 16);
+            const amount = BigInt('0x' + amountBytes.toString('hex'));
+            offset += 16;
+            amounts.push(amount.toString());
+        }
+
+        // **6. Decode Text String**
+        if (offset + 2 > dataBuffer.length) {
+            throw new Error('Not enough data for text length');
+        }
+        const textLength = dataBuffer.readUInt16BE(offset);
+        offset += 2;
+        if (offset + textLength > dataBuffer.length) {
+            throw new Error('Not enough data for text');
+        }
+        const textBytes = dataBuffer.slice(offset, offset + textLength);
+        offset += textLength;
+        const text = textBytes.toString('utf8');
+
+        // **7. Construct the Action Object**
+        const action = {
+            actionType,
+            senderId,
+            receiverId,
+            clientId,
+            cawonce,
+            recipients,
+            amounts,
+            text,
+        };
+
+        actions.push(action);
+    }
+
+    return actions;
 }
+
+ 
+function bigIntToBytes(bigint, length) {
+  // Converts a BigInt to a Buffer of specified length in big-endian order
+  let hex = bigint.toString(16);
+  while (hex.length < length * 2) {
+    hex = '00' + hex;
+  }
+  return Buffer.from(hex, 'hex');
+}
+
+function packActionData(action) {
+  // **1. Initialize a 17-byte Buffer for Fixed-Size Data**
+  const fixedData = Buffer.alloc(17);
+
+  // **2. Write Fixed-Size Fields into the Buffer**
+
+  // Write actionType (1 byte at offset 0)
+  fixedData.writeUInt8(Number(action.actionType), 0);
+
+  // Write senderId (4 bytes at offset 1)
+  fixedData.writeUInt32BE(action.senderId, 1);
+
+  // Write receiverId (4 bytes at offset 5)
+  fixedData.writeUInt32BE(action.receiverId, 5);
+
+  // Write clientId (4 bytes at offset 9)
+  fixedData.writeUInt32BE(action.clientId, 9);
+
+  // Write cawonce (4 bytes at offset 13)
+  fixedData.writeUInt32BE(action.cawonce, 13);
+
+  // **3. Pack the Flag and Length into a Byte**
+
+  const isTippingValidator = action.amounts.length === action.recipients.length + 1;
+  const flagAndLength = ((isTippingValidator ? 1 : 0) << 3) | (action.recipients.length & 0x07);
+  const flagAndLengthData = Buffer.from([flagAndLength]);
+
+  // **4. Encode Recipients Array**
+
+  let recipientsData = Buffer.alloc(0);
+  for (let i = 0; i < action.recipients.length; i++) {
+    const recipientBuffer = Buffer.alloc(4);
+    recipientBuffer.writeUInt32BE(action.recipients[i], 0);
+    recipientsData = Buffer.concat([recipientsData, recipientBuffer]);
+  }
+
+  // **5. Encode Amounts Array**
+
+  let amountsData = Buffer.alloc(0);
+  for (let i = 0; i < action.amounts.length; i++) {
+    const amountBigInt = BigInt(action.amounts[i]);
+    const amountBuffer = Buffer.alloc(16);
+    amountBuffer.writeBigUInt64BE(amountBigInt >> 64n, 0); // High 64 bits
+    amountBuffer.writeBigUInt64BE(amountBigInt & 0xFFFFFFFFFFFFFFFFn, 8); // Low 64 bits
+    amountsData = Buffer.concat([amountsData, amountBuffer]);
+  }
+
+  // **6. Encode Text String**
+
+  const textBytes = Buffer.from(action.text, 'utf8');
+  if (textBytes.length > 420) {
+    throw new Error('Text exceeds maximum length of 420 bytes');
+  }
+  const textLengthBuffer = Buffer.alloc(2);
+  textLengthBuffer.writeUInt16BE(textBytes.length, 0);
+  const textData = Buffer.concat([textLengthBuffer, textBytes]);
+
+  // **7. Concatenate All Data**
+
+  const actionData = Buffer.concat([fixedData, flagAndLengthData, recipientsData, amountsData, textData]);
+
+  // **8. Log Packed Data Lengths for Debugging**
+
+  console.log('Packed Action Data Length:', actionData.length);
+  console.log('Text Length:', textBytes.length);
+
+  return actionData;
+}
+
+
+
+function packActions(actions) {
+  let packedData = Buffer.alloc(0);
+
+  for (let i = 0; i < actions.length; i++) {
+    const actionData = packActionData(actions[i]);
+    packedData = Buffer.concat([packedData, actionData]);
+  }
+
+  return packedData;
+}
+
+
+
+
 
 async function processActions(actions, params) {
   console.log("---");
   console.log("PROCESS ACTIONS");
-  var cawonces = {}
+  const cawonces = {};
 
-  var signedActions = []
-  for (var i = 0; i<actions.length; i++){
-    var action = actions[i];
-    if (action.cawonce == undefined && cawonces[action.senderId] != undefined)
+  const signedActions = [];
+  for (let i = 0; i < actions.length; i++) {
+    const action = actions[i];
+    if (action.cawonce == undefined && cawonces[action.senderId] != undefined) {
       action.cawonce = cawonces[action.senderId.toString()] + 1;
+    }
 
-    var data = await generateData(action.actionType, action);
+    // Generate the data for signing
+    const data = await generateData(action.actionType, action);
     cawonces[data.message.senderId] = data.message.cawonce;
 
-    // console.log("Signing with data:", data);
-    var sig = await signData(action.sender, data);
-    var sigData = await verifyAndSplitSig(sig, action.sender, data);
+    // Sign the data
+    const sig = await signData(action.sender, data);
+    const sigData = await verifyAndSplitSig(sig, action.sender, data);
 
+    // Store the action and signature data
     signedActions.push({
       data: data,
       sigData: sigData,
+      action: data.message, // Store the action data for packing
     });
   }
 
-    // console.log("Data", signedActions.map(function(action) {return action.data.message}))
-    // console.log("SENDER ID:", params.validatorId || 1);
+  // Pack the actions into a bytes array
+  const packedActionsData = packActions(signedActions.map(sa => sa.action));
 
+  // Prepare signature arrays
+  const vArray = signedActions.map(sa => sa.sigData.v);
+  const rArray = signedActions.map(sa => sa.sigData.r);
+  const sArray = signedActions.map(sa => sa.sigData.s);
 
-  var withdraws = actions.filter(function(action) {return action.actionType == 'withdraw'});
-  var quote;
+  // Get the quote for withdraws if needed
+  const withdraws = actions.filter(action => action.actionType === 'withdraw');
+  let quote;
   if (withdraws.length > 0) {
-    var tokenIds = withdraws.map(function(action){return action.senderId});
-    var amounts = withdraws.map(function(action){return action.amounts[0]});
+    const tokenIds = withdraws.map(action => action.senderId);
+    const amounts = withdraws.map(action => action.amounts[0]);
     quote = await cawActions.withdrawQuote(tokenIds, amounts, false);
     console.log('withdraw quote returned:', quote);
   }
 
   console.log('Will process with quote:', quote?.nativeFee);
 
-	// console.log("Will Process: ", {
-	// 	v: signedActions.map(function(action) {return action.sigData.v}),
-	// 	r: signedActions.map(function(action) {return action.sigData.r}),
-	// 	s: signedActions.map(function(action) {return action.sigData.s}),
-	// 	actions: signedActions.map(function(action) {return action.data.message}),
-	// });
-
-  // signedActions.map(function(action) {
-  //   console.log("SIGNED:", action.sigData.r, action.sigData.v, action.sigData.s, action.data.message)
-  //   return action.sigData.v
-  // })
-  t = await cawActions.processActions(params.validatorId || 1, {
-    v: signedActions.map(function(action) {return action.sigData.v}),
-    r: signedActions.map(function(action) {return action.sigData.r}),
-    s: signedActions.map(function(action) {return action.sigData.s}),
-    actions: signedActions.map(function(action) {return action.data.message}),
-  }, 0, {
+  // Send the transaction with the packed data
+  const txOptions = {
     nonce: await web3.eth.getTransactionCount(params.validator),
     from: params.validator,
     value: quote?.nativeFee || '0',
-  });
+  };
 
-  var fullTx = await web3.eth.getTransaction(t.tx);
+  const t = await cawActions.processActions(
+    params.validatorId || 1,
+    '0x' + packedActionsData.toString('hex'),
+    vArray,
+    rArray,
+    sArray,
+    0, // lzTokenAmountForWithdraws
+    txOptions
+  );
+
+  const fullTx = await web3.eth.getTransaction(t.tx);
   console.log("processed", signedActions.length, "actions. GAS units:", BigInt(t.receipt.gasUsed));
 
   return {
@@ -207,6 +386,8 @@ async function processActions(actions, params) {
     signedActions: signedActions
   };
 }
+
+
 
 async function generateData(type, params = {}) {
   var actionType = {
@@ -217,6 +398,7 @@ async function generateData(type, params = {}) {
     follow: 4,
     unfollow: 5,
     withdraw: 6,
+    noop: 7,
   }[type];
 
   var domain = {
@@ -234,11 +416,8 @@ async function generateData(type, params = {}) {
     primaryType: 'ActionData',
     message: {
       actionType: actionType,
-      sender: params.sender,
       senderId: params.senderId,
       receiverId: params.receiverId || 0,
-      timestamp: params.timestamp || (Math.floor(new Date().getTime() / 1000)),
-      cawId: params.cawId || "0x0000000000000000000000000000000000000000000000000000000000000000",
       text: params.text || "",
       cawonce: cawonce,
       recipients: params.recipients || [],
@@ -265,8 +444,8 @@ async function verifyAndSplitSig(sig, user, data) {
   // console.log('r: ', r)
   // console.log('s: ', s)
   const recoverAddr = recoverTypedSignature({data: data, signature: sig, version: SignTypedDataVersion.V4 })
-  // console.log('recovered address', recoverAddr)
-  // console.log('account: ', user)
+  console.log('recovered address', recoverAddr)
+  console.log('account: ', user)
   expect(recoverAddr).to.equal(user.toLowerCase())
 
   return { r, s, v };
@@ -294,6 +473,11 @@ async function deposit(user, tokenId, amount, layer, clientId) {
   });
 
   return t;
+}
+
+function computeCawId(action) {
+console.log("WILL COMPUTE ID:", action.senderId, action.cawonce, action);
+	return (BigInt(action.senderId) << 32n) + BigInt(action.cawonce);
 }
 
 async function buyUsername(user, name) {
@@ -492,30 +676,35 @@ contract('CawNames', function(accounts, x) {
     await expectBalanceOf(2, {toEqual: 40000});
     await expectBalanceOf(3, {toEqual: 10000});
 
-    var timestamp = (Math.floor(new Date().getTime() / 1000));
     var firstCaw = {
       actionType: 'caw',
       text: "the first caw message ever sent",
       sender: accounts[2],
-      timestamp: timestamp,
       senderId: 1,
       cawonce: 0
     };
     var result = await processActions([firstCaw], {
       validator: accounts[2]
     });
-    var cawId = result.signedActions[0].sigData.r;
-    console.log("FISRT CAW SENT!", cawId);
+    var cawId = computeCawId(result.signedActions[0].data.message);
+
+		truffleAssert.eventEmitted(result.tx, 'DebugActionData', (event) => {
+			console.log('Unpacked ActionData:', event);
+			// Compare each field with the original action
+			// Return true if they match, false otherwise
+			return false;
+		});
+
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
       var actions = decodeActions(args.actions)
-      console.log("Action:", actions.r[0])
-// return true
-      return actions.r[0] == result.signedActions[0].sigData.r;
+			console.log('actions', args.actions);
+			console.log('actions', actions, result.signedActions[0].data.message);
+			console.log('cawonce', actions[0].cawonce, result.signedActions[0].data.message.cawonce);
+			console.log('sender id', actions[0].senderId, result.signedActions[0].data.message.senderId);
+      return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
+				actions[0].senderId == result.signedActions[0].data.message.senderId;
     });
-
-    // var isVerfied = await cawActions.isVerified(1, cawId);
-    // expect(isVerfied.toString()).to.equal('true');
 
 
     var rewardMultiplier = await cawNames.rewardMultiplier();
@@ -558,10 +747,11 @@ contract('CawNames', function(accounts, x) {
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
       var actions = decodeActions(args.actions)
-      return actions.r[0] == result.signedActions[0].sigData.r;
+      return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
+				actions[0].senderId == result.signedActions[0].data.message.senderId;
     });
 
-    var secondCawId = result.signedActions[0].sigData.r;
+    var secondCawId = computeCawId(result.signedActions[0].data.message);
 
     rewardMultiplier = await cawNames.rewardMultiplier();
     console.log("REWARD MUL", BigInt(rewardMultiplier).toString())
@@ -576,9 +766,7 @@ contract('CawNames', function(accounts, x) {
     await expectBalanceOf(2, {toEqual: 39000});
     await expectBalanceOf(3, {toEqual: 14437.5});
 
-    timestamp = Math.floor(new Date().getTime() / 1000);
     await processActions([{
-      timestamp: timestamp,
       actionType: 'like',
       cawId: secondCawId,
       sender: accounts[2],
@@ -602,9 +790,7 @@ contract('CawNames', function(accounts, x) {
     await expectBalanceOf(3, {toEqual: 12437.5});
 
 
-    timestamp = Math.floor(new Date().getTime() / 1000);
     await processActions([{
-      timestamp: timestamp,
       actionType: 'follow',
       sender: accounts[2],
       receiverId: 1,
@@ -627,7 +813,6 @@ contract('CawNames', function(accounts, x) {
 
     // It will fail if you try to replay the same call
     result = await processActions([{
-      timestamp: timestamp,
       actionType: 'follow',
       sender: accounts[2],
       receiverId: 1,
@@ -645,9 +830,7 @@ contract('CawNames', function(accounts, x) {
 
 
 
-    timestamp = Math.floor(new Date().getTime() / 1000);
     await processActions([{
-      timestamp: timestamp,
       actionType: 'recaw',
       cawId: secondCawId,
       sender: accounts[2],
@@ -674,7 +857,6 @@ contract('CawNames', function(accounts, x) {
 
     var cawonce = (await cawActions.nextCawonce(1)).toString();
     result = await processActions([{
-      timestamp: timestamp,
       actionType: 'recaw',
       cawId: secondCawId,
       sender: accounts[2],
@@ -745,7 +927,8 @@ contract('CawNames', function(accounts, x) {
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
       var actions = decodeActions(args.actions)
-      return actions.r[0] == result.signedActions[0].sigData.r;
+      return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
+				actions[0].senderId == result.signedActions[0].data.message.senderId;
     });
     var newBalance = BigInt(await cawNamesL2.cawBalanceOf(1));
 
@@ -802,7 +985,8 @@ contract('CawNames', function(accounts, x) {
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
       var actions = decodeActions(args.actions)
-      return actions.r[0] == result.signedActions[0].sigData.r;
+      return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
+				actions[0].senderId == result.signedActions[0].data.message.senderId;
     });
 
     var balanceWas = BigInt(await token.balanceOf(accounts[3]))
@@ -848,7 +1032,6 @@ contract('CawNames', function(accounts, x) {
       actionType: 'caw',
       text: "Send Caw to a new client beofre authing",
       sender: accounts[3],
-      timestamp: timestamp,
       clientId: 2,
       senderId: 1,
     };
@@ -874,7 +1057,8 @@ contract('CawNames', function(accounts, x) {
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
       var actions = decodeActions(args.actions)
-      return actions.r[0] == result.signedActions[0].sigData.r;
+      return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
+				actions[0].senderId == result.signedActions[0].data.message.senderId;
     });
 
 
@@ -886,7 +1070,6 @@ contract('CawNames', function(accounts, x) {
       actionType: 'caw',
       text: "Send Caw to a new client before authing",
       sender: accounts[3],
-      timestamp: timestamp,
       clientId: 3,
       senderId: 1,
     };
@@ -920,7 +1103,8 @@ contract('CawNames', function(accounts, x) {
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
 			console.log("Raw ACTION data: ", args.actions);
       var actions = decodeActions(args.actions)
-      return actions.r[0] == result.signedActions[0].sigData.r;
+      return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
+				actions[0].senderId == result.signedActions[0].data.message.senderId;
     });
 
 
@@ -937,13 +1121,20 @@ contract('CawNames', function(accounts, x) {
       return true;
 		});
 
+    // var result = await processActions(a, {
+    //   validator: accounts[2]
+    // });
+    //
+    // truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
+		// 	console.log("Raw ACTION data: ", args.actions);
+    //   return true;
+		// });
 
 
     // var newMessage = {
     //   actionType: 'caw',
     //   message: "Sending a new CAW",
     //   sender: accounts[2],
-    //   timestamp: timestamp,
     //   senderId: 1,
 		// 	cawonce: 0
     // };
