@@ -23,6 +23,9 @@ const {
   SignTypedDataVersion,
   signTypedData,
 } = require('@metamask/eth-sig-util');
+const { ethers } = require('ethers');
+const { bufferToHex } = require('ethereumjs-util');
+
 
 
 const wethAddress = '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2';
@@ -46,24 +49,6 @@ var cawActionsMainnet;
 var uriGenerator;
 var clientManager;
 
-const dataTypes = {
-  EIP712Domain: [
-    { name: 'name', type: 'string' },
-    { name: 'version', type: 'string' },
-    { name: 'chainId', type: 'uint256' },
-    { name: 'verifyingContract', type: 'address' },
-  ],
-  ActionData: [
-    { name: 'actionType', type: 'uint8' },
-    { name: 'senderId', type: 'uint32' },
-    { name: 'receiverId', type: 'uint32' },
-    { name: 'clientId', type: 'uint32' },
-    { name: 'cawonce', type: 'uint32'},
-    { name: 'recipients', type: 'uint32[]' },
-    { name: 'amounts', type: 'uint128[]' },
-    { name: 'text', type: 'string' },
-  ],
-};
 
 const gasUsed = async function(transaction) {
   var fullTx = await web3.eth.getTransaction(transaction.tx);
@@ -75,16 +60,16 @@ function timeout(ms) {
 }
 
 async function signData(user, data) {
-  var privateKey = web3.eth.currentProvider.wallets[user.toLowerCase()].getPrivateKey()
-  // console.log("SIgning:::", data);
-  s = signTypedData({
+  var privateKey = web3.eth.currentProvider.wallets[user.toLowerCase()].getPrivateKey();
+  const sig = signTypedData({
     data: data,
     privateKey: privateKey,
     version: SignTypedDataVersion.V4
   });
-  console.log("SIG:", s)
-return s;
+  console.log("SIG:", sig);
+  return sig;
 }
+
 
 
 // OLD SIGNING METHOD:
@@ -102,182 +87,183 @@ return s;
   // console.log("ABOUT TO SIGN sig", sig);
 
 function decodeActions(data) {
-	const multiActionDataABI = {
-		"components": [
-			{ "internalType": "uint8", "name": "actionType", "type": "uint8" },
-			{ "internalType": "uint32", "name": "senderId", "type": "uint32" },
-			{ "internalType": "uint32", "name": "receiverId", "type": "uint32" },
-			{ "internalType": "uint32", "name": "clientId", "type": "uint32" },
-			{ "internalType": "uint32", "name": "cawonce", "type": "uint32" },
-			{ "internalType": "uint32[]", "name": "recipients", "type": "uint32[]" },
-			{ "internalType": "uint128[]", "name": "amounts", "type": "uint128[]" },
-			{ "internalType": "string", "name": "text", "type": "string" }
-		],
-		"internalType": "struct ActionData[]",
-		"name": "actions",
-		"type": "tuple[]"
-	};
+  const actions = [];
+  let offset = 0;
+
+  // Remove '0x' prefix if present
+  let dataString = data;
+  if (data.startsWith('0x')) {
+    dataString = data.slice(2);
+  }
+  const dataBuffer = Buffer.from(dataString, 'hex');
+
+  while (offset < dataBuffer.length) {
+    // **1. Decode actionType (1 byte)**
+    const actionType = dataBuffer.readUInt8(offset);
+    offset += 1;
+
+    // **2. Decode senderId (4 bytes)**
+    const senderId = dataBuffer.readUInt32BE(offset);
+    offset += 4;
+
+    // **3. Decode receiverId (4 bytes)**
+    const receiverId = dataBuffer.readUInt32BE(offset);
+    offset += 4;
+
+    // **4. Decode clientId (4 bytes)**
+    const clientId = dataBuffer.readUInt32BE(offset);
+    offset += 4;
+
+    // **5. Decode cawonce (4 bytes)**
+    const cawonce = dataBuffer.readUInt32BE(offset);
+    offset += 4;
+
+    // **6. Decode receiverCawonce (4 bytes)**
+    const receiverCawonce = dataBuffer.readUInt32BE(offset);
+    offset += 4;
+
+		// **7. Decode transferRecipient (4 bytes)**
+		const transferRecipient = dataBuffer.readUInt32BE(offset);
+		offset += 4;
+
+		let amountToTransfer;
+		if (transferRecipient !== 0) {
+			// **8. Decode amountToTransfer (16 bytes)**
+			const amountToTransferBytes = dataBuffer.slice(offset, offset + 16);
+			amountToTransfer = BigInt('0x' + amountToTransferBytes.toString('hex'));
+			offset += 16;
+		}
+
+		// **9. Decode validatorTipAmount (8 bytes)**
+		const validatorTipAmountBytes = dataBuffer.slice(offset, offset + 8);
+		const validatorTipAmount = BigInt('0x' + validatorTipAmountBytes.toString('hex'));
+		offset += 8;
+
+    // **10. Decode textLength (2 bytes)**
+    const textLength = dataBuffer.readUInt16BE(offset);
+    offset += 2;
+
+    // **11. Decode text**
+    const textBytes = dataBuffer.slice(offset, offset + textLength);
+    const text = textBytes.toString('utf8');
+    offset += textLength;
 
 
-	const decodedData = web3.eth.abi.decodeParameter(multiActionDataABI, data);
-  return decodedData;
+		// **Construct the Action Object**
+		const action = {
+			actionType,
+			senderId,
+			receiverId,
+			clientId,
+			cawonce,
+			receiverCawonce,
+			transferRecipient,
+			amountToTransfer: amountToTransfer ? amountToTransfer.toString() : undefined,
+			validatorTipAmount: validatorTipAmount.toString(),
+			text,
+		};
 
+		actions.push(action);
+  }
 
-
-    const actions = [];
-    let offset = 0;
-
-    // Remove '0x' prefix if present
-    let dataString = data;
-    if (data.startsWith('0x')) {
-        dataString = data.slice(2);
-    }
-    const dataBuffer = Buffer.from(dataString, 'hex');
-
-    while (offset < dataBuffer.length) {
-        // **1. Decode Fixed-Size Data (32 bytes per action)**
-        const packedBytes = dataBuffer.slice(offset, offset + 32);
-        offset += 32;
-
-        const packed = BigInt('0x' + packedBytes.toString('hex'));
-
-        const actionType = Number((packed >> 248n) & 0xffn);
-        const senderId = Number((packed >> 216n) & 0xffffffffn);
-        const receiverId = Number((packed >> 184n) & 0xffffffffn);
-        const clientId = Number((packed >> 152n) & 0xffffffffn);
-        const cawonce = Number((packed >> 120n) & 0xffffffffn);
-
-        // **2. Decode Flag and Length**
-        const flagAndLength = dataBuffer.readUInt8(offset);
-        offset += 1;
-
-        const isTippingValidator = ((flagAndLength >> 3) & 0x01) === 1;
-        const recipientsLength = flagAndLength & 0x07; // Bits 2-0
-
-        // **3. Decode Recipients Array**
-        const recipients = [];
-        for (let i = 0; i < recipientsLength; i++) {
-            if (offset + 4 > dataBuffer.length) {
-                throw new Error('Not enough data for recipient');
-            }
-            const recipient = dataBuffer.readUInt32BE(offset);
-            offset += 4;
-            recipients.push(recipient);
-        }
-
-        // **4. Determine Amounts Length**
-        let amountsLength;
-        if (isTippingValidator) {
-            amountsLength = recipientsLength + 1;
-        } else {
-            amountsLength = recipientsLength;
-        }
-        if (amountsLength > 8) {
-            throw new Error('Invalid amounts length');
-        }
-
-        // **5. Decode Amounts Array**
-        const amounts = [];
-        for (let i = 0; i < amountsLength; i++) {
-            if (offset + 16 > dataBuffer.length) {
-                throw new Error('Not enough data for amount');
-            }
-            const amountBytes = dataBuffer.slice(offset, offset + 16);
-            const amount = BigInt('0x' + amountBytes.toString('hex'));
-            offset += 16;
-            amounts.push(amount.toString());
-        }
-
-        // **6. Decode Text String**
-        if (offset + 2 > dataBuffer.length) {
-            throw new Error('Not enough data for text length');
-        }
-        const textLength = dataBuffer.readUInt16BE(offset);
-        offset += 2;
-        if (offset + textLength > dataBuffer.length) {
-            throw new Error('Not enough data for text');
-        }
-        const textBytes = dataBuffer.slice(offset, offset + textLength);
-        offset += textLength;
-        const text = textBytes.toString('utf8');
-
-        // **7. Construct the Action Object**
-        const action = {
-            actionType,
-            senderId,
-            receiverId,
-            clientId,
-            cawonce,
-            recipients,
-            amounts,
-            text,
-        };
-
-        actions.push(action);
-    }
-
-    return actions;
+  return actions;
 }
 
+
  
+const actionTypeMap = {
+  caw: 0,
+  like: 1,
+  unlike: 2,
+  recaw: 3,
+  follow: 4,
+  unfollow: 5,
+  withdraw: 6,
+  noop: 7,
+};
+
+const dataTypes = {
+  EIP712Domain: [
+    { name: 'name', type: 'string' },
+    { name: 'version', type: 'string' },
+    { name: 'chainId', type: 'uint256' },
+    { name: 'verifyingContract', type: 'address' },
+  ],
+  ActionData: [
+    { name: 'actionData', type: 'bytes' },
+  ],
+};
+
 
 
 
 async function processActions(actions, params) {
   console.log("---");
   console.log("PROCESS ACTIONS");
-  var cawonces = {}
+  var cawonces = {};
 
-  var signedActions = []
-  for (var i = 0; i<actions.length; i++){
+  var signedActions = [];
+
+  for (var i = 0; i < actions.length; i++){
     var action = actions[i];
+		console.log('Cawonces', cawonces);
+		console.log('Cawonce 1:', action.cawonce, cawonces[action.senderId], cawonces[action.senderId.toString()],)
     if (action.cawonce == undefined && cawonces[action.senderId] != undefined)
       action.cawonce = cawonces[action.senderId.toString()] + 1;
 
     var data = await generateData(action.actionType, action);
-    cawonces[data.message.senderId] = data.message.cawonce;
+    cawonces[action.senderId] = data.actionDataStruct.cawonce;//action.cawonce;
+		console.log('Cawonce 2:', action.cawonce, cawonces[action.senderId], cawonces[action.senderId.toString()],)
 
-    // console.log("Signing with data:", data);
+    // Map the actionType to numeric value
+    action.actionTypeNum = actionTypeMap[action.actionType];
+
     var sig = await signData(action.sender, data);
     var sigData = await verifyAndSplitSig(sig, action.sender, data);
 
     signedActions.push({
       data: data,
       sigData: sigData,
+      action: data.actionDataStruct,
+      packedActionData: data.message.actionData,
     });
   }
 
-    // console.log("Data", signedActions.map(function(action) {return action.data.message}))
-    // console.log("SENDER ID:", params.validatorId || 1);
+  // Filter out withdraw actions
+  var withdraws = signedActions.filter(function(signedAction) {
+		console.log('is withdraw?', signedAction.action.actionType, actionTypeMap[action.actionType], signedAction.action.actionType == actionTypeMap[action.actionType]);
+    return signedAction.action.actionType == actionTypeMap[action.actionType];
+  });
 
-
-  var withdraws = actions.filter(function(action) {return action.actionType == 'withdraw'});
   var quote;
   if (withdraws.length > 0) {
-    var tokenIds = withdraws.map(function(action){return action.senderId});
-    var amounts = withdraws.map(function(action){return action.amounts[0]});
+    var tokenIds = withdraws.map(function(signedAction){ return signedAction.action.senderId });
+    var amounts = withdraws.map(function(signedAction){ return signedAction.action.amountToTransfer });
     quote = await cawActions.withdrawQuote(tokenIds, amounts, false);
     console.log('withdraw quote returned:', quote);
   }
 
   console.log('Will process with quote:', quote?.nativeFee);
 
-	// console.log("Will Process: ", {
-	// 	v: signedActions.map(function(action) {return action.sigData.v}),
-	// 	r: signedActions.map(function(action) {return action.sigData.r}),
-	// 	s: signedActions.map(function(action) {return action.sigData.s}),
-	// 	actions: signedActions.map(function(action) {return action.data.message}),
-	// });
+  var packedData = signedActions.map(function(signedAction) {
+    return signedAction.packedActionData;
+  });
 
-  // signedActions.map(function(action) {
-  //   console.log("SIGNED:", action.sigData.r, action.sigData.v, action.sigData.s, action.data.message)
-  //   return action.sigData.v
-  // })
-  t = await cawActions.processActions(params.validatorId || 1, {
-    v: signedActions.map(function(action) {return action.sigData.v}),
-    r: signedActions.map(function(action) {return action.sigData.r}),
-    s: signedActions.map(function(action) {return action.sigData.s}),
-    actions: signedActions.map(function(action) {return action.data.message}),
+  console.log("Pre-PACKED DATA:", signedActions[0].action);
+  console.log("Pre-PACKED DATA:", signedActions[1]?.action);
+  console.log("Pre-PACKED DATA:", signedActions[2]?.action);
+  console.log("Pre-PACKED DATA:", signedActions[3]?.action);
+  console.log("Pre-PACKED DATA:", signedActions[4]?.action);
+  console.log("PACKED DATA:", packedData);
+
+  // For debugging: Unpack and log the first action
+  console.log("UNPACKED:", await cawActions.unpackActionData(packedData[0]));
+
+  const t = await cawActions.processActions(params.validatorId || 1, {
+    v: signedActions.map(function(action) { return action.sigData.v }),
+    r: signedActions.map(function(action) { return action.sigData.r }),
+    s: signedActions.map(function(action) { return action.sigData.s }),
+    actions: packedData 
   }, 0, {
     nonce: await web3.eth.getTransactionCount(params.validator),
     from: params.validator,
@@ -285,7 +271,7 @@ async function processActions(actions, params) {
   });
 
   var fullTx = await web3.eth.getTransaction(t.tx);
-  console.log("processed", signedActions.length, "actions. GAS units:", BigInt(t.receipt.gasUsed));
+  console.log("Processed", signedActions.length, "actions. GAS units:", BigInt(t.receipt.gasUsed));
 
   return {
     tx: t,
@@ -293,17 +279,10 @@ async function processActions(actions, params) {
   };
 }
 
+
+// When generating data to sign
 async function generateData(type, params = {}) {
-  var actionType = {
-    caw: 0,
-    like: 1,
-    unlike: 2,
-    recaw: 3,
-    follow: 4,
-    unfollow: 5,
-    withdraw: 6,
-    noop: 7,
-  }[type];
+  var actionTypeNum = actionTypeMap[type];
 
   var domain = {
     chainId: 31337,
@@ -316,44 +295,44 @@ async function generateData(type, params = {}) {
   if (cawonce == undefined) 
     cawonce = Number(await cawActions.nextCawonce(params.senderId));
 
+  var actionDataStruct = {
+    actionType: actionTypeNum,
+    senderId: params.senderId,
+    receiverId: params.receiverId || 0,
+    clientId: params.clientId || defaultClientId,
+    cawonce: cawonce,
+    receiverCawonce: params.receiverCawonce || 0,
+    transferRecipient: params.transferRecipient || 0,
+		amountToTransfer: params.transferRecipient != 0 ? params.amountToTransfer || '0' : undefined,
+    validatorTipAmount: params.validatorTipAmount || '0',
+    text: params.text || "",
+  };
+
+  var packedActionData = await cawActions.packActionData(actionDataStruct);
+
   return {
     primaryType: 'ActionData',
     message: {
-      actionType: actionType,
-      senderId: params.senderId,
-      receiverId: params.receiverId || 0,
-      text: params.text || "",
-      cawonce: cawonce,
-      recipients: params.recipients || [],
-      amounts: params.amounts || [],
-      clientId: params.clientId || defaultClientId,
+      actionData: packedActionData,
     },
     domain: domain,
-    types: {
-      EIP712Domain: dataTypes.EIP712Domain,
-      ActionData: dataTypes.ActionData,
-    },
+    types: dataTypes,
+    actionDataStruct: actionDataStruct, // Include for later reference
   };
 }
 
+
+
 async function verifyAndSplitSig(sig, user, data) {
-  // console.log('SIG', sig)
-  // console.log('hashed SIG', web3.utils.soliditySha3(sig))
-  
-  const signatureSans0x = sig.substring(2)
+  const signatureSans0x = sig.substring(2);
   const r = '0x' + signatureSans0x.substring(0,64);
   const s = '0x' + signatureSans0x.substring(64,128);
-  const v = parseInt(signatureSans0x.substring(128,130), 16)
-  // console.log('v: ', v)
-  // console.log('r: ', r)
-  // console.log('s: ', s)
-  const recoverAddr = recoverTypedSignature({data: data, signature: sig, version: SignTypedDataVersion.V4 })
-  // console.log('recovered address', recoverAddr)
-  // console.log('account: ', user)
-  expect(recoverAddr).to.equal(user.toLowerCase())
-
+  const v = parseInt(signatureSans0x.substring(128,130), 16);
+  const recoverAddr = recoverTypedSignature({data: data, signature: sig, version: SignTypedDataVersion.V4 });
+  expect(recoverAddr).to.equal(user.toLowerCase());
   return { r, s, v };
 }
+
 
 async function deposit(user, tokenId, amount, layer, clientId) {
   clientId ||= defaultClientId;
@@ -379,13 +358,11 @@ async function deposit(user, tokenId, amount, layer, clientId) {
   return t;
 }
 
-function computeCawId(action) {
-console.log("WILL COMPUTE ID:", action.senderId, action.cawonce, action);
+async function computeCawId(action) {
 	return (BigInt(action.senderId) << 32n) + BigInt(action.cawonce);
 }
 
 async function buyUsername(user, name) {
-
   var balance = await token.balanceOf(user)
   await token.approve(minter.address, balance.toString(), {
     nonce: await web3.eth.getTransactionCount(user),
@@ -590,17 +567,14 @@ contract('CawNames', function(accounts, x) {
     var result = await processActions([firstCaw], {
       validator: accounts[2]
     });
-    var cawId = computeCawId(result.signedActions[0].data.message);
+    var cawId = await computeCawId(result.signedActions[0].action);
     console.log("FISRT CAW SENT!", cawId);
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
       var actions = decodeActions(args.actions)
 			console.log('actions', args.actions);
-			console.log('actions', actions, result.signedActions[0].data.message);
-			console.log('cawonce', actions[0].cawonce, result.signedActions[0].data.message.cawonce);
-			console.log('sender id', actions[0].senderId, result.signedActions[0].data.message.senderId);
-      return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
-				actions[0].senderId == result.signedActions[0].data.message.senderId;
+      return actions[0].cawonce == firstCaw.cawonce &&
+				actions[0].senderId == firstCaw.senderId;
     });
 
 
@@ -625,9 +599,12 @@ contract('CawNames', function(accounts, x) {
 
     console.log("Expect fail:")
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
-      console.log(args);
-      return args.actionId == result.signedActions[0].sigData.r &&
-        args.reason == 'cawonce used already';
+      console.log(result.signedActions[0].action.senderId, result.signedActions[0].action.cawonce)
+			console.log(Number(args.senderId), Number(args.cawonce));
+			console.log(Number(args.senderId) == result.signedActions[0].action.senderId);
+      return Number(args.senderId) == result.signedActions[0].action.senderId &&
+				Number(args.cawonce) == result.signedActions[0].action.cawonce &&
+        args.reason == 'cawonce already used';
     });
 
 
@@ -644,11 +621,11 @@ contract('CawNames', function(accounts, x) {
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
       var actions = decodeActions(args.actions)
-      return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
-				actions[0].senderId == result.signedActions[0].data.message.senderId;
+      return actions[0].cawonce == result.signedActions[0].action.cawonce &&
+				actions[0].senderId == result.signedActions[0].action.senderId;
     });
 
-    var secondCawId = computeCawId(result.signedActions[0].data.message);
+    var secondCawId = await computeCawId(result.signedActions[0].action);
 
     rewardMultiplier = await cawNames.rewardMultiplier();
     console.log("REWARD MUL", BigInt(rewardMultiplier).toString())
@@ -667,6 +644,7 @@ contract('CawNames', function(accounts, x) {
       actionType: 'like',
       cawId: secondCawId,
       sender: accounts[2],
+			receiverCawonce: 0,
       receiverId: 2,
       senderId: 3,
     }], {
@@ -721,13 +699,19 @@ contract('CawNames', function(accounts, x) {
 
     console.log("Expect fail:")
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
-      return args.actionId == result.signedActions[0].sigData.r &&
+      console.log(result.signedActions[0].action.senderId, result.signedActions[0].action.cawonce)
+			console.log(Number(args.senderId), Number(args.cawonce));
+			console.log(Number(args.senderId) == result.signedActions[0].action.senderId);
+      return Number(args.senderId) == result.signedActions[0].action.senderId &&
+				Number(args.cawonce) == result.signedActions[0].action.cawonce &&
         args.reason == 'insufficent CAW balance';
     });
 
 
+    var balance = BigInt(await cawNamesL2.cawBalanceOf(1));
+		console.log("CAW BALANCE: ", balance)
 
-    await processActions([{
+    result = await processActions([{
       actionType: 'recaw',
       cawId: secondCawId,
       sender: accounts[2],
@@ -736,6 +720,8 @@ contract('CawNames', function(accounts, x) {
     }], {
       validator: accounts[2]
     });
+    truffleAssert.eventEmitted(result.tx, 'ActionsProcessed');
+
 
     // var recawCount = await cawNames.recawCount(1);
     // await expect(recawCount.toString()).to.equal('1');
@@ -766,8 +752,9 @@ contract('CawNames', function(accounts, x) {
 
     console.log("Expect fail:")
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
-      return args.actionId == result.signedActions[0].sigData.r &&
-        args.reason == 'cawonce used already';
+      return Number(args.senderId) == result.signedActions[0].action.senderId &&
+				Number(args.cawonce) == result.signedActions[0].action.cawonce &&
+        args.reason == 'cawonce already used';
     });
 
 
@@ -802,7 +789,9 @@ contract('CawNames', function(accounts, x) {
       cawonce2++;
     }
 
-    await processActions(actionsToProcess, { validator: accounts[1] });
+    result = await processActions(actionsToProcess, { validator: accounts[1] });
+
+    truffleAssert.eventEmitted(result.tx, 'ActionsProcessed')
 
     console.log("checking tokens");
     var tokens = await cawNames.tokens(accounts[2]);
@@ -813,8 +802,8 @@ contract('CawNames', function(accounts, x) {
     var cawonce1 = Number(await cawActions.nextCawonce(1));
     var actionsToProcess = [{
       actionType: 'withdraw',
-      amounts: [(balance*3n/10n).toString()],
-      recipients: [1],
+      amountToTransfer: (balance*3n/10n).toString(),
+      transferRecipient: 1,
       sender: accounts[2],
       senderId: 1,
       cawonce: cawonce1,
@@ -824,12 +813,13 @@ contract('CawNames', function(accounts, x) {
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
       var actions = decodeActions(args.actions)
-      return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
-				actions[0].senderId == result.signedActions[0].data.message.senderId;
+      return actions[0].cawonce == result.signedActions[0].action.cawonce &&
+				actions[0].senderId == result.signedActions[0].action.senderId;
     });
     var newBalance = BigInt(await cawNamesL2.cawBalanceOf(1));
 
-    expect(newBalance).to.equal(balance * 7n / 10n)
+    expect(newBalance/1000n).to.equal((balance * 7n / 10n)/1000n)
+		// expectBalanceOf(Number((balance * 7n / 10n) / (10n**18n)))
 
 
     var balanceWas = BigInt(await token.balanceOf(accounts[2]))
@@ -854,8 +844,8 @@ contract('CawNames', function(accounts, x) {
     var cawonce1 = Number(await cawActions.nextCawonce(1));
     var actionsToProcess = [{
       actionType: 'withdraw',
-      amounts: [(balance*3n/10n).toString()],
-      recipients: [1],
+      amountToTransfer: (balance*3n/10n).toString(),
+      transferRecipient: 1,
       sender: accounts[3],
       senderId: 1,
       cawonce: cawonce1,
@@ -865,7 +855,11 @@ contract('CawNames', function(accounts, x) {
     result = await processActions(actionsToProcess, { validator: accounts[1] });
 
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
-      return args.actionId == result.signedActions[0].sigData.r &&
+      console.log(Number(args.senderId), result.signedActions[0].action.senderId, '&&',
+				Number(args.cawonce), result.signedActions[0].action.cawonce, '&&',
+        args.reason, 'signer is not owner of this CawName');
+      return Number(args.senderId) == result.signedActions[0].action.senderId &&
+				Number(args.cawonce) == result.signedActions[0].action.cawonce &&
         args.reason == 'signer is not owner of this CawName';
     });
 
@@ -882,8 +876,8 @@ contract('CawNames', function(accounts, x) {
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
       var actions = decodeActions(args.actions)
-      return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
-				actions[0].senderId == result.signedActions[0].data.message.senderId;
+      return actions[0].cawonce == result.signedActions[0].action.cawonce &&
+				actions[0].senderId == result.signedActions[0].action.senderId;
     });
 
     var balanceWas = BigInt(await token.balanceOf(accounts[3]))
@@ -900,8 +894,8 @@ contract('CawNames', function(accounts, x) {
     // and this one should fail:
     var actionsToProcess = [{
       actionType: 'withdraw',
-      amounts: [(balance*3n/10n).toString()],
-      recipients: [1],
+      amountToTransfer: (balance*3n/10n).toString(),
+      transferRecipient: 1,
       sender: accounts[2],
       senderId: 1,
       cawonce: cawonce1,
@@ -913,8 +907,9 @@ contract('CawNames', function(accounts, x) {
     console.log("Expect fail:")
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
       console.log(args);
-      return args.actionId == result.signedActions[0].sigData.r &&
-        args.reason == 'cawonce used already';
+      return Number(args.senderId) == result.signedActions[0].action.senderId &&
+				Number(args.cawonce) == result.signedActions[0].action.cawonce &&
+        args.reason == 'cawonce already used';
     });
 
 
@@ -939,7 +934,8 @@ contract('CawNames', function(accounts, x) {
     console.log("Expect fail:")
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
       console.log(args);
-      return args.actionId == result.signedActions[0].sigData.r &&
+      return Number(args.senderId) == result.signedActions[0].action.senderId &&
+				Number(args.cawonce) == result.signedActions[0].action.cawonce &&
         args.reason == 'User has not authenticated with this client';
     });
 
@@ -954,8 +950,8 @@ contract('CawNames', function(accounts, x) {
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
       var actions = decodeActions(args.actions)
-      return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
-				actions[0].senderId == result.signedActions[0].data.message.senderId;
+      return actions[0].cawonce == result.signedActions[0].action.cawonce &&
+				actions[0].senderId == result.signedActions[0].action.senderId;
     });
 
 
@@ -977,7 +973,8 @@ contract('CawNames', function(accounts, x) {
     console.log("Expect fail:")
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
       console.log(args);
-      return args.actionId == result.signedActions[0].sigData.r &&
+      return Number(args.senderId) == result.signedActions[0].action.senderId &&
+				Number(args.cawonce) == result.signedActions[0].action.cawonce &&
         args.reason == 'User has not authenticated with this client';
     });
 
@@ -1000,8 +997,8 @@ contract('CawNames', function(accounts, x) {
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
 			console.log("Raw ACTION data: ", args.actions);
       var actions = decodeActions(args.actions)
-      return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
-				actions[0].senderId == result.signedActions[0].data.message.senderId;
+      return actions[0].cawonce == result.signedActions[0].action.cawonce &&
+				actions[0].senderId == result.signedActions[0].action.senderId;
     });
 
 
@@ -1015,7 +1012,7 @@ contract('CawNames', function(accounts, x) {
     });
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
 			console.log("Raw ACTION data: ", args.actions);
-      return true;
+      return args.actions.length == 256;
 		});
 
     // var result = await processActions(a, {
