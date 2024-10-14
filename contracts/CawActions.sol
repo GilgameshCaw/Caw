@@ -18,6 +18,7 @@ contract CawActions is Context {
     ActionType actionType;
     uint32 senderId;
     uint32 receiverId;
+    uint32 receiverCawonce;
     uint32 clientId;
     uint32 cawonce;
     uint32[] recipients;
@@ -39,8 +40,8 @@ contract CawActions is Context {
   mapping(uint32 => mapping(uint256 => uint256)) public usedCawonce;
   mapping(uint32 => uint256) public currentCawonceMap;
 
-  event ActionsProcessed(bytes actions);
-  event ActionRejected(bytes32 actionId, string reason);
+  event ActionsProcessed(ActionData[] actions);
+  event ActionRejected(uint32 senderId, uint32 cawonce, string reason);
 
   CawNameL2 CawName;
 
@@ -53,6 +54,9 @@ contract CawActions is Context {
   function processAction(uint32 validatorId, ActionData calldata action, uint8 v, bytes32 r, bytes32 s) external {
     require(address(this) == _msgSender(), "caller is not the CawActions contract");
     require(!isCawonceUsed(action.senderId, action.cawonce), 'cawonce used already');
+    require( CawName.authenticated(action.clientId, action.senderId),
+            "User has not authenticated with this client"
+           );
 
     verifySignature(v, r, s, action);
 
@@ -169,8 +173,8 @@ contract CawActions is Context {
     ActionData calldata data
   ) public view {
     bytes memory hash = abi.encode(
-      keccak256("ActionData(uint8 actionType,uint32 senderId,uint32 receiverId,uint32 clientId,uint32 cawonce,uint32[] recipients,uint128[] amounts,string text)"),
-      data.actionType, data.senderId, data.receiverId, data.clientId, data.cawonce, 
+      keccak256("ActionData(uint8 actionType,uint32 senderId,uint32 receiverId,uint32 receiverCawonce,uint32 clientId,uint32 cawonce,uint32[] recipients,uint128[] amounts,string text)"),
+      data.actionType, data.senderId, data.receiverId, data.receiverCawonce, data.clientId, data.cawonce, 
       keccak256(abi.encodePacked(data.recipients)),
       keccak256(abi.encodePacked(data.amounts)),
       keccak256(bytes(data.text))
@@ -178,15 +182,13 @@ contract CawActions is Context {
 
     address signer = getSigner(hash, v, r, s);
     require(signer == CawName.ownerOf(data.senderId), "signer is not owner of this CawName");
-    if (!CawName.authenticated(data.clientId, data.senderId))
-      revert("User has not authenticated with this client");
   }
 
   /**
-   * @dev Marks a cawonce as used for a specific senderId.
-   * @param senderId the id of the sender.
-   * @param cawonce The cawonce to mark as used.
-   */
+  * @dev Marks a cawonce as used for a specific senderId.
+  * @param senderId the id of the sender.
+    * @param cawonce The cawonce to mark as used.
+      */
   function useCawonce(uint32 senderId, uint256 cawonce) internal {
     uint256 word = cawonce / 256;
     uint256 bit = cawonce % 256;
@@ -202,22 +204,22 @@ contract CawActions is Context {
 
     uint256 nextSlot;
     for (nextSlot = 1; nextSlot < 256; nextSlot++)
-      if (((1 << nextSlot) & word) == 0) break;
+    if (((1 << nextSlot) & word) == 0) break;
 
     // Calculate the nonce: nonce = currentMap * 256 + bitIndex
     return (currentCawonceMap[senderId] * 256) + nextSlot;
   }
 
   /**
-   * @dev Checks if a cawonce has been used for a specific senderId.
-   * @param senderId the id of the sender.
-   * @param cawonce The cawonce to check.
-   * @return True if the cawonce has been used, false otherwise.
-   */
+  * @dev Checks if a cawonce has been used for a specific senderId.
+  * @param senderId the id of the sender.
+    * @param cawonce The cawonce to check.
+      * @return True if the cawonce has been used, false otherwise.
+      */
   function isCawonceUsed(uint32 senderId, uint256 cawonce) public view returns (bool) {
     uint256 word = cawonce / 256;
     uint256 bit = cawonce % 256;
-    return(usedCawonce[senderId][word] & (1 << bit)) != 0;
+    return (usedCawonce[senderId][word] & (1 << bit)) != 0;
   }
 
   function getSigner(
@@ -242,12 +244,12 @@ contract CawActions is Context {
       abi.encode(
         keccak256(
           "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
-        ),
-        keccak256(bytes("CawNet")),
-        keccak256(bytes("1")),
-        chainId,
-        address(this)
-      )
+    ),
+    keccak256(bytes("CawNet")),
+    keccak256(bytes("1")),
+    chainId,
+    address(this)
+    )
     );
   }
 
@@ -256,7 +258,7 @@ contract CawActions is Context {
     bytes32[] calldata r = data.r;
     bytes32[] calldata s = data.s;
 
-		require(data.actions.length <= 256, 'can only process 256 actions at once');
+    require(data.actions.length <= 256, 'can only process 256 actions at once');
     uint16 successCount;
     uint16 withdrawCount;
 
@@ -278,12 +280,12 @@ contract CawActions is Context {
 
         successCount += 1;
       } catch Error(string memory reason) {
-        emit ActionRejected(data.r[i], reason);
+        emit ActionRejected(data.actions[i].senderId, data.actions[i].cawonce, reason);
       } catch Panic(uint256 errorCode) {
         string memory errorCodeStr = Strings.toString(errorCode);
-        emit ActionRejected(data.r[i], string(abi.encodePacked("Panic error code: ", errorCodeStr)));
+        emit ActionRejected(data.actions[i].senderId, data.actions[i].cawonce, string(abi.encodePacked("Panic error code: ", errorCodeStr)));
       } catch (bytes memory lowLevelData) {
-        emit ActionRejected(data.r[i], "low level exception");
+        emit ActionRejected(data.actions[i].senderId, data.actions[i].cawonce, "low level exception");
       }
     }
 
@@ -320,7 +322,7 @@ contract CawActions is Context {
 
     // Emit the successful actions event if any were processed
     // if (successCount > 0) emit ActionsProcessed(successfulActions);
-    if (successCount > 0) emit ActionsProcessed(abi.encode(successfulActions));
+    if (successCount > 0) emit ActionsProcessed(successfulActions);
 
     // Call setWithdrawable with the withdraw tokens and amounts
     if (withdrawCount > 0) CawName.setWithdrawable{value: msg.value}(withdrawIds, withdrawAmounts, lzTokenAmountForWithdraws);
@@ -329,54 +331,6 @@ contract CawActions is Context {
   function withdrawQuote(uint32[] memory tokenIds, uint256[] memory amounts, bool payInLzToken) public view returns (MessagingFee memory quote) {
     return CawName.withdrawQuote(tokenIds, amounts, payInLzToken);
   }
-
-  function packActionData(ActionData memory action) internal pure returns (bytes memory) {
-    // **1. Pack Fixed-Size Variables into a Single `uint256`**
-    uint256 packed = (uint256(uint8(action.actionType)) << 248)
-      | (uint256(action.senderId) << 216)
-      | (uint256(action.receiverId) << 184)
-      | (uint256(action.clientId) << 152)
-      | (uint256(action.cawonce) << 120);
-
-      // **2. Encode Fixed-Size Data**
-      bytes memory fixedData = abi.encodePacked(packed);
-
-      // **3. Determine the isTippingValidator Flag**
-      // isTippingValidator is true if amounts.length == recipients.length + 1
-      bool isTippingValidator = (action.amounts.length == action.recipients.length + 1);
-
-      // **4. Pack the Flag and Length into a Byte**
-      // Bit 3: isTippingValidator flag (1 if tipping validator)
-      // Bits 2-0: recipientsLength (0-7)
-      uint8 flagAndLength = uint8((isTippingValidator ? 1 : 0) << 3) | uint8(action.recipients.length & 0x07);
-
-      // **5. Encode Flag and Length**
-      bytes memory flagAndLengthData = abi.encodePacked(flagAndLength);
-
-      // **6. Encode Recipients Array**
-      bytes memory recipientsData;
-      for (uint i = 0; i < action.recipients.length; i++)
-        recipientsData = abi.encodePacked(recipientsData, action.recipients[i]);
-
-      // **7. Encode Amounts Array**
-      bytes memory amountsData;
-      for (uint i = 0; i < action.amounts.length; i++)
-        amountsData = abi.encodePacked(amountsData, action.amounts[i]);
-
-      // **8. Encode Text String**
-      bytes memory textBytes = bytes(action.text);
-      bytes memory textData = abi.encodePacked(uint16(textBytes.length), textBytes);
-
-      // **10. Concatenate All Data**
-      return bytes.concat(fixedData, flagAndLengthData, recipientsData, amountsData, textData);
-  }
-
-
-
-
-
-
-
 
 }
 

@@ -57,6 +57,7 @@ const dataTypes = {
     { name: 'actionType', type: 'uint8' },
     { name: 'senderId', type: 'uint32' },
     { name: 'receiverId', type: 'uint32' },
+    { name: 'receiverCawonce', type: 'uint32' },
     { name: 'clientId', type: 'uint32' },
     { name: 'cawonce', type: 'uint32'},
     { name: 'recipients', type: 'uint32[]' },
@@ -102,11 +103,13 @@ return s;
   // console.log("ABOUT TO SIGN sig", sig);
 
 function decodeActions(data) {
+return data;
 	const multiActionDataABI = {
 		"components": [
 			{ "internalType": "uint8", "name": "actionType", "type": "uint8" },
 			{ "internalType": "uint32", "name": "senderId", "type": "uint32" },
 			{ "internalType": "uint32", "name": "receiverId", "type": "uint32" },
+			{ "internalType": "uint32", "name": "receiverCawonce", "type": "uint32" },
 			{ "internalType": "uint32", "name": "clientId", "type": "uint32" },
 			{ "internalType": "uint32", "name": "cawonce", "type": "uint32" },
 			{ "internalType": "uint32[]", "name": "recipients", "type": "uint32[]" },
@@ -121,102 +124,6 @@ function decodeActions(data) {
 
 	const decodedData = web3.eth.abi.decodeParameter(multiActionDataABI, data);
   return decodedData;
-
-
-
-    const actions = [];
-    let offset = 0;
-
-    // Remove '0x' prefix if present
-    let dataString = data;
-    if (data.startsWith('0x')) {
-        dataString = data.slice(2);
-    }
-    const dataBuffer = Buffer.from(dataString, 'hex');
-
-    while (offset < dataBuffer.length) {
-        // **1. Decode Fixed-Size Data (32 bytes per action)**
-        const packedBytes = dataBuffer.slice(offset, offset + 32);
-        offset += 32;
-
-        const packed = BigInt('0x' + packedBytes.toString('hex'));
-
-        const actionType = Number((packed >> 248n) & 0xffn);
-        const senderId = Number((packed >> 216n) & 0xffffffffn);
-        const receiverId = Number((packed >> 184n) & 0xffffffffn);
-        const clientId = Number((packed >> 152n) & 0xffffffffn);
-        const cawonce = Number((packed >> 120n) & 0xffffffffn);
-
-        // **2. Decode Flag and Length**
-        const flagAndLength = dataBuffer.readUInt8(offset);
-        offset += 1;
-
-        const isTippingValidator = ((flagAndLength >> 3) & 0x01) === 1;
-        const recipientsLength = flagAndLength & 0x07; // Bits 2-0
-
-        // **3. Decode Recipients Array**
-        const recipients = [];
-        for (let i = 0; i < recipientsLength; i++) {
-            if (offset + 4 > dataBuffer.length) {
-                throw new Error('Not enough data for recipient');
-            }
-            const recipient = dataBuffer.readUInt32BE(offset);
-            offset += 4;
-            recipients.push(recipient);
-        }
-
-        // **4. Determine Amounts Length**
-        let amountsLength;
-        if (isTippingValidator) {
-            amountsLength = recipientsLength + 1;
-        } else {
-            amountsLength = recipientsLength;
-        }
-        if (amountsLength > 8) {
-            throw new Error('Invalid amounts length');
-        }
-
-        // **5. Decode Amounts Array**
-        const amounts = [];
-        for (let i = 0; i < amountsLength; i++) {
-            if (offset + 16 > dataBuffer.length) {
-                throw new Error('Not enough data for amount');
-            }
-            const amountBytes = dataBuffer.slice(offset, offset + 16);
-            const amount = BigInt('0x' + amountBytes.toString('hex'));
-            offset += 16;
-            amounts.push(amount.toString());
-        }
-
-        // **6. Decode Text String**
-        if (offset + 2 > dataBuffer.length) {
-            throw new Error('Not enough data for text length');
-        }
-        const textLength = dataBuffer.readUInt16BE(offset);
-        offset += 2;
-        if (offset + textLength > dataBuffer.length) {
-            throw new Error('Not enough data for text');
-        }
-        const textBytes = dataBuffer.slice(offset, offset + textLength);
-        offset += textLength;
-        const text = textBytes.toString('utf8');
-
-        // **7. Construct the Action Object**
-        const action = {
-            actionType,
-            senderId,
-            receiverId,
-            clientId,
-            cawonce,
-            recipients,
-            amounts,
-            text,
-        };
-
-        actions.push(action);
-    }
-
-    return actions;
 }
 
  
@@ -322,6 +229,7 @@ async function generateData(type, params = {}) {
       actionType: actionType,
       senderId: params.senderId,
       receiverId: params.receiverId || 0,
+      receiverCawonce: params.receiverCawonce || 0,
       text: params.text || "",
       cawonce: cawonce,
       recipients: params.recipients || [],
@@ -626,8 +534,8 @@ contract('CawNames', function(accounts, x) {
     console.log("Expect fail:")
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
       console.log(args);
-      return args.actionId == result.signedActions[0].sigData.r &&
-        args.reason == 'cawonce used already';
+      return args.cawonce == result.signedActions[0].data.message.cawonce &&
+				args.senderId == result.signedActions[0].data.message.senderId;
     });
 
 
@@ -667,6 +575,7 @@ contract('CawNames', function(accounts, x) {
       actionType: 'like',
       cawId: secondCawId,
       sender: accounts[2],
+      receiverCawonce: 0,
       receiverId: 2,
       senderId: 3,
     }], {
@@ -721,13 +630,14 @@ contract('CawNames', function(accounts, x) {
 
     console.log("Expect fail:")
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
-      return args.actionId == result.signedActions[0].sigData.r &&
+      return args.cawonce == result.signedActions[0].data.message.cawonce &&
+				args.senderId == result.signedActions[0].data.message.senderId &&
         args.reason == 'insufficent CAW balance';
     });
 
 
 
-    await processActions([{
+    result = await processActions([{
       actionType: 'recaw',
       cawId: secondCawId,
       sender: accounts[2],
@@ -736,6 +646,8 @@ contract('CawNames', function(accounts, x) {
     }], {
       validator: accounts[2]
     });
+
+    truffleAssert.eventEmitted(result.tx, 'ActionsProcessed');
 
     // var recawCount = await cawNames.recawCount(1);
     // await expect(recawCount.toString()).to.equal('1');
@@ -766,7 +678,8 @@ contract('CawNames', function(accounts, x) {
 
     console.log("Expect fail:")
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
-      return args.actionId == result.signedActions[0].sigData.r &&
+      return args.cawonce == result.signedActions[0].data.message.cawonce &&
+				args.senderId == result.signedActions[0].data.message.senderId &&
         args.reason == 'cawonce used already';
     });
 
@@ -802,7 +715,8 @@ contract('CawNames', function(accounts, x) {
       cawonce2++;
     }
 
-    await processActions(actionsToProcess, { validator: accounts[1] });
+    result = await processActions(actionsToProcess, { validator: accounts[1] });
+    truffleAssert.eventEmitted(result.tx, 'ActionsProcessed')
 
     console.log("checking tokens");
     var tokens = await cawNames.tokens(accounts[2]);
@@ -865,7 +779,8 @@ contract('CawNames', function(accounts, x) {
     result = await processActions(actionsToProcess, { validator: accounts[1] });
 
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
-      return args.actionId == result.signedActions[0].sigData.r &&
+      return args.cawonce == result.signedActions[0].data.message.cawonce &&
+				args.senderId == result.signedActions[0].data.message.senderId &&
         args.reason == 'signer is not owner of this CawName';
     });
 
@@ -913,7 +828,8 @@ contract('CawNames', function(accounts, x) {
     console.log("Expect fail:")
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
       console.log(args);
-      return args.actionId == result.signedActions[0].sigData.r &&
+      return args.cawonce == result.signedActions[0].data.message.cawonce &&
+				args.senderId == result.signedActions[0].data.message.senderId &&
         args.reason == 'cawonce used already';
     });
 
@@ -939,7 +855,8 @@ contract('CawNames', function(accounts, x) {
     console.log("Expect fail:")
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
       console.log(args);
-      return args.actionId == result.signedActions[0].sigData.r &&
+      return args.cawonce == result.signedActions[0].data.message.cawonce &&
+				args.senderId == result.signedActions[0].data.message.senderId &&
         args.reason == 'User has not authenticated with this client';
     });
 
@@ -977,7 +894,8 @@ contract('CawNames', function(accounts, x) {
     console.log("Expect fail:")
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
       console.log(args);
-      return args.actionId == result.signedActions[0].sigData.r &&
+      return args.cawonce == result.signedActions[0].data.message.cawonce &&
+				args.senderId == result.signedActions[0].data.message.senderId &&
         args.reason == 'User has not authenticated with this client';
     });
 
@@ -1014,8 +932,9 @@ contract('CawNames', function(accounts, x) {
       validator: accounts[2]
     });
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-			console.log("Raw ACTION data: ", args.actions);
-      return true;
+			console.log("Raw ACTION data: ", args.actions.length);
+			return true;
+      // return args.actions.length == 256;
 		});
 
     // var result = await processActions(a, {
