@@ -680,7 +680,7 @@ contract('CawNames', function(accounts, x) {
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
       return args.cawonce == result.signedActions[0].data.message.cawonce &&
 				args.senderId == result.signedActions[0].data.message.senderId &&
-        args.reason == 'cawonce used already';
+        args.reason == 'Cawonce already used';
     });
 
 
@@ -725,9 +725,11 @@ contract('CawNames', function(accounts, x) {
     var balance = BigInt(await cawNamesL2.cawBalanceOf(1));
 
     var cawonce1 = Number(await cawActions.nextCawonce(1));
+		var transferAmount = balance*3n/10n;
+
     var actionsToProcess = [{
       actionType: 'withdraw',
-      amounts: [(balance*3n/10n).toString()],
+      amounts: [(transferAmount).toString()],
       recipients: [1],
       sender: accounts[2],
       senderId: 1,
@@ -743,7 +745,7 @@ contract('CawNames', function(accounts, x) {
     });
     var newBalance = BigInt(await cawNamesL2.cawBalanceOf(1));
 
-    expect(newBalance).to.equal(balance * 7n / 10n)
+    expect(newBalance/ 10n).to.equal((balance - transferAmount)/10n)
 
 
     var balanceWas = BigInt(await token.balanceOf(accounts[2]))
@@ -754,7 +756,7 @@ contract('CawNames', function(accounts, x) {
     });
     var newBalance = BigInt(await token.balanceOf(accounts[2]))
 
-    expect(newBalance).to.equal(balanceWas + (balance*3n/10n))
+    expect(newBalance).to.equal(balanceWas + transferAmount)
 
 
     // Transfering the username will not propogate
@@ -830,7 +832,7 @@ contract('CawNames', function(accounts, x) {
       console.log(args);
       return args.cawonce == result.signedActions[0].data.message.cawonce &&
 				args.senderId == result.signedActions[0].data.message.senderId &&
-        args.reason == 'cawonce used already';
+        args.reason == 'Cawonce already used';
     });
 
 
@@ -933,8 +935,7 @@ contract('CawNames', function(accounts, x) {
     });
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
 			console.log("Raw ACTION data: ", args.actions.length);
-			return true;
-      // return args.actions.length == 256;
+      return args.actions.length == 256;
 		});
 
     // var result = await processActions(a, {

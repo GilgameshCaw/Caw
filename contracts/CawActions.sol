@@ -4,15 +4,13 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/utils/Context.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
-import "@openzeppelin/contracts/utils/cryptography/draft-EIP712.sol";
 
 import "./CawNameL2.sol";
 
 import { MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
 contract CawActions is Context {
-
-  enum ActionType{ CAW, LIKE, UNLIKE, RECAW, FOLLOW, UNFOLLOW, WITHDRAW, NOOP  }
+  enum ActionType { CAW, LIKE, UNLIKE, RECAW, FOLLOW, UNFOLLOW, WITHDRAW, NOOP }
 
   struct ActionData {
     ActionType actionType;
@@ -33,8 +31,7 @@ contract CawActions is Context {
     bytes32[] s;
   }
 
-  bytes32 public eip712DomainHash;
-
+  bytes32 public immutable eip712DomainHash;
   bytes32 public currentHash = bytes32("genesis");
 
   mapping(uint32 => mapping(uint256 => uint256)) public usedCawonce;
@@ -43,39 +40,36 @@ contract CawActions is Context {
   event ActionsProcessed(ActionData[] actions);
   event ActionRejected(uint32 senderId, uint32 cawonce, string reason);
 
-  CawNameL2 CawName;
+  CawNameL2 public immutable CawName;
 
-  constructor(address _cawNames)
-  {
+  // Precomputed type hashes for EIP712
+  bytes32 private constant EIP712_DOMAIN_TYPEHASH = keccak256(
+    "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+  );
+  bytes32 private constant ACTIONDATA_TYPEHASH = keccak256(
+    "ActionData(uint8 actionType,uint32 senderId,uint32 receiverId,uint32 receiverCawonce,uint32 clientId,uint32 cawonce,uint32[] recipients,uint128[] amounts,string text)"
+  );
+
+  constructor(address _cawNames) {
     eip712DomainHash = generateDomainHash();
     CawName = CawNameL2(_cawNames);
   }
 
   function processAction(uint32 validatorId, ActionData calldata action, uint8 v, bytes32 r, bytes32 s) external {
-    require(address(this) == _msgSender(), "caller is not the CawActions contract");
-    require(!isCawonceUsed(action.senderId, action.cawonce), 'cawonce used already');
-    require( CawName.authenticated(action.clientId, action.senderId),
-            "User has not authenticated with this client"
-           );
+    require(address(this) == _msgSender(), "Caller must be CawActions contract");
+    require(!isCawonceUsed(action.senderId, action.cawonce), "Cawonce already used");
+    require(CawName.authenticated(action.clientId, action.senderId), "User has not authenticated with this client");
 
     verifySignature(v, r, s, action);
 
-    if (action.actionType == ActionType.CAW)
-      caw(action);
-    else if (action.actionType == ActionType.LIKE)
-      likeCaw(action);
-    else if (action.actionType == ActionType.UNLIKE)
-      unlikeCaw(action);
-    else if (action.actionType == ActionType.RECAW)
-      reCaw(action);
-    else if (action.actionType == ActionType.FOLLOW)
-      followUser(action);
-    else if (action.actionType == ActionType.UNFOLLOW)
-      unfollowUser(action);
-    else if (action.actionType == ActionType.WITHDRAW)
-      withdraw(action);
-    else if (action.actionType != ActionType.NOOP)
-      revert("Invalid action type");
+    if (action.actionType == ActionType.CAW) caw(action);
+    else if (action.actionType == ActionType.LIKE) likeCaw(action);
+    else if (action.actionType == ActionType.UNLIKE) unlikeCaw(action);
+    else if (action.actionType == ActionType.RECAW) reCaw(action);
+    else if (action.actionType == ActionType.FOLLOW) followUser(action);
+    else if (action.actionType == ActionType.UNFOLLOW) unfollowUser(action);
+    else if (action.actionType == ActionType.WITHDRAW) withdraw(action);
+    else if (action.actionType != ActionType.NOOP) revert("Invalid action type");
 
     distributeAmounts(validatorId, action);
     useCawonce(action.senderId, action.cawonce);
@@ -84,253 +78,217 @@ contract CawActions is Context {
   }
 
   function distributeAmounts(uint32 validatorId, ActionData calldata action) internal {
-    require(action.amounts.length < 8, 'Can not distribute more than 7 amounts at once');
-    if (action.amounts.length + action.recipients.length == 0) return; // no amounts
-    bool isWithdrawl = action.actionType == ActionType.WITHDRAW;
+    uint256 numRecipients = action.recipients.length;
+    uint256 numAmounts = action.amounts.length;
 
-    // If the user is triggering a withdraw, the first element should be skipped,
-    // because it will be the amount intending to be withdrawn
-    if (isWithdrawl && action.amounts.length == 1 && action.recipients.length == 1) return;
-    uint256 startIndex = isWithdrawl ? 1 : 0;
+    if (numAmounts != numRecipients)
+      require(numAmounts == numRecipients + 1, "Amounts and recipients mismatch");
 
-    require(
-      action.recipients.length == action.amounts.length - 1,
-      'The amounts list must have exactly one more value than the recipients list'
-    ); // the last value in the amounts array is given to the validator
+    if (numRecipients == 0 && numAmounts == 0) return;
 
-    uint256 amountTotal = action.amounts[action.amounts.length-1];
+    bool isWithdrawal = action.actionType == ActionType.WITHDRAW;
+    uint256 startIndex = isWithdrawal ? 1 : 0;
 
-    for (uint256 i = startIndex; i < action.recipients.length; i++) {
+    uint256 amountTotal = action.amounts[numAmounts - 1];
+
+    for (uint256 i = startIndex; i < numRecipients; ) {
       CawName.addToBalance(action.recipients[i], action.amounts[i]);
       amountTotal += action.amounts[i];
+      unchecked {
+        ++i;
+      }
     }
 
-    CawName.addToBalance(validatorId, action.amounts[action.amounts.length-1]);
+    CawName.addToBalance(validatorId, action.amounts[numAmounts - 1]);
     CawName.spendAndDistribute(action.senderId, amountTotal, 0);
   }
 
-  function caw(
-    ActionData calldata data
-  ) internal {
-    require(bytes(data.text).length <= 420, 'text must be less than 420 characters');
+  function caw(ActionData calldata data) internal {
+    require(bytes(data.text).length <= 420, "Text exceeds 420 characters");
     CawName.spendAndDistributeTokens(data.senderId, 5000, 5000);
   }
 
-  function noop(
-    ActionData calldata data
-  ) internal { }
+  function noop(ActionData calldata data) internal {}
 
-  function withdraw(
-    ActionData calldata data
-  ) internal {
+  function withdraw(ActionData calldata data) internal {
     CawName.withdraw(data.senderId, data.amounts[0]);
   }
 
-  function likeCaw(
-    ActionData calldata data
-  ) internal {
-    // This function can be called more than once from the same user to the same CAW.
-    // front ends should manage any duplicate likes as a no-op. Validators and front-ends
-    // should prevent users from calling this more than once, because nothing will happen
-    // except the actor will spend more CAW.
-    // 
-    // If a user likes their own caw, 400 caw will still be distributed among all stakers.
+  function likeCaw(ActionData calldata data) internal {
     CawName.spendAndDistributeTokens(data.senderId, 2000, 400);
     CawName.addTokensToBalance(data.receiverId, 1600);
   }
 
-  function unlikeCaw(
-    ActionData calldata data
-  ) internal {
-    // This is a no-op, but it should get processed nonetheless,
-    // so front-end clients can see that it was successful
+  function unlikeCaw(ActionData calldata data) internal {
+    // No operation needed for unlike
   }
 
-  function reCaw(
-    ActionData calldata data
-  ) internal {
+  function reCaw(ActionData calldata data) internal {
     CawName.spendAndDistributeTokens(data.senderId, 4000, 2000);
     CawName.addTokensToBalance(data.receiverId, 2000);
   }
 
-  function unfollowUser(
-    ActionData calldata data
-  ) internal {
-    // This is a no-op, but it should get processed nonetheless,
-    // so front-end clients can see that it was successful
+  function unfollowUser(ActionData calldata data) internal {
+    // No operation needed for unfollow
   }
 
-  function followUser(
-    ActionData calldata data
-  ) internal {
-    require(data.senderId != data.receiverId, 'cannot follow yourself');
+  function followUser(ActionData calldata data) internal {
+    require(data.senderId != data.receiverId, "Cannot follow yourself");
     CawName.spendAndDistributeTokens(data.senderId, 30000, 6000);
     CawName.addTokensToBalance(data.receiverId, 24000);
   }
 
   function verifySignature(
-    uint8 v, bytes32 r, bytes32 s,
+    uint8 v,
+    bytes32 r,
+    bytes32 s,
     ActionData calldata data
   ) public view {
-    bytes memory hash = abi.encode(
-      keccak256("ActionData(uint8 actionType,uint32 senderId,uint32 receiverId,uint32 receiverCawonce,uint32 clientId,uint32 cawonce,uint32[] recipients,uint128[] amounts,string text)"),
-      data.actionType, data.senderId, data.receiverId, data.receiverCawonce, data.clientId, data.cawonce, 
-      keccak256(abi.encodePacked(data.recipients)),
-      keccak256(abi.encodePacked(data.amounts)),
-      keccak256(bytes(data.text))
+    bytes32 structHash = keccak256(
+      abi.encode(
+        ACTIONDATA_TYPEHASH,
+        data.actionType,
+        data.senderId,
+        data.receiverId,
+        data.receiverCawonce,
+        data.clientId,
+        data.cawonce,
+        keccak256(abi.encodePacked(data.recipients)),
+        keccak256(abi.encodePacked(data.amounts)),
+        keccak256(bytes(data.text))
+    )
     );
 
-    address signer = getSigner(hash, v, r, s);
+    address signer = getSigner(structHash, v, r, s);
     require(signer == CawName.ownerOf(data.senderId), "signer is not owner of this CawName");
   }
 
-  /**
-  * @dev Marks a cawonce as used for a specific senderId.
-  * @param senderId the id of the sender.
-    * @param cawonce The cawonce to mark as used.
-      */
   function useCawonce(uint32 senderId, uint256 cawonce) internal {
-    uint256 word = cawonce / 256;
-    uint256 bit = cawonce % 256;
+    uint256 word = cawonce >> 8; // Divide by 256
+    uint256 bit = cawonce & 0xff; // Modulo 256
     usedCawonce[senderId][word] |= (1 << bit);
-    while (usedCawonce[senderId][currentCawonceMap[senderId]] == type(uint256).max)
-      currentCawonceMap[senderId] += 1;
+    if (usedCawonce[senderId][word] == type(uint256).max) {
+      currentCawonceMap[senderId] = word + 1;
+    }
   }
 
   function nextCawonce(uint32 senderId) public view returns (uint256) {
     uint256 currentMap = currentCawonceMap[senderId];
     uint256 word = usedCawonce[senderId][currentMap];
-    if (word == 0) return (currentMap * 256);
+    if (word == 0) return currentMap * 256;
 
     uint256 nextSlot;
-    for (nextSlot = 1; nextSlot < 256; nextSlot++)
-    if (((1 << nextSlot) & word) == 0) break;
-
-    // Calculate the nonce: nonce = currentMap * 256 + bitIndex
-    return (currentCawonceMap[senderId] * 256) + nextSlot;
+    for (nextSlot = 0; nextSlot < 256; ) {
+      if (((1 << nextSlot) & word) == 0) break;
+      unchecked {
+        ++nextSlot;
+      }
+    }
+    return (currentMap * 256) + nextSlot;
   }
 
-  /**
-  * @dev Checks if a cawonce has been used for a specific senderId.
-  * @param senderId the id of the sender.
-    * @param cawonce The cawonce to check.
-      * @return True if the cawonce has been used, false otherwise.
-      */
   function isCawonceUsed(uint32 senderId, uint256 cawonce) public view returns (bool) {
-    uint256 word = cawonce / 256;
-    uint256 bit = cawonce % 256;
+    uint256 word = cawonce >> 8; // Divide by 256
+    uint256 bit = cawonce & 0xff; // Modulo 256
     return (usedCawonce[senderId][word] & (1 << bit)) != 0;
   }
 
   function getSigner(
-    bytes memory hashedObject,
-    uint8 v, bytes32 r, bytes32 s
+    bytes32 structHash,
+    uint8 v,
+    bytes32 r,
+    bytes32 s
   ) public view returns (address) {
-    uint256 chainId;
-    assembly {
-      chainId := chainid()
-    }
-
-    bytes32 hash = keccak256(abi.encodePacked("\x19\x01", eip712DomainHash, keccak256(hashedObject)));
-    return ecrecover(hash, v,r,s);
+    bytes32 hash = keccak256(abi.encodePacked("\x19\x01", eip712DomainHash, structHash));
+    return ecrecover(hash, v, r, s);
   }
 
   function generateDomainHash() public view returns (bytes32) {
-    uint256 chainId;
-    assembly {
-      chainId := chainid()
-    }
     return keccak256(
       abi.encode(
-        keccak256(
-          "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
-    ),
-    keccak256(bytes("CawNet")),
-    keccak256(bytes("1")),
-    chainId,
-    address(this)
+        EIP712_DOMAIN_TYPEHASH,
+        keccak256(bytes("CawNet")),
+        keccak256(bytes("1")),
+        block.chainid,
+        address(this)
     )
     );
   }
 
   function processActions(uint32 validatorId, MultiActionData calldata data, uint256 lzTokenAmountForWithdraws) external payable {
-    uint8[] calldata v = data.v;
-    bytes32[] calldata r = data.r;
-    bytes32[] calldata s = data.s;
+    uint256 actionsLength = data.actions.length;
+    require(actionsLength <= 256, "Cannot process more than 256 actions");
 
-    require(data.actions.length <= 256, 'can only process 256 actions at once');
     uint16 successCount;
     uint16 withdrawCount;
-
-    // Bitmaps to track success and withdraw actions
     uint256 successBitmap = 0;
     uint256 withdrawBitmap = 0;
 
-    // First pass: Process actions and set success/withdraw bits
-    for (uint16 i = 0; i < data.actions.length; i++) {
-      try CawActions(this).processAction(validatorId, data.actions[i], v[i], r[i], s[i]) {
-        // Mark this action as successful in the bitmap
-        successBitmap |= (1 << i);  // Set the ith bit to 1
-
-        // Check if the action is a withdraw
+    for (uint16 i = 0; i < actionsLength; ) {
+      try CawActions(this).processAction(validatorId, data.actions[i], data.v[i], data.r[i], data.s[i]) {
+        successBitmap |= (1 << i);
         if (data.actions[i].actionType == ActionType.WITHDRAW) {
-          withdrawBitmap |= (1 << i);  // Set the ith bit to 1
-          withdrawCount++;
+          withdrawBitmap |= (1 << i);
+          unchecked {
+            ++withdrawCount;
+          }
         }
-
-        successCount += 1;
+        unchecked {
+          ++successCount;
+        }
       } catch Error(string memory reason) {
         emit ActionRejected(data.actions[i].senderId, data.actions[i].cawonce, reason);
-      } catch Panic(uint256 errorCode) {
-        string memory errorCodeStr = Strings.toString(errorCode);
-        emit ActionRejected(data.actions[i].senderId, data.actions[i].cawonce, string(abi.encodePacked("Panic error code: ", errorCodeStr)));
-      } catch (bytes memory lowLevelData) {
-        emit ActionRejected(data.actions[i].senderId, data.actions[i].cawonce, "low level exception");
+      } catch (bytes memory) {
+        emit ActionRejected(data.actions[i].senderId, data.actions[i].cawonce, "Low-level exception");
+      }
+      unchecked {
+        ++i;
       }
     }
 
-    // Only allocate arrays after counting successful actions
-    // bytes memory successfulActions;
-    ActionData[] memory successfulActions = new ActionData[](successCount);
+    if (successCount > 0) {
+      ActionData[] memory successfulActions = new ActionData[](successCount);
+      uint16 index = 0;
+      for (uint16 i = 0; i < actionsLength; ) {
+        if ((successBitmap & (1 << i)) != 0) {
+          successfulActions[index] = data.actions[i];
+          unchecked {
+            ++index;
+          }
+        }
+        unchecked {
+          ++i;
+        }
+      }
+      emit ActionsProcessed(successfulActions);
+    }
 
-    uint32[] memory withdrawIds;
-    uint256[] memory withdrawAmounts;
     if (withdrawCount > 0) {
-      withdrawIds = new uint32[](withdrawCount);
-      withdrawAmounts = new uint256[](withdrawCount);
-    }
-
-    // Second pass: Populate arrays based on bitmaps
-    uint16 successIndex = 0;
-    uint16 withdrawIndex = 0;
-
-    for (uint16 i = 0; i < data.actions.length; i++) {
-      if ((successBitmap & (1 << i)) != 0) {
-        // This action was successful, so add it to the successfulActions array
-        // successfulActions = abi.encodePacked(successfulActions, packActionData(data.actions[i]));
-        successfulActions[successIndex] = data.actions[i];
-        successIndex++;
+      uint32[] memory withdrawIds = new uint32[](withdrawCount);
+      uint256[] memory withdrawAmounts = new uint256[](withdrawCount);
+      uint16 index = 0;
+      for (uint16 i = 0; i < actionsLength; ) {
+        if ((withdrawBitmap & (1 << i)) != 0) {
+          withdrawIds[index] = data.actions[i].senderId;
+          withdrawAmounts[index] = data.actions[i].amounts[0];
+          unchecked {
+            ++index;
+          }
+        }
+        unchecked {
+          ++i;
+        }
       }
-
-      if ((withdrawBitmap & (1 << i)) != 0) {
-        // This action was a successful withdraw, so add it to the withdrawIds and withdrawAmounts arrays
-        withdrawIds[withdrawIndex] = data.actions[i].senderId;
-        withdrawAmounts[withdrawIndex] = data.actions[i].amounts[0];
-        withdrawIndex++;
-      }
+      CawName.setWithdrawable{ value: msg.value }(withdrawIds, withdrawAmounts, lzTokenAmountForWithdraws);
     }
-
-    // Emit the successful actions event if any were processed
-    // if (successCount > 0) emit ActionsProcessed(successfulActions);
-    if (successCount > 0) emit ActionsProcessed(successfulActions);
-
-    // Call setWithdrawable with the withdraw tokens and amounts
-    if (withdrawCount > 0) CawName.setWithdrawable{value: msg.value}(withdrawIds, withdrawAmounts, lzTokenAmountForWithdraws);
   }
 
-  function withdrawQuote(uint32[] memory tokenIds, uint256[] memory amounts, bool payInLzToken) public view returns (MessagingFee memory quote) {
+  function withdrawQuote(uint32[] memory tokenIds, uint256[] memory amounts, bool payInLzToken)
+  public
+  view
+  returns (MessagingFee memory quote)
+  {
     return CawName.withdrawQuote(tokenIds, amounts, payInLzToken);
   }
-
 }
 
