@@ -1,4 +1,4 @@
-// contracts/CawNameL2.sol
+// contracts/CawName.sol
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
@@ -27,14 +27,18 @@ contract CawNameL2 is
 
   address public cawActions;
 
+  // In a normal ERC271, ownerOf reverts if there is no owner,
+  // here, since it's not a real ERC721, just a pretender,
+  // we return the zero addres... probably fine. Right?
   mapping(uint256 => address) public ownerOf;
 
+  // Keeping track of clients to which the user has authenticated
   mapping(uint32 => mapping(uint32 => bool)) public authenticated;
 
   mapping(uint32 => uint256) public cawOwnership;
 
   uint256 public rewardMultiplier = 10**18;
-  uint256 public precision = 30425026352721 ** 2;
+  uint256 public precision = 30425026352721 ** 2;// ** 3;
 
   uint32 public layer1EndpointId = 30101;
 
@@ -71,37 +75,26 @@ contract CawNameL2 is
     return cawOwnership[tokenId] * rewardMultiplier / (precision);
   }
 
-  function spendAndDistributeTokens(uint32 tokenId, uint256 amountToSpend, uint256 amountToDistribute) external returns (bool success, string memory errorReason) {
-    // Multiply amounts by 10^18
-    return spendAndDistribute(tokenId, amountToSpend * 10**18, amountToDistribute * 10**18);
+  function spendAndDistributeTokens(uint32 tokenId, uint256 amountToSpend, uint256 amountToDistribute) external {
+    spendAndDistribute(tokenId, amountToSpend * 10**18, amountToDistribute * 10**18);
   }
 
-  function spendAndDistribute(uint32 tokenId, uint256 amountToSpend, uint256 amountToDistribute) public returns (bool success, string memory errorReason) {
-    if (cawActions != _msgSender()) {
-      return (false, "caller is not the cawActions contract");
-    }
-
+  function spendAndDistribute(uint32 tokenId, uint256 amountToSpend, uint256 amountToDistribute) public {
+    require(cawActions == _msgSender(), "caller is not the cawActions contract");
     uint256 balance = cawBalanceOf(tokenId);
 
-    if (balance < amountToSpend) {
-      return (false, "insufficient CAW balance");
-    }
-
+    require(balance >= amountToSpend, 'Insufficient CAW balance');
     uint256 newCawBalance = balance - amountToSpend;
 
-    if (totalCaw > balance) {
+    if (totalCaw > balance)
       rewardMultiplier += rewardMultiplier * amountToDistribute / (totalCaw - balance);
-    } else {
-      newCawBalance += amountToDistribute;
-    }
+    else newCawBalance += amountToDistribute;
 
     setCawBalance(tokenId, newCawBalance);
-    return (true, "");
   }
 
-  function addTokensToBalance(uint32 tokenId, uint256 amount) external returns (bool success, string memory errorReason) {
-    // Multiply amount by 10^18
-    return addToBalance(tokenId, amount * 10**18);
+  function addTokensToBalance(uint32 tokenId, uint256 amount) external {
+    addToBalance(tokenId, amount * 10**18);
   }
 
   function authenticateAndUpdateOwners(uint32 cawClientId, uint32 tokenId, uint32[] calldata tokenIds, address[] calldata owners) public {
@@ -117,13 +110,10 @@ contract CawNameL2 is
     authenticateAndUpdateOwners(cawClientId, tokenId, tokenIds, owners);
   }
 
-  function addToBalance(uint32 tokenId, uint256 amount) public returns (bool success, string memory errorReason) {
-    if (!(fromLZ || cawActions == _msgSender())) {
-      return (false, "caller is not cawActions or LZ");
-    }
+  function addToBalance(uint32 tokenId, uint256 amount) public {
+    require(fromLZ || cawActions == _msgSender(), "caller is not cawActions or LZ");
 
     setCawBalance(tokenId, cawBalanceOf(tokenId) + amount);
-    return (true, "");
   }
 
   function setCawBalance(uint32 tokenId, uint256 newCawBalance) internal {
@@ -166,30 +156,40 @@ contract CawNameL2 is
   }
 
   function _lzReceive(
-    Origin calldata _origin,
-    bytes32 _guid,
-    bytes calldata payload,
-    address _executor,
-    bytes calldata
+    Origin calldata _origin, // struct containing info about the message sender
+    bytes32 _guid, // global packet identifier
+    bytes calldata payload, // encoded message payload being received
+    address _executor, // the Executor address.
+    bytes calldata // arbitrary data appended by the Executor
   ) internal override {
+    // Declare selector and arguments as memory variables
     bytes4 decodedSelector;
-    bytes memory args = new bytes(payload.length - 4);
+    bytes memory args = new bytes(payload.length - 4); // Arguments excluding the first 4 bytes
 
     assembly {
+      // Copy the selector (first 4 bytes) from calldata
       decodedSelector := calldataload(payload.offset)
+
+      // Copy the arguments from calldata to memory
       calldatacopy(add(args, 32), add(payload.offset, 4), sub(payload.length, 4))
     }
 
+    // Ensure the selector corresponds to an expected function to prevent unauthorized actions
     require(isAuthorizedFunction(decodedSelector), "Unauthorized function call");
 
+    // Call the function using the selector and arguments
+    // (bool success, bytes memory returnData) = address(this).delegatecall(abi.encode(decodedSelector, args));
     fromLZ = true;
     (bool success, bytes memory returnData) = address(this).delegatecall(bytes.concat(decodedSelector, args));
     fromLZ = false;
 
+    // Handle failure and revert with the error message
     if (!success) {
+      // If the returndata is empty, use a generic error message
       if (returnData.length == 0) {
         revert("Delegatecall failed with no revert reason");
       } else {
+        // Bubble up the revert reason
         assembly {
           let returndata_size := mload(returnData)
           revert(add(32, returnData), returndata_size)
@@ -200,27 +200,23 @@ contract CawNameL2 is
 
   mapping(bytes4 => string) public functionSigs;
 
+  // Helper function to verify if the function selector is authorized
   function isAuthorizedFunction(bytes4 selector) private pure returns (bool) {
+    // Add all authorized function selectors here
     return selector == bytes4(keccak256("depositAndUpdateOwners(uint32,uint32,uint256,uint32[],address[])")) || 
       selector == bytes4(keccak256("authenticateAndUpdateOwners(uint32,uint32,uint32[],address[])")) ||
       selector == bytes4(keccak256("mintAndUpdateOwners(uint32,address,string,uint32[],address[])")) ||
       selector == bytes4(keccak256("updateOwners(uint32[],address[])"));
   }
 
-  function withdraw(uint32 tokenId, uint256 amount) external returns (bool success, string memory errorReason) {
-    if (cawActions != _msgSender()) {
-      return (false, "caller is not the cawActions contract");
-    }
+  function withdraw(uint32 tokenId, uint256 amount) external {
+    require(cawActions == _msgSender(), "caller is not the cawActions contract");
 
     uint256 balance = cawBalanceOf(tokenId);
-    if (balance < amount) {
-      return (false, "insufficient CAW balance");
-    }
+    require(balance >= amount, 'Insufficient CAW balance');
 
     totalCaw -= amount;
     setCawBalance(tokenId, balance - amount);
-
-    return (true, "");
   }
 
   function setWithdrawable(uint32[] memory tokenIds, uint256[] memory amounts, uint256 lzTokenAmount) external payable {
@@ -244,15 +240,16 @@ contract CawNameL2 is
     return _quote(layer1EndpointId, payload, _options, _payInLzToken);
   }
 
+  // Will use to send withdrawable amount to L1
   function lzSend(bytes4 selector, bytes memory payload, uint256 lzTokenAmount) internal {
     bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(selector), 0);
 
     _lzSend(
-      layer1EndpointId,
-      payload,
-      _options,
-      MessagingFee(msg.value, lzTokenAmount),
-      payable(msg.sender)
+      layer1EndpointId, // Destination chain's endpoint ID.
+      payload, // Encoded message payload being sent.
+      _options, // Message execution options (e.g., gas to use on destination).
+      MessagingFee(msg.value, lzTokenAmount), // Fee struct containing native gas and ZRO token.
+      payable(msg.sender) // The refund address in case the send call reverts.
     );
   }
 
@@ -265,4 +262,5 @@ contract CawNameL2 is
   }
 
 }
+
 

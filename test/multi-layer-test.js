@@ -706,7 +706,7 @@ contract('CawNames', function(accounts, x) {
 			console.log(args)
       return args.cawonce == result.signedActions[0].data.message.cawonce &&
 				args.senderId == result.signedActions[0].data.message.senderId &&
-        args.reason == 'Cawonce used already';
+        args.reason == 'Cawonce already used';
     });
 
 
@@ -858,7 +858,7 @@ contract('CawNames', function(accounts, x) {
       console.log(args);
       return args.cawonce == result.signedActions[0].data.message.cawonce &&
 				args.senderId == result.signedActions[0].data.message.senderId &&
-        args.reason == 'Cawonce used already';
+        args.reason == 'Cawonce already used';
     });
 
 
