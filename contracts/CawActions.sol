@@ -10,140 +10,279 @@ import "./CawNameL2.sol";
 import { MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
 contract CawActions is Context {
-  enum ActionType { CAW, LIKE, UNLIKE, RECAW, FOLLOW, UNFOLLOW, WITHDRAW, NOOP }
+    enum ActionType { CAW, LIKE, UNLIKE, RECAW, FOLLOW, UNFOLLOW, WITHDRAW, NOOP }
 
-  struct ActionData {
-    ActionType actionType;
-    uint32 senderId;
-    uint32 receiverId;
-    uint32 receiverCawonce;
-    uint32 clientId;
-    uint32 cawonce;
-    uint32[] recipients;
-    uint128[] amounts;
-    string text;
-  }
-
-  struct MultiActionData {
-    ActionData[] actions;
-    uint8[] v;
-    bytes32[] r;
-    bytes32[] s;
-  }
-
-  bytes32 public immutable eip712DomainHash;
-  bytes32 public currentHash = bytes32("genesis");
-
-  mapping(uint32 => mapping(uint256 => uint256)) public usedCawonce;
-  mapping(uint32 => uint256) public currentCawonceMap;
-
-  event ActionsProcessed(ActionData[] actions);
-  event ActionRejected(uint32 senderId, uint32 cawonce, string reason);
-
-  CawNameL2 public immutable CawName;
-
-  // Precomputed type hashes for EIP712
-  bytes32 private constant EIP712_DOMAIN_TYPEHASH = keccak256(
-    "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
-  );
-  bytes32 private constant ACTIONDATA_TYPEHASH = keccak256(
-    "ActionData(uint8 actionType,uint32 senderId,uint32 receiverId,uint32 receiverCawonce,uint32 clientId,uint32 cawonce,uint32[] recipients,uint128[] amounts,string text)"
-  );
-
-  constructor(address _cawNames) {
-    eip712DomainHash = generateDomainHash();
-    CawName = CawNameL2(_cawNames);
-  }
-
-  function processAction(uint32 validatorId, ActionData calldata action, uint8 v, bytes32 r, bytes32 s) external {
-    require(address(this) == _msgSender(), "Caller must be CawActions contract");
-    require(!isCawonceUsed(action.senderId, action.cawonce), "Cawonce already used");
-    require(CawName.authenticated(action.clientId, action.senderId), "User has not authenticated with this client");
-
-    verifySignature(v, r, s, action);
-
-    if (action.actionType == ActionType.CAW) caw(action);
-    else if (action.actionType == ActionType.LIKE) likeCaw(action);
-    else if (action.actionType == ActionType.UNLIKE) unlikeCaw(action);
-    else if (action.actionType == ActionType.RECAW) reCaw(action);
-    else if (action.actionType == ActionType.FOLLOW) followUser(action);
-    else if (action.actionType == ActionType.UNFOLLOW) unfollowUser(action);
-    else if (action.actionType == ActionType.WITHDRAW) withdraw(action);
-    else if (action.actionType != ActionType.NOOP) revert("Invalid action type");
-
-    distributeAmounts(validatorId, action);
-    useCawonce(action.senderId, action.cawonce);
-
-    currentHash = keccak256(abi.encodePacked(currentHash, r));
-  }
-
-  function distributeAmounts(uint32 validatorId, ActionData calldata action) internal {
-    uint256 numRecipients = action.recipients.length;
-    uint256 numAmounts = action.amounts.length;
-
-    if (numAmounts != numRecipients)
-      require(numAmounts == numRecipients + 1, "Amounts and recipients mismatch");
-
-    if (numRecipients == 0 && numAmounts == 0) return;
-
-    bool isWithdrawal = action.actionType == ActionType.WITHDRAW;
-    uint256 startIndex = isWithdrawal ? 1 : 0;
-
-    uint256 amountTotal = action.amounts[numAmounts - 1];
-
-    for (uint256 i = startIndex; i < numRecipients; ) {
-      CawName.addToBalance(action.recipients[i], action.amounts[i]);
-      amountTotal += action.amounts[i];
-      unchecked {
-        ++i;
-      }
+    struct ActionData {
+        ActionType actionType;
+        uint32 senderId;
+        uint32 receiverId;
+        uint32 receiverCawonce;
+        uint32 clientId;
+        uint32 cawonce;
+        uint32[] recipients;
+        uint128[] amounts;
+        string text;
     }
 
-    CawName.addToBalance(validatorId, action.amounts[numAmounts - 1]);
-    CawName.spendAndDistribute(action.senderId, amountTotal, 0);
-  }
+    struct MultiActionData {
+        ActionData[] actions;
+        uint8[] v;
+        bytes32[] r;
+        bytes32[] s;
+    }
 
-  function caw(ActionData calldata data) internal {
-    require(bytes(data.text).length <= 420, "Text exceeds 420 characters");
-    CawName.spendAndDistributeTokens(data.senderId, 5000, 5000);
-  }
+    uint256 private constant MAX_TEXT_LENGTH = 420;
 
-  function noop(ActionData calldata data) internal {}
+    bytes32 public immutable eip712DomainHash;
+    bytes32 public currentHash = bytes32("genesis");
 
-  function withdraw(ActionData calldata data) internal {
-    CawName.withdraw(data.senderId, data.amounts[0]);
-  }
+    mapping(uint32 => mapping(uint256 => uint256)) public usedCawonce;
+    mapping(uint32 => uint256) public currentCawonceMap;
 
-  function likeCaw(ActionData calldata data) internal {
-    CawName.spendAndDistributeTokens(data.senderId, 2000, 400);
-    CawName.addTokensToBalance(data.receiverId, 1600);
-  }
+    event ActionsProcessed(ActionData[] actions);
+    event ActionRejected(uint32 senderId, uint32 cawonce, string reason);
 
-  function unlikeCaw(ActionData calldata data) internal {
-    // No operation needed for unlike
-  }
+    CawNameL2 public immutable CawName;
 
-  function reCaw(ActionData calldata data) internal {
-    CawName.spendAndDistributeTokens(data.senderId, 4000, 2000);
-    CawName.addTokensToBalance(data.receiverId, 2000);
-  }
+    // Precomputed type hashes for EIP712
+    bytes32 private constant EIP712_DOMAIN_TYPEHASH = keccak256(
+        "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+    );
+    bytes32 private constant ACTIONDATA_TYPEHASH = keccak256(
+        "ActionData(uint8 actionType,uint32 senderId,uint32 receiverId,uint32 receiverCawonce,uint32 clientId,uint32 cawonce,uint32[] recipients,uint128[] amounts,string text)"
+    );
 
-  function unfollowUser(ActionData calldata data) internal {
-    // No operation needed for unfollow
-  }
+    constructor(address _cawNames) {
+        eip712DomainHash = generateDomainHash();
+        CawName = CawNameL2(_cawNames);
+    }
 
-  function followUser(ActionData calldata data) internal {
-    require(data.senderId != data.receiverId, "Cannot follow yourself");
-    CawName.spendAndDistributeTokens(data.senderId, 30000, 6000);
-    CawName.addTokensToBalance(data.receiverId, 24000);
-  }
+    function processAction(
+        uint32 validatorId,
+        ActionData calldata action,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) internal returns (bool success, string memory errorReason) {
+        success = true;
+        errorReason = "";
+
+        if (isCawonceUsed(action.senderId, action.cawonce)) {
+            success = false;
+            errorReason = "Cawonce used already";
+            return (success, errorReason);
+        }
+
+        if (!CawName.authenticated(action.clientId, action.senderId)) {
+            success = false;
+            errorReason = "User has not authenticated with this client";
+            return (success, errorReason);
+        }
+
+        (bool sigValid, string memory sigError) = verifySignature(v, r, s, action);
+        if (!sigValid) {
+            success = false;
+            errorReason = sigError;
+            return (success, errorReason);
+        }
+
+        // First, get action cost and distribution amounts
+        uint256 actionCost;
+        uint256 amountToDistribute;
+        (bool costSuccess, string memory costError, uint256 actionCostReturned, uint256 amountToDistributeReturned) = getActionCostAndDistribution(action);
+        if (!costSuccess) {
+            success = false;
+            errorReason = costError;
+            return (success, errorReason);
+        }
+        actionCost = actionCostReturned;
+        amountToDistribute = amountToDistributeReturned;
+
+        // Then, calculate the total amount to distribute directly to recipients
+        uint256 totalDistributeAmount = calculateTotalDistributeAmount(action);
+        uint256 totalAmountToSpend = actionCost + totalDistributeAmount;
+
+        // Check if sender has enough balance
+        uint256 senderBalance = CawName.cawBalanceOf(action.senderId);
+        if (senderBalance < totalAmountToSpend) {
+            success = false;
+            errorReason = "Insufficient CAW balance";
+            return (success, errorReason);
+        }
+
+        // Deduct total amount from sender and distribute amountToDistribute among all users
+        (bool spendSuccess, string memory spendError) = CawName.spendAndDistribute(
+            action.senderId,
+            totalAmountToSpend,
+            amountToDistribute
+        );
+        if (!spendSuccess) {
+            success = false;
+            errorReason = spendError;
+            return (success, errorReason);
+        }
+
+        // Now execute the action (without further token deductions)
+        (success, errorReason) = executeActionWithoutSpending(action);
+        if (!success) {
+            // Since tokens have already been deducted and distributed, we cannot refund
+            // Ensure that executeActionWithoutSpending cannot fail at this point
+            return (success, errorReason);
+        }
+
+        // Distribute the amounts to recipients
+        (success, errorReason) = distributeAmounts(validatorId, action);
+        if (!success) {
+            // Handle distribution failure if needed
+            return (success, errorReason);
+        }
+
+        useCawonce(action.senderId, action.cawonce);
+
+        currentHash = keccak256(abi.encodePacked(currentHash, r));
+
+        return (success, errorReason);
+    }
+
+    function getActionCostAndDistribution(
+        ActionData calldata action
+    ) internal pure returns (bool success, string memory errorReason, uint256 actionCost, uint256 amountToDistribute) {
+        success = true;
+        errorReason = "";
+        actionCost = 0;
+        amountToDistribute = 0;
+
+        if (action.actionType == ActionType.CAW) {
+            if (bytes(action.text).length > MAX_TEXT_LENGTH) {
+                success = false;
+                errorReason = "Text must be less than 420 characters";
+                return (success, errorReason, 0, 0);
+            }
+            actionCost = 5000 * 10**18;
+            amountToDistribute = 5000 * 10**18;
+        } else if (action.actionType == ActionType.LIKE) {
+            actionCost = 2000 * 10**18;
+            amountToDistribute = 400 * 10**18;
+        } else if (action.actionType == ActionType.RECAW) {
+            actionCost = 4000 * 10**18;
+            amountToDistribute = 2000 * 10**18;
+        } else if (action.actionType == ActionType.FOLLOW) {
+            if (action.senderId == action.receiverId) {
+                success = false;
+                errorReason = "Cannot follow yourself";
+                return (success, errorReason, 0, 0);
+            }
+            actionCost = 30000 * 10**18;
+            amountToDistribute = 6000 * 10**18;
+        } else if (action.actionType == ActionType.WITHDRAW) {
+            actionCost = 0; // Withdraw doesn't have an action cost
+            amountToDistribute = 0;
+        } else if (action.actionType == ActionType.UNLIKE || action.actionType == ActionType.UNFOLLOW || action.actionType == ActionType.NOOP) {
+            actionCost = 0;
+            amountToDistribute = 0;
+        } else {
+            success = false;
+            errorReason = "Invalid action type";
+            return (success, errorReason, 0, 0);
+        }
+
+        return (success, errorReason, actionCost, amountToDistribute);
+    }
+
+    function calculateTotalDistributeAmount(ActionData calldata action) internal pure returns (uint256 totalDistributeAmount) {
+        totalDistributeAmount = 0;
+
+        uint256 numAmounts = action.amounts.length;
+        if (numAmounts == 0) {
+            return totalDistributeAmount;
+        }
+
+        for (uint256 i = 0; i < numAmounts; ) {
+            totalDistributeAmount += uint256(action.amounts[i]);
+            unchecked {
+              ++i;
+            }
+        }
+    }
+
+    function executeActionWithoutSpending(ActionData calldata action) internal returns (bool success, string memory errorReason) {
+        success = true;
+        errorReason = "";
+
+        if (action.actionType == ActionType.CAW) {
+            // No additional state changes needed for caw action
+            return (success, errorReason);
+        } else if (action.actionType == ActionType.LIKE) {
+            CawName.addTokensToBalance(action.receiverId, 1600);
+        } else if (action.actionType == ActionType.RECAW) {
+            CawName.addTokensToBalance(action.receiverId, 2000);
+        } else if (action.actionType == ActionType.FOLLOW) {
+            CawName.addTokensToBalance(action.receiverId, 24000);
+        } else if (action.actionType == ActionType.UNLIKE || action.actionType == ActionType.UNFOLLOW || action.actionType == ActionType.NOOP) {
+            // No operation needed
+            return (success, errorReason);
+        } else if (action.actionType == ActionType.WITHDRAW) {
+            (bool withdrawSuccess, string memory withdrawError) = CawName.withdraw(action.senderId, action.amounts[0]);
+            if (!withdrawSuccess) {
+                success = false;
+                errorReason = withdrawError;
+                return (success, errorReason);
+            }
+        } else {
+            success = false;
+            errorReason = "Invalid action type";
+            return (success, errorReason);
+        }
+
+        return (success, errorReason);
+    }
+
+    function distributeAmounts(
+        uint32 validatorId,
+        ActionData calldata action
+    ) internal returns (bool success, string memory errorReason) {
+        success = true;
+        errorReason = "";
+
+        uint256 numRecipients = action.recipients.length;
+        uint256 numAmounts = action.amounts.length;
+
+        if (numAmounts != numRecipients) {
+            if (numAmounts != numRecipients + 1) {
+                success = false;
+                errorReason = "Amounts and recipients mismatch";
+                return (success, errorReason);
+            }
+        }
+
+        if (numRecipients == 0 && numAmounts == 0) return (success, errorReason);
+
+        bool isWithdrawal = action.actionType == ActionType.WITHDRAW;
+        uint256 startIndex = isWithdrawal ? 1 : 0;
+
+        // Distribute amounts to recipients
+        for (uint256 i = startIndex; i < numRecipients; ) {
+            CawName.addToBalance(action.recipients[i], action.amounts[i]);
+            unchecked {
+                ++i;
+            }
+        }
+
+        // Add to validator
+        CawName.addToBalance(validatorId, action.amounts[numAmounts - 1]);
+
+        return (success, errorReason);
+    }
 
   function verifySignature(
     uint8 v,
     bytes32 r,
     bytes32 s,
     ActionData calldata data
-  ) public view {
+  ) public view returns (bool success, string memory errorReason) {
+    success = true;
+    errorReason = "";
+
     bytes32 structHash = keccak256(
       abi.encode(
         ACTIONDATA_TYPEHASH,
@@ -160,14 +299,23 @@ contract CawActions is Context {
     );
 
     address signer = getSigner(structHash, v, r, s);
-    require(signer == CawName.ownerOf(data.senderId), "signer is not owner of this CawName");
+    if (signer != CawName.ownerOf(data.senderId)) {
+      success = false;
+      errorReason = "Signer is not owner of this CawName";
+      return (success, errorReason);
+    }
+
+    return (success, errorReason);
   }
 
   function useCawonce(uint32 senderId, uint256 cawonce) internal {
     uint256 word = cawonce >> 8; // Divide by 256
     uint256 bit = cawonce & 0xff; // Modulo 256
-    usedCawonce[senderId][word] |= (1 << bit);
-    if (usedCawonce[senderId][word] == type(uint256).max) {
+    uint256 usedCawonceWord = usedCawonce[senderId][word];
+    usedCawonceWord |= (1 << bit);
+    usedCawonce[senderId][word] = usedCawonceWord;
+
+    if (usedCawonceWord == type(uint256).max) {
       currentCawonceMap[senderId] = word + 1;
     }
   }
@@ -215,7 +363,11 @@ contract CawActions is Context {
     );
   }
 
-  function processActions(uint32 validatorId, MultiActionData calldata data, uint256 lzTokenAmountForWithdraws) external payable {
+  function processActions(
+    uint32 validatorId,
+    MultiActionData calldata data,
+    uint256 lzTokenAmountForWithdraws
+  ) external payable {
     uint256 actionsLength = data.actions.length;
     require(actionsLength <= 256, "Cannot process more than 256 actions");
 
@@ -225,7 +377,15 @@ contract CawActions is Context {
     uint256 withdrawBitmap = 0;
 
     for (uint16 i = 0; i < actionsLength; ) {
-      try CawActions(this).processAction(validatorId, data.actions[i], data.v[i], data.r[i], data.s[i]) {
+      (bool success, string memory errorReason) = processAction(
+        validatorId,
+        data.actions[i],
+        data.v[i],
+        data.r[i],
+        data.s[i]
+      );
+
+      if (success) {
         successBitmap |= (1 << i);
         if (data.actions[i].actionType == ActionType.WITHDRAW) {
           withdrawBitmap |= (1 << i);
@@ -236,10 +396,8 @@ contract CawActions is Context {
         unchecked {
           ++successCount;
         }
-      } catch Error(string memory reason) {
-        emit ActionRejected(data.actions[i].senderId, data.actions[i].cawonce, reason);
-      } catch (bytes memory) {
-        emit ActionRejected(data.actions[i].senderId, data.actions[i].cawonce, "Low-level exception");
+      } else {
+        emit ActionRejected(data.actions[i].senderId, data.actions[i].cawonce, errorReason);
       }
       unchecked {
         ++i;
@@ -283,11 +441,11 @@ contract CawActions is Context {
     }
   }
 
-  function withdrawQuote(uint32[] memory tokenIds, uint256[] memory amounts, bool payInLzToken)
-  public
-  view
-  returns (MessagingFee memory quote)
-  {
+  function withdrawQuote(
+    uint32[] memory tokenIds,
+    uint256[] memory amounts,
+    bool payInLzToken
+  ) public view returns (MessagingFee memory quote) {
     return CawName.withdrawQuote(tokenIds, amounts, payInLzToken);
   }
 }

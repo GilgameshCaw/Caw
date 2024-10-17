@@ -77,7 +77,7 @@ function timeout(ms) {
 
 async function signData(user, data) {
   var privateKey = web3.eth.currentProvider.wallets[user.toLowerCase()].getPrivateKey()
-  // console.log("SIgning:::", data);
+  console.log("SIgning:::", data);
   s = signTypedData({
     data: data,
     privateKey: privateKey,
@@ -596,6 +596,31 @@ contract('CawNames', function(accounts, x) {
     await expectBalanceOf(3, {toEqual: 12437.5});
 
 
+
+
+    result = await processActions([{
+      actionType: 'like',
+      cawId: secondCawId,
+      sender: accounts[2],
+      receiverCawonce: 0,
+      receiverId: 2,
+      senderId: 1,
+			amounts: [(10000000n * 10n**18n).toString()]
+    }], {
+      validator: accounts[2]
+    });
+
+    console.log("Expect fail:")
+    truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
+      return args.cawonce == result.signedActions[0].data.message.cawonce &&
+				args.senderId == result.signedActions[0].data.message.senderId &&
+        args.reason == 'Insufficient CAW balance';
+    });
+
+    //^ this should fail, and the balance should be the same as it was:
+    await expectBalanceOf(1, {toEqual: 6620.1132});
+
+
     await processActions([{
       actionType: 'follow',
       sender: accounts[2],
@@ -632,7 +657,7 @@ contract('CawNames', function(accounts, x) {
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
       return args.cawonce == result.signedActions[0].data.message.cawonce &&
 				args.senderId == result.signedActions[0].data.message.senderId &&
-        args.reason == 'insufficent CAW balance';
+        args.reason == 'Insufficient CAW balance';
     });
 
 
@@ -678,9 +703,10 @@ contract('CawNames', function(accounts, x) {
 
     console.log("Expect fail:")
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
+			console.log(args)
       return args.cawonce == result.signedActions[0].data.message.cawonce &&
 				args.senderId == result.signedActions[0].data.message.senderId &&
-        args.reason == 'Cawonce already used';
+        args.reason == 'Cawonce used already';
     });
 
 
@@ -783,7 +809,7 @@ contract('CawNames', function(accounts, x) {
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
       return args.cawonce == result.signedActions[0].data.message.cawonce &&
 				args.senderId == result.signedActions[0].data.message.senderId &&
-        args.reason == 'signer is not owner of this CawName';
+        args.reason == 'Signer is not owner of this CawName';
     });
 
     console.log("TRANSFER UPDATE end:", BigInt(await cawNames.pendingTransferEnd(l2)));
@@ -832,7 +858,7 @@ contract('CawNames', function(accounts, x) {
       console.log(args);
       return args.cawonce == result.signedActions[0].data.message.cawonce &&
 				args.senderId == result.signedActions[0].data.message.senderId &&
-        args.reason == 'Cawonce already used';
+        args.reason == 'Cawonce used already';
     });
 
 
@@ -935,6 +961,7 @@ contract('CawNames', function(accounts, x) {
     });
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
 			console.log("Raw ACTION data: ", args.actions.length);
+			// return true;
       return args.actions.length == 256;
 		});
 
