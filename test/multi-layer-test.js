@@ -45,7 +45,6 @@ var cawActionsMainnet;
 
 var uriGenerator;
 var clientManager;
-var totalGas = 0n;
 
 const dataTypes = {
   EIP712Domain: [
@@ -54,47 +53,18 @@ const dataTypes = {
     { name: 'chainId', type: 'uint256' },
     { name: 'verifyingContract', type: 'address' },
   ],
-  CawAction: [
+  ActionData: [
     { name: 'actionType', type: 'uint8' },
     { name: 'senderId', type: 'uint32' },
     { name: 'receiverId', type: 'uint32' },
     { name: 'receiverCawonce', type: 'uint32' },
     { name: 'clientId', type: 'uint32' },
-    { name: 'cawonce', type: 'uint32' },
+    { name: 'cawonce', type: 'uint32'},
     { name: 'recipients', type: 'uint32[]' },
     { name: 'amounts', type: 'uint128[]' },
     { name: 'text', type: 'string' },
   ],
-  CawInteraction: [
-    { name: 'actionType', type: 'uint8' },
-    { name: 'senderId', type: 'uint32' },
-    { name: 'receiverId', type: 'uint32' },
-    { name: 'receiverCawonce', type: 'uint32' },
-    { name: 'clientId', type: 'uint32' },
-    { name: 'cawonce', type: 'uint32' },
-    { name: 'recipients', type: 'uint32[]' },
-    { name: 'amounts', type: 'uint128[]' },
-  ],
-  UserInteraction: [
-    { name: 'actionType', type: 'uint8' },
-    { name: 'senderId', type: 'uint32' },
-    { name: 'receiverId', type: 'uint32' },
-    { name: 'clientId', type: 'uint32' },
-    { name: 'cawonce', type: 'uint32' },
-    { name: 'recipients', type: 'uint32[]' },
-    { name: 'amounts', type: 'uint128[]' },
-  ],
-  WithdrawAction: [
-    { name: 'actionType', type: 'uint8' },
-    { name: 'senderId', type: 'uint32' },
-    { name: 'clientId', type: 'uint32' },
-    { name: 'cawonce', type: 'uint32' },
-    { name: 'recipients', type: 'uint32[]' },
-    { name: 'amounts', type: 'uint128[]' },
-  ],
 };
-
-
 
 const gasUsed = async function(transaction) {
   var fullTx = await web3.eth.getTransaction(transaction.tx);
@@ -107,7 +77,7 @@ function timeout(ms) {
 
 async function signData(user, data) {
   var privateKey = web3.eth.currentProvider.wallets[user.toLowerCase()].getPrivateKey()
-  console.log("SIgning:::", data, privateKey);
+  console.log("SIgning:::", data);
   s = signTypedData({
     data: data,
     privateKey: privateKey,
@@ -133,7 +103,7 @@ return s;
   // console.log("ABOUT TO SIGN sig", sig);
 
 function decodeActions(data) {
-	return data;
+return data;
 	const multiActionDataABI = {
 		"components": [
 			{ "internalType": "uint8", "name": "actionType", "type": "uint8" },
@@ -163,46 +133,20 @@ function decodeActions(data) {
 async function processActions(actions, params) {
   console.log("---");
   console.log("PROCESS ACTIONS");
-  const cawonces = {};
+  var cawonces = {}
 
-  const cawActionsArray = [];
-  const cawInteractionsArray = [];
-  const userInteractionsArray = [];
-  const withdrawActionsArray = [];
-
-	const signedActions = [];
-
-  for (const action of actions) {
+  var signedActions = []
+  for (var i = 0; i<actions.length; i++){
+    var action = actions[i];
     if (action.cawonce == undefined && cawonces[action.senderId] != undefined)
       action.cawonce = cawonces[action.senderId.toString()] + 1;
 
     var data = await generateData(action.actionType, action);
     cawonces[data.message.senderId] = data.message.cawonce;
 
-    const sig = await signData(action.sender, data);
-    const sigData = await verifyAndSplitSig(sig, action.sender, data);
-
-    // Combine message and signature data
-    const actionData = {
-      ...data.message,
-      // actionType: data.message.actionType,
-      v: sigData.v,
-      r: sigData.r,
-      s: sigData.s,
-    };
-
-		console.log("ACTION DATA:", actionData);
-
-    // Push to the appropriate action array
-    if (action.actionType === 'caw') {
-      cawActionsArray.push(actionData);
-    } else if (['like', 'unlike', 'recaw'].includes(action.actionType)) {
-      cawInteractionsArray.push(actionData);
-    } else if (['follow', 'unfollow'].includes(action.actionType)) {
-      userInteractionsArray.push(actionData);
-    } else if (['withdraw', 'noop'].includes(action.actionType)) {
-      withdrawActionsArray.push(actionData);
-    }
+    // console.log("Signing with data:", data);
+    var sig = await signData(action.sender, data);
+    var sigData = await verifyAndSplitSig(sig, action.sender, data);
 
     signedActions.push({
       data: data,
@@ -210,48 +154,54 @@ async function processActions(actions, params) {
     });
   }
 
+    // console.log("Data", signedActions.map(function(action) {return action.data.message}))
+    // console.log("SENDER ID:", params.validatorId || 1);
+
+
+  var withdraws = actions.filter(function(action) {return action.actionType == 'withdraw'});
   var quote;
-  if (withdrawActionsArray.length > 0) {
-    var tokenIds = withdrawActionsArray.map(function(action){return action.senderId});
-    var amounts = withdrawActionsArray.map(function(action){return action.amounts[0]});
+  if (withdraws.length > 0) {
+    var tokenIds = withdraws.map(function(action){return action.senderId});
+    var amounts = withdraws.map(function(action){return action.amounts[0]});
     quote = await cawActions.withdrawQuote(tokenIds, amounts, false);
     console.log('withdraw quote returned:', quote);
   }
 
-  // Prepare parameters for the `processActions` function call
-  const validatorId = params.validatorId || 1;
+  console.log('Will process with quote:', quote?.nativeFee);
 
-  // Call the `processActions` function on the `cawActions` contract instance
-  const t = await cawActions.processActions(
-    validatorId,
-    cawActionsArray,
-    cawInteractionsArray,
-    userInteractionsArray,
-    withdrawActionsArray,
-    0, {
-      nonce: await web3.eth.getTransactionCount(params.validator),
-      from: params.validator,
-      value: quote?.nativeFee || '0',
-    }
-  );
+	// console.log("Will Process: ", {
+	// 	v: signedActions.map(function(action) {return action.sigData.v}),
+	// 	r: signedActions.map(function(action) {return action.sigData.r}),
+	// 	s: signedActions.map(function(action) {return action.sigData.s}),
+	// 	actions: signedActions.map(function(action) {return action.data.message}),
+	// });
 
-  console.log(`Processed ${actions.length} actions. Gas used: ${BigInt(t.receipt.gasUsed)}`);
-  totalGas += BigInt(t.receipt.gasUsed);
+  // signedActions.map(function(action) {
+  //   console.log("SIGNED:", action.sigData.r, action.sigData.v, action.sigData.s, action.data.message)
+  //   return action.sigData.v
+  // })
+  t = await cawActions.processActions(params.validatorId || 1, {
+    v: signedActions.map(function(action) {return action.sigData.v}),
+    r: signedActions.map(function(action) {return action.sigData.r}),
+    s: signedActions.map(function(action) {return action.sigData.s}),
+    actions: signedActions.map(function(action) {return action.data.message}),
+  }, 0, {
+    nonce: await web3.eth.getTransactionCount(params.validator),
+    from: params.validator,
+    value: quote?.nativeFee || '0',
+  });
 
-
-  // Optionally, capture events emitted
-  const events = t.logs;
+  var fullTx = await web3.eth.getTransaction(t.tx);
+  console.log("processed", signedActions.length, "actions. GAS units:", BigInt(t.receipt.gasUsed));
 
   return {
     tx: t,
-    signedActions: signedActions,
-    events: events,
+    signedActions: signedActions
   };
 }
 
-
 async function generateData(type, params = {}) {
-  const actionTypeMap = {
+  var actionType = {
     caw: 0,
     like: 1,
     unlike: 2,
@@ -260,121 +210,39 @@ async function generateData(type, params = {}) {
     unfollow: 5,
     withdraw: 6,
     noop: 7,
-  };
+  }[type];
 
-  const actionType = actionTypeMap[type];
-  const domain = {
-    chainId: await web3.eth.getChainId(),
+  var domain = {
+    chainId: 31337,
     name: 'CawNet',
     verifyingContract: cawActions.address,
-    version: '1',
+    version: '1'
   };
-
-console.log("domaiin:", domain);
 
   var cawonce = params.cawonce;
   if (cawonce == undefined) 
     cawonce = Number(await cawActions.nextCawonce(params.senderId));
 
-  let message;
-  let primaryType;
-  let types;
-
-  if (type === 'caw') {
-    message = {
-      actionType: actionType,
-      senderId: params.senderId,
-      receiverId: params.receiverId || 0,
-      receiverCawonce: params.receiverCawonce || 0,
-      clientId: params.clientId || defaultClientId,
-      cawonce: cawonce,
-      recipients: params.recipients || [],
-      amounts: params.amounts || [],
-      text: params.text || '',
-    };
-    primaryType = 'CawAction';
-    types = {
-      EIP712Domain: dataTypes.EIP712Domain,
-      CawAction: dataTypes.CawAction,
-    };
-  } else if (['like', 'unlike', 'recaw'].includes(type)) {
-    message = {
-      actionType: actionType,
-      senderId: params.senderId,
-      receiverId: params.receiverId || 0,
-      receiverCawonce: params.receiverCawonce || 0,
-      clientId: params.clientId || defaultClientId,
-      cawonce: cawonce,
-      recipients: params.recipients || [],
-      amounts: params.amounts || [],
-    };
-    primaryType = 'CawInteraction';
-    types = {
-      EIP712Domain: dataTypes.EIP712Domain,
-      CawInteraction: dataTypes.CawInteraction,
-    };
-  } else if (['follow', 'unfollow'].includes(type)) {
-    message = {
-      actionType: actionType,
-      senderId: params.senderId,
-      receiverId: params.receiverId || 0,
-      clientId: params.clientId || defaultClientId,
-      cawonce: cawonce,
-      recipients: params.recipients || [],
-      amounts: params.amounts || [],
-    };
-    primaryType = 'UserInteraction';
-    types = {
-      EIP712Domain: dataTypes.EIP712Domain,
-      UserInteraction: dataTypes.UserInteraction,
-    };
-  } else if (['withdraw', 'noop'].includes(type)) {
-    message = {
-      actionType: actionType,
-      senderId: params.senderId,
-      clientId: params.clientId || defaultClientId,
-      cawonce: cawonce,
-      recipients: params.recipients || [],
-      amounts: params.amounts || [],
-    };
-    primaryType = 'WithdrawAction';
-    types = {
-      EIP712Domain: dataTypes.EIP712Domain,
-      WithdrawAction: dataTypes.WithdrawAction,
-    };
-  } else {
-    throw new Error(`Unsupported action type: ${type}`);
-  }
-  // Handle other action types similarly
-
   return {
-    primaryType: primaryType,
-    message: message,
+    primaryType: 'ActionData',
+    message: {
+      actionType: actionType,
+      senderId: params.senderId,
+      receiverId: params.receiverId || 0,
+      receiverCawonce: params.receiverCawonce || 0,
+      text: params.text || "",
+      cawonce: cawonce,
+      recipients: params.recipients || [],
+      amounts: params.amounts || [],
+      clientId: params.clientId || defaultClientId,
+    },
     domain: domain,
-    types: types,
+    types: {
+      EIP712Domain: dataTypes.EIP712Domain,
+      ActionData: dataTypes.ActionData,
+    },
   };
-
-  // return {
-  //   primaryType: 'ActionData',
-  //   message: {
-  //     actionType: actionType,
-  //     senderId: params.senderId,
-  //     receiverId: params.receiverId || 0,
-  //     receiverCawonce: params.receiverCawonce || 0,
-  //     text: params.text || "",
-  //     cawonce: cawonce,
-  //     recipients: params.recipients || [],
-  //     amounts: params.amounts || [],
-  //     clientId: params.clientId || defaultClientId,
-  //   },
-  //   domain: domain,
-  //   types: {
-  //     EIP712Domain: dataTypes.EIP712Domain,
-  //     ActionData: dataTypes.ActionData,
-  //   },
-  // };
 }
-
 
 async function verifyAndSplitSig(sig, user, data) {
   // console.log('SIG', sig)
@@ -394,7 +262,6 @@ async function verifyAndSplitSig(sig, user, data) {
 
   return { r, s, v };
 }
-
 
 async function deposit(user, tokenId, amount, layer, clientId) {
   clientId ||= defaultClientId;
@@ -635,8 +502,7 @@ contract('CawNames', function(accounts, x) {
     console.log("FISRT CAW SENT!", cawId);
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-      var actions = decodeActions(args.cawActions)
-			console.log('args', args);
+      var actions = decodeActions(args.actions)
 			console.log('actions', args.actions);
 			console.log('actions', actions, result.signedActions[0].data.message);
 			console.log('cawonce', actions[0].cawonce, result.signedActions[0].data.message.cawonce);
@@ -685,7 +551,7 @@ contract('CawNames', function(accounts, x) {
     });
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-      var actions = decodeActions(args.cawActions)
+      var actions = decodeActions(args.actions)
       return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
 				actions[0].senderId == result.signedActions[0].data.message.senderId;
     });
@@ -806,13 +672,7 @@ contract('CawNames', function(accounts, x) {
       validator: accounts[2]
     });
 
-    // result = truffleAssert.eventEmitted(result.tx, 'ActionsProcessed');
-
-    truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-      var actions = decodeActions(args.cawInteractions)
-      return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
-				actions[0].senderId == result.signedActions[0].data.message.senderId;
-    });
+    truffleAssert.eventEmitted(result.tx, 'ActionsProcessed');
 
     // var recawCount = await cawNames.recawCount(1);
     // await expect(recawCount.toString()).to.equal('1');
@@ -891,11 +751,11 @@ contract('CawNames', function(accounts, x) {
     var balance = BigInt(await cawNamesL2.cawBalanceOf(1));
 
     var cawonce1 = Number(await cawActions.nextCawonce(1));
-		var withdrawAmount = balance*3n/10n;
+		var transferAmount = balance*3n/10n;
 
     var actionsToProcess = [{
       actionType: 'withdraw',
-      amounts: [(withdrawAmount).toString()],
+      amounts: [(transferAmount).toString()],
       recipients: [1],
       sender: accounts[2],
       senderId: 1,
@@ -905,14 +765,13 @@ contract('CawNames', function(accounts, x) {
     result = await processActions(actionsToProcess, { validator: accounts[1] });
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-      var actions = decodeActions(args.withdrawActions)
-			console.log(actions);
+      var actions = decodeActions(args.actions)
       return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
 				actions[0].senderId == result.signedActions[0].data.message.senderId;
     });
     var newBalance = BigInt(await cawNamesL2.cawBalanceOf(1));
 
-    expect(newBalance/ 100n).to.equal((balance - withdrawAmount)/100n)
+    expect(newBalance/ 10n).to.equal((balance - transferAmount)/10n)
 
 
     var balanceWas = BigInt(await token.balanceOf(accounts[2]))
@@ -923,7 +782,7 @@ contract('CawNames', function(accounts, x) {
     });
     var newBalance = BigInt(await token.balanceOf(accounts[2]))
 
-    expect(newBalance).to.equal(balanceWas + withdrawAmount)
+    expect(newBalance).to.equal(balanceWas + transferAmount)
 
 
     // Transfering the username will not propogate
@@ -950,7 +809,7 @@ contract('CawNames', function(accounts, x) {
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
       return args.cawonce == result.signedActions[0].data.message.cawonce &&
 				args.senderId == result.signedActions[0].data.message.senderId &&
-        args.reason == 'Invalid signer';
+        args.reason == 'Signer is not owner of this CawName';
     });
 
     console.log("TRANSFER UPDATE end:", BigInt(await cawNames.pendingTransferEnd(l2)));
@@ -965,7 +824,7 @@ contract('CawNames', function(accounts, x) {
     result = await processActions(actionsToProcess, { validator: accounts[1] });
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-      var actions = decodeActions(args.withdrawActions)
+      var actions = decodeActions(args.actions)
       return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
 				actions[0].senderId == result.signedActions[0].data.message.senderId;
     });
@@ -1026,7 +885,7 @@ contract('CawNames', function(accounts, x) {
       console.log(args);
       return args.cawonce == result.signedActions[0].data.message.cawonce &&
 				args.senderId == result.signedActions[0].data.message.senderId &&
-        args.reason == 'User not authenticated';
+        args.reason == 'User has not authenticated with this client';
     });
 
     var quote = await cawNames.authenticateQuote(2, 1, l2, false);
@@ -1039,7 +898,7 @@ contract('CawNames', function(accounts, x) {
     });
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-      var actions = decodeActions(args.cawActions)
+      var actions = decodeActions(args.actions)
       return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
 				actions[0].senderId == result.signedActions[0].data.message.senderId;
     });
@@ -1065,7 +924,7 @@ contract('CawNames', function(accounts, x) {
       console.log(args);
       return args.cawonce == result.signedActions[0].data.message.cawonce &&
 				args.senderId == result.signedActions[0].data.message.senderId &&
-        args.reason == 'User not authenticated';
+        args.reason == 'User has not authenticated with this client';
     });
 
     // depositing and specifying a new client ID is another way to authenticate with that client.
@@ -1085,8 +944,8 @@ contract('CawNames', function(accounts, x) {
     });
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-			// console.log("Raw ACTION data: ", args.actions);
-      var actions = decodeActions(args.cawActions);
+			console.log("Raw ACTION data: ", args.actions);
+      var actions = decodeActions(args.actions)
       return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
 				actions[0].senderId == result.signedActions[0].data.message.senderId;
     });
@@ -1101,9 +960,9 @@ contract('CawNames', function(accounts, x) {
       validator: accounts[2]
     });
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-			console.log("Raw ACTION data: ", args.cawActions.length);
+			console.log("Raw ACTION data: ", args.actions.length);
 			// return true;
-      return args.cawActions.length == 256;
+      return args.actions.length == 256;
 		});
 
     // var result = await processActions(a, {
@@ -1127,7 +986,6 @@ contract('CawNames', function(accounts, x) {
     //   sender: accounts[2]
     // });
 
-    console.log("TOTAL GAS USED:", totalGas);
 
   });
 
