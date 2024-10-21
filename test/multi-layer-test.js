@@ -32,6 +32,7 @@ const usdcAddress = '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48'; // USDC
 const l2 = 8453;
 const l1 = 30101;
 var defaultClientId = 1;
+var totalGas = 0n;
 var token;
 var minter;
 var swapper;
@@ -193,6 +194,7 @@ async function processActions(actions, params) {
 
   var fullTx = await web3.eth.getTransaction(t.tx);
   console.log("processed", signedActions.length, "actions. GAS units:", BigInt(t.receipt.gasUsed));
+  totalGas += BigInt(t.receipt.gasUsed);
 
   return {
     tx: t,
@@ -986,6 +988,7 @@ contract('CawNames', function(accounts, x) {
     //   sender: accounts[2]
     // });
 
+    console.log("TOTAL GAS:", totalGas);
 
   });
 
