@@ -75,6 +75,11 @@ contract CawNameL2 is
     return cawOwnership[tokenId] * rewardMultiplier / (precision);
   }
 
+  function spendDistributeAndAddTokensToBalance(uint32 tokenId, uint256 amountToSpend, uint256 amountToDistribute, uint32 recipientId, uint256 recipientAmount) external {
+    spendAndDistribute(tokenId, amountToSpend * 10**18, amountToDistribute * 10**18);
+    addToBalance(recipientId, recipientAmount * 10**18);
+  }
+
   function spendAndDistributeTokens(uint32 tokenId, uint256 amountToSpend, uint256 amountToDistribute) external {
     spendAndDistribute(tokenId, amountToSpend * 10**18, amountToDistribute * 10**18);
   }

@@ -31,16 +31,17 @@ contract CawActions is Context {
     bytes32[] s;
   }
 
-  bytes32 public immutable eip712DomainHash;
-  bytes32 public currentHash = bytes32("genesis");
+  bytes32 internal immutable eip712DomainHash;
+  bytes32 internal currentHash = bytes32("genesis");
 
-  mapping(uint32 => mapping(uint256 => uint256)) public usedCawonce;
-  mapping(uint32 => uint256) public currentCawonceMap;
+  mapping(uint32 => mapping(uint256 => uint256)) internal usedCawonce;
+  mapping(uint32 => uint256) internal currentCawonceMap;
 
   event ActionsProcessed(ActionData[] actions);
   event ActionRejected(uint32 senderId, uint32 cawonce, string reason);
 
-  CawNameL2 public immutable CawName;
+  CawNameL2 internal immutable CawName;
+  CawActions internal immutable externalSelf;
 
   // Precomputed type hashes for EIP712
   bytes32 private constant EIP712_DOMAIN_TYPEHASH = keccak256(
@@ -52,29 +53,50 @@ contract CawActions is Context {
 
   constructor(address _cawNames) {
     eip712DomainHash = generateDomainHash();
+    externalSelf = CawActions(this);
     CawName = CawNameL2(_cawNames);
   }
 
   function processAction(uint32 validatorId, ActionData calldata action, uint8 v, bytes32 r, bytes32 s) external {
     require(address(this) == _msgSender(), "Caller must be CawActions contract");
+    _processAction(validatorId, action, v, r, s);
+  }
+
+  function _processAction(uint32 validatorId, ActionData calldata action, uint8 v, bytes32 r, bytes32 s) internal {
     require(!isCawonceUsed(action.senderId, action.cawonce), "Cawonce already used");
     require(CawName.authenticated(action.clientId, action.senderId), "User has not authenticated with this client");
 
     verifySignature(v, r, s, action);
 
-    if (action.actionType == ActionType.CAW) caw(action);
-    else if (action.actionType == ActionType.LIKE) likeCaw(action);
-    else if (action.actionType == ActionType.UNLIKE) unlikeCaw(action);
-    else if (action.actionType == ActionType.RECAW) reCaw(action);
-    else if (action.actionType == ActionType.FOLLOW) followUser(action);
-    else if (action.actionType == ActionType.UNFOLLOW) unfollowUser(action);
-    else if (action.actionType == ActionType.WITHDRAW) withdraw(action);
-    else if (action.actionType != ActionType.NOOP) revert("Invalid action type");
+    if (action.actionType == ActionType.CAW) {
+      require(bytes(action.text).length <= 420, "Text exceeds 420 characters");
+      CawName.spendAndDistributeTokens(action.senderId, 5000, 5000);
+    } else if (action.actionType == ActionType.LIKE)
+      CawName.spendDistributeAndAddTokensToBalance(action.senderId, 2000, 400, action.receiverId, 1600);
+    else if (action.actionType == ActionType.RECAW) {
+      CawName.spendDistributeAndAddTokensToBalance(action.senderId, 4000, 2000, action.receiverId, 2000);
+    } else if (action.actionType == ActionType.FOLLOW) {
+      require(action.senderId != action.receiverId, "Cannot follow yourself");
+      CawName.spendDistributeAndAddTokensToBalance(action.senderId, 30000, 6000, action.receiverId, 24000);
+    } else if (action.actionType == ActionType.WITHDRAW)
+      CawName.withdraw(action.senderId, action.amounts[0]);
+    else if ( action.actionType != ActionType.UNLIKE &&
+        action.actionType != ActionType.UNFOLLOW &&
+        action.actionType != ActionType.NOOP)
+      revert("Invalid action type");
 
     distributeAmounts(validatorId, action);
     useCawonce(action.senderId, action.cawonce);
 
     currentHash = keccak256(abi.encodePacked(currentHash, r));
+  }
+
+  function getCurrentHash() public view returns (bytes32) {
+    return currentHash;
+  }
+
+  function getCawNameAddress() public view returns (address) {
+    return address(CawName);
   }
 
   function distributeAmounts(uint32 validatorId, ActionData calldata action) internal {
@@ -94,48 +116,11 @@ contract CawActions is Context {
     for (uint256 i = startIndex; i < numRecipients; ) {
       CawName.addToBalance(action.recipients[i], action.amounts[i]);
       amountTotal += action.amounts[i];
-      unchecked {
-        ++i;
-      }
+      unchecked { ++i; }
     }
 
     CawName.spendAndDistribute(action.senderId, amountTotal, 0);
     CawName.addToBalance(validatorId, action.amounts[numAmounts - 1]);
-  }
-
-  function caw(ActionData calldata data) internal {
-    require(bytes(data.text).length <= 420, "Text exceeds 420 characters");
-    CawName.spendAndDistributeTokens(data.senderId, 5000, 5000);
-  }
-
-  function noop(ActionData calldata data) internal {}
-
-  function withdraw(ActionData calldata data) internal {
-    CawName.withdraw(data.senderId, data.amounts[0]);
-  }
-
-  function likeCaw(ActionData calldata data) internal {
-    CawName.spendAndDistributeTokens(data.senderId, 2000, 400);
-    CawName.addTokensToBalance(data.receiverId, 1600);
-  }
-
-  function unlikeCaw(ActionData calldata data) internal {
-    // No operation needed for unlike
-  }
-
-  function reCaw(ActionData calldata data) internal {
-    CawName.spendAndDistributeTokens(data.senderId, 4000, 2000);
-    CawName.addTokensToBalance(data.receiverId, 2000);
-  }
-
-  function unfollowUser(ActionData calldata data) internal {
-    // No operation needed for unfollow
-  }
-
-  function followUser(ActionData calldata data) internal {
-    require(data.senderId != data.receiverId, "Cannot follow yourself");
-    CawName.spendAndDistributeTokens(data.senderId, 30000, 6000);
-    CawName.addTokensToBalance(data.receiverId, 24000);
   }
 
   function verifySignature(
@@ -143,7 +128,7 @@ contract CawActions is Context {
     bytes32 r,
     bytes32 s,
     ActionData calldata data
-  ) public view {
+  ) internal view {
     bytes32 structHash = keccak256(
       abi.encode(
         ACTIONDATA_TYPEHASH,
@@ -160,7 +145,7 @@ contract CawActions is Context {
     );
 
     address signer = getSigner(structHash, v, r, s);
-    require(signer == CawName.ownerOf(data.senderId), "Signer is not owner of this CawName");
+    require(signer == CawName.ownerOf(data.senderId), "Invalid signer");
   }
 
   function useCawonce(uint32 senderId, uint256 cawonce) internal {
@@ -180,9 +165,7 @@ contract CawActions is Context {
     uint256 nextSlot;
     for (nextSlot = 0; nextSlot < 256; ) {
       if (((1 << nextSlot) & word) == 0) break;
-      unchecked {
-        ++nextSlot;
-      }
+      unchecked { ++nextSlot; }
     }
     return (currentMap * 256) + nextSlot;
   }
@@ -198,7 +181,7 @@ contract CawActions is Context {
     uint8 v,
     bytes32 r,
     bytes32 s
-  ) public view returns (address) {
+  ) internal view returns (address) {
     bytes32 hash = keccak256(abi.encodePacked("\x19\x01", eip712DomainHash, structHash));
     return ecrecover(hash, v, r, s);
   }
@@ -215,7 +198,15 @@ contract CawActions is Context {
     );
   }
 
-  function processActions(uint32 validatorId, MultiActionData calldata data, uint256 lzTokenAmountForWithdraws) external payable {
+  // This function can be used to process actions, but by design it
+  // will consume more gas. This funciton will not short circuit
+  // and fail if an action is rejected. The actual intention of
+  // this function is intended to be used with eth_call,
+  // which does not execute or change state on the block
+  // chain. The returned actions from this using eth_call
+  // will have been fully verified and should be able to
+  // be processed successfully via processActions.
+  function safeProcessActions(uint32 validatorId, MultiActionData calldata data, uint256 lzTokenAmountForWithdraws) external payable returns (ActionData[] memory){
     uint256 actionsLength = data.actions.length;
     require(actionsLength <= 256, "Cannot process more than 256 actions");
 
@@ -229,65 +220,75 @@ contract CawActions is Context {
         successBitmap |= (1 << i);
         if (data.actions[i].actionType == ActionType.WITHDRAW) {
           withdrawBitmap |= (1 << i);
-          unchecked {
-            ++withdrawCount;
-          }
+          unchecked { ++withdrawCount; }
         }
-        unchecked {
-          ++successCount;
-        }
+        unchecked { ++successCount; }
       } catch Error(string memory reason) {
         emit ActionRejected(data.actions[i].senderId, data.actions[i].cawonce, reason);
       } catch (bytes memory) {
         emit ActionRejected(data.actions[i].senderId, data.actions[i].cawonce, "Low-level exception");
       }
-      unchecked {
-        ++i;
-      }
+      unchecked { ++i; }
     }
 
+    ActionData[] memory successfulActions = new ActionData[](successCount);
     if (successCount > 0) {
-      ActionData[] memory successfulActions = new ActionData[](successCount);
       uint16 index = 0;
       for (uint16 i = 0; i < actionsLength; ) {
         if ((successBitmap & (1 << i)) != 0) {
           successfulActions[index] = data.actions[i];
-          unchecked {
-            ++index;
-          }
+          unchecked { ++index; }
         }
-        unchecked {
-          ++i;
-        }
+        unchecked { ++i; }
       }
-      emit ActionsProcessed(successfulActions);
+      emit ActionsProcessed(data.actions);
     }
 
+    setWithdrawable(withdrawBitmap, withdrawCount, data.actions, lzTokenAmountForWithdraws);
+    return successfulActions;
+  }
+
+  function processActions(uint32 validatorId, MultiActionData calldata data, uint256 lzTokenAmountForWithdraws) external payable {
+    uint256 actionsLength = data.actions.length;
+    require(actionsLength <= 256, "Cannot process more than 256 actions");
+
+    uint16 withdrawCount;
+    uint256 withdrawBitmap = 0;
+
+    for (uint16 i = 0; i < actionsLength; ) {
+      _processAction(validatorId, data.actions[i], data.v[i], data.r[i], data.s[i]);
+        if (data.actions[i].actionType == ActionType.WITHDRAW) {
+          withdrawBitmap |= (1 << i);
+          unchecked { ++withdrawCount; }
+        }
+      unchecked { ++i; }
+
+    }
+    emit ActionsProcessed(data.actions);
+
+    setWithdrawable(withdrawBitmap, withdrawCount, data.actions, lzTokenAmountForWithdraws);
+  }
+
+
+  function setWithdrawable(uint256 withdrawBitmap, uint256 withdrawCount, ActionData[] memory actions, uint256 lzTokenAmountForWithdraws) internal {
     if (withdrawCount > 0) {
       uint32[] memory withdrawIds = new uint32[](withdrawCount);
       uint256[] memory withdrawAmounts = new uint256[](withdrawCount);
       uint16 index = 0;
-      for (uint16 i = 0; i < actionsLength; ) {
+      for (uint16 i = 0; i < actions.length; ) {
         if ((withdrawBitmap & (1 << i)) != 0) {
-          withdrawIds[index] = data.actions[i].senderId;
-          withdrawAmounts[index] = data.actions[i].amounts[0];
-          unchecked {
-            ++index;
-          }
+          withdrawIds[index] = actions[i].senderId;
+          withdrawAmounts[index] = actions[i].amounts[0];
+          unchecked { ++index; }
         }
-        unchecked {
-          ++i;
-        }
+        unchecked { ++i; }
       }
       CawName.setWithdrawable{ value: msg.value }(withdrawIds, withdrawAmounts, lzTokenAmountForWithdraws);
     }
   }
 
   function withdrawQuote(uint32[] memory tokenIds, uint256[] memory amounts, bool payInLzToken)
-  public
-  view
-  returns (MessagingFee memory quote)
-  {
+  external view returns (MessagingFee memory quote) {
     return CawName.withdrawQuote(tokenIds, amounts, payInLzToken);
   }
 }
