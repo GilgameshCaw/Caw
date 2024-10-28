@@ -128,6 +128,86 @@ return data;
 }
 
  
+async function safeProcessActions(actions, params) {
+  console.log("---");
+  console.log("SAFE PROCESS ACTIONS");
+  var cawonces = {}
+
+  var signedActions = []
+  for (var i = 0; i<actions.length; i++){
+    var action = actions[i];
+    if (action.cawonce == undefined && cawonces[action.senderId] != undefined)
+      action.cawonce = cawonces[action.senderId.toString()] + 1;
+
+    var data = await generateData(action.actionType, action);
+    cawonces[data.message.senderId] = data.message.cawonce;
+
+    // console.log("Signing with data:", data);
+    var sig = await signData(action.sender, data);
+    var sigData = await verifyAndSplitSig(sig, action.sender, data);
+
+    signedActions.push({
+      data: data,
+      sigData: sigData,
+    });
+  }
+
+    // console.log("Data", signedActions.map(function(action) {return action.data.message}))
+    // console.log("SENDER ID:", params.validatorId || 1);
+
+
+  var withdraws = actions.filter(function(action) {return action.actionType == 'withdraw'});
+  var quote;
+  if (withdraws.length > 0) {
+    var tokenIds = withdraws.map(function(action){return action.senderId});
+    var amounts = withdraws.map(function(action){return action.amounts[0]});
+    quote = await cawActions.withdrawQuote(tokenIds, amounts, false);
+    console.log('withdraw quote returned:', quote);
+  }
+
+  console.log('Will process with quote:', quote?.nativeFee);
+
+	// console.log("Will Process: ", {
+	// 	v: signedActions.map(function(action) {return action.sigData.v}),
+	// 	r: signedActions.map(function(action) {return action.sigData.r}),
+	// 	s: signedActions.map(function(action) {return action.sigData.s}),
+	// 	actions: signedActions.map(function(action) {return action.data.message}),
+	// });
+
+  // signedActions.map(function(action) {
+  //   console.log("SIGNED:", action.sigData.r, action.sigData.v, action.sigData.s, action.data.message)
+  //   return action.sigData.v
+  // })
+
+
+
+    var transactionData = {
+      v: signedActions.map(action => action.sigData.v),
+      r: signedActions.map(action => action.sigData.r),
+      s: signedActions.map(action => action.sigData.s),
+      actions: signedActions.map(action => action.data.message),
+    };
+
+    // Prepare the options for the transaction
+    const txOptions = {
+      nonce: await web3.eth.getTransactionCount(params.validator),
+      from: params.validator,
+			value: quote?.nativeFee || '0',
+    };
+
+  console.log("attempting to process", transactionData.actions.length, "actions");
+
+  t = await cawActions.safeProcessActions(params.validatorId || 1, transactionData, 0, txOptions);
+
+  var fullTx = await web3.eth.getTransaction(t.tx);
+  console.log("processed", signedActions.length, "actions. GAS units:", BigInt(t.receipt.gasUsed));
+  // totalGas += BigInt(t.receipt.gasUsed);
+
+  return {
+    tx: t,
+    signedActions: signedActions
+  };
+}
 
 
 
@@ -181,20 +261,62 @@ async function processActions(actions, params) {
   //   console.log("SIGNED:", action.sigData.r, action.sigData.v, action.sigData.s, action.data.message)
   //   return action.sigData.v
   // })
-  t = await cawActions.processActions(params.validatorId || 1, {
-    v: signedActions.map(function(action) {return action.sigData.v}),
-    r: signedActions.map(function(action) {return action.sigData.r}),
-    s: signedActions.map(function(action) {return action.sigData.s}),
-    actions: signedActions.map(function(action) {return action.data.message}),
-  }, 0, {
-    nonce: await web3.eth.getTransactionCount(params.validator),
-    from: params.validator,
-    value: quote?.nativeFee || '0',
-  });
 
-  var fullTx = await web3.eth.getTransaction(t.tx);
-  console.log("processed", signedActions.length, "actions. GAS units:", BigInt(t.receipt.gasUsed));
-  totalGas += BigInt(t.receipt.gasUsed);
+
+
+    var transactionData = {
+      v: signedActions.map(action => action.sigData.v),
+      r: signedActions.map(action => action.sigData.r),
+      s: signedActions.map(action => action.sigData.s),
+      actions: signedActions.map(action => action.data.message),
+    };
+
+    // Prepare the options for the transaction
+    const txOptions = {
+      nonce: await web3.eth.getTransactionCount(params.validator),
+      from: params.validator,
+			value: quote?.nativeFee || '0',
+    };
+
+  console.log("attempting to process", transactionData.actions.length, "actions");
+
+  var result = []
+  while (result.length < transactionData.actions.length) {
+
+    // simulate process actions to check which actions will be successful:
+    result = await cawActions.safeProcessActions.call(
+      params.validatorId || 1,
+      transactionData,
+      0, // modify as needed
+      txOptions
+    );
+
+    console.log("Simulation Result: ", result);
+    var ids = result.map(action => `${action.senderId}-${action.cawonce}`);
+    console.log("successful IDS", ids);
+    var filteredSignedActions = signedActions.filter(action => ids.includes(`${action.data.message.senderId}-${action.data.message.cawonce}`));
+    console.log("filtered Signed Actions", filteredSignedActions);
+    transactionData = {
+      v: filteredSignedActions.map(action => action.sigData.v),
+      r: filteredSignedActions.map(action => action.sigData.r),
+      s: filteredSignedActions.map(action => action.sigData.s),
+      actions: filteredSignedActions.map(action => action.data.message),
+    };
+
+  }
+    console.log("going to actually process", transactionData.actions.length, "actions");
+
+
+
+
+  var t;
+  if (transactionData.actions.length > 0) {
+    t = await cawActions.processActions(params.validatorId || 1, transactionData, 0, txOptions);
+
+    var fullTx = await web3.eth.getTransaction(t.tx);
+    console.log("processed", signedActions.length, "actions. GAS units:", BigInt(t.receipt.gasUsed));
+    totalGas += BigInt(t.receipt.gasUsed);
+  }
 
   return {
     tx: t,
@@ -529,7 +651,7 @@ contract('CawNames', function(accounts, x) {
 
 
     // already processed, so trying to process again will fail
-    var result = await processActions([firstCaw], {
+    var result = await safeProcessActions([firstCaw], {
       validator: accounts[2]
     });
 
@@ -600,7 +722,7 @@ contract('CawNames', function(accounts, x) {
 
 
 
-    result = await processActions([{
+    result = await safeProcessActions([{
       actionType: 'like',
       cawId: secondCawId,
       sender: accounts[2],
@@ -645,7 +767,7 @@ contract('CawNames', function(accounts, x) {
     await expectBalanceOf(3, {toEqual: 16353.2579});
 
     // It will fail if you try to replay the same call
-    result = await processActions([{
+    result = await safeProcessActions([{
       actionType: 'follow',
       sender: accounts[2],
       receiverId: 1,
@@ -692,7 +814,7 @@ contract('CawNames', function(accounts, x) {
     await expectBalanceOf(3, {toEqual: 17551.4900});
 
     var cawonce = (await cawActions.nextCawonce(1)).toString();
-    result = await processActions([{
+    result = await safeProcessActions([{
       actionType: 'recaw',
       cawId: secondCawId,
       sender: accounts[2],
@@ -806,12 +928,12 @@ contract('CawNames', function(accounts, x) {
     }]
 
 
-    result = await processActions(actionsToProcess, { validator: accounts[1] });
+    result = await safeProcessActions(actionsToProcess, { validator: accounts[1] });
 
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
       return args.cawonce == result.signedActions[0].data.message.cawonce &&
 				args.senderId == result.signedActions[0].data.message.senderId &&
-        args.reason == 'Signer is not owner of this CawName';
+        args.reason == 'Invalid signer';
     });
 
     console.log("TRANSFER UPDATE end:", BigInt(await cawNames.pendingTransferEnd(l2)));
@@ -853,7 +975,7 @@ contract('CawNames', function(accounts, x) {
     }]
 
 
-    result = await processActions(actionsToProcess, { validator: accounts[1] });
+    result = await safeProcessActions(actionsToProcess, { validator: accounts[1] });
 
     console.log("Expect fail:")
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
@@ -878,7 +1000,7 @@ contract('CawNames', function(accounts, x) {
       clientId: 2,
       senderId: 1,
     };
-    var result = await processActions([unauthedCaw], {
+    var result = await safeProcessActions([unauthedCaw], {
       validator: accounts[2]
     });
 
@@ -917,7 +1039,7 @@ contract('CawNames', function(accounts, x) {
       clientId: 3,
       senderId: 1,
     };
-    var result = await processActions([unauthedCaw], {
+    var result = await safeProcessActions([unauthedCaw], {
       validator: accounts[2]
     });
 
