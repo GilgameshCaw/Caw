@@ -35,3 +35,7 @@ As mentioned in the spec, many actions taken by a user will involve redistributi
 as rewards, to "all other stakers". To accomplish this, an O(1) algorithm has been developed to
 fulfil this redistribution continuously and efficiently.  You can read the logic and
 <a href='./docs/STAKE_POOL_REWARDS.md'>proof of the algorithm here</a>.
+
+# Contact and questions
+Message me on telegram: https://t.me/Gilgamesh_Caw
+Or my twitter: https://x.com/caw_dev
