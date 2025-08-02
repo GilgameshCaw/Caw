@@ -1,0 +1,52 @@
+{
+  "name": "caw-infra",
+  "version": "0.1.0",
+  "main": "dist/src/index.js",
+  "scripts": {
+    "prisma:reset": "prisma db push --force-reset",
+    "prisma:migrate": "prisma migrate dev",
+
+    "test": "tsc --noEmit && mocha --import=tsx tests/**/*.test.ts",
+
+    "redis": "redis-server --port 6379",
+    "api":   "tsx programs/start.ts",
+    "web":   "cd src/services/FrontEnd && yarn dev",
+
+    "dev:api": "nodemon --watch src --ext ts,js --exec \"tsx programs/start.ts\"",
+
+    "start": "concurrently \"npm run redis\" \"npm run api\"",
+    "dev":   "concurrently \"npm run redis\" \"npm run dev:api\" \"npm run web\""
+  },
+  "author": "",
+  "license": "UNLICENSED",
+  "description": "",
+  "devDependencies": {
+    "@types/chai": "^4.3.16",
+    "@types/express": "^5.0.1",
+    "@types/ioredis": "^5.0.0",
+    "@types/mocha": "^10.0.6",
+    "@types/node": "^20.17.32",
+    "chai": "^5.1.1",
+    "concurrently": "^9.1.2",
+    "mocha": "^10.4.0",
+    "nodemon": "^3.1.10",
+    "tsx": "^4.11.0",
+    "typescript": "^5.4.5",
+    "xo": "^0.58.0"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.7.0",
+    "@types/cors": "^2.8.19",
+    "@types/keccak": "^3.0.4",
+    "@types/pg": "^8.11.6",
+    "cors": "^2.8.5",
+    "ethers": "^6.12.1",
+    "ioredis": "^5.6.1",
+    "keccak": "^3.0.4",
+    "pg": "^8.12.0",
+    "prisma": "^6.7.0",
+    "reflect-metadata": "^0.2.2",
+    "typeorm": "^0.3.20",
+    "zod": "^3.23.8"
+  }
+}

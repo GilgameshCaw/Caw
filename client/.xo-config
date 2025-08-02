@@ -1,0 +1,35 @@
+{
+  "space": true,
+  "prettier": true,
+  "rules": {
+    "@typescript-eslint/no-unused-vars": [
+      "error",
+      {
+        "args": "all",
+        "argsIgnorePattern": "^_",
+        "caughtErrors": "all",
+        "caughtErrorsIgnorePattern": "^_",
+        "destructuredArrayIgnorePattern": "^_",
+        "varsIgnorePattern": "^_",
+        "ignoreRestSiblings": true
+      }
+    ],
+    "unicorn/filename-case": [
+      "error",
+      {
+        "cases": {
+          "camelCase": true,
+          "pascalCase": true
+        }
+      }
+    ],
+    "capitalized-comments": "off",
+    "unicorn/prevent-abbreviations": "off",
+    "import/extensions": "off",
+    "@typescript-eslint/no-empty-function": "off",
+    "no-constant-condition": "off",
+    "no-await-in-loop": "off",
+    "no-unmodified-loop-condition": "off",
+    "@typescript-eslint/no-loop-func": "off"
+  }
+}

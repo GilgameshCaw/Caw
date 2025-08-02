@@ -1,0 +1,7 @@
+/node_modules
+/dist
+/config.json
+dump.rdb
+.env
+.DS_Store
+.vscode/

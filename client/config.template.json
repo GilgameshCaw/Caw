@@ -1,0 +1,40 @@
+[
+  {
+    "service": "FrontEnd",
+    "config": {
+    }
+  },
+  {
+    "service": "Api",
+    "config": {
+      "port": 4000,
+      "allowedOrigins": [
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175"
+      ]
+    }
+  },
+  {
+    "service": "ActionProcessor",
+    "config": {
+      "redisUrl": "redis://127.0.0.1:6379"
+    }
+  },
+  {
+    "service": "Validator",
+    "config": {
+      "l2RpcUrl":      "wss://base-sepolia.infura.io/ws/v3/xxx",
+      "validatorId":   1,
+      "checkInterval": 30000
+    }
+  },
+  {
+    "service": "RawEventsGatherer",
+    "config": {
+      "chainId": 84532,
+      "rpcUrl": "wss://base-sepolia.infura.io/ws/v3/xxx"
+    }
+  }
+]
+

@@ -1,0 +1,31 @@
+{
+  "include": ["src"],
+  "compilerOptions": {
+    /* Language and Environment */
+    "target": "ESNext",                                  /* Set the JavaScript language version for emitted JavaScript and include compatible library declarations. */
+    "module": "ESNext",                                  /* Specify what module code is generated. */
+    "rootDir": "./",                                     /* Specify the root folder within your source files. */
+    "moduleResolution": "node",                       /* Specify how TypeScript looks up a file from a given module specifier. */
+    "experimentalDecorators": true,                      /* Enable experimental support for legacy experimental decorators. */
+    "emitDecoratorMetadata": true,                       /* Emit design-type metadata for decorated declarations in source files. */
+
+    /* Modules */
+    "outDir": "./dist",                                  /* Specify an output folder for all emitted files. */
+
+    /* JavaScript Support */
+    "declaration": true,                                 /* Generate .d.ts files from TypeScript and JavaScript files in your project. */
+    "declarationMap": true,                              /* Create sourcemaps for d.ts files. */
+    "sourceMap": true,                                   /* Create source map files for emitted JavaScript files. */
+
+    /* Interop Constraints */
+    "isolatedModules": true,                             /* Ensure that each file can be safely transpiled without relying on other imports. */
+    "allowSyntheticDefaultImports": true,                /* Allow 'import x from y' when a module doesn't have a default export. */
+    "esModuleInterop": true,                             /* Emit additional JavaScript to ease support for importing CommonJS modules. This enables 'allowSyntheticDefaultImports' for type compatibility. */
+    "forceConsistentCasingInFileNames": true,            /* Ensure that casing is correct in imports. */
+
+    /* Type Checking */
+    "strict": true,                                      /* Enable all strict type-checking options. */
+    "skipLibCheck": true                                 /* Skip type checking all .d.ts files. */
+  }
+}
+

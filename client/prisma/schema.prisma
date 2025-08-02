@@ -1,0 +1,141 @@
+// prisma/schema.prisma
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// all possible user actions
+enum ActionType {
+  CAW
+  LIKE
+  UNLIKE
+  RECAW
+  FOLLOW
+  UNFOLLOW
+  WITHDRAW
+  OTHER
+}
+
+model RawEvent {
+  id              Int      @id @default(autoincrement())
+  chainId         Int // ← which network this came from
+  blockNumber     BigInt
+  logIndex        Int
+  transactionHash String
+  parentHash      String // ← chain-of-events hash
+  data            Json
+  topics          Json
+  contractAddress String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  Action          Action[]
+
+  @@unique([blockNumber, logIndex, transactionHash])
+}
+
+model User {
+  id             Int      @id @default(autoincrement())
+  address        String
+  tokenId        Int      @unique
+  username       String   @unique
+  image          String?
+  cawCount       Int      @default(0)
+  followerCount  Int      @default(0)
+  followingCount Int      @default(0)
+  likeCount      Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  caws      Caw[]
+  likes     Like[]
+  follows   Follow[] @relation("Following") // whom *I* follow
+  followers Follow[] @relation("Follower") // who follows *me*
+}
+
+model Caw {
+  id            Int        @id @default(autoincrement())
+  userId        Int
+  content       String
+  action        ActionType
+  originalCawId Int?
+  cawonce       Int
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  parent        Caw?       @relation("CawToRecaws", fields: [originalCawId], references: [id])
+  recaws        Caw[]      @relation("CawToRecaws")
+  user  User   @relation(fields: [userId], references: [tokenId])
+  likes Like[]
+
+  // counter caches:
+  commentCount Int @default(0)
+  recawCount   Int @default(0)
+  likeCount    Int @default(0)
+
+  @@index([userId, action, createdAt])
+  @@index([originalCawId])
+}
+
+model Like {
+  userId Int
+  cawId  Int
+  action ActionType
+
+  user User @relation(fields: [userId], references: [tokenId])
+  caw  Caw  @relation(fields: [cawId], references: [id])
+
+  @@unique([userId, cawId]) // ← prevent duplicate likes
+  @@index([cawId]) // ← to count likes / filter by cawId
+}
+
+model Follow {
+  id Int @id @default(autoincrement())
+
+  // the “follower” side of the relation — foreign key = followerId
+  follower   User @relation("Follower", fields: [followerId], references: [tokenId])
+  followerId Int
+
+  // the “following” side of the relation — foreign key = followingId
+  following   User @relation("Following", fields: [followingId], references: [tokenId])
+  followingId Int
+
+  action    ActionType @default(FOLLOW)
+  createdAt DateTime   @default(now())
+
+  @@unique([followerId, followingId])
+}
+
+model TxQueue {
+  id       Int    @id @default(autoincrement())
+  senderId Int
+  payload  Json
+  signedTx String
+  status   String @default("pending")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([signedTx])
+  @@index([senderId, status])
+}
+
+model Action {
+  id         Int      @id @default(autoincrement())
+  rawEvent   RawEvent @relation(fields: [rawEventId], references: [id])
+  rawEventId Int
+
+  chainId    Int
+  senderId   Int
+  cawonce    Int
+  actionType ActionType
+  data       Json
+
+  createdAt DateTime @default(now())
+
+  @@unique([chainId, senderId, cawonce])
+}
