@@ -335,7 +335,7 @@ async function generateData(type, params = {}) {
 
   var domain = {
     chainId: 31337,
-    name: 'CawNet',
+    name: 'Caw Protocol',
     verifyingContract: cawActions.address,
     version: '1'
   };
