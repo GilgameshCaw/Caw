@@ -42,7 +42,7 @@ contract CawNameL2 is
   uint256 public rewardMultiplier = 10**18;
   uint256 public precision = 30425026352721 ** 2;// ** 3;
 
-  uint32 public layer1EndpointId = 30101;
+  uint32 public immutable layer1EndpointId;
 
   bool private fromLZ;
 
@@ -63,9 +63,10 @@ contract CawNameL2 is
     uint256 nextCawonce;
   }
 
-  constructor(address _endpoint)
+  constructor(uint32 _endpointId, address _endpoint)
     OApp(_endpoint, msg.sender)
   {
+    layer1EndpointId = _endpointId;
   }
 
   function getTokens(uint32[] memory tokenIds) external view returns (Token[] memory) {

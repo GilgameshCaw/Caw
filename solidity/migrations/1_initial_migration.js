@@ -60,12 +60,12 @@ module.exports = async function (deployer, network, accounts) {
 
     // // First L2 Deploy
     // // npx truffle deploy --network testnetL2
-    cawNamesL2Address = "0xefDcb58F7180CDa18249446b798b373C946E85eD"
+    cawNamesL2Address// = "0xefDcb58F7180CDa18249446b798b373C946E85eD"
     // // //
     // // // // Second L1 Deploy
     // // npx truffle deploy --network testnetL1
     //
-    uriGeneratorAddress = '0x2ef93854d45ddc1b785e64c30e0617dda0f98585'
+    uriGeneratorAddress// = '0x2ef93854d45ddc1b785e64c30e0617dda0f98585'
     // clientManagerAddress = '0x328b5B2179EFfc94b61D900807312A104A209D6e'
     // cawNamesAddress = '0xec947761e38DBd47e53fe15adc5519CcF2Cc7Ea5'
     // cawNamesL2MainnetAddress = '0xa4d38428641E9285eb2798B418C8634A0fcB8131' 
@@ -139,7 +139,7 @@ module.exports = async function (deployer, network, accounts) {
   let networkId = lzNetworkIds[network];
 
   if (network.match(/L2/) && !cawNamesL2Address) {
-    var cawNamesL2 = await deployer.deploy(CawNameL2, lzEndpoint);
+    var cawNamesL2 = await deployer.deploy(CawNameL2, peerNetworkId, lzEndpoint);
     cawNamesL2Address = (await CawNameL2.deployed()).address;
   }
 
@@ -193,7 +193,7 @@ module.exports = async function (deployer, network, accounts) {
 
     var cawNamesL2Mainnet;
     if (!cawNamesL2MainnetAddress) {
-      cawNamesL2Mainnet = await deployer.deploy(CawNameL2, lzEndpoint);
+      cawNamesL2Mainnet = await deployer.deploy(CawNameL2, peerNetworkId, lzEndpoint);
       console.log("Caw Names L2 on Mainnet", cawNamesL2Mainnet.address);
       cawNamesL2MainnetAddress = cawNamesL2Mainnet.address;
     } else cawNamesL2Mainnet = await CawNameL2.at(cawNamesL2MainnetAddress);

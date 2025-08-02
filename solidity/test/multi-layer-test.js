@@ -517,7 +517,7 @@ contract('CawNames', function(accounts, x) {
     uriGenerator = uriGenerator || await CawNameURI.new();
     console.log("URI Generator addr", uriGenerator.address);
 
-    cawNamesL2 = cawNamesL2 || await CawNameL2.new(l2Endpoint.address);
+    cawNamesL2 = cawNamesL2 || await CawNameL2.new(l1, l2Endpoint.address);
     await l1Endpoint.setDestLzEndpoint(cawNamesL2.address, l2Endpoint.address);
 
     cawNames = cawNames || await CawName.new(cawAddress, uriGenerator.address, buyAndBurnAddress, clientManager.address, l1Endpoint.address, l1);
@@ -528,7 +528,7 @@ contract('CawNames', function(accounts, x) {
     await clientManager.createClient(gilg, 1,1,1,1);
 
 
-    cawNamesL2Mainnet = cawNamesL2Mainnet || await CawNameL2.new(l1Endpoint.address);
+    cawNamesL2Mainnet = cawNamesL2Mainnet || await CawNameL2.new(l1, l1Endpoint.address);
     await cawNamesL2Mainnet.setL1Peer(l1, cawNames.address, true);
     await cawNames.setL2Peer(l1, cawNamesL2Mainnet.address);
 
