@@ -1,3 +1,4 @@
+// client/src/services/FrontEnd/src/store/tokenDataStore.ts
 import { Address } from "viem";
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
@@ -13,9 +14,8 @@ interface TokenDataStore {
   setHasHydrated: () => void;
   removeActiveToken: () => void;
   bumpCawonce:  (tokenId: number) => void;
-  hiddenTokenIds: Record<Address, number[]>;
   setTokensForAddress: (addr: Address, tokens: TokenData[]) => void;
-  hideToken: (addr: Address, tokenId: number) => void;
+  removeAddress: (addr: Address) => void;
   allTokens: () => TokenData[]
 
 
@@ -35,7 +35,6 @@ export const useActiveToken = () =>
 export const useTokenDataStore = create<TokenDataStore>()(
   persist(
     (set, get) => ({
-      hiddenTokenIds: {},
       hasHydrated: false,
       tokensByAddress: {},
       lastAddress: undefined,
@@ -53,13 +52,15 @@ export const useTokenDataStore = create<TokenDataStore>()(
             [addr]: tokens
           }
         })),
-      hideToken: (addr, tokenId) =>
-        set(state => ({
-          hiddenTokenIds: {
-            ...state.hiddenTokenIds,
-            [addr]: [...(state.hiddenTokenIds[addr]||[]), tokenId]
-          }
-        })),
+      removeAddress: (addressToRemove: Address) =>
+        set(state => {
+          const { [addressToRemove]: _, ...remainingTokens } = state.tokensByAddress;
+
+          console.log("remainingTokens:", remainingTokens, addressToRemove)
+          return {
+            tokensByAddress: remainingTokens,
+          };
+        }),
 
       setActiveTokenId: (tokenId) => set({ activeTokenId: Number(tokenId) }),
       setLastAddress: (address) => {console.log("SETTING ADDRESS:::::::::::::::", address);set({ lastAddress: address })},
@@ -123,9 +124,21 @@ export const useTokenDataStore = create<TokenDataStore>()(
           localStorage.removeItem(name)
         }
       },
+      merge: (persisted, current) => {
+        const persistedState = (persisted || {}) as Partial<TokenDataStore>;
+        const currentState = current as TokenDataStore;
+
+        return {
+          ...persistedState,
+          ...currentState, // current wins at top level
+          tokensByAddress: {
+            ...(persistedState.tokensByAddress || {}),
+            ...(currentState.tokensByAddress || {}), // current wins per address
+          },
+        };
+      },
       partialize: (state) => ({          // only persist the ID
         tokensByAddress: state.tokensByAddress,
-        hiddenTokenIds:  state.hiddenTokenIds,
         activeTokenId:   state.activeTokenId,
         lastAddress:     state.lastAddress,
         hasHydrated:     state.hasHydrated

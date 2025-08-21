@@ -350,3 +350,12 @@
 .shadow {
 box-shadow: 0px 0px 5px white;
 }
+
+.show-hover-parent {
+  opacity: 0
+}
+.hover-parent:hover {
+  .show-hover-parent {
+    opacity: 1
+  }
+}

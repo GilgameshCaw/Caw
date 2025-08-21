@@ -60,21 +60,21 @@ module.exports = async function (deployer, network, accounts) {
 
     // // First L2 Deploy
     // // npx truffle deploy --network testnetL2
-    cawNamesL2Address// = "0xefDcb58F7180CDa18249446b798b373C946E85eD"
+    cawNamesL2Address = "0xfD0Ade8a11BDd8771b3112C91294Edb1597A1F4D"
     // // //
     // // // // Second L1 Deploy
     // // npx truffle deploy --network testnetL1
     //
-    uriGeneratorAddress// = '0x2ef93854d45ddc1b785e64c30e0617dda0f98585'
-    // clientManagerAddress = '0x328b5B2179EFfc94b61D900807312A104A209D6e'
-    // cawNamesAddress = '0xec947761e38DBd47e53fe15adc5519CcF2Cc7Ea5'
-    // cawNamesL2MainnetAddress = '0xa4d38428641E9285eb2798B418C8634A0fcB8131' 
-    // cawNamesMinterAddress = '0x1641b0c89B42D19d58F206b81b170325a3E160aD'
-    // cawActionsMainnetAddress = '0xfD0Ade8a11BDd8771b3112C91294Edb1597A1F4D'
+    uriGeneratorAddress = '0x4FD239922c1678abAc2F4BEFc40b6dD2A9266522'
+    clientManagerAddress = '0x13409039fdEb5011C90327C33812871882987BBd'
+    cawNamesAddress = '0x4ef125b425A73Ca45a7F8AA65e5E5be0400bCdF9'
+    cawNamesL2MainnetAddress = '0xB7648984908d4f41c361c132a6Da7e6fB252bDb5' 
+    cawNamesMinterAddress = '0xDc96e6C7E42B1200A5CBE3F5Ab12cEb4d93A24bB'
+    cawActionsMainnetAddress = '0x4D45a77c7724c5b71F3757cCAEC55b5B8f04955d'
     // //
     // // // Second L2 Deploy
     // // npx truffle deploy --network testnetL2
-    // cawActionsAddress = "0xE3970742a65F3253694a33219e84407d6DA8A46C"
+    cawActionsAddress = "0x793b884C8e64166d3faCDD03115F168Dbf539ae1"
   } else {
     cawAddress = '0xf3b9569F82B18aEf890De263B84189bd33EBe452';
 

@@ -1,3 +1,5 @@
+// client/src/services/FrontEnd/src/hooks/useTokenDataUpdate.tsx
+
 import { useEffect } from "react"
 import { useAccount, useReadContract } from "wagmi"
 import { Address } from "viem"
@@ -27,22 +29,28 @@ export default function useTokenDataUpdate() {
   const setLastAddress = useTokenDataStore(s => s.setLastAddress)
   const lastAddress = useTokenDataStore(s => s.lastAddress)
 
-console.log("has address?", !!address, address!)
+  const viewedAddress = (address ?? lastAddress) as Address | undefined
+  console.log("has address?", !!address, address ?? null, "viewedAddress:", viewedAddress ?? null)
+
   const { data: rawTokens, isError, error, isLoading, isLoadingError } = useReadContract({
     address: CAW_NAMES_ADDRESS,
     chainId: sepolia.id,
     abi: cawNameAbi,
     functionName: "tokens",
-    args: [address!],
+    args: [viewedAddress as Address],
+
     query: {
-      enabled: !!address
+      enabled: !!viewedAddress
     }
   })
-    if (address && rawTokens && rawTokens.length > 0 && activeTokenId === undefined) {
-      setActiveTokenId(rawTokens[0].tokenId)
-    }
-    if (!!address && rawTokens && rawTokens.length > 0)
-      setLastAddress(address!)
+
+
+  if (viewedAddress && rawTokens && rawTokens.length > 0 && activeTokenId === undefined)
+    setActiveTokenId(rawTokens[0].tokenId)
+
+  // only update lastAddress when a wallet is actually connected
+  if (!!address && rawTokens && rawTokens.length > 0)
+    setLastAddress(address)
 
   console.log("TOKEN DATA FROM L1:", rawTokens, isError, error)
 
@@ -52,7 +60,7 @@ console.log("has address?", !!address, address!)
     abi:          cawNameL2Abi,
     functionName: "getTokens",
     query: {
-      enabled: rawTokens && rawTokens.length > 0,
+      enabled: !!rawTokens && rawTokens.length > 0,
     },
     args: [(rawTokens ?? []).map((token) => Number(token.tokenId))],
   })
@@ -81,7 +89,7 @@ console.log("has address?", !!address, address!)
   // })
 
   useEffect(() => {
-    if (!rawTokens || balancesLoading || !address) return
+    if (!rawTokens || balancesLoading || !viewedAddress) return
 
     const updated: TokenData[] = (rawTokens).map(l1Token => {
       // const usdPrice = priceMap[meta.coingeckoId]?.usd ?? 0
@@ -92,7 +100,7 @@ console.log("has address?", !!address, address!)
         username:     l1Token.username,
         withdrawable: l1Token.withdrawable,
         ownerBalance: l1Token.ownerBalance,
-        address: address!,
+        address: viewedAddress!,
         owner: l1Token.owner!,
         stakedAmount:   l2Token!.cawBalance,
         cawonce:      Number(l2Token!.nextCawonce),
@@ -100,9 +108,10 @@ console.log("has address?", !!address, address!)
     })
 
     if (rawTokens.length > 0)
-      setTokensForAddress(address, updated)
+      setTokensForAddress(viewedAddress as Address, updated)
 
-  }, [rawTokens, setTokensForAddress, balancesLoading])
+  }, [rawTokens, l2TokenData, viewedAddress, setTokensForAddress, balancesLoading])
+
 }
 
 

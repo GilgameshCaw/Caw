@@ -16,6 +16,7 @@ const ProfileChooser: React.FC = () => {
   const lastAddress = useTokenDataStore(state => state.lastAddress);
   const activeTokenId = useTokenDataStore(state => state.activeTokenId);
   const tokensByAddress = useTokenDataStore(s => s.tokensByAddress);
+  const removeAddress = useTokenDataStore(s => s.removeAddress);
 
   const setLastAddress = useTokenDataStore(s => s.setLastAddress)
   const setActiveTokenId = useTokenDataStore(state => state.setActiveTokenId);;
@@ -30,13 +31,19 @@ const ProfileChooser: React.FC = () => {
 
   if (hasHydrated && !selectedToken)
     return (
-      <a href="/mint" className="text-blue-500 hover:underline">
+      <div className="mb-2">
+      <a href="/mint" className="bg-gray-900/80 px-5 py-3 rounded-md hover:bg-gray-900 text-sm ">
         + create your profile
       </a>
+      </div>
     );
 
   // --- handlers ---
   const toggleDropdown = () => setDropdownOpen(open => !open);
+
+  const handleRemoveAddress = (address: Address) => {
+    removeAddress(address);
+  };
 
   const handleSelectProfile = (token: TokenData) => {
     setActiveTokenId(token.tokenId)
@@ -51,7 +58,7 @@ const ProfileChooser: React.FC = () => {
 
   // --- main render when tokens exist ---
   return (
-    <div className="relative flex flex-col text-left">
+    <div className="relative flex flex-col text-left left-[0%]">
       <button
         onClick={toggleDropdown}
         className="flex items-center p-1 cursor-pointer"
@@ -78,20 +85,29 @@ const ProfileChooser: React.FC = () => {
       </button>
 
       {isDropdownOpen && (
-        <ul className="absolute bg-black right-0 bottom-0 mt-2 shadow-lg rounded-md overflow-hidden z-10">
+        <ul className="absolute left-0 w-fit bg-black right-0 bottom-0 mt-2 shadow-lg rounded-md overflow-hidden z-10">
           {Object.entries(visibleTokensByAddress).map(([ownerAddress, tokenList]) => (
-            <li key={ownerAddress} className="border-b border-gray-700">
+            <li key={ownerAddress} className="hover-parent border-b border-gray-700">
               {/* group header */}
-              <div className="px-4 py-2 bg-gray-900 text-xs font-semibold flex space-between">
-                <div className="">
+              <div className="pl-4 pr-2 py-2 bg-gray-900 text-xs font-semibold flex space-between">
+                <div className="pl-4">
                   {ownerAddress}
                 </div>
-                <div className="w-[15px] text-right">
-                  {address == ownerAddress && "←"}
-                </div>
+                {address == ownerAddress ? (
+                  <div className="w-[15px] pl-2 text-right">
+                    ←
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => handleRemoveAddress(ownerAddress as Address)}
+                    className="hover:bg-[#ffffff33] cursor-pointer show-hover-parent w-[14px] px-0 ml-2 text-[8px] bg-[#ffffff22] rounded-xs"
+                  >
+                    X
+                  </button>
+                ) }
               </div>
               {/* tokens for that address */}
-              <ul>
+              <ul className="">
                 {tokenList.map(token => (
                   <li key={token.tokenId}>
                     <button
@@ -111,7 +127,7 @@ const ProfileChooser: React.FC = () => {
                   </li>
                 ))}
                   {address == ownerAddress && (
-                    <li className="text-xs text-center py-1">
+                    <li className="text-xs text-center pt-1 pb-3">
                       <Link to={`/mint`} className="block">
                         + Mint a username
                       </Link>

@@ -13,6 +13,8 @@ const router = Router()
  */
 router.get('/', async (req, res) => {
   try {
+
+
     // 1) fetch pending queue entries
     const raws = await prisma.txQueue.findMany({
       where: { senderId: Number(req.query.senderId) },
