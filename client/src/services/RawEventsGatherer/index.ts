@@ -3,6 +3,7 @@ import { z } from 'zod'
 import Redis from 'ioredis'
 import { Service } from '../../Service'
 import listenForRawEvents, { RawEventInput } from './listenForRawEvents'
+import { convertBigIntsToStrings } from "./utils";
 import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
 import { prisma } from '../../prismaClient'
 
@@ -69,7 +70,7 @@ export const rawEventsGathererService: Service = {
             logIndex:        e.logIndex,
             transactionHash: e.transactionHash,
             parentHash:      e.parentHash,
-            data:            e.data,
+            data:            convertBigIntsToStrings(e.data),
             topics:          e.topics,
             contractAddress: CAW_ACTIONS_ADDRESS
           }

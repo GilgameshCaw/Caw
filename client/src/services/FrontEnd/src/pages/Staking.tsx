@@ -8,7 +8,7 @@ import { SubmitButton } from "~/components/buttons/SubmitButton"
 import { Input } from "~/components/Input"
 import { GasPriceLine } from "~/components/GasPriceLine"
 import { TokenData } from "~/types";
-import { handleError } from "~/utils";
+import { handleError, convertToText } from "~/utils";
 import useContractCall from "~/hooks/useContractCall";
 import useAllowance from "~/hooks/useAllowance";
 import { useAccount, useConnections, useReadContract, useSwitchChain } from "wagmi"
@@ -19,6 +19,7 @@ import { maxUint256, parseUnits } from "viem";
 import MainLayout from '~/layouts/MainLayout'
 import { sepolia, baseSepolia } from 'wagmi/chains'
 import { chains } from '~/config/chains'
+import { Link } from 'react-router-dom'
 
 const tabs = ["stake", "unstake", "info"] as const
 const CLIENT_ID = Number(import.meta.env.VITE_CLIENT_ID)
@@ -83,31 +84,40 @@ export const Staking: React.FC = () => {
     <MainLayout>
       <div className="w-[80%] m-auto">
         <div className="pl-1">{renderHeader(activeTab)}</div>
-        <div className="text-xl pt-4">
-          Active account: @{activeToken.username}
-        </div>
-        <div className="pt-6 md:py-8">
-          <div className="tabs-fade relative -mx-4 mb-2.5">
-            <div className="relative flex overflow-x-scroll">
-              <div className="sm:text-md mb-2.5 flex gap-2 px-4 text-sm font-semibold whitespace-nowrap md:text-lg">
-                {tabs.map(tab => (
-                  <button
-                    key={tab}
-                    onClick={() => setSearchParams({action: tab})}
-                    className={`tab ${activeTab === tab ? "tab-active" : ""}`}
-                  >
-                    {tab === "stake" ? "Deposit" : tab === "unstake" ? "Withdraw" : "Info"}
-                  </button>
-                ))}
+        { activeToken ?
+          <div>
+            <div className="text-xl pt-4">
+              Active account: @{activeToken.username}
+            </div>
+            <div className="pt-6 md:py-8">
+              <div className="tabs-fade relative -mx-4 mb-2.5">
+                <div className="relative flex overflow-x-scroll">
+                  <div className="sm:text-md mb-2.5 flex gap-2 px-4 text-sm font-semibold whitespace-nowrap md:text-lg">
+                    {tabs.map(tab => (
+                      <button
+                        key={tab}
+                        onClick={() => setSearchParams({action: tab})}
+                        className={`tab ${activeTab === tab ? "tab-active" : ""}`}
+                      >
+                        {tab === "stake" ? "Deposit" : tab === "unstake" ? "Withdraw" : "Info"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
+              {activeTab === "stake" && <StakePanel tokenId={tokenId} />}
+              {activeTab === "unstake" && (
+                <UnstakePanel token={activeToken} />
+              )}
+              {activeTab === "info" && <InfoPanel />}
             </div>
           </div>
-          {activeTab === "stake" && <StakePanel tokenId={tokenId} />}
-          {activeTab === "unstake" && (
-            <UnstakePanel token={activeToken} />
-          )}
-          {activeTab === "info" && <InfoPanel />}
-        </div>
+          :
+          <div className="text-xl pt-4">
+            No active account.
+            You must first <Link className='underline' to={`/mint`}>create a profile</Link>
+          </div>
+        }
       </div>
     </MainLayout>
   )
@@ -175,7 +185,7 @@ function StakePanel({ tokenId }: { tokenId?: number }) {
     address: CAW_NAMES_ADDRESS,
     abi: cawNameAbi,
     functionName: "deposit",
-    args: [ CLIENT_ID, tokenId!, parseUnits((amount || 0).toString(), 18), chains.l2.layerZero, 0n ],
+    args: [ CLIENT_ID, tokenId || 0, parseUnits((amount || 0).toString(), 18), chains.l2.layerZero, 0n ],
     disabled:      !tokenId || !amount || depositFee == 0n,
     value: depositFee,
     onPending: () => { },
@@ -217,32 +227,72 @@ function StakePanel({ tokenId }: { tokenId?: number }) {
 }
 
 /** Withdraw panel */
-function UnstakePanel({ token, withdrawable }: { token?: TokenData, withdrawable: bigint }) {
+function UnstakePanel({ token }: { token?: TokenData }) {
+  const { switchChain } = useSwitchChain();
+  const handleSwitchChain = (network) => switchChain({ chainId: chains[network].chainId });
   const signAndSubmit     = useSignAndSubmitAction()
   const [ amount, setAmount ]       = useState<string>("")
-  const [ messagingFee, setFee ]    = useState<bigint>(0n)
+  const [ nativeFee, setFee ]    = useState<bigint>(0n)
+  const withdrawable = token?.withdrawable || 0;
+  const { isConnected } = useAccount()
+
+  const connections = useConnections();
+  const isMainnet = connections[0]?.chainId == chains.l1.chainId;
+
 
   // quote withdraw fee on L2
   const { data: quote } = useReadContract({
-    address:      CAW_NAMES_L2_ADDRESS,
-    abi:          cawNameL2Abi,
+    address:      CAW_NAMES_ADDRESS,
+    abi:          cawNameAbi,
     functionName: "withdrawQuote",
-    args:         [[ token?.tokenId ?? 0 ], [ parseUnits(amount || "0", 18) ], false],
+    args:         [CLIENT_ID, false],
     query: {
-      enabled: !!token && !!amount
+      enabled: !!token
     }
   })
+
+  const unstake = useContractCall({
+    address: CAW_NAMES_ADDRESS,
+    abi: cawNameAbi,
+    functionName: "withdraw",
+    args: [ CLIENT_ID, Number((token?.tokenId ?? 0n)), 0n ],
+    disabled: !token?.tokenId || nativeFee == 0n,
+    value: nativeFee,
+    onPending: () => { },
+    onSuccess: (hash) => {
+    },
+    onError: (err) => handleError(err, "stake"),
+  });
 
   const handleWithdraw = async (event) => {
     if (!token) return
     event.preventDefault()
     try {
-      await signAndSubmit({
-        senderId:        token.tokenId,
-        actionType:      'withdraw',
-        recipients: [token.tokenId],
-        amounts: [BigInt(amount) * 10n**18n],
-      })
+      if (!isMainnet) {
+        handleSwitchChain("l1")
+      } else {
+        unstake.call();
+      }
+    } catch (err) {
+      console.error('withdraw failed', err)
+    } finally {
+    }
+  }
+
+  const handleWithdrawInit = async (event) => {
+    if (!token) return
+    event.preventDefault()
+    try {
+      if (isMainnet) {
+        handleSwitchChain("l2")
+      } else {
+        await signAndSubmit({
+          senderId:        token.tokenId,
+          actionType:      'withdraw',
+          recipients: [token.tokenId],
+          amounts: [BigInt(amount) * 10n**18n],
+        })
+      }
       // maybe optimistically update UI here…
     } catch (err) {
       console.error('withdraw failed', err)
@@ -254,27 +304,20 @@ function UnstakePanel({ token, withdrawable }: { token?: TokenData, withdrawable
     if (quote?.nativeFee != null) setFee(BigInt(quote.nativeFee))
   }, [quote])
 
-  // const unstake = useContractCall({
-  //   address: CAW_NAMES_ADDRESS,
-  //   abi: cawNameAbi,
-  //   functionName: "withdraw",
-  //   args: [ CLIENT_ID, tokenId ?? 0, parseUnits(amount || "0", 18), chains.l1.layerZero, false ],
-  //   disabled:      !tokenId || !amount || messagingFee > 0n,
-  //   onPending: () => { },
-  //   onSuccess: (hash) => {
-  //   },
-  //   onError: (err) => handleError(err, "stake"),
-  // });
 
 
   return (
     <div className="space-y-4">
       <div className={token && token.withdrawable == 0n ? 'hidden' : '' }>
-        Pending Withdraw: {(token?.withdrawable)?.toString()}
-        <SubmitButton onClick={()=>{}} className="btn btn-submit" >
-      </SubmitButton>
+        Pending Withdraw: {convertToText(withdrawable.toString(), 18)} CAW
+        {isConnected && 
+          <SubmitButton onClick={handleWithdraw} className="btn btn-submit" >
+            {!isMainnet ? "Switch Network" : "Withdraw"}
+          </SubmitButton>
+        }
       </div>
 
+    <hr className="mb-8"/>
         Withdraw
       <Input
         balance={{ raw: token?.stakedAmount || 0n, usd: 0 }}
@@ -282,16 +325,16 @@ function UnstakePanel({ token, withdrawable }: { token?: TokenData, withdrawable
         onChange={setAmount}
       />
       <SubmitButton
-        onClick={handleWithdraw}
+        onClick={handleWithdrawInit}
         // disabled={!write}
         // loading={isLoading}
         className="btn btn-submit"
       >
-        Withdraw
+        {isMainnet ? "Switch Network" : "Initialize Withdrawal"}
       </SubmitButton>
     </div>
   )
-      // <GasPriceLine gas={unstake.gasCostWei + messagingFee} />
+      // <GasPriceLine gas={unstake.gasCostWei + nativeFee} />
 }
 
 /** Info panel */
