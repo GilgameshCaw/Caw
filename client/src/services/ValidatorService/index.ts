@@ -117,7 +117,7 @@ export const validatorService: Service = {
         const [ successfulActions, rejectionMessages ] = decoded
 
         console.log("simulated:", successfulActions.length, rejectionMessages)
-        return { successfulActions, rejectionMessages }
+        return { successfulActions, rejectionMessages, quote }
       } catch (err) {
         console.error("FAILED to simulate actions", err)
       }
@@ -256,7 +256,7 @@ console.log("succeededKeys", succeededKeys)
 
         console.log("will Simulat", validatorId);
       // 1) simulate
-      const { successfulActions, rejectionMessages } =
+      const { successfulActions, rejectionMessages, quote } =
         await simulateActions(validatorId, fullBatch)
       console.log(successfulActions, '////////////////', entries);
 
@@ -297,11 +297,11 @@ console.log("succeededKeys", succeededKeys)
 
       // 2) estimate gas cost
       const gasCost = await estimateProcessGasCost(
-        validatorId, multiSucceeded, /* messagingFee= */ BigInt(0)
+        validatorId, multiSucceeded, quote.nativeFee
       )
 
       const rawGasLimit = await estimateGasLimit(
-        validatorId, multiSucceeded, /* messagingFee=*/ 0n
+        validatorId, multiSucceeded, quote.nativeFee
       );
 
       // recompute tip from only the successful ones
@@ -313,7 +313,7 @@ console.log("succeededKeys", succeededKeys)
       }
 
       const finalized = await submitProcessActions(
-         validatorId, multiSucceeded, /* messagingFee= */ BigInt(0), rawGasLimit
+         validatorId, multiSucceeded, quote.nativeFee, rawGasLimit
        )
 
       // 4) update database

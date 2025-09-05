@@ -369,3 +369,12 @@ box-shadow: 0px 0px 5px white;
 .custom-scrollbar-alt::-webkit-scrollbar {
   display: none; /* WebKit browsers */
 }
+
+.show-hover-parent {
+  opacity: 0
+}
+.hover-parent:hover {
+  .show-hover-parent {
+    opacity: 1
+  }
+}

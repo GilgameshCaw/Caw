@@ -573,7 +573,7 @@ export const Profile: React.FC = () => {
                 </div>
               </div>
             </div>
-
+ me 
             {/* Modal Footer */}
             <div className="flex justify-end space-x-3 p-6 border-t border-white/10">
               <button

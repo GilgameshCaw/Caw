@@ -15,6 +15,7 @@ const ProfileChooser: React.FC = () => {
   const activeToken = useActiveToken()
   const lastAddress = useTokenDataStore(state => state.lastAddress);
   const activeTokenId = useTokenDataStore(state => state.activeTokenId);
+  const removeAddress = useTokenDataStore(s => s.removeAddress);
   const tokensByAddress = useTokenDataStore(s => s.tokensByAddress);
   const { isDark } = useTheme()
 
@@ -42,6 +43,10 @@ const ProfileChooser: React.FC = () => {
   // --- handlers ---
   const toggleDropdown = () => setDropdownOpen(open => !open);
 
+  const handleRemoveAddress = (address: Address) => {
+    removeAddress(address);
+  };
+
   const handleSelectProfile = (token: TokenData) => {
     setActiveTokenId(token.tokenId)
     setDropdownOpen(false);
@@ -55,7 +60,7 @@ const ProfileChooser: React.FC = () => {
 
   // --- main render when tokens exist ---
   return (
-    <div className="relative flex flex-col text-left">
+    <div className="relative flex flex-col text-left left-[0%]">
       <button
         onClick={toggleDropdown}
         className="flex items-center p-1 cursor-pointer"
@@ -99,12 +104,21 @@ const ProfileChooser: React.FC = () => {
                 <div className="">
                   {ownerAddress}
                 </div>
-                <div className="w-[15px] text-right">
-                  {address == ownerAddress && "←"}
-                </div>
+                {address == ownerAddress ? (
+                  <div className="w-[15px] pl-2 text-right">
+                    ←
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => handleRemoveAddress(ownerAddress as Address)}
+                    className="hover:bg-[#ffffff33] cursor-pointer show-hover-parent w-[14px] px-0 ml-2 text-[8px] bg-[#ffffff22] rounded-xs"
+                  >
+                    X
+                  </button>
+                ) }
               </div>
               {/* tokens for that address */}
-              <ul>
+              <ul className="">
                 {tokenList.map(token => (
                   <li key={token.tokenId}>
                     <button
@@ -128,7 +142,7 @@ const ProfileChooser: React.FC = () => {
                   </li>
                 ))}
                   {address == ownerAddress && (
-                    <li className="text-xs text-center py-1">
+                    <li className="text-xs text-center pt-1 pb-3">
                       <Link to={`/mint`} className="block">
                         + Mint a username
                       </Link>
