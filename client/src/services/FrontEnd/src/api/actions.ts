@@ -22,8 +22,8 @@ const ActionTypeMap = {
 export type ActionTypeKey = keyof typeof ActionTypeMap
 
 /** natstat: singleton client ID (one per front-end) */
-const CLIENT_ID = Number(import.meta.env.VITE_CLIENT_ID)
-const VALIDATOR_TIP = BigInt(import.meta.env.VITE_VALIDATOR_TIP)
+const CLIENT_ID = Number(import.meta.env.VITE_CLIENT_ID) || 1
+const VALIDATOR_TIP = BigInt(import.meta.env.VITE_VALIDATOR_TIP || "1000000000000000")
 
 
 

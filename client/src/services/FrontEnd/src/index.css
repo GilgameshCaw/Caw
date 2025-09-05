@@ -130,7 +130,7 @@
     }
 
     &.btn-connect {
-      @apply rounded-md px-3 py-2 text-base text-sm md:rounded-lg md:px-4 md:py-2.5;
+      @apply rounded-xl px-3 py-2 text-base text-sm md:rounded-2xl md:px-4 md:py-2.5;
     }
 
     &.btn-launch {
@@ -153,7 +153,7 @@
     }
 
     &.btn-submit {
-      @apply relative mt-4 w-full rounded-sm py-5 text-lg;
+      @apply relative mt-4 w-full rounded-full py-3 text-lg bg-yellow-500 hover:bg-yellow-600 text-black transition-all duration-300;
     }
 
     &.btn-loading:after {
@@ -246,7 +246,6 @@
 
   .modal {
     @apply relative z-10 flex w-[600px] max-w-full flex-col rounded-sm bg-black px-3 py-4;
-    box-shadow: 0px 0px 4px 3px --alpha(var(--color-primary) / 20%); /* modal-glow */
   }
 
   .modal-backdrop {
@@ -349,4 +348,24 @@
 
 .shadow {
 box-shadow: 0px 0px 5px white;
+}
+
+/* Custom scrollbar styles - Completely transparent */
+.custom-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* Internet Explorer 10+ */
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  display: none; /* WebKit browsers */
+}
+
+/* Alternative: Completely hidden scrollbar */
+.custom-scrollbar-alt {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* Internet Explorer 10+ */
+}
+
+.custom-scrollbar-alt::-webkit-scrollbar {
+  display: none; /* WebKit browsers */
 }

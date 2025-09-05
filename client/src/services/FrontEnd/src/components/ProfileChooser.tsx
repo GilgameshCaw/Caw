@@ -8,7 +8,7 @@ import { Link } from 'react-router-dom'
 import { TokenData } from "~/types";
 import { useAccount } from "wagmi";
 import { Address } from "viem";
-
+import { useTheme } from "~/hooks/useTheme";
 
 const ProfileChooser: React.FC = () => {
   const { isConnected, address } = useAccount();
@@ -16,6 +16,7 @@ const ProfileChooser: React.FC = () => {
   const lastAddress = useTokenDataStore(state => state.lastAddress);
   const activeTokenId = useTokenDataStore(state => state.activeTokenId);
   const tokensByAddress = useTokenDataStore(s => s.tokensByAddress);
+  const { isDark } = useTheme()
 
   const setLastAddress = useTokenDataStore(s => s.setLastAddress)
   const setActiveTokenId = useTokenDataStore(state => state.setActiveTokenId);;
@@ -23,15 +24,18 @@ const ProfileChooser: React.FC = () => {
 
   const selectedToken = activeToken;
 
-
-
   const hasHydrated = useTokenDataStore(s => s.hasHydrated);
   console.log("tokens by address", hasHydrated, tokensByAddress)
 
   if (hasHydrated && !selectedToken)
     return (
-      <a href="/mint" className="text-blue-500 hover:underline">
-        + create your profile
+      <a href="/mint" className={`inline-flex items-center gap-2 px-4 py-3 rounded-2xl transition-all duration-200 font-medium text-sm shadow-lg hover:shadow-xl hover:scale-105 ${
+        isDark
+          ? 'bg-white/10 text-white border border-white/20 hover:bg-white/20 hover:border-white/30'
+          : 'bg-gray-200 text-black border border-gray-300 hover:bg-gray-300 hover:border-gray-400'
+      }`}>
+        <span className="text-lg">+</span>
+        create your profile
       </a>
     );
 
@@ -63,11 +67,14 @@ const ProfileChooser: React.FC = () => {
           <div className="m-5">
           </div>
 
-
-          <div className="font-bold text-lg">
+          <div className={`font-bold text-lg transition-all duration-300 ${
+            isDark ? 'text-white' : 'text-black'
+          }`}>
             {selectedToken.username}
           </div>
-          <div className="opacity-40 text-sm">
+          <div className={`opacity-40 text-sm transition-all duration-300 ${
+            isDark ? 'text-gray-300' : 'text-gray-600'
+          }`}>
             {selectedToken.stakedAmount > 0n ? formatUnitsCompact(selectedToken.stakedAmount,18) : "No"} CAW
           </div>
           <div className={`${notCurrentAddress ? '' : 'hidden'} text-2xs text-red-500`}>
@@ -78,11 +85,17 @@ const ProfileChooser: React.FC = () => {
       </button>
 
       {isDropdownOpen && (
-        <ul className="absolute bg-black right-0 bottom-0 mt-2 shadow-lg rounded-md overflow-hidden z-10">
+        <ul className={`absolute right-0 bottom-0 mt-2 shadow-lg rounded-md overflow-hidden z-10 transition-all duration-300 ${
+          isDark ? 'bg-black border border-white/20' : 'bg-white border border-gray-200'
+        }`}>
           {Object.entries(visibleTokensByAddress).map(([ownerAddress, tokenList]) => (
-            <li key={ownerAddress} className="border-b border-gray-700">
+            <li key={ownerAddress} className={`border-b transition-all duration-300 ${
+              isDark ? 'border-gray-700' : 'border-gray-200'
+            }`}>
               {/* group header */}
-              <div className="px-4 py-2 bg-gray-900 text-xs font-semibold flex space-between">
+              <div className={`px-4 py-2 text-xs font-semibold flex space-between transition-all duration-300 ${
+                isDark ? 'bg-gray-900 text-white' : 'bg-gray-100 text-black'
+              }`}>
                 <div className="">
                   {ownerAddress}
                 </div>
@@ -96,7 +109,11 @@ const ProfileChooser: React.FC = () => {
                   <li key={token.tokenId}>
                     <button
                       onClick={() => handleSelectProfile(token)}
-                      className="cursor-pointer flex items-center px-4 py-2 hover:bg-gray-800 w-full text-left"
+                      className={`cursor-pointer flex items-center px-4 py-2 w-full text-left transition-all duration-200 ${
+                        isDark 
+                          ? 'hover:bg-gray-800 text-white' 
+                          : 'hover:bg-gray-100 text-black'
+                      }`}
                     >
                       <div className="rounded-full overflow-hidden w-8 h-8 mr-3">
                         <img src="/images/logo.jpeg" alt={token.username} />

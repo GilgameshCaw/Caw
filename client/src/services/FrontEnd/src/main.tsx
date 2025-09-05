@@ -16,7 +16,7 @@ createRoot(document.getElementById("root")!).render(
       <StateProvider>
         <QueryClientProvider client={queryClient}>
           <App />
-        </QueryClientProvider>,
+        </QueryClientProvider>
       </StateProvider>
     </Web3Provider>
   </StrictMode>

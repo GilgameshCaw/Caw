@@ -1,10 +1,10 @@
 import { create } from "zustand";
 
-export type Modal = "network" | 'comment' | 'quote';
+export type Modal = "network" | 'comment' | 'quote' | 'message';
 
 interface ModalStore {
   modal?: Modal;
-  openModal: (modal: Modal) => void;
+  openModal: (modal: Modal, data?: any) => void;
   closeModal: () => void;
   modalData?: any;
 }

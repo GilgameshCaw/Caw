@@ -1,0 +1,123 @@
+// src/components/modals/MessageModal.tsx
+import React, { useState } from 'react'
+import { useSignAndSubmitAction } from '~/api/actions'
+import CloseIcon from '~/assets/images/close.svg?react'
+import { useTokenDataStore } from "~/store/tokenDataStore"
+import { useAccount } from "wagmi"
+import { useTheme } from '~/hooks/useTheme'
+import { HiOutlineMail } from 'react-icons/hi'
+
+interface MessageModalProps {
+  recipient: {
+    id: string
+    username: string
+    tokenId?: number
+  }
+  onClose: () => void
+}
+
+export const MessageModal: React.FC<MessageModalProps> = ({ recipient, onClose }) => {
+  const [message, setMessage] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
+  const { isDark } = useTheme()
+  const { isConnected } = useAccount()
+  const activeTokenId = useTokenDataStore(state => state.activeTokenId)
+  const signAndSubmit = useSignAndSubmitAction()
+
+  const handleSendMessage = async () => {
+    if (!message.trim() || !activeTokenId || isLoading) return
+    
+    setIsLoading(true)
+    try {
+      await signAndSubmit({
+        actionType: 'caw',
+        senderId: activeTokenId,
+        receiverId: Number(recipient.id),
+        receiverCawonce: recipient.tokenId ?? 0,
+        text: message.trim()
+      })
+      setMessage('')
+      onClose()
+    } catch (err) {
+      console.error('Message failed', err)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      handleSendMessage()
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      onClick={onClose}
+    >
+      <div
+        className="bg-black p-6 rounded-lg w-full max-w-md relative mx-4 border border-white/20"
+        onClick={e => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <h3 className="text-lg font-bold text-white">
+            Send message
+          </h3>
+          <button
+            className="text-white hover:text-gray-300 transition-colors duration-200"
+            onClick={onClose}
+          >
+            <CloseIcon className="w-6 h-6" />
+          </button>
+        </div>
+
+        {/* Recipient Info */}
+        <div className="flex items-center space-x-3 mb-6">
+          <div className="w-10 h-10 rounded-full bg-gray-600 flex items-center justify-center">
+            <img 
+              src="/images/logo.jpeg" 
+              alt={recipient.username}
+              className="w-10 h-10 rounded-full object-cover"
+            />
+          </div>
+          <div>
+            <div className="text-white font-medium">{recipient.username}</div>
+            <div className="text-gray-400 text-sm">@{recipient.username}</div>
+          </div>
+        </div>
+
+        {/* Message Input */}
+        <div className="space-y-3">
+          <label className="text-white text-sm font-medium">
+            Message:
+          </label>
+          <textarea
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            onKeyPress={handleKeyPress}
+            className="w-full resize-none rounded-lg border transition-all duration-300 focus:outline-none py-3 px-4 text-white placeholder-white/50 focus:border-white/30 focus:bg-black bg-black border-white/20"
+            rows={4}
+            placeholder="What's happening?"
+            disabled={isLoading}
+          />
+        </div>
+
+        {/* Send Button */}
+        <div className="mt-6">
+          <button
+            onClick={handleSendMessage}
+            disabled={isLoading || !isConnected}
+            className="w-full py-2 px-6 rounded-full font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-all duration-200"
+          >
+            {isLoading ? 'Sending...' : 'Send'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default MessageModal

@@ -5,8 +5,10 @@ import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 
 const rpcs = {
   HARDHAT: "ws://127.0.0.1:8545",
-  // TODO: move this out to config file or .env
-  ALCHEMY_MAINNET: "https://mainnet.infura.io/v3/xxx",
+  // Using environment variables for RPC URLs
+  ALCHEMY_MAINNET: import.meta.env.VITE_ALCHEMY_API_KEY 
+    ? `https://eth-mainnet.g.alchemy.com/v2/${import.meta.env.VITE_ALCHEMY_API_KEY}`
+    : "https://mainnet.infura.io/v3/xxx",
   SEPOLIA: "https://ethereum-sepolia-rpc.publicnode.com",
   BASE_SEPOLIA: "https://base-sepolia-rpc.publicnode.com"
 };
@@ -15,7 +17,7 @@ const queryClient = new QueryClient();
 
 export const wagmiConfig = getDefaultConfig({
   appName: "CAW",
-  projectId: "xxx",
+  projectId: import.meta.env.VITE_PROJECT_ID || "your_project_id_here",
   chains: [sepolia, baseSepolia],
   transports: {
     [sepolia.id]: http(rpcs.SEPOLIA),

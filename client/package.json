@@ -5,17 +5,13 @@
   "scripts": {
     "prisma:reset": "prisma db push --force-reset",
     "prisma:migrate": "prisma migrate dev",
-
     "test": "tsc --noEmit && mocha --import=tsx tests/**/*.test.ts",
-
     "redis": "redis-server --port 6379",
-    "api":   "tsx programs/start.ts",
-    "web":   "cd src/services/FrontEnd && yarn dev",
-
+    "api": "tsx programs/start.ts",
+    "web": "cd src/services/FrontEnd && yarn dev",
     "dev:api": "nodemon --watch src --ext ts,js --exec \"tsx programs/start.ts\"",
-
     "start": "concurrently \"npm run redis\" \"npm run api\"",
-    "dev":   "concurrently \"npm run redis\" \"npm run dev:api\" \"npm run web\""
+    "dev": "concurrently \"npm run redis\" \"npm run dev:api\" \"npm run web\""
   },
   "author": "",
   "license": "UNLICENSED",
@@ -41,6 +37,7 @@
     "@types/pg": "^8.11.6",
     "cors": "^2.8.5",
     "ethers": "^6.12.1",
+    "express": "^5.1.0",
     "ioredis": "^5.6.1",
     "keccak": "^3.0.4",
     "pg": "^8.12.0",

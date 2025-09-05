@@ -5,6 +5,7 @@ import routes from "./routes";
 
 function App() {
   useCawonceSync();
+
   return (
     <BrowserRouter>
       <Routes>

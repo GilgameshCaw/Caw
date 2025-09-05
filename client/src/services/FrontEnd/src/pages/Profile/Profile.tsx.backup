@@ -32,8 +32,8 @@ export const Profile: React.FC = () => {
   })
 
   // Image handling state
-  const [avatarPreview, setAvatarPreview] = useState<string | undefined>(undefined)
-  const [coverPreview, setCoverPreview] = useState<string | undefined>(undefined)
+  const [avatarPreview, setAvatarPreview] = useState<string | null>(null)
+  const [coverPreview, setCoverPreview] = useState<string | null>(null)
   const [isUploading, setIsUploading] = useState(false)
 
   // Image handling functions
@@ -96,11 +96,13 @@ export const Profile: React.FC = () => {
 
   return (
     <MainLayout>
-      <div className={`max-w-2xl mx-auto min-h-screen transition-all duration-300 ${
+      <div className={`max-w-2xl mx-auto px-6 py-4 min-h-screen transition-all duration-300 ${
         isDark ? 'bg-black text-white' : 'bg-white text-black'
       }`}>
         {/* Profile Header */}
-        <div className="relative transition-all duration-300">
+        <div className={`relative transition-all duration-300 -mx-10 ${
+          isDark ? 'bg-black' : 'bg-white'
+        }`}>
           {/* Cover Photo */}
           <div className={`h-48 w-full transition-all duration-300 ${
             isDark ? 'bg-gray-800' : 'bg-gray-200'
@@ -120,178 +122,176 @@ export const Profile: React.FC = () => {
           </div>
         </div>
 
-        {/* Profile Info - Layout de 2 columnas */}
-        <div className={`pt-24 pb-6 px-6 transition-all duration-300 ${
+        {/* Profile Info */}
+        <div className={`pt-24 pb-6 pl-6 pr-6 transition-all duration-300 ${
           isDark ? 'bg-black text-white' : 'bg-white text-black'
         }`}>
-          {/* Layout principal: 2 columnas */}
-          <div className="flex justify-between items-start">
-            {/* Columna izquierda: Username, Joined, Stats */}
-            <div className="flex-1">
-              {/* Username y Joined */}
-              <div className="mb-4">
-                <h1 className={`text-2xl font-bold transition-all duration-300 ${
-                  isDark ? 'text-white' : 'text-black'
-                }`}>
-                  @{displayUsername}
-                </h1>
-                <p className={`text-sm mt-1 transition-all duration-300 ${
-                  isDark ? 'text-gray-400' : 'text-gray-600'
-                }`}>
-                  Joined January 2024
-                </p>
-              </div>
-
-              {/* Stats - Alineadas horizontalmente */}
-              <div className="flex space-x-8 mb-6">
-                <div>
-                  <div className={`text-lg font-bold transition-all duration-300 ${
-                    isDark ? 'text-white' : 'text-black'
-                  }`}>
-                    42
-                  </div>
-                  <div className={`text-sm transition-all duration-300 ${
-                    isDark ? 'text-gray-400' : 'text-gray-600'
-                  }`}>
-                    Posts
-                  </div>
-                </div>
-                <div>
-                  <div className={`text-lg font-bold transition-all duration-300 ${
-                    isDark ? 'text-white' : 'text-black'
-                  }`}>
-                    1.2K
-                  </div>
-                  <div className={`text-sm transition-all duration-300 ${
-                    isDark ? 'text-gray-400' : 'text-gray-600'
-                  }`}>
-                    Following
-                  </div>
-                </div>
-                <div>
-                  <div className={`text-lg font-bold transition-all duration-300 ${
-                    isDark ? 'text-white' : 'text-black'
-                  }`}>
-                    3.4K
-                  </div>
-                  <div className={`text-sm transition-all duration-300 ${
-                    isDark ? 'text-gray-400' : 'text-gray-600'
-                  }`}>
-                    Followers
-                  </div>
-                </div>
-              </div>
-
-              {/* Bio - Arriba de location y website, puede estirarse hacia la derecha */}
-              <div className="mb-4 pr-6">
-                <p className={`text-base leading-relaxed transition-all duration-300 ${
-                  isDark ? 'text-white' : 'text-black'
-                }`}>
-                  Building the future of decentralized social media! 🚀<br />
-                  The Caw Protocol is revolutionizing how we connect online.
-                </p>
-              </div>
-
-              {/* Location and Website - En el mismo renglón */}
-              <div className="flex items-center space-x-6">
-                <div className="flex items-center space-x-2">
-                  <HiLocationMarker className={`w-4 h-4 transition-colors duration-300 ${
-                    isDark ? 'text-gray-400' : 'text-gray-500'
-                  }`} />
-                  <span className={`text-base transition-colors duration-300 ${
-                    isDark ? 'text-gray-300' : 'text-gray-600'
-                  }`}>
-                    San Francisco, CA
-                  </span>
-                </div>
+          {/* Header con nombre y botón Edit Profile */}
+          <div className="flex justify-between items-center mb-4">
+            <h1 className={`text-2xl font-bold transition-all duration-300 ${
+              isDark ? 'text-white' : 'text-black'
+            }`}>
+              @{displayUsername}
+            </h1>
+            
+            {/* Botón Edit Profile - Al lado del nombre */}
+            <div>
+              {isOwnProfile ? (
+                <button 
+                  onClick={() => setIsEditModalOpen(true)}
+                  className={`px-4 py-2 rounded-full font-semibold border transition-all duration-200 ${
+                    isDark 
+                      ? 'border-white/60 text-white hover:bg-white hover:text-black' 
+                      : 'border-black/60 text-black hover:bg-black hover:text-white'
+                  }`}
+                >
+                  <HiPencil className="w-4 h-4 inline mr-2" />
+                  Edit Profile
+                </button>
+              ) : (
+              <div className="flex flex-col space-y-3">
+                <button 
+                  onClick={() => setIsFollowing(!isFollowing)}
+                  className={`px-8 py-2 rounded-full font-semibold border transition-all duration-200 ${
+                    isFollowing
+                      ? 'border-white bg-white text-black hover:bg-white/90'
+                      : 'border-white text-white hover:bg-white hover:text-black'
+                  }`}
+                >
+                  {isFollowing ? 'Following' : 'Follow'}
+                </button>
                 
-                <div className="flex items-center space-x-2">
-                  <HiGlobe className={`w-4 h-4 transition-colors duration-300 ${
-                    isDark ? 'text-gray-400' : 'text-gray-500'
-                  }`} />
-                  <a 
-                    href="https://caw.is" 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className={`text-base transition-colors duration-300 hover:underline ${
-                      isDark ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-500'
+                {/* Message and More Options buttons */}
+                <div className="flex justify-center space-x-2">
+                  {/* Message button */}
+                  <button 
+                    onClick={() => {
+                      // Mock user data - in real app this would come from the profile data
+                      const recipientData = {
+                        id: '1', // This should come from the actual user data
+                        username: displayUsername,
+                        tokenId: 1 // This should come from the actual user data
+                      }
+                      openModal('message', recipientData)
+                    }}
+                    className={`p-2 rounded-full border transition-all duration-200 cursor-pointer hover:bg-white/10 ${
+                      isDark 
+                        ? 'border-white/60 text-white hover:bg-white/10' 
+                        : 'border-black/60 text-black hover:bg-black/10'
                     }`}
+                    title="Send Message"
                   >
-                    caw.is
-                  </a>
+                    <HiOutlineMail className="w-5 h-5" />
+                  </button>
+                  
+                  {/* More options button */}
+                  <button 
+                    className={`p-2 rounded-full border transition-all duration-200 cursor-pointer hover:bg-white/10 ${
+                      isDark 
+                        ? 'border-white/60 text-white hover:bg-white/10' 
+                        : 'border-black/60 text-black hover:bg-black/10'
+                    }`}
+                    title="More options"
+                  >
+                    <HiDotsHorizontal className="w-5 h-5" />
+                  </button>
                 </div>
+              </div>
+            )}
+          </div>
+
+          {/* Fecha de unión */}
+          <p className={`text-sm mb-4 transition-all duration-300 ${
+            isDark ? 'text-gray-400' : 'text-gray-600'
+          }`}>
+            Joined January 2024
+          </p>
+
+          {/* Stats - Justo debajo de la fecha */}
+          <div className="flex justify-start space-x-8 sm:space-x-6 mb-6">
+            <div className="text-center">
+              <div className={`text-lg font-bold transition-all duration-300 ${
+                isDark ? 'text-white' : 'text-black'
+              }`}>
+                42
+              </div>
+              <div className={`text-sm transition-all duration-300 ${
+                isDark ? 'text-gray-400' : 'text-gray-600'
+              }`}>
+                Posts
               </div>
             </div>
+            <div className="text-center">
+              <div className={`text-lg font-bold transition-all duration-300 ${
+                isDark ? 'text-white' : 'text-black'
+              }`}>
+                1.2K
+              </div>
+              <div className={`text-sm transition-all duration-300 ${
+                isDark ? 'text-gray-400' : 'text-gray-600'
+              }`}>
+                Following
+              </div>
+            </div>
+            <div className="text-center">
+              <div className={`text-lg font-bold transition-all duration-300 ${
+                isDark ? 'text-white' : 'text-black'
+              }`}>
+                3.4K
+              </div>
+              <div className={`text-sm transition-all duration-300 ${
+                isDark ? 'text-gray-400' : 'text-gray-600'
+              }`}>
+                Followers
+              </div>
+            </div>
+          </div>
 
-            {/* Columna derecha: Solo Edit Button */}
-            <div className="ml-6 flex flex-col items-end">
-              {/* Edit Button */}
-              <div>
-                {isOwnProfile ? (
-                  <button 
-                    onClick={() => setIsEditModalOpen(true)}
-                    className={`px-4 py-2 rounded-full font-semibold border transition-all duration-200 ${
-                      isDark 
-                        ? 'border-white/60 text-white hover:bg-white hover:text-black' 
-                        : 'border-black/60 text-black hover:bg-black hover:text-white'
-                    }`}
-                  >
-                    <HiPencil className="w-4 h-4 inline mr-2" />
-                    Edit Profile
-                  </button>
-                ) : (
-                  <div className="flex flex-col space-y-3">
-                    <button 
-                      onClick={() => setIsFollowing(!isFollowing)}
-                      className={`px-8 py-2 rounded-full font-semibold border transition-all duration-200 ${
-                        isFollowing
-                          ? 'border-white bg-white text-black hover:bg-white/90'
-                          : 'border-white text-white hover:bg-white hover:text-black'
-                      }`}
-                    >
-                      {isFollowing ? 'Following' : 'Follow'}
-                    </button>
-                    
-                    <div className="flex justify-center space-x-2">
-                      <button 
-                        onClick={() => {
-                          const recipientData = {
-                            id: '1',
-                            username: displayUsername,
-                            tokenId: 1
-                          }
-                          openModal('message', recipientData)
-                        }}
-                        className={`p-2 rounded-full border transition-all duration-200 cursor-pointer hover:bg-white/10 ${
-                          isDark 
-                            ? 'border-white/60 text-white hover:bg-white/10' 
-                            : 'border-black/60 text-black hover:bg-black/10'
-                        }`}
-                        title="Send Message"
-                      >
-                        <HiOutlineMail className="w-5 h-5" />
-                      </button>
-                      
-                      <button 
-                        className={`p-2 rounded-full border transition-all duration-200 cursor-pointer hover:bg-white/10 ${
-                          isDark 
-                            ? 'border-white/60 text-white hover:bg-white/10' 
-                            : 'border-black/60 text-black hover:bg-black/10'
-                        }`}
-                        title="More options"
-                      >
-                        <HiDotsHorizontal className="w-5 h-5" />
-                      </button>
-                    </div>
-                  </div>
-                )}
+          {/* Bio y ubicación */}
+          <div className="mb-6">
+            <p className={`text-base mt-3 leading-relaxed transition-all duration-300 ${
+              isDark ? 'text-white' : 'text-black'
+            }`}>
+              Building the future of decentralized social media! 🚀<br />
+              The Caw Protocol is revolutionizing how we connect online.
+            </p>
+            
+            {/* Location and Website - Mejor organizados para mobile */}
+            <div className="flex flex-col sm:flex-row sm:items-center space-y-2 sm:space-y-0 sm:space-x-6 mt-4">
+              {/* Location */}
+              <div className="flex items-center space-x-2">
+                <HiLocationMarker className={`w-4 h-4 transition-colors duration-300 ${
+                  isDark ? 'text-gray-400' : 'text-gray-500'
+                }`} />
+                <span className={`text-base transition-colors duration-300 ${
+                  isDark ? 'text-gray-300' : 'text-gray-600'
+                }`}>
+                  San Francisco, CA
+                </span>
+              </div>
+              
+              {/* Website */}
+              <div className="flex items-center space-x-2">
+                <HiGlobe className={`w-4 h-4 transition-colors duration-300 ${
+                  isDark ? 'text-gray-400' : 'text-gray-500'
+                }`} />
+                <a 
+                  href="https://caw.is" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className={`text-base transition-colors duration-300 hover:underline ${
+                    isDark ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-500'
+                  }`}
+                >
+                  caw.is
+                </a>
               </div>
             </div>
           </div>
         </div>
 
         {/* Tabs */}
-        <div className="px-6 mb-6">
+        <div className="mb-6">
           <Tabs<ProfileTab>
             tabs={profileTabs}
             active={activeTab}
@@ -450,7 +450,7 @@ export const Profile: React.FC = () => {
                         onClick={(e) => {
                           e.preventDefault()
                           e.stopPropagation()
-                          setAvatarPreview(undefined)
+                          setAvatarPreview(null)
                         }}
                         className={`px-3 py-1 text-xs rounded-full transition-all duration-300 ${
                           isDark 
@@ -467,7 +467,7 @@ export const Profile: React.FC = () => {
                         onClick={(e) => {
                           e.preventDefault()
                           e.stopPropagation()
-                          setCoverPreview(undefined)
+                          setCoverPreview(null)
                         }}
                         className={`px-3 py-1 text-xs rounded-full transition-all duration-300 ${
                           isDark 
@@ -611,3 +611,4 @@ export const Profile: React.FC = () => {
     </MainLayout>
   )
 }
+
