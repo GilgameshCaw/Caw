@@ -1,5 +1,6 @@
 // src/components/Tabs.tsx
 import React from 'react'
+import { useTheme } from '~/hooks/useTheme'
 
 export interface TabItem<T extends string> {
   id:    T
@@ -13,18 +14,27 @@ type Props<T extends string> = {
 }
 
 export function Tabs<T extends string>({ tabs, active, onChange }: Props<T>) {
+  const { isDark } = useTheme()
+  
   return (
-    <div className="flex space-x-4 border-b border-gray-700">
+    <div className={`flex justify-center sm:justify-center border-b transition-all duration-300 ${
+      isDark ? 'border-white/20' : 'border-gray-300'
+    }`}>
       {tabs.map(t => (
         <button
           key={t.id}
           onClick={() => onChange(t.id)}
-          className={
-            `py-2 flex-1 text-center ` +
-            (t.id === active
-              ? 'border-b-2 border-blue-500 text-white'
-              : 'text-gray-400')
-          }
+          className={`py-4 px-8 sm:flex-1 text-center font-medium text-lg transition-all duration-200 cursor-pointer ${
+            t.id === active
+              ? `${isDark 
+                  ? 'text-white border-white' 
+                  : 'text-black border-black'
+                } border-b-2`
+              : `${isDark 
+                  ? 'text-gray-400 hover:text-white hover:bg-white/5' 
+                  : 'text-gray-600 hover:text-black hover:bg-gray-100'
+                }`
+          }`}
         >
           {t.label}
         </button>

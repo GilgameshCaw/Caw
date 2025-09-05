@@ -36,7 +36,10 @@ export const PendingPage: React.FC = () => {
   const [loading, setLoad]    = useState(true)
 
   useEffect(() => {
-    if (!activeTokenId) return
+    if (!activeTokenId) {
+      setLoad(false)
+      return
+    }
     setLoad(true)
 
     apiFetch<ApiResponse>(`/api/txs?senderId=${activeTokenId}`)
@@ -49,8 +52,20 @@ export const PendingPage: React.FC = () => {
   }, [activeTokenId])
 
   if (loading) return <MainLayout>Loading…</MainLayout>
+  if (!activeTokenId) 
+    return <MainLayout>
+      <div className="text-center py-12">
+        <h2 className="text-xl font-semibold mb-4">No Active Token</h2>
+        <p className="text-gray-400">Please connect your wallet and select a CawName to view pending transactions.</p>
+      </div>
+    </MainLayout>
   if (actions.length === 0)
-    return <MainLayout>No pending transactions</MainLayout>
+    return <MainLayout>
+      <div className="text-center py-12">
+        <h2 className="text-xl font-semibold mb-4">No Pending Transactions</h2>
+        <p className="text-gray-400">You don't have any pending transactions at the moment.</p>
+      </div>
+    </MainLayout>
 
   // build a lookup for users
   const userById = new Map(users.map(u => [u.id, u]))

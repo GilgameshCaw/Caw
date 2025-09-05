@@ -4,15 +4,14 @@ import { useTokenDataStore } from '~/store/tokenDataStore'
 import FeedItem from './FeedItem'
 import { apiFetch } from '../api/client'
 import { User, CawItem } from '~/types'
+import { useTheme } from '~/hooks/useTheme'
 
 type Props = {
-  filter: 'For you' | 'Following' | 'profile' | 'profile-likes'
+  filter: 'For you' | 'Following' | 'profile' | 'profile-likes' | 'profile-replies' | 'profile-media'
   username?: string
 }
 
-
 // whatever shape your backend now returns
-
 type FeedResponse = {
   items: CawItem[]
   nextCursor?: number
@@ -20,13 +19,14 @@ type FeedResponse = {
 
 const Feed: React.FC<Props> = ({ filter, username }) => {
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
+  const { isDark } = useTheme()
   const [items,      setItems]      = useState<CawItem[]>([])
   const [nextCursor, setNextCursor] = useState<number|undefined>(undefined)
   const [hasMore,    setHasMore]    = useState(true)
   const [loading,    setLoading]    = useState(false)
   const [error,      setError]      = useState<string>()
 
-  // load one “page” of results
+  // load one "page" of results
   const loadPage = useCallback(async (force = false) => {
     if (loading || (!hasMore && !force)) return
     setLoading(true)
@@ -39,20 +39,19 @@ const Feed: React.FC<Props> = ({ filter, username }) => {
     }
     // new profile‐only:
     if (filter === 'profile' && username) {
-      // Fetch only this user’s posts
+      // Fetch only this user's posts
       params.set('user', username)
     }
 
     // new profile‐likes:
     if (filter === 'profile-likes' && username) {
-      // Fetch only this user’s liked posts
+      // Fetch only this user's liked posts
       params.set('user', username)
       params.set('filter', 'liked')
     }
     if (nextCursor != null) {
       params.set('cursor', String(cursorToUse))
     }
-
 
     try {
       const { items: newItems, nextCursor: newCursor } =
@@ -108,12 +107,13 @@ const Feed: React.FC<Props> = ({ filter, username }) => {
   }, [loadPage, loading, hasMore, nextCursor])
 
   // render
-  if (error)   return <div className="text-red-500">{error}</div>
-  if (items.length === 0 && loading) return <div>Loading…</div>
-  if (items.length === 0)             return <div>No posts yet.</div>
+  if (error)   return <div className={`text-red-500 transition-all duration-300 ${isDark ? 'text-red-400' : 'text-red-600'}`}>{error}</div>
+  if (items.length === 0 && loading) return <div className={`transition-all duration-300 ${isDark ? 'text-white' : 'text-black'}`}>Loading…</div>
+  if (items.length === 0)             return <div className={`transition-all duration-300 ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>No posts yet.</div>
 
   return (
     <div>
+      {/* Posts with consistent styling across all pages */}
       {items.map(caw => (
         <FeedItem
           key={caw.id}
@@ -121,8 +121,8 @@ const Feed: React.FC<Props> = ({ filter, username }) => {
         />
       ))}
 
-      {loading && <div className="py-4 text-center">Loading more…</div>}
-      {!hasMore && <div className="py-4 text-center">You’ve reached the end.</div>}
+      {loading && <div className={`py-4 text-center transition-all duration-300 ${isDark ? 'text-white' : 'text-black'}`}>Loading more…</div>}
+      {!hasMore && <div className={`py-4 text-center transition-all duration-300 ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>You've reached the end.</div>}
     </div>
   )
 }
