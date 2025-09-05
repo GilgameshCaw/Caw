@@ -1,0 +1,5 @@
+[33mff66561[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mdesign-branch[m[33m)[m feat: major frontend overhaul with new pages, components, and theme system
+[33mcd5ed8e[m[33m ([m[1;32mmaster[m[33m)[m Fixed an issue with cross chain communication on testnet
+[33m1b262a0[m Fixed a small bug with the solidity tests
+[33m22491e1[m Added infrastructure for validator, api, and web app
+[33m6610e17[m Moved all solidity files into solidity directory
