@@ -1,9 +1,12 @@
 import React from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useTheme } from '~/hooks/useTheme'
+import { formatUsageCount } from '~/utils/numberFormat'
 
 const TrendingHashtags: React.FC = () => {
   const { isDark } = useTheme()
-  
+  const navigate = useNavigate()
+
   const trendingHashtags = [
     { tag: 'CawProtocol', posts: '2.3K', trend: 'up' },
     { tag: 'Gilgamesh', posts: '1.8K', trend: 'up' },
@@ -14,14 +17,19 @@ const TrendingHashtags: React.FC = () => {
     { tag: 'OneWhoStillDreams', posts: '432', trend: 'up' }
   ]
 
+  const handleHashtagClick = (hashtag: string) => {
+    navigate(`/hashtags/${hashtag}`)
+  }
+
   return (
     <div className="space-y-4">
       {trendingHashtags.map((item, index) => (
-        <div
+        <button
           key={item.tag}
-          className={`cursor-pointer p-3 rounded-lg transition-colors duration-200 group ${
-            isDark 
-              ? 'hover:bg-white/10' 
+          onClick={() => handleHashtagClick(item.tag)}
+          className={`w-full cursor-pointer p-3 rounded-lg transition-colors duration-200 group ${
+            isDark
+              ? 'hover:bg-white/10'
               : 'hover:bg-gray-200/50'
           }`}
         >
@@ -48,11 +56,11 @@ const TrendingHashtags: React.FC = () => {
                   ? 'text-gray-400 group-hover:text-gray-300' 
                   : 'text-gray-500 group-hover:text-gray-600'
               }`}>
-                {item.posts} posts
+                {formatUsageCount(item.posts)}
               </span>
             </div>
           </div>
-        </div>
+        </button>
       ))}
     </div>
   )

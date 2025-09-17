@@ -7,8 +7,9 @@ import { User, CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
 
 type Props = {
-  filter: 'For you' | 'Following' | 'profile' | 'profile-likes' | 'profile-replies' | 'profile-media'
+  filter: 'For you' | 'Following' | 'profile' | 'profile-likes' | 'profile-replies' | 'profile-media' | string
   username?: string
+  apiEndpoint?: string
 }
 
 // whatever shape your backend now returns
@@ -17,7 +18,7 @@ type FeedResponse = {
   nextCursor?: number
 }
 
-const Feed: React.FC<Props> = ({ filter, username }) => {
+const Feed: React.FC<Props> = ({ filter, username, apiEndpoint }) => {
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const { isDark } = useTheme()
   const [items,      setItems]      = useState<CawItem[]>([])
@@ -33,6 +34,33 @@ const Feed: React.FC<Props> = ({ filter, username }) => {
     setError(undefined)
 
     const cursorToUse = force ? undefined : nextCursor
+
+    // Use custom API endpoint if provided (for hashtag feeds)
+    if (apiEndpoint) {
+      const params = new URLSearchParams()
+      if (nextCursor != null) {
+        params.set('cursor', String(cursorToUse))
+      }
+
+      try {
+        const { items: newItems, nextCursor: newCursor } =
+          await apiFetch<FeedResponse>(`${apiEndpoint}?${params.toString()}`)
+
+        setItems(current => {
+          return force ? newItems : [...current, ...newItems]
+        })
+        setNextCursor(newCursor)
+        setHasMore(newCursor != null)
+      } catch (err: any) {
+        console.error('Custom feed load error', err)
+        setError('Failed to load feed')
+      } finally {
+        setLoading(false)
+      }
+      return
+    }
+
+    // Default caws API logic
     const params = new URLSearchParams()
     if (filter === 'Following') {
       params.set('filter', 'following')
@@ -107,9 +135,15 @@ const Feed: React.FC<Props> = ({ filter, username }) => {
   }, [loadPage, loading, hasMore, nextCursor])
 
   // render
-  if (error)   return <div className={`text-red-500 transition-all duration-300 ${isDark ? 'text-red-400' : 'text-red-600'}`}>{error}</div>
-  if (items.length === 0 && loading) return <div className={`transition-all duration-300 ${isDark ? 'text-white' : 'text-black'}`}>Loading…</div>
-  if (items.length === 0)             return <div className={`transition-all duration-300 ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>No posts yet.</div>
+  if (error)   return <div className="text-red-400">Error loading feed: {error}</div>
+  if (items.length === 0 && loading) return (
+    <div className="space-y-4">
+      {[...Array(3)].map((_, i) => (
+        <div key={i} className="animate-pulse bg-gray-800 rounded-lg h-32"></div>
+      ))}
+    </div>
+  )
+  if (items.length === 0) return <div className="text-gray-400 text-center py-8">No posts yet.</div>
 
   return (
     <div>
@@ -121,8 +155,8 @@ const Feed: React.FC<Props> = ({ filter, username }) => {
         />
       ))}
 
-      {loading && <div className={`py-4 text-center transition-all duration-300 ${isDark ? 'text-white' : 'text-black'}`}>Loading more…</div>}
-      {!hasMore && <div className={`py-4 text-center transition-all duration-300 ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>You've reached the end.</div>}
+      {loading && <div className="py-4 text-center text-gray-400">Loading more…</div>}
+      {!hasMore && <div className="py-4 text-center text-gray-500">You've reached the end.</div>}
     </div>
   )
 }

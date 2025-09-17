@@ -41,6 +41,7 @@ export type CawItem = {
   user: { id: number; username: string; image?: string }
   parent: CawItem
   likeCount: number
+  viewCount: number
   hasLiked: boolean
   hasRecawed: boolean
   commentCount: number

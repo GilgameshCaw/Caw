@@ -1,18 +1,26 @@
 import React from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useTheme } from '~/hooks/useTheme'
 
 const Trending: React.FC = () => {
   const { isDark } = useTheme()
-  
+  const navigate = useNavigate()
+
   const trends = [
     '#CawProtocol',
+    '$CAW',
     '#Gilgamesh',
     '#TehFutureIsHere',
     '#IAmRyoshi',
     '#DecentralizedFreedom',
-    '#Cawmmunity',
-    '#OneWhoStillDreams'
+    '#Cawmmunity'
   ]
+
+  const handleHashtagClick = (hashtag: string) => {
+    // Remove # or $ symbol and navigate
+    const cleanHashtag = hashtag.replace(/^[#$]/, '')
+    navigate(`/hashtags/${cleanHashtag}`)
+  }
 
   return (
     <>
@@ -26,22 +34,23 @@ const Trending: React.FC = () => {
         }`}>Trending</h2>
         <div className="space-y-4">
           {trends.map(t => (
-            <div
+            <button
               key={t}
-              className={`cursor-pointer p-3 rounded-lg transition-colors duration-200 group ${
-                isDark 
-                  ? 'hover:bg-white/10' 
+              onClick={() => handleHashtagClick(t)}
+              className={`w-full cursor-pointer p-3 rounded-lg transition-colors duration-200 group text-left ${
+                isDark
+                  ? 'hover:bg-white/10'
                   : 'hover:bg-gray-200/50'
               }`}
             >
               <span className={`font-medium transition-colors duration-200 ${
-                isDark 
-                  ? 'text-gray-300 group-hover:text-white' 
+                isDark
+                  ? 'text-gray-300 group-hover:text-white'
                   : 'text-gray-600 group-hover:text-black'
               }`}>
                 {t}
               </span>
-            </div>
+            </button>
           ))}
         </div>
       </div>

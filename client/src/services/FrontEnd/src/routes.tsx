@@ -10,6 +10,7 @@ import MessagesPage from "./pages/Messages";
 import BookmarksPage from "./pages/Bookmarks";
 import ExplorePage from "./pages/Explore";
 import GameFiPage from "./pages/GameFiPage";
+import HashtagPage from "./pages/HashtagPage";
 import { Navigate } from "react-router-dom";
 
 
@@ -50,6 +51,10 @@ export default [
   {
     path: "/caws/:id",
     component: <CawPage />,
+  },
+  {
+    path: "/hashtags/:hashtag",
+    component: <HashtagPage />,
   },
   {
     path: "/notifications",

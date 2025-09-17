@@ -217,6 +217,7 @@ contract CawActions is Context {
     uint256 withdrawBitmap = 0;
     rejections = new string[](actionsLength);
 
+
     for (uint16 i = 0; i < actionsLength; ) {
       try CawActions(this).processAction(validatorId, data.actions[i], data.v[i], data.r[i], data.s[i]) {
         successBitmap |= (1 << i);

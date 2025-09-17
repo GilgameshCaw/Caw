@@ -1,11 +1,12 @@
 //src/services/ActionProcessor/index.ts
 import { ActionType as PrismaActionType } from '@prisma/client'
-import getActionType from '../../abi/getActionType'
-import { findOrCreateUser } from '../UserService'
 import { prisma } from '../../prismaClient'
 import { Service } from '../../Service'
 import Redis from 'ioredis'
 import { z } from 'zod'
+import { createOrFindAction, ensureActionExists } from './actionCreation'
+import { processDomainEffects } from './domainProcessor'
+import type { RawAction } from './types'
 
 const Config = z.object({
   redisUrl: z.string().optional().default('redis://127.0.0.1:6379'),
@@ -81,190 +82,33 @@ async function handleRawEvent(raw: { id: number, chainId: number, data: any }) {
 }
 
 
-async function handleRawAction(rawId: number, chainId: number, rawAction: any): Promise<void> {
+async function handleRawAction(rawId: number, chainId: number, rawAction: RawAction): Promise<void> {
   await prisma.$transaction(async (tx) => {
-
-    let action
     try {
-      console.log("Will create?")
-      action = await prisma.action.create({
-        data: {
-          rawEventId: rawId,
-          chainId:    chainId,
-          senderId:   rawAction.senderId,
-          cawonce:    rawAction.cawonce,
-          actionType: getActionType(Number(rawAction.actionType)),
-          data:       rawAction
-        }
-      })
-    } catch (err: any) {
-      console.log("error - ", err.code === 'P2002' ? "already exists" : "other issue:")
-      if (err.code === 'P2002') return
-      console.log('action.create error', err)
-      return
-    }
+      // Create or find existing action, determine if domain processing is needed
+      const { action, shouldProcessDomain } = await createOrFindAction(tx, rawId, chainId, rawAction)
 
-    action = await prisma.action.findFirstOrThrow({
-      where: { rawEventId: rawId }
-    })
+      if (!shouldProcessDomain) {
+        return // Domain objects already exist, nothing to do
+      }
 
+      // Ensure we have a valid action before processing
+      const validAction = await ensureActionExists(tx, rawId, action)
 
-
-    // now materialize domain effects
-    console.log("TYPe", action.actionType)
-
-    const authorId = await findOrCreateUser(action.senderId)
-
-    // detect “comment” vs brand-new post
-    let parentCawId: number | undefined
-    let originalCawId: number | undefined
-    if (rawAction.receiverId) { // this doesn't work for follows, but maybe fine and maybe make it so cawonce is not able to be 0
-      console.log("Searching for original caw id.... ", rawAction.receiverCawonce, rawAction.receiverId)
-      parentCawId = await findCawId(
-        rawAction.receiverCawonce,
-        rawAction.receiverId
-      )
-    }
-
-    switch (action.actionType) {
-      case 'CAW':
-        await prisma.caw.create({
-          data: {
-            userId:  authorId,
-            cawonce: action.cawonce,
-            content: rawAction.text,
-            action:  action.actionType,
-            originalCawId: parentCawId,
-          }
-        })
-        if (rawAction.originalCawId) {
-          await prisma.caw.update({
-            where: { id: rawAction.originalCawId },
-            data:  { commentCount: { increment: 1 } }
-          })
-        }
-
-        // increment user’s cawCount
-        await prisma.user.update({
-          where: { id: rawAction.senderId },
-          data: { cawCount: { increment: 1 } }
-        })
-
-        if (parentCawId)  // if it was a comment, bump the parent’s commentCount
-          await prisma.caw.update({
-            where: { id: parentCawId },
-            data:  { commentCount: { increment: 1 } }
-          })
-        break
-
-      case 'RECAW':
-        await prisma.caw.create({
-          data: {
-            originalCawId: await findCawId(rawAction.receiverCawonce, action.senderId),
-            userId:        await findOrCreateUser(action.senderId),
-            action:        action.actionType,
-            cawonce:       action.cawonce,
-            content:       rawAction.text
-          }
-        })
-        await prisma.caw.update({
-          where: { id: parentCawId },
-          data:  { recawCount: { increment: 1 } }
-        })
-        break
-
-
-      case 'LIKE':
-        const userId = await findOrCreateUser(action.senderId)
-        // 1) see if there's already a like
-
-        const existing = await prisma.like.findUnique({
-          where: { userId_cawId: { userId, cawId: parentCawId } }
-
-        })
-
-
-        console.log("Create like: ", existing)
-        if (existing) {
-          // 2a) just update the action field (no counter bump)
-          await tx.like.update({
-            where: { userId_cawId: { userId, cawId: parentCawId } },
-            data:  { action: 'LIKE' }
-
-          })
-        } else {
-          // 2b) create the like _and_ bump the Caw.likeCount
-          await tx.like.create({
-            data: { userId, cawId: parentCawId, action: 'LIKE' }
-          })
-          await tx.caw.update({
-            where: { id: parentCawId },
-            data:  { likeCount: { increment: 1 } }
-          })
-        }
-        break
-
-
-      case 'UNLIKE':
-        await prisma.like.deleteMany({
-          where: {
-            userId: await findOrCreateUser(action.senderId),
-            cawId:  await findCawId(rawAction.receiverCawonce, rawAction.senderId)
-          }
-        })
-        break
-
-      case 'FOLLOW':
-        await prisma.follow.upsert({
-          where: {
-            followerId_followingId: {
-              followerId:  await findOrCreateUser(action.senderId),
-              followingId: await findOrCreateUser(rawAction.receiverId)
-            }
-          },
-          update: { action: 'FOLLOW' },
-          create: {
-            followerId:  await findOrCreateUser(action.senderId),
-            followingId: await findOrCreateUser(rawAction.receiverId),
-            action:      'FOLLOW'
-          }
-        })
-        break
-
-      case 'UNFOLLOW':
-        await prisma.follow.deleteMany({
-          where: {
-            followerId:  await findOrCreateUser(action.senderId),
-            followingId: await findOrCreateUser(rawAction.receiverId)
-          }
-        })
-        break
-
-        // other action types (WITHDRAW, OTHER) can be handled here
+      // Process domain effects based on action type
+      await processDomainEffects(tx, validAction, rawAction)
+    } catch (err) {
+      console.error('Failed to handle raw action:', err)
+      // Don't re-throw to avoid failing the entire transaction batch
     }
   })
 }
 
-// placeholder: map on-chain senderId → your User.id
-async function findUserId(senderId: number): Promise<number> {
-  const u = await prisma.user.upsert({
-    where: { address: String(senderId) },
-    update: {},
-    create: { address: String(senderId) }
-  })
-  return u.id
-}
-
-// placeholder: find the Caw this action targets (by cawonce & user)
-async function findCawId(cawonce: number, userOnChain: number): Promise<number> {
-  const uid = await findOrCreateUser(userOnChain)
-  const c = await prisma.caw.findFirst({
-    where: { userId: uid, action: 'CAW', cawonce: cawonce },
-    orderBy: { createdAt: 'asc' }
-  })
-  if (!c) throw new Error(`target caw not found ${uid} cawonce: ${cawonce}`)
-  return c.id
-}
+// NOTE: Helper functions moved to separate modules:
+// - findCawId moved to actionHandlers.ts
+// - User creation handled by UserService
+// - Domain object checks moved to domainObjectChecks.ts
+// - Action creation moved to actionCreation.ts
 
 // allow all actions for now
 function filterAction(_a: any): boolean {

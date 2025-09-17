@@ -71,6 +71,7 @@ model Caw {
   recaws        Caw[]      @relation("CawToRecaws")
   user  User   @relation(fields: [userId], references: [tokenId])
   likes Like[]
+  hashtags CawHashtag[]
 
   // counter caches:
   commentCount Int @default(0)
@@ -138,4 +139,31 @@ model Action {
   createdAt DateTime @default(now())
 
   @@unique([chainId, senderId, cawonce])
+}
+
+model Hashtag {
+  id         Int      @id @default(autoincrement())
+  name       String   @unique // hashtag without the # symbol
+  usageCount Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  caws CawHashtag[]
+
+  @@index([name])
+  @@index([usageCount])
+}
+
+model CawHashtag {
+  id        Int     @id @default(autoincrement())
+  cawId     Int
+  hashtagId Int
+  createdAt DateTime @default(now())
+
+  caw     Caw     @relation(fields: [cawId], references: [id], onDelete: Cascade)
+  hashtag Hashtag @relation(fields: [hashtagId], references: [id], onDelete: Cascade)
+
+  @@unique([cawId, hashtagId])
+  @@index([hashtagId])
+  @@index([cawId])
 }

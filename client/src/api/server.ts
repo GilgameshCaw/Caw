@@ -4,6 +4,7 @@ import http from 'http'
 import actionsRouter from './routes/actions'
 import cawRouter from './routes/caws'
 import txRouter  from './routes/txs'
+import hashtagRouter from './routes/hashtags'
 
 /**
  * natstat: build and configure Express app
@@ -35,6 +36,7 @@ function createApp() {
 	app.use('/api/actions', actionsRouter)
 	app.use('/api/caws', cawRouter)
 	app.use('/api/txs',  txRouter)
+	app.use('/api/hashtags', hashtagRouter)
 
   return app
 }

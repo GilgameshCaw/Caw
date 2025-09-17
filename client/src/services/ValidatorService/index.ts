@@ -84,7 +84,7 @@ export const validatorService: Service = {
       try {
         console.log("will simulate actions:", multiData.actions)
         var withdraws = multiData.actions.filter(function(action: any) {return getActionType(action.actionType).toString() == 'WITHDRAW'});
-        var quote;
+        var quote = { nativeFee: BigInt(0) }; // Default quote for non-withdrawal actions
         var withdrawTypes = multiData.actions.map(function(action: any) {return getActionType(action.actionType).toString()});
         console.log("Withdraws:", withdraws, withdrawTypes)
         if (withdraws.length > 0) {

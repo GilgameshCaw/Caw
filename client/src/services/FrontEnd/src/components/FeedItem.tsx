@@ -26,6 +26,30 @@ import { useModalStore } from '~/store/modalStore'
 import { Link } from 'react-router-dom'
 import { User, CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
+import ContentWithHashtags from './ContentWithHashtags'
+import { formatEngagementCount } from '~/utils/numberFormat'
+
+// Helper function to format relative time
+function formatTimeAgo(timestamp: string): string {
+  const now = new Date()
+  const time = new Date(timestamp)
+  const diffInMs = now.getTime() - time.getTime()
+  const diffInMinutes = Math.floor(diffInMs / (1000 * 60))
+  const diffInHours = Math.floor(diffInMs / (1000 * 60 * 60))
+  const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24))
+
+  if (diffInMinutes < 1) {
+    return 'now'
+  } else if (diffInMinutes < 60) {
+    return `${diffInMinutes}m`
+  } else if (diffInHours < 24) {
+    return `${diffInHours}h`
+  } else if (diffInDays < 7) {
+    return `${diffInDays}d`
+  } else {
+    return time.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  }
+}
 
 const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean }> = ({ item, isMainPost = false, isReply = false }) => {
   const activeTokenId     = useTokenDataStore(s => s.activeTokenId)
@@ -213,7 +237,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   <span className={`text-sm transition-colors duration-300 ml-4 md:ml-0 ${
                     isDark ? 'text-gray-500' : 'text-gray-500'
                   }`}>
-                    · {Math.floor(Math.random() * 24) + 1}h
+                    · {formatTimeAgo(useItem.timestamp)}
                   </span>
                 </div>
               </div>
@@ -238,11 +262,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           </div>
 
           {/* Post Content */}
-          <div className={`mb-4 transition-colors duration-300 pl-2 md:pl-0 ${
-            isDark ? 'text-gray-200' : 'text-gray-800'
-          }`}>
-            {useItem.content}
-          </div>
+          <ContentWithHashtags
+            content={useItem.content}
+            className={`mb-4 transition-colors duration-300 pl-2 md:pl-0 ${
+              isDark ? 'text-gray-200' : 'text-gray-800'
+            }`}
+          />
 
           {/* Post Actions */}
           <div className="flex items-center justify-between">
@@ -256,7 +281,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 title="Reply"
               >
                 <HiOutlineChat className="w-5 h-5" />
-                <span className="text-sm">{useItem.commentCount}</span>
+                <span className="text-sm">{formatEngagementCount(useItem.commentCount)}</span>
               </button>
 
               {/* Retweets */}
@@ -275,7 +300,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   }`} />
                   <span className={`text-sm transition-colors duration-300 ${
                     isRecawed ? 'text-green-500' : ''
-                  }`}>{useItem.recawCount}</span>
+                  }`}>{formatEngagementCount(useItem.recawCount)}</span>
                 </button>
 
                 {showRecawMenu && (
@@ -324,18 +349,18 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 title="Like"
               >
                 <HiOutlineHeart className={`w-5 h-5 ${useItem.hasLiked ? 'fill-current' : ''}`} />
-                <span className="text-sm">{useItem.likeCount}</span>
+                <span className="text-sm">{formatEngagementCount(useItem.likeCount)}</span>
               </button>
 
               {/* Views */}
-              <button 
+              <button
                 className={`flex items-center space-x-2 transition-colors duration-300 cursor-pointer ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
                 title="Views"
               >
                 <HiOutlineEye className="w-5 h-5" />
-                <span className="text-sm">{Math.floor(Math.random() * 1000) + 100}</span>
+                <span className="text-sm">{formatEngagementCount(useItem.viewCount || 0)}</span>
               </button>
             </div>
 
