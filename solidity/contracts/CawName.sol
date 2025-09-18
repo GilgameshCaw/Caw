@@ -38,6 +38,7 @@ contract CawName is
   string[] public usernames;
   bool private fromLZ;
 
+  // TODO: this one not used
   bytes4 public mintSelector = bytes4(keccak256("mintAndUpdateOwners(uint32,address,string,uint32[],address[])"));
 
   bytes4 public addToBalanceSelector = bytes4(keccak256("depositAndUpdateOwners(uint32,uint32,uint256,uint32[],address[])"));
@@ -186,6 +187,8 @@ contract CawName is
     }
   }
 
+  // TODO:
+  // TODO:
   // TODO:
   // create a depositFor function, so users can approve and
   // use other contracts to interface with this one.

@@ -51,6 +51,14 @@ model User {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
+  // Profile fields
+  bio            String?  @db.Text
+  displayName    String?
+  location       String?
+  website        String?
+  avatarUrl      String?
+  coverPhotoUrl  String?
+
   caws      Caw[]
   likes     Like[]
   follows   Follow[] @relation("Following") // whom *I* follow

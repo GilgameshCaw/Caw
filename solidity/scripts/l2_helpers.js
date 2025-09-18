@@ -1,7 +1,7 @@
 
 // just run:
 // .load ./scripts/l2_helpers.js
-// r = await processActions([firstCaw], {validator: accounts[0]})
+// r = await processActions([firstLike], {validator: accounts[0]})
 //
 // r.tx.receipt.logs[0].args
 //

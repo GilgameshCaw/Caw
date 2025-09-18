@@ -45,7 +45,10 @@ router.get('/', async (req, res) => {
         where: { followerId: currentUserId, action: 'FOLLOW' },
         select: { followingId: true }
       })
-      where.userId = { in: follows.map(f => f.followingId) }
+      // Include self in following feed (users should see their own posts)
+      const followingIds = follows.map(f => f.followingId)
+      followingIds.push(currentUserId) // Add self
+      where.userId = { in: followingIds }
     } else if (filter === 'liked' && targetUserId) {
       // “profile-likes” mode: caws this user has liked
       where.likes = { some: { userId: targetUserId } }

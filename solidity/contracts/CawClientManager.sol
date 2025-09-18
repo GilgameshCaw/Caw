@@ -51,6 +51,14 @@ contract CawClientManager {
     return client.depositFee;
   }
 
+  // TODO:
+  // Could someone make a fee that's stuipidly high to block users from withdrawing?
+  // Could someone make a fee that's stuipidly high to block users from withdrawing?
+  // Could someone make a fee that's stuipidly high to block users from withdrawing?
+  // Could someone make a fee that's stuipidly high to block users from withdrawing?
+  // Could someone make a fee that's stuipidly high to block users from withdrawing?
+  // Could someone make a fee that's stuipidly high to block users from withdrawing?
+  // Could someone make a fee that's stuipidly high to block users from withdrawing?
   function getWithdrawFee(uint32 clientId) public view returns (uint256) {
     CawClient storage client = clients[clientId];
     return client.withdrawFee;
