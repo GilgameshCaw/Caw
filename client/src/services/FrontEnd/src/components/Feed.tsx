@@ -5,6 +5,7 @@ import FeedItem from './FeedItem'
 import { apiFetch } from '../api/client'
 import { User, CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
+import { usePendingPostsStore } from '~/store/pendingPostsStore'
 
 type Props = {
   filter: 'For you' | 'Following' | 'profile' | 'profile-likes' | 'profile-replies' | 'profile-media' | string
@@ -20,6 +21,7 @@ type FeedResponse = {
 
 const Feed: React.FC<Props> = ({ filter, username, apiEndpoint }) => {
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
+  const pendingPosts = usePendingPostsStore(s => s.pendingPosts)
   const { isDark } = useTheme()
   const [items,      setItems]      = useState<CawItem[]>([])
   const [nextCursor, setNextCursor] = useState<number|undefined>(undefined)
@@ -147,6 +149,16 @@ const Feed: React.FC<Props> = ({ filter, username, apiEndpoint }) => {
 
   return (
     <div>
+      {/* Show pending posts at the top (only on main feed, not profiles) */}
+      {filter === 'For you' && pendingPosts.map(post => (
+        <div key={post.tempId} className="opacity-60 relative">
+          <div className="absolute top-2 right-2 text-xs text-gray-500 bg-gray-800 px-2 py-1 rounded">
+            Pending...
+          </div>
+          <FeedItem item={post as CawItem} />
+        </div>
+      ))}
+
       {/* Posts with consistent styling across all pages */}
       {items.map(caw => (
         <FeedItem

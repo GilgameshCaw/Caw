@@ -245,25 +245,100 @@ console.log("succeededKeys", succeededKeys)
       }, BigInt(0))
     }
 
+    /** natstat: check if on-chain image storage has sufficient CAW payment */
+    function validateImageStorageCost(
+      action: any
+    ): { valid: boolean; requiredCaw?: number } {
+      // Check if this is an 'other' action type (used for on-chain images)
+      if (getActionType(action.actionType).toString() !== 'OTHER') {
+        return { valid: true }
+      }
+
+      // Parse the text to check for base64 images
+      const text = action.text || ''
+      const imageMatches = text.match(/image64:([^\n]+)/g)
+      if (!imageMatches || imageMatches.length === 0) {
+        return { valid: true }
+      }
+
+      // Calculate required CAW for all images
+      let totalRequiredCaw = 0
+      for (const match of imageMatches) {
+        const base64Data = match.replace('image64:', '')
+        // Base64 encoding increases size by ~33%
+        const originalSize = Math.ceil((base64Data.length * 3) / 4)
+        // Using same calculation as frontend
+        const MIN_CAW_COST = 500
+        const l1GasPerByte = 16
+        const l1DataGas = originalSize * l1GasPerByte
+        const l2ExecutionGas = originalSize * 3
+        const totalGas = l1DataGas + l2ExecutionGas
+        const effectiveGasPrice = 8
+        const cawPerGwei = 0.03
+        const baseCost = Math.ceil(totalGas * effectiveGasPrice * cawPerGwei)
+        const totalCost = Math.ceil(baseCost * 1.5)
+        totalRequiredCaw += Math.max(MIN_CAW_COST, totalCost)
+      }
+
+      // Check if amounts array has sufficient CAW
+      const amounts = action.amounts || []
+      const providedCaw = amounts.length > 0 ? Number(amounts[0]) : 0
+
+      if (providedCaw < totalRequiredCaw) {
+        console.log(`Insufficient CAW for image storage: provided ${providedCaw}, required ${totalRequiredCaw}`)
+        return { valid: false, requiredCaw: totalRequiredCaw }
+      }
+
+      return { valid: true }
+    }
+
 
     /** natstat: core polling loop */
     async function pollLoop() {
       const entries = await fetchPendingQueue()
       if (!entries.length) return
 
-      const fullBatch = buildMultiActionData(entries)
-      const totalTipBefore = computeTotalTip(entries)
+      // Pre-filter entries that don't have sufficient CAW for image storage
+      const validatedEntries: typeof entries = []
+      const invalidEntries: typeof entries = []
+
+      for (const entry of entries) {
+        const action = (entry.payload as any).data
+        const validation = validateImageStorageCost(action)
+        if (validation.valid) {
+          validatedEntries.push(entry)
+        } else {
+          invalidEntries.push(entry)
+          console.log(`Rejecting txQueue entry ${entry.id}: insufficient CAW for image storage`)
+        }
+      }
+
+      // Mark invalid entries as failed immediately
+      if (invalidEntries.length > 0) {
+        await Promise.all(invalidEntries.map(entry =>
+          prisma.txQueue.update({
+            where: { id: entry.id },
+            data: { status: 'failed' }
+          })
+        ))
+      }
+
+      // If no valid entries remain, return
+      if (!validatedEntries.length) return
+
+      const fullBatch = buildMultiActionData(validatedEntries)
+      const totalTipBefore = computeTotalTip(validatedEntries)
 
         console.log("will Simulat", validatorId);
       // 1) simulate
       const { successfulActions, rejectionMessages, quote } =
         await simulateActions(validatorId, fullBatch)
-      console.log(successfulActions, '////////////////', entries);
+      console.log(successfulActions, '////////////////', validatedEntries);
 
         console.log("Simulation complete:", successfulActions.length, rejectionMessages)
 
       if (!successfulActions.length) {
-        await updateQueueStatuses(entries, [], rejectionMessages)
+        await updateQueueStatuses(validatedEntries, [], rejectionMessages)
         return
       }
 
@@ -282,7 +357,7 @@ console.log("succeededKeys", succeededKeys)
       const ethPerCaw = 16140000n;
 
       // filter down to only those queue-rows that actually succeeded
-      const succeededEntries = entries.filter((e, index) => {
+      const succeededEntries = validatedEntries.filter((e, index) => {
         return rejectionMessages[index] == '';
         // const d = (e.payload as any).data
         // return succeededKeys.has(`${d.senderId}-${d.cawonce}`)
@@ -309,6 +384,9 @@ console.log("succeededKeys", succeededKeys)
       console.log(`tip ${totalTip} (≈ ${ethPerCaw * totalTip} wei) vs gasCost ${gasCost}`)
       if (totalTip * ethPerCaw < gasCost) {
         console.log("Skipping because tip < gasCost")
+        // Mark all entries as failed due to insufficient tip
+        await updateQueueStatuses(entries, [],
+          entries.map(() => 'Insufficient tip to cover gas costs'))
         return
       }
 
@@ -317,7 +395,7 @@ console.log("succeededKeys", succeededKeys)
        )
 
       // 4) update database
-      await updateQueueStatuses(entries, finalized, rejectionMessages)
+      await updateQueueStatuses(validatedEntries, finalized, rejectionMessages)
     }
 
     // start polling

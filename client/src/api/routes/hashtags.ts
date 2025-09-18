@@ -48,7 +48,26 @@ router.get('/:tag/caws', async (req, res) => {
       cursor: cursor ? { id: cursor.id } : undefined,
       include: {
         caw: {
-          include: getCawIncludeConfig({ currentUserId, includeHashtags: true })
+          include: {
+            user: { select: { tokenId: true, username: true, image: true } },
+            likes: currentUserId
+              ? { where: { userId: currentUserId }, select: { userId: true, pending: true } }
+              : false,
+            recaws: currentUserId
+              ? { where: { userId: currentUserId, action: 'RECAW' }, select: { id: true } }
+              : false,
+            hashtags: {
+              include: { hashtag: { select: { name: true } } }
+            },
+            parent: {
+              include: {
+                user: { select: { tokenId: true, username: true, image: true } },
+                hashtags: {
+                  include: { hashtag: { select: { name: true } } }
+                }
+              }
+            }
+          }
         }
       }
     })
@@ -69,17 +88,11 @@ router.get('/:tag/caws', async (req, res) => {
 
   } catch (err: any) {
     console.error(`GET /api/hashtags/${req.params.tag}/caws error`, err)
-
-    // Return mock data for development
-    const mockItems = [
-      createHashtagMockCaw(req.params.tag, 0),
-      createHashtagMockCaw(req.params.tag, 1)
-    ]
-
-    return res.json({
-      items: mockItems,
+    return res.status(500).json({
+      error: 'Internal server error',
+      items: [],
       nextCursor: undefined,
-      hashtag: { name: req.params.tag, usageCount: 42 }
+      hashtag: { name: req.params.tag, usageCount: 0 }
     })
   }
 })
@@ -100,8 +113,7 @@ router.get('/trending', async (req, res) => {
 
   } catch (err: any) {
     console.error('GET /api/hashtags/trending error', err)
-
-    return res.json({ hashtags: mockTrendingHashtags.slice(0, limit) })
+    return res.status(500).json({ error: 'Internal server error', hashtags: [] })
   }
 })
 
@@ -127,15 +139,7 @@ router.get('/search', async (req, res) => {
 
   } catch (err: any) {
     console.error('GET /api/hashtags/search error', err)
-
-    const query = req.query.q as string || ""
-
-    // Return mock search results
-    const mockResults = mockTrendingHashtags
-      .filter(h => h.name.toLowerCase().includes(query.toLowerCase()))
-      .slice(0, limit)
-
-    return res.json({ hashtags: mockResults })
+    return res.status(500).json({ error: 'Internal server error', hashtags: [] })
   }
 })
 

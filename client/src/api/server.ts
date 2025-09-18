@@ -1,10 +1,12 @@
 import express from 'express'
 import cors, { CorsOptions } from 'cors'
 import http from 'http'
+import path from 'path'
 import actionsRouter from './routes/actions'
 import cawRouter from './routes/caws'
 import txRouter  from './routes/txs'
 import hashtagRouter from './routes/hashtags'
+import uploadRouter from './routes/upload'
 
 /**
  * natstat: build and configure Express app
@@ -32,11 +34,17 @@ function createApp() {
   }
 
   app.use(cors(corsOpts))
-  app.use(express.json())
-	app.use('/api/actions', actionsRouter)
-	app.use('/api/caws', cawRouter)
-	app.use('/api/txs',  txRouter)
-	app.use('/api/hashtags', hashtagRouter)
+  app.use(express.json({ limit: '50mb' })) // Increase limit for image uploads
+
+  // Serve static uploaded files
+  app.use('/uploads', express.static(path.join(process.cwd(), 'public', 'uploads')))
+
+  // API routes
+  app.use('/api/actions', actionsRouter)
+  app.use('/api/caws', cawRouter)
+  app.use('/api/txs',  txRouter)
+  app.use('/api/hashtags', hashtagRouter)
+  app.use('/api/upload', uploadRouter)
 
   return app
 }

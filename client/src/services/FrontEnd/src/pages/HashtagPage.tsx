@@ -164,7 +164,7 @@ export const HashtagPage: React.FC = () => {
 
           <div className="flex-1">
             <div className="flex items-center mb-2">
-              <HiHashtag className="h-6 w-6 text-blue-600 mr-2" />
+              <HiHashtag className="h-6 w-6 text-yellow-500 mr-2" />
               <h1 className="text-2xl font-bold text-gray-900 dark:text-white">
                 {hashtagInfo?.name}
               </h1>

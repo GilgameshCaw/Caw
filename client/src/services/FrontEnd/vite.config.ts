@@ -11,7 +11,13 @@ import { ViteImageOptimizer } from "vite-plugin-image-optimizer";
 export default defineConfig({
   base: "/",
   server: {
-    allowedHosts: ["local.caw.com"]
+    allowedHosts: ["local.caw.com"],
+    proxy: {
+      '/api': {
+        target: 'http://localhost:4000',
+        changeOrigin: true,
+      }
+    }
   },
   plugins: [
     tailwindcss(),

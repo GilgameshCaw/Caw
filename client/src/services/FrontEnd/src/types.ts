@@ -44,7 +44,13 @@ export type CawItem = {
   viewCount: number
   hasLiked: boolean
   hasRecawed: boolean
+  likePending?: boolean // True when like is pending on-chain confirmation
   commentCount: number
   recawCount: number
   cawonce: number
+  imageData?: string // Base64 image data for on-chain images
+  imageUrl?: string  // URL for off-chain images
+  hasImage?: boolean // Quick check if caw has any image
+  videoData?: string // URLs for off-chain videos
+  hasVideo?: boolean // Quick check if caw has any video
 }

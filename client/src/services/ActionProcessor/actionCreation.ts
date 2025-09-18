@@ -18,11 +18,36 @@ export async function createOrFindAction(
   chainId: number,
   rawAction: RawAction
 ): Promise<CreateActionResult> {
-  let action: ProcessedAction
+  // First, try to find existing action
+  const existingAction = await tx.action.findFirst({
+    where: { rawEventId: rawId }
+  })
 
+  if (existingAction) {
+    console.log("Action already exists, checking domain objects")
+
+    // Check if domain objects already exist for this action
+    const actionType = getActionType(Number(rawAction.actionType))
+    const domainObjectExists = await checkDomainObjectExists(
+      tx,
+      existingAction,
+      rawAction,
+      actionType
+    )
+
+    if (domainObjectExists) {
+      console.log("Domain object already exists, skipping")
+      return { action: existingAction, shouldProcessDomain: false }
+    }
+
+    console.log("Action exists but domain object missing, proceeding to create it")
+    return { action: existingAction, shouldProcessDomain: true }
+  }
+
+  // Action doesn't exist, create it
   try {
-    console.log("Will create?")
-    action = await prisma.action.create({
+    console.log("Creating new action")
+    const action = await tx.action.create({
       data: {
         rawEventId: rawId,
         chainId: chainId,
@@ -37,40 +62,24 @@ export async function createOrFindAction(
     return { action, shouldProcessDomain: true }
 
   } catch (err: any) {
-    console.log("error - ", err.code === 'P2002' ? "already exists" : "other issue:")
-
+    // This shouldn't happen since we checked for existence first
+    // but handle it just in case of race conditions
     if (err.code === 'P2002') {
-      // Action already exists, check if domain objects were created
-      action = await tx.action.findFirst({
+      console.log("Race condition: action was created by another process")
+      // Try to find it again
+      const action = await tx.action.findFirst({
         where: { rawEventId: rawId }
       })
 
       if (!action) {
-        console.log("Action not found in transaction, skipping")
-        throw new Error("Action not found after creation failed")
+        throw new Error("Action not found after race condition")
       }
 
-      // Check if domain objects already exist for this action
-      const actionType = getActionType(Number(rawAction.actionType))
-      const domainObjectExists = await checkDomainObjectExists(
-        tx,
-        action,
-        rawAction,
-        actionType
-      )
-
-      if (domainObjectExists) {
-        console.log("Domain object already exists, skipping")
-        return { action, shouldProcessDomain: false }
-      }
-
-      console.log("Action exists but domain object missing, proceeding to create it")
       return { action, shouldProcessDomain: true }
-
-    } else {
-      console.log('action.create error', err)
-      throw err
     }
+
+    console.log('action.create error', err)
+    throw err
   }
 }
 

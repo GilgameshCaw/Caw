@@ -2,10 +2,10 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useSignAndSubmitAction } from '~/api/actions'
-import { 
-  HiOutlineHeart, 
-  HiOutlineEye, 
-  HiOutlineChat, 
+import {
+  HiOutlineHeart,
+  HiOutlineEye,
+  HiOutlineChat,
   HiOutlineDotsHorizontal,
   HiOutlineTranslate,
   HiOutlineClipboard,
@@ -15,7 +15,8 @@ import {
   HiOutlineFilter,
   HiOutlineEyeOff,
   HiOutlineUserRemove,
-  HiOutlineExclamation
+  HiOutlineExclamation,
+  HiOutlineCloudUpload
 } from 'react-icons/hi'
 import Recaw from '~/assets/images/recaw.svg?react';
 import Pencil from '~/assets/images/pencil.svg?react';
@@ -58,6 +59,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const [busyLike, setBusyLike]     = useState(false)
   const [busyRecaw, setBusyRecaw]   = useState(false)
   const [isRecawed, setIsRecawed]   = useState(false)
+  const [likePending, setLikePending] = useState(item.likePending || false)
   const signAndSubmit     = useSignAndSubmitAction()
   const [showRecawMenu, setShowRecawMenu]   = useState(false)
   const [showOptionsMenu, setShowOptionsMenu] = useState(false)
@@ -91,18 +93,20 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   }
 
   const handleLike = async (event: React.MouseEvent) => {
-    if (!activeTokenId || busyLike) return
+    if (!activeTokenId || busyLike || likePending) return
     event.preventDefault()
     setBusyLike(true)
+    setLikePending(true) // Set pending state immediately
     try {
       await signAndSubmit({
         actionType:      useItem.hasLiked ? 'unlike' : 'like',
         senderId:        activeTokenId,
-        receiverId:      useItem.user.id,
+        receiverId:      useItem.user.tokenId,
         receiverCawonce: useItem.cawonce ?? 0,
       })
     } catch (err) {
       console.error('Like failed', err)
+      setLikePending(false) // Reset on error
     } finally {
       setBusyLike(false)
     }
@@ -269,6 +273,130 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
             }`}
           />
 
+          {/* Video Display */}
+          {useItem.hasVideo && (
+            <div className="mb-4 pl-2 md:pl-0">
+              {(() => {
+                // Check if videoData contains URLs
+                if (useItem.videoData) {
+                  // Videos stored as URLs (always off-chain)
+                  const videoUrls = useItem.videoData.split('|||')
+                  return (
+                    <div className={`grid grid-cols-1 gap-2 max-w-2xl`}>
+                      {videoUrls.map((url, index) => (
+                        <div key={index} className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 bg-black">
+                          <video
+                            controls
+                            className="w-full h-auto max-h-96"
+                            preload="metadata"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                            }}
+                            onError={(e) => {
+                              console.error('Failed to load video from URL:', url)
+                              e.currentTarget.style.display = 'none'
+                            }}
+                          >
+                            <source src={url} type="video/mp4" />
+                            <source src={url} type="video/webm" />
+                            Your browser does not support the video tag.
+                          </video>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                }
+                return null
+              })()}
+            </div>
+          )}
+
+          {/* Image Display */}
+          {useItem.hasImage && (
+            <div className="mb-4 pl-2 md:pl-0">
+              {(() => {
+                // Check if imageData contains URLs or base64 data
+                if (useItem.imageData) {
+                  if (useItem.imageData.startsWith('urls:')) {
+                    // Off-chain images stored as URLs
+                    const urls = useItem.imageData.replace('urls:', '').split('|||')
+                    return (
+                      <div className={`grid ${urls.length > 1 ? 'grid-cols-2 gap-2' : 'grid-cols-1'} max-w-2xl`}>
+                        {urls.map((url, index) => (
+                          <div key={index} className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
+                            <img
+                              src={url}
+                              alt={`Caw image ${index + 1}`}
+                              className="w-full h-auto cursor-pointer hover:opacity-90 transition-opacity"
+                              onClick={(e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                // TODO: Open image in modal
+                              }}
+                              onError={(e) => {
+                                console.error('Failed to load image from URL:', url)
+                                e.currentTarget.style.display = 'none'
+                              }}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  } else {
+                    // On-chain images stored as base64
+                    const images = useItem.imageData.split('|||')
+                    return (
+                      <div className={`grid ${images.length > 1 ? 'grid-cols-2 gap-2' : 'grid-cols-1'} max-w-2xl`}>
+                        {images.map((imageBase64, index) => (
+                          <div key={index} className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
+                            <img
+                              src={`data:image/jpeg;base64,${imageBase64}`}
+                              alt={`Caw image ${index + 1}`}
+                              className="w-full h-auto cursor-pointer hover:opacity-90 transition-opacity"
+                              onClick={(e) => {
+                                e.preventDefault()
+                                e.stopPropagation()
+                                // TODO: Open image in modal
+                              }}
+                              onError={(e) => {
+                                console.error('Failed to load on-chain image')
+                                e.currentTarget.style.display = 'none'
+                              }}
+                            />
+                            <div className="absolute top-2 right-2 px-2 py-1 bg-black/70 text-white text-xs rounded-full">
+                              On-chain
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )
+                  }
+                } else if (useItem.imageUrl) {
+                  // Legacy single image URL
+                  return (
+                    <div className="relative max-w-md rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
+                      <img
+                        src={useItem.imageUrl}
+                        alt="Caw image"
+                        className="w-full h-auto cursor-pointer hover:opacity-90 transition-opacity"
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          // TODO: Open image in modal
+                        }}
+                        onError={(e) => {
+                          console.error('Failed to load image')
+                          e.currentTarget.style.display = 'none'
+                        }}
+                      />
+                    </div>
+                  )
+                }
+                return null
+              })()}
+            </div>
+          )}
+
           {/* Post Actions */}
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-6">
@@ -338,17 +466,27 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               </div>
 
               {/* Likes */}
-              <button 
+              <button
                 className={`flex items-center space-x-2 transition-colors duration-300 hover:text-red-500 cursor-pointer ${
-                  useItem.hasLiked 
-                    ? 'text-red-500' 
+                  useItem.hasLiked
+                    ? 'text-red-500'
                     : isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
                 onClick={handleLike}
-                disabled={busyLike}
-                title="Like"
+                disabled={busyLike || likePending}
+                title={likePending ? "Processing like..." : "Like"}
               >
-                <HiOutlineHeart className={`w-5 h-5 ${useItem.hasLiked ? 'fill-current' : ''}`} />
+                {likePending ? (
+                  <div className="relative w-5 h-5">
+                    <div className="w-5 h-5 border-2 border-gray-400 border-t-red-500 rounded-full animate-spin"></div>
+                    {/* Show cloud icon when pending on server (not just local) */}
+                    {item.likePending && (
+                      <HiOutlineCloudUpload className="absolute inset-0 w-3 h-3 m-auto text-gray-500" />
+                    )}
+                  </div>
+                ) : (
+                  <HiOutlineHeart className={`w-5 h-5 ${useItem.hasLiked ? 'fill-current' : ''}`} />
+                )}
                 <span className="text-sm">{formatEngagementCount(useItem.likeCount)}</span>
               </button>
 

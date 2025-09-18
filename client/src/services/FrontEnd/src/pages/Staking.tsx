@@ -8,14 +8,14 @@ import { SubmitButton } from "~/components/buttons/SubmitButton"
 import { Input } from "~/components/Input"
 import { GasPriceLine } from "~/components/GasPriceLine"
 import { TokenData } from "~/types";
-import { handleError, convertToText } from "~/utils";
+import { handleError, convertToText, formatUnitsCompact } from "~/utils";
 import useContractCall from "~/hooks/useContractCall";
 import useAllowance from "~/hooks/useAllowance";
 import { useAccount, useConnections, useReadContract, useSwitchChain } from "wagmi"
 import { useActiveToken, useTokenDataStore } from "~/store/tokenDataStore"
 import { erc20Abi, cawNameAbi, cawNameL2Abi } from "~/../../../abi/generated"
 import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_L2_ADDRESS } from "~/../../../abi/addresses"
-import { maxUint256, parseUnits } from "viem";
+import { maxUint256, parseUnits, formatUnits } from "viem";
 import MainLayout from '~/layouts/MainLayout'
 import { sepolia, baseSepolia } from 'wagmi/chains'
 import { chains } from '~/config/chains'
@@ -28,15 +28,46 @@ type StakingTab = 'stake' | 'unstake' | 'info'
 const Staking = () => {
   const { isDark } = useTheme()
   const [activeTab, setActiveTab] = useState<StakingTab>('stake')
-  const [amount, setAmount] = useState<string>("45")
+  const [amount, setAmount] = useState<string>("")
+  const activeToken = useActiveToken()
+  const { address, isConnected } = useAccount()
 
-  const mockData = {
-    stakedAmount: 500.0,
-    withdrawable: 25.0,
-    walletBalance: 1000.0,
-    actions: 42,
-    availableBalance: 750.0
-  }
+  // Use real data from activeToken if available
+  const mockData = useMemo(() => {
+    if (!activeToken) {
+      return {
+        stakedAmount: 0,
+        withdrawable: 0,
+        walletBalance: 0,
+        actions: 0,
+        availableBalance: 0,
+        username: 'Not Connected',
+        tokenId: 0
+      }
+    }
+
+    console.log('Active token data:', {
+      stakedAmount: activeToken.stakedAmount,
+      withdrawable: activeToken.withdrawable,
+      ownerBalance: activeToken.ownerBalance,
+      cawonce: activeToken.cawonce
+    })
+
+    // Convert bigint to number using formatUnits directly
+    const stakedAmount = activeToken.stakedAmount ? Number(formatUnits(activeToken.stakedAmount, 18)) : 0
+    const withdrawable = activeToken.withdrawable ? Number(formatUnits(activeToken.withdrawable, 18)) : 0
+    const walletBalance = activeToken.ownerBalance ? Number(formatUnits(activeToken.ownerBalance, 18)) : 0
+
+    return {
+      stakedAmount,
+      withdrawable,
+      walletBalance,
+      actions: activeToken.cawonce || 0, // Using cawonce as action count
+      availableBalance: walletBalance,
+      username: activeToken.username,
+      tokenId: activeToken.tokenId
+    }
+  }, [activeToken])
 
   const renderStakePanel = () => (
     <div className="space-y-6">
@@ -67,9 +98,11 @@ const Staking = () => {
             <div className={`text-base font-bold transition-all duration-300 ${
               isDark ? 'text-white' : 'text-black'
             }`}>
-              {mockData.availableBalance.toFixed(1)} CAW
+              {mockData.availableBalance.toLocaleString('en-US', { maximumFractionDigits: 2 })} CAW
             </div>
-            <button className={`px-3 py-1 text-xs rounded-full transition-all duration-300 cursor-pointer ${
+            <button
+              onClick={() => setAmount(mockData.availableBalance.toString())}
+              className={`px-3 py-1 text-xs rounded-full transition-all duration-300 cursor-pointer ${
               isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-200 text-black hover:bg-gray-300'
             }`}>
               Max
@@ -148,9 +181,11 @@ const Staking = () => {
             <div className={`text-base font-bold transition-all duration-300 ${
               isDark ? 'text-white' : 'text-black'
             }`}>
-              {mockData.stakedAmount.toFixed(1)} CAW
+              {mockData.stakedAmount.toLocaleString('en-US', { maximumFractionDigits: 2 })} CAW
             </div>
-            <button className={`px-3 py-1 text-xs rounded-full transition-all duration-300 cursor-pointer ${
+            <button
+              onClick={() => setAmount(mockData.stakedAmount.toString())}
+              className={`px-3 py-1 text-xs rounded-full transition-all duration-300 cursor-pointer ${
               isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-200 text-black hover:bg-gray-300'
             }`}>
               Max
@@ -344,7 +379,11 @@ const Staking = () => {
             <span className={`text-sm font-medium transition-colors duration-300 ${
               isDark ? 'text-white' : 'text-black'
             }`}>
-              Active Account: @user
+              {activeToken ? (
+                <>Active Account: @{mockData.username}</>
+              ) : (
+                'No Active Account'
+              )}
             </span>
           </div>
         </div>
@@ -368,7 +407,7 @@ const Staking = () => {
               <div className={`text-lg font-bold transition-colors duration-300 ${
                 isDark ? 'text-white' : 'text-black'
               }`}>
-                {mockData.stakedAmount.toFixed(1)}
+                {formatUnitsCompact(activeToken?.stakedAmount || 0n, 18)}
               </div>
             </div>
             
@@ -383,7 +422,7 @@ const Staking = () => {
               <div className={`text-lg font-bold transition-colors duration-300 ${
                 isDark ? 'text-yellow-200' : 'text-yellow-800'
               }`}>
-                {mockData.withdrawable.toFixed(1)}
+                {formatUnitsCompact(activeToken?.withdrawable || 0n, 18)}
               </div>
             </div>
             
@@ -398,7 +437,7 @@ const Staking = () => {
               <div className={`text-lg font-bold transition-colors duration-300 ${
                 isDark ? 'text-white' : 'text-black'
               }`}>
-                {mockData.walletBalance.toFixed(0)}
+                {formatUnitsCompact(activeToken?.ownerBalance || 0n, 18)}
               </div>
             </div>
             
@@ -413,13 +452,8 @@ const Staking = () => {
               <div className={`text-lg font-bold transition-colors duration-300 ${
                 isDark ? 'text-white' : 'text-black'
               }`}>
-                {mockData.actions}
+                {mockData.actions.toLocaleString()}
               </div>
-              {activeTab === "stake" && <StakePanel tokenId={tokenId} />}
-              {activeTab === "unstake" && (
-                <UnstakePanel token={activeToken} />
-              )}
-              {activeTab === "info" && <InfoPanel />}
             </div>
           </div>
         </div>

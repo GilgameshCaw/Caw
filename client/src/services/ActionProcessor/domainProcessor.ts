@@ -7,7 +7,8 @@ import {
   handleLikeAction,
   handleUnlikeAction,
   handleFollowAction,
-  handleUnfollowAction
+  handleUnfollowAction,
+  handleOtherAction
 } from './actionHandlers'
 import type { PrismaTransactionClient, RawAction, ProcessedAction } from './types'
 
@@ -50,7 +51,16 @@ export async function processDomainEffects(
       break
 
     case 'LIKE':
-      await handleLikeAction(tx, action, parentCawId)
+      // For likes, we need to find the caw being liked
+      if (!parentCawId && rawAction.receiverCawonce) {
+        // The receiverId in a like might be 0, so we search by cawonce only
+        const targetCaw = await tx.caw.findFirst({
+          where: { cawonce: rawAction.receiverCawonce },
+          orderBy: { createdAt: 'asc' }
+        })
+        parentCawId = targetCaw?.id
+      }
+      await handleLikeAction(tx, action, rawAction, parentCawId)
       break
 
     case 'UNLIKE':
@@ -63,6 +73,10 @@ export async function processDomainEffects(
 
     case 'UNFOLLOW':
       await handleUnfollowAction(tx, action, rawAction)
+      break
+
+    case 'OTHER':
+      await handleOtherAction(tx, action, rawAction, authorId, parentCawId)
       break
 
     default:

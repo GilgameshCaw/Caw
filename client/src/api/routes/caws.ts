@@ -21,12 +21,6 @@ router.get('/', async (req, res) => {
     
     console.log('API Debug - username parameter:', username)
     
-    // If it's a specific user profile, return their posts immediately
-    if (username === "user") {
-        console.log('Returning user mock data for username:', username)
-        return res.json({ items: userMockItems, nextCursor: undefined })
-    }
-    
     const cursor      = req.query.cursor ? { id: Number(req.query.cursor) } : undefined
     const currentUserId = Number(req.header('x-user-id') || 0) || undefined
 
@@ -78,17 +72,11 @@ router.get('/', async (req, res) => {
     const items = shapedCaws.map(caw => shapeCaw(caw))
 
 
-    
-    // For now, always return mock data for testing if no items
-    if (items.length === 0) {
-      return res.json({ items: mockCawItems, nextCursor: undefined })
-    }
-    
+
     return res.json({ items, nextCursor })
   } catch (err: any) {
     console.error('GET /api/caws error', err)
-
-    return res.json({ items: mockCawItems, nextCursor: undefined })
+    return res.status(500).json({ error: 'Internal server error', items: [], nextCursor: undefined })
   }
 })
 

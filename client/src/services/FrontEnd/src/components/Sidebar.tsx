@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react'
 import { NavLink }              from 'react-router-dom'
 import ProfileChooser           from '~/components/ProfileChooser'
 import { fetchTxPage }          from '../api/txs'
-import { useTokenDataStore } from "~/store/tokenDataStore";
+import { useTokenDataStore, useActiveToken } from "~/store/tokenDataStore";
 import { useTheme } from "~/hooks/useTheme";
 
 
@@ -29,6 +29,7 @@ const links = ['Home','Explore','Notifications','Messages','Profile'] as const
 
 const Sidebar: React.FC = () => {
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
+  const activeToken = useActiveToken()
   const [pending, setPending] = useState(0)
   const { isDark, toggle } = useTheme()
 
@@ -202,7 +203,7 @@ const Sidebar: React.FC = () => {
           </NavLink>
 
           <NavLink
-            to="/profile"
+            to={activeToken ? `/users/${activeToken.username}` : "/profile"}
             className={({ isActive }) =>
               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }

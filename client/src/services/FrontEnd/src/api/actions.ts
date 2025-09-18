@@ -16,7 +16,7 @@ const ActionTypeMap = {
   follow:   4,
   unfollow: 5,
   withdraw: 6,
-  other:     7
+  other:    7
 } as const
 
 export type ActionTypeKey = keyof typeof ActionTypeMap

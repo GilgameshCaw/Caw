@@ -64,6 +64,10 @@ model Caw {
   action        ActionType
   originalCawId Int?
   cawonce       Int
+  imageData     String?    @db.Text // Base64 encoded image data for on-chain storage
+  hasImage      Boolean    @default(false)
+  videoData     String?    @db.Text // Video URLs for off-chain storage
+  hasVideo      Boolean    @default(false)
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
@@ -78,6 +82,7 @@ model Caw {
   recawCount   Int @default(0)
   likeCount    Int @default(0)
 
+  @@unique([userId, cawonce])
   @@index([userId, action, createdAt])
   @@index([originalCawId])
 }
@@ -86,6 +91,7 @@ model Like {
   userId Int
   cawId  Int
   action ActionType
+  pending Boolean @default(false) // Track pending state for optimistic UI
 
   user User @relation(fields: [userId], references: [tokenId])
   caw  Caw  @relation(fields: [cawId], references: [id])
