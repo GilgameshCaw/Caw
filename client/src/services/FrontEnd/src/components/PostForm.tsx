@@ -327,7 +327,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             
             {/* Character counter and token ownership status */}
             <div className="flex items-center space-x-2">
-              {!isTokenOwner && activeTokenId && (
+              {!isTokenOwner && activeTokenId && isConnected && (
                 <span className="text-xs text-red-500 font-medium">
                   Not token owner
                 </span>
@@ -663,7 +663,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           <div className="flex items-center space-x-3">
             {/* Token ownership and character counter */}
             <div className="flex items-center space-x-3">
-              {!isTokenOwner && activeTokenId && (
+              {!isTokenOwner && activeTokenId && isConnected && (
                 <span className="text-sm text-red-500 font-medium">
                   Not token owner
                 </span>
