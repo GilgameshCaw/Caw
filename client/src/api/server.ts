@@ -9,6 +9,7 @@ import hashtagRouter from './routes/hashtags'
 import uploadRouter from './routes/upload'
 import usersRouter from './routes/users'
 import txQueueRouter from './routes/txqueue'
+import viewsRouter from './routes/views'
 
 /**
  * natstat: build and configure Express app
@@ -49,6 +50,7 @@ function createApp() {
   app.use('/api/upload', uploadRouter)
   app.use('/api/users', usersRouter)
   app.use('/api/txqueue', txQueueRouter)
+  app.use('/api/views', viewsRouter)
 
   return app
 }

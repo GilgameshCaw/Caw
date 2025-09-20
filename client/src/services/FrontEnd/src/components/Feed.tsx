@@ -6,6 +6,7 @@ import { apiFetch } from '../api/client'
 import { User, CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
+import { useViewTracking } from '~/hooks/useViewTracking'
 
 type Props = {
   filter: 'For you' | 'Following' | 'profile' | 'profile-likes' | 'profile-replies' | 'profile-media' | string
@@ -28,6 +29,10 @@ const Feed: React.FC<Props> = ({ filter, username, apiEndpoint }) => {
   const [hasMore,    setHasMore]    = useState(true)
   const [loading,    setLoading]    = useState(false)
   const [error,      setError]      = useState<string>()
+
+  // Track views for visible caws
+  const visibleCawIds = items.map(item => item.id).filter(id => id != null)
+  useViewTracking(visibleCawIds)
 
   // load one "page" of results
   const loadPage = useCallback(async (force = false) => {

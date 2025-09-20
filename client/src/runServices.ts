@@ -43,6 +43,7 @@ const availableServiceList: Service[] = [
   frontEndService,
   apiService,
   dataCleanerService,
+  viewTrackerService,
 ];
 
 const availableServices = new Map<string, Service>();
