@@ -6,12 +6,15 @@ interface PendingPost extends Partial<CawItem> {
   content: string
   timestamp: string
   isPending: true
+  txQueueId?: number // Track the associated txQueue ID
 }
 
 interface PendingPostsStore {
   pendingPosts: PendingPost[]
-  addPendingPost: (post: { content: string; username: string; tokenId: number }) => void
+  addPendingPost: (post: { content: string; username: string; tokenId: number }) => string
+  updatePostWithTxQueueId: (tempId: string, txQueueId: number) => void
   removePendingPost: (tempId: string) => void
+  removePendingPostByTxQueueId: (txQueueId: number) => void
   clearPendingPosts: () => void
 }
 
@@ -50,6 +53,22 @@ export const usePendingPostsStore = create<PendingPostsStore>((set) => ({
         pendingPosts: state.pendingPosts.filter(p => p.tempId !== tempId)
       }))
     }, 30000)
+
+    return tempId
+  },
+
+  updatePostWithTxQueueId: (tempId, txQueueId) => {
+    set((state) => ({
+      pendingPosts: state.pendingPosts.map(post =>
+        post.tempId === tempId ? { ...post, txQueueId } : post
+      )
+    }))
+  },
+
+  removePendingPostByTxQueueId: (txQueueId) => {
+    set((state) => ({
+      pendingPosts: state.pendingPosts.filter(p => p.txQueueId !== txQueueId)
+    }))
   },
 
   removePendingPost: (tempId) => {

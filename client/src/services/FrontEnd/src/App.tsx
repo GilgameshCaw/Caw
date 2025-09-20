@@ -1,10 +1,12 @@
 import { BrowserRouter, Route, Routes } from "react-router";
 import { useCawonceSync } from '~/hooks/useCawonce'
+import { useTxQueueMonitor } from '~/hooks/useTxQueueMonitor'
 import { useAccount } from "wagmi"
 import routes from "./routes";
 
 function App() {
   useCawonceSync();
+  useTxQueueMonitor();
 
   return (
     <BrowserRouter>

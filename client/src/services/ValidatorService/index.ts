@@ -118,8 +118,15 @@ export const validatorService: Service = {
 
         console.log("simulated:", successfulActions.length, rejectionMessages)
         return { successfulActions, rejectionMessages, quote }
-      } catch (err) {
-        console.error("FAILED to simulate actions", err)
+      } catch (err: any) {
+        console.error("FAILED to simulate actions:", err.message || err)
+        // Return empty successful actions and error messages for all actions
+        const rejectionMessages = multiData.actions.map(() =>
+          err.message?.includes('execution reverted')
+            ? 'Transaction simulation failed - execution reverted'
+            : `Simulation error: ${err.message || 'Unknown error'}`
+        )
+        return { successfulActions: [], rejectionMessages, quote: { nativeFee: BigInt(0) } }
       }
     }
 
@@ -220,17 +227,26 @@ console.log("Update success")
       )
 console.log("succeededKeys", succeededKeys)
 
-      await Promise.all(queueEntries.map(entry => {
+      await Promise.all(queueEntries.map((entry, index) => {
         const data = (entry.payload as any).data
         const key  = `${data.senderId}-${data.cawonce}`
         const newStatus = succeededKeys.has(key)
           ? 'done'
           : 'failed'
-        console.log("new status", newStatus)
+
+        // Get the rejection reason for this specific entry
+        const reason = newStatus === 'failed' && simulationRejections[index]
+          ? simulationRejections[index]
+          : undefined
+
+        console.log("new status", newStatus, reason ? `with reason: ${reason}` : '')
 
         return prisma.txQueue.update({
           where: { id: entry.id },
-          data:  { status: newStatus }
+          data:  {
+            status: newStatus
+            // Note: reason field doesn't exist in schema yet
+          }
         })
       }))
     }
@@ -245,17 +261,33 @@ console.log("succeededKeys", succeededKeys)
       }, BigInt(0))
     }
 
-    /** natstat: check if on-chain image storage has sufficient CAW payment */
-    function validateImageStorageCost(
+    /** natstat: check if OTHER actions have sufficient CAW payment for their content */
+    function validateOtherActionCost(
       action: any
-    ): { valid: boolean; requiredCaw?: number } {
-      // Check if this is an 'other' action type (used for on-chain images)
+    ): { valid: boolean; requiredCaw?: number; underpriced?: boolean } {
+      // Check if this is an 'other' action type
       if (getActionType(action.actionType).toString() !== 'OTHER') {
         return { valid: true }
       }
 
-      // Parse the text to check for base64 images
       const text = action.text || ''
+
+      // Check if this is a profile update (p: prefix or profile-update: prefix)
+      if (text.startsWith('p:') || text.startsWith('profile-update:')) {
+        // Profile updates have their cost calculated on frontend
+        // We just need to check if sufficient tip was provided
+        const amounts = action.amounts || []
+        const providedTip = amounts.length > 0 ? Number(amounts[0]) : 0
+
+        // Profile updates should have some tip amount for the cost
+        if (providedTip < 100) { // Minimum 100 CAW for profile updates
+          console.log(`Profile update has insufficient tip: ${providedTip} CAW`)
+          return { valid: false, requiredCaw: 100, underpriced: true }
+        }
+        return { valid: true }
+      }
+
+      // Parse the text to check for base64 images
       const imageMatches = text.match(/image64:([^\n]+)/g)
       if (!imageMatches || imageMatches.length === 0) {
         return { valid: true }
@@ -286,7 +318,7 @@ console.log("succeededKeys", succeededKeys)
 
       if (providedCaw < totalRequiredCaw) {
         console.log(`Insufficient CAW for image storage: provided ${providedCaw}, required ${totalRequiredCaw}`)
-        return { valid: false, requiredCaw: totalRequiredCaw }
+        return { valid: false, requiredCaw: totalRequiredCaw, underpriced: true }
       }
 
       return { valid: true }
@@ -298,29 +330,36 @@ console.log("succeededKeys", succeededKeys)
       const entries = await fetchPendingQueue()
       if (!entries.length) return
 
-      // Pre-filter entries that don't have sufficient CAW for image storage
+      // Pre-filter entries that don't have sufficient CAW for OTHER actions
       const validatedEntries: typeof entries = []
-      const invalidEntries: typeof entries = []
+      const underpricedEntries: typeof entries = []
 
       for (const entry of entries) {
         const action = (entry.payload as any).data
-        const validation = validateImageStorageCost(action)
+        const validation = validateOtherActionCost(action)
         if (validation.valid) {
           validatedEntries.push(entry)
-        } else {
-          invalidEntries.push(entry)
-          console.log(`Rejecting txQueue entry ${entry.id}: insufficient CAW for image storage`)
+        } else if (validation.underpriced) {
+          underpricedEntries.push(entry)
+          console.log(`Marking txQueue entry ${entry.id} as underpriced: required ${validation.requiredCaw} CAW`)
         }
       }
 
-      // Mark invalid entries as failed immediately
-      if (invalidEntries.length > 0) {
-        await Promise.all(invalidEntries.map(entry =>
-          prisma.txQueue.update({
+      // Mark underpriced entries with 'underpriced' status for potential relay to other validators
+      if (underpricedEntries.length > 0) {
+        await Promise.all(underpricedEntries.map(entry => {
+          const action = (entry.payload as any).data
+          const validation = validateOtherActionCost(action)
+          const reason = `Insufficient CAW: required ${validation.requiredCaw} CAW`
+
+          return prisma.txQueue.update({
             where: { id: entry.id },
-            data: { status: 'failed' }
+            data: {
+              status: 'underpriced',
+              reason
+            }
           })
-        ))
+        }))
       }
 
       // If no valid entries remain, return
@@ -329,15 +368,28 @@ console.log("succeededKeys", succeededKeys)
       const fullBatch = buildMultiActionData(validatedEntries)
       const totalTipBefore = computeTotalTip(validatedEntries)
 
-        console.log("will Simulat", validatorId);
+        console.log("will Simulate", validatorId);
       // 1) simulate
-      const { successfulActions, rejectionMessages, quote } =
-        await simulateActions(validatorId, fullBatch)
+      const simulationResult = await simulateActions(validatorId, fullBatch)
+
+      // Check if simulateActions returned undefined (error case)
+      if (!simulationResult) {
+        console.error("Simulation returned undefined, marking all as failed")
+        await updateQueueStatuses(
+          validatedEntries,
+          [],
+          validatedEntries.map(() => 'Simulation failed - internal error')
+        )
+        return
+      }
+
+      const { successfulActions, rejectionMessages, quote } = simulationResult
       console.log(successfulActions, '////////////////', validatedEntries);
 
         console.log("Simulation complete:", successfulActions.length, rejectionMessages)
 
-      if (!successfulActions.length) {
+      if (!successfulActions || !successfulActions.length) {
+        console.log("No successful actions from simulation, marking all as failed")
         await updateQueueStatuses(validatedEntries, [], rejectionMessages)
         return
       }
@@ -394,8 +446,37 @@ console.log("succeededKeys", succeededKeys)
          validatorId, multiSucceeded, quote.nativeFee, rawGasLimit
        )
 
-      // 4) update database
-      await updateQueueStatuses(validatedEntries, finalized, rejectionMessages)
+      // 4) update database - properly track which entries succeeded vs failed
+      // Build array to track success/failure for each original entry
+      const finalStatuses = validatedEntries.map((entry, index) => {
+        // Check if this entry was in the succeeded set that got submitted
+        const wasSubmitted = succeededEntries.includes(entry)
+        if (!wasSubmitted) {
+          // This entry failed simulation, return empty success
+          return { succeeded: false, reason: rejectionMessages[index] }
+        }
+        // This entry was submitted, check if it finalized
+        const data = (entry.payload as any).data
+        const isFinalized = finalized.some(
+          f => f.senderId === data.senderId && f.cawonce === data.cawonce
+        )
+        return {
+          succeeded: isFinalized,
+          reason: isFinalized ? undefined : 'Transaction failed on chain'
+        }
+      })
+
+      // Update each entry with its actual status
+      await Promise.all(validatedEntries.map((entry, index) => {
+        const { succeeded, reason } = finalStatuses[index]
+        return prisma.txQueue.update({
+          where: { id: entry.id },
+          data: {
+            status: succeeded ? 'done' : 'failed',
+            ...(reason ? { reason } : {})
+          }
+        })
+      }))
     }
 
     // start polling

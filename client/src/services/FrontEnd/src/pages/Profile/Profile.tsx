@@ -1,5 +1,5 @@
 // src/pages/ProfilePage.tsx
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useParams }    from 'react-router-dom'
 import MainLayout       from '~/layouts/MainLayout'
 import { Tabs, TabItem } from '~/components/Tabs'
@@ -8,36 +8,107 @@ import { useTheme } from '~/hooks/useTheme'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useModalStore } from '~/store/modalStore'
 import { HiPencil, HiX, HiCamera, HiGlobe, HiLocationMarker, HiOutlineMail, HiDotsHorizontal } from 'react-icons/hi'
+import { apiFetch } from '~/api/client'
+import { useAccount } from 'wagmi'
+import { useSignAndSubmitAction } from '~/api/actions'
+import { useConnectModal } from '@rainbow-me/rainbowkit'
 
 type ProfileTab = 'profile' | 'profile-likes' | 'profile-replies' | 'profile-media'
+
+type ProfileData = {
+  id: number
+  address: string
+  tokenId: number
+  username: string
+  image?: string
+  bio?: string
+  displayName?: string
+  location?: string
+  website?: string
+  avatarUrl?: string
+  coverPhotoUrl?: string
+  profileUpdatePending?: boolean
+  cawCount: number
+  followerCount: number
+  followingCount: number
+  likeCount: number
+  isFollowing?: boolean
+  createdAt: string
+  updatedAt: string
+}
 
 export const Profile: React.FC = () => {
   const { username } = useParams<{ username: string }>()
   const [activeTab, setActiveTab] = useState<ProfileTab>('profile')
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
-  const [isFollowing, setIsFollowing] = useState(false)
+  const [profileData, setProfileData] = useState<ProfileData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const { isDark } = useTheme()
   const activeToken = useActiveToken()
   const { openModal } = useModalStore()
-  
-  // Use username from params or fallback to 'user' for testing
-  const displayUsername = username || 'user'
-  
+  const { isConnected, address } = useAccount()
+  const [isSaving, setIsSaving] = useState(false)
+  const [updateCost, setUpdateCost] = useState(0)
+  const submitAction = useSignAndSubmitAction()
+
+  // Use username from params or fallback to activeToken's username
+  const displayUsername = username || activeToken?.username || 'user'
+
+  // Fetch profile data
+  useEffect(() => {
+    const fetchProfile = async () => {
+      if (!displayUsername || displayUsername === 'user') {
+        setLoading(false)
+        return
+      }
+
+      setLoading(true)
+      setError(null)
+
+      try {
+        const data = await apiFetch<ProfileData>(`/api/users/${displayUsername}`)
+        setProfileData(data)
+      } catch (err) {
+        console.error('Failed to fetch profile:', err)
+        setError('Failed to load profile')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchProfile()
+  }, [displayUsername, activeToken?.tokenId])
+
   // Form state - Initialize with current profile data
   const [formData, setFormData] = useState({
-    name: displayUsername, // Username is minted, cannot be changed
-    description: 'Building the future of decentralized social media! 🚀\nThe Caw Protocol is revolutionizing how we connect online.',
-    location: 'San Francisco, CA',
-    website: 'https://caw.is'
+    name: profileData?.username || displayUsername,
+    description: profileData?.bio || '',
+    location: profileData?.location || '',
+    website: profileData?.website || ''
   })
+
+  // Update form data when profile data changes
+  useEffect(() => {
+    if (profileData) {
+      setFormData({
+        name: profileData.username,
+        description: profileData.bio || '',
+        location: profileData.location || '',
+        website: profileData.website || ''
+      })
+    }
+  }, [profileData])
 
   // Image handling state
   const [avatarPreview, setAvatarPreview] = useState<string | undefined>(undefined)
   const [coverPreview, setCoverPreview] = useState<string | undefined>(undefined)
+  const [avatarUrl, setAvatarUrl] = useState<string | undefined>(undefined)
+  const [coverUrl, setCoverUrl] = useState<string | undefined>(undefined)
   const [isUploading, setIsUploading] = useState(false)
 
   // Image handling functions
-  const handleImageSelect = (type: 'avatar' | 'cover', event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageSelect = async (type: 'avatar' | 'cover', event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
 
@@ -53,20 +124,181 @@ export const Profile: React.FC = () => {
       return
     }
 
-    // Create preview URL
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const result = e.target?.result as string
-      if (type === 'avatar') {
-        setAvatarPreview(result)
-      } else {
-        setCoverPreview(result)
-      }
-    }
-    reader.readAsDataURL(file)
+    setIsUploading(true)
 
-    // TODO: Backend developer - Upload image to server
-    console.log(`Selected ${type} image:`, file.name, file.size, file.type)
+    try {
+      // Upload image to server
+      const uploadFormData = new FormData()
+      uploadFormData.append('media', file)
+      uploadFormData.append('tokenId', String(activeToken?.tokenId || 0))
+
+      const response = await fetch('/api/upload', {
+        method: 'POST',
+        body: uploadFormData
+      })
+
+      if (!response.ok) throw new Error('Upload failed')
+
+      const data = await response.json()
+      const imageUrl = `${window.location.origin}${data.url}`
+
+      // Set both preview and URL
+      if (type === 'avatar') {
+        const reader = new FileReader()
+        reader.onload = (e) => setAvatarPreview(e.target?.result as string)
+        reader.readAsDataURL(file)
+        setAvatarUrl(imageUrl)
+      } else {
+        const reader = new FileReader()
+        reader.onload = (e) => setCoverPreview(e.target?.result as string)
+        reader.readAsDataURL(file)
+        setCoverUrl(imageUrl)
+      }
+
+      // Update cost estimate
+      calculateUpdateCost()
+    } catch (err) {
+      console.error('Failed to upload image:', err)
+      alert('Failed to upload image. Please try again.')
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
+  // Calculate cost for profile update based on data size
+  const calculateUpdateCost = () => {
+    // Only count fields that have changed - use compact keys
+    const changedData: any = {}
+
+    // Check if description changed (allow empty values)
+    if (formData.description !== (profileData?.bio || '')) {
+      changedData.d = formData.description // d = description/bio
+    }
+    // Check if location changed (allow empty values)
+    if (formData.location !== (profileData?.location || '')) {
+      changedData.l = formData.location // l = location
+    }
+    // Check if website changed (allow empty values)
+    if (formData.website !== (profileData?.website || '')) {
+      changedData.w = formData.website // w = website
+    }
+    if (avatarUrl) {
+      changedData.a = avatarUrl // a = avatar
+    }
+    if (coverUrl) {
+      changedData.c = coverUrl // c = cover
+    }
+
+    // If no changes, cost is 0
+    if (Object.keys(changedData).length === 0) {
+      setUpdateCost(0)
+      return
+    }
+
+    // Calculate cost based on actual data being submitted with compact format
+    const actionText = `p:${JSON.stringify(changedData)}`
+    const dataSize = actionText.length
+
+    // Base cost: 100 CAW + 10 CAW per character (accounts for gas costs)
+    const cost = 100 + Math.ceil(dataSize * 10)
+
+    setUpdateCost(cost)
+  }
+
+  // Update cost when form data changes
+  useEffect(() => {
+    calculateUpdateCost()
+  }, [formData, avatarUrl, coverUrl, profileData])
+
+  // Handle profile update submission
+  const { openConnectModal } = useConnectModal()
+
+  const handleProfileUpdate = async () => {
+    // If wallet not connected, open connect modal
+    if (!isConnected) {
+      openConnectModal?.()
+      return
+    }
+
+    // Check if user has an active token
+    if (!activeToken) {
+      alert('Please select a token')
+      return
+    }
+
+    setIsSaving(true)
+
+    // Declare variables in outer scope so they're accessible in catch block
+    let profileUpdateData: any = {}
+    let actionText = ''
+
+    try {
+      // Only include fields that have changed - use compact keys to save gas
+      // Check if description changed (allow empty values)
+      if (formData.description !== (profileData?.bio || '')) {
+        profileUpdateData.d = formData.description // d = description/bio
+      }
+      // Check if location changed (allow empty values)
+      if (formData.location !== (profileData?.location || '')) {
+        profileUpdateData.l = formData.location // l = location
+      }
+      // Check if website changed (allow empty values)
+      if (formData.website !== (profileData?.website || '')) {
+        profileUpdateData.w = formData.website // w = website
+      }
+      if (avatarUrl) {
+        profileUpdateData.a = avatarUrl // a = avatar
+      }
+      if (coverUrl) {
+        profileUpdateData.c = coverUrl // c = cover
+      }
+
+      // If no changes, don't submit
+      if (Object.keys(profileUpdateData).length === 0) {
+        alert('No changes to save')
+        setIsSaving(false)
+        return
+      }
+
+      // Create the action text with compact profile update prefix
+      actionText = `p:${JSON.stringify(profileUpdateData)}`
+
+      // Submit as other action with tip amount in amounts array
+      await submitAction({
+        actionType: 'other',
+        senderId: activeToken.tokenId,
+        text: actionText,
+        amounts: [BigInt(updateCost)]
+      })
+
+      // Close modal and refresh profile data
+      setIsEditModalOpen(false)
+
+      // Clear temporary state
+      setAvatarPreview(undefined)
+      setCoverPreview(undefined)
+      setAvatarUrl(undefined)
+      setCoverUrl(undefined)
+
+      // Refresh profile data after a short delay
+      setTimeout(() => {
+        window.location.reload()
+      }, 2000)
+    } catch (err: any) {
+      console.error('Failed to update profile:', err)
+      console.error('Error details:', {
+        message: err?.message,
+        stack: err?.stack,
+        response: err?.response,
+        data: profileUpdateData,
+        actionText,
+        activeToken,
+        updateCost
+      })
+      alert(`Failed to update profile: ${err?.message || 'Unknown error'}`)
+    } finally {
+      setIsSaving(false)
+    }
   }
 
   const triggerFileInput = (type: 'avatar' | 'cover') => {
@@ -79,9 +311,22 @@ export const Profile: React.FC = () => {
       }
     }, 10)
   }
-  
+
   // Check if this is our own profile or someone else's
   const isOwnProfile = !username || username === activeToken?.username
+
+  // Format join date
+  const formatJoinDate = (dateString: string) => {
+    const date = new Date(dateString)
+    return date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+  }
+
+  // Format stats
+  const formatStat = (count: number) => {
+    if (count >= 1000000) return `${(count / 1000000).toFixed(1)}M`
+    if (count >= 1000) return `${(count / 1000).toFixed(1)}K`
+    return count.toString()
+  }
 
   // define our four tabs
   const profileTabs: TabItem<ProfileTab>[] = [
@@ -133,12 +378,12 @@ export const Profile: React.FC = () => {
                 <h1 className={`text-2xl font-bold transition-all duration-300 ${
                   isDark ? 'text-white' : 'text-black'
                 }`}>
-                  @{displayUsername}
+                  @{profileData?.username || displayUsername}
                 </h1>
                 <p className={`text-sm mt-1 transition-all duration-300 ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}>
-                  Joined January 2024
+                  {profileData?.createdAt ? `Joined ${formatJoinDate(profileData.createdAt)}` : 'Joined recently'}
                 </p>
               </div>
 
@@ -148,7 +393,7 @@ export const Profile: React.FC = () => {
                   <div className={`text-lg font-bold transition-all duration-300 ${
                     isDark ? 'text-white' : 'text-black'
                   }`}>
-                    42
+                    {formatStat(profileData?.cawCount || 0)}
                   </div>
                   <div className={`text-sm transition-all duration-300 ${
                     isDark ? 'text-gray-400' : 'text-gray-600'
@@ -156,70 +401,93 @@ export const Profile: React.FC = () => {
                     Posts
                   </div>
                 </div>
-                <div>
+                <button
+                  onClick={() => openModal('followingList', { username: profileData?.username || displayUsername })}
+                  className="cursor-pointer hover:opacity-80 transition-opacity"
+                >
                   <div className={`text-lg font-bold transition-all duration-300 ${
                     isDark ? 'text-white' : 'text-black'
                   }`}>
-                    1.2K
+                    {formatStat(profileData?.followingCount || 0)}
                   </div>
                   <div className={`text-sm transition-all duration-300 ${
                     isDark ? 'text-gray-400' : 'text-gray-600'
                   }`}>
                     Following
                   </div>
-                </div>
-                <div>
+                </button>
+                <button
+                  onClick={() => openModal('followersList', { username: profileData?.username || displayUsername })}
+                  className="cursor-pointer hover:opacity-80 transition-opacity"
+                >
                   <div className={`text-lg font-bold transition-all duration-300 ${
                     isDark ? 'text-white' : 'text-black'
                   }`}>
-                    3.4K
+                    {formatStat(profileData?.followerCount || 0)}
                   </div>
                   <div className={`text-sm transition-all duration-300 ${
                     isDark ? 'text-gray-400' : 'text-gray-600'
                   }`}>
                     Followers
                   </div>
-                </div>
+                </button>
               </div>
 
               {/* Bio - Arriba de location y website, puede estirarse hacia la derecha */}
               <div className="mb-4 pr-6">
-                <p className={`text-base leading-relaxed transition-all duration-300 ${
-                  isDark ? 'text-white' : 'text-black'
-                }`}>
-                  Building the future of decentralized social media! 🚀<br />
-                  The Caw Protocol is revolutionizing how we connect online.
-                </p>
+                {profileData?.profileUpdatePending && (
+                  <div className={`text-base italic mb-2 transition-all duration-300 ${
+                    isDark ? 'text-yellow-400' : 'text-yellow-600'
+                  }`}>
+                    Profile info updating...
+                  </div>
+                )}
+                {profileData?.bio && (
+                  <p className={`text-base leading-relaxed transition-all duration-300 ${
+                    isDark ? 'text-white' : 'text-black'
+                  }`}>
+                    {profileData.bio.split('\n').map((line, i) => (
+                      <React.Fragment key={i}>
+                        {line}
+                        {i < profileData.bio!.split('\n').length - 1 && <br />}
+                      </React.Fragment>
+                    ))}
+                  </p>
+                )}
               </div>
 
               {/* Location and Website - En el mismo renglón */}
               <div className="flex items-center space-x-6">
-                <div className="flex items-center space-x-2">
-                  <HiLocationMarker className={`w-4 h-4 transition-colors duration-300 ${
-                    isDark ? 'text-gray-400' : 'text-gray-500'
-                  }`} />
-                  <span className={`text-base transition-colors duration-300 ${
-                    isDark ? 'text-gray-300' : 'text-gray-600'
-                  }`}>
-                    San Francisco, CA
-                  </span>
-                </div>
-                
-                <div className="flex items-center space-x-2">
-                  <HiGlobe className={`w-4 h-4 transition-colors duration-300 ${
-                    isDark ? 'text-gray-400' : 'text-gray-500'
-                  }`} />
-                  <a 
-                    href="https://caw.is" 
-                    target="_blank" 
-                    rel="noopener noreferrer"
-                    className={`text-base transition-colors duration-300 hover:underline ${
-                      isDark ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-500'
-                    }`}
-                  >
-                    caw.is
-                  </a>
-                </div>
+                {profileData?.location && (
+                  <div className="flex items-center space-x-2">
+                    <HiLocationMarker className={`w-4 h-4 transition-colors duration-300 ${
+                      isDark ? 'text-gray-400' : 'text-gray-500'
+                    }`} />
+                    <span className={`text-base transition-colors duration-300 ${
+                      isDark ? 'text-gray-300' : 'text-gray-600'
+                    }`}>
+                      {profileData.location}
+                    </span>
+                  </div>
+                )}
+
+                {profileData?.website && (
+                  <div className="flex items-center space-x-2">
+                    <HiGlobe className={`w-4 h-4 transition-colors duration-300 ${
+                      isDark ? 'text-gray-400' : 'text-gray-500'
+                    }`} />
+                    <a
+                      href={profileData.website.startsWith('http') ? profileData.website : `https://${profileData.website}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`text-base transition-colors duration-300 hover:underline ${
+                        isDark ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-500'
+                      }`}
+                    >
+                      {profileData.website.replace(/^https?:\/\//, '')}
+                    </a>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -241,24 +509,27 @@ export const Profile: React.FC = () => {
                   </button>
                 ) : (
                   <div className="flex flex-col space-y-3">
-                    <button 
-                      onClick={() => setIsFollowing(!isFollowing)}
+                    <button
+                      onClick={() => {
+                        // TODO: Implement follow/unfollow action
+                        setProfileData(prev => prev ? {...prev, isFollowing: !prev.isFollowing} : null)
+                      }}
                       className={`px-8 py-2 rounded-full font-semibold border transition-all duration-200 ${
-                        isFollowing
+                        profileData?.isFollowing
                           ? 'border-white bg-white text-black hover:bg-white/90'
                           : 'border-white text-white hover:bg-white hover:text-black'
                       }`}
                     >
-                      {isFollowing ? 'Following' : 'Follow'}
+                      {profileData?.isFollowing ? 'Following' : 'Follow'}
                     </button>
                     
                     <div className="flex justify-center space-x-2">
                       <button 
                         onClick={() => {
                           const recipientData = {
-                            id: '1',
-                            username: displayUsername,
-                            tokenId: 1
+                            id: String(profileData?.id || 1),
+                            username: profileData?.username || displayUsername,
+                            tokenId: profileData?.tokenId || 1
                           }
                           openModal('message', recipientData)
                         }}
@@ -303,7 +574,7 @@ export const Profile: React.FC = () => {
         <div className="w-full">
           <Feed
             filter={activeTab}
-            username={displayUsername}
+            username={profileData?.username || displayUsername}
           />
         </div>
       </div>
@@ -372,7 +643,7 @@ export const Profile: React.FC = () => {
                 <div className="flex items-center space-x-6">
                   {/* Avatar Section */}
                   <div className="flex flex-col items-center">
-                    <button 
+                    <button
                       type="button"
                       className={`w-20 h-20 rounded-full border-2 border-dashed transition-all duration-300 hover:border-yellow-500 hover:bg-yellow-500/10 cursor-pointer ${
                         isDark ? 'border-gray-600 bg-gray-800/50' : 'border-gray-300 bg-gray-50'
@@ -381,6 +652,30 @@ export const Profile: React.FC = () => {
                         e.preventDefault()
                         e.stopPropagation()
                         triggerFileInput('avatar')
+                      }}
+                      onDragOver={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        e.currentTarget.classList.add('border-yellow-500', 'bg-yellow-500/10')
+                      }}
+                      onDragLeave={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        e.currentTarget.classList.remove('border-yellow-500', 'bg-yellow-500/10')
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        e.currentTarget.classList.remove('border-yellow-500', 'bg-yellow-500/10')
+
+                        const file = e.dataTransfer.files[0]
+                        if (file && file.type.startsWith('image/')) {
+                          const input = document.getElementById('avatar-upload') as HTMLInputElement
+                          const dt = new DataTransfer()
+                          dt.items.add(file)
+                          input.files = dt.files
+                          handleImageSelect('avatar', { target: input } as any)
+                        }
                       }}
                     >
                       <div className="w-full h-full flex items-center justify-center overflow-hidden rounded-full">
@@ -416,6 +711,26 @@ export const Profile: React.FC = () => {
                         e.stopPropagation()
                         triggerFileInput('cover')
                       }}
+                      onDragOver={(e) => {
+                        e.preventDefault()
+                        e.currentTarget.classList.add('border-yellow-500', 'bg-yellow-500/10')
+                      }}
+                      onDragLeave={(e) => {
+                        e.preventDefault()
+                        e.currentTarget.classList.remove('border-yellow-500', 'bg-yellow-500/10')
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault()
+                        e.currentTarget.classList.remove('border-yellow-500', 'bg-yellow-500/10')
+                        const file = e.dataTransfer.files?.[0]
+                        if (file && file.type.startsWith('image/')) {
+                          const input = document.getElementById('cover-upload') as HTMLInputElement
+                          const dt = new DataTransfer()
+                          dt.items.add(file)
+                          input.files = dt.files
+                          handleImageSelect('cover', { target: input } as any)
+                        }
+                      }}
                     >
                       <div className="absolute inset-0 flex items-center justify-center overflow-hidden rounded-lg">
                         {coverPreview ? (
@@ -432,7 +747,7 @@ export const Profile: React.FC = () => {
                             <p className={`text-xs transition-colors duration-300 ${
                               isDark ? 'text-gray-400' : 'text-gray-500'
                             }`}>
-                              Click to upload cover photo
+                              Click or drag to upload
                             </p>
                           </div>
                         )}
@@ -587,22 +902,28 @@ export const Profile: React.FC = () => {
                 Cancel
               </button>
               <button
-                onClick={() => {
-                  // TODO: Backend developer - Connect to API for saving profile data
-                  // Only save: description, location, website (name is minted and cannot be changed)
-                  // Also handle image uploads: avatarPreview and coverPreview
-                  console.log('Saving profile data:', {
-                    description: formData.description,
-                    location: formData.location,
-                    website: formData.website,
-                    avatarImage: avatarPreview ? 'Image selected' : 'No image',
-                    coverImage: coverPreview ? 'Image selected' : 'No image'
-                  })
-                  setIsEditModalOpen(false)
-                }}
-                className="px-6 py-2 rounded-full font-medium bg-yellow-500 hover:bg-yellow-600 text-black transition-all duration-300"
+                onClick={handleProfileUpdate}
+                disabled={isSaving || isUploading || (isConnected && activeToken && address?.toLowerCase() !== activeToken.address?.toLowerCase()) || (isConnected && activeToken && updateCost === 0)}
+                className={`px-6 py-2 rounded-full font-medium transition-all duration-300 ${
+                  isSaving || isUploading || (isConnected && activeToken && address?.toLowerCase() !== activeToken.address?.toLowerCase()) || (isConnected && activeToken && updateCost === 0)
+                    ? 'bg-gray-500 cursor-not-allowed'
+                    : 'bg-yellow-500 hover:bg-yellow-600'
+                } text-black`}
               >
-                Save Changes
+                {isSaving ? (
+                  <span className="flex items-center">
+                    <span className="animate-spin mr-2">⏳</span>
+                    Updating...
+                  </span>
+                ) : !isConnected ? (
+                  <span>Connect Wallet</span>
+                ) : activeToken && address?.toLowerCase() !== activeToken.address?.toLowerCase() ? (
+                  <span>Wrong Address</span>
+                ) : (
+                  <span>
+                    Save Changes {updateCost > 0 && `(${updateCost.toLocaleString()} CAW)`}
+                  </span>
+                )}
               </button>
             </div>
           </div>

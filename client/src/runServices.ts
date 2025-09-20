@@ -6,6 +6,7 @@ import { actionProcessorService } from './services/ActionProcessor';
 import { validatorService } from './services/ValidatorService';
 import { frontEndService } from './services/FrontEnd';
 import { apiService } from './services/Api'
+import { dataCleanerService } from './services/DataCleaner';
 
 import delay from './tools/delay';
 
@@ -40,6 +41,7 @@ const availableServiceList: Service[] = [
   validatorService,
   frontEndService,
   apiService,
+  dataCleanerService,
 ];
 
 const availableServices = new Map<string, Service>();

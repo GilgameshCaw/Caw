@@ -58,6 +58,7 @@ model User {
   website        String?
   avatarUrl      String?
   coverPhotoUrl  String?
+  profileUpdatePending Boolean @default(false)
 
   caws      Caw[]
   likes     Like[]
@@ -100,6 +101,8 @@ model Like {
   cawId  Int
   action ActionType
   pending Boolean @default(false) // Track pending state for optimistic UI
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [tokenId])
   caw  Caw  @relation(fields: [cawId], references: [id])
@@ -121,6 +124,7 @@ model Follow {
 
   action    ActionType @default(FOLLOW)
   createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
 
   @@unique([followerId, followingId])
 }
@@ -131,6 +135,7 @@ model TxQueue {
   payload  Json
   signedTx String
   status   String @default("pending")
+  reason   String? // Reason for failure if status is "failed"
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -151,6 +156,7 @@ model Action {
   data       Json
 
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([chainId, senderId, cawonce])
 }
@@ -173,6 +179,7 @@ model CawHashtag {
   cawId     Int
   hashtagId Int
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   caw     Caw     @relation(fields: [cawId], references: [id], onDelete: Cascade)
   hashtag Hashtag @relation(fields: [hashtagId], references: [id], onDelete: Cascade)

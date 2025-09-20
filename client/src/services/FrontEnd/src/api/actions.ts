@@ -127,21 +127,40 @@ export function useSignAndSubmitAction() {
   }, [isConnected, pendingParams, cawonce])
 
    async function requestAndSubmit(params: ActionParams) {
-    // if (cawonce == 0) return console.error("NO CAWONCE");
-    const { domain, types, primaryType, message } = buildTypedData({...params, cawonce})
+    // Get the current cawonce from the store at submission time
+    const currentToken = useTokenDataStore.getState().tokensByAddress[address?.toLowerCase() || '']?.find(t => t.tokenId === activeTokenId)
+    const currentCawonce = currentToken?.cawonce
 
-    const signature = await signTypedDataAsync({
-      domain,
-      types:       { ActionData: TYPES.ActionData },
-      primaryType,               // 'ActionData'
-      message
-    })
+    // Don't proceed if cawonce is not loaded yet
+    if (currentCawonce === undefined || currentCawonce === null) {
+      throw new Error('Token data not loaded yet. Please wait a moment and try again.')
+    }
 
-    await apiFetch('/api/actions', {
-      method: 'POST',
-      body: JSON.stringify({ data: message, signature })
-    })
+    // Bump cawonce BEFORE submission to avoid conflicts with concurrent submissions
     bumpCawonce(activeTokenId)
+
+    const { domain, types, primaryType, message } = buildTypedData({...params, cawonce: currentCawonce})
+
+    try {
+      const signature = await signTypedDataAsync({
+        domain,
+        types:       { ActionData: TYPES.ActionData },
+        primaryType,               // 'ActionData'
+        message
+      })
+
+      const response = await apiFetch('/api/actions', {
+        method: 'POST',
+        body: JSON.stringify({ data: message, domain, types, signature })
+      })
+
+      return response // Return the response which includes txQueueId
+    } catch (error) {
+      // If submission fails, we should ideally roll back the cawonce bump
+      // but for now we'll leave it incremented to avoid conflicts
+      console.error('Failed to submit action:', error)
+      throw error
+    }
    }
 
 

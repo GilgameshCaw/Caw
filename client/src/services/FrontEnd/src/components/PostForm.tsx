@@ -40,6 +40,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   const activeToken = useActiveToken();
   const signAndSubmit = useSignAndSubmitAction()
   const addPendingPost = usePendingPostsStore((state) => state.addPendingPost)
+  const updatePostWithTxQueueId = usePendingPostsStore((state) => state.updatePostWithTxQueueId)
 
   const { switchChain } = useSwitchChain();
   const chains = useChains();
@@ -238,15 +239,21 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     }
 
     // Add pending post to store (only if not a reply)
+    let tempId: string | undefined
     if (!replyTo && activeToken) {
-      addPendingPost({
+      tempId = addPendingPost({
         content: finalText,
         username: activeToken.username,
         tokenId: activeTokenId
       })
     }
 
-    await signAndSubmit(params)
+    const response = await signAndSubmit(params)
+
+    // Update pending post with txQueue ID if we have both
+    if (tempId && response?.txQueueId) {
+      updatePostWithTxQueueId(tempId, response.txQueueId)
+    }
 
     // Reset form
     setText('')
@@ -332,7 +339,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                   Not token owner
                 </span>
               )}
-              {hasNoToken && (
+              {hasNoToken && isConnected && (
                 <span className="text-xs text-yellow-600 dark:text-yellow-400 font-medium">
                   Select a token
                 </span>
@@ -668,7 +675,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                   Not token owner
                 </span>
               )}
-              {hasNoToken && (
+              {hasNoToken && isConnected && (
                 <span className="text-sm text-yellow-600 dark:text-yellow-400 font-medium">
                   Select a token
                 </span>

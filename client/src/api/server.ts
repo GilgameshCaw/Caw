@@ -7,6 +7,8 @@ import cawRouter from './routes/caws'
 import txRouter  from './routes/txs'
 import hashtagRouter from './routes/hashtags'
 import uploadRouter from './routes/upload'
+import usersRouter from './routes/users'
+import txQueueRouter from './routes/txqueue'
 
 /**
  * natstat: build and configure Express app
@@ -45,6 +47,8 @@ function createApp() {
   app.use('/api/txs',  txRouter)
   app.use('/api/hashtags', hashtagRouter)
   app.use('/api/upload', uploadRouter)
+  app.use('/api/users', usersRouter)
+  app.use('/api/txqueue', txQueueRouter)
 
   return app
 }

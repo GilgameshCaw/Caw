@@ -92,9 +92,15 @@ const ProfileChooser: React.FC = () => {
       </button>
 
       {isDropdownOpen && (
-        <ul className={`absolute right-0 bottom-0 mt-2 shadow-lg rounded-md overflow-hidden z-10 transition-all duration-300 ${
-          isDark ? 'bg-black border border-white/20' : 'bg-white border border-gray-200'
-        }`}>
+        <ul
+          className={`absolute bottom-0 mt-2 shadow-lg rounded-md overflow-hidden z-10 transition-all duration-300 ${
+            isDark ? 'bg-black border border-white/20' : 'bg-white border border-gray-200'
+          }`}
+          style={{
+            right: window.innerWidth < 1100 ? 'auto' : '0',
+            left: window.innerWidth < 1100 ? '15px' : 'auto'
+          }}
+        >
           {Object.entries(visibleTokensByAddress).map(([ownerAddress, tokenList]) => (
             <li key={ownerAddress} className={`border-b transition-all duration-300 ${
               isDark ? 'border-gray-700' : 'border-gray-200'

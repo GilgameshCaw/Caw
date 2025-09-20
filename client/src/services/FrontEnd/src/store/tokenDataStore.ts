@@ -28,6 +28,7 @@ interface TokenDataStore {
 export const useActiveToken = () =>
   useTokenDataStore(state => {
     const tokens = Object.values(state.tokensByAddress).flat()
+    console.log("Finding active topken %%%%%%%%%%%", tokens.find(t => t.tokenId === state.activeTokenId) || tokens[0])
     return tokens.find(t => t.tokenId === state.activeTokenId) || tokens[0];
   }
 );

@@ -2,6 +2,8 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useSignAndSubmitAction } from '~/api/actions'
+import { useAccount } from 'wagmi'
+import { useConnectModal } from '@rainbow-me/rainbowkit'
 import {
   HiOutlineHeart,
   HiOutlineEye,
@@ -16,7 +18,7 @@ import {
   HiOutlineEyeOff,
   HiOutlineUserRemove,
   HiOutlineExclamation,
-  HiOutlineCloudUpload
+  HiOutlineCheck
 } from 'react-icons/hi'
 import Recaw from '~/assets/images/recaw.svg?react';
 import Pencil from '~/assets/images/pencil.svg?react';
@@ -24,6 +26,7 @@ import Bookmark from '~/assets/images/bookmark.svg?react';
 import Share from '~/assets/images/share.svg?react';
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import { useModalStore } from '~/store/modalStore'
+import { useOptimisticLikesStore } from '~/store/optimisticLikesStore'
 import { Link } from 'react-router-dom'
 import { User, CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
@@ -54,17 +57,87 @@ function formatTimeAgo(timestamp: string): string {
 
 const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean }> = ({ item, isMainPost = false, isReply = false }) => {
   const activeTokenId     = useTokenDataStore(s => s.activeTokenId)
+  const activeToken = useTokenDataStore(s => {
+    const tokens = Object.values(s.tokensByAddress).flat()
+    return tokens.find(t => t.tokenId === s.activeTokenId) || tokens[0]
+  })
   const openModal        = useModalStore(s => s.openModal)
+  const { isConnected, address } = useAccount()
+  const { openConnectModal } = useConnectModal()
   const { isDark } = useTheme()
   const [busyLike, setBusyLike]     = useState(false)
   const [busyRecaw, setBusyRecaw]   = useState(false)
   const [isRecawed, setIsRecawed]   = useState(false)
   const [likePending, setLikePending] = useState(item.likePending || false)
+  const [txSubmitted, setTxSubmitted] = useState(false) // Track if tx was submitted during this session only
+  const [pendingLikeAction, setPendingLikeAction] = useState(false) // Track if we're waiting to like after connection
+  const [wrongWalletError, setWrongWalletError] = useState(false) // Track if wrong wallet is connected
   const signAndSubmit     = useSignAndSubmitAction()
   const [showRecawMenu, setShowRecawMenu]   = useState(false)
   const [showOptionsMenu, setShowOptionsMenu] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const optionsMenuRef = useRef<HTMLDivElement>(null)
+
+  // Determine which item to use (handle recaws)
+  let useItem = item;
+  let headline;
+  if (item.content === "" && item.parent) {
+    headline = 'Recawed by ' + item.user.username
+    useItem = item.parent;
+  }
+
+  // Auto-trigger like after wallet connection
+  useEffect(() => {
+    if (pendingLikeAction && isConnected && activeTokenId && activeToken && activeToken.cawonce !== undefined) {
+      // Immediately clear the pending action to prevent re-triggers
+      setPendingLikeAction(false)
+
+      // Check if connected to correct wallet
+      if (activeToken.address.toLowerCase() === address?.toLowerCase()) {
+        // Add optimistic like if liking
+        let tempLikeId: string | undefined
+        const addOptimisticLike = useOptimisticLikesStore.getState().addOptimisticLike
+        const updateLikeWithTxQueueId = useOptimisticLikesStore.getState().updateLikeWithTxQueueId
+        if (!useItem.hasLiked) {
+          tempLikeId = addOptimisticLike({
+            userId: activeTokenId,
+            cawId: useItem.id
+          })
+        }
+
+        // Directly call the sign and submit without recursion
+        signAndSubmit({
+          actionType: useItem.hasLiked ? 'unlike' : 'like',
+          senderId: activeTokenId,
+          receiverId: useItem.user.tokenId,
+          receiverCawonce: useItem.cawonce ?? 0,
+        }).then((response) => {
+          // Update optimistic like with txQueue ID if we have both
+          if (tempLikeId && response?.txQueueId) {
+            updateLikeWithTxQueueId(tempLikeId, response.txQueueId)
+          }
+          setLikePending(true)
+          setTxSubmitted(true)
+        }).catch(err => {
+          console.error('Like failed', err)
+          setLikePending(false)
+          setTxSubmitted(false)
+        })
+      } else {
+        setWrongWalletError(true)
+        setTimeout(() => setWrongWalletError(false), 5000) // Clear error after 5 seconds
+      }
+    }
+    // Remove signAndSubmit from dependencies to prevent re-triggers
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isConnected, activeTokenId, pendingLikeAction, address, activeToken, activeToken?.cawonce, useItem.hasLiked, useItem.user.tokenId, useItem.cawonce])
+
+  // Clear wrong wallet error when address changes
+  useEffect(() => {
+    if (wrongWalletError && activeToken && activeToken.address.toLowerCase() === address?.toLowerCase()) {
+      setWrongWalletError(false)
+    }
+  }, [address, activeToken, wrongWalletError])
 
   // close menus on any outside click
   useEffect(() => {
@@ -73,7 +146,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       const target = e.target as Node
       const isRecawMenuOpen = showRecawMenu && menuRef.current && !menuRef.current.contains(target)
       const isOptionsMenuOpen = showOptionsMenu && optionsMenuRef.current && !optionsMenuRef.current.contains(target)
-      
+
       if (isRecawMenuOpen || isOptionsMenuOpen) {
         e.stopPropagation();
         e.preventDefault();
@@ -85,36 +158,82 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     return () => document.removeEventListener('click', onClickOutside, true)
   }, [showRecawMenu, showOptionsMenu])
 
-  let useItem = item;
-  let headline;
-  if (item.content === "" && item.parent) {
-    headline = 'Recawed by ' + item.user.username
-    useItem = item.parent;
-  }
-
   const handleLike = async (event: React.MouseEvent) => {
-    if (!activeTokenId || busyLike || likePending) return
     event.preventDefault()
+
+    // If wallet not connected, open connect modal and set pending action
+    if (!isConnected) {
+      setPendingLikeAction(true)
+      if (openConnectModal) {
+        openConnectModal()
+      }
+      return
+    }
+
+    // Check if connected to wrong wallet
+    if (activeToken && address && activeToken.address.toLowerCase() !== address.toLowerCase()) {
+      setWrongWalletError(true)
+      setTimeout(() => setWrongWalletError(false), 5000) // Clear error after 5 seconds
+      return
+    }
+
+    // If no active token selected, return
+    if (!activeTokenId || busyLike || likePending) return
+
     setBusyLike(true)
-    setLikePending(true) // Set pending state immediately
+    setTxSubmitted(false) // Reset txSubmitted at start of new like action
+
+    // Add optimistic like if liking
+    let tempLikeId: string | undefined
+    const addOptimisticLike = useOptimisticLikesStore.getState().addOptimisticLike
+    const updateLikeWithTxQueueId = useOptimisticLikesStore.getState().updateLikeWithTxQueueId
+    if (!useItem.hasLiked) {
+      tempLikeId = addOptimisticLike({
+        userId: activeTokenId,
+        cawId: useItem.id
+      })
+    }
+
     try {
-      await signAndSubmit({
+      const response = await signAndSubmit({
         actionType:      useItem.hasLiked ? 'unlike' : 'like',
         senderId:        activeTokenId,
         receiverId:      useItem.user.tokenId,
         receiverCawonce: useItem.cawonce ?? 0,
       })
+
+      // Update optimistic like with txQueue ID if we have both
+      if (tempLikeId && response?.txQueueId) {
+        updateLikeWithTxQueueId(tempLikeId, response.txQueueId)
+      }
+
+      // Transaction was successfully submitted to the server
+      setLikePending(true)
+      setTxSubmitted(true)
     } catch (err) {
       console.error('Like failed', err)
-      setLikePending(false) // Reset on error
+      // Reset states on error
+      setLikePending(false)
+      setTxSubmitted(false)
     } finally {
       setBusyLike(false)
     }
   }
 
   const handleRecaw = async (event: React.MouseEvent) => {
-    if (!activeTokenId || busyRecaw) return
     event.preventDefault()
+
+    // If wallet not connected, open connect modal
+    if (!isConnected) {
+      if (openConnectModal) {
+        openConnectModal()
+      }
+      return
+    }
+
+    // If no active token selected, return
+    if (!activeTokenId || busyRecaw) return
+
     setBusyRecaw(true)
     try {
       await signAndSubmit({
@@ -476,13 +595,14 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 disabled={busyLike || likePending}
                 title={likePending ? "Processing like..." : "Like"}
               >
-                {likePending ? (
+                {(busyLike && !txSubmitted) ? (
+                  // Just spinner while signing/submitting transaction
+                  <div className="w-5 h-5 border-2 border-gray-400 border-t-red-500 rounded-full animate-spin"></div>
+                ) : (likePending || item.likePending) ? (
+                  // Spinner with checkmark after transaction is submitted (or if pending from DB)
                   <div className="relative w-5 h-5">
                     <div className="w-5 h-5 border-2 border-gray-400 border-t-red-500 rounded-full animate-spin"></div>
-                    {/* Show cloud icon when pending on server (not just local) */}
-                    {item.likePending && (
-                      <HiOutlineCloudUpload className="absolute inset-0 w-3 h-3 m-auto text-gray-500" />
-                    )}
+                    <HiOutlineCheck className="absolute inset-0 w-3 h-3 m-auto text-red-500" />
                   </div>
                 ) : (
                   <HiOutlineHeart className={`w-5 h-5 ${useItem.hasLiked ? 'fill-current' : ''}`} />
@@ -528,6 +648,17 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               </button>
             </div>
           </div>
+
+          {/* Wrong wallet error message */}
+          {wrongWalletError && (
+            <div className={`mt-2 px-4 py-2 text-sm rounded-md transition-all duration-300 ${
+              isDark
+                ? 'bg-red-900/20 text-red-400 border border-red-800'
+                : 'bg-red-50 text-red-600 border border-red-200'
+            }`}>
+              Please switch to the wallet that owns this profile
+            </div>
+          )}
         </div>
       </Link>
 

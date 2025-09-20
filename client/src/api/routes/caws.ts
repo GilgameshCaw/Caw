@@ -22,7 +22,8 @@ router.get('/', async (req, res) => {
     console.log('API Debug - username parameter:', username)
     
     const cursor      = req.query.cursor ? { id: Number(req.query.cursor) } : undefined
-    const currentUserId = Number(req.header('x-user-id') || 0) || undefined
+    const userIdHeader = req.header('x-user-id')
+    const currentUserId = userIdHeader ? Number(userIdHeader) : undefined
 
     // 1️⃣ if ?user=foo, look up that user
     let targetUserId: number|undefined
@@ -87,7 +88,8 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   const cawId = Number(req.params.id)
   // 1) fetch the caw itself
-  const currentUserId = Number(req.header('x-user-id')) || undefined
+  const userIdHeader = req.header('x-user-id')
+  const currentUserId = userIdHeader ? Number(userIdHeader) : undefined
 
   const raw = await prisma.caw.findUnique({
     where: { id: cawId },

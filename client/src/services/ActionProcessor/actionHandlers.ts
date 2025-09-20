@@ -232,46 +232,86 @@ export async function handleUnlikeAction(
 
 /**
  * Handle FOLLOW action - create or update follow relationship
+ * Note: User counts (followerCount, followingCount) are automatically calculated
+ * via Prisma _count aggregations in the API, so no manual count updates needed
  */
 export async function handleFollowAction(
   tx: PrismaTransactionClient,
   action: any,
   rawAction: any
 ): Promise<void> {
-  await tx.follow.upsert({
+  const followerId = await findOrCreateUser(action.senderId)
+  const followingId = await findOrCreateUser(rawAction.receiverId)
+
+  // Check if follow already exists
+  const existingFollow = await tx.follow.findUnique({
     where: {
       followerId_followingId: {
-        followerId: await findOrCreateUser(action.senderId),
-        followingId: await findOrCreateUser(rawAction.receiverId)
+        followerId,
+        followingId
       }
-    },
-    update: { action: 'FOLLOW' },
-    create: {
-      followerId: await findOrCreateUser(action.senderId),
-      followingId: await findOrCreateUser(rawAction.receiverId),
-      action: 'FOLLOW'
     }
   })
+
+  if (!existingFollow) {
+    // Create new follow relationship
+    await tx.follow.create({
+      data: {
+        followerId,
+        followingId,
+        action: 'FOLLOW'
+      }
+    })
+
+    console.log(`User ${followerId} now follows user ${followingId}`)
+  } else if (existingFollow.action !== 'FOLLOW') {
+    // Update existing relationship back to FOLLOW
+    await tx.follow.update({
+      where: {
+        followerId_followingId: {
+          followerId,
+          followingId
+        }
+      },
+      data: {
+        action: 'FOLLOW'
+      }
+    })
+
+    console.log(`User ${followerId} re-followed user ${followingId}`)
+  }
 }
 
 /**
  * Handle UNFOLLOW action - remove follow relationship
+ * Note: User counts (followerCount, followingCount) are automatically calculated
+ * via Prisma _count aggregations in the API, so no manual count updates needed
  */
 export async function handleUnfollowAction(
   tx: PrismaTransactionClient,
   action: any,
   rawAction: any
 ): Promise<void> {
-  await tx.follow.deleteMany({
+  const followerId = await findOrCreateUser(action.senderId)
+  const followingId = await findOrCreateUser(rawAction.receiverId)
+
+  // Delete the follow relationship
+  const deleted = await tx.follow.deleteMany({
     where: {
-      followerId: await findOrCreateUser(action.senderId),
-      followingId: await findOrCreateUser(rawAction.receiverId)
+      followerId,
+      followingId
     }
   })
+
+  if (deleted.count > 0) {
+    console.log(`User ${followerId} unfollowed user ${followingId}`)
+  } else {
+    console.log(`User ${followerId} was not following user ${followingId}`)
+  }
 }
 
 /**
- * Handle OTHER action - for image uploads and other custom content
+ * Handle OTHER action - for image uploads, profile updates, and other custom content
  */
 export async function handleOtherAction(
   tx: PrismaTransactionClient,
@@ -280,6 +320,87 @@ export async function handleOtherAction(
   authorId: number,
   parentCawId?: number
 ): Promise<void> {
+  // Check if this is a profile update (both old and new formats)
+  if (rawAction.text?.startsWith('profile-update:') || rawAction.text?.startsWith('p:')) {
+    console.log('Processing profile update for user:', authorId)
+
+    try {
+      // Parse the JSON data after the prefix (support both formats)
+      const jsonStr = rawAction.text.startsWith('p:')
+        ? rawAction.text.replace('p:', '').trim()
+        : rawAction.text.replace('profile-update:', '').trim()
+      const profileData = JSON.parse(jsonStr)
+
+      // Map compact keys to full field names
+      const keyMap: Record<string, string> = {
+        'd': 'bio',        // description/bio
+        'l': 'location',   // location
+        'w': 'website',    // website
+        'a': 'avatarUrl',  // avatar
+        'c': 'coverPhotoUrl', // cover
+        // Also support full field names for backward compatibility
+        'bio': 'bio',
+        'displayName': 'displayName',
+        'location': 'location',
+        'website': 'website',
+        'avatarUrl': 'avatarUrl',
+        'coverPhotoUrl': 'coverPhotoUrl'
+      }
+
+      const updateData: any = {}
+
+      for (const [key, value] of Object.entries(profileData)) {
+        const field = keyMap[key]
+        if (!field) continue // Skip unknown fields
+
+        if (value !== undefined) {
+          // Sanitize string values
+          if (typeof value === 'string') {
+            const trimmedValue = value.trim()
+
+            // Additional validation for specific fields
+            if (field === 'website' && trimmedValue) {
+              // Basic URL validation
+              if (!trimmedValue.match(/^https?:\/\/.+/) && !trimmedValue.match(/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/)) {
+                console.warn(`Invalid website URL for user ${authorId}: ${trimmedValue}`)
+                continue
+              }
+            }
+
+            if (field === 'bio' && trimmedValue.length > 500) {
+              updateData[field] = trimmedValue.substring(0, 500)
+            } else if (field === 'displayName' && trimmedValue.length > 50) {
+              updateData[field] = trimmedValue.substring(0, 50)
+            } else if (field === 'location' && trimmedValue.length > 100) {
+              updateData[field] = trimmedValue.substring(0, 100)
+            } else if (field === 'website' && trimmedValue.length > 200) {
+              updateData[field] = trimmedValue.substring(0, 200)
+            } else if ((field === 'avatarUrl' || field === 'coverPhotoUrl') && trimmedValue.length > 500) {
+              updateData[field] = trimmedValue.substring(0, 500)
+            } else {
+              updateData[field] = trimmedValue
+            }
+          }
+        }
+      }
+
+      // Update the user profile and clear the pending flag
+      await tx.user.update({
+        where: { tokenId: authorId },
+        data: {
+          ...updateData,
+          profileUpdatePending: false
+        }
+      })
+
+      console.log('Profile updated successfully for user:', authorId, updateData)
+      return // Exit early for profile updates
+    } catch (err) {
+      console.error('Failed to process profile update:', err)
+      // Continue to process as regular OTHER action if parsing fails
+    }
+  }
+
   // Extract image data if present (can be multiple images)
   let imageDataArray: string[] = []
   let textContent = rawAction.text
