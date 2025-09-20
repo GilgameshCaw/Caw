@@ -1,0 +1,217 @@
+import React, { useState } from 'react'
+import { HiX, HiLink, HiMail, HiShare, HiCheck } from 'react-icons/hi'
+import { FaTwitter, FaFacebook, FaWhatsapp, FaTelegram } from 'react-icons/fa'
+import { useTheme } from '~/hooks/useTheme'
+
+interface ShareModalProps {
+  isOpen: boolean
+  onClose: () => void
+  url: string
+  title: string
+  text?: string
+}
+
+export const ShareModal: React.FC<ShareModalProps> = ({
+  isOpen,
+  onClose,
+  url,
+  title,
+  text = ''
+}) => {
+  const { isDark } = useTheme()
+  const [copied, setCopied] = useState(false)
+  const shareUrl = `${window.location.origin}${url}`
+  const shareText = text || title
+
+  if (!isOpen) return null
+
+  const handleNativeShare = async () => {
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title,
+          text: shareText,
+          url: shareUrl
+        })
+        onClose()
+      } catch (error) {
+        if ((error as Error).name !== 'AbortError') {
+          console.error('Share failed:', error)
+        }
+      }
+    }
+  }
+
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(shareUrl)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  const shareOptions = [
+    {
+      name: 'Twitter',
+      icon: FaTwitter,
+      color: 'text-blue-400',
+      url: `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(shareUrl)}`
+    },
+    {
+      name: 'Facebook',
+      icon: FaFacebook,
+      color: 'text-blue-600',
+      url: `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(shareUrl)}`
+    },
+    {
+      name: 'WhatsApp',
+      icon: FaWhatsapp,
+      color: 'text-green-500',
+      url: `https://wa.me/?text=${encodeURIComponent(shareText + ' ' + shareUrl)}`
+    },
+    {
+      name: 'Telegram',
+      icon: FaTelegram,
+      color: 'text-blue-500',
+      url: `https://t.me/share/url?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(shareText)}`
+    },
+    {
+      name: 'Email',
+      icon: HiMail,
+      color: 'text-gray-500',
+      url: `mailto:?subject=${encodeURIComponent(title)}&body=${encodeURIComponent(shareText + '\n\n' + shareUrl)}`
+    }
+  ]
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 bg-black/50 z-40 transition-opacity"
+        onClick={onClose}
+      />
+
+      {/* Modal */}
+      <div className="fixed inset-x-0 bottom-0 md:inset-0 md:flex md:items-center md:justify-center z-50 px-4 md:px-0">
+        <div
+          className={`w-full md:w-96 rounded-t-2xl md:rounded-2xl ${
+            isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
+          } border overflow-hidden animate-slide-up md:animate-fade-in`}
+        >
+          {/* Header */}
+          <div className={`flex items-center justify-between px-4 py-3 border-b ${
+            isDark ? 'border-white/20' : 'border-gray-200'
+          }`}>
+            <h2 className={`text-lg font-semibold ${
+              isDark ? 'text-white' : 'text-gray-900'
+            }`}>
+              Share
+            </h2>
+            <button
+              onClick={onClose}
+              className={`p-1 rounded-full transition ${
+                isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'
+              }`}
+            >
+              <HiX className={`w-5 h-5 ${
+                isDark ? 'text-white/70' : 'text-gray-600'
+              }`} />
+            </button>
+          </div>
+
+          {/* Content */}
+          <div className="p-4">
+            {/* Native share button (if supported) */}
+            {navigator.share && (
+              <button
+                onClick={handleNativeShare}
+                className={`w-full mb-4 px-4 py-3 rounded-full flex items-center justify-center space-x-2 transition ${
+                  isDark
+                    ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                    : 'bg-blue-500 hover:bg-blue-600 text-white'
+                }`}
+              >
+                <HiShare className="w-5 h-5" />
+                <span>Share via...</span>
+              </button>
+            )}
+
+            {/* Copy link button */}
+            <button
+              onClick={handleCopyLink}
+              className={`w-full mb-4 px-4 py-3 rounded-full flex items-center justify-center space-x-2 transition ${
+                isDark
+                  ? 'bg-white/10 hover:bg-white/20 text-white border border-white/20'
+                  : 'bg-gray-100 hover:bg-gray-200 text-gray-900 border border-gray-300'
+              }`}
+            >
+              {copied ? (
+                <>
+                  <HiCheck className="w-5 h-5 text-green-500" />
+                  <span>Copied!</span>
+                </>
+              ) : (
+                <>
+                  <HiLink className="w-5 h-5" />
+                  <span>Copy link</span>
+                </>
+              )}
+            </button>
+
+            {/* Share options grid */}
+            <div className="grid grid-cols-3 gap-3">
+              {shareOptions.map((option) => (
+                <a
+                  key={option.name}
+                  href={option.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`flex flex-col items-center justify-center p-3 rounded-lg transition ${
+                    isDark
+                      ? 'bg-white/5 hover:bg-white/10'
+                      : 'bg-gray-50 hover:bg-gray-100'
+                  }`}
+                >
+                  <option.icon className={`w-6 h-6 mb-1 ${option.color}`} />
+                  <span className={`text-xs ${
+                    isDark ? 'text-white/70' : 'text-gray-600'
+                  }`}>
+                    {option.name}
+                  </span>
+                </a>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <style jsx>{`
+        @keyframes slide-up {
+          from {
+            transform: translateY(100%);
+          }
+          to {
+            transform: translateY(0);
+          }
+        }
+
+        @keyframes fade-in {
+          from {
+            opacity: 0;
+            transform: scale(0.95);
+          }
+          to {
+            opacity: 1;
+            transform: scale(1);
+          }
+        }
+
+        .animate-slide-up {
+          animation: slide-up 0.3s ease-out;
+        }
+
+        .animate-fade-in {
+          animation: fade-in 0.2s ease-out;
+        }
+      `}</style>
+    </>
+  )
+}

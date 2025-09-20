@@ -25,6 +25,7 @@ import Pencil from '~/assets/images/pencil.svg?react';
 import Bookmark from '~/assets/images/bookmark.svg?react';
 import Share from '~/assets/images/share.svg?react';
 import { useTokenDataStore } from '~/store/tokenDataStore'
+import { ShareModal } from './ShareModal'
 import { useModalStore } from '~/store/modalStore'
 import { useOptimisticLikesStore } from '~/store/optimisticLikesStore'
 import { Link } from 'react-router-dom'
@@ -75,6 +76,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const signAndSubmit     = useSignAndSubmitAction()
   const [showRecawMenu, setShowRecawMenu]   = useState(false)
   const [showOptionsMenu, setShowOptionsMenu] = useState(false)
+  const [showShareModal, setShowShareModal] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const optionsMenuRef = useRef<HTMLDivElement>(null)
 
@@ -652,7 +654,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               </button>
 
               {/* Share */}
-              <button 
+              <button
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setShowShareModal(true)
+                }}
                 className={`transition-colors duration-300 hover:text-blue-500 cursor-pointer ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
@@ -854,6 +861,15 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         </>,
         document.body
       )}
+
+      {/* Share Modal */}
+      <ShareModal
+        isOpen={showShareModal}
+        onClose={() => setShowShareModal(false)}
+        url={`/caws/${useItem.id}`}
+        title={`${useItem.user?.displayName || '@' + useItem.user?.username}'s caw`}
+        text={useItem.text}
+      />
     </>
   )
 }
