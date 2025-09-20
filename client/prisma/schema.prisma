@@ -90,6 +90,7 @@ model Caw {
   commentCount Int @default(0)
   recawCount   Int @default(0)
   likeCount    Int @default(0)
+  viewCount    Int @default(0)
 
   @@unique([userId, cawonce])
   @@index([userId, action, createdAt])

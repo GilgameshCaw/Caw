@@ -7,6 +7,7 @@ import { validatorService } from './services/ValidatorService';
 import { frontEndService } from './services/FrontEnd';
 import { apiService } from './services/Api'
 import { dataCleanerService } from './services/DataCleaner';
+import { viewTrackerService } from './services/ViewTracker';
 
 import delay from './tools/delay';
 

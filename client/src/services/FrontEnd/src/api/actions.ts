@@ -127,13 +127,27 @@ export function useSignAndSubmitAction() {
   }, [isConnected, pendingParams, cawonce])
 
    async function requestAndSubmit(params: ActionParams) {
-    // Get the current cawonce from the store at submission time
-    const currentToken = useTokenDataStore.getState().tokensByAddress[address?.toLowerCase() || '']?.find(t => t.tokenId === activeTokenId)
-    const currentCawonce = currentToken?.cawonce
+    // Wait for token data to be loaded (max 5 seconds)
+    let attempts = 0;
+    let currentToken;
+    let currentCawonce;
 
-    // Don't proceed if cawonce is not loaded yet
+    while (attempts < 50) { // 50 attempts * 100ms = 5 seconds max
+      currentToken = useTokenDataStore.getState().tokensByAddress[address?.toLowerCase() || '']?.find(t => t.tokenId === activeTokenId)
+      currentCawonce = currentToken?.cawonce
+
+      if (currentCawonce !== undefined && currentCawonce !== null) {
+        break; // Token data is loaded
+      }
+
+      // Wait 100ms before trying again
+      await new Promise(resolve => setTimeout(resolve, 100));
+      attempts++;
+    }
+
+    // If still not loaded after waiting, throw error
     if (currentCawonce === undefined || currentCawonce === null) {
-      throw new Error('Token data not loaded yet. Please wait a moment and try again.')
+      throw new Error('Token data not loaded. Please try again.')
     }
 
     // Bump cawonce BEFORE submission to avoid conflicts with concurrent submissions

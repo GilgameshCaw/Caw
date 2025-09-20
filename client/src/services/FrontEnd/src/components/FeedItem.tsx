@@ -88,12 +88,25 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
   // Auto-trigger like after wallet connection
   useEffect(() => {
-    if (pendingLikeAction && isConnected && activeTokenId && activeToken && activeToken.cawonce !== undefined) {
-      // Immediately clear the pending action to prevent re-triggers
-      setPendingLikeAction(false)
+    if (pendingLikeAction && isConnected && activeTokenId && activeToken) {
+      // Wait a bit for cawonce to load if needed
+      const checkAndTriggerLike = async () => {
+        let attempts = 0;
+        while (attempts < 20 && activeToken.cawonce === undefined) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+          attempts++;
+        }
 
-      // Check if connected to correct wallet
-      if (activeToken.address.toLowerCase() === address?.toLowerCase()) {
+        if (activeToken.cawonce === undefined) {
+          console.error('Token data not loaded after waiting');
+          return;
+        }
+
+        // Immediately clear the pending action to prevent re-triggers
+        setPendingLikeAction(false)
+
+        // Check if connected to correct wallet
+        if (activeToken.address.toLowerCase() === address?.toLowerCase()) {
         // Add optimistic like if liking
         let tempLikeId: string | undefined
         const addOptimisticLike = useOptimisticLikesStore.getState().addOptimisticLike
@@ -127,6 +140,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         setWrongWalletError(true)
         setTimeout(() => setWrongWalletError(false), 5000) // Clear error after 5 seconds
       }
+      }
+
+      checkAndTriggerLike()
     }
     // Remove signAndSubmit from dependencies to prevent re-triggers
     // eslint-disable-next-line react-hooks/exhaustive-deps
