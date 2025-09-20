@@ -1,0 +1,222 @@
+import React, { useState, useEffect } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { apiFetch } from '~/api/client'
+import Feed from '~/components/Feed'
+import { useTheme } from '~/hooks/useTheme'
+import { HiUsers, HiHashtag, HiCollection } from 'react-icons/hi'
+
+interface SearchResults {
+  caws: any[]
+  users: any[]
+  hashtags: any[]
+}
+
+const SearchResultsPage: React.FC = () => {
+  const [searchParams] = useSearchParams()
+  const query = searchParams.get('q') || ''
+  const { isDark } = useTheme()
+  const [activeTab, setActiveTab] = useState<'all' | 'caws' | 'users' | 'hashtags'>('all')
+  const [results, setResults] = useState<SearchResults | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!query) return
+
+    const fetchResults = async () => {
+      setLoading(true)
+      setError(null)
+      try {
+        const data = await apiFetch<SearchResults>(
+          `/api/search?q=${encodeURIComponent(query)}&type=${activeTab}`
+        )
+        setResults(data)
+      } catch (err) {
+        console.error('Search failed:', err)
+        setError('Failed to search. Please try again.')
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchResults()
+  }, [query, activeTab])
+
+  if (!query) {
+    return (
+      <div className="max-w-2xl mx-auto px-6 py-4">
+        <div className={`text-center py-8 ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
+          Enter a search query to get started
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="max-w-2xl mx-auto px-6 py-4">
+      <div className="mb-6">
+        <h1 className={`text-2xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+          Search Results
+        </h1>
+        <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
+          Results for "{query}"
+        </p>
+      </div>
+
+      {/* Tab Navigation */}
+      <div className={`flex space-x-1 mb-6 border-b ${isDark ? 'border-white/20' : 'border-gray-200'}`}>
+        {[
+          { id: 'all' as const, label: 'All', icon: HiCollection },
+          { id: 'caws' as const, label: 'Caws', icon: HiCollection },
+          { id: 'users' as const, label: 'Users', icon: HiUsers },
+          { id: 'hashtags' as const, label: 'Hashtags', icon: HiHashtag }
+        ].map(tab => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={`flex items-center space-x-2 px-4 py-3 transition-all ${
+              activeTab === tab.id
+                ? isDark
+                  ? 'border-b-2 border-blue-500 text-white'
+                  : 'border-b-2 border-blue-500 text-gray-900'
+                : isDark
+                  ? 'text-white/60 hover:text-white'
+                  : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <tab.icon className="w-4 h-4" />
+            <span>{tab.label}</span>
+          </button>
+        ))}
+      </div>
+
+      {/* Results */}
+      {loading ? (
+        <div className="space-y-4">
+          {[...Array(3)].map((_, i) => (
+            <div key={i} className={`animate-pulse ${
+              isDark ? 'bg-white/10' : 'bg-gray-100'
+            } rounded-lg h-32`}></div>
+          ))}
+        </div>
+      ) : error ? (
+        <div className="text-red-500 text-center py-8">{error}</div>
+      ) : results ? (
+        <div className="space-y-6">
+          {/* Caws Results */}
+          {(activeTab === 'all' || activeTab === 'caws') && results.caws.length > 0 && (
+            <div>
+              {activeTab === 'all' && (
+                <h2 className={`text-lg font-semibold mb-3 ${
+                  isDark ? 'text-white' : 'text-gray-900'
+                }`}>Caws</h2>
+              )}
+              <Feed
+                filter="search"
+                apiEndpoint={`/api/search?q=${encodeURIComponent(query)}&type=caws`}
+              />
+            </div>
+          )}
+
+          {/* Users Results */}
+          {(activeTab === 'all' || activeTab === 'users') && results.users.length > 0 && (
+            <div>
+              {activeTab === 'all' && (
+                <h2 className={`text-lg font-semibold mb-3 ${
+                  isDark ? 'text-white' : 'text-gray-900'
+                }`}>Users</h2>
+              )}
+              <div className="space-y-3">
+                {results.users.map(user => (
+                  <a
+                    key={user.id}
+                    href={`/profile/${user.username}`}
+                    className={`block p-4 rounded-lg transition ${
+                      isDark
+                        ? 'bg-white/5 hover:bg-white/10'
+                        : 'bg-gray-50 hover:bg-gray-100'
+                    }`}
+                  >
+                    <div className="flex items-center space-x-3">
+                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-500" />
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-2">
+                          <span className={`font-semibold ${
+                            isDark ? 'text-white' : 'text-gray-900'
+                          }`}>
+                            {user.displayName || user.username}
+                          </span>
+                          {user.verified && (
+                            <span className="text-blue-500 text-sm">✓</span>
+                          )}
+                        </div>
+                        <div className={`text-sm ${
+                          isDark ? 'text-white/60' : 'text-gray-600'
+                        }`}>
+                          @{user.username} • {user.followerCount || 0} followers
+                        </div>
+                      </div>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Hashtags Results */}
+          {(activeTab === 'all' || activeTab === 'hashtags') && results.hashtags.length > 0 && (
+            <div>
+              {activeTab === 'all' && (
+                <h2 className={`text-lg font-semibold mb-3 ${
+                  isDark ? 'text-white' : 'text-gray-900'
+                }`}>Hashtags</h2>
+              )}
+              <div className="space-y-3">
+                {results.hashtags.map(hashtag => (
+                  <a
+                    key={hashtag.tag}
+                    href={`/hashtag/${hashtag.tag}`}
+                    className={`block p-4 rounded-lg transition ${
+                      isDark
+                        ? 'bg-white/5 hover:bg-white/10'
+                        : 'bg-gray-50 hover:bg-gray-100'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <HiHashtag className={`w-5 h-5 ${
+                          isDark ? 'text-white/60' : 'text-gray-600'
+                        }`} />
+                        <span className={`font-semibold ${
+                          isDark ? 'text-white' : 'text-gray-900'
+                        }`}>
+                          {hashtag.tag}
+                        </span>
+                      </div>
+                      <span className={`text-sm ${
+                        isDark ? 'text-white/60' : 'text-gray-600'
+                      }`}>
+                        {hashtag.usageCount} caws
+                      </span>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* No Results */}
+          {results.caws.length === 0 && results.users.length === 0 && results.hashtags.length === 0 && (
+            <div className={`text-center py-8 ${
+              isDark ? 'text-white/60' : 'text-gray-600'
+            }`}>
+              No results found for "{query}"
+            </div>
+          )}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+export default SearchResultsPage
