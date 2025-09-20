@@ -30,11 +30,11 @@ export function formatLargeNumber(num: number): string {
 /**
  * Format usage counts for hashtags with proper suffixes
  * @param count - The usage count
- * @returns Formatted string with "posts" suffix
+ * @returns Formatted string with "caws" suffix
  */
 export function formatUsageCount(count: number): string {
   const formattedNumber = formatLargeNumber(count)
-  return count === 1 ? '1 post' : `${formattedNumber} posts`
+  return count === 1 ? '1 caw' : `${formattedNumber} caws`
 }
 
 /**

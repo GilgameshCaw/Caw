@@ -172,7 +172,7 @@ export const HashtagPage: React.FC = () => {
 
             <p className="text-gray-600 dark:text-gray-400">
               {hashtagInfo?.usageCount === 0
-                ? 'No posts yet'
+                ? 'No caws yet'
                 : formatUsageCount(hashtagInfo.usageCount)
               }
             </p>
@@ -220,7 +220,7 @@ export const HashtagPage: React.FC = () => {
             <div className="text-center py-12">
               <HiHashtag className="mx-auto h-12 w-12 text-gray-400 mb-4" />
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">
-                No posts with #{cleanHashtag} yet
+                No caws with #{cleanHashtag} yet
               </h3>
               <p className="text-gray-600 dark:text-gray-400">
                 Be the first to use this hashtag in your caw!

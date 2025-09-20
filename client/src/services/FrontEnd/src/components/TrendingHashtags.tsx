@@ -1,32 +1,78 @@
-import React from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTheme } from '~/hooks/useTheme'
-import { formatUsageCount } from '~/utils/numberFormat'
+import { formatLargeNumber } from '~/utils/numberFormat'
+
+interface TrendingHashtag {
+  name: string
+  usageCount: number
+}
 
 const TrendingHashtags: React.FC = () => {
   const { isDark } = useTheme()
   const navigate = useNavigate()
+  const [trendingHashtags, setTrendingHashtags] = useState<TrendingHashtag[]>([])
+  const [loading, setLoading] = useState(true)
 
-  const trendingHashtags = [
-    { tag: 'CawProtocol', posts: '2.3K', trend: 'up' },
-    { tag: 'Gilgamesh', posts: '1.8K', trend: 'up' },
-    { tag: 'TehFutureIsHere', posts: '1.5K', trend: 'up' },
-    { tag: 'IAmRyoshi', posts: '1.2K', trend: 'up' },
-    { tag: 'DecentralizedFreedom', posts: '980', trend: 'up' },
-    { tag: 'Cawmmunity', posts: '756', trend: 'up' },
-    { tag: 'OneWhoStillDreams', posts: '432', trend: 'up' }
-  ]
+  useEffect(() => {
+    const fetchTrendingHashtags = async () => {
+      try {
+        const response = await fetch('/api/hashtags/trending?limit=7')
+        if (response.ok) {
+          const data = await response.json()
+          setTrendingHashtags(data.hashtags || [])
+        }
+      } catch (error) {
+        console.error('Failed to fetch trending hashtags:', error)
+        // Fallback to some default data if fetch fails
+        setTrendingHashtags([
+          { name: 'CawProtocol', usageCount: 2300 },
+          { name: 'Gilgamesh', usageCount: 1800 },
+          { name: 'TehFutureIsHere', usageCount: 1500 },
+          { name: 'IAmRyoshi', usageCount: 1200 },
+          { name: 'DecentralizedFreedom', usageCount: 980 },
+          { name: 'Cawmmunity', usageCount: 756 },
+          { name: 'OneWhoStillDreams', usageCount: 432 }
+        ])
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchTrendingHashtags()
+    // Refresh every 5 minutes
+    const interval = setInterval(fetchTrendingHashtags, 5 * 60 * 1000)
+    return () => clearInterval(interval)
+  }, [])
 
   const handleHashtagClick = (hashtag: string) => {
     navigate(`/hashtags/${hashtag}`)
+  }
+
+  if (loading) {
+    return (
+      <div className="space-y-4 animate-pulse">
+        {[...Array(7)].map((_, i) => (
+          <div key={i} className="h-12 bg-gray-800 rounded-lg"></div>
+        ))}
+      </div>
+    )
+  }
+
+  if (trendingHashtags.length === 0) {
+    return (
+      <div className={`text-center py-4 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+        No trending hashtags yet
+      </div>
+    )
   }
 
   return (
     <div className="space-y-4">
       {trendingHashtags.map((item, index) => (
         <button
-          key={item.tag}
-          onClick={() => handleHashtagClick(item.tag)}
+          key={item.name}
+          onClick={() => handleHashtagClick(item.name)}
           className={`w-full cursor-pointer p-3 rounded-lg transition-colors duration-200 group ${
             isDark
               ? 'hover:bg-white/10'
@@ -43,20 +89,20 @@ const TrendingHashtags: React.FC = () => {
                 #{index + 1}
               </span>
               <span className={`font-medium transition-colors duration-200 ${
-                isDark 
-                  ? 'text-gray-300 group-hover:text-white' 
+                isDark
+                  ? 'text-gray-300 group-hover:text-white'
                   : 'text-gray-600 group-hover:text-black'
               }`}>
-                #{item.tag}
+                #{item.name}
               </span>
             </div>
             <div className="flex items-center space-x-2">
               <span className={`text-xs transition-colors duration-200 ${
-                isDark 
-                  ? 'text-gray-400 group-hover:text-gray-300' 
+                isDark
+                  ? 'text-gray-400 group-hover:text-gray-300'
                   : 'text-gray-500 group-hover:text-gray-600'
               }`}>
-                {formatUsageCount(item.posts)}
+                {item.usageCount === 1 ? '1 caw' : `${formatLargeNumber(item.usageCount)} caws`}
               </span>
             </div>
           </div>
