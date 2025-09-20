@@ -77,6 +77,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const [showRecawMenu, setShowRecawMenu]   = useState(false)
   const [showOptionsMenu, setShowOptionsMenu] = useState(false)
   const [showShareModal, setShowShareModal] = useState(false)
+  const [textCopied, setTextCopied] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const optionsMenuRef = useRef<HTMLDivElement>(null)
 
@@ -289,7 +290,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         console.log('Translate post')
         break
       case 'copy':
-        navigator.clipboard.writeText(useItem.content)
+        navigator.clipboard.writeText(useItem.text || '')
+        setTextCopied(true)
+        setTimeout(() => setTextCopied(false), 2000)
         break
       case 'show-more':
         console.log('Show more like this')
@@ -733,8 +736,17 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'
                 }`}
               >
-                <HiOutlineClipboard className="w-5 h-5" />
-                Copy post text
+                {textCopied ? (
+                  <>
+                    <HiOutlineCheck className="w-5 h-5 text-green-500" />
+                    <span className="text-green-500">Copied!</span>
+                  </>
+                ) : (
+                  <>
+                    <HiOutlineClipboard className="w-5 h-5" />
+                    Copy post text
+                  </>
+                )}
               </button>
               
               <button
