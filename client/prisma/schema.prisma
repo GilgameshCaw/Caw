@@ -60,10 +60,12 @@ model User {
   coverPhotoUrl  String?
   profileUpdatePending Boolean @default(false)
 
-  caws      Caw[]
-  likes     Like[]
-  follows   Follow[] @relation("Following") // whom *I* follow
-  followers Follow[] @relation("Follower") // who follows *me*
+  caws          Caw[]
+  likes         Like[]
+  bookmarks     Bookmark[]
+  scheduledCaws ScheduledCaw[]
+  follows       Follow[] @relation("Following") // whom *I* follow
+  followers     Follow[] @relation("Follower") // who follows *me*
 }
 
 model Caw {
@@ -82,9 +84,10 @@ model Caw {
 
   parent        Caw?       @relation("CawToRecaws", fields: [originalCawId], references: [id])
   recaws        Caw[]      @relation("CawToRecaws")
-  user  User   @relation(fields: [userId], references: [tokenId])
-  likes Like[]
-  hashtags CawHashtag[]
+  user      User         @relation(fields: [userId], references: [tokenId])
+  likes     Like[]
+  bookmarks Bookmark[]
+  hashtags  CawHashtag[]
 
   // counter caches:
   commentCount Int @default(0)
@@ -188,4 +191,37 @@ model CawHashtag {
   @@unique([cawId, hashtagId])
   @@index([hashtagId])
   @@index([cawId])
+}
+
+model Bookmark {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  cawId     Int
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  caw  Caw  @relation(fields: [cawId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, cawId])
+  @@index([userId])
+  @@index([cawId])
+}
+
+model ScheduledCaw {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  content     String   @db.Text
+  scheduledAt DateTime
+  status      String   @default("pending") // pending, published, failed, cancelled
+  publishedId Int?     // ID of the published caw
+  imageData   String?  @db.Text // Base64 encoded image data
+  hasImage    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [tokenId], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([scheduledAt])
+  @@index([status])
 }

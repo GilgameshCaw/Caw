@@ -10,6 +10,28 @@ router.post('/', async (req, res) => {
   try {
     const { data, domain, types, signature } = req.body
 
+    // Validate required fields
+    if (!data || !signature) {
+      return res.status(400).json({ error: 'Missing required fields: data and signature' })
+    }
+
+    // Validate and sanitize amounts field
+    if (data.amounts && Array.isArray(data.amounts)) {
+      data.amounts = data.amounts.map((amt: any) => {
+        if (amt === null || amt === undefined || amt === '') {
+          return '0'
+        }
+        const strAmt = String(amt)
+        if (strAmt === 'NaN' || isNaN(Number(strAmt))) {
+          console.warn(`Invalid amount value in action: ${amt}, defaulting to 0`)
+          return '0'
+        }
+        return strAmt
+      })
+    } else {
+      data.amounts = []
+    }
+
     // Create optimistic pending state for profile updates
     if (data.actionType === 'other' && data.text && (data.text.startsWith('p:') || data.text.startsWith('profile-update:'))) {
       try {

@@ -46,12 +46,21 @@ const Feed: React.FC<Props> = ({ filter, username, apiEndpoint }) => {
     if (apiEndpoint) {
       const params = new URLSearchParams()
       if (nextCursor != null) {
-        params.set('cursor', String(cursorToUse))
+        // Use 'offset' for search endpoints, 'cursor' for others
+        const paramName = apiEndpoint.includes('/search') ? 'offset' : 'cursor'
+        params.set(paramName, String(cursorToUse))
       }
 
       try {
-        const { items: newItems, nextCursor: newCursor } =
-          await apiFetch<FeedResponse>(`${apiEndpoint}?${params.toString()}`)
+        // Check if apiEndpoint already has query params
+        const separator = apiEndpoint.includes('?') ? '&' : '?'
+        const url = params.toString()
+          ? `${apiEndpoint}${separator}${params.toString()}`
+          : apiEndpoint
+
+        const response = await apiFetch<FeedResponse>(url)
+        const newItems = response.items || []
+        const newCursor = response.nextCursor
 
         setItems(current => {
           return force ? newItems : [...current, ...newItems]
@@ -113,7 +122,7 @@ const Feed: React.FC<Props> = ({ filter, username, apiEndpoint }) => {
     } finally {
       setLoading(false)
     }
-  }, [filter, nextCursor, hasMore, loading])
+  }, [filter, nextCursor, hasMore, loading, apiEndpoint, username])
 
   // when filter changes, reset everything & load first page
   useEffect(() => {
@@ -121,7 +130,7 @@ const Feed: React.FC<Props> = ({ filter, username, apiEndpoint }) => {
     setNextCursor(undefined)
     setHasMore(true)
     loadPage(true)
-  }, [filter, activeTokenId])
+  }, [filter, activeTokenId, apiEndpoint])
 
   // infinite‐scroll: when near bottom, load more
   useEffect(() => {

@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { HiOutlineSearch } from 'react-icons/hi'
@@ -9,6 +9,8 @@ import { useAccount } from "wagmi"
 import { useConnectModal } from "@rainbow-me/rainbowkit"
 import { HiOutlinePlus } from "react-icons/hi"
 import { BsWallet } from 'react-icons/bs'
+import { apiFetch } from '~/api/client'
+import { useTokenDataStore } from '~/store/tokenDataStore'
 
 const BookmarksPage: React.FC = () => {
   const { isDark } = useTheme()
@@ -16,94 +18,74 @@ const BookmarksPage: React.FC = () => {
   const [isMobilePostModalOpen, setIsMobilePostModalOpen] = useState(false)
   const { isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
+  const tokenId = useTokenDataStore(state => state.activeTokenId)
+  const [bookmarkedPosts, setBookmarkedPosts] = useState<CawItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [hasMore, setHasMore] = useState(true)
+  const [offset, setOffset] = useState(0)
+  const limit = 20
 
-  // Mock bookmarked posts data - using CawItem format
-  const bookmarkedPosts: CawItem[] = [
-    {
-      id: 'bookmark-1',
-      user: { tokenId: 1, username: 'cawuser1' },
-      content: 'Just discovered the amazing potential of decentralized social media! The future is here and it\'s built on blockchain technology. #CawProtocol #Web3',
-      timestamp: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-      likeCount: 24,
-      hasLiked: true,
-      hasRecawed: false,
-      commentCount: 8,
-      recawCount: 12,
-      cawonce: 1,
-      userId: 1,
-      originalCaw: undefined
-    },
-    {
-      id: 'bookmark-2',
-      user: { tokenId: 2, username: 'blockchaindev' },
-      content: 'Building the next generation of social platforms with Caw Protocol. The community-driven approach is revolutionary!',
-      timestamp: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
-      likeCount: 156,
-      hasLiked: false,
-      hasRecawed: false,
-      commentCount: 23,
-      recawCount: 45,
-      cawonce: 2,
-      userId: 2,
-      originalCaw: undefined
-    },
-    {
-      id: 'bookmark-3',
-      user: { tokenId: 3, username: 'cryptoenthusiast' },
-      content: 'The staking rewards on Caw Protocol are incredible! Earning while participating in the ecosystem. This is how social media should work.',
-      timestamp: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
-      likeCount: 89,
-      hasLiked: true,
-      hasRecawed: false,
-      commentCount: 15,
-      recawCount: 28,
-      cawonce: 3,
-      userId: 3,
-      originalCaw: undefined
-    },
-    {
-      id: 'bookmark-4',
-      user: { tokenId: 4, username: 'web3builder' },
-      content: 'Just minted my first CawName! The process was so smooth and the community is incredibly supportive. Ready to be part of the revolution!',
-      timestamp: new Date(Date.now() - 8 * 60 * 60 * 1000).toISOString(),
-      likeCount: 67,
-      hasLiked: false,
-      hasRecawed: false,
-      commentCount: 12,
-      recawCount: 19,
-      cawonce: 4,
-      userId: 4,
-      originalCaw: undefined
-    },
-    {
-      id: 'bookmark-5',
-      user: { tokenId: 5, username: 'decentralized' },
-      content: 'The beauty of Caw Protocol lies in its simplicity. No complex interfaces, just pure social interaction powered by blockchain technology.',
-      timestamp: new Date(Date.now() - 12 * 60 * 60 * 1000).toISOString(),
-      likeCount: 203,
-      hasLiked: true,
-      hasRecawed: false,
-      commentCount: 34,
-      recawCount: 67,
-      cawonce: 5,
-      userId: 5,
-      originalCaw: undefined
-    },
-    {
-      id: 'bookmark-6',
-      user: { tokenId: 6, username: 'cawcommunity' },
-      content: 'Welcome to all new members joining our growing community! Together we\'re building the future of social media. #Cawmmunity',
-      timestamp: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
-      likeCount: 445,
-      hasLiked: true,
-      hasRecawed: false,
-      commentCount: 78,
-      recawCount: 123,
-      cawonce: 6,
-      userId: 6,
-      originalCaw: undefined
+  const fetchBookmarks = async (isLoadMore = false) => {
+    if (!tokenId) {
+      setLoading(false)
+      return
     }
-  ]
+
+    try {
+      const params = new URLSearchParams({
+        limit: limit.toString(),
+        offset: (isLoadMore ? offset : 0).toString()
+      })
+      const data = await apiFetch(`/api/bookmarks?${params}`, {
+        method: 'GET',
+        headers: {
+          'x-user-id': tokenId.toString()
+        }
+      })
+
+      const { items, nextCursor } = data
+
+      // Transform the data to match CawItem format
+      const transformedItems = items.map((item: any) => ({
+        ...item,
+        id: item.id.toString(),
+        timestamp: item.createdAt,
+        hasRecawed: false, // You can check this from the database if needed
+        isBookmarked: true,
+        hashtags: item.hashtags?.map((h: any) => h.hashtag) || []
+      }))
+
+      if (isLoadMore) {
+        setBookmarkedPosts(prev => [...prev, ...transformedItems])
+      } else {
+        setBookmarkedPosts(transformedItems)
+      }
+
+      setHasMore(!!nextCursor)
+      setOffset(nextCursor || offset + limit)
+    } catch (error) {
+      console.error('Failed to fetch bookmarks:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchBookmarks()
+  }, [tokenId])
+
+  const handleBookmarkUpdate = (cawId: number, isBookmarked: boolean) => {
+    if (!isBookmarked) {
+      // Remove from list when unbookmarked
+      setBookmarkedPosts(prev => prev.filter(caw => caw.id !== cawId.toString()))
+    }
+  }
+
+  // Filter bookmarks based on search query
+  const filteredPosts = bookmarkedPosts.filter(post =>
+    post.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    post.user.username.toLowerCase().includes(searchQuery.toLowerCase())
+  )
 
   return (
     <MainLayout>
@@ -138,14 +120,29 @@ const BookmarksPage: React.FC = () => {
         </div>
 
         {/* Bookmarked Posts */}
-        <div className="space-y-0">
-          {bookmarkedPosts.map((post) => (
-            <FeedItem key={post.id} item={post} />
-          ))}
-        </div>
+        {loading && bookmarkedPosts.length === 0 ? (
+          <div className="animate-pulse space-y-4">
+            {[1, 2, 3].map(i => (
+              <div key={i} className={`p-4 rounded-lg ${isDark ? 'bg-white/5' : 'bg-gray-100'}`}>
+                <div className={`h-4 ${isDark ? 'bg-white/10' : 'bg-gray-200'} rounded mb-2`} />
+                <div className={`h-4 ${isDark ? 'bg-white/10' : 'bg-gray-200'} rounded w-3/4`} />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-0">
+            {filteredPosts.map((post) => (
+              <FeedItem
+                key={post.id}
+                item={post}
+                onBookmarkUpdate={handleBookmarkUpdate}
+              />
+            ))}
+          </div>
+        )}
 
         {/* Empty State (if no bookmarks) */}
-        {bookmarkedPosts.length === 0 && (
+        {!loading && bookmarkedPosts.length === 0 && (
           <div className="text-center py-12">
             <div className={`w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center ${
               isDark ? 'bg-gray-800' : 'bg-gray-200'
@@ -160,7 +157,7 @@ const BookmarksPage: React.FC = () => {
             <p className={`transition-colors duration-300 ${
               isDark ? 'text-gray-400' : 'text-gray-600'
             }`}>
-              Save posts you want to read later by clicking the bookmark icon
+              {tokenId ? 'Save posts you want to read later by clicking the bookmark icon' : 'Connect your wallet to view bookmarks'}
             </p>
           </div>
         )}

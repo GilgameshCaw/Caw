@@ -12,6 +12,8 @@ import MediaUpload from './MediaUpload'
 import type { MediaType, StorageType } from './MediaUpload'
 import { calculateOnChainCost } from '~/utils/imageUtils'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
+import { apiFetch } from '~/api/client'
+import { HiCalendar, HiClock } from 'react-icons/hi'
 
 interface PostFormProps {
   /** if provided, we're replying to this caw */
@@ -34,6 +36,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   const [showGifPicker, setShowGifPicker] = useState(false)
   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
   const [showScheduler, setShowScheduler] = useState(false)
+  const [scheduledDate, setScheduledDate] = useState('')
+  const [scheduledTime, setScheduledTime] = useState('')
+  const [isScheduling, setIsScheduling] = useState(false)
   const [showMediaUpload, setShowMediaUpload] = useState(false)
   const [showMediaOverlay, setShowMediaOverlay] = useState(false)
   const activeTokenId = useTokenDataStore(state => state.activeTokenId);
@@ -51,7 +56,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
 
   // Check if the user owns the selected token
   const isTokenOwner = activeToken && address && activeToken.owner?.toLowerCase() === address.toLowerCase();
-  const hasNoToken = !activeTokenId;
+  const hasNoToken = !activeToken?.tokenId;
   const canPost = !hasNoToken && isTokenOwner && !wrongChain && isConnected;
 
   const handleMediaSelected = (media: any[]) => {
@@ -153,6 +158,57 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   }
 
   const handleSubmit = async () => {
+    // Check if this is a scheduled post
+    if (showScheduler && scheduledDate && scheduledTime) {
+      if (!activeTokenId) {
+        alert('Please connect your wallet to schedule posts')
+        return
+      }
+
+      setIsScheduling(true)
+      try {
+        const scheduledAt = new Date(`${scheduledDate}T${scheduledTime}`)
+
+        // Prepare image data if any
+        let imageData = null
+        const images = selectedMedia.filter(m => m.type === 'image')
+        if (images.length > 0) {
+          // For scheduled posts, only support on-chain images
+          const onChainImages = images.filter(img => img.storageType === 'on-chain')
+          if (onChainImages.length > 0) {
+            imageData = onChainImages.map(img => img.content).join('|||')
+          }
+        }
+
+        await apiFetch('/api/scheduled', {
+          method: 'POST',
+          body: JSON.stringify({
+            content: text,
+            scheduledAt: scheduledAt.toISOString(),
+            imageData
+          }),
+          headers: { 'x-user-id': activeTokenId.toString() }
+        })
+
+        // Clear form
+        setText('')
+        setSelectedMedia([])
+        setShowScheduler(false)
+        setScheduledDate('')
+        setScheduledTime('')
+
+        if (onSuccess) onSuccess()
+        alert('Post scheduled successfully!')
+      } catch (error) {
+        console.error('Failed to schedule post:', error)
+        alert('Failed to schedule post')
+      } finally {
+        setIsScheduling(false)
+      }
+      return
+    }
+
+    // Regular post submission
     let finalText = text
     let totalCawCost = BigInt(0)
 
@@ -337,11 +393,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               {!isTokenOwner && activeTokenId && isConnected && (
                 <span className="text-xs text-red-500 font-medium">
                   Not token owner
-                </span>
-              )}
-              {hasNoToken && isConnected && (
-                <span className="text-xs text-yellow-600 dark:text-yellow-400 font-medium">
-                  Select a token
                 </span>
               )}
               {(text.length > 0 || selectedMedia.length > 0) && (
@@ -588,9 +639,51 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           <div className={`mt-4 p-4 border rounded-lg ${
             isDark ? 'border-gray-600 bg-gray-800' : 'border-gray-200 bg-gray-50'
           }`}>
-            <p className={`text-center ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-              Post scheduling coming soon...
-            </p>
+            <div className="flex items-center space-x-2 mb-3">
+              <HiCalendar className={`w-5 h-5 ${isDark ? 'text-yellow-400' : 'text-yellow-600'}`} />
+              <span className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                Schedule Post
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={`block text-sm mb-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                  Date
+                </label>
+                <input
+                  type="date"
+                  value={scheduledDate}
+                  onChange={(e) => setScheduledDate(e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
+                  className={`w-full px-3 py-2 rounded-lg border transition-colors ${
+                    isDark
+                      ? 'bg-gray-700 border-gray-600 text-white focus:border-yellow-400'
+                      : 'bg-white border-gray-300 text-gray-900 focus:border-yellow-500'
+                  } focus:outline-none`}
+                />
+              </div>
+              <div>
+                <label className={`block text-sm mb-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                  Time
+                </label>
+                <input
+                  type="time"
+                  value={scheduledTime}
+                  onChange={(e) => setScheduledTime(e.target.value)}
+                  className={`w-full px-3 py-2 rounded-lg border transition-colors ${
+                    isDark
+                      ? 'bg-gray-700 border-gray-600 text-white focus:border-yellow-400'
+                      : 'bg-white border-gray-300 text-gray-900 focus:border-yellow-500'
+                  } focus:outline-none`}
+                />
+              </div>
+            </div>
+            {scheduledDate && scheduledTime && (
+              <p className={`mt-2 text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                <HiClock className="inline-block w-4 h-4 mr-1" />
+                Scheduled for {new Date(`${scheduledDate}T${scheduledTime}`).toLocaleString()}
+              </p>
+            )}
           </div>
         )}
 
@@ -673,11 +766,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               {!isTokenOwner && activeTokenId && isConnected && (
                 <span className="text-sm text-red-500 font-medium">
                   Not token owner
-                </span>
-              )}
-              {hasNoToken && isConnected && (
-                <span className="text-sm text-yellow-600 dark:text-yellow-400 font-medium">
-                  Select a token
                 </span>
               )}
               {(text.length > 0 || selectedMedia.length > 0) && (

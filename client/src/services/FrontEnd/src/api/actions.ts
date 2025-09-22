@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef, useCallback } from "react";
 import { apiFetch }              from './client'
 import { baseSepolia }           from 'wagmi/chains'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
@@ -114,30 +114,40 @@ export function useSignAndSubmitAction() {
 
   // ⬇️ buffer for the action the user tried to do before they were connected
   const [pendingParams, setPendingParams] = useState<ActionParams | null>(null)
+  const submittingRef = useRef(false) // Use ref to prevent re-entrancy
 
-  // as soon as we become connected, replay the pending action
-  useEffect(() => {
-    if (isConnected && pendingParams && cawonce != undefined) {
-      // clear before firing to avoid loops
-      const params = pendingParams
-      setPendingParams(null)
-      // now actually sign & submit
-      void requestAndSubmit(params)
+  const requestAndSubmit = useCallback(async (params: ActionParams) => {
+    // Ensure we have an active token ID
+    if (!activeTokenId) {
+      throw new Error('No active token selected. Please connect your wallet.')
     }
-  }, [isConnected, pendingParams, cawonce])
 
-   async function requestAndSubmit(params: ActionParams) {
-    // Wait for token data to be loaded (max 5 seconds)
+    // Wait for token data to be loaded (max 10 seconds)
     let attempts = 0;
     let currentToken;
     let currentCawonce;
 
-    while (attempts < 50) { // 50 attempts * 100ms = 5 seconds max
-      currentToken = useTokenDataStore.getState().tokensByAddress[address?.toLowerCase() || '']?.find(t => t.tokenId === activeTokenId)
-      currentCawonce = currentToken?.cawonce
+    while (attempts < 100) { // 100 attempts * 100ms = 10 seconds max
+      const state = useTokenDataStore.getState();
 
-      if (currentCawonce !== undefined && currentCawonce !== null) {
-        break; // Token data is loaded
+      // Try to find tokens for the address (case-insensitive)
+      let tokensByAddress;
+      if (address) {
+        // Check all variations of address case
+        tokensByAddress = state.tokensByAddress[address.toLowerCase()] ||
+                         state.tokensByAddress[address] ||
+                         Object.entries(state.tokensByAddress).find(([key]) =>
+                           key.toLowerCase() === address.toLowerCase()
+                         )?.[1];
+      }
+
+      if (tokensByAddress && tokensByAddress.length > 0) {
+        currentToken = tokensByAddress.find(t => t.tokenId === activeTokenId);
+        currentCawonce = currentToken?.cawonce;
+
+        if (currentCawonce !== undefined && currentCawonce !== null) {
+          break; // Token data is loaded
+        }
       }
 
       // Wait 100ms before trying again
@@ -147,7 +157,14 @@ export function useSignAndSubmitAction() {
 
     // If still not loaded after waiting, throw error
     if (currentCawonce === undefined || currentCawonce === null) {
-      throw new Error('Token data not loaded. Please try again.')
+      console.error('Token data not loaded:', {
+        activeTokenId,
+        address,
+        allAddresses: Object.keys(useTokenDataStore.getState().tokensByAddress),
+        tokensByAddress: useTokenDataStore.getState().tokensByAddress,
+        currentToken
+      });
+      throw new Error('Token data not loaded. Please refresh and try again.')
     }
 
     // Bump cawonce BEFORE submission to avoid conflicts with concurrent submissions
@@ -175,8 +192,24 @@ export function useSignAndSubmitAction() {
       console.error('Failed to submit action:', error)
       throw error
     }
-   }
+  }, [activeTokenId, address, signTypedDataAsync, bumpCawonce])
 
+  // as soon as we become connected, replay the pending action
+  useEffect(() => {
+    if (!isConnected || !pendingParams || !cawonce || submittingRef.current) {
+      return
+    }
+
+    // Set flag immediately to prevent re-execution
+    submittingRef.current = true
+    const params = pendingParams
+    setPendingParams(null)
+
+    // Submit the action
+    requestAndSubmit(params).finally(() => {
+      submittingRef.current = false
+    })
+  }, [isConnected, pendingParams, cawonce, requestAndSubmit])
 
   return async (params: ActionParams) => {
     // 1) if wallet not yet connected, pop the connect modal

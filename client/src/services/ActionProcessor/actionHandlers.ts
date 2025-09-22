@@ -197,11 +197,25 @@ export async function handleLikeAction(
   console.log("Create like: ", existing)
 
   if (existing) {
-    // Just update the action field and clear pending status (no counter bump)
-    await tx.like.update({
-      where: { userId_cawId: { userId, cawId: parentCawId } },
-      data: { action: 'LIKE', pending: false }
-    })
+    // Update the action field and clear pending status
+    // If it was pending, we need to increment the counter
+    if (existing.pending) {
+      await tx.like.update({
+        where: { userId_cawId: { userId, cawId: parentCawId } },
+        data: { action: 'LIKE', pending: false }
+      })
+      // Increment the like count since this is a pending->confirmed transition
+      await tx.caw.update({
+        where: { id: parentCawId },
+        data: { likeCount: { increment: 1 } }
+      })
+    } else {
+      // Already processed, just ensure it's marked as LIKE
+      await tx.like.update({
+        where: { userId_cawId: { userId, cawId: parentCawId } },
+        data: { action: 'LIKE', pending: false }
+      })
+    }
   } else {
     // Create the like and bump the Caw.likeCount
     await tx.like.create({
@@ -222,12 +236,28 @@ export async function handleUnlikeAction(
   action: any,
   rawAction: any
 ): Promise<void> {
-  await tx.like.deleteMany({
-    where: {
-      userId: await findOrCreateUser(action.senderId),
-      cawId: await findCawId(rawAction.receiverCawonce, rawAction.senderId)
-    }
+  const userId = await findOrCreateUser(action.senderId)
+  const cawId = await findCawId(rawAction.receiverCawonce, rawAction.receiverId)
+
+  // Check if the like exists and isn't pending before deleting
+  const existing = await tx.like.findUnique({
+    where: { userId_cawId: { userId, cawId } }
   })
+
+  if (existing) {
+    // Delete the like
+    await tx.like.delete({
+      where: { userId_cawId: { userId, cawId } }
+    })
+
+    // If it wasn't pending, decrement the count
+    if (!existing.pending) {
+      await tx.caw.update({
+        where: { id: cawId },
+        data: { likeCount: { decrement: 1 } }
+      })
+    }
+  }
 }
 
 /**

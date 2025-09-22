@@ -33,6 +33,7 @@ import { User, CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
 import ContentWithHashtags from './ContentWithHashtags'
 import { formatEngagementCount } from '~/utils/numberFormat'
+import { apiFetch } from '~/api/client'
 
 // Helper function to format relative time
 function formatTimeAgo(timestamp: string): string {
@@ -56,7 +57,7 @@ function formatTimeAgo(timestamp: string): string {
   }
 }
 
-const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean }> = ({ item, isMainPost = false, isReply = false }) => {
+const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void }> = ({ item, isMainPost = false, isReply = false, onBookmarkUpdate }) => {
   const activeTokenId     = useTokenDataStore(s => s.activeTokenId)
   const activeToken = useTokenDataStore(s => {
     const tokens = Object.values(s.tokensByAddress).flat()
@@ -71,13 +72,17 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const [isRecawed, setIsRecawed]   = useState(false)
   const [likePending, setLikePending] = useState(item.likePending || false)
   const [txSubmitted, setTxSubmitted] = useState(false) // Track if tx was submitted during this session only
-  const [pendingLikeAction, setPendingLikeAction] = useState(false) // Track if we're waiting to like after connection
+  const [pendingLikeAction, setPendingLikeAction] = useState<{ receiverId: number, receiverCawonce: number, actionType: 'like' | 'unlike' } | null>(null) // Track pending like data
   const [wrongWalletError, setWrongWalletError] = useState(false) // Track if wrong wallet is connected
   const signAndSubmit     = useSignAndSubmitAction()
   const [showRecawMenu, setShowRecawMenu]   = useState(false)
   const [showOptionsMenu, setShowOptionsMenu] = useState(false)
   const [showShareModal, setShowShareModal] = useState(false)
   const [textCopied, setTextCopied] = useState(false)
+  const [isBookmarked, setIsBookmarked] = useState(item.isBookmarked || false)
+  const [busyBookmark, setBusyBookmark] = useState(false)
+  const [translatedText, setTranslatedText] = useState<string | null>(null)
+  const [isTranslating, setIsTranslating] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const optionsMenuRef = useRef<HTMLDivElement>(null)
 
@@ -91,65 +96,55 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
   // Auto-trigger like after wallet connection
   useEffect(() => {
-    if (pendingLikeAction && isConnected && activeTokenId && activeToken) {
-      // Wait a bit for cawonce to load if needed
-      const checkAndTriggerLike = async () => {
-        let attempts = 0;
-        while (attempts < 20 && activeToken.cawonce === undefined) {
-          await new Promise(resolve => setTimeout(resolve, 100));
-          attempts++;
-        }
+    if (!pendingLikeAction || !isConnected || !activeTokenId || !activeToken) return;
 
-        if (activeToken.cawonce === undefined) {
-          console.error('Token data not loaded after waiting');
-          return;
-        }
-
-        // Immediately clear the pending action to prevent re-triggers
-        setPendingLikeAction(false)
-
-        // Check if connected to correct wallet
-        if (activeToken.address.toLowerCase() === address?.toLowerCase()) {
-        // Add optimistic like if liking
-        let tempLikeId: string | undefined
-        const addOptimisticLike = useOptimisticLikesStore.getState().addOptimisticLike
-        const updateLikeWithTxQueueId = useOptimisticLikesStore.getState().updateLikeWithTxQueueId
-        if (!useItem.hasLiked) {
-          tempLikeId = addOptimisticLike({
-            userId: activeTokenId,
-            cawId: useItem.id
-          })
-        }
-
-        // Directly call the sign and submit without recursion
-        signAndSubmit({
-          actionType: useItem.hasLiked ? 'unlike' : 'like',
-          senderId: activeTokenId,
-          receiverId: useItem.user.tokenId,
-          receiverCawonce: useItem.cawonce ?? 0,
-        }).then((response) => {
-          // Update optimistic like with txQueue ID if we have both
-          if (tempLikeId && response?.txQueueId) {
-            updateLikeWithTxQueueId(tempLikeId, response.txQueueId)
-          }
-          setLikePending(true)
-          setTxSubmitted(true)
-        }).catch(err => {
-          console.error('Like failed', err)
-          setLikePending(false)
-          setTxSubmitted(false)
-        })
-      } else {
-        setWrongWalletError(true)
-        setTimeout(() => setWrongWalletError(false), 5000) // Clear error after 5 seconds
-      }
-      }
-
-      checkAndTriggerLike()
+    // Check if connected to correct wallet
+    if (activeToken.address.toLowerCase() !== address?.toLowerCase()) {
+      setPendingLikeAction(null); // Clear pending action
+      setWrongWalletError(true);
+      setTimeout(() => setWrongWalletError(false), 5000);
+      return;
     }
-    // Remove signAndSubmit from dependencies to prevent re-triggers
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isConnected, activeTokenId, pendingLikeAction, address, activeToken, activeToken?.cawonce, useItem.hasLiked, useItem.user.tokenId, useItem.cawonce])
+
+    // Clear pending action FIRST to prevent re-triggers
+    const actionData = pendingLikeAction;
+    setPendingLikeAction(null);
+
+    // Add optimistic like if liking
+    let tempLikeId: string | undefined;
+    const addOptimisticLike = useOptimisticLikesStore.getState().addOptimisticLike;
+    const updateLikeWithTxQueueId = useOptimisticLikesStore.getState().updateLikeWithTxQueueId;
+
+    if (actionData.actionType === 'like') {
+      tempLikeId = addOptimisticLike({
+        userId: activeTokenId,
+        cawId: useItem.id
+      });
+    }
+
+    setBusyLike(true);
+
+    // Submit the action
+    signAndSubmit({
+      actionType: actionData.actionType,
+      senderId: activeTokenId,
+      receiverId: actionData.receiverId,
+      receiverCawonce: actionData.receiverCawonce,
+    }).then((response) => {
+      // Update optimistic like with txQueue ID if we have both
+      if (tempLikeId && response?.txQueueId) {
+        updateLikeWithTxQueueId(tempLikeId, response.txQueueId);
+      }
+      setLikePending(true);
+      setTxSubmitted(true);
+    }).catch(err => {
+      console.error('Like failed', err);
+      setLikePending(false);
+      setTxSubmitted(false);
+    }).finally(() => {
+      setBusyLike(false);
+    });
+  }, [pendingLikeAction, isConnected, activeTokenId, activeToken, address, signAndSubmit, useItem.id])
 
   // Clear wrong wallet error when address changes
   useEffect(() => {
@@ -182,11 +177,15 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
     // If wallet not connected, open connect modal and set pending action
     if (!isConnected) {
-      setPendingLikeAction(true)
+      setPendingLikeAction({
+        receiverId: useItem.user.tokenId,
+        receiverCawonce: useItem.cawonce ?? 0,
+        actionType: useItem.hasLiked ? 'unlike' : 'like'
+      });
       if (openConnectModal) {
-        openConnectModal()
+        openConnectModal();
       }
-      return
+      return;
     }
 
     // Check if connected to wrong wallet
@@ -274,6 +273,50 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     openModal('comment')
   }
 
+  const handleBookmark = async (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+
+    if (!activeTokenId) {
+      if (openConnectModal) {
+        openConnectModal()
+      }
+      return
+    }
+
+    setBusyBookmark(true)
+    const cawId = parseInt(useItem.id)
+
+    try {
+      if (isBookmarked) {
+        // Remove bookmark
+        await apiFetch(`/api/bookmarks/${cawId}`, {
+          method: 'DELETE',
+          headers: { 'x-user-id': activeTokenId.toString() }
+        })
+        setIsBookmarked(false)
+        if (onBookmarkUpdate) {
+          onBookmarkUpdate(cawId, false)
+        }
+      } else {
+        // Add bookmark
+        await apiFetch(`/api/bookmarks/${cawId}`, {
+          method: 'POST',
+          body: JSON.stringify({}),
+          headers: { 'x-user-id': activeTokenId.toString() }
+        })
+        setIsBookmarked(true)
+        if (onBookmarkUpdate) {
+          onBookmarkUpdate(cawId, true)
+        }
+      }
+    } catch (error) {
+      console.error('Failed to toggle bookmark:', error)
+    } finally {
+      setBusyBookmark(false)
+    }
+  }
+
   const handleOptionsClick = (e?: React.MouseEvent) => {
     if (e) {
       e.preventDefault()
@@ -282,12 +325,47 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     setShowOptionsMenu(!showOptionsMenu)
   }
 
-  const handleMenuAction = (action: string) => {
+  const handleMenuAction = async (action: string) => {
     setShowOptionsMenu(false)
     // Handle different menu actions
     switch (action) {
       case 'translate':
-        console.log('Translate post')
+        if (isTranslating || translatedText) {
+          // Reset translation if already translated
+          setTranslatedText(null)
+          return
+        }
+
+        setIsTranslating(true)
+        try {
+          const userLang = navigator.language || 'en'
+          const targetLang = userLang.split('-')[0] // Get language code without region
+
+          // Use Google Translate API (free tier)
+          const response = await fetch(
+            `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(useItem.content)}`
+          )
+          const data = await response.json()
+          const translated = data[0]?.[0]?.[0]
+
+          if (translated && translated !== useItem.content) {
+            setTranslatedText(translated)
+          } else {
+            // If translation is the same, try translating to English
+            const enResponse = await fetch(
+              `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=${encodeURIComponent(useItem.content)}`
+            )
+            const enData = await enResponse.json()
+            const enTranslated = enData[0]?.[0]?.[0]
+            if (enTranslated) {
+              setTranslatedText(enTranslated)
+            }
+          }
+        } catch (error) {
+          console.error('Translation failed:', error)
+        } finally {
+          setIsTranslating(false)
+        }
         break
       case 'copy':
         navigator.clipboard.writeText(useItem.text || '')
@@ -295,28 +373,78 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         setTimeout(() => setTextCopied(false), 2000)
         break
       case 'show-more':
-        console.log('Show more like this')
+        // Store preference for similar content
+        const moreLikeThis = JSON.parse(localStorage.getItem('moreLikeThis') || '[]')
+        const keywords = useItem.content.toLowerCase().split(' ').filter(w => w.length > 4)
+        moreLikeThis.push(...keywords)
+        localStorage.setItem('moreLikeThis', JSON.stringify([...new Set(moreLikeThis)]))
+        alert('You will see more posts like this')
         break
       case 'show-less':
-        console.log('Show less like this')
+        // Store preference against similar content
+        const lessLikeThis = JSON.parse(localStorage.getItem('lessLikeThis') || '[]')
+        const lessKeywords = useItem.content.toLowerCase().split(' ').filter(w => w.length > 4)
+        lessLikeThis.push(...lessKeywords)
+        localStorage.setItem('lessLikeThis', JSON.stringify([...new Set(lessLikeThis)]))
+        alert('You will see fewer posts like this')
         break
       case 'mute-thread':
-        console.log('Mute thread')
+        // Store muted thread IDs
+        const mutedThreads = JSON.parse(localStorage.getItem('mutedThreads') || '[]')
+        mutedThreads.push(useItem.id)
+        localStorage.setItem('mutedThreads', JSON.stringify([...new Set(mutedThreads)]))
+        alert('Thread muted. You won\'t receive notifications from this conversation')
         break
       case 'mute-words':
-        console.log('Mute words and tags')
+        // Open prompt for words to mute
+        const wordsToMute = prompt('Enter words or tags to mute (comma-separated):')
+        if (wordsToMute) {
+          const mutedWords = JSON.parse(localStorage.getItem('mutedWords') || '[]')
+          const newWords = wordsToMute.split(',').map(w => w.trim().toLowerCase())
+          mutedWords.push(...newWords)
+          localStorage.setItem('mutedWords', JSON.stringify([...new Set(mutedWords)]))
+          alert(`Muted: ${newWords.join(', ')}`)
+        }
         break
       case 'hide-post':
-        console.log('Hide post for me')
+        // Store hidden post IDs
+        const hiddenPosts = JSON.parse(localStorage.getItem('hiddenPosts') || '[]')
+        hiddenPosts.push(useItem.id)
+        localStorage.setItem('hiddenPosts', JSON.stringify([...new Set(hiddenPosts)]))
+        // Optionally trigger a callback to remove from feed
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('hidePost', { detail: { postId: useItem.id } }))
+        }
+        alert('Post hidden from your feed')
         break
       case 'mute-account':
-        console.log('Mute this account')
+        // Store muted account IDs
+        const mutedAccounts = JSON.parse(localStorage.getItem('mutedAccounts') || '[]')
+        mutedAccounts.push(useItem.user.tokenId)
+        localStorage.setItem('mutedAccounts', JSON.stringify([...new Set(mutedAccounts)]))
+        alert(`@${useItem.user.username} has been muted`)
         break
       case 'block-account':
-        console.log('Block account')
+        // Store blocked account IDs
+        const blockedAccounts = JSON.parse(localStorage.getItem('blockedAccounts') || '[]')
+        blockedAccounts.push(useItem.user.tokenId)
+        localStorage.setItem('blockedAccounts', JSON.stringify([...new Set(blockedAccounts)]))
+        alert(`@${useItem.user.username} has been blocked`)
         break
       case 'report':
-        console.log('Report post')
+        // Store reported posts with reason
+        const reason = prompt('Why are you reporting this post?\n1. Spam\n2. Harassment\n3. Inappropriate content\n4. Other')
+        if (reason) {
+          const reportedPosts = JSON.parse(localStorage.getItem('reportedPosts') || '[]')
+          reportedPosts.push({
+            postId: useItem.id,
+            userId: useItem.user.tokenId,
+            reason,
+            timestamp: new Date().toISOString()
+          })
+          localStorage.setItem('reportedPosts', JSON.stringify(reportedPosts))
+          alert('Thank you for your report. We will review it shortly.')
+        }
         break
       default:
         break
@@ -406,12 +534,40 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           </div>
 
           {/* Post Content */}
-          <ContentWithHashtags
-            content={useItem.content}
-            className={`mb-4 transition-colors duration-300 pl-2 md:pl-0 ${
-              isDark ? 'text-gray-200' : 'text-gray-800'
-            }`}
-          />
+          {isTranslating ? (
+            <div className={`mb-4 pl-2 md:pl-0 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+              <div className="flex items-center space-x-2">
+                <div className="w-4 h-4 border-2 border-gray-400 border-t-blue-500 rounded-full animate-spin"></div>
+                <span className="text-sm">Translating...</span>
+              </div>
+            </div>
+          ) : translatedText ? (
+            <div className="mb-4 pl-2 md:pl-0">
+              <ContentWithHashtags
+                content={translatedText}
+                className={`transition-colors duration-300 ${
+                  isDark ? 'text-gray-200' : 'text-gray-800'
+                }`}
+              />
+              <div className={`mt-2 text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                <HiOutlineTranslate className="inline-block w-4 h-4 mr-1" />
+                Translated from original •{' '}
+                <button
+                  onClick={() => setTranslatedText(null)}
+                  className="underline hover:no-underline"
+                >
+                  Show original
+                </button>
+              </div>
+            </div>
+          ) : (
+            <ContentWithHashtags
+              content={useItem.content}
+              className={`mb-4 transition-colors duration-300 pl-2 md:pl-0 ${
+                isDark ? 'text-gray-200' : 'text-gray-800'
+              }`}
+            />
+          )}
 
           {/* Video Display */}
           {useItem.hasVideo && (
@@ -621,9 +777,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   <div className="w-5 h-5 border-2 border-gray-400 border-t-red-500 rounded-full animate-spin"></div>
                 ) : (likePending || item.likePending) ? (
                   // Spinner with checkmark after transaction is submitted (or if pending from DB)
-                  <div className="relative w-5 h-5">
+                  <div className="relative w-5 h-5 group">
                     <div className="w-5 h-5 border-2 border-gray-400 border-t-red-500 rounded-full animate-spin"></div>
                     <HiOutlineCheck className="absolute inset-0 w-3 h-3 m-auto text-red-500" />
+                    {/* Tooltip */}
+                    <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 text-xs bg-black text-white rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap">
+                      Submitted, pending validation
+                    </div>
                   </div>
                 ) : (
                   <HiOutlineHeart className={`w-5 h-5 ${useItem.hasLiked ? 'fill-current' : ''}`} />
@@ -645,15 +805,25 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
             <div className="flex items-center space-x-4">
               {/* Bookmark */}
-              <button 
+              <button
+                onClick={handleBookmark}
+                disabled={busyBookmark}
                 className={`transition-colors duration-300 hover:text-yellow-500 cursor-pointer ${
-                  isDark ? 'text-gray-400' : 'text-gray-600'
+                  isBookmarked
+                    ? 'text-yellow-500'
+                    : isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
-                title="Save"
+                title={isBookmarked ? "Remove bookmark" : "Save"}
               >
-                <Bookmark className={`w-5 h-5 transition-all duration-300 ${
-                  isDark ? 'stroke-white stroke-[1.5]' : 'stroke-gray-600'
-                }`} />
+                {busyBookmark ? (
+                  <div className="w-5 h-5 border-2 border-gray-400 border-t-yellow-500 rounded-full animate-spin"></div>
+                ) : (
+                  <Bookmark className={`w-5 h-5 transition-all duration-300 ${
+                    isBookmarked
+                      ? 'fill-yellow-500 stroke-yellow-500'
+                      : isDark ? 'stroke-white stroke-[1.5]' : 'stroke-gray-600'
+                  }`} />
+                )}
               </button>
 
               {/* Share */}

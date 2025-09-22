@@ -12,6 +12,7 @@ export interface CawRaw {
   commentCount: number
   recawCount: number
   likeCount: number
+  viewCount?: number
   cawonce: number
   parent?: any
   hashtags?: Array<{ hashtag: { name: string } }>
@@ -25,6 +26,7 @@ export interface ShapedCaw {
   timestamp: string
   user: { tokenId: number; username: string; image?: string }
   likeCount: number
+  viewCount: number
   hasLiked: boolean
   hasRecawed: boolean
   likePending?: boolean
@@ -46,6 +48,7 @@ export function shapeCaw(raw: CawRaw): ShapedCaw {
     timestamp: raw.createdAt.toISOString(),
     user: raw.user,
     likeCount: raw.likeCount,
+    viewCount: raw.viewCount || 0,
     hasLiked: Boolean(userLike),
     likePending: userLike?.pending,
     hasRecawed: Boolean(raw.recaws && raw.recaws.length > 0),

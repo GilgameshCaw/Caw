@@ -70,7 +70,28 @@ export const validatorService: Service = {
         s.push('0x' + hex.slice(64, 128))
         v.push(parseInt(hex.slice(128, 130), 16))
 
-        actions.push((entry.payload as any).data)
+        // Ensure amounts are properly formatted as strings
+        const actionData = (entry.payload as any).data
+        const sanitizedAction = {
+          ...actionData,
+          amounts: Array.isArray(actionData.amounts)
+            ? actionData.amounts.map((amt: any) => {
+                // Convert to string and validate
+                if (amt === null || amt === undefined || amt === '') {
+                  return '0'
+                }
+                // Ensure it's a valid number string
+                const strAmt = String(amt)
+                if (strAmt === 'NaN' || isNaN(Number(strAmt))) {
+                  console.warn(`Invalid amount value: ${amt}, defaulting to 0`)
+                  return '0'
+                }
+                return strAmt
+              })
+            : []
+        }
+
+        actions.push(sanitizedAction)
       }
 
       return { actions, v, r, s }
@@ -121,11 +142,17 @@ export const validatorService: Service = {
       } catch (err: any) {
         console.error("FAILED to simulate actions:", err.message || err)
         // Return empty successful actions and error messages for all actions
-        const rejectionMessages = multiData.actions.map(() =>
-          err.message?.includes('execution reverted')
-            ? 'Transaction simulation failed - execution reverted'
-            : `Simulation error: ${err.message || 'Unknown error'}`
-        )
+        const rejectionMessages = multiData.actions.map(() => {
+          if (err.message?.includes('execution reverted')) {
+            return 'Transaction simulation failed - execution reverted'
+          } else if (err.message?.includes('insufficient funds')) {
+            return 'Insufficient funds for transaction'
+          } else if (err.message?.includes('nonce')) {
+            return 'Invalid nonce - transaction may be outdated'
+          } else {
+            return `Simulation error: ${err.message || 'Unknown error'}`
+          }
+        })
         return { successfulActions: [], rejectionMessages, quote: { nativeFee: BigInt(0) } }
       }
     }
@@ -244,8 +271,8 @@ console.log("succeededKeys", succeededKeys)
         return prisma.txQueue.update({
           where: { id: entry.id },
           data:  {
-            status: newStatus
-            // Note: reason field doesn't exist in schema yet
+            status: newStatus,
+            ...(reason ? { reason } : {})
           }
         })
       }))
@@ -375,11 +402,16 @@ console.log("succeededKeys", succeededKeys)
       // Check if simulateActions returned undefined (error case)
       if (!simulationResult) {
         console.error("Simulation returned undefined, marking all as failed")
-        await updateQueueStatuses(
-          validatedEntries,
-          [],
-          validatedEntries.map(() => 'Simulation failed - internal error')
-        )
+        // Mark ALL entries as failed, not just pass empty arrays
+        await Promise.all(validatedEntries.map(entry => {
+          return prisma.txQueue.update({
+            where: { id: entry.id },
+            data: {
+              status: 'failed',
+              reason: 'Simulation failed - internal error'
+            }
+          })
+        }))
         return
       }
 
@@ -390,7 +422,16 @@ console.log("succeededKeys", succeededKeys)
 
       if (!successfulActions || !successfulActions.length) {
         console.log("No successful actions from simulation, marking all as failed")
-        await updateQueueStatuses(validatedEntries, [], rejectionMessages)
+        // Mark ALL entries as failed with their specific rejection messages
+        await Promise.all(validatedEntries.map((entry, index) => {
+          return prisma.txQueue.update({
+            where: { id: entry.id },
+            data: {
+              status: 'failed',
+              reason: rejectionMessages[index] || 'Simulation rejected - unknown reason'
+            }
+          })
+        }))
         return
       }
 

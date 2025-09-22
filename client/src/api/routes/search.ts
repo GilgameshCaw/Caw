@@ -1,8 +1,7 @@
 import { Router } from 'express'
-import { PrismaClient } from '@prisma/client'
+import { prisma } from '../../prismaClient'
 
 const router = Router()
-const prisma = new PrismaClient()
 
 /**
  * GET /api/search
@@ -28,30 +27,72 @@ router.get('/', async (req, res) => {
 
     // Search caws if type is 'all' or 'caws'
     if (type === 'all' || type === 'caws') {
-      const caws = await prisma.$queryRaw`
-        SELECT c.*, u.*,
-          ts_rank(to_tsvector('english', c.text), plainto_tsquery('english', ${query})) as rank
-        FROM "Caw" c
-        LEFT JOIN "User" u ON c."userId" = u.id
-        WHERE to_tsvector('english', c.text) @@ plainto_tsquery('english', ${query})
-        ORDER BY rank DESC, c."createdAt" DESC
-        LIMIT ${searchLimit}
-        OFFSET ${searchOffset}
-      `
-      results.caws = caws
+      // Limit to 10 caws for 'all' tab, use full limit for 'caws' tab
+      const cawLimit = type === 'all' ? 10 : searchLimit
+      const caws = await prisma.caw.findMany({
+        where: {
+          content: { contains: query, mode: 'insensitive' }
+        },
+        take: cawLimit + 1, // Take one more to check if there are more results
+        skip: type === 'all' ? 0 : searchOffset, // No pagination for 'all' tab
+        orderBy: { createdAt: 'desc' },
+        include: {
+          user: { select: { tokenId: true, username: true, image: true } }
+        }
+      })
+
+      // Check if there are more results
+      const hasMore = caws.length > cawLimit
+      const items = hasMore ? caws.slice(0, cawLimit) : caws
+
+      // Format caws similar to the feed response format
+      const formattedCaws = items.map((caw: any) => ({
+        id: caw.id.toString(),
+        content: caw.content,
+        timestamp: caw.createdAt.toISOString(),
+        user: {
+          id: caw.user.tokenId,
+          tokenId: caw.user.tokenId,
+          username: caw.user.username,
+          image: caw.user.image
+        },
+        parent: caw.originalCawId || null,
+        likeCount: 0,
+        viewCount: 0,
+        hasLiked: false, // This would need user context
+        hasRecawed: false, // This would need user context
+        commentCount: 0,
+        recawCount: 0,
+        cawonce: caw.cawonce,
+        imageData: caw.imageData,
+        imageUrl: null,
+        hasImage: caw.hasImage,
+        videoData: caw.videoData,
+        hasVideo: caw.hasVideo,
+        pending: caw.pending || false
+      }))
+
+      results.caws = formattedCaws
+
+      // If searching for caws only, return in Feed format
+      if (type === 'caws') {
+        return res.json({
+          items: formattedCaws,
+          nextCursor: hasMore ? searchOffset + searchLimit : undefined
+        })
+      }
     }
 
     // Search users if type is 'all' or 'users'
     if (type === 'all' || type === 'users') {
+      // Limit to 5 users for 'all' tab, use full limit for 'users' tab
+      const userLimit = type === 'all' ? 5 : searchLimit
       const users = await prisma.user.findMany({
         where: {
-          OR: [
-            { username: { contains: query, mode: 'insensitive' } },
-            { displayName: { contains: query, mode: 'insensitive' } }
-          ]
+          username: { contains: query, mode: 'insensitive' }
         },
-        take: searchLimit,
-        skip: searchOffset,
+        take: userLimit,
+        skip: type === 'all' ? 0 : searchOffset, // No pagination for 'all' tab
         orderBy: [
           { followerCount: 'desc' },
           { createdAt: 'desc' }
@@ -60,27 +101,40 @@ router.get('/', async (req, res) => {
       results.users = users
     }
 
-    // Search hashtags if type is 'all' or 'hashtags'
+    // Search hashtags
     if (type === 'all' || type === 'hashtags') {
+      // Limit to 5 hashtags for 'all' tab, use full limit for 'hashtags' tab
+      const hashtagLimit = type === 'all' ? 5 : searchLimit
       const hashtags = await prisma.hashtag.findMany({
         where: {
-          tag: { contains: query.replace('#', ''), mode: 'insensitive' }
+          name: { contains: query.replace('#', ''), mode: 'insensitive' }
         },
-        take: searchLimit,
-        skip: searchOffset,
+        take: hashtagLimit,
+        skip: type === 'all' ? 0 : searchOffset, // No pagination for 'all' tab
         orderBy: { usageCount: 'desc' },
         select: {
-          tag: true,
+          name: true,
           usageCount: true
         }
       })
-      results.hashtags = hashtags
+      results.hashtags = hashtags.map(h => ({ tag: h.name, usageCount: h.usageCount }))
+    }
+
+    // Add hasMore flags for 'all' tab to show "View more" links
+    if (type === 'all') {
+      const response: any = { ...results }
+      // Check if there are more results than what we're showing
+      if (results.caws.length === 10) response.hasMoreCaws = true
+      if (results.users.length === 5) response.hasMoreUsers = true
+      if (results.hashtags.length === 5) response.hasMoreHashtags = true
+      return res.json(response)
     }
 
     return res.json(results)
 
-  } catch (error) {
+  } catch (error: any) {
     console.error('GET /api/search error:', error)
+    console.error('Error message:', error.message)
     return res.status(500).json({ error: 'Search failed' })
   }
 })
@@ -103,18 +157,13 @@ router.get('/suggestions', async (req, res) => {
     // Get user suggestions
     const users = await prisma.user.findMany({
       where: {
-        OR: [
-          { username: { startsWith: query, mode: 'insensitive' } },
-          { displayName: { startsWith: query, mode: 'insensitive' } }
-        ]
+        username: { startsWith: query, mode: 'insensitive' }
       },
       take: 5,
       orderBy: { followerCount: 'desc' },
       select: {
         username: true,
-        displayName: true,
-        avatar: true,
-        verified: true
+        image: true
       }
     })
 
@@ -122,9 +171,8 @@ router.get('/suggestions', async (req, res) => {
       suggestions.push({
         type: 'user',
         value: user.username,
-        display: user.displayName || user.username,
-        avatar: user.avatar,
-        verified: user.verified
+        display: user.username,
+        avatar: user.image
       })
     })
 
@@ -133,12 +181,12 @@ router.get('/suggestions', async (req, res) => {
       const hashtagQuery = query.substring(1)
       const hashtags = await prisma.hashtag.findMany({
         where: {
-          tag: { startsWith: hashtagQuery, mode: 'insensitive' }
+          name: { startsWith: hashtagQuery, mode: 'insensitive' }
         },
         take: 5,
         orderBy: { usageCount: 'desc' },
         select: {
-          tag: true,
+          name: true,
           usageCount: true
         }
       })
@@ -146,8 +194,8 @@ router.get('/suggestions', async (req, res) => {
       hashtags.forEach(hashtag => {
         suggestions.push({
           type: 'hashtag',
-          value: `#${hashtag.tag}`,
-          display: `#${hashtag.tag}`,
+          value: `#${hashtag.name}`,
+          display: `#${hashtag.name}`,
           count: hashtag.usageCount
         })
       })
@@ -170,14 +218,10 @@ router.get('/trending', async (req, res) => {
     // Get trending hashtags
     const trendingHashtags = await prisma.hashtag.findMany({
       take: 10,
-      orderBy: [
-        { recentUsageCount: 'desc' },
-        { usageCount: 'desc' }
-      ],
+      orderBy: { usageCount: 'desc' },
       select: {
-        tag: true,
-        usageCount: true,
-        recentUsageCount: true
+        name: true,
+        usageCount: true
       }
     })
 
@@ -192,9 +236,7 @@ router.get('/trending', async (req, res) => {
       },
       select: {
         username: true,
-        displayName: true,
-        avatar: true,
-        verified: true,
+        image: true,
         followerCount: true
       }
     })

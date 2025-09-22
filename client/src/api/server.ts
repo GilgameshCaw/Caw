@@ -11,6 +11,8 @@ import usersRouter from './routes/users'
 import txQueueRouter from './routes/txqueue'
 import viewsRouter from './routes/views'
 import searchRouter from './routes/search'
+import bookmarksRouter from './routes/bookmarks'
+import scheduledRouter from './routes/scheduled'
 
 /**
  * natstat: build and configure Express app
@@ -53,6 +55,8 @@ function createApp() {
   app.use('/api/txqueue', txQueueRouter)
   app.use('/api/views', viewsRouter)
   app.use('/api/search', searchRouter)
+  app.use('/api/bookmarks', bookmarksRouter)
+  app.use('/api/scheduled', scheduledRouter)
 
   return app
 }

@@ -1,0 +1,148 @@
+import { prisma } from '../prismaClient'
+import { createClient } from 'redis'
+
+// Initialize Redis client
+const redis = createClient({
+  url: process.env.REDIS_URL || 'redis://localhost:6379'
+})
+
+redis.on('error', err => console.log('Redis Client Error', err))
+redis.connect().catch(console.error)
+
+interface ViewData {
+  cawId: number
+  userId?: number
+  ipHash: string
+}
+
+/**
+ * Track a single view for a caw
+ */
+export async function trackView({ cawId, userId, ipHash }: ViewData): Promise<void> {
+  // Create a unique key for this viewer
+  const viewKey = userId ? `user:${userId}` : `ip:${ipHash}`
+  const cawViewKey = `caw:${cawId}:viewers`
+
+  // Check if this viewer has already viewed this caw in the last 24 hours
+  const alreadyViewed = await redis.sIsMember(cawViewKey, viewKey)
+
+  if (!alreadyViewed) {
+    // Add viewer to the set with 24-hour expiry
+    await redis.sAdd(cawViewKey, viewKey)
+    await redis.expire(cawViewKey, 86400) // 24 hours
+
+    // Increment view count in database
+    await prisma.caw.update({
+      where: { id: cawId },
+      data: { viewCount: { increment: 1 } }
+    })
+
+    // Also increment in Redis for fast access
+    await redis.incr(`caw:${cawId}:viewcount`)
+  }
+}
+
+/**
+ * Track views for multiple caws at once
+ */
+export async function trackBulkViews(cawIds: number[], userId?: number, ipHash?: string): Promise<void> {
+  if (!ipHash) return
+
+  const viewKey = userId ? `user:${userId}` : `ip:${ipHash}`
+
+  // Process each caw
+  const promises = cawIds.map(async (cawId) => {
+    const cawViewKey = `caw:${cawId}:viewers`
+
+    // Check if already viewed
+    const alreadyViewed = await redis.sIsMember(cawViewKey, viewKey)
+
+    if (!alreadyViewed) {
+      // Add to viewers set
+      await redis.sAdd(cawViewKey, viewKey)
+      await redis.expire(cawViewKey, 86400) // 24 hours
+
+      // Increment in Redis
+      await redis.incr(`caw:${cawId}:viewcount`)
+
+      return cawId // Return cawId to update in DB
+    }
+    return null
+  })
+
+  const results = await Promise.all(promises)
+  const cawsToUpdate = results.filter(id => id !== null) as number[]
+
+  // Bulk update view counts in database
+  if (cawsToUpdate.length > 0) {
+    await prisma.$transaction(
+      cawsToUpdate.map(cawId =>
+        prisma.caw.update({
+          where: { id: cawId },
+          data: { viewCount: { increment: 1 } }
+        })
+      )
+    )
+  }
+}
+
+/**
+ * Get trending caws by view count
+ */
+export async function getTrendingByViews(limit: number = 10): Promise<number[]> {
+  const trending = await prisma.caw.findMany({
+    where: {
+      createdAt: {
+        gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) // Last 7 days
+      }
+    },
+    orderBy: { viewCount: 'desc' },
+    take: limit,
+    select: { id: true }
+  })
+
+  return trending.map(caw => caw.id)
+}
+
+/**
+ * Get view count for a caw (from Redis cache first, fallback to DB)
+ */
+export async function getViewCount(cawId: number): Promise<number> {
+  // Try Redis first
+  const cachedCount = await redis.get(`caw:${cawId}:viewcount`)
+  if (cachedCount !== null) {
+    return parseInt(cachedCount)
+  }
+
+  // Fallback to database
+  const caw = await prisma.caw.findUnique({
+    where: { id: cawId },
+    select: { viewCount: true }
+  })
+
+  const count = caw?.viewCount || 0
+
+  // Cache in Redis
+  await redis.set(`caw:${cawId}:viewcount`, count, {
+    EX: 3600 // 1 hour cache
+  })
+
+  return count
+}
+
+/**
+ * Get view counts for multiple caws
+ */
+export async function getViewCounts(cawIds: number[]): Promise<Map<number, number>> {
+  const counts = new Map<number, number>()
+
+  // Get all counts from Redis in parallel
+  const promises = cawIds.map(async (cawId) => {
+    const count = await getViewCount(cawId)
+    counts.set(cawId, count)
+  })
+
+  await Promise.all(promises)
+
+  return counts
+}

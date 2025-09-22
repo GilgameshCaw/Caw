@@ -24,16 +24,8 @@ const TrendingHashtags: React.FC = () => {
         }
       } catch (error) {
         console.error('Failed to fetch trending hashtags:', error)
-        // Fallback to some default data if fetch fails
-        setTrendingHashtags([
-          { name: 'CawProtocol', usageCount: 2300 },
-          { name: 'Gilgamesh', usageCount: 1800 },
-          { name: 'TehFutureIsHere', usageCount: 1500 },
-          { name: 'IAmRyoshi', usageCount: 1200 },
-          { name: 'DecentralizedFreedom', usageCount: 980 },
-          { name: 'Cawmmunity', usageCount: 756 },
-          { name: 'OneWhoStillDreams', usageCount: 432 }
-        ])
+        // Don't show mock data, just show empty state
+        setTrendingHashtags([])
       } finally {
         setLoading(false)
       }
@@ -80,14 +72,7 @@ const TrendingHashtags: React.FC = () => {
           }`}
         >
           <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <span className={`text-sm font-medium transition-colors duration-200 ${
-                isDark 
-                  ? 'text-gray-300 group-hover:text-white' 
-                  : 'text-gray-600 group-hover:text-black'
-              }`}>
-                #{index + 1}
-              </span>
+            <div className="flex items-center">
               <span className={`font-medium transition-colors duration-200 ${
                 isDark
                   ? 'text-gray-300 group-hover:text-white'

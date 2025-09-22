@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom'
 import { apiFetch } from '~/api/client'
 import Feed from '~/components/Feed'
+import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { HiUsers, HiHashtag, HiCollection } from 'react-icons/hi'
 
@@ -9,16 +10,37 @@ interface SearchResults {
   caws: any[]
   users: any[]
   hashtags: any[]
+  hasMoreCaws?: boolean
+  hasMoreUsers?: boolean
+  hasMoreHashtags?: boolean
 }
 
-const SearchResultsPage: React.FC = () => {
+interface SearchResultsPageProps {
+  defaultTab?: 'all' | 'caws' | 'users' | 'hashtags'
+}
+
+const SearchResultsPage: React.FC<SearchResultsPageProps> = ({ defaultTab = 'all' }) => {
   const [searchParams] = useSearchParams()
   const query = searchParams.get('q') || ''
   const { isDark } = useTheme()
-  const [activeTab, setActiveTab] = useState<'all' | 'caws' | 'users' | 'hashtags'>('all')
+  const navigate = useNavigate()
+  const location = useLocation()
+  const [activeTab, setActiveTab] = useState<'all' | 'caws' | 'users' | 'hashtags'>(defaultTab)
   const [results, setResults] = useState<SearchResults | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [previousTab, setPreviousTab] = useState<'all' | 'caws' | 'users' | 'hashtags'>(defaultTab)
+
+  // Update activeTab based on URL path
+  useEffect(() => {
+    const pathParts = location.pathname.split('/')
+    const tabFromPath = pathParts[pathParts.length - 1]
+    if (['caws', 'users', 'hashtags'].includes(tabFromPath)) {
+      setActiveTab(tabFromPath as any)
+    } else if (location.pathname === '/search') {
+      setActiveTab('all')
+    }
+  }, [location.pathname])
 
   useEffect(() => {
     if (!query) return
@@ -26,11 +48,24 @@ const SearchResultsPage: React.FC = () => {
     const fetchResults = async () => {
       setLoading(true)
       setError(null)
+
+      // Clear results when switching tabs to avoid undefined errors
+      if (previousTab !== activeTab) {
+        setResults(null)
+        setPreviousTab(activeTab)
+      }
+
       try {
         const data = await apiFetch<SearchResults>(
           `/api/search?q=${encodeURIComponent(query)}&type=${activeTab}`
         )
-        setResults(data)
+        // Ensure all properties are present
+        const normalizedData: SearchResults = {
+          caws: data.caws || [],
+          users: data.users || [],
+          hashtags: data.hashtags || []
+        }
+        setResults(normalizedData)
       } catch (err) {
         console.error('Search failed:', err)
         setError('Failed to search. Please try again.')
@@ -44,16 +79,19 @@ const SearchResultsPage: React.FC = () => {
 
   if (!query) {
     return (
-      <div className="max-w-2xl mx-auto px-6 py-4">
-        <div className={`text-center py-8 ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-          Enter a search query to get started
+      <MainLayout>
+        <div className="max-w-2xl mx-auto px-6 py-4">
+          <div className={`text-center py-8 ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
+            Enter a search query to get started
+          </div>
         </div>
-      </div>
+      </MainLayout>
     )
   }
 
   return (
-    <div className="max-w-2xl mx-auto px-6 py-4">
+    <MainLayout>
+      <div className="max-w-2xl mx-auto px-6 py-4">
       <div className="mb-6">
         <h1 className={`text-2xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
           Search Results
@@ -73,7 +111,11 @@ const SearchResultsPage: React.FC = () => {
         ].map(tab => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
+            onClick={() => {
+              setActiveTab(tab.id)
+              const newPath = tab.id === 'all' ? '/search' : `/search/${tab.id}`
+              navigate(`${newPath}?q=${encodeURIComponent(query)}`)
+            }}
             className={`flex items-center space-x-2 px-4 py-3 transition-all ${
               activeTab === tab.id
                 ? isDark
@@ -104,12 +146,29 @@ const SearchResultsPage: React.FC = () => {
       ) : results ? (
         <div className="space-y-6">
           {/* Caws Results */}
-          {(activeTab === 'all' || activeTab === 'caws') && results.caws.length > 0 && (
+          {(activeTab === 'all' || activeTab === 'caws') && (
             <div>
               {activeTab === 'all' && (
-                <h2 className={`text-lg font-semibold mb-3 ${
-                  isDark ? 'text-white' : 'text-gray-900'
-                }`}>Caws</h2>
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className={`text-lg font-semibold ${
+                    isDark ? 'text-white' : 'text-gray-900'
+                  }`}>Caws</h2>
+                  {results?.hasMoreCaws && (
+                    <button
+                      onClick={() => {
+                        setActiveTab('caws')
+                        navigate(`/search/caws?q=${encodeURIComponent(query)}`)
+                      }}
+                      className={`text-sm transition ${
+                        isDark
+                          ? 'text-blue-400 hover:text-blue-300'
+                          : 'text-blue-600 hover:text-blue-500'
+                      }`}
+                    >
+                      View more →
+                    </button>
+                  )}
+                </div>
               )}
               <Feed
                 filter="search"
@@ -119,12 +178,29 @@ const SearchResultsPage: React.FC = () => {
           )}
 
           {/* Users Results */}
-          {(activeTab === 'all' || activeTab === 'users') && results.users.length > 0 && (
+          {(activeTab === 'all' || activeTab === 'users') && results?.users && results.users.length > 0 && (
             <div>
               {activeTab === 'all' && (
-                <h2 className={`text-lg font-semibold mb-3 ${
-                  isDark ? 'text-white' : 'text-gray-900'
-                }`}>Users</h2>
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className={`text-lg font-semibold ${
+                    isDark ? 'text-white' : 'text-gray-900'
+                  }`}>Users</h2>
+                  {results.hasMoreUsers && (
+                    <button
+                      onClick={() => {
+                        setActiveTab('users')
+                        navigate(`/search/users?q=${encodeURIComponent(query)}`)
+                      }}
+                      className={`text-sm transition ${
+                        isDark
+                          ? 'text-blue-400 hover:text-blue-300'
+                          : 'text-blue-600 hover:text-blue-500'
+                      }`}
+                    >
+                      View more →
+                    </button>
+                  )}
+                </div>
               )}
               <div className="space-y-3">
                 {results.users.map(user => (
@@ -164,12 +240,29 @@ const SearchResultsPage: React.FC = () => {
           )}
 
           {/* Hashtags Results */}
-          {(activeTab === 'all' || activeTab === 'hashtags') && results.hashtags.length > 0 && (
+          {(activeTab === 'all' || activeTab === 'hashtags') && results?.hashtags && results.hashtags.length > 0 && (
             <div>
               {activeTab === 'all' && (
-                <h2 className={`text-lg font-semibold mb-3 ${
-                  isDark ? 'text-white' : 'text-gray-900'
-                }`}>Hashtags</h2>
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className={`text-lg font-semibold ${
+                    isDark ? 'text-white' : 'text-gray-900'
+                  }`}>Hashtags</h2>
+                  {results.hasMoreHashtags && (
+                    <button
+                      onClick={() => {
+                        setActiveTab('hashtags')
+                        navigate(`/search/hashtags?q=${encodeURIComponent(query)}`)
+                      }}
+                      className={`text-sm transition ${
+                        isDark
+                          ? 'text-blue-400 hover:text-blue-300'
+                          : 'text-blue-600 hover:text-blue-500'
+                      }`}
+                    >
+                      View more →
+                    </button>
+                  )}
+                </div>
               )}
               <div className="space-y-3">
                 {results.hashtags.map(hashtag => (
@@ -206,7 +299,7 @@ const SearchResultsPage: React.FC = () => {
           )}
 
           {/* No Results */}
-          {results.caws.length === 0 && results.users.length === 0 && results.hashtags.length === 0 && (
+          {results && results.caws.length === 0 && results.users.length === 0 && results.hashtags.length === 0 && (
             <div className={`text-center py-8 ${
               isDark ? 'text-white/60' : 'text-gray-600'
             }`}>
@@ -215,7 +308,8 @@ const SearchResultsPage: React.FC = () => {
           )}
         </div>
       ) : null}
-    </div>
+      </div>
+    </MainLayout>
   )
 }
 
