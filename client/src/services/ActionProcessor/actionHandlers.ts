@@ -3,6 +3,7 @@ import { prisma } from '../../prismaClient'
 import { findOrCreateUser } from '../UserService'
 import { processHashtagsForCaw } from '../../tools/hashtags'
 import { NotificationService } from '../NotificationService'
+import { elasticsearchService } from '../ElasticsearchService'
 import type { PrismaTransactionClient } from './types'
 
 /**
@@ -538,6 +539,17 @@ export async function handleOtherAction(
       console.error(`Failed to process hashtags for caw ${newCaw.id}:`, err)
     }
   }
+
+  // Index in Elasticsearch (non-blocking)
+  setImmediate(async () => {
+    const cawWithUser = await prisma.caw.findUnique({
+      where: { id: newCaw.id },
+      include: { user: true }
+    })
+    if (cawWithUser) {
+      await elasticsearchService.indexCaw(cawWithUser)
+    }
+  })
 
   // Schedule background job to process image if needed
   if (imageData) {

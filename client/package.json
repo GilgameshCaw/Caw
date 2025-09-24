@@ -35,6 +35,7 @@
     "xo": "^0.58.0"
   },
   "dependencies": {
+    "@elastic/elasticsearch": "^9.1.1",
     "@prisma/client": "^6.7.0",
     "@types/cors": "^2.8.19",
     "@types/keccak": "^3.0.4",

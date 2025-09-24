@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '~/api/client'
 import { useTheme } from '~/hooks/useTheme'
 import { useActiveToken } from '~/store/tokenDataStore'
-import { formatRelativeTime } from '~/utils/dateHelpers'
 import {
   HiHeart,
   HiUserAdd,
@@ -44,6 +43,28 @@ interface NotificationsResponse {
 }
 
 type TabType = 'all' | 'mentions'
+
+// Helper function to format relative time
+function formatRelativeTime(timestamp: string): string {
+  const now = new Date()
+  const time = new Date(timestamp)
+  const diffInMs = now.getTime() - time.getTime()
+  const diffInMinutes = Math.floor(diffInMs / (1000 * 60))
+  const diffInHours = Math.floor(diffInMs / (1000 * 60 * 60))
+  const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24))
+
+  if (diffInMinutes < 1) {
+    return 'now'
+  } else if (diffInMinutes < 60) {
+    return `${diffInMinutes}m`
+  } else if (diffInHours < 24) {
+    return `${diffInHours}h`
+  } else if (diffInDays < 7) {
+    return `${diffInDays}d`
+  } else {
+    return time.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  }
+}
 
 const Notifications: React.FC = () => {
   const navigate = useNavigate()

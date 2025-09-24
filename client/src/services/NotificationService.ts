@@ -1,5 +1,6 @@
 import { prisma } from '../prismaClient'
 import { NotificationType } from '@prisma/client'
+import { elasticsearchService } from './ElasticsearchService'
 
 export class NotificationService {
   /**

@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
+import { elasticsearchService } from '../../services/ElasticsearchService'
 
 const router = Router()
 
