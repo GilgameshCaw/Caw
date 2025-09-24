@@ -13,6 +13,7 @@ import viewsRouter from './routes/views'
 import searchRouter from './routes/search'
 import bookmarksRouter from './routes/bookmarks'
 import scheduledRouter from './routes/scheduled'
+import notificationsRouter from './routes/notifications'
 
 /**
  * natstat: build and configure Express app
@@ -57,6 +58,7 @@ function createApp() {
   app.use('/api/search', searchRouter)
   app.use('/api/bookmarks', bookmarksRouter)
   app.use('/api/scheduled', scheduledRouter)
+  app.use('/api/notifications', notificationsRouter)
 
   return app
 }

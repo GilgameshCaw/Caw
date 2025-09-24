@@ -2,6 +2,7 @@
 import { prisma } from '../../prismaClient'
 import { findOrCreateUser } from '../UserService'
 import { processHashtagsForCaw } from '../../tools/hashtags'
+import { NotificationService } from '../NotificationService'
 import type { PrismaTransactionClient } from './types'
 
 /**
@@ -69,7 +70,15 @@ export async function handleCawAction(
       }
     },
     update: {
-      // If CAW already exists, just update the timestamps
+      // If CAW already exists (was pending), update it and clear pending flag
+      content: textContent,
+      action: action.actionType,
+      originalCawId: parentCawId,
+      imageData: imageUrls.length > 0 ? `urls:${imageUrls.join('|||')}` : null,
+      hasImage: imageUrls.length > 0,
+      videoData: videoUrls.length > 0 ? videoUrls.join('|||') : null,
+      hasVideo: videoUrls.length > 0,
+      pending: false, // Clear pending flag when confirmed on-chain
       updatedAt: new Date()
     },
     create: {
@@ -83,7 +92,8 @@ export async function handleCawAction(
       hasImage: imageUrls.length > 0,
       // Store video URLs in videoData field
       videoData: videoUrls.length > 0 ? videoUrls.join('|||') : null,
-      hasVideo: videoUrls.length > 0
+      hasVideo: videoUrls.length > 0,
+      pending: false // Not pending when created from blockchain event
     }
   })
 
@@ -102,6 +112,22 @@ export async function handleCawAction(
   } catch (err) {
     console.error(`Failed to process hashtags for caw ${newCaw.id}:`, err)
     // Don't fail the entire transaction if hashtag processing fails
+  }
+
+  // Create notifications for @mentions
+  try {
+    await NotificationService.createMentionNotifications(newCaw.id, textContent, authorId)
+  } catch (err) {
+    console.error(`Failed to create mention notifications for caw ${newCaw.id}:`, err)
+  }
+
+  // Create notification if this is a reply
+  if (parentCawId) {
+    try {
+      await NotificationService.createReplyNotification(parentCawId, newCaw.id, authorId)
+    } catch (err) {
+      console.error(`Failed to create reply notification for caw ${newCaw.id}:`, err)
+    }
   }
 
   // Update comment count for original caw if this is a comment
@@ -166,6 +192,13 @@ export async function handleRecawAction(
       data: { recawCount: { increment: 1 } }
     })
   }
+
+  // Create repost notification
+  try {
+    await NotificationService.createRepostNotification(originalCawId, userId)
+  } catch (err) {
+    console.error(`Failed to create repost notification:`, err)
+  }
 }
 
 /**
@@ -225,6 +258,13 @@ export async function handleLikeAction(
       where: { id: parentCawId },
       data: { likeCount: { increment: 1 } }
     })
+
+    // Create like notification
+    try {
+      await NotificationService.createLikeNotification(parentCawId, userId)
+    } catch (err) {
+      console.error(`Failed to create like notification:`, err)
+    }
   }
 }
 
@@ -294,6 +334,13 @@ export async function handleFollowAction(
     })
 
     console.log(`User ${followerId} now follows user ${followingId}`)
+
+    // Create follow notification
+    try {
+      await NotificationService.createFollowNotification(followingId, followerId)
+    } catch (err) {
+      console.error(`Failed to create follow notification:`, err)
+    }
   } else if (existingFollow.action !== 'FOLLOW') {
     // Update existing relationship back to FOLLOW
     await tx.follow.update({

@@ -81,4 +81,16 @@ export default [
     path: "/search",
     component: <SearchResultsPage />,
   },
+  {
+    path: "/search/caws",
+    component: <SearchResultsPage defaultTab="caws" />,
+  },
+  {
+    path: "/search/users",
+    component: <SearchResultsPage defaultTab="users" />,
+  },
+  {
+    path: "/search/hashtags",
+    component: <SearchResultsPage defaultTab="hashtags" />,
+  },
 ];

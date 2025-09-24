@@ -66,6 +66,8 @@ model User {
   scheduledCaws ScheduledCaw[]
   follows       Follow[] @relation("Following") // whom *I* follow
   followers     Follow[] @relation("Follower") // who follows *me*
+  notificationsReceived Notification[] @relation("NotificationRecipient")
+  notificationsSent     Notification[] @relation("NotificationActor")
 }
 
 model Caw {
@@ -79,6 +81,7 @@ model Caw {
   hasImage      Boolean    @default(false)
   videoData     String?    @db.Text // Video URLs for off-chain storage
   hasVideo      Boolean    @default(false)
+  pending       Boolean    @default(false) // Optimistic UI - true while transaction is pending
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
@@ -88,6 +91,7 @@ model Caw {
   likes     Like[]
   bookmarks Bookmark[]
   hashtags  CawHashtag[]
+  notifications Notification[]
 
   // counter caches:
   commentCount Int @default(0)
@@ -224,4 +228,34 @@ model ScheduledCaw {
   @@index([userId])
   @@index([scheduledAt])
   @@index([status])
+}
+
+enum NotificationType {
+  FOLLOW
+  LIKE
+  REPLY
+  REPOST
+  QUOTE
+  MENTION
+}
+
+model Notification {
+  id         Int              @id @default(autoincrement())
+  userId     Int              // The user receiving the notification
+  actorId    Int              // The user who triggered the notification
+  type       NotificationType
+  cawId      Int?             // Related caw if applicable
+  groupKey   String?          // For grouping similar notifications (e.g., "like_cawId_123")
+  isRead     Boolean          @default(false)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  user  User @relation("NotificationRecipient", fields: [userId], references: [tokenId], onDelete: Cascade)
+  actor User @relation("NotificationActor", fields: [actorId], references: [tokenId], onDelete: Cascade)
+  caw   Caw? @relation(fields: [cawId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead, createdAt])
+  @@index([userId, type])
+  @@index([groupKey])
+  @@index([createdAt])
 }

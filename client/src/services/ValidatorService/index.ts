@@ -100,10 +100,21 @@ export const validatorService: Service = {
 
     async function simulateActions(
       validatorId: number,
-      multiData: { actions: any[]; v: number[]; r: string[]; s: string[] }
-    ) {
+      multiData: { actions: any[]; v: number[]; r: string[]; s: string[] },
+      retryCount: number = 0
+    ): Promise<{ successfulActions: any[], rejectionMessages: string[], quote: any }> {
+      const maxRetries = 3;
+      const baseTimeout = 10000; // 10 seconds base timeout
+      const timeout = baseTimeout * Math.pow(1.5, retryCount); // Exponential backoff
+
       try {
-        console.log("will simulate actions:", multiData.actions)
+        console.log(`[Attempt ${retryCount + 1}/${maxRetries}] Simulating actions with RPC: ${l2RpcUrl}`);
+        console.log("Actions to simulate:", multiData.actions.map(a => ({
+          type: getActionType(a.actionType).toString(),
+          sender: a.senderId,
+          cawonce: a.cawonce
+        })));
+
         var withdraws = multiData.actions.filter(function(action: any) {return getActionType(action.actionType).toString() == 'WITHDRAW'});
         var quote = { nativeFee: BigInt(0) }; // Default quote for non-withdrawal actions
         var withdrawTypes = multiData.actions.map(function(action: any) {return getActionType(action.actionType).toString()});
@@ -117,7 +128,6 @@ export const validatorService: Service = {
           console.log('withdraw quote returned:', quote);
         }
 
-
         // ABI‐encode
         console.log("Before native process", quote)
         const calldata = iface.encodeFunctionData('safeProcessActions', [
@@ -125,10 +135,21 @@ export const validatorService: Service = {
           { actions: multiData.actions, v: multiData.v, r: multiData.r, s: multiData.s },
           0
         ])
-        console.log("got call data", calldata, quote?.nativeFee)
+        console.log(`Call data prepared, timeout set to ${timeout}ms`)
 
-        const returnData = await provider.call({ to: CAW_ACTIONS_ADDRESS, data: calldata, value: quote?.nativeFee })
-        console.log("Called!")
+        // Add timeout to prevent hanging
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error(`TIMEOUT`)), timeout)
+        })
+
+        const startTime = Date.now();
+        const returnData = await Promise.race([
+          provider.call({ to: CAW_ACTIONS_ADDRESS, data: calldata, value: quote?.nativeFee }),
+          timeoutPromise
+        ]) as string
+        const elapsed = Date.now() - startTime;
+
+        console.log(`Simulation completed in ${elapsed}ms`)
         const decoded = iface.decodeFunctionResult(
           'safeProcessActions',
           returnData
@@ -140,20 +161,71 @@ export const validatorService: Service = {
         console.log("simulated:", successfulActions.length, rejectionMessages)
         return { successfulActions, rejectionMessages, quote }
       } catch (err: any) {
-        console.error("FAILED to simulate actions:", err.message || err)
-        // Return empty successful actions and error messages for all actions
-        const rejectionMessages = multiData.actions.map(() => {
-          if (err.message?.includes('execution reverted')) {
-            return 'Transaction simulation failed - execution reverted'
-          } else if (err.message?.includes('insufficient funds')) {
-            return 'Insufficient funds for transaction'
-          } else if (err.message?.includes('nonce')) {
-            return 'Invalid nonce - transaction may be outdated'
+        const elapsed = Date.now();
+
+        // Log full error details
+        console.error(`[Attempt ${retryCount + 1}] Simulation failed after ${timeout}ms:`, {
+          error: err.message || err,
+          stack: err.stack,
+          rpcUrl: l2RpcUrl,
+          actions: multiData.actions.map(a => ({
+            type: getActionType(a.actionType).toString(),
+            sender: a.senderId,
+            cawonce: a.cawonce
+          }))
+        });
+
+        // Handle timeout with retry
+        if (err.message === 'TIMEOUT') {
+          if (retryCount < maxRetries - 1) {
+            console.log(`Timeout occurred, retrying... (attempt ${retryCount + 2}/${maxRetries})`);
+            // Wait a bit before retrying (exponential backoff)
+            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)));
+            return simulateActions(validatorId, multiData, retryCount + 1);
           } else {
-            return `Simulation error: ${err.message || 'Unknown error'}`
+            console.error(`Max retries reached. Likely a duplicate cawonce or persistent network issue.`);
+            // After max retries, check if it's likely a duplicate cawonce
+            const rejectionMessages = multiData.actions.map(() =>
+              'Transaction simulation failed after multiple retries - likely duplicate cawonce'
+            );
+            return { successfulActions: [], rejectionMessages, quote: { nativeFee: BigInt(0) } };
           }
-        })
-        return { successfulActions: [], rejectionMessages, quote: { nativeFee: BigInt(0) } }
+        }
+
+        // Handle specific blockchain errors (these don't need retry)
+        if (err.message?.includes('execution reverted')) {
+          const revertMatch = err.message.match(/execution reverted: (.+)/);
+          const revertReason = revertMatch?.[1] || 'Unknown revert reason';
+          console.log(`Execution reverted with reason: ${revertReason}`);
+
+          // Check for specific duplicate cawonce error
+          if (revertReason.includes('cawonce') || revertReason.includes('already processed')) {
+            const rejectionMessages = multiData.actions.map(() =>
+              `Transaction already processed - duplicate cawonce`
+            );
+            return { successfulActions: [], rejectionMessages, quote: { nativeFee: BigInt(0) } };
+          }
+
+          const rejectionMessages = multiData.actions.map(() =>
+            `Transaction reverted: ${revertReason}`
+          );
+          return { successfulActions: [], rejectionMessages, quote: { nativeFee: BigInt(0) } };
+        }
+
+        // Handle other errors
+        const rejectionMessages = multiData.actions.map(() => {
+          if (err.message?.includes('insufficient funds')) {
+            return 'Insufficient funds for transaction';
+          } else if (err.message?.includes('nonce')) {
+            return 'Invalid nonce - transaction may be outdated';
+          } else if (err.message?.includes('already known')) {
+            return 'Transaction already known - duplicate cawonce';
+          } else {
+            return `Simulation error: ${err.message || 'Unknown error'}`;
+          }
+        });
+
+        return { successfulActions: [], rejectionMessages, quote: { nativeFee: BigInt(0) } };
       }
     }
 
@@ -354,50 +426,64 @@ console.log("succeededKeys", succeededKeys)
 
     /** natstat: core polling loop */
     async function pollLoop() {
-      const entries = await fetchPendingQueue()
-      if (!entries.length) return
+      try {
+        const entries = await fetchPendingQueue()
+        if (!entries.length) return
 
-      // Pre-filter entries that don't have sufficient CAW for OTHER actions
-      const validatedEntries: typeof entries = []
-      const underpricedEntries: typeof entries = []
+        console.log(`[Validator] Processing ${entries.length} pending transactions`)
+        console.log(`[Validator] Queue IDs: ${entries.map(e => e.id).join(', ')}`)
 
-      for (const entry of entries) {
-        const action = (entry.payload as any).data
-        const validation = validateOtherActionCost(action)
-        if (validation.valid) {
-          validatedEntries.push(entry)
-        } else if (validation.underpriced) {
-          underpricedEntries.push(entry)
-          console.log(`Marking txQueue entry ${entry.id} as underpriced: required ${validation.requiredCaw} CAW`)
-        }
-      }
+        // Log transaction details for debugging
+        entries.forEach(entry => {
+          const action = (entry.payload as any).data
+          console.log(`[Validator] TxQueue #${entry.id}: Type=${getActionType(action.actionType)}, Sender=${action.senderId}, Cawonce=${action.cawonce}`)
+        })
 
-      // Mark underpriced entries with 'underpriced' status for potential relay to other validators
-      if (underpricedEntries.length > 0) {
-        await Promise.all(underpricedEntries.map(entry => {
+        // Pre-filter entries that don't have sufficient CAW for OTHER actions
+        const validatedEntries: typeof entries = []
+        const underpricedEntries: typeof entries = []
+
+        for (const entry of entries) {
           const action = (entry.payload as any).data
           const validation = validateOtherActionCost(action)
-          const reason = `Insufficient CAW: required ${validation.requiredCaw} CAW`
+          if (validation.valid) {
+            validatedEntries.push(entry)
+          } else if (validation.underpriced) {
+            underpricedEntries.push(entry)
+            console.log(`[Validator] Marking txQueue entry ${entry.id} as underpriced: required ${validation.requiredCaw} CAW`)
+          }
+        }
 
-          return prisma.txQueue.update({
-            where: { id: entry.id },
-            data: {
-              status: 'underpriced',
-              reason
-            }
-          })
-        }))
-      }
+        // Mark underpriced entries with 'underpriced' status for potential relay to other validators
+        if (underpricedEntries.length > 0) {
+          await Promise.all(underpricedEntries.map(entry => {
+            const action = (entry.payload as any).data
+            const validation = validateOtherActionCost(action)
+            const reason = `Insufficient CAW: required ${validation.requiredCaw} CAW`
 
-      // If no valid entries remain, return
-      if (!validatedEntries.length) return
+            return prisma.txQueue.update({
+              where: { id: entry.id },
+              data: {
+                status: 'underpriced',
+                reason
+              }
+            })
+          }))
+        }
 
-      const fullBatch = buildMultiActionData(validatedEntries)
-      const totalTipBefore = computeTotalTip(validatedEntries)
+        // If no valid entries remain, return
+        if (!validatedEntries.length) {
+          console.log("[Validator] No valid entries to process after filtering")
+          return
+        }
 
-        console.log("will Simulate", validatorId);
-      // 1) simulate
-      const simulationResult = await simulateActions(validatorId, fullBatch)
+        console.log(`[Validator] ${validatedEntries.length} valid entries to simulate`)
+        const fullBatch = buildMultiActionData(validatedEntries)
+        const totalTipBefore = computeTotalTip(validatedEntries)
+
+        console.log(`[Validator] Starting simulation for validator ${validatorId} with RPC: ${l2RpcUrl}`);
+        // 1) simulate
+        const simulationResult = await simulateActions(validatorId, fullBatch)
 
       // Check if simulateActions returned undefined (error case)
       if (!simulationResult) {
@@ -493,8 +579,9 @@ console.log("succeededKeys", succeededKeys)
         // Check if this entry was in the succeeded set that got submitted
         const wasSubmitted = succeededEntries.includes(entry)
         if (!wasSubmitted) {
-          // This entry failed simulation, return empty success
-          return { succeeded: false, reason: rejectionMessages[index] }
+          // This entry failed simulation
+          // The rejection message for this specific entry is at rejectionMessages[index]
+          return { succeeded: false, reason: rejectionMessages[index] || 'Simulation failed' }
         }
         // This entry was submitted, check if it finalized
         const data = (entry.payload as any).data
@@ -503,24 +590,49 @@ console.log("succeededKeys", succeededKeys)
         )
         return {
           succeeded: isFinalized,
-          reason: isFinalized ? undefined : 'Transaction failed on chain'
+          reason: isFinalized ? null : 'Transaction failed on chain'
         }
       })
 
       // Update each entry with its actual status
       await Promise.all(validatedEntries.map((entry, index) => {
         const { succeeded, reason } = finalStatuses[index]
+
+        // Only set reason if status is failed
+        const updateData: any = {
+          status: succeeded ? 'done' : 'failed'
+        }
+
+        // Only add reason field if transaction failed AND we have a reason
+        if (!succeeded && reason) {
+          updateData.reason = reason
+        } else if (succeeded && reason === null) {
+          // Clear any existing reason for successful transactions
+          updateData.reason = null
+        }
+
         return prisma.txQueue.update({
           where: { id: entry.id },
-          data: {
-            status: succeeded ? 'done' : 'failed',
-            ...(reason ? { reason } : {})
-          }
+          data: updateData
         })
       }))
+      } catch (err: any) {
+        console.error("[Validator] Poll loop error:", {
+          message: err.message,
+          stack: err.stack,
+          rpcUrl: l2RpcUrl
+        })
+        // Don't crash on errors, will retry on next interval
+      }
     }
 
     // start polling
+    console.log(`[Validator] Starting validator service with:`);
+    console.log(`  - RPC URL: ${l2RpcUrl}`);
+    console.log(`  - Validator ID: ${validatorId}`);
+    console.log(`  - Check Interval: ${checkInterval}ms`);
+    console.log(`  - Wallet Address: ${wallet.address}`);
+
     timer = setInterval(() => pollLoop().catch(console.error), checkInterval)
     pollLoop().catch(console.error)
 

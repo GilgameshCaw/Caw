@@ -31,6 +31,7 @@ import { useOptimisticLikesStore } from '~/store/optimisticLikesStore'
 import { Link } from 'react-router-dom'
 import { User, CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
+import { usePendingPolling, usePendingCawPolling, usePendingLikePolling } from '~/hooks/usePendingPolling'
 import ContentWithHashtags from './ContentWithHashtags'
 import { formatEngagementCount } from '~/utils/numberFormat'
 import { apiFetch } from '~/api/client'
@@ -58,6 +59,10 @@ function formatTimeAgo(timestamp: string): string {
 }
 
 const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void }> = ({ item, isMainPost = false, isReply = false, onBookmarkUpdate }) => {
+  // Enable polling for pending items
+  usePendingCawPolling(parseInt(item.id), item.pending || false)
+  usePendingLikePolling(parseInt(item.id), item.likePending || false)
+
   const activeTokenId     = useTokenDataStore(s => s.activeTokenId)
   const activeToken = useTokenDataStore(s => {
     const tokens = Object.values(s.tokensByAddress).flat()
@@ -456,6 +461,8 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       <Link to={`/caws/${item.id}`} className="block">
         <div className={`p-4 transition-all duration-300 hover:bg-gray-500/5 cursor-pointer border-b ${
           isDark ? 'border-gray-800' : 'border-gray-200'
+        } ${
+          item.pending ? 'opacity-60' : ''
         }`}>
           {/* Replying to header */}
           {item.parent && (
@@ -511,6 +518,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   }`}>
                     · {formatTimeAgo(useItem.timestamp)}
                   </span>
+                  {item.pending && (
+                    <span className="ml-2 px-2 py-0.5 text-xs bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 rounded-full">
+                      Pending
+                    </span>
+                  )}
                 </div>
               </div>
             </div>

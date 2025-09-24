@@ -45,6 +45,70 @@ router.post('/', async (req, res) => {
       }
     }
 
+    // Create optimistic pending caw for CAW actions
+    if (data.actionType === 0 || data.actionType === 'caw') { // 0 is the enum value for 'caw'
+      try {
+        console.log('Creating optimistic pending caw for user:', data.senderId, 'cawonce:', data.cawonce)
+
+        // Ensure user exists first
+        const user = await prisma.user.findUnique({
+          where: { tokenId: data.senderId }
+        })
+
+        if (!user) {
+          // Create user if doesn't exist
+          await prisma.user.create({
+            data: { tokenId: data.senderId }
+          })
+        }
+
+        // Extract image URLs if present
+        const imageUrlRegex = /(https?:\/\/[^\s]+\/uploads\/images\/[^\s]+\.(jpg|jpeg|png|gif|webp))/gi
+        const imageUrls = data.text?.match(imageUrlRegex) || []
+        const videoUrlRegex = /video:(https?:\/\/[^\s]+\/uploads\/videos\/[^\s]+\.(mp4|webm|mov|avi|mkv|ogg|ogv))/gi
+        const videoMatches = [...(data.text?.matchAll(videoUrlRegex) || [])]
+        const videoUrls = videoMatches.map((match: RegExpMatchArray) => match[1])
+
+        // Remove URLs from text content
+        let textContent = data.text || ''
+        imageUrls.forEach((url: string) => {
+          textContent = textContent.replace(url, '').trim()
+        })
+        videoMatches.forEach((match: RegExpMatchArray) => {
+          textContent = textContent.replace(match[0], '').trim()
+        })
+        textContent = textContent.replace(/\n{3,}/g, '\n\n').trim()
+
+        // Create the pending caw
+        await prisma.caw.upsert({
+          where: {
+            userId_cawonce: {
+              userId: data.senderId,
+              cawonce: data.cawonce
+            }
+          },
+          update: {
+            pending: true // If it already exists, just mark as pending
+          },
+          create: {
+            userId: data.senderId,
+            cawonce: data.cawonce,
+            content: textContent,
+            action: 'CAW',
+            pending: true, // Mark as pending
+            imageData: imageUrls.length > 0 ? `urls:${imageUrls.join('|||')}` : null,
+            hasImage: imageUrls.length > 0,
+            videoData: videoUrls.length > 0 ? videoUrls.join('|||') : null,
+            hasVideo: videoUrls.length > 0
+          }
+        })
+        console.log('Successfully created optimistic pending caw')
+      } catch (cawErr) {
+        console.error('Failed to create optimistic pending caw:', cawErr)
+        // Continue even if optimistic caw creation fails
+      }
+    }
+
     // Debug logging for all actions
     console.log('Received action:', {
       actionType: data.actionType,
