@@ -15,6 +15,8 @@ import {
   HiOutlineSearch,
   HiOutlineBell,
   HiOutlineChat,
+  HiOutlineChatAlt2,
+  HiOutlineMail,
   HiOutlineBookmark,
   HiOutlineCog,
   HiOutlineUserAdd,
@@ -32,7 +34,6 @@ const Sidebar: React.FC = () => {
   const [pending, setPending] = useState(0)
   const { isDark, toggle } = useTheme()
 
-  console.log('Current theme:', isDark ? 'dark' : 'light')
 
   useEffect(() => {
     let cancelled = false
@@ -68,10 +69,10 @@ const Sidebar: React.FC = () => {
   }
 
   return (
-    <div className={`flex flex-col h-screen sm:h-full sm:justify-between w-full sm:w-[200px] border-r-0.5 sm:border-r transition-all duration-300 ${
+    <div className={`flex flex-col h-screen sm:h-full sm:justify-between w-full sm:w-[200px] border-r-0.5 border-white/5 sm:border-r sm:border-white/20 transition-all duration-300 ${
       isDark 
-        ? 'bg-black border-white/20' 
-        : 'bg-white border-gray-300'
+        ? 'bg-black' 
+        : 'bg-white border-r-0.5 border-gray-200 sm:border-gray-300'
     }`}>
       <div className="flex flex-col h-full sm:flex-1">
         {/* Logo Section - Hidden on mobile */}
@@ -89,64 +90,64 @@ const Sidebar: React.FC = () => {
         </div>
 
         {/* Navigation */}
-        <nav className="px-2 py-2 pt-20 sm:px-4 sm:py-4 sm:pl-0 sm:pt-4 space-y-1 sm:flex-1">
+        <nav className="px-2 py-2 pt-20 sm:px-4 sm:py-4 sm:pl-0 sm:pt-4 space-y-0.5 sm:space-y-1 sm:flex-1 pb-4">
           <NavLink
           to="/home"
           className={({ isActive }) =>
-            `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+            `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
           }>
-            <HiOutlineHome className="w-7 h-7 sm:w-7 sm:h-7" />
-            <span className="font-medium text-lg sm:text-lg">Home</span>
+            <HiOutlineHome className="w-5.5 h-5.5 sm:w-7 sm:h-7" />
+            <span className="font-medium text-base sm:text-lg">Home</span>
           </NavLink>
 
           <NavLink
             to="/explore"
             className={({ isActive }) =>
-              `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+              `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
           >
-            <HiOutlineSearch className="w-7 h-7 sm:w-7 sm:h-7" />
-            <span className="font-medium text-lg sm:text-lg">Explore</span>
+            <HiOutlineSearch className="w-5.5 h-5.5 sm:w-7 sm:h-7" />
+            <span className="font-medium text-base sm:text-lg">Explore</span>
           </NavLink>
 
           <NavLink
             to="/notifications"
             className={({ isActive }) =>
-              `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+              `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
           >
-            <HiOutlineBell className="w-7 h-7 sm:w-7 sm:h-7" />
-            <span className="font-medium text-lg sm:text-lg">Notifications</span>
+            <HiOutlineBell className="w-5.5 h-5.5 sm:w-7 sm:h-7" />
+            <span className="font-medium text-base sm:text-lg">Notifications</span>
           </NavLink>
 
           <NavLink
             to="/messages"
             className={({ isActive }) =>
-              `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+              `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
           >
-            <HiOutlineChat className="w-7 h-7 sm:w-7 sm:h-7" />
-            <span className="font-medium text-lg sm:text-lg">Messages</span>
+            <HiOutlineMail className="w-5.5 h-5.5 sm:w-7 sm:h-7" />
+            <span className="font-medium text-base sm:text-lg">Messages</span>
           </NavLink>
 
           <NavLink
             to="/bookmarks"
             className={({ isActive }) =>
-              `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+              `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
           >
-            <HiOutlineBookmark className="w-7 h-7 sm:w-7 sm:h-7" />
-            <span className="font-medium text-lg sm:text-lg">Bookmarks</span>
+            <HiOutlineBookmark className="w-5.5 h-5.5 sm:w-7 sm:h-7" />
+            <span className="font-medium text-base sm:text-lg">Bookmarks</span>
           </NavLink>
 
           <NavLink
           to="/pending"
           className={({ isActive }) =>
-            `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+            `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
           }
           >
-            <HiOutlineClock className="w-7 h-7 sm:w-7 sm:h-7" />
-            <span className="font-medium text-lg sm:text-lg">Pending</span>
+            <HiOutlineClock className="w-5.5 h-5.5 sm:w-7 sm:h-7" />
+            <span className="font-medium text-base sm:text-lg">Pending</span>
             {pending > 0 && (
               <span className="absolute top-1 right-1 inline-flex items-center justify-center
               px-2 py-0.5 text-xs font-bold text-white bg-red-500 rounded-full
@@ -160,30 +161,47 @@ const Sidebar: React.FC = () => {
           <NavLink
             to="/staking"
             className={({ isActive }) =>
-              `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+              `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
           >
-            <HiOutlineCube className="w-7 h-7 sm:w-7 sm:h-7" />
-            <span className="font-medium text-lg sm:text-lg">Staking</span>
+            <HiOutlineCube className="w-5.5 h-5.5 sm:w-7 sm:h-7" />
+            <span className="font-medium text-base sm:text-lg">Staking</span>
+          </NavLink>
+
+          <NavLink
+            to="/chat"
+            className={({ isActive }) =>
+              `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+            }
+          >
+            <HiOutlineChatAlt2 className="w-5.5 h-5.5 sm:w-7 sm:h-7" />
+            <span className="font-medium text-base sm:text-lg">Chat</span>
+            <span className={`px-1.5 py-0.5 text-xs font-semibold rounded-full transition-colors duration-300 ${
+              isDark 
+                ? 'bg-yellow-500 text-black' 
+                : 'bg-yellow-500 text-black'
+            }`}>
+              New
+            </span>
           </NavLink>
 
           <NavLink
             to="/mint"
             className={({ isActive }) =>
-              `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+              `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
           >
-            <HiOutlineColorSwatch className="w-7 h-7 sm:w-7 sm:h-7" />
-            <span className="font-medium text-lg sm:text-lg">Mint</span>
+            <HiOutlineColorSwatch className="w-5.5 h-5.5 sm:w-7 sm:h-7" />
+            <span className="font-medium text-base sm:text-lg">Mint</span>
           </NavLink>
 
           <NavLink
             to="/gamefi"
             className={({ isActive }) =>
-              `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+              `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
           >
-            <svg className="w-7 h-7 sm:w-7 sm:h-7" fill="none" stroke="currentColor" viewBox="0 0 32 32">
+            <svg className="w-5.5 h-5.5 sm:w-7 sm:h-7" fill="none" stroke="currentColor" viewBox="0 0 32 32">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M30.9,25l-3-14.9c-0.3-1.3-1.1-2.5-2.2-3.2c-1.9-1.1-4.3-0.8-5.8,0.7L18.6,9h-2h-1.1h-2l-1.4-1.4 c-1.5-1.5-3.9-1.8-5.8-0.7c-1.2,0.7-2,1.8-2.2,3.2L1.1,25c-0.3,1.6,0.9,3,2.5,3c0.6,0,1.1-0.2,1.5-0.7L8.8,23c1.7-1.9,4.1-3,6.6-3 h1.1c2.5,0,5,1.1,6.6,3l3.8,4.3c0.4,0.4,0.9,0.7,1.5,0.7C30.1,28,31.3,26.5,30.9,25z" />
               <circle strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" cx="23" cy="14" r="2" />
               <line strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" x1="9" y1="16" x2="9" y2="12" />
@@ -191,7 +209,7 @@ const Sidebar: React.FC = () => {
               <line strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" x1="17" y1="13" x2="15" y2="13" />
               <line strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" x1="17" y1="16" x2="15" y2="16" />
             </svg>
-            <span className="font-medium text-lg sm:text-lg">GameFi</span>
+            <span className="font-medium text-base sm:text-lg">GameFi</span>
             <span className={`px-1.5 py-0.5 text-xs font-semibold rounded-full transition-colors duration-300 ${
               isDark 
                 ? 'bg-yellow-500 text-black' 
@@ -204,26 +222,26 @@ const Sidebar: React.FC = () => {
           <NavLink
             to="/profile"
             className={({ isActive }) =>
-              `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+              `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
           >
-            <HiOutlineUser className="w-7 h-7 sm:w-7 sm:h-7" />
-            <span className="font-medium text-lg sm:text-lg">Profile</span>
+            <HiOutlineUser className="w-5.5 h-5.5 sm:w-7 sm:h-7" />
+            <span className="font-medium text-base sm:text-lg">Profile</span>
           </NavLink>
 
           <NavLink
             to="/settings"
             className={({ isActive }) =>
-              `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+              `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
           >
-            <HiOutlineCog className="w-7 h-7 sm:w-7 sm:h-7" />
-            <span className="font-medium text-lg sm:text-lg">Settings</span>
+            <HiOutlineCog className="w-5.5 h-5.5 sm:w-7 sm:h-7" />
+            <span className="font-medium text-base sm:text-lg">Settings</span>
           </NavLink>
         </nav>
       </div>
 
-      <div className="px-3 -mt-4 pb-0 sm:px-4 sm:py-4 sm:absolute sm:bottom-0">
+      <div className="px-2 mt-4 pb-20 sm:px-4 sm:py-4 sm:absolute sm:bottom-0 sm:pb-4">
         <ProfileChooser/>
       </div>
     </div>

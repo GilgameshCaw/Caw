@@ -68,7 +68,6 @@ export const NewProfile: React.FC = () => {
     args:         [ useAddress! ],
     query: { enabled: !!useAddress }
   })
-console.log("BALANCE:", balance)
 
   // quote on‐chain L2 deposit fee
   const { data: quote, error,failureReason, fetchStatus } = useReadContract({
@@ -107,8 +106,8 @@ console.log("BALANCE:", balance)
     address: CAW_NAMES_MINTER_ADDRESS,
     args:         [CLIENT_ID, username, lzTokenAmount],
     disabled:     !quote || !address || !isValid || needsApproval,
-    onPending:    hash => console.log('tx pending', hash),
-    onSuccess:    hash => console.log('minted!', hash),
+    onPending:    hash => {},
+    onSuccess:    hash => {},
     onError:      err  => console.error(err),
   })
 
@@ -159,17 +158,16 @@ console.log("BALANCE:", balance)
                     value={username}
                     pattern="[A-Za-z0-9]*"
                     onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9]/g, ''))}
-                    className="w-full pl-10 pr-12 py-3 bg-black border border-white/20 rounded-full text-white placeholder-white/50 focus:outline-none focus:border-white/30 focus:bg-black transition-all duration-300"
+                    className="w-full pl-10 pr-12 py-3 bg-transparent border border-white/20 rounded-lg text-white placeholder-white/50 focus:outline-none focus:border-white/40 focus:bg-transparent transition-all duration-300"
                     placeholder="Enter your username"
                 />
                 <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
                     <div 
                         className="relative"
-                        onMouseEnter={() => setShowPricingModal(true)}
-                        onMouseLeave={() => setShowPricingModal(false)}
                     >
                         <button 
-                            className="text-gray-400 hover:text-white transition-colors duration-200"
+                            className="text-gray-400 hover:text-white hover:cursor-pointer transition-colors duration-200"
+                            onClick={() => setShowPricingModal(!showPricingModal)}
                         >
                             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -178,7 +176,14 @@ console.log("BALANCE:", balance)
                         
                         {/* Modal de precios */}
                         {showPricingModal && (
-                            <div className="absolute bottom-full right-0 mb-6 w-96 bg-black border border-white/20 rounded-lg p-6 shadow-xl z-50">
+                            <>
+                                {/* Overlay */}
+                                <div 
+                                    className="fixed inset-0 bg-black/50 z-40"
+                                    onClick={() => setShowPricingModal(false)}
+                                />
+                                {/* Modal */}
+                                <div className="fixed top-[35%] left-1/2 transform -translate-x-1/2 -translate-y-1/2 md:fixed md:top-[27%] md:left-[51%] md:-translate-x-1/2 md:-translate-y-1/2 mb-6 w-80 md:w-96 bg-black border border-white/20 rounded-lg p-6 shadow-xl z-50">
                                 <div className="text-sm font-medium text-center text-white mb-4">Username Pricing</div>
                                 <div className="space-y-3">
                                     <div className="flex justify-between text-xs items-center">
@@ -222,7 +227,8 @@ console.log("BALANCE:", balance)
                                         </div>
                                     </div>
                                 </div>
-                            </div>
+                                </div>
+                            </>
                         )}
                     </div>
                 </div>

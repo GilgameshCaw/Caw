@@ -26,7 +26,6 @@ const ProfileChooser: React.FC = () => {
   const selectedToken = activeToken;
 
   const hasHydrated = useTokenDataStore(s => s.hasHydrated);
-  console.log("tokens by address", hasHydrated, tokensByAddress)
 
   if (hasHydrated && !selectedToken)
     return (

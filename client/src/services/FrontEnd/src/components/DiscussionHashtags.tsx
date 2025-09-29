@@ -14,19 +14,20 @@ const DiscussionHashtags: React.FC = () => {
   ]
 
   return (
-    <div className="space-y-3">
+    <div className="flex justify-start">
+      <div className="space-y-3 w-full max-w-lg sm:max-w-2xl">
       {discussionTopics.map((topic, index) => (
         <div
           key={topic.tag}
-          className={`cursor-pointer p-3 rounded-lg transition-colors duration-200 group ${
+          className={`cursor-pointer p-4 rounded-lg transition-colors duration-200 group ${
             isDark 
               ? 'hover:bg-white/10' 
               : 'hover:bg-gray-200/50'
           }`}
         >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <span className={`font-medium transition-colors duration-200 ${
+            {/* Hashtag */}
+            <div className="mb-3">
+              <span className={`text-sm sm:text-lg font-semibold transition-colors duration-200 ${
                 isDark 
                   ? 'text-gray-300 group-hover:text-white' 
                   : 'text-gray-600 group-hover:text-black'
@@ -34,15 +35,17 @@ const DiscussionHashtags: React.FC = () => {
                 #{topic.tag}
               </span>
             </div>
-            <div className="flex items-center space-x-4">
-              <span className={`text-xs transition-colors duration-200 ${
+            
+            {/* Stats - horizontal on mobile, vertical layout on desktop */}
+            <div className="flex flex-row items-center justify-between space-x-2">
+              <span className={`text-sm transition-colors duration-200 ${
                 isDark 
                   ? 'text-gray-400 group-hover:text-gray-300' 
                   : 'text-gray-500 group-hover:text-gray-600'
               }`}>
                 {topic.participants} participants
               </span>
-              <span className={`text-xs transition-colors duration-200 ${
+              <span className={`text-sm transition-colors duration-200 mr-4 sm:ml-auto sm:mr-0 ${
                 isDark 
                   ? 'text-gray-400 group-hover:text-gray-300' 
                   : 'text-gray-500 group-hover:text-gray-600'
@@ -51,8 +54,8 @@ const DiscussionHashtags: React.FC = () => {
               </span>
             </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   )
 }

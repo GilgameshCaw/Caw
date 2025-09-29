@@ -56,14 +56,13 @@ export const useTokenDataStore = create<TokenDataStore>()(
         set(state => {
           const { [addressToRemove]: _, ...remainingTokens } = state.tokensByAddress;
 
-          console.log("remainingTokens:", remainingTokens, addressToRemove)
           return {
             tokensByAddress: remainingTokens,
           };
         }),
 
       setActiveTokenId: (tokenId) => set({ activeTokenId: Number(tokenId) }),
-      setLastAddress: (address) => {console.log("SETTING ADDRESS:::::::::::::::", address);set({ lastAddress: address })},
+      setLastAddress: (address) => set({ lastAddress: address }),
       removeActiveToken: () => set({ activeTokenId: undefined }),
 
       setCawonce: (tokenId, cawonce) =>
@@ -117,7 +116,6 @@ export const useTokenDataStore = create<TokenDataStore>()(
           const str = JSON.stringify(value, (_key, value) =>
             typeof value === 'bigint' ? value.toString() : value
           )
-          console.log("LOCAK SET ITEM:", name, str)
           localStorage.setItem(name, str)
         },
         removeItem: (name) => {

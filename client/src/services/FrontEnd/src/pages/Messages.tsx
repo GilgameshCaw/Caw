@@ -1,6 +1,7 @@
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { useState, useEffect, useRef } from 'react'
+import MobileBottomNavbar from '~/components/MobileBottomNavbar'
 import { 
   HiOutlineCog, 
   HiOutlineMail,
@@ -18,6 +19,7 @@ const MessagesPage: React.FC = () => {
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [messageSettings, setMessageSettings] = useState('Everyone')
+  const [activeBottomTab, setActiveBottomTab] = useState('messages')
   const [selectedUser, setSelectedUser] = useState<{name: string, handle: string, avatar: string} | null>(null)
   const [modalStep, setModalStep] = useState<'select' | 'compose'>('select')
   const [messageText, setMessageText] = useState('')
@@ -74,13 +76,10 @@ const MessagesPage: React.FC = () => {
     setShowChatOptionsMenu(false)
     switch (action) {
       case 'block-user':
-        console.log('Block user:', selectedConversation?.name)
         break
       case 'mute-notifications':
-        console.log('Mute notifications for:', selectedConversation?.name)
         break
       case 'report':
-        console.log('Report user:', selectedConversation?.name)
         break
       default:
         break
@@ -739,7 +738,7 @@ const MessagesPage: React.FC = () => {
             </div>
 
             {/* Chat Messages */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar-alt space-y-4 p-4 md:p-4 pt-32 md:pt-4 pb-20 md:pb-4">
+            <div className="flex-1 overflow-y-auto custom-scrollbar-alt space-y-4 p-4 md:p-4 pt-32 md:pt-4 pb-32 md:pb-4">
               {chatMessages.map((message) => (
                 <div
                   key={message.id}
@@ -767,8 +766,8 @@ const MessagesPage: React.FC = () => {
               ))}
             </div>
 
-            {/* Message Input - Fixed at bottom */}
-            <div className="flex-shrink-0 border-t border-white/10 p-2 md:p-4 fixed md:relative bottom-0 left-0 right-0 z-20 bg-black md:bg-transparent">
+            {/* Message Input - Fixed above navbar */}
+            <div className="flex-shrink-0 border-t border-white/10 px-1 py-3 md:p-4 fixed md:relative bottom-16 left-0 right-0 z-50 bg-black md:bg-transparent">
               <div className={`flex items-center rounded-full border transition-all duration-300 focus-within:ring-2 focus-within:ring-gray-500/30 ${
                 isDark 
                   ? 'bg-black border-white/20' 
@@ -812,7 +811,7 @@ const MessagesPage: React.FC = () => {
                 <input
                   type="text"
                   placeholder="Start a new message"
-                  className={`flex-1 py-3 pr-12 bg-transparent border-none outline-none ${
+                  className={`flex-1 py-3 pr-4 md:pr-12 bg-transparent border-none outline-none ${
                     isDark 
                       ? 'text-white placeholder-gray-500' 
                       : 'text-black placeholder-gray-500'
@@ -820,7 +819,7 @@ const MessagesPage: React.FC = () => {
                 />
                 
                 {/* Send button */}
-                <button className={`p-2 rounded-full transition-all duration-200 cursor-pointer ${
+                <button className={`p-2 mr-0 md:mr-1 rounded-full transition-all duration-200 cursor-pointer flex-shrink-0 ${
                   isDark 
                     ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10' 
                     : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50'
@@ -1101,7 +1100,6 @@ const MessagesPage: React.FC = () => {
                   <button
                     onClick={() => {
                       // Handle send message logic here
-                      console.log('Sending message to', selectedUser.name, ':', messageText)
                       closeModal()
                     }}
                     className="w-full py-2 px-6 rounded-full font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-all duration-300"
@@ -1221,7 +1219,6 @@ const MessagesPage: React.FC = () => {
               <button
                 onClick={() => {
                   // Handle save logic here
-                  console.log('Saving message settings:', messageSettings)
                   setIsSettingsModalOpen(false)
                 }}
                 className="px-6 py-2 rounded-full font-medium bg-yellow-500 hover:bg-yellow-600 text-black transition-all duration-300 cursor-pointer"
@@ -1232,6 +1229,13 @@ const MessagesPage: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Mobile Bottom Navbar */}
+      <MobileBottomNavbar 
+        activeTab={activeBottomTab}
+        onTabChange={(tab) => setActiveBottomTab(tab)}
+        isVisible={true}
+      />
     </MainLayout>
   )
 }

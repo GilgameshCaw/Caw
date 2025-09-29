@@ -48,7 +48,7 @@ const MobilePostModal: React.FC<MobilePostModalProps> = ({ isOpen, onClose }) =>
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-50 bg-black flex flex-col">
+    <div className="fixed inset-0 z-30 bg-black flex flex-col" style={{ top: '64px' }}>
       {/* Header */}
       <div className={`flex items-center justify-between p-4 border-b transition-all duration-300 ${
         isDark ? 'border-white/10' : 'border-gray-200'

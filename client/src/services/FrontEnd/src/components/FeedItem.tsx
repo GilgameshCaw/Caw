@@ -386,7 +386,30 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
             }`}
             style={{
               top: optionsMenuRef.current ? 
-                `${optionsMenuRef.current.getBoundingClientRect().bottom + 8}px` : '20px',
+                (() => {
+                  const rect = optionsMenuRef.current.getBoundingClientRect()
+                  const isMobile = window.innerWidth < 640 // sm breakpoint
+                  const navbarHeight = 80 // Height of mobile bottom navbar
+                  const modalHeight = 400 // Approximate modal height
+                  const bottomPosition = rect.bottom + 8
+                  
+                  if (isMobile) {
+                    // Check if modal would overlap with mobile navbar
+                    if ((bottomPosition + modalHeight) > (window.innerHeight - navbarHeight)) {
+                      // Try positioning above the button
+                      const topPosition = rect.top - modalHeight - 8
+                      
+                      // If it would go off-screen at the top, center it in viewport
+                      if (topPosition < 20) {
+                        return `${Math.max(20, (window.innerHeight - navbarHeight - modalHeight) / 2)}px`
+                      }
+                      
+                      return `${topPosition}px`
+                    }
+                  }
+                  
+                  return `${bottomPosition}px`
+                })() : '20px',
               right: optionsMenuRef.current ? 
                 `${window.innerWidth - optionsMenuRef.current.getBoundingClientRect().right}px` : '16px'
             }}

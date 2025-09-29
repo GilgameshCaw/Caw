@@ -8,6 +8,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useModalStore } from '~/store/modalStore'
 import { HiPencil, HiX, HiCamera, HiGlobe, HiLocationMarker, HiOutlineMail, HiDotsHorizontal } from 'react-icons/hi'
+import MobileBottomNavbar from '~/components/MobileBottomNavbar'
 
 type ProfileTab = 'profile' | 'profile-likes' | 'profile-replies' | 'profile-media'
 
@@ -16,6 +17,7 @@ export const Profile: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ProfileTab>('profile')
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [isFollowing, setIsFollowing] = useState(false)
+  const [activeBottomTab, setActiveBottomTab] = useState('profile')
   const { isDark } = useTheme()
   const activeToken = useActiveToken()
   const { openModal } = useModalStore()
@@ -66,7 +68,6 @@ export const Profile: React.FC = () => {
     reader.readAsDataURL(file)
 
     // TODO: Backend developer - Upload image to server
-    console.log(`Selected ${type} image:`, file.name, file.size, file.type)
   }
 
   const triggerFileInput = (type: 'avatar' | 'cover') => {
@@ -92,7 +93,6 @@ export const Profile: React.FC = () => {
   ]
 
   // Debug theme
-  console.log('Profile - isDark:', isDark, 'displayUsername:', displayUsername)
 
   return (
     <MainLayout>
@@ -124,22 +124,88 @@ export const Profile: React.FC = () => {
         <div className={`pt-24 pb-6 px-6 transition-all duration-300 ${
           isDark ? 'bg-black text-white' : 'bg-white text-black'
         }`}>
-          {/* Layout principal: 2 columnas */}
-          <div className="flex justify-between items-start">
+          {/* Layout principal: 1 columna en móvil, 2 columnas en desktop */}
+          <div className="flex flex-col sm:flex-row sm:justify-between items-start">
             {/* Columna izquierda: Username, Joined, Stats */}
-            <div className="flex-1">
+            <div className="flex-1 w-full sm:w-auto">
               {/* Username y Joined */}
               <div className="mb-4">
-                <h1 className={`text-2xl font-bold transition-all duration-300 ${
-                  isDark ? 'text-white' : 'text-black'
-                }`}>
-                  @{displayUsername}
-                </h1>
-                <p className={`text-sm mt-1 transition-all duration-300 ${
-                  isDark ? 'text-gray-400' : 'text-gray-600'
-                }`}>
-                  Joined January 2024
-                </p>
+                <div className="flex justify-between items-start">
+                  <div>
+                    <h1 className={`text-2xl font-bold transition-all duration-300 ${
+                      isDark ? 'text-white' : 'text-black'
+                    }`}>
+                      @{displayUsername}
+                    </h1>
+                    <p className={`text-sm mt-1 transition-all duration-300 ${
+                      isDark ? 'text-gray-400' : 'text-gray-600'
+                    }`}>
+                      Joined January 2024
+                    </p>
+                  </div>
+                  
+                  {/* Edit Button - Solo visible en móvil */}
+                  <div className="sm:hidden">
+                    {isOwnProfile ? (
+                      <button 
+                        onClick={() => setIsEditModalOpen(true)}
+                        className={`px-4 py-2 rounded-full font-semibold border transition-all duration-200 ${
+                          isDark 
+                            ? 'border-white/60 text-white hover:bg-white hover:text-black' 
+                            : 'border-black/60 text-black hover:bg-black hover:text-white'
+                        }`}
+                      >
+                        <HiPencil className="w-4 h-4 inline mr-2" />
+                        Edit Profile
+                      </button>
+                    ) : (
+                      <div className="flex flex-col space-y-3">
+                        <button 
+                          onClick={() => setIsFollowing(!isFollowing)}
+                          className={`px-8 py-2 rounded-full font-semibold border transition-all duration-200 ${
+                            isFollowing
+                              ? 'border-white bg-white text-black hover:bg-white/90'
+                              : 'border-white text-white hover:bg-white hover:text-black'
+                          }`}
+                        >
+                          {isFollowing ? 'Following' : 'Follow'}
+                        </button>
+                        
+                        <div className="flex justify-center space-x-2">
+                          <button 
+                            onClick={() => {
+                              const recipientData = {
+                                id: '1',
+                                username: displayUsername,
+                                tokenId: 1
+                              }
+                              openModal('message', recipientData)
+                            }}
+                            className={`p-2 rounded-full border transition-all duration-200 cursor-pointer hover:bg-white/10 ${
+                              isDark 
+                                ? 'border-white/60 text-white hover:bg-white/10' 
+                                : 'border-black/60 text-black hover:bg-black/10'
+                            }`}
+                            title="Send Message"
+                          >
+                            <HiOutlineMail className="w-5 h-5" />
+                          </button>
+                          
+                          <button 
+                            className={`p-2 rounded-full border transition-all duration-200 cursor-pointer hover:bg-white/10 ${
+                              isDark 
+                                ? 'border-white/60 text-white hover:bg-white/10' 
+                                : 'border-black/60 text-black hover:bg-black/10'
+                            }`}
+                            title="More options"
+                          >
+                            <HiDotsHorizontal className="w-5 h-5" />
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
 
               {/* Stats - Alineadas horizontalmente */}
@@ -183,7 +249,7 @@ export const Profile: React.FC = () => {
               </div>
 
               {/* Bio - Arriba de location y website, puede estirarse hacia la derecha */}
-              <div className="mb-4 pr-6">
+              <div className="mb-4 w-full sm:pr-6 sm:max-w-lg">
                 <p className={`text-base leading-relaxed transition-all duration-300 ${
                   isDark ? 'text-white' : 'text-black'
                 }`}>
@@ -223,14 +289,14 @@ export const Profile: React.FC = () => {
               </div>
             </div>
 
-            {/* Columna derecha: Solo Edit Button */}
-            <div className="ml-6 flex flex-col items-end">
+            {/* Columna derecha: Solo Edit Button - Solo visible en desktop */}
+            <div className="hidden sm:flex mt-4 sm:mt-0 sm:ml-6 flex-col items-end">
               {/* Edit Button */}
               <div>
                 {isOwnProfile ? (
                   <button 
                     onClick={() => setIsEditModalOpen(true)}
-                    className={`px-4 py-2 rounded-full font-semibold border transition-all duration-200 ${
+                    className={`px-4 py-2 w-full sm:w-auto rounded-full font-semibold border transition-all duration-200 ${
                       isDark 
                         ? 'border-white/60 text-white hover:bg-white hover:text-black' 
                         : 'border-black/60 text-black hover:bg-black hover:text-white'
@@ -591,13 +657,12 @@ export const Profile: React.FC = () => {
                   // TODO: Backend developer - Connect to API for saving profile data
                   // Only save: description, location, website (name is minted and cannot be changed)
                   // Also handle image uploads: avatarPreview and coverPreview
-                  console.log('Saving profile data:', {
-                    description: formData.description,
-                    location: formData.location,
-                    website: formData.website,
-                    avatarImage: avatarPreview ? 'Image selected' : 'No image',
-                    coverImage: coverPreview ? 'Image selected' : 'No image'
-                  })
+                  // Saving profile data
+                  // description: formData.description,
+                  // location: formData.location,
+                  // website: formData.website,
+                  // avatarImage: avatarPreview ? 'Image selected' : 'No image',
+                  // coverImage: coverPreview ? 'Image selected' : 'No image'
                   setIsEditModalOpen(false)
                 }}
                 className="px-6 py-2 rounded-full font-medium bg-yellow-500 hover:bg-yellow-600 text-black transition-all duration-300"
@@ -608,6 +673,13 @@ export const Profile: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Mobile Bottom Navbar */}
+      <MobileBottomNavbar 
+        activeTab={activeBottomTab}
+        onTabChange={(tab) => setActiveBottomTab(tab)}
+        isVisible={true}
+      />
     </MainLayout>
   )
 }

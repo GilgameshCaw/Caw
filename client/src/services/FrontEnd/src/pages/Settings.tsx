@@ -1,58 +1,102 @@
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { useState } from 'react'
+import MobileBottomNavbar from '~/components/MobileBottomNavbar'
 
 // Settings page component with clean, modern design
 export const SettingsPage: React.FC = () => {
-  const { isDark, toggleTheme } = useTheme()
+  const { isDark, toggle: toggleTheme } = useTheme()
   const [searchQuery, setSearchQuery] = useState('')
+  const [activeBottomTab, setActiveBottomTab] = useState('settings')
+  const [expandedSections, setExpandedSections] = useState<string[]>([])
 
-  // Settings menu items in the specified order
+  // Function to toggle section expansion
+  const toggleSection = (sectionId: string) => {
+    setExpandedSections(prev => 
+      prev.includes(sectionId) 
+        ? prev.filter(id => id !== sectionId)
+        : [...prev, sectionId]
+    )
+  }
+
+  // Settings menu items with sub-items
   const settingsItems = [
     {
       id: 'account',
       title: 'Account',
       description: 'Manage your account settings',
       hasArrow: true,
-      onClick: () => console.log('Account clicked')
+      onClick: () => toggleSection('account'),
+      subItems: [
+        { id: 'profile', title: 'Profile Information', onClick: () => {} },
+        { id: 'privacy', title: 'Privacy Settings', onClick: () => {} },
+        { id: 'security', title: 'Security & Authentication', onClick: () => {} }
+      ]
     },
     {
       id: 'notifications',
       title: 'Notifications',
       description: 'Configure notification preferences',
       hasArrow: true,
-      onClick: () => console.log('Notifications clicked')
+      onClick: () => toggleSection('notifications'),
+      subItems: [
+        { id: 'push', title: 'Push Notifications', onClick: () => {} },
+        { id: 'email', title: 'Email Notifications', onClick: () => {} },
+        { id: 'mobile', title: 'Mobile Alerts', onClick: () => {} },
+        { id: 'desktop', title: 'Desktop Notifications', onClick: () => {} }
+      ]
     },
     {
       id: 'themes',
       title: 'Themes',
       description: 'Customize appearance and themes',
       hasArrow: true,
-      onClick: () => {
-        toggleTheme()
-        console.log('Theme toggled')
-      }
+      onClick: () => toggleSection('themes'),
+      subItems: [
+        { id: 'dark-mode', title: 'Dark Mode', onClick: () => toggleTheme() },
+        { id: 'light-mode', title: 'Light Mode', onClick: () => toggleTheme() },
+        { id: 'auto', title: 'Auto (System)', onClick: () => {} },
+        { id: 'custom-colors', title: 'Custom Colors', onClick: () => {} }
+      ]
     },
     {
       id: 'languages',
       title: 'Languages',
       description: 'Select your preferred language',
       hasArrow: true,
-      onClick: () => console.log('Languages clicked')
+      onClick: () => toggleSection('languages'),
+      subItems: [
+        { id: 'english', title: 'English', onClick: () => {} },
+        { id: 'spanish', title: 'Spanish', onClick: () => {} },
+        { id: 'french', title: 'French', onClick: () => {} },
+        { id: 'german', title: 'German', onClick: () => {} },
+        { id: 'chinese', title: 'Chinese', onClick: () => {} },
+        { id: 'japanese', title: 'Japanese', onClick: () => {} },
+        { id: 'italian', title: 'Italian', onClick: () => {} },
+        { id: 'arabic', title: 'Arabic', onClick: () => {} }
+      ]
     },
     {
       id: 'resources',
       title: 'Resources',
       description: 'Additional resources and tools',
       hasArrow: true,
-      onClick: () => console.log('Resources clicked')
+      onClick: () => toggleSection('resources'),
+      subItems: [
+        { id: 'documentation', title: 'Documentation', onClick: () => {} },
+        { id: 'api', title: 'API Reference', onClick: () => {} },
+        { id: 'community', title: 'Community Forums', onClick: () => {} }
+      ]
     },
     {
       id: 'help',
       title: 'Help',
       description: 'Get help and support',
       hasArrow: true,
-      onClick: () => console.log('Help clicked')
+      onClick: () => toggleSection('help'),
+      subItems: [
+        { id: 'faq', title: 'Frequently Asked Questions', onClick: () => {} }
+      ]
     }
   ]
 
@@ -114,44 +158,78 @@ export const SettingsPage: React.FC = () => {
 
         {/* Settings Menu */}
         <div className="space-y-0">
-          {filteredItems.map((item, index) => (
-            <div
-              key={item.id}
-              onClick={item.onClick}
-              className={`group cursor-pointer py-4 px-0 transition-all duration-200 hover:bg-gray-500/20`}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex-1">
-                  <h3 className={`font-normal text-base transition-colors duration-300 ${
-                    isDark ? 'text-white' : 'text-black'
-                  }`}>
-                    {item.title}
-                  </h3>
+          {filteredItems.map((item, index) => {
+            const isExpanded = expandedSections.includes(item.id)
+            
+            return (
+              <div key={item.id} className="border-b border-gray-800/30 last:border-b-0">
+                {/* Main Settings Item */}
+                <div
+                  onClick={item.onClick}
+                  className={`group cursor-pointer py-4 px-0 transition-all duration-200 hover:bg-gray-500/20`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1">
+                      <h3 className={`font-normal text-base transition-colors duration-300 ${
+                        isDark ? 'text-white' : 'text-black'
+                      }`}>
+                        {item.title}
+                      </h3>
+                    </div>
+                    
+                    {/* Arrow icon with rotation animation */}
+                    {item.hasArrow && (
+                      <div className={`ml-4 transition-all duration-300 ${
+                        isDark ? 'text-gray-400' : 'text-gray-500'
+                      } ${isExpanded ? 'rotate-90' : ''}`}>
+                        <svg 
+                          className="w-4 h-4" 
+                          fill="none" 
+                          stroke="currentColor" 
+                          viewBox="0 0 24 24"
+                        >
+                          <path 
+                            strokeLinecap="round" 
+                            strokeLinejoin="round" 
+                            strokeWidth={2} 
+                            d="M9 5l7 7-7 7" 
+                          />
+                        </svg>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                
-                {/* Arrow icon */}
-                {item.hasArrow && (
-                  <div className={`ml-4 transition-colors duration-300 ${
-                    isDark ? 'text-gray-400' : 'text-gray-500'
+
+                {/* Expandable Sub-Items */}
+                {item.subItems && (
+                  <div className={`overflow-hidden transition-all duration-300 ease-in-out ${
+                    isExpanded ? 'max-h-96 opacity-100' : 'max-h-0 opacity-0'
                   }`}>
-                    <svg 
-                      className="w-4 h-4" 
-                      fill="none" 
-                      stroke="currentColor" 
-                      viewBox="0 0 24 24"
-                    >
-                      <path 
-                        strokeLinecap="round" 
-                        strokeLinejoin="round" 
-                        strokeWidth={2} 
-                        d="M9 5l7 7-7 7" 
-                      />
-                    </svg>
+                    <div className="ml-4">
+                      {item.subItems.map((subItem) => (
+                        <button
+                          key={subItem.id}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            subItem.onClick()
+                          }}
+                          className={`cursor-pointer flex items-center px-4 py-3 w-full text-left transition-all duration-200 hover:bg-gray-500/20 ${
+                            isDark 
+                              ? 'text-gray-300 hover:text-white' 
+                              : 'text-gray-600 hover:text-black'
+                          }`}
+                        >
+                          <span className="text-sm font-normal">
+                            {subItem.title}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 )}
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
 
         {/* No results message */}
@@ -163,6 +241,13 @@ export const SettingsPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Mobile Bottom Navbar */}
+      <MobileBottomNavbar 
+        activeTab={activeBottomTab}
+        onTabChange={(tab) => setActiveBottomTab(tab)}
+        isVisible={true}
+      />
     </MainLayout>
   )
 }

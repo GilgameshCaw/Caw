@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { formatUnitsCompact } from '~/utils'
 import { useTokenDataStore }   from '~/store/tokenDataStore'
 import { apiFetch }            from '../api/client'
+import MobileBottomNavbar from '~/components/MobileBottomNavbar'
 
 type RawAction = {
   id:            number
@@ -34,6 +35,7 @@ export const PendingPage: React.FC = () => {
   const [actions, setActions] = useState<RawAction[]>([])
   const [users,   setUsers]   = useState<User[]>([])
   const [loading, setLoad]    = useState(true)
+  const [activeBottomTab, setActiveBottomTab] = useState('pending')
 
   useEffect(() => {
     if (!activeTokenId) {
@@ -122,6 +124,13 @@ export const PendingPage: React.FC = () => {
           )
         })}
       </ul>
+
+      {/* Mobile Bottom Navbar */}
+      <MobileBottomNavbar 
+        activeTab={activeBottomTab}
+        onTabChange={(tab) => setActiveBottomTab(tab)}
+        isVisible={true}
+      />
     </MainLayout>
   )
 }

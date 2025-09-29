@@ -17,11 +17,11 @@ const MainLayout = ({ children }: MainLayoutProps) => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   
   return (
-    <div className={`max-h-screen min-h-screen w-full max-w-[1050px] flex m-auto transition-all duration-300 ${
+    <div className={`min-h-screen w-full max-w-[1050px] flex m-auto transition-all duration-300 ${
       isDark ? 'bg-black' : 'bg-white'
     }`}>
       {/* Mobile Header */}
-      <div className={`md:hidden fixed top-0 left-0 right-0 z-[9999] flex items-center justify-center p-4 border-b w-screen overflow-hidden transition-all duration-300 ${
+      <div className={`md:hidden fixed top-0 left-0 right-0 z-50 flex items-center justify-center p-4 border-b w-screen overflow-hidden transition-all duration-300 ${
         isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'
       }`}>
         <button
@@ -53,7 +53,7 @@ const MainLayout = ({ children }: MainLayoutProps) => {
           className={`fixed left-0 top-0 h-full w-80 max-w-[90vw] transform transition-transform duration-300 ease-in-out ${
             isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
           } ${
-            isDark ? 'bg-black border-r border-white/20' : 'bg-white border-r border-gray-300'
+            isDark ? 'bg-black border-r border-white/5' : 'bg-white border-r border-gray-200'
           }`}
           onClick={(e) => e.stopPropagation()}
         >
@@ -73,7 +73,7 @@ const MainLayout = ({ children }: MainLayoutProps) => {
       {/* Main Content */}
       <main className={`w-full max-w-lg mr-2 md:ml-22 md:max-w-none transition-all duration-300 ${
         isDark ? 'bg-black text-white' : 'bg-white text-black'
-      } ${isMobileMenuOpen ? 'md:pt-0 pt-16' : 'pt-16 md:pt-0'}`}>
+      } ${isMobileMenuOpen ? 'md:pt-0 pt-16' : 'pt-16 md:pt-0'} pb-20 md:pb-0`}>
         <div className="p-3 md:pr-3">
           {children}
         </div>

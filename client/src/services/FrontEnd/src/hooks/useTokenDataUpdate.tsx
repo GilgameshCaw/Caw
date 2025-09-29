@@ -30,7 +30,6 @@ export default function useTokenDataUpdate() {
   const lastAddress = useTokenDataStore(s => s.lastAddress)
 
   const viewedAddress = (address ?? lastAddress) as Address | undefined
-  console.log("has address?", !!address, address ?? null, "viewedAddress:", viewedAddress ?? null)
 
   const { data: rawTokens, isError, error, isLoading, isLoadingError } = useReadContract({
     address: CAW_NAMES_ADDRESS,
@@ -52,7 +51,6 @@ export default function useTokenDataUpdate() {
   if (!!address && rawTokens && rawTokens.length > 0)
     setLastAddress(address)
 
-  console.log("TOKEN DATA FROM L1:", rawTokens, isError, error)
 
   const { data: l2TokenData, isLoading: balancesLoading  } = useReadContract({
     address: CAW_NAMES_L2_ADDRESS,
@@ -64,7 +62,6 @@ export default function useTokenDataUpdate() {
     },
     args: [(rawTokens ?? []).map((token) => Number(token.tokenId))],
   })
-  console.log("TOKEN DATA FROM L2:", l2TokenData, isError, error)
 
 
   // price fetch

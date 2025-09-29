@@ -56,7 +56,7 @@ const CommunityStats: React.FC = () => {
         >
           <div className="flex items-center space-x-3">
             <div className={`transition-colors duration-300 ${
-              isDark ? 'text-white' : 'text-black'
+              isDark ? 'text-yellow-500' : 'text-yellow-600'
             }`}>
               {stat.icon}
             </div>

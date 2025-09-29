@@ -1,10 +1,12 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { HiOutlineSearch } from 'react-icons/hi'
 import FeedItem from '~/components/FeedItem'
 import type { CawItem } from '~/types'
 import MobilePostModal from '~/components/MobilePostModal'
+import MobileSubMenu from '~/components/MobileSubMenu'
+import MobileBottomNavbar from '~/components/MobileBottomNavbar'
 import { useAccount } from "wagmi"
 import { useConnectModal } from "@rainbow-me/rainbowkit"
 import { HiOutlinePlus } from "react-icons/hi"
@@ -14,8 +16,30 @@ const BookmarksPage: React.FC = () => {
   const { isDark } = useTheme()
   const [searchQuery, setSearchQuery] = useState('')
   const [isMobilePostModalOpen, setIsMobilePostModalOpen] = useState(false)
+  const [isSubMenuOpen, setIsSubMenuOpen] = useState(false)
+  const [activeBottomTab, setActiveBottomTab] = useState('bookmarks')
+  const [isScrolling, setIsScrolling] = useState(false)
   const { isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
+
+  // Handle scroll detection for transparency effect
+  useEffect(() => {
+    let scrollTimer: NodeJS.Timeout
+
+    const handleScroll = () => {
+      setIsScrolling(true)
+      clearTimeout(scrollTimer)
+      scrollTimer = setTimeout(() => {
+        setIsScrolling(false)
+      }, 150)
+    }
+
+    window.addEventListener('scroll', handleScroll)
+    return () => {
+      window.removeEventListener('scroll', handleScroll)
+      clearTimeout(scrollTimer)
+    }
+  }, [])
 
   // Mock bookmarked posts data - using CawItem format
   const bookmarkedPosts: CawItem[] = [
@@ -169,8 +193,10 @@ const BookmarksPage: React.FC = () => {
       {/* Floating Action Button - Mobile only */}
       <div className="md:hidden fixed bottom-20 right-12 z-30 transform-none">
         <button
-          onClick={isConnected ? () => setIsMobilePostModalOpen(true) : openConnectModal}
-          className="w-14 h-14 bg-yellow-500 hover:bg-yellow-400 text-black rounded-full shadow-lg hover:shadow-xl transition-all duration-200 flex items-center justify-center"
+          onClick={isConnected ? () => setIsSubMenuOpen(true) : openConnectModal}
+          className={`w-14 h-14 bg-yellow-500 hover:bg-yellow-400 text-black rounded-full shadow-lg hover:shadow-xl transition-all duration-200 flex items-center justify-center ${
+            isScrolling ? 'opacity-60' : 'opacity-100'
+          }`}
         >
           {isConnected ? (
             <HiOutlinePlus className="w-6 h-6" />
@@ -180,10 +206,27 @@ const BookmarksPage: React.FC = () => {
         </button>
       </div>
 
+      {/* Mobile Submenu */}
+      <MobileSubMenu
+        isOpen={isSubMenuOpen}
+        onClose={() => setIsSubMenuOpen(false)}
+        onPostClick={() => setIsMobilePostModalOpen(true)}
+        onVoiceRoomClick={() => {
+          // Voice Room functionality placeholder
+        }}
+      />
+
       {/* Mobile Post Modal */}
       <MobilePostModal 
         isOpen={isMobilePostModalOpen}
         onClose={() => setIsMobilePostModalOpen(false)}
+      />
+
+      {/* Mobile Bottom Navbar */}
+      <MobileBottomNavbar 
+        activeTab={activeBottomTab}
+        onTabChange={(tab) => setActiveBottomTab(tab)}
+        isVisible={!isMobilePostModalOpen}
       />
     </MainLayout>
   )

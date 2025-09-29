@@ -17,14 +17,14 @@ export function Tabs<T extends string>({ tabs, active, onChange }: Props<T>) {
   const { isDark } = useTheme()
   
   return (
-    <div className={`flex justify-center sm:justify-center border-b transition-all duration-300 ${
+    <div className={`flex justify-center sm:justify-center space-x-0 sm:space-x-0 border-b transition-all duration-300 ${
       isDark ? 'border-white/20' : 'border-gray-300'
     }`}>
       {tabs.map(t => (
         <button
           key={t.id}
           onClick={() => onChange(t.id)}
-          className={`py-4 px-8 sm:flex-1 text-center font-medium text-lg transition-all duration-200 cursor-pointer ${
+          className={`py-4 px-6 sm:px-8 sm:flex-1 text-center font-medium text-xl sm:text-lg transition-all duration-200 cursor-pointer flex-1 sm:flex-1 ${
             t.id === active
               ? `${isDark 
                   ? 'text-white border-white' 
