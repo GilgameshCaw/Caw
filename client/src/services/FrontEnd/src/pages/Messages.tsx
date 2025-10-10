@@ -12,7 +12,7 @@ import {
   HiOutlineExclamation,
   HiOutlineShieldCheck
 } from 'react-icons/hi'
-import { useCurrentUser } from '~/hooks/useCurrentUser'
+import { useTokenDataStore, useActiveToken } from '~/store/tokenDataStore'
 import {
   useXmtpIdentity,
   useConversations,
@@ -23,7 +23,8 @@ import { formatDistanceToNow } from 'date-fns'
 
 const MessagesPage: React.FC = () => {
   const { isDark } = useTheme()
-  const { currentUser } = useCurrentUser()
+  const activeToken = useActiveToken()
+  const currentUser = activeToken ? { id: activeToken.tokenId, username: activeToken.username } : null
   const [isNewMessageModalOpen, setIsNewMessageModalOpen] = useState(false)
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
