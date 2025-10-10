@@ -14,6 +14,7 @@ import searchRouter from './routes/search'
 import bookmarksRouter from './routes/bookmarks'
 import scheduledRouter from './routes/scheduled'
 import notificationsRouter from './routes/notifications'
+import xmtpRouter from './routes/xmtp'
 
 /**
  * natstat: build and configure Express app
@@ -59,6 +60,7 @@ function createApp() {
   app.use('/api/bookmarks', bookmarksRouter)
   app.use('/api/scheduled', scheduledRouter)
   app.use('/api/notifications', notificationsRouter)
+  app.use('/api/xmtp', xmtpRouter)
 
   return app
 }

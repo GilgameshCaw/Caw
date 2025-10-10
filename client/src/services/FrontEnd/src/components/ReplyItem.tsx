@@ -40,6 +40,11 @@ const ReplyItem: React.FC<{ item: CawItem }> = ({ item }) => {
   const handleLike = async (event: React.MouseEvent) => {
     if (!activeTokenId || busyLike) return
     event.preventDefault()
+
+    // Don't allow interactions with pending or failed caws
+    if (item.status === 'PENDING' || item.status === 'FAILED') {
+      return
+    }
     setBusyLike(true)
     try {
       await signAndSubmit({
@@ -81,7 +86,9 @@ const ReplyItem: React.FC<{ item: CawItem }> = ({ item }) => {
 
   return (
     <Link to={`/caws/${item.id}`} className="block">
-      <div className="p-4 transition-all duration-300 hover:bg-gray-500/5 cursor-pointer">
+      <div className={`p-4 transition-all duration-300 hover:bg-gray-500/5 cursor-pointer ${
+        (item.status === 'PENDING' || item.status === 'FAILED') ? 'opacity-60' : ''
+      }`}>
         {/* Reply Layout - Avatar left, content right */}
         <div className="flex items-start space-x-3">
           {/* Avatar - Left side, positioned for vertical line connection */}
@@ -118,6 +125,11 @@ const ReplyItem: React.FC<{ item: CawItem }> = ({ item }) => {
               }`}>
                 · {Math.floor(Math.random() * 24) + 1}h
               </span>
+              {item.status === 'PENDING' && (
+                <span className="ml-2 px-2 py-0.5 text-xs bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 rounded-full">
+                  Pending
+                </span>
+              )}
             </div>
             
             {/* Post content */}
@@ -210,14 +222,14 @@ const ReplyItem: React.FC<{ item: CawItem }> = ({ item }) => {
               </button>
 
               {/* Views */}
-              <button 
+              <button
                 className={`flex items-center space-x-2 transition-colors duration-300 cursor-pointer ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
                 title="Views"
               >
                 <HiOutlineEye className="w-5 h-5" />
-                <span className="text-sm">{Math.floor(Math.random() * 1000) + 100}</span>
+                <span className="text-sm">{item.viewCount || 0}</span>
               </button>
             </div>
           </div>

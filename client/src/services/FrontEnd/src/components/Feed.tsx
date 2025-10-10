@@ -1,5 +1,5 @@
 // src/services/FrontEnd/src/components/Feed.tsx
-import React, { useEffect, useState, useCallback } from 'react'
+import React, { useEffect, useState, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import FeedItem from './FeedItem'
 import { apiFetch } from '../api/client'
@@ -20,7 +20,11 @@ type FeedResponse = {
   nextCursor?: number
 }
 
-const Feed: React.FC<Props> = ({ filter, username, apiEndpoint }) => {
+export interface FeedRef {
+  refresh: () => void
+}
+
+const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref) => {
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const pendingPosts = usePendingPostsStore(s => s.pendingPosts)
   const { isDark } = useTheme()
@@ -29,6 +33,16 @@ const Feed: React.FC<Props> = ({ filter, username, apiEndpoint }) => {
   const [hasMore,    setHasMore]    = useState(true)
   const [loading,    setLoading]    = useState(false)
   const [error,      setError]      = useState<string>()
+
+  // Expose refresh method via ref
+  useImperativeHandle(ref, () => ({
+    refresh: () => {
+      setItems([])
+      setNextCursor(undefined)
+      setHasMore(true)
+      loadPage(true)
+    }
+  }), [])
 
   // Track views for visible caws
   const visibleCawIds = items.map(item => item.id).filter(id => id != null)
@@ -45,7 +59,7 @@ const Feed: React.FC<Props> = ({ filter, username, apiEndpoint }) => {
     // Use custom API endpoint if provided (for hashtag feeds)
     if (apiEndpoint) {
       const params = new URLSearchParams()
-      if (nextCursor != null) {
+      if (cursorToUse != null) {
         // Use 'offset' for search endpoints, 'cursor' for others
         const paramName = apiEndpoint.includes('/search') ? 'offset' : 'cursor'
         params.set(paramName, String(cursorToUse))
@@ -185,7 +199,9 @@ const Feed: React.FC<Props> = ({ filter, username, apiEndpoint }) => {
       {!hasMore && <div className="py-4 text-center text-gray-500">You've reached the end.</div>}
     </div>
   )
-}
+})
+
+Feed.displayName = 'Feed'
 
 export default Feed
 

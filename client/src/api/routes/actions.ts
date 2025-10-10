@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
+import { processHashtagsForCaw } from '../../tools/hashtags'
 
 const router = Router()
 
@@ -79,8 +80,25 @@ router.post('/', async (req, res) => {
         })
         textContent = textContent.replace(/\n{3,}/g, '\n\n').trim()
 
+        // For replies, find the parent caw ID
+        let originalCawId: number | undefined
+        if (data.receiverId && data.receiverCawonce) {
+          const parentCaw = await prisma.caw.findFirst({
+            where: {
+              userId: data.receiverId,
+              cawonce: data.receiverCawonce
+            }
+          })
+          if (parentCaw) {
+            originalCawId = parentCaw.id
+            console.log(`Found parent caw ID ${originalCawId} for reply`)
+          } else {
+            console.log(`Warning: Parent caw not found for receiverId ${data.receiverId}, receiverCawonce ${data.receiverCawonce}`)
+          }
+        }
+
         // Create the pending caw
-        await prisma.caw.upsert({
+        const caw = await prisma.caw.upsert({
           where: {
             userId_cawonce: {
               userId: data.senderId,
@@ -88,21 +106,35 @@ router.post('/', async (req, res) => {
             }
           },
           update: {
-            pending: true // If it already exists, just mark as pending
+            status: 'PENDING', // If it already exists, mark as pending
+            originalCawId: originalCawId || null, // Update originalCawId for replies
+            updatedAt: new Date()
           },
           create: {
             userId: data.senderId,
             cawonce: data.cawonce,
             content: textContent,
             action: 'CAW',
-            pending: true, // Mark as pending
+            status: 'PENDING', // Mark as pending
+            originalCawId: originalCawId || null, // Set originalCawId for replies
             imageData: imageUrls.length > 0 ? `urls:${imageUrls.join('|||')}` : null,
             hasImage: imageUrls.length > 0,
             videoData: videoUrls.length > 0 ? videoUrls.join('|||') : null,
             hasVideo: videoUrls.length > 0
           }
         })
-        console.log('Successfully created optimistic pending caw')
+
+        console.log(`Created/Updated pending caw: ID=${caw.id}, userId=${caw.userId}, cawonce=${caw.cawonce}, status=${caw.status}`)
+
+        // Process hashtags for the new caw
+        try {
+          await processHashtagsForCaw(caw.id, textContent)
+          console.log(`Processed hashtags for caw ${caw.id}`)
+        } catch (err) {
+          console.error(`Failed to process hashtags for caw ${caw.id}:`, err)
+          // Don't fail the request if hashtag processing fails
+        }
+        console.log('Successfully created optimistic pending caw with ID:', caw.id)
       } catch (cawErr) {
         console.error('Failed to create optimistic pending caw:', cawErr)
         // Continue even if optimistic caw creation fails
@@ -180,6 +212,26 @@ router.post('/', async (req, res) => {
         signedTx: signature
       }
     })
+    console.log(`Created TxQueue entry ${txQueueEntry.id} for action type ${data.actionType}, senderId ${data.senderId}, cawonce ${data.cawonce}`)
+
+    // Verify pending caw was created if this is a CAW action
+    if (data.actionType === 0 || data.actionType === 'caw') {
+      const pendingCaw = await prisma.caw.findUnique({
+        where: {
+          userId_cawonce: {
+            userId: data.senderId,
+            cawonce: data.cawonce
+          }
+        }
+      })
+
+      if (pendingCaw) {
+        console.log(`✅ Verified pending caw exists: ID ${pendingCaw.id}, status ${pendingCaw.status}`)
+      } else {
+        console.error(`❌ WARNING: Pending caw NOT found after creation for userId ${data.senderId}, cawonce ${data.cawonce}`)
+      }
+    }
+
     res.status(201).json({ status: 'queued', txQueueId: txQueueEntry.id })
   } catch (err: any) {
     console.error('POST /api/actions error', err)

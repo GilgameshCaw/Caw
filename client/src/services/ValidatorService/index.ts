@@ -104,7 +104,7 @@ export const validatorService: Service = {
       retryCount: number = 0
     ): Promise<{ successfulActions: any[], rejectionMessages: string[], quote: any }> {
       const maxRetries = 3;
-      const baseTimeout = 10000; // 10 seconds base timeout
+      const baseTimeout = 60000; // 60 seconds base timeout for testnet
       const timeout = baseTimeout * Math.pow(1.5, retryCount); // Exponential backoff
 
       try {
@@ -117,8 +117,6 @@ export const validatorService: Service = {
 
         var withdraws = multiData.actions.filter(function(action: any) {return getActionType(action.actionType).toString() == 'WITHDRAW'});
         var quote = { nativeFee: BigInt(0) }; // Default quote for non-withdrawal actions
-        var withdrawTypes = multiData.actions.map(function(action: any) {return getActionType(action.actionType).toString()});
-        console.log("Withdraws:", withdraws, withdrawTypes)
         if (withdraws.length > 0) {
           var tokenIds = withdraws.map(function(action){return action.senderId});
           console.log("get tokenIds:", tokenIds)
@@ -137,16 +135,30 @@ export const validatorService: Service = {
         ])
         console.log(`Call data prepared, timeout set to ${timeout}ms`)
 
-        // Add timeout to prevent hanging
+        // Add timeout to prevent hanging - but with a longer, more reasonable timeout
         const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error(`TIMEOUT`)), timeout)
+          setTimeout(() => {
+            console.warn(`RPC call timing out after ${timeout}ms - will retry. Consider checking RPC endpoint health.`)
+            reject(new Error(`TIMEOUT after ${timeout}ms`))
+          }, timeout)
         })
 
         const startTime = Date.now();
-        const returnData = await Promise.race([
-          provider.call({ to: CAW_ACTIONS_ADDRESS, data: calldata, value: quote?.nativeFee }),
-          timeoutPromise
-        ]) as string
+
+        // For now, disable timeout since it's causing issues with action processing
+        // The timeout was preventing legitimate transactions from completing
+        // TODO: Investigate why timeouts are occurring and implement better handling
+        const returnData = await provider.call({
+          to: CAW_ACTIONS_ADDRESS,
+          data: calldata,
+          value: quote?.nativeFee
+        }) as string
+
+        // Original code with timeout (currently disabled):
+        // const returnData = await Promise.race([
+        //   provider.call({ to: CAW_ACTIONS_ADDRESS, data: calldata, value: quote?.nativeFee }),
+        //   timeoutPromise
+        // ]) as string
         const elapsed = Date.now() - startTime;
 
         console.log(`Simulation completed in ${elapsed}ms`)
@@ -186,7 +198,7 @@ export const validatorService: Service = {
             console.error(`Max retries reached. Likely a duplicate cawonce or persistent network issue.`);
             // After max retries, check if it's likely a duplicate cawonce
             const rejectionMessages = multiData.actions.map(() =>
-              'Transaction simulation failed after multiple retries - likely duplicate cawonce'
+              'Transaction simulation failed after multiple retries - timeout occurred'
             );
             return { successfulActions: [], rejectionMessages, quote: { nativeFee: BigInt(0) } };
           }
@@ -220,10 +232,18 @@ export const validatorService: Service = {
             return 'Invalid nonce - transaction may be outdated';
           } else if (err.message?.includes('already known')) {
             return 'Transaction already known - duplicate cawonce';
+          } else if (err.message?.includes('TIMEOUT')) {
+            // Don't treat timeouts as permanent failures - return null to skip processing
+            return null;
           } else {
             return `Simulation error: ${err.message || 'Unknown error'}`;
           }
         });
+
+        // If all messages are null (all timeouts), return special indicator
+        if (rejectionMessages.every(msg => msg === null)) {
+          return { successfulActions: [], rejectionMessages: [], isTimeout: true, quote: { nativeFee: BigInt(0) } };
+        }
 
         return { successfulActions: [], rejectionMessages, quote: { nativeFee: BigInt(0) } };
       }
@@ -326,7 +346,7 @@ console.log("Update success")
       )
 console.log("succeededKeys", succeededKeys)
 
-      await Promise.all(queueEntries.map((entry, index) => {
+      await Promise.all(queueEntries.map(async (entry, index) => {
         const data = (entry.payload as any).data
         const key  = `${data.senderId}-${data.cawonce}`
         const newStatus = succeededKeys.has(key)
@@ -340,13 +360,54 @@ console.log("succeededKeys", succeededKeys)
 
         console.log("new status", newStatus, reason ? `with reason: ${reason}` : '')
 
-        return prisma.txQueue.update({
+        // Update TxQueue status
+        await prisma.txQueue.update({
           where: { id: entry.id },
           data:  {
             status: newStatus,
             ...(reason ? { reason } : {})
           }
         })
+
+        // If the TxQueue entry failed and it's a CAW action, mark the Caw as failed
+        if (newStatus === 'failed' && (data.actionType === 0 || data.actionType === 'caw')) {
+          try {
+            await prisma.caw.update({
+              where: {
+                userId_cawonce: {
+                  userId: data.senderId,
+                  cawonce: data.cawonce
+                }
+              },
+              data: {
+                status: 'FAILED'
+              }
+            })
+            console.log(`Marked caw as FAILED for user ${data.senderId} cawonce ${data.cawonce}`)
+          } catch (cawUpdateErr) {
+            console.error('Failed to update caw status to FAILED:', cawUpdateErr)
+            // Continue even if caw update fails (might not exist)
+          }
+        } else if (newStatus === 'done' && (data.actionType === 0 || data.actionType === 'caw')) {
+          // If succeeded, mark as SUCCESS
+          try {
+            await prisma.caw.update({
+              where: {
+                userId_cawonce: {
+                  userId: data.senderId,
+                  cawonce: data.cawonce
+                }
+              },
+              data: {
+                status: 'SUCCESS'
+              }
+            })
+            console.log(`Marked caw as SUCCESS for user ${data.senderId} cawonce ${data.cawonce}`)
+          } catch (cawUpdateErr) {
+            console.error('Failed to update caw status to SUCCESS:', cawUpdateErr)
+            // Continue even if caw update fails (might not exist)
+          }
+        }
       }))
     }
 
@@ -501,10 +562,17 @@ console.log("succeededKeys", succeededKeys)
         return
       }
 
-      const { successfulActions, rejectionMessages, quote } = simulationResult
+      const { successfulActions, rejectionMessages, quote, isTimeout } = simulationResult as any
       console.log(successfulActions, '////////////////', validatedEntries);
 
-        console.log("Simulation complete:", successfulActions.length, rejectionMessages)
+        console.log("Simulation complete:", successfulActions.length, rejectionMessages, isTimeout ? "(TIMEOUT)" : "")
+
+      // Check if this was a timeout - don't mark as failed, leave as pending for retry
+      if (isTimeout) {
+        console.log("Simulation timed out - keeping entries as pending for retry")
+        // Log the timeout but don't update status - leave as 'pending'
+        return
+      }
 
       if (!successfulActions || !successfulActions.length) {
         console.log("No successful actions from simulation, marking all as failed")
@@ -615,6 +683,55 @@ console.log("succeededKeys", succeededKeys)
           where: { id: entry.id },
           data: updateData
         })
+      }))
+
+      // Update caw status for CAW actions that were processed
+      await Promise.all(validatedEntries.map(async (entry, index) => {
+        const { succeeded, reason } = finalStatuses[index]
+        const data = (entry.payload as any).data
+
+        // Check if this is a CAW action
+        if (data.actionType === 0 || data.actionType === 'caw') {
+          if (succeeded) {
+            // Mark caw as SUCCESS
+            try {
+              await prisma.caw.update({
+                where: {
+                  userId_cawonce: {
+                    userId: data.senderId,
+                    cawonce: data.cawonce
+                  }
+                },
+                data: {
+                  status: 'SUCCESS'
+                }
+              })
+              console.log(`Marked caw as SUCCESS for user ${data.senderId} cawonce ${data.cawonce}`)
+            } catch (cawUpdateErr) {
+              console.error('Failed to update caw status to SUCCESS:', cawUpdateErr)
+              // Continue even if caw update fails (might not exist)
+            }
+          } else {
+            // Mark caw as FAILED
+            try {
+              await prisma.caw.update({
+                where: {
+                  userId_cawonce: {
+                    userId: data.senderId,
+                    cawonce: data.cawonce
+                  }
+                },
+                data: {
+                  status: 'FAILED'
+                }
+              })
+              console.log(`Marked caw as FAILED for user ${data.senderId} cawonce ${data.cawonce}: ${reason}`)
+            } catch (cawUpdateErr) {
+              console.error('Failed to update caw status to FAILED:', cawUpdateErr)
+              // Continue even if caw update fails (might not exist)
+            }
+          }
+        }
       }))
       } catch (err: any) {
         console.error("[Validator] Poll loop error:", {

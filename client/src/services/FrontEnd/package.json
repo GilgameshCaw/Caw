@@ -17,6 +17,7 @@
     "@reactuses/core": "^6.0.2",
     "@tanstack/react-query": "^5.81.5",
     "axios": "^1.7.9",
+    "date-fns": "^4.1.0",
     "framer-motion": "^11.14.1",
     "nuqs": "^2.4.3",
     "react": "^18.3.1",

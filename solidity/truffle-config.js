@@ -1,17 +1,21 @@
 var HDWalletProvider = require("@truffle/hdwallet-provider");
-var pems = [
-  // '0xREDACTED_PRIVATE_KEY', // gilgamesh
-  // HARD HAT:
-  // '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80', //hard hat #1
-  // '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d', //hard hat #2
-  // '0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6', //hard hat #3
-  '0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a', //hard hat #4
-  '0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba', //hard hat #5
-  '0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e', //hard hat #6
-  '0x4bbbf85ce3377467afe5d46f804f221813b2bb87f24d81f60f1fcdbf7cbf4356',
-  '0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97',
-  '0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6'
-];
+require('dotenv').config();
+
+// Load private keys from environment variable or use Hardhat defaults for development
+var pems = process.env.PRIVATE_KEYS
+  ? process.env.PRIVATE_KEYS.split(',')
+  : [
+      // Hardhat default test accounts (safe to use for local development)
+      '0x47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a',
+      '0x8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba',
+      '0x92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e',
+      '0x4bbbf85ce3377467afe5d46f804f221813b2bb87f24d81f60f1fcdbf7cbf4356',
+      '0xdbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97',
+      '0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6'
+    ];
+
+// Load Infura project ID from environment variable
+const infuraProjectId = process.env.INFURA_PROJECT_ID || 'YOUR_INFURA_PROJECT_ID';
 /**
  * Use this file to configure your truffle project. It's seeded with some
  * common settings for different networks and features like migrations,
@@ -104,7 +108,7 @@ module.exports = {
       provider: function() {
         return new HDWalletProvider(
           pems,
-          "https://sepolia.infura.io/v3/YOUR_INFURA_PROJECT_ID",
+          `https://sepolia.infura.io/v3/${infuraProjectId}`,
           // 'wss://sepolia.drpc.org',
           // "wss://sepolia.infura.io/ws/v3/YOUR_INFURA_PROJECT_ID",
           // 'https://eth-sepolia.public.blastapi.io',
@@ -131,7 +135,7 @@ module.exports = {
           // "https://sepolia.base.org",
           // "wss://base-sepolia.drpc.org",
           // https://base-sepolia.gateway.tenderly.com",
-          "wss://base-sepolia.infura.io/ws/v3/YOUR_INFURA_PROJECT_ID",
+          `wss://base-sepolia.infura.io/ws/v3/${infuraProjectId}`,
           // "wss://base-sepolia-rpc.publicnode.com",
           0, // Active address index
           pems.length,

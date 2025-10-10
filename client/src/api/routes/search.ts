@@ -32,7 +32,8 @@ router.get('/', async (req, res) => {
       const cawLimit = type === 'all' ? 10 : searchLimit
       const caws = await prisma.caw.findMany({
         where: {
-          content: { contains: query, mode: 'insensitive' }
+          content: { contains: query, mode: 'insensitive' },
+          status: 'SUCCESS'  // Only show public SUCCESS caws in search results
         },
         take: cawLimit + 1, // Take one more to check if there are more results
         skip: type === 'all' ? 0 : searchOffset, // No pagination for 'all' tab

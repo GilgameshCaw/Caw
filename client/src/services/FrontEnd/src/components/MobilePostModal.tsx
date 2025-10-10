@@ -11,9 +11,10 @@ import type { ActionParams } from '~/api/actions'
 interface MobilePostModalProps {
   isOpen: boolean;
   onClose: () => void;
+  onSuccess?: () => void;
 }
 
-const MobilePostModal: React.FC<MobilePostModalProps> = ({ isOpen, onClose }) => {
+const MobilePostModal: React.FC<MobilePostModalProps> = ({ isOpen, onClose, onSuccess }) => {
   const [text, setText] = useState('')
   const { isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
@@ -32,6 +33,7 @@ const MobilePostModal: React.FC<MobilePostModalProps> = ({ isOpen, onClose }) =>
       }
       await signAndSubmit(params)
       setText('')
+      onSuccess?.()
       onClose()
     } catch (err) {
       console.error('Post failed', err)

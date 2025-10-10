@@ -17,6 +17,18 @@ export const CawPage: React.FC = () => {
   const [error, setError]       = useState<string | null>(null)
   const { isDark } = useTheme()
 
+  // Function to refresh comments after posting a reply
+  const refreshComments = async () => {
+    try {
+      const { caw: fetched, comments: fetchedComments } =
+        await apiFetch<{ caw: CawItem; comments: CawItem[] }>(`/api/caws/${id}`)
+      setCaw(fetched)
+      setComments(fetchedComments)
+    } catch (error) {
+      console.error('Error refreshing comments:', error)
+    }
+  }
+
   useEffect(() => {
     (async () => {
       try {
@@ -39,6 +51,7 @@ export const CawPage: React.FC = () => {
             content: 'Just discovered the amazing potential of decentralized social media! The Caw Protocol is revolutionizing how we connect online. This is the future of social networking! 🚀',
             timestamp: new Date().toISOString(),
             likeCount: 89,
+            viewCount: 342,
             hasLiked: false,
             hasRecawed: false,
             commentCount: 15,
@@ -119,13 +132,14 @@ export const CawPage: React.FC = () => {
         <div className="mb-6 relative">
           
           <div className="relative z-10">
-            <FeedItem 
+            <FeedItem
               item={{
                 id:            caw.id,
                 user:          caw.user,
                 content:       caw.content,
                 timestamp:     caw.timestamp,
                 likeCount:     caw.likeCount,
+                viewCount:     caw.viewCount || 0,  // Include viewCount
                 hasLiked:      caw.hasLiked,
                 hasRecawed:    caw.hasRecawed,
                 commentCount:  caw.commentCount,
@@ -133,6 +147,11 @@ export const CawPage: React.FC = () => {
                 cawonce:       caw.cawonce,
                 userId:        caw.user.tokenId,
                 originalCaw:   caw.originalCaw,
+                status:        caw.status,  // Include status field
+                imageData:     caw.imageData,  // Include imageData
+                hasImage:      caw.hasImage,  // Include hasImage
+                videoData:     caw.videoData,  // Include videoData
+                hasVideo:      caw.hasVideo,  // Include hasVideo
               }}
               isMainPost={true}
             />
@@ -143,6 +162,7 @@ export const CawPage: React.FC = () => {
         <div className="border-b border-white/20 mb-2">
           <PostForm
             replyTo={caw}
+            onSuccess={refreshComments}
           />
         </div>
 
@@ -169,6 +189,7 @@ export const CawPage: React.FC = () => {
                   content:      comm.content,
                   timestamp:    comm.timestamp,
                   likeCount:    comm.likeCount,
+                  viewCount:    comm.viewCount || 0, // Pass the actual viewCount
                   hasLiked:     comm.hasLiked,
                   hasRecawed:   comm.hasRecawed,
                   commentCount: comm.commentCount,
@@ -176,6 +197,7 @@ export const CawPage: React.FC = () => {
                   cawonce:      comm.cawonce,
                   userId:       comm.user.tokenId,
                   originalCaw:  comm.originalCaw,
+                  status:       comm.status, // Pass the status field for pending replies
                 }}
               />
             </div>

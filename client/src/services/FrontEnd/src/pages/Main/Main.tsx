@@ -1,9 +1,9 @@
 import { Tabs, TabItem } from '~/components/Tabs'
 import MainLayout from "~/layouts/MainLayout";
 import PostForm from "~/components/PostForm";
-import Feed from "~/components/Feed";
+import Feed, { type FeedRef } from "~/components/Feed";
 import MobilePostModal from "~/components/MobilePostModal";
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { useAccount } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { HiOutlinePlus } from "react-icons/hi";
@@ -18,6 +18,7 @@ export const Main: React.FC = () => {
   const { isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
   const { isDark } = useTheme()
+  const feedRef = useRef<FeedRef>(null)
 
   const mainTabs: TabItem<MainTab>[] = [
     { id: 'Following', label: 'Following' },
@@ -34,10 +35,11 @@ export const Main: React.FC = () => {
         />
         {/* PostForm - Hidden on mobile */}
         <div className="hidden md:block border-b border-white/20">
-          <PostForm/>
+          <PostForm onSuccess={() => feedRef.current?.refresh()}/>
         </div>
         <div className="w-full">
           <Feed
+            ref={feedRef}
             filter={activeTab}
           />
         </div>
@@ -58,9 +60,13 @@ export const Main: React.FC = () => {
       </div>
 
       {/* Mobile Post Modal */}
-      <MobilePostModal 
+      <MobilePostModal
         isOpen={isMobilePostModalOpen}
         onClose={() => setIsMobilePostModalOpen(false)}
+        onSuccess={() => {
+          setIsMobilePostModalOpen(false)
+          feedRef.current?.refresh()
+        }}
       />
     </MainLayout>
   );

@@ -72,3 +72,7 @@ yarn-error.log*
 /doc
 .bash_profile
 
+# logs directory
+/client/logs
+*.log
+

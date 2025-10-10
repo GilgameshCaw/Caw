@@ -21,6 +21,13 @@ enum ActionType {
   OTHER
 }
 
+// Transaction status for Caws
+enum CawStatus {
+  SUCCESS
+  PENDING
+  FAILED
+}
+
 model RawEvent {
   id              Int      @id @default(autoincrement())
   chainId         Int // ← which network this came from
@@ -68,6 +75,7 @@ model User {
   followers     Follow[] @relation("Follower") // who follows *me*
   notificationsReceived Notification[] @relation("NotificationRecipient")
   notificationsSent     Notification[] @relation("NotificationActor")
+  xmtpIdentity  XmtpIdentity?
 }
 
 model Caw {
@@ -81,7 +89,7 @@ model Caw {
   hasImage      Boolean    @default(false)
   videoData     String?    @db.Text // Video URLs for off-chain storage
   hasVideo      Boolean    @default(false)
-  pending       Boolean    @default(false) // Optimistic UI - true while transaction is pending
+  status        CawStatus  @default(SUCCESS) // Transaction status: SUCCESS, PENDING, FAILED
   createdAt     DateTime   @default(now())
   updatedAt     DateTime   @updatedAt
 
@@ -102,6 +110,7 @@ model Caw {
   @@unique([userId, cawonce])
   @@index([userId, action, createdAt])
   @@index([originalCawId])
+  @@index([status, userId]) // Index for filtering by status and user
 }
 
 model Like {
@@ -258,4 +267,115 @@ model Notification {
   @@index([userId, type])
   @@index([groupKey])
   @@index([createdAt])
+}
+
+// XMTP Message Models
+enum MessageStatus {
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum ConversationType {
+  DM
+  GROUP
+}
+
+model XmtpIdentity {
+  id               Int      @id @default(autoincrement())
+  userId           Int      @unique // CAW user token ID
+  walletAddress    String   @unique // Ethereum wallet address
+  installationId   String   @unique // XMTP installation ID
+  identityKey      String   // Public identity key for XMTP
+  preKeys          Json     // Pre-keys for offline messaging
+  signedPreKey     Json     // Signed pre-key
+  registrationId   Int      // XMTP registration ID
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user             User     @relation(fields: [userId], references: [tokenId])
+  sentMessages     Message[] @relation("MessageSender")
+  conversations    ConversationParticipant[]
+
+  @@index([walletAddress])
+  @@index([installationId])
+}
+
+model Conversation {
+  id               String   @id @default(uuid())
+  type             ConversationType
+  topic            String   @unique // XMTP conversation topic
+  name             String?  // Group name (for groups)
+  description      String?  // Group description
+  avatarUrl        String?  // Group avatar
+  creatorId        Int      // User who created the conversation
+  metadata         Json?    // Additional metadata
+  lastMessageAt    DateTime?
+  lastMessageId    String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  participants     ConversationParticipant[]
+  messages         Message[]
+
+  @@index([lastMessageAt])
+  @@index([creatorId])
+}
+
+model ConversationParticipant {
+  id               Int      @id @default(autoincrement())
+  conversationId   String
+  userId           Int
+  joinedAt         DateTime @default(now())
+  leftAt           DateTime?
+  isAdmin          Boolean  @default(false)
+  isMuted          Boolean  @default(false)
+  lastReadAt       DateTime?
+  unreadCount      Int      @default(0)
+
+  conversation     Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  identity         XmtpIdentity @relation(fields: [userId], references: [userId])
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+  @@index([conversationId])
+}
+
+model Message {
+  id               String   @id @default(uuid())
+  conversationId   String
+  senderId         Int
+  content          String   @db.Text // Encrypted content
+  contentType      String   @default("text") // text, image, file, etc.
+  metadata         Json?    // Additional metadata (file info, reactions, etc.)
+  status           MessageStatus @default(SENT)
+  editedAt         DateTime?
+  deletedAt        DateTime?
+  parentMessageId  String?  // For replies/threads
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  conversation     Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender           XmtpIdentity @relation("MessageSender", fields: [senderId], references: [userId])
+  parent           Message?  @relation("MessageReplies", fields: [parentMessageId], references: [id])
+  replies          Message[] @relation("MessageReplies")
+  receipts         MessageReceipt[]
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+  @@index([parentMessageId])
+}
+
+model MessageReceipt {
+  id               Int      @id @default(autoincrement())
+  messageId        String
+  userId           Int
+  deliveredAt      DateTime?
+  readAt           DateTime?
+
+  message          Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([userId])
 }

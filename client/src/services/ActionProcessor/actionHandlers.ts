@@ -71,7 +71,7 @@ export async function handleCawAction(
       }
     },
     update: {
-      // If CAW already exists (was pending), update it and clear pending flag
+      // If CAW already exists (was pending), update it to SUCCESS
       content: textContent,
       action: action.actionType,
       originalCawId: parentCawId,
@@ -79,7 +79,7 @@ export async function handleCawAction(
       hasImage: imageUrls.length > 0,
       videoData: videoUrls.length > 0 ? videoUrls.join('|||') : null,
       hasVideo: videoUrls.length > 0,
-      pending: false, // Clear pending flag when confirmed on-chain
+      status: 'SUCCESS', // Mark as SUCCESS when confirmed on-chain
       updatedAt: new Date()
     },
     create: {
@@ -94,7 +94,7 @@ export async function handleCawAction(
       // Store video URLs in videoData field
       videoData: videoUrls.length > 0 ? videoUrls.join('|||') : null,
       hasVideo: videoUrls.length > 0,
-      pending: false // Not pending when created from blockchain event
+      status: 'SUCCESS' // Mark as SUCCESS when created from blockchain event
     }
   })
 

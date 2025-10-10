@@ -18,7 +18,8 @@ import {
   HiOutlineEyeOff,
   HiOutlineUserRemove,
   HiOutlineExclamation,
-  HiOutlineCheck
+  HiOutlineCheck,
+  HiOutlineRefresh
 } from 'react-icons/hi'
 import Recaw from '~/assets/images/recaw.svg?react';
 import Pencil from '~/assets/images/pencil.svg?react';
@@ -60,7 +61,8 @@ function formatTimeAgo(timestamp: string): string {
 
 const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void }> = ({ item, isMainPost = false, isReply = false, onBookmarkUpdate }) => {
   // Enable polling for pending items
-  usePendingCawPolling(parseInt(item.id), item.pending || false)
+  usePendingCawPolling(parseInt(item.id), item.status === 'PENDING')
+  console.log("status", item.status);
   usePendingLikePolling(parseInt(item.id), item.likePending || false)
 
   const activeTokenId     = useTokenDataStore(s => s.activeTokenId)
@@ -88,6 +90,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const [busyBookmark, setBusyBookmark] = useState(false)
   const [translatedText, setTranslatedText] = useState<string | null>(null)
   const [isTranslating, setIsTranslating] = useState(false)
+  const [isRetrying, setIsRetrying] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const optionsMenuRef = useRef<HTMLDivElement>(null)
 
@@ -180,6 +183,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const handleLike = async (event: React.MouseEvent) => {
     event.preventDefault()
 
+    // Don't allow interactions with pending or failed caws
+    if (item.status === 'PENDING' || item.status === 'FAILED') {
+      return
+    }
+
     // If wallet not connected, open connect modal and set pending action
     if (!isConnected) {
       setPendingLikeAction({
@@ -243,8 +251,39 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     }
   }
 
+  const handleRetry = async (event: React.MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+
+    if (!activeTokenId || !activeToken || isRetrying) return
+
+    setIsRetrying(true)
+
+    try {
+      // Resubmit the caw action
+      await signAndSubmit({
+        actionType: 'caw',
+        senderId: activeTokenId,
+        text: useItem.content,
+        amounts: [] // You might need to calculate proper amounts for images
+      })
+
+      // Optionally update local state to show pending status
+      // This would require updating the item's status in the parent component
+    } catch (error) {
+      console.error('Retry failed:', error)
+    } finally {
+      setIsRetrying(false)
+    }
+  }
+
   const handleRecaw = async (event: React.MouseEvent) => {
     event.preventDefault()
+
+    // Don't allow interactions with pending or failed caws
+    if (item.status === 'PENDING' || item.status === 'FAILED') {
+      return
+    }
 
     // If wallet not connected, open connect modal
     if (!isConnected) {
@@ -275,6 +314,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
   const handleReply = (e: React.MouseEvent) => {
     e.preventDefault()
+
+    // Don't allow interactions with pending or failed caws
+    if (item.status === 'PENDING' || item.status === 'FAILED') {
+      return
+    }
+
     openModal('comment')
   }
 
@@ -462,7 +507,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         <div className={`p-4 transition-all duration-300 hover:bg-gray-500/5 cursor-pointer border-b ${
           isDark ? 'border-gray-800' : 'border-gray-200'
         } ${
-          item.pending ? 'opacity-60' : ''
+          (item.status === 'PENDING' || item.status === 'FAILED') ? 'opacity-60' : ''
         }`}>
           {/* Replying to header */}
           {item.parent && (
@@ -518,10 +563,25 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   }`}>
                     · {formatTimeAgo(useItem.timestamp)}
                   </span>
-                  {item.pending && (
+                  {item.status === 'PENDING' && (
                     <span className="ml-2 px-2 py-0.5 text-xs bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 rounded-full">
                       Pending
                     </span>
+                  )}
+                  {item.status === 'FAILED' && (
+                    <>
+                      <span className="ml-2 px-2 py-0.5 text-xs bg-red-500/20 text-red-600 dark:text-red-400 rounded-full">
+                        Failed
+                      </span>
+                      <button
+                        onClick={handleRetry}
+                        disabled={isRetrying}
+                        className="ml-2 px-2 py-0.5 text-xs bg-blue-500/20 text-blue-600 dark:text-blue-400 rounded-full hover:bg-blue-500/30 transition-colors flex items-center gap-1"
+                      >
+                        <HiOutlineRefresh className={`w-3 h-3 ${isRetrying ? 'animate-spin' : ''}`} />
+                        {isRetrying ? 'Retrying...' : 'Retry'}
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
@@ -709,12 +769,17 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-6">
               {/* Comments */}
-              <button 
-                className={`flex items-center space-x-2 transition-colors duration-300 hover:text-blue-500 cursor-pointer ${
+              <button
+                className={`flex items-center space-x-2 transition-colors duration-300 ${
+                  (item.status === 'PENDING' || item.status === 'FAILED')
+                    ? 'cursor-not-allowed opacity-50'
+                    : 'hover:text-blue-500 cursor-pointer'
+                } ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
                 onClick={handleReply}
-                title="Reply"
+                disabled={item.status === 'PENDING' || item.status === 'FAILED'}
+                title={item.status === 'PENDING' ? "Cannot reply to pending caw" : item.status === 'FAILED' ? "Cannot reply to failed caw" : "Reply"}
               >
                 <HiOutlineChat className="w-5 h-5" />
                 <span className="text-sm">{formatEngagementCount(useItem.commentCount)}</span>
@@ -722,14 +787,19 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
               {/* Retweets */}
               <div className="relative">
-                <button 
-                  className={`group flex items-center space-x-2 transition-colors duration-300 hover:text-green-500 cursor-pointer ${
-                    isRecawed 
-                      ? 'text-green-500' 
+                <button
+                  className={`group flex items-center space-x-2 transition-colors duration-300 ${
+                    item.pending
+                      ? 'cursor-not-allowed opacity-50'
+                      : 'hover:text-green-500 cursor-pointer'
+                  } ${
+                    isRecawed
+                      ? 'text-green-500'
                       : isDark ? 'text-gray-400' : 'text-gray-600'
                   }`}
-                  onClick={e => { e.preventDefault(); setShowRecawMenu(show => !show) }}
-                  title="ReCaw"
+                  onClick={e => { e.preventDefault(); if (item.status !== 'PENDING' && item.status !== 'FAILED') setShowRecawMenu(show => !show) }}
+                  disabled={item.status === 'PENDING' || item.status === 'FAILED'}
+                  title={item.status === 'PENDING' ? "Cannot recaw pending caw" : item.status === 'FAILED' ? "Cannot recaw failed caw" : "ReCaw"}
                 >
                   <Recaw className={`w-5 h-5 transition-all duration-300 ${
                     isRecawed ? 'text-green-500' : ''
@@ -775,14 +845,18 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
               {/* Likes */}
               <button
-                className={`flex items-center space-x-2 transition-colors duration-300 hover:text-red-500 cursor-pointer ${
+                className={`flex items-center space-x-2 transition-colors duration-300 ${
+                  (item.status === 'PENDING' || item.status === 'FAILED')
+                    ? 'cursor-not-allowed opacity-50'
+                    : 'hover:text-red-500 cursor-pointer'
+                } ${
                   useItem.hasLiked
                     ? 'text-red-500'
                     : isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
                 onClick={handleLike}
-                disabled={busyLike || likePending}
-                title={likePending ? "Processing like..." : "Like"}
+                disabled={busyLike || likePending || item.status === 'PENDING' || item.status === 'FAILED'}
+                title={item.status === 'PENDING' ? "Cannot like pending caw" : item.status === 'FAILED' ? "Cannot like failed caw" : likePending ? "Processing like..." : "Like"}
               >
                 {(busyLike && !txSubmitted) ? (
                   // Just spinner while signing/submitting transaction

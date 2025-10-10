@@ -36,9 +36,12 @@ router.get('/:tag/caws', async (req, res) => {
       })
     }
 
-    // Get caws that have this hashtag
+    // Get caws that have this hashtag - only show SUCCESS caws
     const cawHashtags = await prisma.cawHashtag.findMany({
-      where: { hashtagId: hashtag.id },
+      where: {
+        hashtagId: hashtag.id,
+        caw: { status: 'SUCCESS' }  // Only show public SUCCESS caws in hashtag feeds
+      },
       orderBy: [
         { caw: { createdAt: 'desc' } },
         { caw: { id: 'desc' } }
