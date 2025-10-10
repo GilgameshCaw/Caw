@@ -9,6 +9,7 @@ export interface CawRaw {
   _count?: { likes: number; recaws: number }
   likes?: Array<{ userId: number; pending?: boolean }>
   recaws?: Array<{ id: number }>
+  bookmarks?: Array<{ id: number }>
   commentCount: number
   recawCount: number
   likeCount: number
@@ -18,6 +19,7 @@ export interface CawRaw {
   hashtags?: Array<{ hashtag: { name: string } }>
   imageData?: string
   hasImage?: boolean
+  status?: 'SUCCESS' | 'PENDING' | 'FAILED'
 }
 
 export interface ShapedCaw {
@@ -29,6 +31,7 @@ export interface ShapedCaw {
   viewCount: number
   hasLiked: boolean
   hasRecawed: boolean
+  isBookmarked?: boolean
   likePending?: boolean
   commentCount: number
   recawCount: number
@@ -38,6 +41,7 @@ export interface ShapedCaw {
   parent?: ShapedCaw | null
   imageData?: string
   hasImage?: boolean
+  status?: 'SUCCESS' | 'PENDING' | 'FAILED'
 }
 
 export function shapeCaw(raw: CawRaw): ShapedCaw {
@@ -52,6 +56,7 @@ export function shapeCaw(raw: CawRaw): ShapedCaw {
     hasLiked: Boolean(userLike),
     likePending: userLike?.pending,
     hasRecawed: Boolean(raw.recaws && raw.recaws.length > 0),
+    isBookmarked: Boolean(raw.bookmarks && raw.bookmarks.length > 0),
     commentCount: raw.commentCount,
     recawCount: raw.recawCount,
     cawonce: raw.cawonce,
@@ -60,6 +65,7 @@ export function shapeCaw(raw: CawRaw): ShapedCaw {
     parent: raw.parent ? shapeCaw(raw.parent) : null,
     imageData: raw.imageData,
     hasImage: raw.hasImage,
+    status: raw.status || 'SUCCESS',
   }
 }
 
@@ -92,6 +98,9 @@ export function getCawIncludeConfig(options: CawQueryOptions = {}) {
       : false,
     recaws: currentUserId
       ? { where: { userId: currentUserId, action: 'RECAW' }, select: { id: true } }
+      : false,
+    bookmarks: currentUserId
+      ? { where: { userId: currentUserId }, select: { id: true } }
       : false,
     ...(includeHashtags && {
       hashtags: {
