@@ -35,8 +35,14 @@ export const actionProcessorService: Service = {
       })
       for (const raw of backlog) {
         if (stopRequested) break
-        await handleRawEvent(raw)
-        lastId = raw.id
+        try {
+          await handleRawEvent(raw)
+          lastId = raw.id
+        } catch (err) {
+          console.error(`[ActionProcessor] Failed to process backlog event ${raw.id}:`, err)
+          // Continue processing other events
+          lastId = raw.id
+        }
       }
 
       // now subscribe to the same "raws" channel your Gatherer is publishing
@@ -48,8 +54,14 @@ export const actionProcessorService: Service = {
         if (rawEventId > lastId) {
           const raw = await prisma.rawEvent.findUnique({ where: { id: rawEventId } })
           if (raw && !stopRequested) {
-            await handleRawEvent(raw)
-            lastId = rawEventId
+            try {
+              await handleRawEvent(raw)
+              lastId = rawEventId
+            } catch (err) {
+              console.error(`[ActionProcessor] Failed to process event ${rawEventId}:`, err)
+              // Continue processing other events
+              lastId = rawEventId
+            }
           }
         }
       })
@@ -83,8 +95,8 @@ async function handleRawEvent(raw: { id: number, chainId: number, data: any }) {
 
 
 async function handleRawAction(rawId: number, chainId: number, rawAction: RawAction): Promise<void> {
-  await prisma.$transaction(async (tx) => {
-    try {
+  try {
+    await prisma.$transaction(async (tx) => {
       // Create or find existing action, determine if domain processing is needed
       const { action, shouldProcessDomain } = await createOrFindAction(tx, rawId, chainId, rawAction)
 
@@ -97,11 +109,33 @@ async function handleRawAction(rawId: number, chainId: number, rawAction: RawAct
 
       // Process domain effects based on action type
       await processDomainEffects(tx, validAction, rawAction)
-    } catch (err) {
-      console.error('Failed to handle raw action:', err)
-      // Don't re-throw to avoid failing the entire transaction batch
+    })
+  } catch (err: any) {
+    // If we hit a race condition, retry once to process the action created by another process
+    if (err.message?.includes('Action already exists (race condition)')) {
+      console.log('[ActionProcessor] Race condition detected, retrying to process existing action...')
+      try {
+        await prisma.$transaction(async (tx) => {
+          // This time we should find the existing action
+          const { action, shouldProcessDomain } = await createOrFindAction(tx, rawId, chainId, rawAction)
+
+          if (!shouldProcessDomain) {
+            console.log('[ActionProcessor] Action and domain objects already exist after retry')
+            return
+          }
+
+          const validAction = await ensureActionExists(tx, rawId, action)
+          await processDomainEffects(tx, validAction, rawAction)
+        })
+        console.log('[ActionProcessor] Successfully processed action after race condition retry')
+      } catch (retryErr) {
+        console.error('[ActionProcessor] Failed to handle raw action after retry:', retryErr)
+      }
+    } else {
+      console.error('[ActionProcessor] Failed to handle raw action:', err)
     }
-  })
+    // Don't re-throw to avoid crashing the processor
+  }
 }
 
 // NOTE: Helper functions moved to separate modules:

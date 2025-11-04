@@ -62,20 +62,13 @@ export async function createOrFindAction(
     return { action, shouldProcessDomain: true }
 
   } catch (err: any) {
-    // This shouldn't happen since we checked for existence first
-    // but handle it just in case of race conditions
+    // If we get a P2002 (duplicate), the transaction is aborted
+    // Don't try to query within an aborted transaction
+    // Just throw and let the outer handler retry or skip
     if (err.code === 'P2002') {
-      console.log("Race condition: action was created by another process")
-      // Try to find it again
-      const action = await tx.action.findFirst({
-        where: { rawEventId: rawId }
-      })
-
-      if (!action) {
-        throw new Error("Action not found after race condition")
-      }
-
-      return { action, shouldProcessDomain: true }
+      console.log("Race condition: action was created by another process (P2002)")
+      // Rethrow - the transaction will be aborted and the outer catch will handle it
+      throw new Error("Action already exists (race condition)")
     }
 
     console.log('action.create error', err)
