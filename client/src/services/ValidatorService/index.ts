@@ -149,11 +149,24 @@ export const validatorService: Service = {
 
         const startTime = Date.now();
 
-        const returnData = await provider.call({
+        // Add timeout wrapper to prevent hanging
+        const callPromise = provider.call({
           to: CAW_ACTIONS_ADDRESS,
           data: calldata,
           value: quote?.nativeFee
-        }) as string
+        })
+
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('RPC call timeout after 30 seconds')), 30000)
+        })
+
+        let returnData: string
+        try {
+          returnData = await Promise.race([callPromise, timeoutPromise]) as string
+        } catch (timeoutErr: any) {
+          console.error('[Validator] RPC call timeout or error:', timeoutErr.message)
+          throw timeoutErr
+        }
 
         const elapsed = Date.now() - startTime;
 
@@ -215,6 +228,15 @@ export const validatorService: Service = {
 
           const rejectionMessages = multiData.actions.map(() =>
             `Transaction reverted: ${revertReason}`
+          );
+          return { successfulActions: [], rejectionMessages, quote: { nativeFee: BigInt(0) } };
+        }
+
+        // Handle timeout errors - mark as temporary failure, don't mark as failed
+        if (err.message?.includes('timeout')) {
+          console.log('[Validator] RPC timeout detected - will retry on next poll')
+          const rejectionMessages = multiData.actions.map(() =>
+            'RPC timeout - will retry'
           );
           return { successfulActions: [], rejectionMessages, quote: { nativeFee: BigInt(0) } };
         }
