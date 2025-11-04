@@ -141,7 +141,7 @@ export async function handleCawAction(
 
   // Increment user's caw count
   await tx.user.update({
-    where: { id: rawAction.senderId },
+    where: { tokenId: rawAction.senderId },
     data: { cawCount: { increment: 1 } }
   })
 
@@ -411,6 +411,7 @@ export async function handleOtherAction(
 
       // Map compact keys to full field names
       const keyMap: Record<string, string> = {
+        'n': 'displayName', // name/displayName
         'd': 'bio',        // description/bio
         'l': 'location',   // location
         'w': 'website',    // website
@@ -575,5 +576,49 @@ export async function handleOtherAction(
       where: { id: parentCawId },
       data: { commentCount: { increment: 1 } }
     })
+  }
+}
+/**
+ * Handle WITHDRAW action - create withdrawal request in database
+ */
+export async function handleWithdrawAction(
+  tx: PrismaTransactionClient,
+  action: any,
+  rawAction: any
+): Promise<void> {
+  console.log('[handleWithdrawAction] Processing WITHDRAW action:', {
+    senderId: action.senderId,
+    cawonce: rawAction.cawonce,
+    amounts: rawAction.amounts
+  })
+
+  // The first amount is the withdrawal amount in wei
+  const withdrawalAmount = rawAction.amounts?.[0]?.toString() || '0'
+
+  // Create or update withdrawal request
+  try {
+    const existingRequest = await tx.withdrawalRequest.findFirst({
+      where: {
+        userId: action.senderId,
+        cawonce: rawAction.cawonce
+      }
+    })
+
+    if (existingRequest) {
+      console.log('[handleWithdrawAction] Withdrawal request already exists:', existingRequest.id)
+    } else {
+      const withdrawalRequest = await tx.withdrawalRequest.create({
+        data: {
+          userId: action.senderId,
+          amount: withdrawalAmount,
+          cawonce: rawAction.cawonce,
+          status: 'pending'
+        }
+      })
+      console.log('[handleWithdrawAction] Created withdrawal request:', withdrawalRequest.id)
+    }
+  } catch (err) {
+    console.error('[handleWithdrawAction] Error creating withdrawal request:', err)
+    throw err
   }
 }

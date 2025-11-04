@@ -12,6 +12,10 @@ import { apiFetch } from '~/api/client'
 import { useAccount } from 'wagmi'
 import { useSignAndSubmitAction } from '~/api/actions'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
+import { useNavigate } from 'react-router-dom'
+import { useTokenDataStore } from '~/store/tokenDataStore'
+import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
+import { hasMinimumStake, getRequiredStake } from '~/constants/stakingRequirements'
 
 type ProfileTab = 'profile' | 'profile-likes' | 'profile-replies' | 'profile-media'
 
@@ -48,6 +52,12 @@ export const Profile: React.FC = () => {
   const activeToken = useActiveToken()
   const { openModal } = useModalStore()
   const { isConnected, address } = useAccount()
+  const signAndSubmit = useSignAndSubmitAction()
+  const { openConnectModal } = useConnectModal()
+  const navigate = useNavigate()
+  const activeTokenId = useTokenDataStore(s => s.activeTokenId)
+  const [busyFollow, setBusyFollow] = useState(false)
+  const [showInsufficientStakeModal, setShowInsufficientStakeModal] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [updateCost, setUpdateCost] = useState(0)
   const submitAction = useSignAndSubmitAction()
@@ -82,7 +92,7 @@ export const Profile: React.FC = () => {
 
   // Form state - Initialize with current profile data
   const [formData, setFormData] = useState({
-    name: profileData?.username || displayUsername,
+    displayName: profileData?.displayName || '',
     description: profileData?.bio || '',
     location: profileData?.location || '',
     website: profileData?.website || ''
@@ -92,7 +102,7 @@ export const Profile: React.FC = () => {
   useEffect(() => {
     if (profileData) {
       setFormData({
-        name: profileData.username,
+        displayName: profileData.displayName || '',
         description: profileData.bio || '',
         location: profileData.location || '',
         website: profileData.website || ''
@@ -170,6 +180,10 @@ export const Profile: React.FC = () => {
     // Only count fields that have changed - use compact keys
     const changedData: any = {}
 
+    // Check if displayName changed (allow empty values)
+    if (formData.displayName !== (profileData?.displayName || '')) {
+      changedData.n = formData.displayName // n = name/displayName
+    }
     // Check if description changed (allow empty values)
     if (formData.description !== (profileData?.bio || '')) {
       changedData.d = formData.description // d = description/bio
@@ -211,8 +225,6 @@ export const Profile: React.FC = () => {
   }, [formData, avatarUrl, coverUrl, profileData])
 
   // Handle profile update submission
-  const { openConnectModal } = useConnectModal()
-
   const handleProfileUpdate = async () => {
     // If wallet not connected, open connect modal
     if (!isConnected) {
@@ -234,6 +246,10 @@ export const Profile: React.FC = () => {
 
     try {
       // Only include fields that have changed - use compact keys to save gas
+      // Check if displayName changed (allow empty values)
+      if (formData.displayName !== (profileData?.displayName || '')) {
+        profileUpdateData.n = formData.displayName // n = name/displayName
+      }
       // Check if description changed (allow empty values)
       if (formData.description !== (profileData?.bio || '')) {
         profileUpdateData.d = formData.description // d = description/bio
@@ -510,32 +526,63 @@ export const Profile: React.FC = () => {
                 ) : (
                   <div className="flex flex-col space-y-3">
                     <button
-                      onClick={() => {
-                        // TODO: Implement follow/unfollow action
-                        setProfileData(prev => prev ? {...prev, isFollowing: !prev.isFollowing} : null)
+                      onClick={async () => {
+                        // Check wallet connection
+                        if (!isConnected) {
+                          if (openConnectModal) {
+                            openConnectModal()
+                          }
+                          return
+                        }
+
+                        // Check for active token
+                        if (!activeTokenId || !activeToken) {
+                          return
+                        }
+
+                        // Check for minimum stake
+                        if (!hasMinimumStake(activeToken.stakedAmount, 'MIN_STAKE_FOLLOW')) {
+                          setShowInsufficientStakeModal(true)
+                          return
+                        }
+
+                        // Perform follow/unfollow action
+                        setBusyFollow(true)
+                        try {
+                          await signAndSubmit({
+                            actionType: profileData?.isFollowing ? 'unfollow' : 'follow',
+                            senderId: activeTokenId,
+                            receiverId: profileData?.tokenId || 0
+                          })
+                          setProfileData(prev => prev ? {...prev, isFollowing: !prev.isFollowing} : null)
+                        } catch (error) {
+                          console.error('Follow action failed:', error)
+                        } finally {
+                          setBusyFollow(false)
+                        }
                       }}
+                      disabled={busyFollow}
                       className={`px-8 py-2 rounded-full font-semibold border transition-all duration-200 ${
+                        busyFollow ? 'opacity-50 cursor-not-allowed' : ''
+                      } ${
                         profileData?.isFollowing
                           ? 'border-white bg-white text-black hover:bg-white/90'
                           : 'border-white text-white hover:bg-white hover:text-black'
                       }`}
                     >
-                      {profileData?.isFollowing ? 'Following' : 'Follow'}
+                      {busyFollow ? 'Processing...' : (profileData?.isFollowing ? 'Following' : 'Follow')}
                     </button>
                     
                     <div className="flex justify-center space-x-2">
-                      <button 
+                      <button
                         onClick={() => {
-                          const recipientData = {
-                            id: String(profileData?.id || 1),
-                            username: profileData?.username || displayUsername,
-                            tokenId: profileData?.tokenId || 1
-                          }
-                          openModal('message', recipientData)
+                          // Navigate to messages page with the user's conversation
+                          // Create or find conversation with this user
+                          navigate(`/messages?user=${profileData?.username || displayUsername}`)
                         }}
                         className={`p-2 rounded-full border transition-all duration-200 cursor-pointer hover:bg-white/10 ${
-                          isDark 
-                            ? 'border-white/60 text-white hover:bg-white/10' 
+                          isDark
+                            ? 'border-white/60 text-white hover:bg-white/10'
                             : 'border-black/60 text-black hover:bg-black/10'
                         }`}
                         title="Send Message"
@@ -797,23 +844,42 @@ export const Profile: React.FC = () => {
                 )}
               </div>
 
-              {/* Name Field - DISABLED: Username is minted and cannot be changed */}
+              {/* Username Field - DISABLED: Username is minted on L1 and cannot be changed */}
               <div className="space-y-2">
                 <label className={`text-sm font-medium transition-colors duration-300 ${
                   isDark ? 'text-gray-300' : 'text-gray-700'
                 }`}>
-                  Name
+                  Username
                 </label>
                 <input
                   type="text"
-                  value={formData.name}
-                  onChange={(e) => setFormData({...formData, name: e.target.value})}
-                  placeholder="Enter your name"
+                  value={`@${profileData?.username || displayUsername}`}
                   disabled
+                  className={`w-full px-4 py-3 rounded-full border transition-all duration-300 ${
+                    isDark
+                      ? 'bg-gray-800 border-gray-600 text-gray-400 cursor-not-allowed'
+                      : 'bg-gray-100 border-gray-300 text-gray-500 cursor-not-allowed'
+                  }`}
+                />
+              </div>
+
+              {/* Display Name Field - EDITABLE */}
+              <div className="space-y-2">
+                <label className={`text-sm font-medium transition-colors duration-300 ${
+                  isDark ? 'text-gray-300' : 'text-gray-700'
+                }`}>
+                  Display Name
+                </label>
+                <input
+                  type="text"
+                  value={formData.displayName}
+                  onChange={(e) => setFormData({...formData, displayName: e.target.value})}
+                  placeholder="Enter your display name"
+                  maxLength={50}
                   className={`w-full px-4 py-3 rounded-full border transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-gray-500/30 ${
-                    isDark 
-                      ? 'bg-gray-800 border-gray-600 text-gray-400 placeholder-gray-500 cursor-not-allowed' 
-                      : 'bg-gray-100 border-gray-300 text-gray-500 placeholder-gray-400 cursor-not-allowed'
+                    isDark
+                      ? 'bg-black border-gray-600 text-white placeholder-gray-400 focus:bg-transparent'
+                      : 'bg-white border-gray-300 text-black placeholder-gray-500 focus:bg-transparent'
                   }`}
                 />
               </div>
@@ -929,6 +995,15 @@ export const Profile: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Insufficient Stake Modal */}
+      <InsufficientStakeModal
+        isOpen={showInsufficientStakeModal}
+        onClose={() => setShowInsufficientStakeModal(false)}
+        actionType="post"
+        currentAmount={activeToken?.stakedAmount}
+        requiredAmount={getRequiredStake('MIN_STAKE_FOLLOW')}
+      />
     </MainLayout>
   )
 }
