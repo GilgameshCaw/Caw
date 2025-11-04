@@ -628,12 +628,12 @@ export const Profile: React.FC = () => {
 
       {/* Edit Profile Modal */}
       {isEditModalOpen && (
-        <div 
-          className="fixed inset-0 bg-black/70 flex items-center justify-center z-50"
+        <div
+          className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
           onClick={() => setIsEditModalOpen(false)}
         >
-          <div 
-            className={`w-full max-w-2xl mx-4 rounded-2xl transition-all duration-300 ${
+          <div
+            className={`w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl transition-all duration-300 ${
               isDark ? 'bg-black border border-white/20' : 'bg-white border border-gray-200'
             }`}
             onClick={(e) => e.stopPropagation()}
