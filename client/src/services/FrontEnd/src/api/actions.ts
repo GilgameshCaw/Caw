@@ -6,6 +6,8 @@ import { useSignTypedData, useAccount } from 'wagmi'
 import type { TypedDataDomain, TypedDataField } from '@ethersproject/abstract-signer'
 import { useActiveToken, useTokenDataStore } from "~/store/tokenDataStore";
 import { CAW_ACTIONS_ADDRESS } from '~/../../../abi/addresses'
+import { hasMinimumStake, getRequiredStake, STAKING_REQUIREMENTS } from '~/constants/stakingRequirements'
+import { InsufficientStakeError, getActionTypeForModal } from '~/errors/InsufficientStakeError'
 
 /** map human-friendly names to on-chain enum values */
 const ActionTypeMap = {
@@ -76,7 +78,8 @@ function buildTypedData(params: ActionParams) {
   if (code === undefined) {
     throw new Error(`Unknown actionType "${params.actionType}"`)
   }
-  const amounts = params.amounts ?? [];
+  // Clone the amounts array to avoid mutating the original
+  const amounts = [...(params.amounts ?? [])];
   amounts.push(BigInt(VALIDATOR_TIP));
 
 
@@ -120,6 +123,19 @@ export function useSignAndSubmitAction() {
     // Ensure we have an active token ID
     if (!activeTokenId) {
       throw new Error('No active token selected. Please connect your wallet.')
+    }
+
+    // Check for minimum stake based on action type
+    const stakingKey = params.actionType === 'like' || params.actionType === 'unlike' ? 'MIN_STAKE_LIKE' :
+                      params.actionType === 'recaw' ? 'MIN_STAKE_REPOST' :
+                      params.actionType === 'follow' || params.actionType === 'unfollow' ? 'MIN_STAKE_FOLLOW' :
+                      params.actionType === 'caw' && params.receiverId ? 'MIN_STAKE_COMMENT' :
+                      'MIN_STAKE_POST'
+
+    if (!hasMinimumStake(activeToken?.stakedAmount, stakingKey)) {
+      const requiredAmount = getRequiredStake(stakingKey)
+      const actionTypeForModal = getActionTypeForModal(params.actionType)
+      throw new InsufficientStakeError(activeToken?.stakedAmount, requiredAmount, actionTypeForModal)
     }
 
     // Wait for token data to be loaded (max 10 seconds)
@@ -217,7 +233,7 @@ export function useSignAndSubmitAction() {
     if (!isConnected) {
       setPendingParams(params)
       openConnectModal?.()
-    } else if (activeToken.address != address) {
+    } else if (activeToken.address?.toLowerCase() !== address?.toLowerCase()) {
       console.error("That profile tokenId is not owned by your connected wallet")
       return
     } else await requestAndSubmit(params)

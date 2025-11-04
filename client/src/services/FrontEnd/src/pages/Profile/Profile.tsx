@@ -279,12 +279,12 @@ export const Profile: React.FC = () => {
       // Create the action text with compact profile update prefix
       actionText = `p:${JSON.stringify(profileUpdateData)}`
 
-      // Submit as other action with tip amount in amounts array
+      // Submit as other action - validator tip is added automatically by submitAction
+      // No need to pass amounts array, the validator tip covers the base cost
       await submitAction({
         actionType: 'other',
         senderId: activeToken.tokenId,
-        text: actionText,
-        amounts: [BigInt(updateCost)]
+        text: actionText
       })
 
       // Close modal and refresh profile data
@@ -987,7 +987,7 @@ export const Profile: React.FC = () => {
                   <span>Wrong Address</span>
                 ) : (
                   <span>
-                    Save Changes {updateCost > 0 && `(${updateCost.toLocaleString()} CAW)`}
+                    Save Changes
                   </span>
                 )}
               </button>
