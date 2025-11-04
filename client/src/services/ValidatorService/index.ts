@@ -157,7 +157,7 @@ export const validatorService: Service = {
         })
 
         const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('RPC call timeout after 30 seconds')), 30000)
+          setTimeout(() => reject(new Error('RPC call timeout after 120 seconds')), 120000)
         })
 
         let returnData: string
