@@ -553,8 +553,8 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 to={`/users/${useItem.user.username}`} 
                 className="w-10 h-10 rounded-full cursor-pointer overflow-hidden"
               >
-                <img 
-                  src="/images/logo.jpeg" 
+                <img
+                  src={useItem.user.avatarUrl || useItem.user.image || "/images/logo.jpeg"}
                   alt={`${useItem.user.username} avatar`}
                   className="w-full h-full object-cover rounded-full hover:opacity-80 transition-opacity duration-200"
                 />

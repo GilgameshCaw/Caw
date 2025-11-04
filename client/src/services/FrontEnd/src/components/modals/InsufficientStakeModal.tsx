@@ -1,0 +1,185 @@
+import React from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useBalance } from 'wagmi'
+import { useAccount } from 'wagmi'
+
+interface InsufficientStakeModalProps {
+  isOpen: boolean
+  onClose: () => void
+  requiredAmount?: bigint
+  currentAmount?: bigint
+  actionType?: 'post' | 'like' | 'repost'
+}
+
+const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
+  isOpen,
+  onClose,
+  requiredAmount,
+  currentAmount,
+  actionType = 'post'
+}) => {
+  const navigate = useNavigate()
+  const { address } = useAccount()
+
+  // Fetch CAW token balance
+  const { data: balanceData } = useBalance({
+    address: address,
+    token: '0xf3b9569f82b18aef890de263b84189bd33ebe452', // CAW token address on Ethereum mainnet
+  })
+
+  if (!isOpen) return null
+
+  const walletBalance = balanceData?.value || 0n
+  const hasZeroBalance = walletBalance === 0n
+
+  const handleBuyCAW = () => {
+    window.open('https://app.uniswap.org/explore/tokens/ethereum/0xf3b9569f82b18aef890de263b84189bd33ebe452', '_blank')
+    onClose()
+  }
+
+  const handleStakeCAW = () => {
+    navigate('/staking')
+    onClose()
+  }
+
+  const getActionText = () => {
+    switch (actionType) {
+      case 'like':
+        return 'like posts'
+      case 'repost':
+        return 'repost content'
+      case 'post':
+      default:
+        return 'create posts'
+    }
+  }
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center"
+        onClick={onClose}
+      >
+        {/* Modal */}
+        <div
+          className="bg-black border border-white/20 rounded-2xl p-6 max-w-md w-full mx-4"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="flex justify-between items-center mb-4">
+            <h2 className="text-xl font-bold text-white">Insufficient CAW Staked</h2>
+            <button
+              onClick={onClose}
+              className="text-gray-400 hover:text-white transition-colors"
+            >
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+
+          {/* Icon */}
+          <div className="flex justify-center mb-4">
+            <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center">
+              <svg className="w-10 h-10 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+          </div>
+
+          {/* Message */}
+          <div className="text-center mb-6">
+            <p className="text-gray-300 mb-2">
+              You don't have enough CAW staked to {getActionText()}.
+            </p>
+
+            {/* Show current wallet balance */}
+            <div className="bg-white/5 rounded-lg p-3 mt-3 mb-3">
+              <p className="text-sm text-gray-400 mb-1">Wallet Balance:</p>
+              <p className="text-lg font-semibold text-white">
+                {(Number(walletBalance) / 1e18).toLocaleString(undefined, { maximumFractionDigits: 2 })} CAW
+              </p>
+            </div>
+
+            {/* Show staking requirements */}
+            {currentAmount !== undefined && requiredAmount !== undefined && (
+              <div className="bg-white/5 rounded-lg p-3 mb-3">
+                <div className="grid grid-cols-2 gap-2 text-sm">
+                  <div>
+                    <p className="text-gray-400">Staked:</p>
+                    <p className="text-white font-medium">
+                      {(Number(currentAmount) / 1e18).toLocaleString(undefined, { maximumFractionDigits: 2 })} CAW
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-gray-400">Required:</p>
+                    <p className="text-yellow-500 font-medium">
+                      {(Number(requiredAmount) / 1e18).toLocaleString(undefined, { maximumFractionDigits: 2 })} CAW
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Conditional message based on balance */}
+            <p className="text-sm text-gray-400 mt-3">
+              {hasZeroBalance ? (
+                <>You'll need to buy CAW tokens to get started with the CAW ecosystem.</>
+              ) : (
+                <>You have CAW in your wallet! Stake it to start participating in the CAW ecosystem.</>
+              )}
+            </p>
+          </div>
+
+          {/* Actions - conditional based on balance */}
+          <div className="space-y-3">
+            {hasZeroBalance ? (
+              <>
+                {/* Primary: Buy CAW */}
+                <button
+                  onClick={handleBuyCAW}
+                  className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all duration-300"
+                >
+                  Buy CAW on Uniswap
+                </button>
+                {/* Secondary: Stake CAW */}
+                <button
+                  onClick={handleStakeCAW}
+                  className="w-full py-3 border border-white/20 hover:border-white/40 text-white font-semibold rounded-full transition-all duration-300"
+                >
+                  Stake CAW
+                </button>
+              </>
+            ) : (
+              <>
+                {/* Primary: Go to staking */}
+                <button
+                  onClick={handleStakeCAW}
+                  className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all duration-300"
+                >
+                  Stake CAW
+                </button>
+                {/* Secondary: Buy more */}
+                <button
+                  onClick={handleBuyCAW}
+                  className="w-full py-3 border border-white/20 hover:border-white/40 text-white font-semibold rounded-full transition-all duration-300"
+                >
+                  Buy More CAW on Uniswap
+                </button>
+              </>
+            )}
+            <button
+              onClick={onClose}
+              className="w-full py-3 text-gray-400 hover:text-white transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
+export default InsufficientStakeModal

@@ -291,6 +291,7 @@ model XmtpIdentity {
   preKeys          Json     // Pre-keys for offline messaging
   signedPreKey     Json     // Signed pre-key
   registrationId   Int      // XMTP registration ID
+  encryptionKey    String?  // XMTP client encryption key (added for SDK v4)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -346,9 +347,11 @@ model Message {
   id               String   @id @default(uuid())
   conversationId   String
   senderId         Int
-  content          String   @db.Text // Encrypted content
+  senderWallet     String?  // Wallet address that sent the message
+  encryptedPayload String   @db.Text // XMTP encrypted envelope/ciphertext
+  messageTopic     String?  // XMTP topic identifier
   contentType      String   @default("text") // text, image, file, etc.
-  metadata         Json?    // Additional metadata (file info, reactions, etc.)
+  metadata         Json?    // Non-sensitive metadata only
   status           MessageStatus @default(SENT)
   editedAt         DateTime?
   deletedAt        DateTime?
@@ -378,4 +381,20 @@ model MessageReceipt {
 
   @@unique([messageId, userId])
   @@index([userId])
+}
+
+model WithdrawalRequest {
+  id               Int      @id @default(autoincrement())
+  userId           Int      // token ID of the user
+  amount           String   // Amount in wei as string (to handle bigint)
+  status           String   @default("pending") // pending, completed, failed
+  txHash           String?  // Transaction hash when completed
+  cawonce          Int      // Cawonce of the withdrawal action
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  completedAt      DateTime?
+
+  @@index([userId, status])
+  @@index([status])
+  @@index([cawonce])
 }

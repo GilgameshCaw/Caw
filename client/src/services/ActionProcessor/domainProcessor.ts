@@ -8,7 +8,8 @@ import {
   handleUnlikeAction,
   handleFollowAction,
   handleUnfollowAction,
-  handleOtherAction
+  handleOtherAction,
+  handleWithdrawAction
 } from './actionHandlers'
 import type { PrismaTransactionClient, RawAction, ProcessedAction } from './types'
 
@@ -77,6 +78,10 @@ export async function processDomainEffects(
 
     case 'OTHER':
       await handleOtherAction(tx, action, rawAction, authorId, parentCawId)
+      break
+
+    case 'WITHDRAW':
+      await handleWithdrawAction(tx, action, rawAction)
       break
 
     default:

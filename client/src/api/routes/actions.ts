@@ -204,6 +204,32 @@ router.post('/', async (req, res) => {
       }
     }
 
+    // Create withdrawal request if this is a withdraw action
+    if (data.actionType === 6 || data.actionType === '6') {  // 6 is the enum value for 'withdraw'
+      console.log('Processing WITHDRAW action - creating withdrawal request')
+      console.log('Withdrawal details:', {
+        userId: data.senderId,
+        amounts: data.amounts,
+        cawonce: data.cawonce
+      })
+
+      try {
+        const withdrawalAmount = data.amounts && data.amounts[0] ? data.amounts[0].toString() : '0'
+        const withdrawalRequest = await prisma.withdrawalRequest.create({
+          data: {
+            userId: data.senderId,
+            amount: withdrawalAmount,
+            cawonce: data.cawonce,
+            status: 'pending'
+          }
+        })
+        console.log(`✅ Created withdrawal request ${withdrawalRequest.id} for user ${data.senderId}, amount: ${withdrawalAmount} CAW, cawonce: ${data.cawonce}`)
+      } catch (withdrawErr) {
+        console.error('❌ Failed to create withdrawal request:', withdrawErr)
+        // Continue even if withdrawal request creation fails
+      }
+    }
+
     // Create the transaction queue entry
     const txQueueEntry = await prisma.txQueue.create({
       data: {

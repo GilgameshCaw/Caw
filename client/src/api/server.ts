@@ -2,6 +2,7 @@ import express from 'express'
 import cors, { CorsOptions } from 'cors'
 import http from 'http'
 import path from 'path'
+import XmtpWebSocketService from '../services/XmtpService/websocket'
 import actionsRouter from './routes/actions'
 import cawRouter from './routes/caws'
 import txRouter  from './routes/txs'
@@ -14,7 +15,10 @@ import searchRouter from './routes/search'
 import bookmarksRouter from './routes/bookmarks'
 import scheduledRouter from './routes/scheduled'
 import notificationsRouter from './routes/notifications'
+import withdrawalsRouter from './routes/withdrawals'
 import xmtpRouter from './routes/xmtp'
+import xmtpSecureRouter from './routes/xmtp-secure'
+import xmtpProxyRouter from './routes/xmtpProxy'
 
 /**
  * natstat: build and configure Express app
@@ -60,7 +64,12 @@ function createApp() {
   app.use('/api/bookmarks', bookmarksRouter)
   app.use('/api/scheduled', scheduledRouter)
   app.use('/api/notifications', notificationsRouter)
-  app.use('/api/xmtp', xmtpRouter)
+  app.use('/api/withdrawals', withdrawalsRouter)
+  // Old insecure XMTP routes commented out - using secure routes instead
+  // app.use('/api/xmtp', xmtpRouter)
+  app.use('/api/xmtp', xmtpSecureRouter)
+  // Temporarily disabled xmtpProxy router due to path-to-regexp issue
+  // app.use('/api/xmtp-proxy', xmtpProxyRouter)
 
   return app
 }
@@ -71,6 +80,10 @@ function createApp() {
 export function startApi(port = Number(process.env.API_PORT) || 4000) {
   const app    = createApp()
   const server = http.createServer(app)
+
+  // Initialize WebSocket server for XMTP
+  XmtpWebSocketService.initialize(server)
+
   server.listen(port, () =>
     console.log(`API listening on http://localhost:${port}`)
   )

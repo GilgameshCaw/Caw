@@ -1,5 +1,5 @@
 // src/components/ProfileChooser.tsx
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import ConnectButton from "~/components/buttons/ConnectButton";
 import { useTokenDataStore, useActiveToken } from "~/store/tokenDataStore";
 import { formatAddress, formatUnitsCompact, convertToText } from "~/utils";
@@ -22,11 +22,29 @@ const ProfileChooser: React.FC = () => {
   const setLastAddress = useTokenDataStore(s => s.setLastAddress)
   const setActiveTokenId = useTokenDataStore(state => state.setActiveTokenId);;
   const [isDropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   const selectedToken = activeToken;
 
   const hasHydrated = useTokenDataStore(s => s.hasHydrated);
   console.log("tokens by address", hasHydrated, tokensByAddress)
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setDropdownOpen(false);
+      }
+    };
+
+    if (isDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [isDropdownOpen]);
 
   if (hasHydrated && !selectedToken)
     return (
@@ -54,15 +72,16 @@ const ProfileChooser: React.FC = () => {
     setDropdownOpen(false);
   };
 
-  const notCurrentAddress = address != activeToken.address;
+  const notCurrentAddress = address?.toLowerCase() != activeToken?.address?.toLowerCase();
 
   const visibleTokensByAddress = { ...tokensByAddress }
-  if (address && (!visibleTokensByAddress[address] || visibleTokensByAddress[address].length == 0))
-      visibleTokensByAddress[address] = [];
+  const normalizedAddress = address?.toLowerCase() as Address | undefined
+  if (normalizedAddress && (!visibleTokensByAddress[normalizedAddress] || visibleTokensByAddress[normalizedAddress].length == 0))
+      visibleTokensByAddress[normalizedAddress] = [];
 
   // --- main render when tokens exist ---
   return (
-    <div className="relative flex flex-col text-left left-[0%]">
+    <div ref={dropdownRef} className="relative flex flex-col text-left left-[0%]">
       <button
         onClick={toggleDropdown}
         className="flex items-center p-1 cursor-pointer"
@@ -112,7 +131,7 @@ const ProfileChooser: React.FC = () => {
                 <div className="">
                   {ownerAddress}
                 </div>
-                {address == ownerAddress ? (
+                {normalizedAddress == ownerAddress ? (
                   <div className="w-[15px] pl-2 text-right">
                     ←
                   </div>
@@ -149,7 +168,7 @@ const ProfileChooser: React.FC = () => {
                     </button>
                   </li>
                 ))}
-                  {address == ownerAddress && (
+                  {normalizedAddress == ownerAddress && (
                     <li className="text-xs text-center pt-1 pb-3">
                       <Link to={`/mint`} className="block">
                         + Mint a username

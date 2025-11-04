@@ -16,6 +16,7 @@ var pems = process.env.PRIVATE_KEYS
 
 // Load Infura project ID from environment variable
 const infuraProjectId = process.env.INFURA_PROJECT_ID || 'YOUR_INFURA_PROJECT_ID';
+console.log("INFURA PROJECT ID: ", infuraProjectId);
 /**
  * Use this file to configure your truffle project. It's seeded with some
  * common settings for different networks and features like migrations,

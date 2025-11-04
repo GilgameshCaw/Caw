@@ -21,15 +21,15 @@ interface RawToken {
 
 export default function useTokenDataUpdate() {
   const { address } = useAccount()
-  const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const setTokensForAddress = useTokenDataStore(s => s.setTokensForAddress)
   const tokensByAddress = useTokenDataStore(s => s.tokensByAddress)
+  const activeTokenIdByAddress = useTokenDataStore(s => s.activeTokenIdByAddress)
 
-  const setActiveTokenId = useTokenDataStore(s => s.setActiveTokenId)
+  const setActiveTokenIdForAddress = useTokenDataStore(s => s.setActiveTokenIdForAddress)
   const setLastAddress = useTokenDataStore(s => s.setLastAddress)
   const lastAddress = useTokenDataStore(s => s.lastAddress)
 
-  const viewedAddress = (address ?? lastAddress) as Address | undefined
+  const viewedAddress = ((address ?? lastAddress)?.toLowerCase()) as Address | undefined
   console.log("has address?", !!address, address ?? null, "viewedAddress:", viewedAddress ?? null)
 
   const { data: rawTokens, isError, error, isLoading, isLoadingError } = useReadContract({
@@ -40,17 +40,26 @@ export default function useTokenDataUpdate() {
     args: [viewedAddress as Address],
 
     query: {
-      enabled: !!viewedAddress
+      enabled: !!viewedAddress,
+      refetchInterval: 5000, // Refetch every 5 seconds to keep data fresh
+      staleTime: 2000, // Consider data stale after 2 seconds
     }
   })
 
 
-  if (viewedAddress && rawTokens && rawTokens.length > 0 && activeTokenId === undefined)
-    setActiveTokenId(rawTokens[0].tokenId)
+  // Set active token for this address if not already set
+  if (viewedAddress && rawTokens && rawTokens.length > 0) {
+    const activeTokenIdForAddress = activeTokenIdByAddress[viewedAddress]
+    if (activeTokenIdForAddress === undefined) {
+      setActiveTokenIdForAddress(viewedAddress, Number(rawTokens[0].tokenId))
+    }
+  }
 
-  // only update lastAddress when a wallet is actually connected
-  if (!!address && rawTokens && rawTokens.length > 0)
+  // Only set lastAddress on initial load if it's not already set
+  // Don't update it when wallet address changes - that's handled by manual username selection
+  if (!!address && rawTokens && rawTokens.length > 0 && !lastAddress) {
     setLastAddress(address)
+  }
 
   console.log("TOKEN DATA FROM L1:", rawTokens, isError, error)
 
@@ -61,6 +70,8 @@ export default function useTokenDataUpdate() {
     functionName: "getTokens",
     query: {
       enabled: !!rawTokens && rawTokens.length > 0,
+      refetchInterval: 5000, // Refetch every 5 seconds to keep data fresh
+      staleTime: 2000, // Consider data stale after 2 seconds
     },
     args: [(rawTokens ?? []).map((token) => Number(token.tokenId))],
   })

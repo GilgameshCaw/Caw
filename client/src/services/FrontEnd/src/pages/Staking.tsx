@@ -1,7 +1,7 @@
 // src/services/FrontEnd/src/components/CawStakingForm.tsx
 import React, { useEffect, useState, useCallback, useMemo } from "react"
 import { useSignAndSubmitAction } from '~/api/actions'
-import { useSearchParams } from "react-router-dom"
+import { useSearchParams, useNavigate, useLocation } from "react-router-dom"
 import { CgExternal } from "react-icons/cg"
 import { FormHeader } from "~/components/forms/FormHeader"
 import { SubmitButton } from "~/components/buttons/SubmitButton"
@@ -11,7 +11,8 @@ import { TokenData } from "~/types";
 import { handleError, convertToText, formatUnitsCompact } from "~/utils";
 import useContractCall from "~/hooks/useContractCall";
 import useAllowance from "~/hooks/useAllowance";
-import { useAccount, useConnections, useReadContract, useSwitchChain } from "wagmi"
+import { useAccount, useConnections, useReadContract, useSwitchChain, useChainId } from "wagmi"
+import { useConnectModal } from "@rainbow-me/rainbowkit"
 import { useActiveToken, useTokenDataStore } from "~/store/tokenDataStore"
 import { erc20Abi, cawNameAbi, cawNameL2Abi } from "~/../../../abi/generated"
 import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_L2_ADDRESS } from "~/../../../abi/addresses"
@@ -25,12 +26,180 @@ import { HiOutlineTrendingUp, HiOutlineTrendingDown, HiOutlineInformationCircle 
 
 type StakingTab = 'stake' | 'unstake' | 'info'
 
+const CLIENT_ID = Number(import.meta.env.VITE_CLIENT_ID)
+
+interface WithdrawalRequest {
+  id: number
+  userId: number
+  amount: string
+  status: string
+  cawonce: number
+  createdAt: string
+  updatedAt: string
+  completedAt?: string
+}
+
 const Staking = () => {
   const { isDark } = useTheme()
-  const [activeTab, setActiveTab] = useState<StakingTab>('stake')
+  const navigate = useNavigate()
+  const location = useLocation()
+
+  // Determine active tab from URL
+  const getActiveTabFromPath = (): StakingTab => {
+    if (location.pathname === '/staking/unstake') return 'unstake'
+    if (location.pathname === '/staking/info') return 'info'
+    return 'stake'
+  }
+
+  const [activeTab, setActiveTab] = useState<StakingTab>(getActiveTabFromPath())
   const [amount, setAmount] = useState<string>("")
+  const [depositFee, setDepositFee] = useState<bigint>(0n)
+  const [withdrawFee, setWithdrawFee] = useState<bigint>(0n)
+  const [pendingWithdrawals, setPendingWithdrawals] = useState<WithdrawalRequest[]>([])
+  const [allWithdrawals, setAllWithdrawals] = useState<WithdrawalRequest[]>([])
+  const [loadingWithdrawals, setLoadingWithdrawals] = useState(false)
+  const [isSwitchingNetwork, setIsSwitchingNetwork] = useState(false)
+  const [isWithdrawPending, setIsWithdrawPending] = useState(false)
+  const [recentStakeTime, setRecentStakeTime] = useState<number | null>(null)
   const activeToken = useActiveToken()
+  const tokenId = activeToken?.tokenId
   const { address, isConnected } = useAccount()
+  const chainId = useChainId()
+  const { switchChain } = useSwitchChain()
+  const { openConnectModal } = useConnectModal()
+  const connections = useConnections()
+  const signAndSubmit = useSignAndSubmitAction()
+
+  const wrongChainForStake = connections[0]?.chainId !== chains.l1.chainId
+  const wrongChainForUnstake = connections[0]?.chainId !== chains.l1.chainId
+  const isMainnet = connections[0]?.chainId === chains.l1.chainId
+
+  // Check if connected wallet owns the active token
+  const isTokenOwner = activeToken?.owner?.toLowerCase() === address?.toLowerCase()
+
+  console.log('[Staking] Current chainId:', chainId, 'Expected L1 chainId:', chains.l1.chainId)
+  console.log('[Staking] Token owner check:', {
+    tokenOwner: activeToken?.owner,
+    connectedAddress: address,
+    isTokenOwner
+  })
+
+  // Get allowance for staking
+  const { allowance } = useAllowance(CAW_ADDRESS, CAW_NAMES_ADDRESS)
+
+  // Get wallet balance
+  const { data: balance } = useReadContract({
+    address: CAW_ADDRESS,
+    abi: erc20Abi,
+    chainId: chains.l1.chainId,
+    functionName: "balanceOf",
+    args: [address!],
+    query: {
+      enabled: !!tokenId && !!address
+    }
+  })
+
+  // Get deposit quote
+  const { data: depositQuote } = useReadContract({
+    abi: cawNameAbi,
+    chainId: chains.l1.chainId,
+    functionName: "depositQuote",
+    address: CAW_NAMES_ADDRESS,
+    args: [CLIENT_ID, tokenId ?? 0, parseUnits(amount || "0", 18), chains.l2.layerZero, false],
+    query: {
+      enabled: !!tokenId && !!amount && activeTab === 'stake'
+    }
+  })
+
+  // Get withdraw quote
+  const { data: withdrawQuote } = useReadContract({
+    address: CAW_NAMES_ADDRESS,
+    abi: cawNameAbi,
+    chainId: chains.l1.chainId,
+    functionName: "withdrawQuote",
+    args: [CLIENT_ID, false],
+    query: {
+      enabled: !!tokenId && activeTab === 'unstake'
+    }
+  })
+
+  // Update fees when quotes change
+  useEffect(() => {
+    if (depositQuote?.nativeFee != null) setDepositFee(BigInt(depositQuote.nativeFee))
+  }, [depositQuote])
+
+  useEffect(() => {
+    if (withdrawQuote?.nativeFee != null) setWithdrawFee(BigInt(withdrawQuote.nativeFee))
+  }, [withdrawQuote])
+
+  // Fetch all withdrawals (pending and recently completed)
+  const fetchPendingWithdrawals = useCallback(async () => {
+    if (!tokenId) return
+
+    setLoadingWithdrawals(true)
+    try {
+      console.log('[Staking] Fetching withdrawal requests for user', tokenId)
+      const response = await fetch(`/api/withdrawals/${tokenId}`)
+      const data = await response.json()
+
+      if (data.success && data.withdrawals) {
+        console.log('[Staking] Fetched withdrawal requests:', data.withdrawals)
+        // Store all withdrawals for LayerZero message check
+        setAllWithdrawals(data.withdrawals)
+        // Filter to show pending and recently completed (within last 10 seconds)
+        const now = Date.now()
+        const filtered = data.withdrawals.filter((w: WithdrawalRequest) => {
+          if (w.status === 'pending') return true
+          if (w.status === 'completed' && w.completedAt) {
+            const completedTime = new Date(w.completedAt).getTime()
+            return (now - completedTime) < 10000 // Show completed for 10 seconds
+          }
+          return false
+        })
+        setPendingWithdrawals(filtered)
+      } else {
+        console.error('[Staking] Failed to fetch withdrawals:', data)
+        setPendingWithdrawals([])
+      }
+    } catch (err) {
+      console.error('[Staking] Error fetching withdrawal requests:', err)
+      setPendingWithdrawals([])
+    } finally {
+      setLoadingWithdrawals(false)
+    }
+  }, [tokenId])
+
+  // Fetch pending withdrawals on mount and when tokenId changes
+  useEffect(() => {
+    fetchPendingWithdrawals()
+  }, [fetchPendingWithdrawals])
+
+  // Poll for withdrawal updates when on unstake tab
+  useEffect(() => {
+    if (activeTab !== 'unstake') return
+
+    const interval = setInterval(() => {
+      fetchPendingWithdrawals()
+    }, 5000) // Poll every 5 seconds
+
+    return () => clearInterval(interval)
+  }, [activeTab, fetchPendingWithdrawals])
+
+  // Clear switching state when chain changes
+  useEffect(() => {
+    if (isSwitchingNetwork) {
+      console.log('[Staking] Chain changed, clearing switching state')
+      setIsSwitchingNetwork(false)
+    }
+  }, [chainId])
+
+  // Update active tab when URL changes
+  useEffect(() => {
+    setActiveTab(getActiveTabFromPath())
+  }, [location.pathname])
+
+  const insufficientBalance = !balance || parseUnits(amount || "0", 18) > balance
+  const needsApproval = !allowance || parseUnits(amount || "0", 18) > allowance
 
   // Use real data from activeToken if available
   const mockData = useMemo(() => {
@@ -69,6 +238,169 @@ const Staking = () => {
     }
   }, [activeToken])
 
+  // Approve CAW tokens for staking
+  const approve = useContractCall({
+    address: CAW_ADDRESS,
+    abi: erc20Abi,
+    functionName: "approve",
+    args: [CAW_NAMES_ADDRESS, maxUint256],
+    disabled: !amount || insufficientBalance || !isTokenOwner,
+    onError: (err) => handleError(err, "approve"),
+    onPending: () => {},
+    onSuccess: async () => {
+      console.log('[Staking] Approval successful, automatically triggering stake')
+      // Wait a brief moment for the approval to be confirmed
+      await new Promise(resolve => setTimeout(resolve, 500))
+      // Automatically call stake after approval
+      await stake.call()
+    },
+  })
+
+  // Deposit/Stake CAW
+  const stake = useContractCall({
+    address: CAW_NAMES_ADDRESS,
+    abi: cawNameAbi,
+    functionName: "deposit",
+    args: [CLIENT_ID, tokenId || 0, parseUnits((amount || "0").toString(), 18), chains.l2.layerZero, 0n],
+    disabled: !tokenId || !amount || depositFee === 0n || !isTokenOwner,
+    value: depositFee,
+    onPending: () => {},
+    onSuccess: (hash) => {
+      console.log('[Staking] Stake successful:', hash)
+      setAmount("")
+      setRecentStakeTime(Date.now())
+    },
+    onError: (err) => handleError(err, "stake"),
+  })
+
+  // Withdraw CAW from L1
+  const withdraw = useContractCall({
+    address: CAW_NAMES_ADDRESS,
+    abi: cawNameAbi,
+    functionName: "withdraw",
+    args: [CLIENT_ID, Number(tokenId ?? 0), 0n],
+    disabled: !tokenId || withdrawFee === 0n,
+    value: withdrawFee,
+    onPending: () => {
+      setIsWithdrawPending(true)
+    },
+    onSuccess: (hash) => {
+      console.log('[Staking] Withdraw successful:', hash)
+      // Keep pending state and force hard reload to bypass all caches
+      setTimeout(() => {
+        setIsWithdrawPending(false)
+        // Force hard reload to bypass wagmi and localStorage caches
+        window.location.href = window.location.href.split('?')[0] + '?t=' + Date.now()
+      }, 5000)
+    },
+    onError: (err) => {
+      setIsWithdrawPending(false)
+      handleError(err, "withdraw")
+    },
+  })
+
+  // Handle stake button click
+  const handleStake = useCallback(async () => {
+    console.log('[Staking] handleStake called', { isConnected, amount, wrongChainForStake, needsApproval })
+
+    // If not connected, open wallet connect modal
+    if (!isConnected) {
+      console.log('[Staking] Opening connect modal')
+      openConnectModal?.()
+      return
+    }
+
+    if (wrongChainForStake) {
+      console.log('[Staking] Switching to L1 network')
+      setIsSwitchingNetwork(true)
+      try {
+        await switchChain({ chainId: chains.l1.chainId })
+      } catch (err) {
+        console.error('[Staking] Network switch failed:', err)
+        setIsSwitchingNetwork(false)
+      }
+      return
+    }
+
+    if (needsApproval) {
+      console.log('[Staking] Approving CAW tokens')
+      await approve.call()
+    } else {
+      console.log('[Staking] Depositing CAW')
+      await stake.call()
+    }
+  }, [isConnected, wrongChainForStake, needsApproval, approve, stake, amount, switchChain, openConnectModal])
+
+  // Handle withdraw button click (for pending withdrawals)
+  const handleWithdraw = useCallback(async () => {
+    if (!activeToken) return
+    console.log('[Staking] handleWithdraw called', { isConnected, isMainnet })
+
+    // If not connected, open wallet connect modal
+    if (!isConnected) {
+      console.log('[Staking] Opening connect modal')
+      openConnectModal?.()
+      return
+    }
+
+    if (!isMainnet) {
+      console.log('[Staking] Switching to L1 network')
+      setIsSwitchingNetwork(true)
+      try {
+        await switchChain({ chainId: chains.l1.chainId })
+      } catch (err) {
+        console.error('[Staking] Network switch failed:', err)
+        setIsSwitchingNetwork(false)
+      }
+      return
+    }
+
+    console.log('[Staking] Executing withdraw')
+    await withdraw.call()
+  }, [activeToken, isConnected, isMainnet, withdraw, switchChain, openConnectModal])
+
+  // Handle unstake initialization (on L2)
+  const handleUnstakeInit = useCallback(async () => {
+    if (!activeToken) return
+    console.log('[Staking] handleUnstakeInit called', { isConnected, amount, isMainnet })
+
+    // If not connected, open wallet connect modal
+    if (!isConnected) {
+      console.log('[Staking] Opening connect modal')
+      openConnectModal?.()
+      return
+    }
+
+    if (isMainnet) {
+      console.log('[Staking] Switching to L2 network')
+      setIsSwitchingNetwork(true)
+      try {
+        await switchChain({ chainId: chains.l2.chainId })
+      } catch (err) {
+        console.error('[Staking] Network switch failed:', err)
+        setIsSwitchingNetwork(false)
+      }
+      return
+    }
+
+    try {
+      console.log('[Staking] Submitting withdraw action to L2')
+      await signAndSubmit({
+        senderId: activeToken.tokenId,
+        actionType: 'withdraw',
+        recipients: [activeToken.tokenId],
+        amounts: [BigInt(amount) * 10n**18n],
+      })
+      setAmount("")
+
+      // Refresh pending withdrawals after submission
+      console.log('[Staking] Refreshing pending withdrawals')
+      await fetchPendingWithdrawals()
+    } catch (err) {
+      console.error('[Staking] Withdraw init failed', err)
+    }
+  }, [activeToken, isConnected, amount, isMainnet, signAndSubmit, switchChain, fetchPendingWithdrawals, openConnectModal])
+
   const renderStakePanel = () => (
     <div className="space-y-6">
       <div>
@@ -84,32 +416,42 @@ const Staking = () => {
         </p>
       </div>
 
-      {/* Available Balance */}
-      <div className="space-y-2">
-        <label className={`text-sm font-medium transition-colors duration-300 ${
-          isDark ? 'text-gray-300' : 'text-gray-700'
-        }`}>
-          Available Balance
-        </label>
-        <div className={`w-full px-4 py-3 rounded-full border transition-all duration-300 bg-black ${
-          isDark ? 'border-white/20' : 'border-gray-300'
-        }`}>
-          <div className="flex items-center justify-between">
-            <div className={`text-base font-bold transition-all duration-300 ${
-              isDark ? 'text-white' : 'text-black'
-            }`}>
-              {mockData.availableBalance.toLocaleString('en-US', { maximumFractionDigits: 2 })} CAW
+      {/* LayerZero Status Link - Show if stake was recent (within last hour) */}
+      {(() => {
+        const now = Date.now()
+        const oneHourAgo = now - (60 * 60 * 1000)
+        const hasRecentStake = recentStakeTime && recentStakeTime > oneHourAgo
+        return hasRecentStake && address && (
+          <div className={`p-3 rounded-lg border transition-all duration-300 ${
+            isDark ? 'bg-blue-500/10 border-blue-500/30' : 'bg-blue-50 border-blue-200'
+          }`}>
+            <div className="flex items-start gap-2">
+              <div className={`mt-0.5 text-sm ${isDark ? 'text-blue-300' : 'text-blue-600'}`}>ℹ️</div>
+              <div className="flex-1">
+                <p className={`text-xs leading-relaxed transition-colors duration-300 ${
+                  isDark ? 'text-blue-200' : 'text-blue-800'
+                }`}>
+                  Waiting for your staked CAW to appear?
+                  <br />
+                  Cross-chain transfers might be processing in the background.
+                  <br />
+                  <br />
+                  <a
+                    href={`https://${chains.l2.chainId === baseSepolia.id ? 'testnet.' : ''}layerzeroscan.com/address/${address}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`font-semibold hover:underline ${
+                      isDark ? 'text-blue-300' : 'text-blue-600'
+                    }`}
+                  >
+                    Check status here →
+                  </a>
+                </p>
+              </div>
             </div>
-            <button
-              onClick={() => setAmount(mockData.availableBalance.toString())}
-              className={`px-3 py-1 text-xs rounded-full transition-all duration-300 cursor-pointer ${
-              isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-200 text-black hover:bg-gray-300'
-            }`}>
-              Max
-            </button>
           </div>
-        </div>
-      </div>
+        )
+      })()}
 
       {/* Amount to Stake */}
       <div className="space-y-2">
@@ -124,30 +466,63 @@ const Staking = () => {
             placeholder="0.0"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            className={`w-full px-4 py-3 pr-12 rounded-full border transition-all duration-300 bg-black ${
+            className={`w-full px-4 py-3 pr-20 rounded-full border transition-all duration-300 bg-black ${
               isDark ? 'border-white/20 text-white' : 'border-gray-300 text-black'
             } focus:outline-none focus:ring-0`}
           />
-          <div className="absolute right-4 top-1/2 transform -translate-y-1/2">
-            <span className={`text-sm font-medium transition-colors duration-300 ${
-              isDark ? 'text-gray-400' : 'text-gray-600'
+          <div className="absolute right-4 top-1/2 transform -translate-y-1/2 flex items-center gap-2">
+            <button
+              onClick={() => setAmount(mockData.availableBalance.toString())}
+              className={`px-3 py-1 text-xs font-semibold rounded-full transition-all duration-300 cursor-pointer ${
+              isDark ? 'bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30' : 'bg-yellow-500/20 text-yellow-600 hover:bg-yellow-500/30'
             }`}>
-              CAW
-            </span>
+              MAX
+            </button>
           </div>
+        </div>
+        <div className="flex items-center justify-between px-2">
+          <button
+            onClick={() => setAmount(mockData.availableBalance.toString())}
+            className={`text-xs transition-colors duration-300 cursor-pointer hover:underline ${
+              isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-black'
+            }`}
+          >
+            Available: {mockData.availableBalance.toLocaleString('en-US', { maximumFractionDigits: 2 })} CAW
+          </button>
         </div>
       </div>
 
       {/* Stake Button */}
       <button
+        onClick={handleStake}
         className={`w-full py-3 px-4 rounded-full font-semibold transition-all duration-300 cursor-pointer ${
-          !amount || parseFloat(amount) <= 0 || parseFloat(amount) > mockData.availableBalance
+          !isConnected
+            ? 'bg-yellow-500 hover:bg-yellow-600 text-black'
+            : (!tokenId || (!isTokenOwner && !wrongChainForStake) || (!wrongChainForStake && !needsApproval && (!amount || depositFee === 0n)))
             ? (isDark ? 'bg-gray-700 text-gray-400' : 'bg-gray-300 text-gray-600')
+            : (stake.status === 'pending' || approve.status === 'pending')
+            ? 'bg-yellow-600 text-black'
             : 'bg-yellow-500 hover:bg-yellow-600 text-black'
         }`}
-        disabled={!amount || parseFloat(amount) <= 0 || parseFloat(amount) > mockData.availableBalance}
+        disabled={isConnected && (!tokenId || (!isTokenOwner && !wrongChainForStake) || (!wrongChainForStake && ((!needsApproval && (!amount || depositFee === 0n || stake.status === 'pending')) || (needsApproval && approve.status === 'pending'))))}
       >
-        {parseFloat(amount || "0") > mockData.availableBalance ? "Insufficient Balance" : "Stake CAW"}
+        {isSwitchingNetwork
+          ? 'Switching...'
+          : !isConnected
+          ? 'Connect Wallet'
+          : !isTokenOwner && activeToken && !wrongChainForStake
+          ? 'Wrong Address'
+          : stake.status === 'pending'
+          ? 'Staking...'
+          : approve.status === 'pending'
+          ? 'Approving...'
+          : wrongChainForStake
+          ? 'Switch Network'
+          : needsApproval
+          ? 'Approve'
+          : insufficientBalance
+          ? "Insufficient Balance"
+          : "Stake CAW"}
       </button>
     </div>
   )
@@ -167,53 +542,131 @@ const Staking = () => {
         </p>
       </div>
 
-      {/* Staked Balance */}
-      <div className="space-y-2">
-        <label className={`text-sm font-medium transition-colors duration-300 ${
-          isDark ? 'text-gray-300' : 'text-gray-700'
+      {/* Ready for Withdrawal Section */}
+      {mockData.withdrawable > 0 && (
+        <div className={`p-4 rounded-lg border transition-all duration-300 ${
+          isDark ? 'bg-green-500/10 border-green-500/30' : 'bg-green-50 border-green-200'
         }`}>
-          Staked Balance
-        </label>
-        <div className={`w-full px-4 py-3 rounded-full border transition-all duration-300 bg-black ${
-          isDark ? 'border-white/20' : 'border-gray-300'
-        }`}>
-          <div className="flex items-center justify-between">
-            <div className={`text-base font-bold transition-all duration-300 ${
-              isDark ? 'text-white' : 'text-black'
-            }`}>
-              {mockData.stakedAmount.toLocaleString('en-US', { maximumFractionDigits: 2 })} CAW
+          <div className="flex items-center justify-between gap-4">
+            {/* Left side: Info */}
+            <div className="flex-1">
+              <div className={`text-sm font-semibold transition-colors duration-300 ${
+                isDark ? 'text-green-200' : 'text-green-800'
+              }`}>
+                Ready for Withdrawal
+              </div>
+              <div className={`text-2xl font-bold transition-colors duration-300 mt-1 ${
+                isDark ? 'text-green-200' : 'text-green-800'
+              }`}>
+                {mockData.withdrawable.toLocaleString('en-US', { maximumFractionDigits: 2 })} CAW
+              </div>
             </div>
+
+            {/* Right side: Button */}
             <button
-              onClick={() => setAmount(mockData.stakedAmount.toString())}
-              className={`px-3 py-1 text-xs rounded-full transition-all duration-300 cursor-pointer ${
-              isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-200 text-black hover:bg-gray-300'
-            }`}>
-              Max
+              onClick={handleWithdraw}
+              className={`py-2 px-6 rounded-full text-sm font-semibold transition-all duration-300 cursor-pointer whitespace-nowrap ${
+                !isConnected
+                  ? 'bg-yellow-500 hover:bg-yellow-600 text-black'
+                  : (!isTokenOwner && activeToken && !wrongChainForUnstake)
+                  ? (isDark ? 'bg-gray-700 text-gray-400' : 'bg-gray-300 text-gray-600')
+                  : (withdraw.status === 'pending' || isWithdrawPending)
+                  ? 'bg-yellow-600 text-black'
+                  : 'bg-yellow-500 hover:bg-yellow-600 text-black'
+              }`}
+              disabled={isConnected && ((!isTokenOwner && activeToken && !wrongChainForUnstake) || withdraw.status === 'pending' || isWithdrawPending)}
+            >
+              {isSwitchingNetwork
+                ? 'Switching...'
+                : !isConnected
+                ? 'Connect Wallet'
+                : !isTokenOwner && activeToken && !wrongChainForUnstake
+                ? 'Wrong Address'
+                : (withdraw.status === 'pending' || isWithdrawPending)
+                ? 'Withdrawing...'
+                : wrongChainForUnstake
+                ? 'Switch Network'
+                : 'Complete Withdrawal'}
             </button>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Pending Withdrawal */}
-      <div className="space-y-2">
-        <label className={`text-sm font-medium transition-colors duration-300 ${
-          isDark ? 'text-gray-300' : 'text-gray-700'
-        }`}>
-          Pending Withdrawal
-        </label>
-        <div className={`w-full px-4 py-3 rounded-full border transition-all duration-300 bg-black ${
-          isDark ? 'border-white/20' : 'border-gray-300'
-        }`}>
-          <div className="flex items-center">
-            <div className="w-2 h-2 bg-yellow-500 rounded-full mr-3"></div>
-            <div className={`text-base font-bold transition-all duration-300 ${
-              isDark ? 'text-yellow-200' : 'text-yellow-800'
-            }`}>
-              {mockData.withdrawable.toFixed(1)} CAW
+      {/* LayerZero Status Link - Show if there are completed withdrawals updated within the last hour */}
+      {(() => {
+        const now = Date.now()
+        const oneHourAgo = now - (60 * 60 * 1000)
+        const hasRecentCompletedWithdrawals = allWithdrawals.some((w: WithdrawalRequest) =>
+          w.status === 'completed' &&
+          w.updatedAt &&
+          new Date(w.updatedAt).getTime() > oneHourAgo
+        )
+        return hasRecentCompletedWithdrawals && address && (
+          <div className={`p-3 rounded-lg border transition-all duration-300 ${
+            isDark ? 'bg-blue-500/10 border-blue-500/30' : 'bg-blue-50 border-blue-200'
+          }`}>
+            <div className="flex items-start gap-2">
+              <div className={`mt-0.5 text-sm ${isDark ? 'text-blue-300' : 'text-blue-600'}`}>ℹ️</div>
+              <div className="flex-1">
+                <p className={`text-xs leading-relaxed transition-colors duration-300 ${
+                  isDark ? 'text-blue-200' : 'text-blue-800'
+                }`}>
+                  Waiting for your unstaked CAW? Cross-chain transfers might be processing in the background.
+                  <br />
+                  <a
+                    href={`https://${chains.l2.chainId === baseSepolia.id ? 'testnet.' : ''}layerzeroscan.com/address/${address}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`font-semibold hover:underline ${
+                      isDark ? 'text-blue-300' : 'text-blue-600'
+                    }`}
+                  >
+                    Check status here →
+                  </a>
+                </p>
+              </div>
             </div>
           </div>
+        )
+      })()}
+
+      {/* Withdrawal Requests (Pending and Recently Completed) */}
+      {pendingWithdrawals.length > 0 && (
+        <div className="space-y-2">
+          {pendingWithdrawals.map((withdrawal) => {
+            const isCompleted = withdrawal.status === 'completed'
+            return (
+              <div key={withdrawal.id} className={`p-4 rounded-lg border transition-all duration-300 ${
+                isCompleted
+                  ? isDark ? 'bg-green-500/10 border-green-500/30' : 'bg-green-50 border-green-200'
+                  : isDark ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-yellow-50 border-yellow-200'
+              }`}>
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-2 h-2 rounded-full ${
+                      isCompleted ? 'bg-green-500' : 'bg-yellow-500 animate-pulse'
+                    }`}></div>
+                    <span className={`text-sm transition-colors duration-300 ${
+                      isCompleted
+                        ? isDark ? 'text-green-200' : 'text-green-800'
+                        : isDark ? 'text-yellow-200' : 'text-yellow-800'
+                    }`}>
+                      <span className="font-semibold">{formatUnits(BigInt(withdrawal.amount), 18)} CAW</span>
+                    </span>
+                  </div>
+                  <span className={`text-xs px-2 py-1 rounded-full font-semibold ${
+                    isCompleted
+                      ? isDark ? 'bg-green-500/20 text-green-200' : 'bg-green-200 text-green-800'
+                      : isDark ? 'bg-yellow-500/20 text-yellow-200' : 'bg-yellow-200 text-yellow-800'
+                  }`}>
+                    {isCompleted ? 'Completed' : 'Pending'}
+                  </span>
+                </div>
+              </div>
+            )
+          })}
         </div>
-      </div>
+      )}
 
       {/* Amount to Unstake */}
       <div className="space-y-2">
@@ -228,30 +681,57 @@ const Staking = () => {
             placeholder="0.0"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            className={`w-full px-4 py-3 pr-12 rounded-full border transition-all duration-300 bg-black ${
+            className={`w-full px-4 py-3 pr-20 rounded-full border transition-all duration-300 bg-black ${
               isDark ? 'border-white/20 text-white' : 'border-gray-300 text-black'
             } focus:outline-none focus:ring-0`}
           />
-          <div className="absolute right-4 top-1/2 transform -translate-y-1/2">
-            <span className={`text-sm font-medium transition-colors duration-300 ${
-              isDark ? 'text-gray-400' : 'text-gray-600'
+          <div className="absolute right-4 top-1/2 transform -translate-y-1/2 flex items-center gap-2">
+            <button
+              onClick={() => setAmount(mockData.stakedAmount.toString())}
+              className={`px-3 py-1 text-xs font-semibold rounded-full transition-all duration-300 cursor-pointer ${
+              isDark ? 'bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30' : 'bg-yellow-500/20 text-yellow-600 hover:bg-yellow-500/30'
             }`}>
-              CAW
-            </span>
+              MAX
+            </button>
           </div>
+        </div>
+        <div className="flex items-center justify-between px-2">
+          <button
+            onClick={() => setAmount(mockData.stakedAmount.toString())}
+            className={`text-xs transition-colors duration-300 cursor-pointer hover:underline ${
+              isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-black'
+            }`}
+          >
+            Staked: {mockData.stakedAmount.toLocaleString('en-US', { maximumFractionDigits: 2 })} CAW
+          </button>
         </div>
       </div>
 
       {/* Unstake Button */}
       <button
+        onClick={handleUnstakeInit}
         className={`w-full py-3 px-4 rounded-full font-semibold transition-all duration-300 cursor-pointer ${
-          !amount || parseFloat(amount) <= 0 || parseFloat(amount) > mockData.stakedAmount
+          !isConnected || isMainnet
+            ? 'bg-yellow-500 hover:bg-yellow-600 text-black'
+            : (!isTokenOwner && !isMainnet) || (!amount || parseFloat(amount) <= 0 || parseFloat(amount) > mockData.stakedAmount)
             ? (isDark ? 'bg-gray-700 text-gray-400' : 'bg-gray-300 text-gray-600')
             : 'bg-yellow-500 hover:bg-yellow-600 text-black'
         }`}
-        disabled={!amount || parseFloat(amount) <= 0 || parseFloat(amount) > mockData.stakedAmount}
+        disabled={isConnected && !isMainnet && ((!isTokenOwner) || (!amount || parseFloat(amount) <= 0 || parseFloat(amount) > mockData.stakedAmount))}
       >
-        {parseFloat(amount || "0") > mockData.stakedAmount ? "Insufficient Staked" : "Unstake CAW"}
+        {isSwitchingNetwork
+          ? 'Switching...'
+          : !isConnected
+          ? 'Connect Wallet'
+          : !isTokenOwner && activeToken && !isMainnet
+          ? 'Wrong Address'
+          : isMainnet
+          ? 'Switch Network'
+          : !amount || parseFloat(amount) <= 0
+          ? "Enter Amount"
+          : parseFloat(amount || "0") > mockData.stakedAmount
+          ? "Insufficient Staked"
+          : "Unstake"}
       </button>
     </div>
   )
@@ -407,10 +887,10 @@ const Staking = () => {
               <div className={`text-lg font-bold transition-colors duration-300 ${
                 isDark ? 'text-white' : 'text-black'
               }`}>
-                {formatUnitsCompact(activeToken?.stakedAmount || 0n, 18)}
+                {activeToken ? formatUnitsCompact(activeToken.stakedAmount || 0n, 18) : '-'}
               </div>
             </div>
-            
+
             <div className={`p-4 rounded-lg border transition-all duration-300 bg-black ${
               isDark ? 'border-white/20' : 'border-gray-300'
             }`}>
@@ -422,10 +902,10 @@ const Staking = () => {
               <div className={`text-lg font-bold transition-colors duration-300 ${
                 isDark ? 'text-yellow-200' : 'text-yellow-800'
               }`}>
-                {formatUnitsCompact(activeToken?.withdrawable || 0n, 18)}
+                {activeToken ? formatUnitsCompact(activeToken.withdrawable || 0n, 18) : '-'}
               </div>
             </div>
-            
+
             <div className={`p-4 rounded-lg border transition-all duration-300 bg-black ${
               isDark ? 'border-white/20' : 'border-gray-300'
             }`}>
@@ -437,10 +917,10 @@ const Staking = () => {
               <div className={`text-lg font-bold transition-colors duration-300 ${
                 isDark ? 'text-white' : 'text-black'
               }`}>
-                {formatUnitsCompact(activeToken?.ownerBalance || 0n, 18)}
+                {activeToken ? formatUnitsCompact(activeToken.ownerBalance || 0n, 18) : '-'}
               </div>
             </div>
-            
+
             <div className={`p-4 rounded-lg border transition-all duration-300 bg-black ${
               isDark ? 'border-white/20' : 'border-gray-300'
             }`}>
@@ -452,7 +932,7 @@ const Staking = () => {
               <div className={`text-lg font-bold transition-colors duration-300 ${
                 isDark ? 'text-white' : 'text-black'
               }`}>
-                {mockData.actions.toLocaleString()}
+                {activeToken ? mockData.actions.toLocaleString() : '-'}
               </div>
             </div>
           </div>
@@ -465,7 +945,7 @@ const Staking = () => {
           } max-w-md mx-auto`}>
             <div className="flex relative">
                                 <button
-                    onClick={() => setActiveTab('stake')}
+                    onClick={() => navigate('/staking')}
                     className={`flex-1 py-2 px-2 sm:px-6 text-center font-medium text-lg transition-all duration-200 flex items-center justify-center space-x-2 relative z-10 cursor-pointer ${
                       activeTab === 'stake'
                         ? `${isDark ? 'bg-white text-black' : 'bg-black text-white'} rounded-lg shadow-lg`
@@ -475,9 +955,9 @@ const Staking = () => {
                     <HiOutlineTrendingUp className="w-5 h-5" />
                     <span>Stake</span>
                   </button>
-                  
+
                   <button
-                    onClick={() => setActiveTab('unstake')}
+                    onClick={() => navigate('/staking/unstake')}
                     className={`flex-1 py-2 px-2 sm:px-6 text-center font-medium text-lg transition-all duration-200 flex items-center justify-center space-x-2 relative z-10 cursor-pointer ${
                       activeTab === 'unstake'
                         ? `${isDark ? 'bg-white text-black' : 'bg-black text-white'} rounded-lg shadow-lg`
@@ -487,9 +967,9 @@ const Staking = () => {
                     <HiOutlineTrendingDown className="w-5 h-5" />
                     <span>Unstake</span>
                   </button>
-                  
+
                   <button
-                    onClick={() => setActiveTab('info')}
+                    onClick={() => navigate('/staking/info')}
                     className={`flex-1 py-2 px-2 sm:px-6 text-center font-medium text-lg transition-all duration-200 flex items-center justify-center space-x-2 relative z-10 cursor-pointer ${
                       activeTab === 'info'
                         ? `${isDark ? 'bg-white text-black' : 'bg-black text-white'} rounded-lg shadow-lg`

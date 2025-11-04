@@ -14,6 +14,8 @@ import { calculateOnChainCost } from '~/utils/imageUtils'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import { apiFetch } from '~/api/client'
 import { HiCalendar, HiClock } from 'react-icons/hi'
+import InsufficientStakeModal from './modals/InsufficientStakeModal'
+import { hasMinimumStake, getRequiredStake } from '~/constants/stakingRequirements'
 
 interface PostFormProps {
   /** if provided, we're replying to this caw */
@@ -41,6 +43,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   const [isScheduling, setIsScheduling] = useState(false)
   const [showMediaUpload, setShowMediaUpload] = useState(false)
   const [showMediaOverlay, setShowMediaOverlay] = useState(false)
+  const [showInsufficientStakeModal, setShowInsufficientStakeModal] = useState(false)
   const activeTokenId = useTokenDataStore(state => state.activeTokenId);
   const activeToken = useActiveToken();
   const signAndSubmit = useSignAndSubmitAction()
@@ -158,6 +161,13 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   }
 
   const handleSubmit = async () => {
+    // Check for minimum stake first
+    const requiredStakeType = replyTo ? 'MIN_STAKE_COMMENT' : quote ? 'MIN_STAKE_QUOTE' : 'MIN_STAKE_POST'
+    if (!hasMinimumStake(activeToken?.stakedAmount, requiredStakeType)) {
+      setShowInsufficientStakeModal(true)
+      return
+    }
+
     // Check if this is a scheduled post
     if (showScheduler && scheduledDate && scheduledTime) {
       if (!activeTokenId) {
@@ -281,9 +291,16 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       }
     }
 
+    // Validate activeTokenId before creating params
+    if (!activeTokenId) {
+      console.error('No active token ID - user may not be connected or data not loaded')
+      alert('Please connect your wallet and ensure your profile is loaded')
+      return
+    }
+
     const params: ActionParams = {
       actionType: onChainImages.length > 0 ? 'other' : 'caw',
-      senderId: activeTokenId!,
+      senderId: activeTokenId,
       text: finalText,
       ...(replyTo && {
         receiverId: replyTo.user.tokenId,
@@ -390,11 +407,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             
             {/* Character counter and token ownership status */}
             <div className="flex items-center space-x-2">
-              {!isTokenOwner && activeTokenId && isConnected && (
-                <span className="text-xs text-red-500 font-medium">
-                  Not token owner
-                </span>
-              )}
               {(text.length > 0 || selectedMedia.length > 0) && (
                 <span className={`text-xs font-medium ${
                   isOverLimit
@@ -428,7 +440,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                 onClick={handleSubmit}
                 title={!isTokenOwner && activeTokenId ? 'You do not own this token' : hasNoToken ? 'Please select a token' : ''}
               >
-                {!isTokenOwner && activeTokenId ? 'Not Owner' : hasNoToken ? 'No Token' : replyTo ? 'Reply' : selectedMedia.some(m => m.type === 'image' && m.storageType === 'on-chain') ? 'Upload' : 'Post'}
+                {!isTokenOwner && activeTokenId ? 'Wrong Address' : hasNoToken ? 'No Token' : replyTo ? 'Reply' : selectedMedia.some(m => m.type === 'image' && m.storageType === 'on-chain') ? 'Upload' : 'Post'}
               </button>
             ) }
           </div>
@@ -763,11 +775,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           <div className="flex items-center space-x-3">
             {/* Token ownership and character counter */}
             <div className="flex items-center space-x-3">
-              {!isTokenOwner && activeTokenId && isConnected && (
-                <span className="text-sm text-red-500 font-medium">
-                  Not token owner
-                </span>
-              )}
               {(text.length > 0 || selectedMedia.length > 0) && (
                 <span className={`text-sm font-medium ${
                   isOverLimit
@@ -800,12 +807,23 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                 onClick={handleSubmit}
                 title={!isTokenOwner && activeTokenId ? 'You do not own this token' : hasNoToken ? 'Please select a token' : ''}
               >
-                {!isTokenOwner && activeTokenId ? 'Not Owner' : hasNoToken ? 'No Token' : replyTo ? 'Reply' : selectedMedia.some(m => m.type === 'image' && m.storageType === 'on-chain') ? 'Upload' : 'Post'}
+                {!isTokenOwner && activeTokenId ? 'Wrong Address' : hasNoToken ? 'No Token' : replyTo ? 'Reply' : selectedMedia.some(m => m.type === 'image' && m.storageType === 'on-chain') ? 'Upload' : 'Post'}
               </button>
             ) }
           </div>
         </div>
       </div>
+
+      {/* Insufficient Stake Modal */}
+      <InsufficientStakeModal
+        isOpen={showInsufficientStakeModal}
+        onClose={() => setShowInsufficientStakeModal(false)}
+        actionType={replyTo ? 'post' : quote ? 'post' : 'post'}
+        currentAmount={activeToken?.stakedAmount}
+        requiredAmount={getRequiredStake(
+          replyTo ? 'MIN_STAKE_COMMENT' : quote ? 'MIN_STAKE_QUOTE' : 'MIN_STAKE_POST'
+        )}
+      />
     </div>
   )
 }

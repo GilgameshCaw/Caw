@@ -10,7 +10,8 @@ interface TokenDataStore {
   tokensByAddress: Record<Address, TokenData[]>;
   lastAddress?: string;
   hasHydrated: boolean;
-  activeTokenId?: number;
+  activeTokenId?: number; // Deprecated - keeping for backwards compatibility
+  activeTokenIdByAddress: Record<Address, number>;
   setHasHydrated: () => void;
   removeActiveToken: () => void;
   bumpCawonce:  (tokenId: number) => void;
@@ -21,15 +22,43 @@ interface TokenDataStore {
 
   setLastAddress: (addr: string) => void;
   setActiveTokenId:   (tokenId?: number|bigint) => void;
+  setActiveTokenIdForAddress: (addr: Address, tokenId: number) => void;
 
   setCawonce:   (tokenId: number, cawonce: number) => void;
 }
 
 export const useActiveToken = () =>
   useTokenDataStore(state => {
-    const tokens = Object.values(state.tokensByAddress).flat()
-    console.log("Finding active topken %%%%%%%%%%%", tokens.find(t => t.tokenId === state.activeTokenId) || tokens[0])
-    return tokens.find(t => t.tokenId === state.activeTokenId) || tokens[0];
+    // Get all tokens first
+    const allTokens = Object.values(state.tokensByAddress).flat()
+
+    // Don't return defaults before hydration completes to avoid showing wrong token
+    if (!state.hasHydrated) return undefined
+
+    if (allTokens.length === 0) return undefined
+
+    // If there's a global activeTokenId, use that (allows viewing tokens from any address)
+    if (state.activeTokenId !== undefined) {
+      const token = allTokens.find(t => t.tokenId === state.activeTokenId)
+      if (token) return token
+    }
+
+    // Fallback: Try to use lastAddress to find a default token
+    const address = state.lastAddress as Address | undefined
+    if (!address) {
+      return allTokens[0]
+    }
+
+    // Normalize address comparison (case-insensitive)
+    const normalizedAddress = address.toLowerCase()
+    const tokensForAddress = Object.entries(state.tokensByAddress)
+      .find(([addr]) => addr.toLowerCase() === normalizedAddress)?.[1] || []
+
+    const activeTokenIdForAddress = Object.entries(state.activeTokenIdByAddress)
+      .find(([addr]) => addr.toLowerCase() === normalizedAddress)?.[1]
+
+    // Find the active token for this address, or default to first token
+    return tokensForAddress.find(t => t.tokenId === activeTokenIdForAddress) || tokensForAddress[0];
   }
 );
 
@@ -40,6 +69,7 @@ export const useTokenDataStore = create<TokenDataStore>()(
       tokensByAddress: {},
       lastAddress: undefined,
       activeTokenId: undefined,
+      activeTokenIdByAddress: {},
       allTokens: () => {
         const { tokensByAddress } = get()
         return Object.values(tokensByAddress).flat()
@@ -50,21 +80,61 @@ export const useTokenDataStore = create<TokenDataStore>()(
           tokensByAddress: {
 
             ...state.tokensByAddress,
-            [addr]: tokens
+            [addr.toLowerCase() as Address]: tokens
           }
         })),
       removeAddress: (addressToRemove: Address) =>
         set(state => {
-          const { [addressToRemove]: _, ...remainingTokens } = state.tokensByAddress;
+          const normalizedAddress = addressToRemove.toLowerCase() as Address
+          const { [normalizedAddress]: _, ...remainingTokens } = state.tokensByAddress;
+          const { [normalizedAddress]: __, ...remainingActiveTokenIds } = state.activeTokenIdByAddress;
 
           console.log("remainingTokens:", remainingTokens, addressToRemove)
           return {
             tokensByAddress: remainingTokens,
+            activeTokenIdByAddress: remainingActiveTokenIds,
           };
         }),
 
-      setActiveTokenId: (tokenId) => set({ activeTokenId: Number(tokenId) }),
-      setLastAddress: (address) => {console.log("SETTING ADDRESS:::::::::::::::", address);set({ lastAddress: address })},
+      setActiveTokenId: (tokenId) => {
+        const state = get()
+        const numTokenId = Number(tokenId)
+
+        // Find which address owns this token
+        let ownerAddress: Address | undefined
+        for (const [addr, tokens] of Object.entries(state.tokensByAddress)) {
+          if (tokens.some(t => t.tokenId === numTokenId)) {
+            ownerAddress = addr as Address
+            break
+          }
+        }
+
+        if (ownerAddress) {
+          // Normalize address for storage
+          const normalizedAddress = ownerAddress.toLowerCase() as Address
+          set({
+            activeTokenId: numTokenId,
+            // Don't update lastAddress - that should only change when wallet connects
+            activeTokenIdByAddress: {
+              ...state.activeTokenIdByAddress,
+              [normalizedAddress]: numTokenId
+            }
+          })
+        } else {
+          // Fallback if we can't find the token
+          set({ activeTokenId: numTokenId })
+        }
+      },
+      setActiveTokenIdForAddress: (addr, tokenId) => set(state => ({
+        activeTokenIdByAddress: {
+          ...state.activeTokenIdByAddress,
+          [addr.toLowerCase() as Address]: tokenId
+        }
+      })),
+      setLastAddress: (address) => {
+        console.log("SETTING ADDRESS:::::::::::::::", address);
+        set({ lastAddress: address.toLowerCase() })
+      },
       removeActiveToken: () => set({ activeTokenId: undefined }),
 
       setCawonce: (tokenId, cawonce) =>
@@ -130,17 +200,22 @@ export const useTokenDataStore = create<TokenDataStore>()(
         const currentState = current as TokenDataStore;
 
         return {
-          ...persistedState,
-          ...currentState, // current wins at top level
+          ...currentState, // current provides defaults
+          ...persistedState, // persisted wins at top level (opposite of before!)
           tokensByAddress: {
             ...(persistedState.tokensByAddress || {}),
-            ...(currentState.tokensByAddress || {}), // current wins per address
+            ...(currentState.tokensByAddress || {}), // current wins per address for fresh data
+          },
+          activeTokenIdByAddress: {
+            ...(persistedState.activeTokenIdByAddress || {}),
+            ...(currentState.activeTokenIdByAddress || {}),
           },
         };
       },
       partialize: (state) => ({          // only persist the ID
         tokensByAddress: state.tokensByAddress,
         activeTokenId:   state.activeTokenId,
+        activeTokenIdByAddress: state.activeTokenIdByAddress,
         lastAddress:     state.lastAddress,
         hasHydrated:     state.hasHydrated
       }) as TokenDataStore

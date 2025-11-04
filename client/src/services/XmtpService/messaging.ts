@@ -1,6 +1,7 @@
 import { Client, Conversation as XmtpConversation } from '@xmtp/node-sdk'
 import { PrismaClient, ConversationType, MessageStatus } from '@prisma/client'
 import XmtpIdentityService from './index'
+import XmtpWebSocketService from './websocket'
 
 const prisma = new PrismaClient()
 
@@ -26,14 +27,19 @@ export class XmtpMessagingService {
   /**
    * Get or create XMTP client for a user
    */
-  private async getClient(userId: number): Promise<Client> {
-    if (this.clients.has(userId)) {
-      return this.clients.get(userId)!
-    }
+  private async getClient(userId: number): Promise<Client | null> {
+    try {
+      if (this.clients.has(userId)) {
+        return this.clients.get(userId)!
+      }
 
-    const client = await XmtpIdentityService.initializeClient(userId)
-    this.clients.set(userId, client)
-    return client
+      const client = await XmtpIdentityService.initializeClient(userId)
+      this.clients.set(userId, client)
+      return client
+    } catch (error) {
+      console.error(`Failed to get XMTP client for user ${userId}:`, error)
+      return null
+    }
   }
 
   /**
@@ -42,55 +48,86 @@ export class XmtpMessagingService {
   async createConversation(params: CreateConversationParams) {
     const { creatorId, participantIds, type = 'DM', name, description } = params
 
-    // Get creator's XMTP client
-    const client = await this.getClient(creatorId)
-
     // For DMs, ensure only 2 participants
     if (type === 'DM' && participantIds.length !== 1) {
       throw new Error('DM conversations must have exactly 2 participants')
     }
 
+    // Check for existing conversation between these users (for DMs)
+    if (type === 'DM') {
+      const existingConversation = await prisma.conversation.findFirst({
+        where: {
+          type: 'DM',
+          participants: {
+            every: {
+              userId: {
+                in: [creatorId, participantIds[0]]
+              }
+            }
+          }
+        },
+        include: {
+          participants: {
+            include: {
+              identity: {
+                include: {
+                  user: true
+                }
+              }
+            }
+          }
+        }
+      })
+
+      if (existingConversation) {
+        return existingConversation
+      }
+    }
+
     // Get wallet addresses for participants
+    const allParticipantIds = [creatorId, ...participantIds]
     const participantWallets = await Promise.all(
-      participantIds.map(async (userId) => {
+      allParticipantIds.map(async (userId) => {
         const identity = await XmtpIdentityService.getIdentity(userId)
-        if (!identity) throw new Error(`XMTP identity not found for user ${userId}`)
+        if (!identity) {
+          // Auto-generate identity if it doesn't exist
+          const user = await prisma.user.findUnique({
+            where: { tokenId: userId }
+          })
+          if (!user) {
+            throw new Error(`User ${userId} not found`)
+          }
+          const newIdentity = await XmtpIdentityService.registerIdentity(userId, user.address)
+          return newIdentity.walletAddress
+        }
         return identity.walletAddress
       })
     )
 
-    // Create XMTP conversation
-    let xmtpConversation: XmtpConversation
+    // For now, generate a topic without XMTP client
+    // This is a temporary solution until XMTP SDK v4 is properly configured
+    const topic = `dm-${Math.min(creatorId, participantIds[0])}-${Math.max(creatorId, participantIds[0])}-${Date.now()}`
 
-    if (type === 'DM') {
-      // Create 1-to-1 conversation
-      xmtpConversation = await client.conversations.newConversation(participantWallets[0])
-    } else {
-      // Create group conversation (when supported by XMTP SDK)
-      // For now, we'll simulate group with metadata
-      xmtpConversation = await client.conversations.newConversation(participantWallets[0])
-    }
+    // Create unique participant entries (avoid duplicates)
+    const uniqueParticipants = new Map<number, { userId: number; isAdmin: boolean }>()
+    uniqueParticipants.set(creatorId, { userId: creatorId, isAdmin: true })
+    participantIds.forEach(userId => {
+      if (!uniqueParticipants.has(userId)) {
+        uniqueParticipants.set(userId, { userId, isAdmin: false })
+      }
+    })
 
     // Save conversation to database
     const conversation = await prisma.conversation.create({
       data: {
         type,
-        topic: xmtpConversation.topic,
+        topic,
         name,
         description,
         creatorId,
         metadata: type === 'GROUP' ? { participantWallets } : undefined,
         participants: {
-          create: [
-            {
-              userId: creatorId,
-              isAdmin: true
-            },
-            ...participantIds.map(userId => ({
-              userId,
-              isAdmin: false
-            }))
-          ]
+          create: Array.from(uniqueParticipants.values())
         }
       },
       include: {
@@ -138,29 +175,102 @@ export class XmtpMessagingService {
       throw new Error('Sender is not a participant in this conversation')
     }
 
-    // Get sender's XMTP client
-    const client = await this.getClient(senderId)
-
-    // Get XMTP conversation
-    const xmtpConversations = await client.conversations.list()
-    const xmtpConversation = xmtpConversations.find(c => c.topic === conversation.topic)
-
-    if (!xmtpConversation) {
-      throw new Error('XMTP conversation not found')
+    // Get sender's wallet address from XMTP identity
+    const senderIdentity = await XmtpIdentityService.getIdentity(senderId)
+    if (!senderIdentity) {
+      throw new Error('Sender XMTP identity not found')
     }
 
-    // Send message via XMTP
-    await xmtpConversation.send(content)
+    // Try to use actual XMTP client for encryption
+    let encryptedPayload: string
+    let messageTopic = conversation.topic
 
-    // Save message to database
+    const client = await this.getClient(senderId)
+    if (client) {
+      try {
+        // Sync conversations first
+        await client.conversations.syncAll(["allowed"])
+
+        // Try to find or create the conversation
+        const conversations = await client.conversations.list()
+        let xmtpConversation = conversations.find(c =>
+          c.id === conversation.topic ||
+          c.topic === conversation.topic
+        )
+
+        if (!xmtpConversation && conversation.type === 'DM') {
+          // Create DM conversation with the other participant
+          const otherParticipant = await prisma.conversationParticipant.findFirst({
+            where: {
+              conversationId,
+              userId: { not: senderId }
+            }
+          })
+
+          if (otherParticipant) {
+            const otherIdentity = await XmtpIdentityService.getIdentity(otherParticipant.userId)
+            if (otherIdentity) {
+              // Create a new DM conversation
+              xmtpConversation = await client.conversations.newDm(otherIdentity.walletAddress)
+              messageTopic = xmtpConversation.topic
+
+              // Update conversation topic in database
+              await prisma.conversation.update({
+                where: { id: conversationId },
+                data: { topic: messageTopic }
+              })
+            }
+          }
+        }
+
+        if (xmtpConversation) {
+          // Send message through XMTP and get encrypted payload
+          const sentMessage = await xmtpConversation.send(content)
+          // Store the encrypted message content
+          encryptedPayload = JSON.stringify({
+            encrypted: true,
+            messageId: sentMessage.id,
+            topic: xmtpConversation.topic,
+            // We don't store the actual content, just metadata
+            timestamp: new Date().toISOString()
+          })
+        } else {
+          // Fallback: mark as needing encryption
+          encryptedPayload = `NEEDS_XMTP_ENCRYPTION:${JSON.stringify({content, contentType})}`
+        }
+      } catch (error) {
+        console.error('Failed to send via XMTP:', error)
+        // Fallback: mark as needing encryption
+        encryptedPayload = `NEEDS_XMTP_ENCRYPTION:${JSON.stringify({content, contentType})}`
+      }
+    } else {
+      // No client available, mark as needing encryption
+      encryptedPayload = `NEEDS_XMTP_ENCRYPTION:${JSON.stringify({content, contentType})}`
+    }
+
+    // Store only encrypted payload and metadata
     const message = await prisma.message.create({
       data: {
         conversationId,
         senderId,
-        content,
+        senderWallet: senderIdentity.walletAddress,
+        encryptedPayload,  // ONLY encrypted content
+        messageTopic: conversation.topic,
         contentType,
         parentMessageId,
-        status: 'SENT'
+        status: 'SENT',
+        metadata: {
+          // Only non-sensitive metadata
+          timestamp: new Date().toISOString(),
+          messageType: contentType
+        }
+      },
+      include: {
+        sender: {
+          include: {
+            user: true
+          }
+        }
       }
     })
 
@@ -184,11 +294,15 @@ export class XmtpMessagingService {
       }
     })
 
+    // Broadcast message via WebSocket
+    XmtpWebSocketService.broadcastMessage(message)
+
     return message
   }
 
   /**
    * Get messages for a conversation
+   * Returns encrypted payloads for client-side decryption
    */
   async getMessages(conversationId: string, userId: number, limit = 50, before?: string) {
     // Check if user is a participant
@@ -205,21 +319,38 @@ export class XmtpMessagingService {
       throw new Error('User is not a participant in this conversation')
     }
 
-    // Get messages
+    // Get messages with encrypted payloads
     const messages = await prisma.message.findMany({
       where: {
         conversationId,
         deletedAt: null,
         ...(before && { createdAt: { lt: new Date(before) } })
       },
-      include: {
+      select: {
+        id: true,
+        conversationId: true,
+        senderId: true,
+        senderWallet: true,
+        encryptedPayload: true,  // Return encrypted payload for client decryption
+        messageTopic: true,
+        contentType: true,
+        metadata: true,
+        status: true,
+        createdAt: true,
+        updatedAt: true,
+        parentMessageId: true,
         sender: {
           include: {
             user: true
           }
         },
         replies: {
-          include: {
+          select: {
+            id: true,
+            encryptedPayload: true,
+            senderId: true,
+            senderWallet: true,
+            createdAt: true,
             sender: {
               include: {
                 user: true

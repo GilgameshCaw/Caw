@@ -1,4 +1,4 @@
-import { Client } from '@xmtp/node-sdk'
+import { Client, type Signer, IdentifierKind } from '@xmtp/node-sdk'
 import { ethers } from 'ethers'
 import { PrismaClient } from '@prisma/client'
 import crypto from 'crypto'
@@ -13,6 +13,7 @@ export interface XmtpIdentityData {
   preKeys: any
   signedPreKey: any
   registrationId: number
+  encryptionKey?: string
 }
 
 export class XmtpIdentityService {
@@ -54,6 +55,22 @@ export class XmtpIdentityService {
    * Register or update an XMTP identity for a CAW user
    */
   async registerIdentity(userId: number, walletAddress: string): Promise<XmtpIdentityData> {
+    // First ensure the user exists in the database
+    const user = await prisma.user.findUnique({
+      where: { tokenId: userId }
+    })
+
+    if (!user) {
+      // Create the user if it doesn't exist
+      await prisma.user.create({
+        data: {
+          tokenId: userId,
+          address: walletAddress,
+          username: `user${userId}` // Default username
+        }
+      })
+    }
+
     // Check if identity already exists
     const existingIdentity = await prisma.xmtpIdentity.findUnique({
       where: { userId }
@@ -67,16 +84,24 @@ export class XmtpIdentityService {
         identityKey: existingIdentity.identityKey,
         preKeys: existingIdentity.preKeys,
         signedPreKey: existingIdentity.signedPreKey,
-        registrationId: existingIdentity.registrationId
+        registrationId: existingIdentity.registrationId,
+        encryptionKey: existingIdentity.encryptionKey || undefined
       }
     }
 
     // Generate new identity
     const identityData = await this.generateIdentity(userId, walletAddress)
 
+    // Generate encryption key for XMTP SDK v4
+    const encryptionKey = crypto.randomBytes(32).toString('hex')
+
     // Store in database
+    console.log("New Identity: ", identityData);
     const newIdentity = await prisma.xmtpIdentity.create({
-      data: identityData
+      data: {
+        ...identityData,
+        encryptionKey
+      }
     })
 
     return {
@@ -86,7 +111,8 @@ export class XmtpIdentityService {
       identityKey: newIdentity.identityKey,
       preKeys: newIdentity.preKeys as any,
       signedPreKey: newIdentity.signedPreKey as any,
-      registrationId: newIdentity.registrationId
+      registrationId: newIdentity.registrationId,
+      encryptionKey: newIdentity.encryptionKey || undefined
     }
   }
 
@@ -107,7 +133,8 @@ export class XmtpIdentityService {
       identityKey: identity.identityKey,
       preKeys: identity.preKeys as any,
       signedPreKey: identity.signedPreKey as any,
-      registrationId: identity.registrationId
+      registrationId: identity.registrationId,
+      encryptionKey: identity.encryptionKey || undefined
     }
   }
 
@@ -128,7 +155,8 @@ export class XmtpIdentityService {
       identityKey: identity.identityKey,
       preKeys: identity.preKeys as any,
       signedPreKey: identity.signedPreKey as any,
-      registrationId: identity.registrationId
+      registrationId: identity.registrationId,
+      encryptionKey: identity.encryptionKey || undefined
     }
   }
 
@@ -142,15 +170,62 @@ export class XmtpIdentityService {
       throw new Error('XMTP identity not found for user')
     }
 
-    // Create a wallet from the validator private key (for dev)
-    const wallet = new ethers.Wallet(process.env.VALIDATOR_PRIVATE_KEY!)
+    // Get or generate encryption key
+    let dbEncryptionKey: Uint8Array
+    if (identity.encryptionKey) {
+      // Convert hex string to Uint8Array
+      const hexKey = identity.encryptionKey.startsWith('0x') ?
+        identity.encryptionKey.slice(2) : identity.encryptionKey
+      dbEncryptionKey = new Uint8Array(
+        hexKey.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16))
+      )
+    } else {
+      // Generate and save encryption key if it doesn't exist
+      dbEncryptionKey = crypto.randomBytes(32)
+      await prisma.xmtpIdentity.update({
+        where: { userId },
+        data: { encryptionKey: '0x' + Buffer.from(dbEncryptionKey).toString('hex') }
+      })
+    }
 
-    // Initialize XMTP client with the wallet
-    this.client = await Client.create(wallet, {
-      env: 'dev' as any
-    })
+    // Create a deterministic wallet for each user
+    // Use a combination of userId and a static seed to generate consistent wallet per user
+    // TODO: In production, use the user's actual wallet or secure key management
+    const walletSeed = ethers.utils.id(`xmtp-seed-${userId}-${identity.walletAddress}`)
+    const wallet = new ethers.Wallet(walletSeed)
 
-    return this.client
+    // Create a Signer object for XMTP v4
+    const signer: Signer = {
+      type: "EOA" as const,
+      getIdentifier: () => ({
+        identifier: wallet.address.toLowerCase(),
+        identifierKind: IdentifierKind.Ethereum
+      }),
+      signMessage: async (message: string) => {
+        // Sign the message with the wallet
+        const signature = await wallet.signMessage(message)
+        // Convert hex signature to Uint8Array
+        const hexString = signature.startsWith('0x') ? signature.slice(2) : signature
+        const bytes = new Uint8Array(
+          hexString.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16))
+        )
+        return bytes
+      }
+    }
+
+    // Initialize XMTP client with v4 API
+    try {
+      this.client = await Client.create(signer, {
+        dbEncryptionKey,
+        env: 'dev'
+      })
+
+      console.log(`✅ XMTP client initialized for user ${userId} with wallet ${wallet.address}`)
+      return this.client
+    } catch (error) {
+      console.error('❌ Failed to create XMTP client:', error)
+      throw error
+    }
   }
 
   /**
@@ -161,7 +236,17 @@ export class XmtpIdentityService {
       throw new Error('XMTP client not initialized')
     }
 
-    return await this.client.canMessage(walletAddress)
+    try {
+      // v4 API expects specific format for canMessage
+      const results = await this.client.canMessage([{
+        identifier: walletAddress.toLowerCase(),
+        identifierKind: IdentifierKind.Ethereum
+      }])
+      return results.get(walletAddress.toLowerCase()) || false
+    } catch (error) {
+      console.error('Error checking canMessage:', error)
+      return false
+    }
   }
 
   /**
@@ -196,10 +281,14 @@ export class XmtpIdentityService {
    */
   private generateSignedPreKey(identityPrivateKey: string) {
     const keyPair = this.generateKeyPair()
+
+    // Ed25519 requires special handling
+    // For now, we'll use a placeholder signature since this is a mock implementation
+    // In production, you'd use the actual XMTP SDK which handles this properly
     const signature = crypto
-      .createSign('SHA256')
-      .update(keyPair.publicKey)
-      .sign(identityPrivateKey, 'hex')
+      .createHash('sha256')
+      .update(keyPair.publicKey + identityPrivateKey)
+      .digest('hex')
 
     return {
       keyId: 0,

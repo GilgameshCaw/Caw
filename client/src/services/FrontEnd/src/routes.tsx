@@ -38,6 +38,14 @@ export default [
     component: <Staking />,
   },
   {
+    path: "/staking/unstake",
+    component: <Staking />,
+  },
+  {
+    path: "/staking/info",
+    component: <Staking />,
+  },
+  {
     path: "/mint",
     component: <NewProfile />,
   },

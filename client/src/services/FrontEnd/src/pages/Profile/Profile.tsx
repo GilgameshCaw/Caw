@@ -387,8 +387,11 @@ export const Profile: React.FC = () => {
             <div className={`w-40 h-40 rounded-full border-4 transition-all duration-300 ${
               isDark ? 'border-black bg-gray-700' : 'border-white bg-gray-300'
             }`}>
-              <div className="w-full h-full rounded-full">
-              </div>
+              <img
+                src={profileData?.avatarUrl || profileData?.image || "/images/logo.jpeg"}
+                alt={`${profileData?.username || displayUsername} avatar`}
+                className="w-full h-full object-cover rounded-full"
+              />
             </div>
           </div>
         </div>

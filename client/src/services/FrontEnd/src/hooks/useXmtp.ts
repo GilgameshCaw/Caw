@@ -1,233 +1,345 @@
-import { useState, useEffect, useCallback } from 'react'
-import { useAccount } from 'wagmi'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAccount, useWalletClient } from "wagmi";
+import {
+  Client,
+  type Identifier,
+  type Signer as XmtpSigner,
+  type ConversationContainer,
+  type DecodedMessage,
+  ConsentState,
+} from "@xmtp/browser-sdk";
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000/api'
+/* ---------- configuration ---------- */
+const XMTP_ENV = (import.meta.env.VITE_XMTP_ENV as "production" | "dev" | "local") ?? "production";
+const APP_VERSION = import.meta.env.VITE_APP_VERSION ?? "caw/0.1";
 
-interface XmtpIdentity {
-  userId: number
-  walletAddress: string
-  installationId: string
-  registrationId: number
-}
+/* ---------- module-level singleton ---------- */
+let sharedClient: Client | null = null;
+let sharedInitPromise: Promise<Client> | null = null;
 
-interface Conversation {
-  id: string
-  type: 'DM' | 'GROUP'
-  topic: string
-  name?: string
-  description?: string
-  lastMessageAt?: string
-  unreadCount: number
-  participants: Array<{
-    userId: number
-    identity: {
-      user: {
-        username: string
-        image?: string
-      }
-    }
-  }>
-}
-
-interface Message {
-  id: string
-  conversationId: string
-  senderId: number
-  content: string
-  contentType: string
-  createdAt: string
-  editedAt?: string
-  deletedAt?: string
-  sender: {
-    user: {
-      username: string
-      image?: string
-    }
+/* ---------- helpers ---------- */
+function hexToBytes(hexString: string): Uint8Array {
+  const clean = hexString.startsWith("0x") ? hexString.slice(2) : hexString;
+  const bytes = new Uint8Array(clean.length / 2);
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = parseInt(clean.substr(index * 2, 2), 16);
   }
+  return bytes;
 }
 
-export function useXmtpIdentity(userId?: number) {
-  const { address } = useAccount()
-  const queryClient = useQueryClient()
+function buildIdentifier(addressHex: `0x${string}`): Identifier {
+  return { identifier: addressHex.toLowerCase(), identifierKind: "Ethereum" };
+}
 
-  const { data: identity, isLoading } = useQuery<XmtpIdentity | null>({
-    queryKey: ['xmtp-identity', userId],
-    queryFn: async () => {
-      if (!userId) return null
-      const response = await fetch(`${API_BASE}/xmtp/identity/${userId}`)
-      if (!response.ok) {
-        if (response.status === 404) return null
-        throw new Error('Failed to fetch XMTP identity')
+function looksLikeSmartAccount(walletClient: any): boolean {
+  const hint = (walletClient?.account?.type || walletClient?.type || "").toString().toLowerCase();
+  return hint.includes("smart");
+}
+
+function makeXmtpSigner(walletClient: any, addressHex: `0x${string}`, chainIdNumber: number): XmtpSigner {
+  console.log('XMTP: Creating signer for address:', addressHex, 'chain:', chainIdNumber);
+
+  const isSmartAccount = looksLikeSmartAccount(walletClient);
+  console.log('XMTP: Account type:', isSmartAccount ? 'Smart Contract Wallet' : 'EOA');
+
+  const base = {
+    getIdentifier: () => {
+      const identifier = buildIdentifier(addressHex);
+      console.log('XMTP: getIdentifier called, returning:', identifier);
+      return identifier;
+    },
+    signMessage: async (message: string) => {
+      console.log('XMTP: signMessage called with message:', message.substring(0, 50) + '...');
+      try {
+        const signatureHex = await walletClient.signMessage({ account: addressHex, message });
+        const signatureBytes = hexToBytes(signatureHex);
+        console.log('XMTP: Message signed successfully, signature length:', signatureBytes.length);
+        return signatureBytes;
+      } catch (error) {
+        console.error('XMTP: Failed to sign message:', error);
+        throw error;
       }
-      const data = await response.json()
-      return data.identity
     },
-    enabled: !!userId
-  })
-
-  const registerIdentity = useMutation({
-    mutationFn: async ({ tokenId }: { tokenId: number }) => {
-      if (!address) throw new Error('Wallet not connected')
-
-      const response = await fetch(`${API_BASE}/xmtp/identity/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tokenId, walletAddress: address })
-      })
-
-      if (!response.ok) throw new Error('Failed to register XMTP identity')
-      return response.json()
+    getChainId: () => {
+      const chainId = BigInt(chainIdNumber);
+      console.log('XMTP: getChainId called, returning:', chainId);
+      return chainId;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['xmtp-identity'] })
-    }
-  })
+  };
 
-  return {
-    identity,
-    isLoading,
-    registerIdentity: registerIdentity.mutate,
-    isRegistering: registerIdentity.isPending
+  const signer = isSmartAccount
+    ? ({ type: "SCW", ...base } as XmtpSigner)
+    : ({ type: "EOA", ...base } as XmtpSigner);
+
+  console.log('XMTP: Signer created with type:', signer.type);
+  return signer;
+}
+
+async function ensureClient(xmtpSigner: XmtpSigner): Promise<Client> {
+  if (sharedClient) {
+    console.log('XMTP: Using existing client');
+    return sharedClient;
   }
-}
 
-export function useConversations(userId?: number) {
-  const { data: conversations = [], isLoading } = useQuery<Conversation[]>({
-    queryKey: ['conversations', userId],
-    queryFn: async () => {
-      if (!userId) return []
-      const response = await fetch(`${API_BASE}/xmtp/conversations?userId=${userId}`)
-      if (!response.ok) throw new Error('Failed to fetch conversations')
-      const data = await response.json()
-      return data.conversations
-    },
-    enabled: !!userId,
-    refetchInterval: 10000 // Poll every 10 seconds for new messages
-  })
+  if (!sharedInitPromise) {
+    console.log('XMTP: Starting client initialization with config:', {
+      env: XMTP_ENV,
+      appVersion: APP_VERSION,
+      signerType: xmtpSigner.type,
+    });
 
-  return { conversations, isLoading }
-}
-
-export function useMessages(conversationId: string, userId?: number) {
-  const queryClient = useQueryClient()
-
-  const { data: messages = [], isLoading, refetch } = useQuery<Message[]>({
-    queryKey: ['messages', conversationId, userId],
-    queryFn: async () => {
-      if (!userId) return []
-      const response = await fetch(
-        `${API_BASE}/xmtp/conversations/${conversationId}/messages?userId=${userId}`
-      )
-      if (!response.ok) throw new Error('Failed to fetch messages')
-      const data = await response.json()
-      return data.messages
-    },
-    enabled: !!userId && !!conversationId,
-    refetchInterval: 5000 // Poll every 5 seconds for new messages
-  })
-
-  const sendMessage = useMutation({
-    mutationFn: async ({ content, contentType = 'text' }: { content: string; contentType?: string }) => {
-      if (!userId) throw new Error('User not authenticated')
-
-      const response = await fetch(`${API_BASE}/xmtp/messages`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          conversationId,
-          senderId: userId,
-          content,
-          contentType
-        })
-      })
-
-      if (!response.ok) throw new Error('Failed to send message')
-      return response.json()
-    },
-    onSuccess: () => {
-      // Refetch messages and conversations
-      queryClient.invalidateQueries({ queryKey: ['messages', conversationId] })
-      queryClient.invalidateQueries({ queryKey: ['conversations'] })
-    }
-  })
-
-  const markAsRead = useCallback(async (messageIds: string[]) => {
-    if (!userId) return
-
-    await fetch(`${API_BASE}/xmtp/messages/read`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messageIds, userId })
+    sharedInitPromise = Client.create(xmtpSigner, {
+      env: XMTP_ENV,
+      appVersion: APP_VERSION,
     })
+    .then((client) => {
+      console.log('XMTP: Client created successfully!', client);
+      sharedClient = client;
+      return client;
+    })
+    .catch((error) => {
+      console.error('XMTP: Client creation failed:', error);
+      console.error('XMTP: Error details:', {
+        message: error.message,
+        stack: error.stack,
+        name: error.name
+      });
+      sharedInitPromise = null; // Reset so it can be retried
+      throw error;
+    });
+  }
 
-    queryClient.invalidateQueries({ queryKey: ['conversations'] })
-  }, [userId, queryClient])
+  console.log('XMTP: Waiting for existing initialization promise...');
+  return sharedInitPromise;
+}
+
+/* ---------- core (shared by the three hooks) ---------- */
+function useXmtpCore() {
+  const { address, isConnected, chain } = useAccount();
+  const { data: walletClient } = useWalletClient();
+
+  const xmtpSigner = useMemo(() => {
+    if (!walletClient || !address || !chain?.id) return null;
+    return makeXmtpSigner(walletClient, address as `0x${string}`, Number(chain.id));
+  }, [walletClient, address, chain?.id]);
+
+  const [xmtpClient, setXmtpClient] = useState<Client | null>(sharedClient);
+  const [isInitialized, setIsInitialized] = useState<boolean>(Boolean(sharedClient));
+  const [isLoading, setIsLoading] = useState(false);
+  const [initError, setInitError] = useState<Error | null>(null);
+
+  const initializeClient = useCallback(async () => {
+    if (!isConnected || !xmtpSigner) {
+      const error = new Error("Wallet not connected or signer unavailable");
+      setInitError(error);
+      throw error;
+    }
+    setIsLoading(true);
+    setInitError(null);
+    try {
+      const client = await ensureClient(xmtpSigner);
+      setXmtpClient(client);
+      setIsInitialized(true);
+    } catch (error) {
+      setXmtpClient(null);
+      setIsInitialized(false);
+      setInitError(error as Error);
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
+  }, [isConnected, xmtpSigner]);
+
+  return { xmtpClient, isInitialized, isLoading, error: initError, initializeClient };
+}
+
+/* ---------- exported hooks expected by your Messages.tsx ---------- */
+
+export function useXmtpClient() {
+  const core = useXmtpCore();
+
+  type UiConversation = {
+    id: string;
+    type: "DM" | "GROUP";
+    participants: Array<any>;
+    name?: string;
+    lastMessageAt?: string;
+    unreadCount?: number;
+  };
+
+  const [conversations, setConversations] = useState<UiConversation[]>([]);
+  const [messagesByConversationId, setMessagesByConversationId] = useState<
+    Map<string, DecodedMessage[]>
+  >(new Map());
+
+  useEffect(() => {
+    if (!core.isInitialized || !core.xmtpClient) return;
+    let cancelled = false;
+
+    (async () => {
+      // Initial list
+      const listed: ConversationContainer[] = await core.xmtpClient.conversations.list();
+      if (!cancelled) {
+        setConversations(
+          listed.map((c) => ({
+            id: c.id,
+            type: "DM",
+            participants: [],
+            lastMessageAt: undefined,
+            unreadCount: 0,
+          }))
+        );
+      }
+
+      // Stream new conversations
+      const stream = await core.xmtpClient.conversations.stream({
+        onValue: (container) => {
+          setConversations((prev) => {
+            const exists = prev.some((c) => c.id === container.id);
+            return exists
+              ? prev
+              : [...prev, { id: container.id, type: "DM", participants: [], unreadCount: 0 }];
+          });
+        },
+        onError: (err) => console.error("XMTP conversation stream error:", err),
+      });
+
+      (async () => {
+        for await (const _ of stream) {
+          if (cancelled) break;
+        }
+      })();
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [core.isInitialized, core.xmtpClient]);
 
   return {
-    messages,
-    isLoading,
-    sendMessage: sendMessage.mutate,
-    isSending: sendMessage.isPending,
-    markAsRead,
-    refetch
-  }
+    isInitialized: core.isInitialized,
+    isLoading: core.isLoading,
+    error: core.error,
+    initializeClient: core.initializeClient,
+    conversations,
+    messages: messagesByConversationId,
+    setMessages: setMessagesByConversationId,
+  };
 }
 
-export function useCreateConversation() {
-  const queryClient = useQueryClient()
+export function useConversations() {
+  const { xmtpClient, isInitialized } = useXmtpCore();
+  const [isLoading, setIsLoading] = useState(false);
 
-  return useMutation({
-    mutationFn: async ({
-      creatorId,
-      participantIds,
-      type = 'DM' as 'DM' | 'GROUP',
-      name,
-      description
-    }: {
-      creatorId: number
-      participantIds: number[]
-      type?: 'DM' | 'GROUP'
-      name?: string
-      description?: string
-    }) => {
-      const response = await fetch(`${API_BASE}/xmtp/conversations`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          creatorId,
-          participantIds,
-          type,
-          name,
-          description
-        })
-      })
+  const startConversation = useCallback(
+    async (peerAddress: string) => {
+      if (!isInitialized || !xmtpClient) throw new Error("XMTP not initialized");
 
-      if (!response.ok) throw new Error('Failed to create conversation')
-      return response.json()
+      const reachability = await Client.canMessage([
+        { identifier: peerAddress, identifierKind: "Ethereum" } as Identifier,
+      ]);
+      if (!reachability.get(peerAddress)) throw new Error("Peer cannot receive XMTP messages");
+
+      const peerInboxId = await xmtpClient.inbox.getInboxId({
+        identifier: peerAddress,
+        identifierKind: "Ethereum",
+      });
+      const dm = await xmtpClient.conversations.newDm(peerInboxId);
+
+      return {
+        id: dm.id,
+        type: "DM" as const,
+        participants: [],
+        lastMessageAt: new Date().toISOString(),
+        unreadCount: 0,
+      };
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['conversations'] })
+    [isInitialized, xmtpClient]
+  );
+
+  const canMessage = useCallback(async (peerAddress: string) => {
+    try {
+      const result = await Client.canMessage([
+        { identifier: peerAddress, identifierKind: "Ethereum" } as Identifier,
+      ]);
+      return !!result.get(peerAddress);
+    } catch {
+      return false;
     }
-  })
+  }, []);
+
+  return { isLoading, startConversation, canMessage };
 }
 
-export function useCanMessage(walletAddress?: string, userId?: number) {
-  const { data: canMessage, isLoading } = useQuery({
-    queryKey: ['can-message', walletAddress, userId],
-    queryFn: async () => {
-      if (!walletAddress || !userId) return false
+export function useMessages(conversationId: string, _optionalUserId?: number) {
+  const { xmtpClient, isInitialized } = useXmtpCore();
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [messages, setMessages] = useState<DecodedMessage[]>([]);
+  const abortRef = useRef<AbortController | null>(null);
 
-      const response = await fetch(
-        `${API_BASE}/xmtp/can-message/${walletAddress}?userId=${userId}`
-      )
+  useEffect(() => {
+    if (!isInitialized || !xmtpClient || !conversationId) return;
 
-      if (!response.ok) return false
-      const data = await response.json()
-      return data.canMessage
+    let cancelled = false;
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    (async () => {
+      setIsLoading(true);
+      try {
+        const convo = await xmtpClient.conversations.getConversationById(conversationId);
+        if (!convo) return;
+
+        const history = await convo.listMessages();
+        if (!cancelled) setMessages(history);
+
+        const stream = await xmtpClient.conversations.streamAllMessages({
+          consentStates: [ConsentState.Allowed],
+          onValue: (msg) => {
+            if (msg.conversationId !== conversationId) return;
+            setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+          },
+          onError: (err) => console.error("XMTP message stream error:", err),
+          signal: controller.signal,
+        });
+
+        (async () => {
+          for await (const _ of stream) {
+            if (cancelled) break;
+          }
+        })();
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      try {
+        abortRef.current?.abort();
+      } catch {}
+    };
+  }, [isInitialized, xmtpClient, conversationId]);
+
+  const sendMessage = useCallback(
+    async (payload: { content: string; contentType?: string }) => {
+      if (!isInitialized || !xmtpClient || !conversationId) return;
+      setIsSending(true);
+      try {
+        const convo = await xmtpClient.conversations.getConversationById(conversationId);
+        if (!convo) throw new Error("Conversation not found");
+        const sent = await convo.sendText(payload.content);
+        setMessages((prev) => [...prev, sent]); // optimistic; stream confirms
+      } finally {
+        setIsSending(false);
+      }
     },
-    enabled: !!walletAddress && !!userId
-  })
+    [isInitialized, xmtpClient, conversationId]
+  );
 
-  return { canMessage, isLoading }
+  const markAsRead = useCallback(() => {}, []);
+
+  return { messages, isLoading, isSending, sendMessage, markAsRead };
 }
+
