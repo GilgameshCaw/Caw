@@ -369,31 +369,28 @@ export const Profile: React.FC = () => {
 
   return (
     <MainLayout>
-      <div className={`max-w-2xl mx-auto min-h-screen transition-all duration-300 ${
-        isDark ? 'bg-black text-white' : 'bg-white text-black'
-      }`}>
-        {/* Profile Header */}
-        <div className="relative transition-all duration-300">
-          {/* Cover Photo */}
-          <div className="h-48 w-full relative overflow-hidden">
-            {profileData?.coverPhotoUrl ? (
-              <img
-                src={profileData.coverPhotoUrl}
-                alt="Cover photo"
-                className="w-full h-full object-cover"
-              />
-            ) : (
-              <div
-                className="w-full h-full"
-                style={{
-                  background: 'linear-gradient(to bottom, #000000 0%, #111111 50%, #000000 100%)'
-                }}
-              />
-            )}
-          </div>
+      {/* Cover Photo - Full Width */}
+      <div className="relative transition-all duration-300">
+        <div className="h-48 w-full relative overflow-hidden">
+          {profileData?.coverPhotoUrl ? (
+            <img
+              src={profileData.coverPhotoUrl}
+              alt="Cover photo"
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            <div
+              className="w-full h-full"
+              style={{
+                background: 'linear-gradient(to bottom, #000000 0%, #111111 50%, #000000 100%)'
+              }}
+            />
+          )}
+        </div>
 
-          {/* Profile Picture */}
-          <div className="absolute -bottom-20 left-6">
+        {/* Profile Picture - Positioned within max-w-2xl bounds */}
+        <div className="max-w-2xl mx-auto relative">
+          <div className="absolute -top-20 left-6">
             <div className={`w-40 h-40 rounded-full border-4 transition-all duration-300 ${
               isDark ? 'border-black bg-gray-700' : 'border-white bg-gray-300'
             }`}>
@@ -405,6 +402,11 @@ export const Profile: React.FC = () => {
             </div>
           </div>
         </div>
+      </div>
+
+      <div className={`max-w-2xl mx-auto min-h-screen transition-all duration-300 ${
+        isDark ? 'bg-black text-white' : 'bg-white text-black'
+      }`}>
 
         {/* Profile Info - Layout de 2 columnas */}
         <div className={`pt-24 pb-6 px-6 transition-all duration-300 ${
