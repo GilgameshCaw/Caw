@@ -104,8 +104,6 @@ export const validatorService: Service = {
       retryCount: number = 0
     ): Promise<{ successfulActions: any[], rejectionMessages: string[], quote: any }> {
       const maxRetries = 3;
-      const baseTimeout = 60000; // 60 seconds base timeout for testnet
-      const timeout = baseTimeout * Math.pow(1.5, retryCount); // Exponential backoff
 
       try {
         console.log(`[Attempt ${retryCount + 1}/${maxRetries}] Simulating actions with RPC: ${l2RpcUrl}`);
@@ -121,8 +119,13 @@ export const validatorService: Service = {
           var tokenIds = withdraws.map(function(action){return action.senderId});
           console.log("get tokenIds:", tokenIds)
           var amounts = withdraws.map(function(action){return action.amounts[0]});
-          console.log("amounts", amounts)
-          quote = await cawActions.withdrawQuote(tokenIds, amounts, false);
+          console.log("meow amounts", amounts)
+          try {
+            quote = await cawActions.withdrawQuote(tokenIds, amounts, false) as any;
+          } catch (err) {
+            console.error("[Validator] Failed to get withdraw quote:", err);
+            // Continue with default quote instead of failing
+          }
           console.log('withdraw quote returned:', quote);
         }
 
@@ -133,32 +136,25 @@ export const validatorService: Service = {
           { actions: multiData.actions, v: multiData.v, r: multiData.r, s: multiData.s },
           0
         ])
-        console.log(`Call data prepared, timeout set to ${timeout}ms`)
-
-        // Add timeout to prevent hanging - but with a longer, more reasonable timeout
-        const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => {
-            console.warn(`RPC call timing out after ${timeout}ms - will retry. Consider checking RPC endpoint health.`)
-            reject(new Error(`TIMEOUT after ${timeout}ms`))
-          }, timeout)
-        })
+        console.log(`Call data prepared, simulating transaction...`)
+        console.log(`  - Contract: ${CAW_ACTIONS_ADDRESS}`)
+        console.log(`  - Value: ${quote?.nativeFee?.toString() || '0'}`)
+        console.log(`  - Actions: ${multiData.actions.length}`)
+        console.log(`  - Action details:`, multiData.actions.map(a => ({
+          type: getActionType(a.actionType).toString(),
+          senderId: a.senderId,
+          receiverId: a.receiverId,
+          cawonce: a.cawonce
+        })))
 
         const startTime = Date.now();
 
-        // For now, disable timeout since it's causing issues with action processing
-        // The timeout was preventing legitimate transactions from completing
-        // TODO: Investigate why timeouts are occurring and implement better handling
         const returnData = await provider.call({
           to: CAW_ACTIONS_ADDRESS,
           data: calldata,
           value: quote?.nativeFee
         }) as string
 
-        // Original code with timeout (currently disabled):
-        // const returnData = await Promise.race([
-        //   provider.call({ to: CAW_ACTIONS_ADDRESS, data: calldata, value: quote?.nativeFee }),
-        //   timeoutPromise
-        // ]) as string
         const elapsed = Date.now() - startTime;
 
         console.log(`Simulation completed in ${elapsed}ms`)
@@ -171,12 +167,28 @@ export const validatorService: Service = {
         const [ successfulActions, rejectionMessages ] = decoded
 
         console.log("simulated:", successfulActions.length, rejectionMessages)
+        console.log("[Validator] Simulation results:")
+        console.log(`  - Successful actions: ${successfulActions.length}`)
+        if (successfulActions.length > 0) {
+          console.log("  - Successful action details:", successfulActions.map((action: any, i: number) => ({
+            index: i,
+            type: getActionType(action.actionType).toString(),
+            sender: action.senderId,
+            receiver: action.receiverId,
+            cawonce: action.cawonce,
+            amounts: action.amounts?.map((a: any) => a.toString())
+          })))
+        }
+        if (rejectionMessages.length > 0) {
+          console.log(`  - Rejected actions: ${rejectionMessages.length}`)
+          rejectionMessages.forEach((msg: string, i: number) => {
+            if (msg) console.log(`    [${i}] Rejection reason: ${msg}`)
+          })
+        }
         return { successfulActions, rejectionMessages, quote }
       } catch (err: any) {
-        const elapsed = Date.now();
-
         // Log full error details
-        console.error(`[Attempt ${retryCount + 1}] Simulation failed after ${timeout}ms:`, {
+        console.error(`[Attempt ${retryCount + 1}] Simulation failed:`, {
           error: err.message || err,
           stack: err.stack,
           rpcUrl: l2RpcUrl,
@@ -187,27 +199,10 @@ export const validatorService: Service = {
           }))
         });
 
-        // Handle timeout with retry
-        if (err.message === 'TIMEOUT') {
-          if (retryCount < maxRetries - 1) {
-            console.log(`Timeout occurred, retrying... (attempt ${retryCount + 2}/${maxRetries})`);
-            // Wait a bit before retrying (exponential backoff)
-            await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)));
-            return simulateActions(validatorId, multiData, retryCount + 1);
-          } else {
-            console.error(`Max retries reached. Likely a duplicate cawonce or persistent network issue.`);
-            // After max retries, check if it's likely a duplicate cawonce
-            const rejectionMessages = multiData.actions.map(() =>
-              'Transaction simulation failed after multiple retries - timeout occurred'
-            );
-            return { successfulActions: [], rejectionMessages, quote: { nativeFee: BigInt(0) } };
-          }
-        }
-
         // Handle specific blockchain errors (these don't need retry)
         if (err.message?.includes('execution reverted')) {
           const revertMatch = err.message.match(/execution reverted: (.+)/);
-          const revertReason = revertMatch?.[1] || 'Unknown revert reason';
+          const revertReason = revertMatch?.[1] || err.message;
           console.log(`Execution reverted with reason: ${revertReason}`);
 
           // Check for specific duplicate cawonce error
@@ -232,18 +227,10 @@ export const validatorService: Service = {
             return 'Invalid nonce - transaction may be outdated';
           } else if (err.message?.includes('already known')) {
             return 'Transaction already known - duplicate cawonce';
-          } else if (err.message?.includes('TIMEOUT')) {
-            // Don't treat timeouts as permanent failures - return null to skip processing
-            return null;
           } else {
             return `Simulation error: ${err.message || 'Unknown error'}`;
           }
         });
-
-        // If all messages are null (all timeouts), return special indicator
-        if (rejectionMessages.every(msg => msg === null)) {
-          return { successfulActions: [], rejectionMessages: [], isTimeout: true, quote: { nativeFee: BigInt(0) } };
-        }
 
         return { successfulActions: [], rejectionMessages, quote: { nativeFee: BigInt(0) } };
       }
@@ -304,7 +291,20 @@ export const validatorService: Service = {
       rawGasLimit: bigint
     ) {
       console.log("will submit ", multiData.actions.length, multiData)
+      console.log("[submitProcessActions] Getting fee data...")
       const feeData = await provider.getFeeData();
+      console.log("[submitProcessActions] Fee data:", {
+        maxFeePerGas: feeData.maxFeePerGas?.toString(),
+        maxPriorityFeePerGas: feeData.maxPriorityFeePerGas?.toString()
+      })
+
+      console.log("[submitProcessActions] Sending transaction with params:", {
+        to: CAW_ACTIONS_ADDRESS,
+        validatorId,
+        actionsCount: multiData.actions.length,
+        messagingFee: messagingFee.toString(),
+        gasLimit: rawGasLimit.toString()
+      })
 
       // sendTransaction
       const tx = await wallet.sendTransaction({
@@ -319,18 +319,28 @@ export const validatorService: Service = {
         maxFeePerGas: feeData.maxFeePerGas,
         maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
       })
+      console.log("[submitProcessActions] Transaction sent! Hash:", tx.hash)
+      console.log("[submitProcessActions] Waiting for confirmation...")
+
       const receipt = await tx.wait()
+      console.log("[submitProcessActions] Transaction confirmed! Block:", receipt?.blockNumber, "Status:", receipt?.status)
 
       const evt = receipt?.logs
         ?.map(log => { try { return iface.parseLog(log) } catch { return null } })
         ?.find(x => x?.name === 'ActionsProcessed')
 
-      if (!evt) throw new Error('ActionsProcessed event missing')
+      if (!evt) {
+        console.error("[submitProcessActions] ActionsProcessed event missing from receipt!")
+        console.error("[submitProcessActions] Receipt logs:", receipt?.logs)
+        throw new Error('ActionsProcessed event missing')
+      }
 
+      console.log("[submitProcessActions] ActionsProcessed event found:", evt.args)
       const processed = (evt.args.actions as any[]).map(a => ({
         senderId:     Number(a.senderId),
         cawonce:      Number(a.cawonce)
       }))
+      console.log("[submitProcessActions] Processed actions:", processed)
       return processed
     }
 
@@ -543,12 +553,21 @@ console.log("succeededKeys", succeededKeys)
         const totalTipBefore = computeTotalTip(validatedEntries)
 
         console.log(`[Validator] Starting simulation for validator ${validatorId} with RPC: ${l2RpcUrl}`);
+        console.log(`[Validator] Simulating ${fullBatch.actions.length} actions:`, fullBatch.actions.map((a: any) => ({
+          type: getActionType(a.actionType).toString(),
+          sender: a.senderId,
+          receiver: a.receiverId,
+          cawonce: a.cawonce,
+          amounts: a.amounts?.map((amt: any) => amt.toString())
+        })))
+
         // 1) simulate
         const simulationResult = await simulateActions(validatorId, fullBatch)
+        console.log(`[Validator] Simulation completed. Result:`, simulationResult ? 'RECEIVED' : 'NULL/UNDEFINED')
 
       // Check if simulateActions returned undefined (error case)
       if (!simulationResult) {
-        console.error("Simulation returned undefined, marking all as failed")
+        console.error("[Validator] Simulation returned undefined, marking all as failed")
         // Mark ALL entries as failed, not just pass empty arrays
         await Promise.all(validatedEntries.map(entry => {
           return prisma.txQueue.update({
@@ -562,30 +581,52 @@ console.log("succeededKeys", succeededKeys)
         return
       }
 
-      const { successfulActions, rejectionMessages, quote, isTimeout } = simulationResult as any
+      const { successfulActions, rejectionMessages, quote } = simulationResult as any
+      console.log("[Validator] Extracted simulation results:")
+      console.log("  - successfulActions:", successfulActions)
+      console.log("  - successfulActions.length:", successfulActions?.length)
+      console.log("  - rejectionMessages:", rejectionMessages)
+      console.log("  - rejectionMessages.length:", rejectionMessages?.length)
+      console.log("  - quote.nativeFee:", quote?.nativeFee?.toString())
       console.log(successfulActions, '////////////////', validatedEntries);
 
-        console.log("Simulation complete:", successfulActions.length, rejectionMessages, isTimeout ? "(TIMEOUT)" : "")
-
-      // Check if this was a timeout - don't mark as failed, leave as pending for retry
-      if (isTimeout) {
-        console.log("Simulation timed out - keeping entries as pending for retry")
-        // Log the timeout but don't update status - leave as 'pending'
-        return
-      }
+      console.log("Simulation complete:", successfulActions.length, rejectionMessages)
 
       if (!successfulActions || !successfulActions.length) {
-        console.log("No successful actions from simulation, marking all as failed")
-        // Mark ALL entries as failed with their specific rejection messages
-        await Promise.all(validatedEntries.map((entry, index) => {
-          return prisma.txQueue.update({
-            where: { id: entry.id },
-            data: {
-              status: 'failed',
-              reason: rejectionMessages[index] || 'Simulation rejected - unknown reason'
-            }
-          })
-        }))
+        console.log("No successful actions from simulation")
+
+        // Check if any rejection is due to RPC/network issues (temporary) vs actual failures (permanent)
+        const hasTemporaryError = rejectionMessages.some((msg: string) =>
+          msg?.includes('timeout') ||
+          msg?.includes('network') ||
+          msg?.includes('connection') ||
+          msg?.includes('RPC')
+        )
+
+        if (hasTemporaryError) {
+          console.log("Detected temporary RPC/network error, resetting to pending for retry")
+          await Promise.all(validatedEntries.map((entry, index) => {
+            return prisma.txQueue.update({
+              where: { id: entry.id },
+              data: {
+                status: 'pending', // Reset to pending for retry
+                reason: null // Clear any previous reason
+              }
+            })
+          }))
+        } else {
+          console.log("Detected permanent failure, marking as failed")
+          // Mark ALL entries as failed with their specific rejection messages
+          await Promise.all(validatedEntries.map((entry, index) => {
+            return prisma.txQueue.update({
+              where: { id: entry.id },
+              data: {
+                status: 'failed',
+                reason: rejectionMessages[index] || 'Simulation rejected - unknown reason'
+              }
+            })
+          }))
+        }
         return
       }
 
@@ -604,11 +645,22 @@ console.log("succeededKeys", succeededKeys)
       const ethPerCaw = 16140000n;
 
       // filter down to only those queue-rows that actually succeeded
+      console.log("[Validator] Filtering succeeded entries from", validatedEntries.length, "total entries")
+      console.log("[Validator] Rejection messages:", rejectionMessages.map((msg: string, i: number) => `[${i}]: ${msg || '(empty - success)'}`))
+
       const succeededEntries = validatedEntries.filter((e, index) => {
-        return rejectionMessages[index] == '';
-        // const d = (e.payload as any).data
-        // return succeededKeys.has(`${d.senderId}-${d.cawonce}`)
+        const success = rejectionMessages[index] == '';
+        const action = (e.payload as any).data
+        console.log(`[Validator] Entry ${e.id} (${getActionType(action.actionType)}): ${success ? 'PASSED' : 'REJECTED: ' + rejectionMessages[index]}`)
+        return success
       })
+
+      console.log(`[Validator] ${succeededEntries.length} entries passed simulation (out of ${validatedEntries.length})`)
+
+      if (succeededEntries.length === 0) {
+        console.log("[Validator] No entries passed simulation - all rejected. Not submitting transaction.")
+        // The rejections will be handled in the next section
+      }
 
       // rebuild your call data only with the succeeded entries
       const multiSucceeded = buildMultiActionData(succeededEntries)
@@ -618,28 +670,61 @@ console.log("succeededKeys", succeededKeys)
 
 
       // 2) estimate gas cost
+      console.log("[Validator] Estimating gas cost...")
       const gasCost = await estimateProcessGasCost(
         validatorId, multiSucceeded, quote.nativeFee
       )
+      console.log("[Validator] Estimated gas cost:", gasCost.toString(), "wei")
 
+      console.log("[Validator] Estimating gas limit...")
       const rawGasLimit = await estimateGasLimit(
         validatorId, multiSucceeded, quote.nativeFee
       );
+      console.log("[Validator] Estimated gas limit:", rawGasLimit.toString())
 
       // recompute tip from only the successful ones
       const totalTip = computeTotalTip(succeededEntries)
-      console.log(`tip ${totalTip} (≈ ${ethPerCaw * totalTip} wei) vs gasCost ${gasCost}`)
+      const tipInWei = ethPerCaw * totalTip
+      console.log(`[Validator] Tip calculation:`)
+      console.log(`  - Total tip: ${totalTip} CAW`)
+      console.log(`  - ETH per CAW: ${ethPerCaw}`)
+      console.log(`  - Tip in wei: ${tipInWei} (${tipInWei.toString()})`)
+      console.log(`  - Gas cost: ${gasCost} (${gasCost.toString()})`)
+      console.log(`  - Tip >= Gas cost? ${tipInWei >= gasCost}`)
+
       if (totalTip * ethPerCaw < gasCost) {
-        console.log("Skipping because tip < gasCost")
+        console.log("[Validator] ❌ SKIPPING - Tip is less than gas cost!")
+        console.log(`[Validator] Need at least ${gasCost / ethPerCaw} CAW tip, but only have ${totalTip} CAW`)
         // Mark all entries as failed due to insufficient tip
         await updateQueueStatuses(entries, [],
           entries.map(() => 'Insufficient tip to cover gas costs'))
         return
       }
+      console.log("[Validator] ✅ Tip check passed - proceeding with submission")
 
-      const finalized = await submitProcessActions(
-         validatorId, multiSucceeded, quote.nativeFee, rawGasLimit
-       )
+      console.log("[Validator] Submitting transaction with", multiSucceeded.actions.length, "actions")
+      console.log("[Validator] Actions to submit:", multiSucceeded.actions.map((a: any) => ({
+        type: getActionType(a.actionType).toString(),
+        sender: a.senderId,
+        receiver: a.receiverId,
+        cawonce: a.cawonce
+      })))
+
+      let finalized: any[] = [];
+      let submissionError: string | null = null;
+
+      try {
+        finalized = await submitProcessActions(
+           validatorId, multiSucceeded, quote.nativeFee, rawGasLimit
+         )
+        console.log("[Validator] Transaction submission result:", finalized ? "SUCCESS" : "FAILED")
+      } catch (submitErr: any) {
+        console.error("[Validator] Transaction submission failed - Full error object:", submitErr)
+        console.error("[Validator] Error message:", submitErr.message)
+        console.error("[Validator] Error stack:", submitErr.stack)
+        submissionError = submitErr.message || 'Failed to submit transaction'
+        // finalized remains empty array, all submitted entries will be marked as failed
+      }
 
       // 4) update database - properly track which entries succeeded vs failed
       // Build array to track success/failure for each original entry
@@ -651,7 +736,12 @@ console.log("succeededKeys", succeededKeys)
           // The rejection message for this specific entry is at rejectionMessages[index]
           return { succeeded: false, reason: rejectionMessages[index] || 'Simulation failed' }
         }
-        // This entry was submitted, check if it finalized
+        // This entry was submitted
+        if (submissionError) {
+          // Transaction submission threw an error (e.g., reverted)
+          return { succeeded: false, reason: submissionError }
+        }
+        // Check if it finalized successfully
         const data = (entry.payload as any).data
         const isFinalized = finalized.some(
           f => f.senderId === data.senderId && f.cawonce === data.cawonce
@@ -663,8 +753,22 @@ console.log("succeededKeys", succeededKeys)
       })
 
       // Update each entry with its actual status
-      await Promise.all(validatedEntries.map((entry, index) => {
+      await Promise.all(validatedEntries.map(async (entry, index) => {
         const { succeeded, reason } = finalStatuses[index]
+
+        // Before marking as failed, reload from database to check if another process marked it as done
+        if (!succeeded) {
+          const currentEntry = await prisma.txQueue.findUnique({
+            where: { id: entry.id },
+            select: { status: true }
+          })
+
+          // If it's already done, skip marking as failed
+          if (currentEntry?.status === 'done') {
+            console.log(`[Validator] TxQueue entry ${entry.id} already marked as 'done', skipping failed update`)
+            return
+          }
+        }
 
         // Only set reason if status is failed
         const updateData: any = {
@@ -712,23 +816,92 @@ console.log("succeededKeys", succeededKeys)
               // Continue even if caw update fails (might not exist)
             }
           } else {
-            // Mark caw as FAILED
+            // Before marking as FAILED, check if it's already SUCCESS
             try {
-              await prisma.caw.update({
+              const existingCaw = await prisma.caw.findUnique({
                 where: {
                   userId_cawonce: {
                     userId: data.senderId,
                     cawonce: data.cawonce
                   }
                 },
-                data: {
-                  status: 'FAILED'
-                }
+                select: { status: true }
               })
-              console.log(`Marked caw as FAILED for user ${data.senderId} cawonce ${data.cawonce}: ${reason}`)
+
+              // Only mark as failed if it's not already successful
+              if (existingCaw && existingCaw.status !== 'SUCCESS') {
+                await prisma.caw.update({
+                  where: {
+                    userId_cawonce: {
+                      userId: data.senderId,
+                      cawonce: data.cawonce
+                    }
+                  },
+                  data: {
+                    status: 'FAILED'
+                  }
+                })
+                console.log(`Marked caw as FAILED for user ${data.senderId} cawonce ${data.cawonce}: ${reason}`)
+              } else if (existingCaw?.status === 'SUCCESS') {
+                console.log(`Caw for user ${data.senderId} cawonce ${data.cawonce} already marked as SUCCESS, skipping failed update`)
+              }
             } catch (cawUpdateErr) {
               console.error('Failed to update caw status to FAILED:', cawUpdateErr)
               // Continue even if caw update fails (might not exist)
+            }
+          }
+        }
+
+        // Check if this is a WITHDRAW action (actionType: 6)
+        if (data.actionType === 6 || data.actionType === 'WITHDRAW') {
+          if (succeeded) {
+            // Mark withdrawal request as completed
+            try {
+              const withdrawalRequest = await prisma.withdrawalRequest.findFirst({
+                where: {
+                  userId: data.senderId,
+                  cawonce: data.cawonce
+                }
+              })
+
+              if (withdrawalRequest) {
+                await prisma.withdrawalRequest.update({
+                  where: { id: withdrawalRequest.id },
+                  data: {
+                    status: 'completed',
+                    completedAt: new Date()
+                  }
+                })
+                console.log(`[ValidatorService] Marked withdrawal request as completed for user ${data.senderId} cawonce ${data.cawonce}`)
+              } else {
+                console.warn(`[ValidatorService] No withdrawal request found for user ${data.senderId} cawonce ${data.cawonce}`)
+              }
+            } catch (withdrawalUpdateErr) {
+              console.error('[ValidatorService] Failed to update withdrawal request status:', withdrawalUpdateErr)
+              // Continue even if withdrawal update fails
+            }
+          } else {
+            // Mark withdrawal request as failed
+            try {
+              const withdrawalRequest = await prisma.withdrawalRequest.findFirst({
+                where: {
+                  userId: data.senderId,
+                  cawonce: data.cawonce
+                }
+              })
+
+              if (withdrawalRequest) {
+                await prisma.withdrawalRequest.update({
+                  where: { id: withdrawalRequest.id },
+                  data: {
+                    status: 'failed'
+                  }
+                })
+                console.log(`[ValidatorService] Marked withdrawal request as failed for user ${data.senderId} cawonce ${data.cawonce}: ${reason}`)
+              }
+            } catch (withdrawalUpdateErr) {
+              console.error('[ValidatorService] Failed to update withdrawal request status to failed:', withdrawalUpdateErr)
+              // Continue even if withdrawal update fails
             }
           }
         }
