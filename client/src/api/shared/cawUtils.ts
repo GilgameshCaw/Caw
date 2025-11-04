@@ -5,7 +5,7 @@ export interface CawRaw {
   id: number
   content: string
   createdAt: Date
-  user: { tokenId: number; username: string; image?: string }
+  user: { tokenId: number; username: string; displayName?: string; image?: string }
   _count?: { likes: number; recaws: number }
   likes?: Array<{ userId: number; pending?: boolean }>
   recaws?: Array<{ id: number }>
@@ -26,7 +26,7 @@ export interface ShapedCaw {
   id: string
   content: string
   timestamp: string
-  user: { tokenId: number; username: string; image?: string }
+  user: { tokenId: number; username: string; displayName?: string; image?: string }
   likeCount: number
   viewCount: number
   hasLiked: boolean
@@ -92,7 +92,7 @@ export function getCawIncludeConfig(options: CawQueryOptions = {}) {
   const { currentUserId, includeHashtags = false } = options
 
   return {
-    user: { select: { tokenId: true, username: true, image: true } },
+    user: { select: { tokenId: true, username: true, displayName: true, image: true } },
     likes: currentUserId
       ? { where: { userId: currentUserId }, select: { userId: true, pending: true } }
       : false,
@@ -109,7 +109,7 @@ export function getCawIncludeConfig(options: CawQueryOptions = {}) {
     }),
     parent: {
       include: {
-        user: { select: { tokenId: true, username: true, image: true } },
+        user: { select: { tokenId: true, username: true, displayName: true, image: true } },
         ...(includeHashtags && {
           hashtags: {
             include: { hashtag: { select: { name: true } } }
