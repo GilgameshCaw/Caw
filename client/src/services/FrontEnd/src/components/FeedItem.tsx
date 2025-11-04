@@ -562,35 +562,27 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               
               {/* User info */}
               <div className="flex-1">
-                <div className="flex items-center space-x-2">
-                  <Link
-                    to={`/users/${useItem.user.username}`}
-                    className={`font-semibold transition-colors duration-300 cursor-pointer hover:underline max-w-[6ch] truncate md:max-w-none md:truncate-none ${
-                      isDark ? 'text-white' : 'text-black'
-                    }`}
-                  >
-                    {useItem.user.displayName || useItem.user.username}
-                  </Link>
-                  <span className={`text-sm transition-colors duration-300 max-w-[6ch] truncate md:max-w-none md:truncate-none ${
-                    isDark ? 'text-gray-400' : 'text-gray-600'
-                  }`}>
-                    @{useItem.user.username}
-                  </span>
-                  <span className={`text-sm transition-colors duration-300 ml-4 md:ml-0 ${
-                    isDark ? 'text-gray-500' : 'text-gray-500'
-                  }`}>
-                    · {formatTimeAgo(useItem.timestamp)}
-                  </span>
-                  {item.status === 'PENDING' && (
-                    <span className="ml-2 px-2 py-0.5 text-xs bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 rounded-full">
-                      Pending
-                    </span>
-                  )}
-                  {item.status === 'FAILED' && (
-                    <>
-                      <span className="ml-2 px-2 py-0.5 text-xs bg-red-500/20 text-red-600 dark:text-red-400 rounded-full">
-                        Failed
+                <div>
+                  {/* First line: Display name and status badges */}
+                  <div className="flex items-center space-x-2 mb-0.5">
+                    <Link
+                      to={`/users/${useItem.user.username}`}
+                      className={`font-semibold transition-colors duration-300 cursor-pointer hover:underline ${
+                        isDark ? 'text-white' : 'text-black'
+                      }`}
+                    >
+                      {useItem.user.displayName || useItem.user.username}
+                    </Link>
+                    {item.status === 'PENDING' && (
+                      <span className="px-2 py-0.5 text-xs bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 rounded-full">
+                        Pending
                       </span>
+                    )}
+                    {item.status === 'FAILED' && (
+                      <>
+                        <span className="px-2 py-0.5 text-xs bg-red-500/20 text-red-600 dark:text-red-400 rounded-full">
+                          Failed
+                        </span>
                       <button
                         onClick={handleRetry}
                         disabled={isRetrying}
@@ -601,6 +593,21 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       </button>
                     </>
                   )}
+                  </div>
+
+                  {/* Second line: Username and time */}
+                  <div className="flex items-center space-x-2">
+                    <span className={`text-sm transition-colors duration-300 ${
+                      isDark ? 'text-gray-400' : 'text-gray-600'
+                    }`}>
+                      @{useItem.user.username}
+                    </span>
+                    <span className={`text-sm transition-colors duration-300 ${
+                      isDark ? 'text-gray-500' : 'text-gray-500'
+                    }`}>
+                      · {formatTimeAgo(useItem.timestamp)}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
