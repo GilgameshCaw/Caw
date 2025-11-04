@@ -25,7 +25,7 @@ export type ActionTypeKey = keyof typeof ActionTypeMap
 
 /** natstat: singleton client ID (one per front-end) */
 const CLIENT_ID = Number(import.meta.env.VITE_CLIENT_ID) || 1
-const VALIDATOR_TIP = BigInt(import.meta.env.VITE_VALIDATOR_TIP || "1000000000000000")
+export const VALIDATOR_TIP = BigInt(import.meta.env.VITE_VALIDATOR_TIP || "1000000000000000")
 
 
 
@@ -80,7 +80,13 @@ function buildTypedData(params: ActionParams) {
   }
   // Clone the amounts array to avoid mutating the original
   const amounts = [...(params.amounts ?? [])];
-  amounts.push(BigInt(VALIDATOR_TIP));
+
+  // For OTHER actions with amounts already provided, don't add validator tip
+  // (the amount already includes the tip plus any additional costs)
+  // For all other cases, add the validator tip
+  if (params.actionType !== 'other' || amounts.length === 0) {
+    amounts.push(BigInt(VALIDATOR_TIP));
+  }
 
 
   return {

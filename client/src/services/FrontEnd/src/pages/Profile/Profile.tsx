@@ -279,12 +279,18 @@ export const Profile: React.FC = () => {
       // Create the action text with compact profile update prefix
       actionText = `p:${JSON.stringify(profileUpdateData)}`
 
-      // Submit as other action - validator tip is added automatically by submitAction
-      // No need to pass amounts array, the validator tip covers the base cost
+      // Calculate total cost: data-dependent cost + validator tip
+      // updateCost is in CAW (whole units), need to convert to wei (10^18)
+      const { VALIDATOR_TIP } = await import('~/api/actions')
+      const updateCostInWei = BigInt(updateCost) * BigInt(10 ** 18)
+      const totalCost = updateCostInWei + VALIDATOR_TIP
+
+      // Submit as other action with total cost (includes validator tip + data cost)
       await submitAction({
         actionType: 'other',
         senderId: activeToken.tokenId,
-        text: actionText
+        text: actionText,
+        amounts: [totalCost]
       })
 
       // Close modal and refresh profile data
@@ -987,7 +993,7 @@ export const Profile: React.FC = () => {
                   <span>Wrong Address</span>
                 ) : (
                   <span>
-                    Save Changes
+                    Save Changes {updateCost > 0 && `(${updateCost.toLocaleString()} CAW)`}
                   </span>
                 )}
               </button>
