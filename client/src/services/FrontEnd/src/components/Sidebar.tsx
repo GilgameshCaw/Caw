@@ -30,30 +30,7 @@ const links = ['Home','Explore','Notifications','Messages','Profile'] as const
 const Sidebar: React.FC = () => {
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const activeToken = useActiveToken()
-  const [pending, setPending] = useState(0)
   const { isDark, toggle } = useTheme()
-
-  console.log('Current theme:', isDark ? 'dark' : 'light')
-
-  useEffect(() => {
-    let cancelled = false
-    async function load() {
-      if (!activeTokenId) return setPending(0)
-      try {
-        // hit our paginated endpoint with page=1,limit=1 to just get total
-        const { total } = await fetchTxPage(activeTokenId, 1, 1)
-        if (!cancelled) setPending(total)
-      } catch (err) {
-        console.error('Could not load pending count', err)
-      }
-    }
-    load()
-    const iv = setInterval(load, 30_000)
-    return () => {
-      cancelled = true
-      clearInterval(iv)
-    }
-  }, [activeTokenId])
 
   // Helper function for consistent NavLink styling
   const getNavLinkClasses = (isActive: boolean) => {
@@ -138,24 +115,6 @@ const Sidebar: React.FC = () => {
           >
             <HiOutlineBookmark className="w-7 h-7 sm:w-7 sm:h-7" />
             <span className="font-medium text-lg sm:text-lg">Bookmarks</span>
-          </NavLink>
-
-          <NavLink
-          to="/pending"
-          className={({ isActive }) =>
-            `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
-          }
-          >
-            <HiOutlineClock className="w-7 h-7 sm:w-7 sm:h-7" />
-            <span className="font-medium text-lg sm:text-lg">Pending</span>
-            {pending > 0 && (
-              <span className="absolute top-1 right-1 inline-flex items-center justify-center
-              px-2 py-0.5 text-xs font-bold text-white bg-red-500 rounded-full
-              transform translate-x-1/2 -translate-y-1/2 min-w-[20px] h-5
-              shadow-lg shadow-red-500/30 animate-pulse">
-                {pending}
-              </span>
-            )}
           </NavLink>
 
           <NavLink
