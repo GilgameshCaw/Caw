@@ -386,7 +386,7 @@ export const Profile: React.FC = () => {
               <div
                 className="w-full h-full"
                 style={{
-                  background: 'linear-gradient(to bottom left, #000000 0%, #000000 46.5%, rgba(0,0,0,0.7) 48.5%, #F1C454 50%, rgba(0,0,0,0.7) 51.5%, #000000 53.5%, #000000 100%)'
+                  background: 'linear-gradient(to bottom right, #000000 0%, #000000 46.5%, rgba(0,0,0,0.7) 48.5%, #F1C454 50%, rgba(0,0,0,0.7) 51.5%, #000000 53.5%, #000000 100%)'
                 }}
               />
             )}
