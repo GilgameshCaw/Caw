@@ -107,13 +107,13 @@ const ReplyItem: React.FC<{ item: CawItem }> = ({ item }) => {
           <div className="flex-1 min-w-0">
             {/* User info */}
             <div className="flex items-center space-x-2 mb-2">
-              <Link 
-                to={`/users/${item.user.username}`} 
+              <Link
+                to={`/users/${item.user.username}`}
                 className={`font-semibold transition-colors duration-300 cursor-pointer hover:underline ${
                   isDark ? 'text-white' : 'text-black'
                 }`}
               >
-                {item.user.username}
+                {item.user.displayName || item.user.username}
               </Link>
               <span className={`text-sm transition-colors duration-300 ${
                 isDark ? 'text-gray-400' : 'text-gray-600'

@@ -214,15 +214,13 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
                       <div className={`font-medium ${
                         isDark ? 'text-white' : 'text-black'
                       }`}>
+                        {user.displayName || user.username}
+                      </div>
+                      <div className={`text-sm ${
+                        isDark ? 'text-gray-400' : 'text-gray-600'
+                      }`}>
                         @{user.username}
                       </div>
-                      {user.displayName && (
-                        <div className={`text-sm ${
-                          isDark ? 'text-gray-400' : 'text-gray-600'
-                        }`}>
-                          {user.displayName}
-                        </div>
-                      )}
                       {user.bio && (
                         <div className={`text-sm mt-1 line-clamp-2 ${
                           isDark ? 'text-gray-300' : 'text-gray-700'

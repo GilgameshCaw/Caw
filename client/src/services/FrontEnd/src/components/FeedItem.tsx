@@ -36,6 +36,8 @@ import { usePendingPolling, usePendingCawPolling, usePendingLikePolling } from '
 import ContentWithHashtags from './ContentWithHashtags'
 import { formatEngagementCount } from '~/utils/numberFormat'
 import { apiFetch } from '~/api/client'
+import InsufficientStakeModal from './modals/InsufficientStakeModal'
+import { hasMinimumStake, getRequiredStake } from '~/constants/stakingRequirements'
 
 // Helper function to format relative time
 function formatTimeAgo(timestamp: string): string {
@@ -91,6 +93,8 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const [translatedText, setTranslatedText] = useState<string | null>(null)
   const [isTranslating, setIsTranslating] = useState(false)
   const [isRetrying, setIsRetrying] = useState(false)
+  const [showInsufficientStakeModal, setShowInsufficientStakeModal] = useState(false)
+  const [insufficientStakeAction, setInsufficientStakeAction] = useState<'post' | 'like' | 'repost'>('post')
   const menuRef = useRef<HTMLDivElement>(null)
   const optionsMenuRef = useRef<HTMLDivElement>(null)
 
@@ -98,7 +102,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   let useItem = item;
   let headline;
   if (item.content === "" && item.parent) {
-    headline = 'Recawed by ' + item.user.username
+    headline = 'Recawed by ' + (item.user.displayName || item.user.username)
     useItem = item.parent;
   }
 
@@ -211,6 +215,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     // If no active token selected, return
     if (!activeTokenId || busyLike || likePending) return
 
+    // Check for minimum stake
+    if (!hasMinimumStake(activeToken?.stakedAmount, 'MIN_STAKE_LIKE')) {
+      setInsufficientStakeAction('like')
+      setShowInsufficientStakeModal(true)
+      return
+    }
+
     setBusyLike(true)
     setTxSubmitted(false) // Reset txSubmitted at start of new like action
 
@@ -295,6 +306,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
     // If no active token selected, return
     if (!activeTokenId || busyRecaw) return
+
+    // Check for minimum stake
+    if (!hasMinimumStake(activeToken?.stakedAmount, 'MIN_STAKE_REPOST')) {
+      setInsufficientStakeAction('repost')
+      setShowInsufficientStakeModal(true)
+      return
+    }
 
     setBusyRecaw(true)
     try {
@@ -511,10 +529,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         }`}>
           {/* Replying to header */}
           {item.parent && (
-            <Link to={`/caws/${item.parent.id}`} className={`block text-xs underline transition-all duration-300 mb-3 truncate md:truncate-none ${
+            <Link to={`/caws/${item.parent.id}`} className={`block text-xs transition-all duration-300 mb-3 truncate md:truncate-none ${
               isDark ? 'text-gray-400' : 'text-gray-600'
             }`}>
-              Replying to @{item.parent.user.username}
+              Replying to <span className="underline">@{item.parent.user.username}</span>
             </Link>
           )}
           
@@ -545,13 +563,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               {/* User info */}
               <div className="flex-1">
                 <div className="flex items-center space-x-2">
-                  <Link 
-                    to={`/users/${useItem.user.username}`} 
+                  <Link
+                    to={`/users/${useItem.user.username}`}
                     className={`font-semibold transition-colors duration-300 cursor-pointer hover:underline max-w-[6ch] truncate md:max-w-none md:truncate-none ${
                       isDark ? 'text-white' : 'text-black'
                     }`}
                   >
-                    {useItem.user.username}
+                    {useItem.user.displayName || useItem.user.username}
                   </Link>
                   <span className={`text-sm transition-colors duration-300 max-w-[6ch] truncate md:max-w-none md:truncate-none ${
                     isDark ? 'text-gray-400' : 'text-gray-600'
@@ -1137,6 +1155,19 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         url={`/caws/${useItem.id}`}
         title={`${useItem.user?.displayName || '@' + useItem.user?.username}'s caw`}
         text={useItem.text}
+      />
+
+      {/* Insufficient Stake Modal */}
+      <InsufficientStakeModal
+        isOpen={showInsufficientStakeModal}
+        onClose={() => setShowInsufficientStakeModal(false)}
+        actionType={insufficientStakeAction}
+        currentAmount={activeToken?.stakedAmount}
+        requiredAmount={getRequiredStake(
+          insufficientStakeAction === 'like' ? 'MIN_STAKE_LIKE' :
+          insufficientStakeAction === 'repost' ? 'MIN_STAKE_REPOST' :
+          'MIN_STAKE_POST'
+        )}
       />
     </>
   )

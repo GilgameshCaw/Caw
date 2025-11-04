@@ -38,7 +38,8 @@ export const QuoteModal: React.FC<QuoteModalProps> = ({ caw, onClose }) => {
 
         {/* show original Caw */}
         <div className="mb-4 rounded-md border-4 border-gray-700 pl-4">
-          <div className="font-bold">@{caw.user.username}</div>
+          <div className="font-bold">{caw.user.displayName || caw.user.username}</div>
+          <div className="text-sm text-gray-400">@{caw.user.username}</div>
           <p className="text-gray-300">{caw.content}</p>
         </div>
       </div>

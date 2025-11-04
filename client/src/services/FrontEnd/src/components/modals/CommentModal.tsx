@@ -33,7 +33,8 @@ export const CommentModal: React.FC<CommentModalProps> = ({ caw, onClose }) => {
 
         {/* original Caw */}
         <div className="mb-4">
-          <div className="font-bold">@{caw.user.username}</div>
+          <div className="font-bold">{caw.user.displayName || caw.user.username}</div>
+          <div className="text-sm text-gray-400">@{caw.user.username}</div>
           <p className="border-l-1 border-l-[#fff4] pt-1 pb-4 pl-3 ml-2 mt-1 text-gray-300">{caw.content}</p>
         </div>
 

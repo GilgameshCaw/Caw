@@ -1,6 +1,9 @@
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { useState, useEffect, useRef, useMemo } from 'react'
+import { useAccount } from 'wagmi'
+import { useSearchParams } from 'react-router-dom'
+import ConnectButton from '~/components/buttons/ConnectButton'
 import {
   HiOutlineCog,
   HiOutlineMail,
@@ -10,16 +13,24 @@ import {
   HiOutlineUserRemove,
   HiOutlineVolumeOff,
   HiOutlineExclamation,
-  HiOutlineShieldCheck
+  HiOutlineShieldCheck,
+  HiOutlineLockClosed,
+  HiOutlineCheckCircle,
+  HiOutlineUserGroup,
+  HiOutlinePaperClip
 } from 'react-icons/hi'
 import { useTokenDataStore, useActiveToken } from '~/store/tokenDataStore'
 import {
-  useXmtpIdentity,
+  useXmtpClient,
   useConversations,
-  useMessages,
-  useCreateConversation
+  useMessages
 } from '~/hooks/useXmtp'
+import { useXmtpWebSocket } from '~/hooks/useXmtpWebSocket'
+import { useMessageNotifications, useTypingStatus } from '~/hooks/useMessageNotifications'
 import { formatDistanceToNow } from 'date-fns'
+import MessageSearch from '~/components/MessageSearch'
+import MessageFileUpload from '~/components/MessageFileUpload'
+import GroupChatModal from '~/components/GroupChatModal'
 
 const MessagesPage: React.FC = () => {
   const { isDark } = useTheme()
@@ -36,13 +47,56 @@ const MessagesPage: React.FC = () => {
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null)
   const [newMessageContent, setNewMessageContent] = useState('')
   const [showChatOptionsMenu, setShowChatOptionsMenu] = useState(false)
+  const [showSearchModal, setShowSearchModal] = useState(false)
+  const [showFileUpload, setShowFileUpload] = useState(false)
+  const [showGroupModal, setShowGroupModal] = useState(false)
+  const [isTyping, setIsTyping] = useState(false)
+  const typingTimeoutRef = useRef<NodeJS.Timeout>()
   const chatMenuRef = useRef<HTMLDivElement>(null)
+  const [targetUser, setTargetUser] = useState<{ tokenId: number, username: string } | null>(null)
 
-  // XMTP hooks
-  const { identity, isLoading: identityLoading, registerIdentity, isRegistering } = useXmtpIdentity(currentUser?.id)
-  const { conversations, isLoading: conversationsLoading } = useConversations(currentUser?.id)
+  // Get wallet address from wagmi
+  const { address } = useAccount()
+
+  // Get URL parameters
+  const [searchParams] = useSearchParams()
+
+  // XMTP hooks - using the main useXmtpClient hook directly
+  const {
+    isInitialized: identity,
+    isLoading: identityLoading,
+    initializeClient,
+    conversations,
+    messages: allMessages,
+    error: xmtpError
+  } = useXmtpClient()
+  const { isLoading: conversationsLoading, startConversation } = useConversations()
   const { messages, sendMessage, isSending, markAsRead } = useMessages(selectedConversationId || '', currentUser?.id)
-  const createConversation = useCreateConversation()
+
+  // WebSocket integration
+  const {
+    isConnected,
+    joinConversation,
+    leaveConversation,
+    sendTyping,
+    markMessagesRead
+  } = useXmtpWebSocket({
+    userId: currentUser?.id,
+    username: currentUser?.username,
+    enabled: !!currentUser && !!identity
+  })
+
+  // Notifications
+  const { areNotificationsEnabled, requestPermission } = useMessageNotifications({
+    userId: currentUser?.id,
+    enabled: !!currentUser && !!identity,
+    onNewMessage: (message) => {
+      console.log('New message notification:', message)
+    }
+  })
+
+  // Typing status for current conversation
+  const { isTyping: otherUserTyping } = useTypingStatus(selectedConversationId || '')
 
   // Function to handle user selection
   const handleUserSelect = (user: {name: string, handle: string, avatar: string}) => {
@@ -76,8 +130,16 @@ const MessagesPage: React.FC = () => {
 
   // Function to handle conversation selection
   const handleConversationSelect = (conversationId: string) => {
+    // Leave previous conversation room
+    if (selectedConversationId) {
+      leaveConversation(selectedConversationId)
+    }
+
     setSelectedConversationId(conversationId)
     setCurrentView('chat')
+
+    // Join new conversation room
+    joinConversation(conversationId)
 
     // Mark messages as read
     const conversation = conversations.find(c => c.id === conversationId)
@@ -88,6 +150,11 @@ const MessagesPage: React.FC = () => {
 
   // Function to go back to inbox
   const goBackToInbox = () => {
+    // Leave conversation room
+    if (selectedConversationId) {
+      leaveConversation(selectedConversationId)
+    }
+
     setCurrentView('inbox')
     setSelectedConversationId(null)
     setShowChatOptionsMenu(false)
@@ -103,21 +170,181 @@ const MessagesPage: React.FC = () => {
     })
 
     setNewMessageContent('')
+
+    // Stop typing indicator
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current)
+    }
+    sendTyping(selectedConversationId, false)
   }
+
+  // Handle file upload
+  const handleFilesSelected = async (files: File[]) => {
+    if (!selectedConversationId || files.length === 0) return
+
+    // Create FormData for file upload
+    const formData = new FormData()
+    formData.append('conversationId', selectedConversationId)
+    formData.append('senderId', currentUser?.id?.toString() || '')
+    formData.append('content', newMessageContent)
+
+    files.forEach(file => {
+      formData.append('files', file)
+    })
+
+    try {
+      const response = await fetch('/api/xmtp/messages/with-attachments', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        },
+        body: formData
+      })
+
+      if (!response.ok) throw new Error('Failed to send files')
+
+      const result = await response.json()
+      console.log('Files sent successfully:', result)
+
+      setShowFileUpload(false)
+      setNewMessageContent('')
+    } catch (error) {
+      console.error('Error sending files:', error)
+    }
+  }
+
+  // Handle typing indicator
+  const handleInputChange = (value: string) => {
+    setNewMessageContent(value)
+
+    if (!selectedConversationId) return
+
+    // Send typing indicator
+    if (!isTyping) {
+      setIsTyping(true)
+      sendTyping(selectedConversationId, true)
+    }
+
+    // Clear previous timeout
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current)
+    }
+
+    // Set new timeout to stop typing indicator
+    typingTimeoutRef.current = setTimeout(() => {
+      setIsTyping(false)
+      sendTyping(selectedConversationId, false)
+    }, 2000)
+  }
+
+  // Handle URL parameter for direct user messaging
+  useEffect(() => {
+    const userParam = searchParams.get('user')
+    if (userParam && currentUser && identity && !conversationsLoading) {
+      // Fetch user details
+      fetch(`/api/users/${userParam}`)
+        .then(res => res.json())
+        .then(userData => {
+          if (userData && !userData.error) {
+            setTargetUser({ tokenId: userData.tokenId, username: userData.username })
+
+            // Check if conversation already exists
+            const existingConv = conversations.find(c =>
+              c.type === 'DM' &&
+              c.participants.some(p => p.userId === userData.tokenId)
+            )
+
+            if (existingConv) {
+              // Select existing conversation
+              handleConversationSelect(existingConv.id)
+            } else {
+              // Create new conversation
+              console.log('Creating conversation with user:', userData)
+              // First ensure XMTP is initialized
+              if (!identity) {
+                console.log('XMTP not initialized - user needs to initialize first')
+                setCurrentView('setup')
+              } else {
+                // XMTP already initialized, create conversation directly
+                if (userData.address) {
+                  startConversation(userData.address)
+                    .then((newConversation) => {
+                      console.log('Conversation created:', newConversation)
+                      handleConversationSelect(newConversation.id)
+                    })
+                    .catch((error) => {
+                      console.error('Failed to create conversation:', error)
+                    })
+                } else {
+                  console.error('User does not have a wallet address')
+                }
+              }
+            }
+          } else {
+            console.log('User not found:', userParam)
+          }
+        })
+        .catch(err => console.error('Error fetching user:', err))
+    }
+  }, [searchParams, currentUser, identity, conversations, conversationsLoading, startConversation, handleConversationSelect])
 
   // Check if user needs to setup XMTP
   useEffect(() => {
     if (currentUser && !identityLoading && !identity) {
       setCurrentView('setup')
-    } else if (currentUser && identity) {
+    } else if (currentUser && identity && currentView === 'setup') {
+      // Only set to inbox if we're currently in setup view
       setCurrentView('inbox')
     }
-  }, [currentUser, identity, identityLoading])
+  }, [currentUser, identity, identityLoading, currentView])
 
   // Handle XMTP registration
   const handleRegisterXmtp = async () => {
-    if (!currentUser) return
-    registerIdentity({ tokenId: currentUser.id })
+    console.log('handleRegisterXmtp called', { currentUser, address })
+    if (!currentUser) {
+      console.log('No current user')
+      return
+    }
+    if (!address) {
+      console.log('No wallet address connected')
+      return
+    }
+
+    try {
+      console.log('Initializing XMTP client for user:', currentUser.id)
+      await initializeClient()
+      console.log('XMTP initialization successful')
+      setCurrentView('inbox')
+
+      // If we have a target user from URL params, try to create conversation after a short delay
+      // to ensure state has updated
+      const userParam = searchParams.get('user')
+      if (userParam && targetUser) {
+        setTimeout(() => {
+          console.log('Creating conversation with target user after initialization:', targetUser)
+          // Re-fetch user to get address
+          fetch(`/api/users/${userParam}`)
+            .then(res => res.json())
+            .then(userData => {
+              if (userData && userData.address) {
+                startConversation(userData.address)
+                  .then((newConversation) => {
+                    console.log('Conversation created after init:', newConversation)
+                    handleConversationSelect(newConversation.id)
+                  })
+                  .catch((error) => {
+                    console.error('Failed to create conversation after init:', error)
+                  })
+              }
+            })
+            .catch(err => console.error('Error fetching user after init:', err))
+        }, 500) // Small delay to ensure state updates
+      }
+    } catch (error) {
+      console.error('Failed to initialize XMTP:', error)
+      // Show error to user
+      alert(`Failed to setup XMTP: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    }
   }
 
   // Function to handle chat options menu actions
@@ -179,7 +406,7 @@ const MessagesPage: React.FC = () => {
               <h1 className={`text-2xl font-bold transition-colors duration-300 ${
                 isDark ? 'text-white' : 'text-black'
               }`}>
-                {currentView === 'inbox' ? 'Messages' : currentView === 'setup' ? 'Setup XMTP' : otherParticipant?.identity.user.username || selectedConversation?.name || 'Chat'}
+                {currentView === 'inbox' ? 'Messages' : currentView === 'setup' ? 'Setup XMTP' : otherParticipant?.identity.user.displayName || otherParticipant?.identity.user.username || selectedConversation?.name || 'Chat'}
               </h1>
             </div>
             {currentView === 'chat' && (
@@ -249,13 +476,16 @@ const MessagesPage: React.FC = () => {
                 {/* Settings Button */}
                 <button
                   onClick={() => setIsSettingsModalOpen(true)}
-                  className={`p-2 rounded-full transition-all duration-300 hover:bg-gray-500/20 cursor-pointer ${
+                  className={`p-2 rounded-full transition-all duration-300 hover:bg-gray-500/20 cursor-pointer relative ${
                     isDark ? '' : ''
                   }`}
                 >
                   <HiOutlineCog className={`w-5 h-5 transition-colors duration-300 ${
                     isDark ? 'text-white' : 'text-black'
                   }`} />
+                  {!areNotificationsEnabled() && (
+                    <span className="absolute top-0 right-0 w-2 h-2 bg-yellow-500 rounded-full"></span>
+                  )}
                 </button>
 
                 {/* New Message Button */}
@@ -278,15 +508,19 @@ const MessagesPage: React.FC = () => {
         {currentView === 'inbox' && (
           <div className="mb-6 flex-shrink-0">
             <div className="relative">
-              <input
-                type="text"
-                placeholder="Search messages"
-                className={`w-full px-4 py-3 rounded-full border transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-gray-500/30 ${
+              <button
+                onClick={() => setShowSearchModal(true)}
+                className={`w-full px-4 py-3 rounded-full border transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-gray-500/30 text-left ${
                   isDark
-                    ? 'bg-black border-gray-600 text-white placeholder-gray-400 focus:bg-transparent'
-                    : 'bg-white border-gray-300 text-black placeholder-gray-500 focus:bg-transparent'
+                    ? 'bg-black border-gray-600 text-gray-400 hover:text-white focus:bg-transparent'
+                    : 'bg-white border-gray-300 text-gray-500 hover:text-black focus:bg-transparent'
                 }`}
-              />
+              >
+                <span className="flex items-center">
+                  <HiOutlineSearch className="w-5 h-5 mr-2" />
+                  Search messages
+                </span>
+              </button>
             </div>
           </div>
         )}
@@ -304,15 +538,26 @@ const MessagesPage: React.FC = () => {
               <p className={`mb-6 ${
                 isDark ? 'text-gray-400' : 'text-gray-600'
               }`}>
-                XMTP provides secure, encrypted messaging between wallets. Initialize your XMTP identity to start sending private messages.
+                XMTP provides secure, encrypted messaging between wallets. {!address ? 'Please connect your wallet first.' : 'Initialize your XMTP identity to start sending private messages.'}
               </p>
-              <button
-                onClick={handleRegisterXmtp}
-                disabled={isRegistering}
-                className="px-6 py-3 rounded-full font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {isRegistering ? 'Initializing...' : 'Initialize XMTP'}
-              </button>
+              {xmtpError && (
+                <div className="mb-4 p-3 rounded-lg bg-red-500/20 border border-red-500">
+                  <p className="text-red-500 text-sm">
+                    {xmtpError.message || 'Failed to initialize XMTP. Please try again.'}
+                  </p>
+                </div>
+              )}
+              {!address ? (
+                <ConnectButton />
+              ) : (
+                <button
+                  onClick={handleRegisterXmtp}
+                  disabled={identityLoading}
+                  className="px-6 py-3 rounded-full font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {identityLoading ? 'Initializing...' : 'Initialize XMTP'}
+                </button>
+              )}
             </div>
           </div>
         )}
@@ -372,7 +617,7 @@ const MessagesPage: React.FC = () => {
                             <h3 className={`font-semibold text-base transition-colors duration-300 ${
                               isDark ? 'text-white' : 'text-black'
                             }`}>
-                              {otherUser?.identity.user.username || conversation.name || 'Unknown'}
+                              {otherUser?.identity.user.displayName || otherUser?.identity.user.username || conversation.name || 'Unknown'}
                             </h3>
                             {conversation.unreadCount > 0 && (
                               <span className="px-2 py-0.5 text-xs font-medium bg-yellow-500 text-black rounded-full">
@@ -406,34 +651,118 @@ const MessagesPage: React.FC = () => {
         {/* Chat View */}
         {currentView === 'chat' && selectedConversationId && (
           <div className="flex flex-col flex-1 md:flex-1 h-screen md:h-auto">
+            {/* Encryption Status Banner */}
+            <div className={`flex items-center justify-center py-2 px-4 ${
+              isDark ? 'bg-green-900/20 border-b border-green-800/30' : 'bg-green-50 border-b border-green-200'
+            }`}>
+              <div className="flex items-center space-x-2">
+                <HiOutlineLockClosed className={`w-4 h-4 ${
+                  isDark ? 'text-green-400' : 'text-green-600'
+                }`} />
+                <span className={`text-xs font-medium ${
+                  isDark ? 'text-green-400' : 'text-green-700'
+                }`}>
+                  Messages are end-to-end encrypted with XMTP protocol
+                </span>
+              </div>
+            </div>
+
             {/* Chat Messages */}
             <div className="flex-1 overflow-y-auto custom-scrollbar-alt space-y-4 p-4 md:p-4 pt-32 md:pt-4 pb-20 md:pb-4">
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`flex flex-col ${message.senderId === currentUser?.id ? 'items-end' : 'items-start'}`}
-                >
-                  <div
-                    className={`max-w-md lg:max-w-xl px-6 py-4 rounded-2xl ${
-                      message.senderId === currentUser?.id
-                        ? 'bg-gray-600 text-white'
-                        : isDark
-                        ? 'bg-gray-700 text-white'
-                        : 'bg-gray-200 text-black'
-                    }`}
-                  >
-                    <p className="text-sm">{message.content}</p>
+              {/* Typing Indicator */}
+              {otherUserTyping && (
+                <div className="flex items-start space-x-3 animate-pulse">
+                  <div className="w-10 h-10 rounded-full bg-gray-600 flex items-center justify-center">
+                    <span className="text-white font-semibold text-sm">
+                      {otherParticipant?.identity.user.username?.[0]?.toUpperCase() || '?'}
+                    </span>
                   </div>
-                  <div className={`mt-1 px-2 ${
-                    message.senderId === currentUser?.id ? 'text-right' : 'text-left'
+                  <div className={`px-6 py-4 rounded-2xl ${
+                    isDark ? 'bg-gray-700' : 'bg-gray-200'
                   }`}>
-                    <p className="text-xs text-white/50 font-medium">
-                      {formatMessageTime(message.createdAt)}
-                    </p>
+                    <div className="flex space-x-1">
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                      <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                    </div>
                   </div>
                 </div>
-              ))}
+              )}
+              {messages.map((message) => {
+                // Parse message content if it includes attachments
+                let messageContent = message.content
+                let attachments = []
+                try {
+                  const parsed = JSON.parse(message.content)
+                  if (parsed.text !== undefined) {
+                    messageContent = parsed.text
+                    attachments = parsed.attachments || []
+                  }
+                } catch {
+                  // Content is plain text
+                }
+
+                return (
+                  <div
+                    key={message.id}
+                    className={`flex flex-col ${message.senderId === currentUser?.id ? 'items-end' : 'items-start'}`}
+                  >
+                    <div
+                      className={`max-w-md lg:max-w-xl px-6 py-4 rounded-2xl ${
+                        message.senderId === currentUser?.id
+                          ? 'bg-gray-600 text-white'
+                          : isDark
+                          ? 'bg-gray-700 text-white'
+                          : 'bg-gray-200 text-black'
+                      }`}
+                    >
+                      {/* Message text */}
+                      {messageContent && <p className="text-sm">{messageContent}</p>}
+
+                      {/* Attachments */}
+                      {attachments.length > 0 && (
+                        <div className="mt-2 space-y-2">
+                          {attachments.map((attachment: any, idx: number) => (
+                            <div key={idx} className="flex items-center space-x-2 p-2 rounded bg-black/20">
+                              <HiOutlinePaperClip className="w-4 h-4" />
+                              <span className="text-xs truncate">{attachment.originalName}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Message metadata with encryption indicator */}
+                    <div className={`mt-1 px-2 flex items-center space-x-2 ${
+                      message.senderId === currentUser?.id ? 'flex-row-reverse space-x-reverse' : 'flex-row'
+                    }`}>
+                      <div className="flex items-center space-x-1">
+                        {/* Encryption indicator */}
+                        <HiOutlineLockClosed className="w-3 h-3 text-green-400" title="End-to-end encrypted" />
+
+                        {/* Read receipt */}
+                        {message.senderId === currentUser?.id && message.status === 'READ' && (
+                          <HiOutlineCheckCircle className="w-3 h-3 text-blue-400" title="Read" />
+                        )}
+                      </div>
+
+                      <p className="text-xs text-white/50 font-medium">
+                        {formatMessageTime(message.createdAt)}
+                      </p>
+                    </div>
+                  </div>
+                )
+              })}
             </div>
+
+            {/* File Upload Component - Show when enabled */}
+            {showFileUpload && (
+              <MessageFileUpload
+                onFilesSelected={handleFilesSelected}
+                onCancel={() => setShowFileUpload(false)}
+                maxSize={10}
+              />
+            )}
 
             {/* Message Input - Fixed at bottom */}
             <div className="flex-shrink-0 border-t border-white/10 p-2 md:p-4 fixed md:relative bottom-0 left-0 right-0 z-20 bg-black md:bg-transparent">
@@ -445,11 +774,17 @@ const MessagesPage: React.FC = () => {
                 {/* Left side icons - fixed area */}
                 <div className="flex items-center space-x-3 px-3 py-3">
                   {/* Image icon */}
-                  <button className={`p-1 rounded-full transition-all duration-200 cursor-pointer ${
-                    isDark
-                      ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
-                      : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50'
-                  }`}>
+                  <button
+                    onClick={() => setShowFileUpload(!showFileUpload)}
+                    className={`p-1 rounded-full transition-all duration-200 cursor-pointer ${
+                      showFileUpload
+                        ? isDark
+                          ? 'text-yellow-400 bg-yellow-400/20'
+                          : 'text-yellow-600 bg-yellow-200'
+                        : isDark
+                          ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
+                          : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50'
+                    }`}>
                     <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
                       <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
                     </svg>
@@ -481,7 +816,7 @@ const MessagesPage: React.FC = () => {
                   type="text"
                   placeholder="Start a new message"
                   value={newMessageContent}
-                  onChange={(e) => setNewMessageContent(e.target.value)}
+                  onChange={(e) => handleInputChange(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
                   className={`flex-1 py-3 pr-12 bg-transparent border-none outline-none ${
                     isDark
@@ -540,6 +875,44 @@ const MessagesPage: React.FC = () => {
             onClick={(e) => e.stopPropagation()}
           >
             {/* Settings modal implementation remains the same */}
+          </div>
+        </div>
+      )}
+
+      {/* Search Modal */}
+      {showSearchModal && (
+        <div
+          className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+          onClick={() => setShowSearchModal(false)}
+        >
+          <div
+            className={`w-full max-w-2xl max-h-[80vh] overflow-y-auto rounded-2xl transition-all duration-300 p-6 ${
+              isDark ? 'bg-black border border-white/20' : 'bg-white border border-gray-200'
+            }`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Close button */}
+            <div className="flex justify-between items-center mb-4">
+              <h2 className={`text-xl font-bold ${isDark ? 'text-white' : 'text-black'}`}>
+                Search Messages
+              </h2>
+              <button
+                onClick={() => setShowSearchModal(false)}
+                className={`p-2 rounded-full transition-all duration-300 hover:bg-gray-500/20 ${
+                  isDark ? 'text-white' : 'text-black'
+                }`}
+              >
+                <HiOutlineX className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Message Search Component */}
+            <MessageSearch
+              userId={currentUser?.tokenId}
+              onSearchComplete={(results) => {
+                console.log('Search results:', results)
+              }}
+            />
           </div>
         </div>
       )}

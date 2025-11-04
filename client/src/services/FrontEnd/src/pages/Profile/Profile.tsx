@@ -150,7 +150,13 @@ export const Profile: React.FC = () => {
       if (!response.ok) throw new Error('Upload failed')
 
       const data = await response.json()
-      const imageUrl = `${window.location.origin}${data.url}`
+
+      // Backend returns { urls: [...] } for the /api/upload endpoint
+      if (!data.urls || !data.urls[0]) {
+        throw new Error('No URL returned from upload')
+      }
+
+      const imageUrl = data.urls[0]
 
       // Set both preview and URL
       if (type === 'avatar') {
@@ -395,13 +401,18 @@ export const Profile: React.FC = () => {
           <div className="flex justify-between items-start">
             {/* Columna izquierda: Username, Joined, Stats */}
             <div className="flex-1">
-              {/* Username y Joined */}
+              {/* Display Name, Username, and Joined */}
               <div className="mb-4">
                 <h1 className={`text-2xl font-bold transition-all duration-300 ${
                   isDark ? 'text-white' : 'text-black'
                 }`}>
-                  @{profileData?.username || displayUsername}
+                  {profileData?.displayName || profileData?.username || displayUsername}
                 </h1>
+                <p className={`text-base mt-0.5 transition-all duration-300 ${
+                  isDark ? 'text-gray-400' : 'text-gray-600'
+                }`}>
+                  @{profileData?.username || displayUsername}
+                </p>
                 <p className={`text-sm mt-1 transition-all duration-300 ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}>
