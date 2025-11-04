@@ -375,11 +375,20 @@ export const Profile: React.FC = () => {
         {/* Profile Header */}
         <div className="relative transition-all duration-300">
           {/* Cover Photo */}
-          <div className={`h-48 w-full transition-all duration-300 ${
-            isDark ? 'bg-gray-800' : 'bg-gray-200'
-          }`}>
-            <div className="h-full w-full">
-            </div>
+          <div className="h-48 w-full relative overflow-hidden">
+            {profileData?.coverPhotoUrl ? (
+              <img
+                src={profileData.coverPhotoUrl}
+                alt="Cover photo"
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <div className={`w-full h-full ${
+                isDark
+                  ? 'bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900'
+                  : 'bg-gradient-to-br from-blue-400 via-purple-400 to-pink-400'
+              }`} />
+            )}
           </div>
 
           {/* Profile Picture */}
