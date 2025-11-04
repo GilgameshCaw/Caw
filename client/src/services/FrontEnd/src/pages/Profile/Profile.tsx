@@ -983,10 +983,7 @@ export const Profile: React.FC = () => {
                 } text-black`}
               >
                 {isSaving ? (
-                  <span className="flex items-center">
-                    <span className="animate-spin mr-2">⏳</span>
-                    Updating...
-                  </span>
+                  <span>Updating...</span>
                 ) : !isConnected ? (
                   <span>Connect Wallet</span>
                 ) : activeToken && address?.toLowerCase() !== activeToken.address?.toLowerCase() ? (
