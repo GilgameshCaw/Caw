@@ -383,11 +383,12 @@ export const Profile: React.FC = () => {
                 className="w-full h-full object-cover"
               />
             ) : (
-              <div className={`w-full h-full ${
-                isDark
-                  ? 'bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900'
-                  : 'bg-gradient-to-br from-blue-400 via-purple-400 to-pink-400'
-              }`} />
+              <div
+                className="w-full h-full"
+                style={{
+                  background: 'linear-gradient(to bottom left, #000000 0%, #000000 46.5%, rgba(0,0,0,0.7) 48.5%, #F1C454 50%, rgba(0,0,0,0.7) 51.5%, #000000 53.5%, #000000 100%)'
+                }}
+              />
             )}
           </div>
 
