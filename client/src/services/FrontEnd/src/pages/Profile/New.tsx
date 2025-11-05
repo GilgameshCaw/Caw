@@ -32,9 +32,15 @@ const DEFAULT_COST = 1_000_000n  // 8+ chars
 export const NewProfile: React.FC = () => {
   const { switchChain } = useSwitchChain();
   const [isSwitchingChain, setIsSwitchingChain] = useState(false);
-  const handleSwitchChain = () => {
+  const handleSwitchChain = async () => {
     setIsSwitchingChain(true);
-    switchChain({ chainId: chains.l1.chainId });
+    try {
+      await switchChain({ chainId: chains.l1.chainId });
+    } catch (error) {
+      console.error('Failed to switch chain:', error);
+    } finally {
+      setIsSwitchingChain(false);
+    }
   };
   const activeToken = useActiveToken();
   const { isConnected, address }      = useAccount()
