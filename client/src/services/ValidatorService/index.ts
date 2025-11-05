@@ -36,11 +36,30 @@ export const validatorService: Service = {
     const privateKey = process.env.VALIDATOR_PRIVATE_KEY
     if (!privateKey) throw new Error('Missing VALIDATOR_PRIVATE_KEY in env')
 
-    const provider    = new WebSocketProvider(l2RpcUrl)
-    const wallet      = new Wallet(privateKey, provider)
-    const cawActions  = new Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi, wallet)
-    const iface      = cawActions.interface  // shorthand
+    let provider: WebSocketProvider
+    let wallet: Wallet
+    let cawActions: Contract
+    let iface: any
 
+    // Function to initialize/reinitialize the WebSocket connection
+    function initializeConnection() {
+      console.log('[Validator] Initializing WebSocket connection...')
+      if (provider) {
+        try {
+          provider.destroy()
+        } catch (e) {
+          // Ignore errors during cleanup
+        }
+      }
+      provider = new WebSocketProvider(l2RpcUrl)
+      wallet = new Wallet(privateKey, provider)
+      cawActions = new Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi, wallet)
+      iface = cawActions.interface
+      console.log('[Validator] WebSocket connection initialized')
+    }
+
+    // Initialize connection
+    initializeConnection()
 
     let timer: NodeJS.Timeout
 
@@ -157,7 +176,7 @@ export const validatorService: Service = {
         })
 
         const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('RPC call timeout after 300 seconds')), 300000)
+          setTimeout(() => reject(new Error('RPC call timeout after 60 seconds')), 60000)
         })
 
         let returnData: string
@@ -165,6 +184,13 @@ export const validatorService: Service = {
           returnData = await Promise.race([callPromise, timeoutPromise]) as string
         } catch (timeoutErr: any) {
           console.error('[Validator] RPC call timeout or error:', timeoutErr.message)
+
+          // If timeout, reinitialize the WebSocket connection
+          if (timeoutErr.message?.includes('timeout')) {
+            console.log('[Validator] Timeout detected - reinitializing WebSocket connection')
+            initializeConnection()
+          }
+
           throw timeoutErr
         }
 
