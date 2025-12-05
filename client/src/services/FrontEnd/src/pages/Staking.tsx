@@ -61,6 +61,9 @@ const Staking = () => {
   const [isSwitchingNetwork, setIsSwitchingNetwork] = useState(false)
   const [isWithdrawPending, setIsWithdrawPending] = useState(false)
   const [recentStakeTime, setRecentStakeTime] = useState<number | null>(null)
+  const [isStakePending, setIsStakePending] = useState(false)
+  const [isApprovePending, setIsApprovePending] = useState(false)
+  const [lastStakedAt, setLastStakedAt] = useState<Date | null>(null)
   const activeToken = useActiveToken()
   const tokenId = activeToken?.tokenId
   const { address, isConnected } = useAccount()
@@ -131,6 +134,26 @@ const Staking = () => {
   useEffect(() => {
     if (withdrawQuote?.nativeFee != null) setWithdrawFee(BigInt(withdrawQuote.nativeFee))
   }, [withdrawQuote])
+
+  // Fetch lastStakedAt timestamp from user profile
+  useEffect(() => {
+    const fetchLastStakedAt = async () => {
+      if (!activeToken?.username) return
+
+      try {
+        const response = await fetch(`/api/users/${activeToken.username}`)
+        const data = await response.json()
+
+        if (data.lastStakedAt) {
+          setLastStakedAt(new Date(data.lastStakedAt))
+        }
+      } catch (err) {
+        console.error('[Staking] Failed to fetch lastStakedAt:', err)
+      }
+    }
+
+    fetchLastStakedAt()
+  }, [activeToken?.username])
 
   // Fetch all withdrawals (pending and recently completed)
   const fetchPendingWithdrawals = useCallback(async () => {
@@ -245,13 +268,20 @@ const Staking = () => {
     functionName: "approve",
     args: [CAW_NAMES_ADDRESS, maxUint256],
     disabled: !amount || insufficientBalance || !isTokenOwner,
-    onError: (err) => handleError(err, "approve"),
-    onPending: () => {},
+    onError: (err) => {
+      handleError(err, "approve")
+      setIsApprovePending(false)
+    },
+    onPending: () => {
+      setIsApprovePending(true)
+    },
     onSuccess: async () => {
       console.log('[Staking] Approval successful, automatically triggering stake')
+      setIsApprovePending(false)
       // Wait a brief moment for the approval to be confirmed
       await new Promise(resolve => setTimeout(resolve, 500))
       // Automatically call stake after approval
+      setIsStakePending(true)
       await stake.call()
     },
   })
@@ -264,13 +294,32 @@ const Staking = () => {
     args: [CLIENT_ID, tokenId || 0, parseUnits((amount || "0").toString(), 18), chains.l2.layerZero, 0n],
     disabled: !tokenId || !amount || depositFee === 0n || !isTokenOwner,
     value: depositFee,
-    onPending: () => {},
-    onSuccess: (hash) => {
+    onPending: () => {
+      setIsStakePending(true)
+    },
+    onSuccess: async (hash) => {
       console.log('[Staking] Stake successful:', hash)
       setAmount("")
       setRecentStakeTime(Date.now())
+      setIsStakePending(false)
+
+      // Record stake timestamp in database for persistent LayerZero status check
+      if (activeToken?.username) {
+        try {
+          await fetch(`/api/users/${activeToken.username}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lastStakedAt: new Date().toISOString() })
+          })
+        } catch (err) {
+          console.error('[Staking] Failed to record stake timestamp:', err)
+        }
+      }
     },
-    onError: (err) => handleError(err, "stake"),
+    onError: (err) => {
+      handleError(err, "stake")
+      setIsStakePending(false)
+    },
   })
 
   // Withdraw CAW from L1
@@ -324,9 +373,11 @@ const Staking = () => {
 
     if (needsApproval) {
       console.log('[Staking] Approving CAW tokens')
+      setIsApprovePending(true)
       await approve.call()
     } else {
       console.log('[Staking] Depositing CAW')
+      setIsStakePending(true)
       await stake.call()
     }
   }, [isConnected, wrongChainForStake, needsApproval, approve, stake, amount, switchChain, openConnectModal])
@@ -416,11 +467,12 @@ const Staking = () => {
         </p>
       </div>
 
-      {/* LayerZero Status Link - Show if stake was recent (within last hour) */}
+      {/* LayerZero Status Link - Show if stake was recent (within last 30 minutes) */}
       {(() => {
         const now = Date.now()
-        const oneHourAgo = now - (60 * 60 * 1000)
-        const hasRecentStake = recentStakeTime && recentStakeTime > oneHourAgo
+        const thirtyMinutesAgo = now - (30 * 60 * 1000)
+        const hasRecentStake = (recentStakeTime && recentStakeTime > thirtyMinutesAgo) ||
+                               (lastStakedAt && lastStakedAt.getTime() > thirtyMinutesAgo)
         return hasRecentStake && address && (
           <div className={`p-3 rounded-lg border transition-all duration-300 ${
             isDark ? 'bg-blue-500/10 border-blue-500/30' : 'bg-blue-50 border-blue-200'
@@ -495,16 +547,16 @@ const Staking = () => {
       {/* Stake Button */}
       <button
         onClick={handleStake}
-        className={`w-full py-3 px-4 rounded-full font-semibold transition-all duration-300 cursor-pointer ${
+        className={`w-full py-3 px-4 rounded-full font-semibold transition-all duration-300 ${
           !isConnected
-            ? 'bg-yellow-500 hover:bg-yellow-600 text-black'
+            ? 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
             : (!tokenId || (!isTokenOwner && !wrongChainForStake) || (!wrongChainForStake && !needsApproval && (!amount || depositFee === 0n)))
-            ? (isDark ? 'bg-gray-700 text-gray-400' : 'bg-gray-300 text-gray-600')
-            : (stake.status === 'pending' || approve.status === 'pending')
-            ? 'bg-yellow-600 text-black'
-            : 'bg-yellow-500 hover:bg-yellow-600 text-black'
+            ? (isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed')
+            : (isStakePending || isApprovePending || stake.status === 'pending' || approve.status === 'pending')
+            ? 'bg-yellow-600 text-black cursor-not-allowed'
+            : 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
         }`}
-        disabled={isConnected && (!tokenId || (!isTokenOwner && !wrongChainForStake) || (!wrongChainForStake && ((!needsApproval && (!amount || depositFee === 0n || stake.status === 'pending')) || (needsApproval && approve.status === 'pending'))))}
+        disabled={isConnected && (!tokenId || (!isTokenOwner && !wrongChainForStake) || (!wrongChainForStake && ((!needsApproval && (!amount || depositFee === 0n || isStakePending || stake.status === 'pending')) || (needsApproval && (isApprovePending || approve.status === 'pending')))))}
       >
         {isSwitchingNetwork
           ? 'Switching...'
@@ -512,9 +564,9 @@ const Staking = () => {
           ? 'Connect Wallet'
           : !isTokenOwner && activeToken && !wrongChainForStake
           ? 'Wrong Address'
-          : stake.status === 'pending'
+          : (isStakePending || stake.status === 'pending')
           ? 'Staking...'
-          : approve.status === 'pending'
+          : (isApprovePending || approve.status === 'pending')
           ? 'Approving...'
           : wrongChainForStake
           ? 'Switch Network'

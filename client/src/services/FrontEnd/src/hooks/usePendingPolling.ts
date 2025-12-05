@@ -97,3 +97,32 @@ export function usePendingLikePolling(cawId: number | undefined, hasPendingLike:
     return () => clearInterval(interval);
   }, [cawId, hasPendingLike, queryClient]);
 }
+
+/**
+ * Hook that polls for pending recaws on a specific caw
+ */
+export function usePendingRecawPolling(cawId: number | undefined, hasPendingRecaw: boolean) {
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (!cawId || !hasPendingRecaw) return;
+
+    const interval = setInterval(() => {
+      // Invalidate queries related to this caw's recaws
+      queryClient.invalidateQueries({
+        queryKey: ['caw', cawId],
+        refetchType: 'active'
+      });
+
+      // Also invalidate feed queries to show new recaw caw
+      queryClient.invalidateQueries({
+        queryKey: ['feed'],
+        refetchType: 'active'
+      });
+
+      console.log(`[Polling] Checking pending recaw for caw ${cawId}...`);
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [cawId, hasPendingRecaw, queryClient]);
+}

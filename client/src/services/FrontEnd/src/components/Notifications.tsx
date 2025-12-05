@@ -221,9 +221,9 @@ const Notifications: React.FC = () => {
 
   const handleNotificationClick = (notification: Notification) => {
     if (notification.type === 'FOLLOW') {
-      navigate(`/profile/${notification.actor.username}`)
+      navigate(`/users/${notification.actor.username}`)
     } else if (notification.caw) {
-      navigate(`/caw/${notification.caw.id}`)
+      navigate(`/caws/${notification.caw.id}`)
     }
   }
 

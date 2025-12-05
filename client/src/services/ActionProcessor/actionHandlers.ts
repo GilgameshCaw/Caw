@@ -303,8 +303,9 @@ export async function handleUnlikeAction(
 
 /**
  * Handle FOLLOW action - create or update follow relationship
- * Note: User counts (followerCount, followingCount) are automatically calculated
- * via Prisma _count aggregations in the API, so no manual count updates needed
+ * Updates follower counts:
+ * - Increments followerId's followingCount (number of people they follow)
+ * - Increments followingId's followerCount (number of followers they have)
  */
 export async function handleFollowAction(
   tx: PrismaTransactionClient,
@@ -325,13 +326,34 @@ export async function handleFollowAction(
   })
 
   if (!existingFollow) {
-    // Create new follow relationship
-    await tx.follow.create({
-      data: {
+    // Create new follow relationship or update pending to success
+    await tx.follow.upsert({
+      where: {
+        followerId_followingId: {
+          followerId,
+          followingId
+        }
+      },
+      update: {
+        action: 'FOLLOW',
+        status: 'SUCCESS'
+      },
+      create: {
         followerId,
         followingId,
-        action: 'FOLLOW'
+        action: 'FOLLOW',
+        status: 'SUCCESS'
       }
+    })
+
+    // Update counts: increment follower's followingCount and following's followerCount
+    await tx.user.update({
+      where: { tokenId: followerId },
+      data: { followingCount: { increment: 1 } }
+    })
+    await tx.user.update({
+      where: { tokenId: followingId },
+      data: { followerCount: { increment: 1 } }
     })
 
     console.log(`User ${followerId} now follows user ${followingId}`)
@@ -342,8 +364,8 @@ export async function handleFollowAction(
     } catch (err) {
       console.error(`Failed to create follow notification:`, err)
     }
-  } else if (existingFollow.action !== 'FOLLOW') {
-    // Update existing relationship back to FOLLOW
+  } else if (existingFollow.action !== 'FOLLOW' || existingFollow.status !== 'SUCCESS') {
+    // Update existing relationship back to FOLLOW or mark pending as success
     await tx.follow.update({
       where: {
         followerId_followingId: {
@@ -352,9 +374,23 @@ export async function handleFollowAction(
         }
       },
       data: {
-        action: 'FOLLOW'
+        action: 'FOLLOW',
+        status: 'SUCCESS'
       }
     })
+
+    // Only increment counts if this was not already a successful follow
+    if (existingFollow.action !== 'FOLLOW') {
+      // Update counts: increment follower's followingCount and following's followerCount
+      await tx.user.update({
+        where: { tokenId: followerId },
+        data: { followingCount: { increment: 1 } }
+      })
+      await tx.user.update({
+        where: { tokenId: followingId },
+        data: { followerCount: { increment: 1 } }
+      })
+    }
 
     console.log(`User ${followerId} re-followed user ${followingId}`)
   }
@@ -362,8 +398,6 @@ export async function handleFollowAction(
 
 /**
  * Handle UNFOLLOW action - remove follow relationship
- * Note: User counts (followerCount, followingCount) are automatically calculated
- * via Prisma _count aggregations in the API, so no manual count updates needed
  */
 export async function handleUnfollowAction(
   tx: PrismaTransactionClient,
@@ -377,11 +411,22 @@ export async function handleUnfollowAction(
   const deleted = await tx.follow.deleteMany({
     where: {
       followerId,
-      followingId
+      followingId,
+      action: 'FOLLOW' // Only delete if it's a FOLLOW relationship
     }
   })
 
   if (deleted.count > 0) {
+    // Update counts: decrement follower's followingCount and following's followerCount
+    await tx.user.update({
+      where: { tokenId: followerId },
+      data: { followingCount: { decrement: 1 } }
+    })
+    await tx.user.update({
+      where: { tokenId: followingId },
+      data: { followerCount: { decrement: 1 } }
+    })
+
     console.log(`User ${followerId} unfollowed user ${followingId}`)
   } else {
     console.log(`User ${followerId} was not following user ${followingId}`)

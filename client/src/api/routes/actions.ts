@@ -204,6 +204,76 @@ router.post('/', async (req, res) => {
       }
     }
 
+    // Create optimistic pending follow if this is a follow action
+    if (data.actionType === 4 || data.actionType === 'follow') {  // 4 is the enum value for 'follow'
+      console.log('Processing FOLLOW action - creating pending follow record')
+      console.log('Follower:', data.senderId, 'Following:', data.receiverId)
+
+      try {
+        // Ensure both users exist
+        await Promise.all([
+          prisma.user.upsert({
+            where: { tokenId: data.senderId },
+            update: {},
+            create: { tokenId: data.senderId, username: `user${data.senderId}`, address: '0x0' }
+          }),
+          prisma.user.upsert({
+            where: { tokenId: data.receiverId },
+            update: {},
+            create: { tokenId: data.receiverId, username: `user${data.receiverId}`, address: '0x0' }
+          })
+        ])
+
+        // Create pending follow (or update existing to pending)
+        const pendingFollow = await prisma.follow.upsert({
+          where: {
+            followerId_followingId: {
+              followerId: data.senderId,
+              followingId: data.receiverId
+            }
+          },
+          update: {
+            status: 'PENDING',
+            action: 'FOLLOW'
+          },
+          create: {
+            followerId: data.senderId,
+            followingId: data.receiverId,
+            action: 'FOLLOW',
+            status: 'PENDING'
+          }
+        })
+        console.log('Successfully created/updated pending follow:', pendingFollow.id)
+      } catch (followErr) {
+        console.error('Failed to create pending follow:', followErr)
+        // Continue even if pending follow creation fails
+      }
+    }
+
+    // Handle unfollow action - remove or mark as failed any pending follows
+    if (data.actionType === 5 || data.actionType === 'unfollow') {  // 5 is the enum value for 'unfollow'
+      console.log('Processing UNFOLLOW action - marking follow as pending removal')
+      console.log('Unfollower:', data.senderId, 'Unfollowing:', data.receiverId)
+
+      try {
+        // Mark existing follow as PENDING (will be deleted when processed)
+        const updatedFollow = await prisma.follow.updateMany({
+          where: {
+            followerId: data.senderId,
+            followingId: data.receiverId,
+            action: 'FOLLOW'
+          },
+          data: {
+            status: 'PENDING'
+          }
+        })
+        console.log('Marked follow as pending for removal:', updatedFollow.count, 'records')
+      } catch (unfollowErr) {
+        console.error('Failed to mark follow as pending removal:', unfollowErr)
+        // Continue even if marking fails
+      }
+    }
+
     // Create withdrawal request if this is a withdraw action
     if (data.actionType === 6 || data.actionType === '6') {  // 6 is the enum value for 'withdraw'
       console.log('Processing WITHDRAW action - creating withdrawal request')

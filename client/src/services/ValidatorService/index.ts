@@ -41,21 +41,88 @@ export const validatorService: Service = {
     let cawActions: Contract
     let iface: any
 
+    // Add global error handler for WebSocket-related uncaught exceptions
+    const handleUncaughtException = (error: Error) => {
+      if (error.message?.includes('WebSocket was closed') ||
+          error.message?.includes('provider destroyed') ||
+          error.message?.includes('UNSUPPORTED_OPERATION')) {
+        console.log('[Validator] Caught WebSocket error (non-fatal):', error.message)
+        console.log('[Validator] Connection will be reinitialized on next operation')
+        // Don't crash the process
+      } else {
+        // Re-throw other errors as they might be important
+        console.error('[Validator] Uncaught exception:', error)
+        throw error
+      }
+    }
+    process.on('uncaughtException', handleUncaughtException)
+
     // Function to initialize/reinitialize the WebSocket connection
-    function initializeConnection() {
+    async function initializeConnection() {
       console.log('[Validator] Initializing WebSocket connection...')
       if (provider) {
         try {
-          provider.destroy()
-        } catch (e) {
-          // Ignore errors during cleanup
+          // Set a flag to prevent the provider from being used during cleanup
+          const oldProvider = provider
+          provider = null as any // Clear reference immediately
+
+          // Safely destroy the old provider
+          setTimeout(async () => {
+            try {
+              // Check if the WebSocket exists and its state
+              const ws = (oldProvider as any)._websocket || (oldProvider as any).websocket
+              if (ws) {
+                const readyState = ws.readyState
+                console.log(`[Validator] Old WebSocket state: ${readyState} (0=CONNECTING, 1=OPEN, 2=CLOSING, 3=CLOSED)`)
+
+                // Only destroy if the WebSocket is OPEN (1) or already CLOSED (3)
+                // Don't try to destroy CONNECTING (0) or CLOSING (2) sockets
+                if (readyState === 1 || readyState === 3) {
+                  oldProvider.destroy()
+                  console.log('[Validator] Old provider destroyed successfully')
+                } else {
+                  // For CONNECTING or CLOSING states, just wait for it to close naturally
+                  console.log('[Validator] Skipping destroy - WebSocket not in stable state')
+                  if (readyState === 0) {
+                    // If still connecting, wait a bit and try to close again
+                    setTimeout(() => {
+                      try {
+                        if (ws.readyState === 1) {
+                          ws.close()
+                        }
+                      } catch (e) {
+                        // Ignore errors during delayed close
+                      }
+                    }, 1000)
+                  }
+                }
+              } else {
+                // No WebSocket found, safe to destroy
+                oldProvider.destroy()
+                console.log('[Validator] Old provider destroyed (no active WebSocket)')
+              }
+            } catch (e: any) {
+              console.log('[Validator] Error destroying old provider (non-fatal):', e.message)
+            }
+          }, 500) // Longer delay to ensure operations complete
+        } catch (e: any) {
+          console.log('[Validator] Error during provider cleanup (non-fatal):', e.message)
         }
       }
+
+      // Create new provider
       provider = new WebSocketProvider(l2RpcUrl)
       wallet = new Wallet(privateKey, provider)
       cawActions = new Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi, wallet)
       iface = cawActions.interface
-      console.log('[Validator] WebSocket connection initialized')
+
+      // Wait for the provider to be ready
+      try {
+        await provider.getNetwork()
+        console.log('[Validator] WebSocket connection initialized and ready')
+      } catch (e: any) {
+        console.log('[Validator] WebSocket connection initialized (network check failed, will retry):', e.message)
+      }
     }
 
     // Initialize connection
@@ -263,6 +330,19 @@ export const validatorService: Service = {
           console.log('[Validator] RPC timeout detected - will retry on next poll')
           const rejectionMessages = multiData.actions.map(() =>
             'RPC timeout - will retry'
+          );
+          return { successfulActions: [], rejectionMessages, quote: { nativeFee: BigInt(0) } };
+        }
+
+        // Handle provider/network errors - reinitialize connection and mark as temporary failure
+        if (err.message?.includes('provider destroyed') ||
+            err.message?.includes('UNSUPPORTED_OPERATION') ||
+            err.message?.includes('cancelled request') ||
+            err.code === 'UNSUPPORTED_OPERATION') {
+          console.log('[Validator] Provider/network error detected - reinitializing connection')
+          initializeConnection()
+          const rejectionMessages = multiData.actions.map(() =>
+            'Network error - will retry'
           );
           return { successfulActions: [], rejectionMessages, quote: { nativeFee: BigInt(0) } };
         }
@@ -549,13 +629,20 @@ console.log("succeededKeys", succeededKeys)
         const entries = await fetchPendingQueue()
         if (!entries.length) return
 
+        console.log(`\n========== [Validator] NEW POLL CYCLE ==========`)
         console.log(`[Validator] Processing ${entries.length} pending transactions`)
         console.log(`[Validator] Queue IDs: ${entries.map(e => e.id).join(', ')}`)
 
         // Log transaction details for debugging
         entries.forEach(entry => {
           const action = (entry.payload as any).data
-          console.log(`[Validator] TxQueue #${entry.id}: Type=${getActionType(action.actionType)}, Sender=${action.senderId}, Cawonce=${action.cawonce}`)
+          console.log(`[Validator] TxQueue #${entry.id}:`)
+          console.log(`  - Type: ${getActionType(action.actionType)}`)
+          console.log(`  - Sender ID: ${action.senderId}`)
+          console.log(`  - Receiver ID: ${action.receiverId}`)
+          console.log(`  - Cawonce: ${action.cawonce}`)
+          console.log(`  - Status: ${entry.status}`)
+          console.log(`  - Created: ${entry.createdAt}`)
         })
 
         // Pre-filter entries that don't have sufficient CAW for OTHER actions
@@ -644,28 +731,62 @@ console.log("succeededKeys", succeededKeys)
         console.log("No successful actions from simulation")
 
         // Check if any rejection is due to RPC/network issues (temporary) vs actual failures (permanent)
-        const hasTemporaryError = rejectionMessages.some((msg: string) =>
-          msg?.includes('timeout') ||
-          msg?.includes('network') ||
-          msg?.includes('connection') ||
-          msg?.includes('RPC')
-        )
+        const hasTemporaryError = rejectionMessages.some((msg: string) => {
+          const lowerMsg = msg?.toLowerCase() || ''
+          return lowerMsg.includes('timeout') ||
+                 lowerMsg.includes('network') ||
+                 lowerMsg.includes('connection') ||
+                 lowerMsg.includes('rpc') ||
+                 lowerMsg.includes('will retry')
+        })
 
         if (hasTemporaryError) {
-          console.log("Detected temporary RPC/network error, resetting to pending for retry")
-          await Promise.all(validatedEntries.map((entry, index) => {
-            return prisma.txQueue.update({
-              where: { id: entry.id },
-              data: {
-                status: 'pending', // Reset to pending for retry
-                reason: null // Clear any previous reason
-              }
-            })
-          }))
+          console.log("========== [Validator] TEMPORARY ERROR DETECTED ==========")
+          console.log("  Keeping transactions as PENDING for automatic retry")
+          console.log("  Affected TxQueue IDs:", validatedEntries.map(e => e.id).join(', '))
+          console.log("  Rejection messages:", rejectionMessages)
+          console.log("  These will be retried on next poll cycle")
+          console.log("==========================================================")
+          // For network errors, just keep them as pending - validator will retry automatically
+          // Don't mark as failed, as the network might recover
+          return
         } else {
-          console.log("Detected permanent failure, marking as failed")
+          console.log("========== [Validator] PERMANENT FAILURE DETECTED ==========")
+          console.log("  Marking transactions as FAILED")
+          console.log("  Affected TxQueue IDs:", validatedEntries.map(e => e.id).join(', '))
           // Mark ALL entries as failed with their specific rejection messages
-          await Promise.all(validatedEntries.map((entry, index) => {
+          await Promise.all(validatedEntries.map(async (entry, index) => {
+            const data = (entry.payload as any).data
+
+            // Mark Follow as FAILED if this is a follow action
+            if (data.actionType === 4 || data.actionType === 'follow' || data.actionType === 5 || data.actionType === 'unfollow') {
+              try {
+                console.log(`[Validator] Marking Follow as FAILED:`)
+                console.log(`  - Follower ID: ${data.senderId}`)
+                console.log(`  - Following ID: ${data.receiverId}`)
+                console.log(`  - Reason: ${rejectionMessages[index] || 'Simulation rejected - unknown reason'}`)
+
+                const result = await prisma.follow.updateMany({
+                  where: {
+                    followerId: data.senderId,
+                    followingId: data.receiverId,
+                    status: 'PENDING'
+                  },
+                  data: {
+                    status: 'FAILED'
+                  }
+                })
+
+                console.log(`  - Updated ${result.count} Follow record(s)`)
+
+                if (result.count === 0) {
+                  console.log(`[Validator] WARNING: No PENDING follow record found to mark as FAILED for ${data.senderId} -> ${data.receiverId}`)
+                }
+              } catch (followErr) {
+                console.error('[Validator] Failed to mark follow as FAILED:', followErr)
+              }
+            }
+
             return prisma.txQueue.update({
               where: { id: entry.id },
               data: {
@@ -762,14 +883,33 @@ console.log("succeededKeys", succeededKeys)
       let submissionError: string | null = null;
 
       try {
+        console.log("[Validator] ========== SUBMITTING TRANSACTION TO BLOCKCHAIN ==========")
         finalized = await submitProcessActions(
            validatorId, multiSucceeded, quote.nativeFee, rawGasLimit
          )
-        console.log("[Validator] Transaction submission result:", finalized ? "SUCCESS" : "FAILED")
+        console.log("[Validator] ========== TRANSACTION SUBMISSION SUCCESSFUL ==========")
+        console.log(`[Validator] ${finalized.length} actions finalized on chain`)
+        finalized.forEach((f: any) => {
+          console.log(`  - Sender ${f.senderId} cawonce ${f.cawonce}: ${getActionType(f.actionType)}`)
+        })
       } catch (submitErr: any) {
-        console.error("[Validator] Transaction submission failed - Full error object:", submitErr)
+        console.error("[Validator] ========== TRANSACTION SUBMISSION FAILED ==========")
+        console.error("[Validator] Full error object:", submitErr)
         console.error("[Validator] Error message:", submitErr.message)
+        console.error("[Validator] Error code:", submitErr.code)
         console.error("[Validator] Error stack:", submitErr.stack)
+
+        // Check if this is a provider/network error that should be retried
+        if (submitErr.message?.includes('provider destroyed') ||
+            submitErr.message?.includes('UNSUPPORTED_OPERATION') ||
+            submitErr.message?.includes('cancelled request') ||
+            submitErr.code === 'UNSUPPORTED_OPERATION') {
+          console.log('[Validator] Provider/network error during submission - reinitializing connection')
+          await initializeConnection()
+          // Don't mark as failed, just skip updating these entries so they can be retried
+          return
+        }
+
         submissionError = submitErr.message || 'Failed to submit transaction'
         // finalized remains empty array, all submitted entries will be marked as failed
       }
@@ -801,8 +941,10 @@ console.log("succeededKeys", succeededKeys)
       })
 
       // Update each entry with its actual status
+      console.log("[Validator] ========== UPDATING TXQUEUE STATUSES ==========")
       await Promise.all(validatedEntries.map(async (entry, index) => {
         const { succeeded, reason } = finalStatuses[index]
+        const data = (entry.payload as any).data
 
         // Before marking as failed, reload from database to check if another process marked it as done
         if (!succeeded) {
@@ -813,7 +955,7 @@ console.log("succeededKeys", succeededKeys)
 
           // If it's already done, skip marking as failed
           if (currentEntry?.status === 'done') {
-            console.log(`[Validator] TxQueue entry ${entry.id} already marked as 'done', skipping failed update`)
+            console.log(`[Validator] TxQueue #${entry.id} already marked as 'done', skipping failed update`)
             return
           }
         }
@@ -831,11 +973,14 @@ console.log("succeededKeys", succeededKeys)
           updateData.reason = null
         }
 
+        console.log(`[Validator] TxQueue #${entry.id} (${getActionType(data.actionType)} from ${data.senderId}): ${succeeded ? 'SUCCESS' : 'FAILED'} ${reason ? `- ${reason}` : ''}`)
+
         return prisma.txQueue.update({
           where: { id: entry.id },
           data: updateData
         })
       }))
+      console.log("[Validator] ========== TXQUEUE UPDATE COMPLETE ==========\n")
 
       // Update caw status for CAW actions that were processed
       await Promise.all(validatedEntries.map(async (entry, index) => {
@@ -978,6 +1123,14 @@ console.log("succeededKeys", succeededKeys)
       started: Promise.resolve(),
       async stop() {
         clearInterval(timer)
+        process.off('uncaughtException', handleUncaughtException)
+        if (provider) {
+          try {
+            provider.destroy()
+          } catch (e) {
+            // Ignore cleanup errors
+          }
+        }
       },
       stats: async () => {
         const count = await prisma.txQueue.count({ where: { status: 'pending' } })

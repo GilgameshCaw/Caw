@@ -11,11 +11,14 @@ import { HiPencil, HiX, HiCamera, HiGlobe, HiLocationMarker, HiOutlineMail, HiDo
 import { apiFetch } from '~/api/client'
 import { useAccount } from 'wagmi'
 import { useSignAndSubmitAction } from '~/api/actions'
+import { useSignAndSubmitWithStakeCheck } from '~/hooks/useSignAndSubmitWithStakeCheck'
+import { InsufficientStakeError } from '~/errors/InsufficientStakeError'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useNavigate } from 'react-router-dom'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
 import { hasMinimumStake, getRequiredStake } from '~/constants/stakingRequirements'
+import { useFollowButton } from '~/hooks/useFollowButton'
 
 type ProfileTab = 'profile' | 'profile-likes' | 'profile-replies' | 'profile-media'
 
@@ -37,6 +40,7 @@ type ProfileData = {
   followingCount: number
   likeCount: number
   isFollowing?: boolean
+  followPending?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -56,11 +60,28 @@ export const Profile: React.FC = () => {
   const { openConnectModal } = useConnectModal()
   const navigate = useNavigate()
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
-  const [busyFollow, setBusyFollow] = useState(false)
-  const [showInsufficientStakeModal, setShowInsufficientStakeModal] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [updateCost, setUpdateCost] = useState(0)
-  const submitAction = useSignAndSubmitAction()
+  const { signAndSubmit: submitActionWithStakeCheck, stakeError, closeStakeModal } = useSignAndSubmitWithStakeCheck()
+
+  // Follow button logic with hook
+  const {
+    isFollowing,
+    isPending: followPending,
+    wrongWallet: followWrongWallet,
+    handleFollowClick,
+    buttonText: followButtonText,
+    hoverText: followHoverText
+  } = useFollowButton({
+    targetUserId: profileData?.tokenId || 0,
+    initialIsFollowing: profileData?.isFollowing || false,
+    initialIsPending: profileData?.followPending || false,
+    onFollowStateChange: (newState) => {
+      setProfileData(prev => prev ? { ...prev, isFollowing: newState } : null)
+    }
+  })
+
+  const [followButtonHovered, setFollowButtonHovered] = useState(false)
 
   // Use username from params or fallback to activeToken's username
   const displayUsername = username || activeToken?.username || 'user'
@@ -292,7 +313,7 @@ export const Profile: React.FC = () => {
       const totalCost = updateCostInWei + VALIDATOR_TIP
 
       // Submit as other action with total cost (includes validator tip + data cost)
-      await submitAction({
+      await submitActionWithStakeCheck({
         actionType: 'other',
         senderId: activeToken.tokenId,
         text: actionText,
@@ -323,7 +344,10 @@ export const Profile: React.FC = () => {
         activeToken,
         updateCost
       })
-      alert(`Failed to update profile: ${err?.message || 'Unknown error'}`)
+      // Don't show alert for insufficient stake errors - the modal handles that
+      if (!(err instanceof InsufficientStakeError)) {
+        alert(`Failed to update profile: ${err?.message || 'Unknown error'}`)
+      }
     } finally {
       setIsSaving(false)
     }
@@ -557,53 +581,32 @@ export const Profile: React.FC = () => {
                   </button>
                 ) : (
                   <div className="flex flex-col space-y-3">
-                    <button
-                      onClick={async () => {
-                        // Check wallet connection
-                        if (!isConnected) {
-                          if (openConnectModal) {
-                            openConnectModal()
-                          }
-                          return
-                        }
-
-                        // Check for active token
-                        if (!activeTokenId || !activeToken) {
-                          return
-                        }
-
-                        // Check for minimum stake
-                        if (!hasMinimumStake(activeToken.stakedAmount, 'MIN_STAKE_FOLLOW')) {
-                          setShowInsufficientStakeModal(true)
-                          return
-                        }
-
-                        // Perform follow/unfollow action
-                        setBusyFollow(true)
-                        try {
-                          await signAndSubmit({
-                            actionType: profileData?.isFollowing ? 'unfollow' : 'follow',
-                            senderId: activeTokenId,
-                            receiverId: profileData?.tokenId || 0
-                          })
-                          setProfileData(prev => prev ? {...prev, isFollowing: !prev.isFollowing} : null)
-                        } catch (error) {
-                          console.error('Follow action failed:', error)
-                        } finally {
-                          setBusyFollow(false)
-                        }
-                      }}
-                      disabled={busyFollow}
-                      className={`px-8 py-2 rounded-full font-semibold border transition-all duration-200 ${
-                        busyFollow ? 'opacity-50 cursor-not-allowed' : ''
-                      } ${
-                        profileData?.isFollowing
-                          ? 'border-white bg-white text-black hover:bg-white/90'
-                          : 'border-white text-white hover:bg-white hover:text-black'
-                      }`}
-                    >
-                      {busyFollow ? 'Processing...' : (profileData?.isFollowing ? 'Following' : 'Follow')}
-                    </button>
+                    <div className="flex flex-col items-center">
+                      <button
+                        onClick={handleFollowClick}
+                        disabled={followPending || followWrongWallet}
+                        onMouseEnter={() => setFollowButtonHovered(true)}
+                        onMouseLeave={() => setFollowButtonHovered(false)}
+                        className={`px-8 py-2 rounded-full font-semibold border transition-all duration-200 ${
+                          followPending || followWrongWallet ? 'opacity-50 cursor-not-allowed' : ''
+                        } ${
+                          isFollowing
+                            ? 'border-white bg-white text-black hover:bg-black hover:text-white hover:border-black'
+                            : 'border-white text-white hover:bg-white hover:text-black'
+                        }`}
+                      >
+                        {followPending && (
+                          <svg className="inline w-4 h-4 mr-2 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                        )}
+                        {followPending ? followButtonText : (followButtonHovered && isFollowing ? followHoverText : followButtonText)}
+                      </button>
+                      {followWrongWallet && (
+                        <p className="mt-2 text-xs text-yellow-500">Please switch to the correct wallet</p>
+                      )}
+                    </div>
                     
                     <div className="flex justify-center space-x-2">
                       <button
@@ -1027,11 +1030,11 @@ export const Profile: React.FC = () => {
 
       {/* Insufficient Stake Modal */}
       <InsufficientStakeModal
-        isOpen={showInsufficientStakeModal}
-        onClose={() => setShowInsufficientStakeModal(false)}
-        actionType="post"
-        currentAmount={activeToken?.stakedAmount}
-        requiredAmount={getRequiredStake('MIN_STAKE_FOLLOW')}
+        isOpen={stakeError.isOpen}
+        onClose={closeStakeModal}
+        currentAmount={stakeError.currentAmount}
+        requiredAmount={stakeError.requiredAmount}
+        actionType={stakeError.actionType}
       />
     </MainLayout>
   )

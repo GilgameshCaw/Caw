@@ -48,6 +48,7 @@ export const NewProfile: React.FC = () => {
   const [showPricingModal, setShowPricingModal] = useState(false)
   const [mintSuccess, setMintSuccess] = useState(false)
   const [mintedTokenId, setMintedTokenId] = useState<number | null>(null)
+  const [hasResetForm, setHasResetForm] = useState(false)
   const useAddress = address || activeToken?.owner;
   const setActiveTokenId = useTokenDataStore(state => state.setActiveTokenId);
 
@@ -127,31 +128,32 @@ console.log("BALANCE:", balance)
     address: CAW_NAMES_MINTER_ADDRESS,
     args:         [CLIENT_ID, username, lzTokenAmount],
     disabled:     !quote || !address || !isValid || needsApproval,
-    onPending:    hash => console.log('tx pending', hash),
+    onPending:    hash => {
+      console.log('tx pending', hash)
+      setHasResetForm(false)
+    },
     onSuccess:    async (hash) => {
       console.log('minted!', hash)
 
-      // Wait a bit for the transaction to be indexed, then fetch the new token
-      setTimeout(async () => {
-        try {
-          // Fetch the tokenId for the newly minted username
-          const response = await fetch(`http://localhost:4000/api/tokens/by-address/${address}`)
-          const data = await response.json()
+      // Wait for the blockchain data to update (useTokenDataUpdate refetches every 5 seconds)
+      // Check the store periodically for the new token
+      const checkForNewToken = () => {
+        const allTokens = useTokenDataStore.getState().allTokens()
+        const newToken = allTokens.find((t: any) => t.username.toLowerCase() === username.toLowerCase())
 
-          // Find the token with the matching username
-          const newToken = data.tokens?.find((t: any) => t.username.toLowerCase() === username.toLowerCase())
-
-          if (newToken) {
-            setMintedTokenId(newToken.tokenId)
-            // Switch to the newly minted token
-            setActiveTokenId(newToken.tokenId)
-          }
-        } catch (err) {
-          console.error('Failed to fetch new token:', err)
+        if (newToken) {
+          setMintedTokenId(newToken.tokenId)
+          // Switch to the newly minted token
+          setActiveTokenId(newToken.tokenId)
+          setMintSuccess(true)
+        } else {
+          // Check again in 2 seconds
+          setTimeout(checkForNewToken, 2000)
         }
+      }
 
-        setMintSuccess(true)
-      }, 3000) // Wait 3 seconds for indexing
+      // Start checking after 3 seconds to give blockchain time to index
+      setTimeout(checkForNewToken, 3000)
     },
     onError:      err  => console.error(err),
   })
@@ -212,7 +214,7 @@ console.log("BALANCE:", balance)
   else submitText = "Mint"
 
   // Show loading screen while waiting for mint to complete
-  if (mintStatus === 'pending' || (mintStatus === 'success' && !mintSuccess)) {
+  if (!hasResetForm && (mintStatus === 'pending' || (mintStatus === 'success' && !mintSuccess))) {
     return (
       <MainLayout>
         <div className="max-w-md mx-auto p-6 space-y-4 mt-8">
@@ -251,7 +253,7 @@ console.log("BALANCE:", balance)
               </p>
               {mintStatus === 'success' && (
                 <p className="text-yellow-500 text-sm">
-                  Transaction confirmed! Indexing your new username...
+                  Transaction submitted! Waiting for confirmation...
                 </p>
               )}
             </div>
@@ -288,10 +290,17 @@ console.log("BALANCE:", balance)
             </div>
 
             {/* Show the username SVG */}
-            <div className="flex justify-center items-center my-8">
+            <div className="flex flex-col items-center my-8 space-y-4">
               <div className="w-44 h-44">
                 <UsernameSvg username={username}/>
               </div>
+              <a
+                href="/profile"
+                className="text-gray-400 hover:text-white underline text-sm transition-colors duration-200 flex items-center space-x-1"
+              >
+                <span>go to profile</span>
+                <span>→</span>
+              </a>
             </div>
 
             <div className="space-y-4">
@@ -300,18 +309,20 @@ console.log("BALANCE:", balance)
               </p>
 
               <button
-                onClick={() => window.location.href = '/profile'}
-                className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all duration-300"
+                onClick={() => window.location.href = '/staking'}
+                className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all duration-300 cursor-pointer"
               >
-                Go to Profile
+                Stake CAW →
               </button>
 
               <button
                 onClick={() => {
                   setMintSuccess(false)
                   setUsername('')
+                  setMintedTokenId(null)
+                  setHasResetForm(true)
                 }}
-                className="w-full py-3 border border-white/20 hover:border-white/40 text-white font-semibold rounded-full transition-all duration-300"
+                className="w-full py-3 border border-white/20 hover:border-white/40 text-white font-semibold rounded-full transition-all duration-300 cursor-pointer"
               >
                 Mint Another Username
               </button>
@@ -325,11 +336,16 @@ console.log("BALANCE:", balance)
   return (
     <MainLayout>
       <div className="max-w-md mx-auto p-6 space-y-4 mt-8"> {/* Cambiado de mt-16 a mt-8 para subir todo el contenido */}
-        <h1 className="text-4xl font-bold text-center">Mint a Username</h1>
+        <div className="text-center space-y-3">
+          <h1 className="text-4xl font-bold">Mint a Username</h1>
+          <p className="text-gray-400 text-sm max-w-lg mx-auto">
+            Your username is a tradeable NFT that will be used to access your account and posts. Minting a username requires CAW to be burnt, fewer characters increase in cost and rarity.
+          </p>
+        </div>
 
         {/* Imagen generada del username - siempre visible */}
         <div className="flex justify-center items-center mb-6 mt-16">
-            <div className="w-44 h-44">
+            <div className="w-64 h-64">
                 <UsernameSvg username={username}/>
             </div>
         </div>
@@ -426,8 +442,8 @@ console.log("BALANCE:", balance)
 
             <SubmitButton
                 onClick={handleSubmit}
-                disabled={usernameTaken || (waiting || (!needsApproval && (!cost || cost == 0n || !!insufficientBalance))) || false}
-                loading={false}
+                disabled={wrongChain ? false : (usernameTaken || waiting || (!needsApproval && (!cost || cost == 0n || !!insufficientBalance)))}
+                loading={isSwitchingChain || waiting}
                 className="btn btn-submit mt-0 transition-all duration-300"
             >
                 {submitText}

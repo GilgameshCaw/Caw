@@ -8,7 +8,7 @@ export interface CawRaw {
   user: { tokenId: number; username: string; displayName?: string; image?: string; avatarUrl?: string }
   _count?: { likes: number; recaws: number }
   likes?: Array<{ userId: number; pending?: boolean }>
-  recaws?: Array<{ id: number }>
+  recaws?: Array<{ id: number; status?: 'SUCCESS' | 'PENDING' | 'FAILED' }>
   bookmarks?: Array<{ id: number }>
   commentCount: number
   recawCount: number
@@ -33,6 +33,7 @@ export interface ShapedCaw {
   hasRecawed: boolean
   isBookmarked?: boolean
   likePending?: boolean
+  recawPending?: boolean
   commentCount: number
   recawCount: number
   cawonce: number
@@ -46,6 +47,7 @@ export interface ShapedCaw {
 
 export function shapeCaw(raw: CawRaw): ShapedCaw {
   const userLike = raw.likes && raw.likes[0]
+  const userRecaw = raw.recaws && raw.recaws[0]
   return {
     id: raw.id.toString(),
     content: raw.content,
@@ -53,9 +55,10 @@ export function shapeCaw(raw: CawRaw): ShapedCaw {
     user: raw.user,
     likeCount: raw.likeCount,
     viewCount: raw.viewCount || 0,
-    hasLiked: Boolean(userLike),
+    hasLiked: Boolean(userLike && !userLike.pending), // Only true if liked AND not pending
     likePending: userLike?.pending,
-    hasRecawed: Boolean(raw.recaws && raw.recaws.length > 0),
+    hasRecawed: Boolean(userRecaw && userRecaw.status !== 'PENDING' && userRecaw.status !== 'FAILED'), // Only true if recawed AND confirmed
+    recawPending: userRecaw?.status === 'PENDING',
     isBookmarked: Boolean(raw.bookmarks && raw.bookmarks.length > 0),
     commentCount: raw.commentCount,
     recawCount: raw.recawCount,
@@ -97,7 +100,7 @@ export function getCawIncludeConfig(options: CawQueryOptions = {}) {
       ? { where: { userId: currentUserId }, select: { userId: true, pending: true } }
       : false,
     recaws: currentUserId
-      ? { where: { userId: currentUserId, action: 'RECAW' }, select: { id: true } }
+      ? { where: { userId: currentUserId, action: 'RECAW' }, select: { id: true, status: true } }
       : false,
     bookmarks: currentUserId
       ? { where: { userId: currentUserId }, select: { id: true } }

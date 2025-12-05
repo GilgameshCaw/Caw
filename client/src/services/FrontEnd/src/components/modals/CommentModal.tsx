@@ -21,7 +21,7 @@ export const CommentModal: React.FC<CommentModalProps> = ({ caw, onClose }) => {
       onClick={onClose}
     >
       <div
-        className="modal bg-[#0c0c0c] p-6 rounded-lg w-full max-w-md relative"
+        className="modal bg-[#0c0c0c] p-6 rounded-lg w-full max-w-2xl relative"
         onClick={e => e.stopPropagation()}
       >
         <button

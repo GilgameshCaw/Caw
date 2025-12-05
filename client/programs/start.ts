@@ -24,5 +24,24 @@ const config = RunServicesConfig.parse(
 logger.log('CAW API Server Starting...')
 logger.log('Configuration loaded from config.json')
 
+// Add process-level error handlers to prevent crashes
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error)
+  logger.log(`Uncaught Exception: ${error.message}`)
+  logger.log(`Stack: ${error.stack}`)
+
+  // Log but don't exit - let the service continue running
+  // The individual services should handle their own errors
+  console.log('Service continuing despite uncaught exception...')
+})
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason)
+  logger.log(`Unhandled Rejection: ${reason}`)
+
+  // Log but don't exit
+  console.log('Service continuing despite unhandled rejection...')
+})
+
 runServices(config)
 

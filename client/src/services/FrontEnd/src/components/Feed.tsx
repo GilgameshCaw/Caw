@@ -107,6 +107,21 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
       params.set('user', username)
       params.set('filter', 'liked')
     }
+
+    // profile-media:
+    if (filter === 'profile-media' && username) {
+      // Fetch posts with images/videos by this user (including recaws)
+      params.set('user', username)
+      params.set('filter', 'media')
+    }
+
+    // profile-replies:
+    if (filter === 'profile-replies' && username) {
+      // Fetch replies by this user
+      params.set('user', username)
+      params.set('filter', 'replies')
+    }
+
     if (nextCursor != null) {
       params.set('cursor', String(cursorToUse))
     }
@@ -164,6 +179,41 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
     return () => window.removeEventListener('scroll', onScroll)
   }, [loadPage, loading, hasMore, nextCursor])
 
+  // Poll for pending likes - refetch specific caws that have pending likes
+  useEffect(() => {
+    const pendingLikeCaws = items.filter(item => item.likePending)
+    console.log('[Feed Polling] Pending like caws:', pendingLikeCaws.length, pendingLikeCaws.map(c => ({ id: c.id, likePending: c.likePending })))
+
+    if (pendingLikeCaws.length === 0) return
+
+    console.log('[Feed Polling] Starting poll interval for', pendingLikeCaws.length, 'caws')
+    const interval = setInterval(async () => {
+      console.log('[Feed Polling] Polling for pending likes...')
+      // Refetch each caw with a pending like
+      for (const caw of pendingLikeCaws) {
+        try {
+          console.log(`[Feed Polling] Fetching caw ${caw.id}...`)
+          const updated = await apiFetch<{ caw: CawItem }>(`/api/caws/${caw.id}`)
+          console.log(`[Feed Polling] Got response for caw ${caw.id}:`, { likePending: updated.caw.likePending, hasLiked: updated.caw.hasLiked })
+
+          // Update the specific item in the list
+          setItems(current =>
+            current.map(item =>
+              item.id === caw.id ? updated.caw : item
+            )
+          )
+        } catch (err) {
+          console.error(`Failed to refresh caw ${caw.id}:`, err)
+        }
+      }
+    }, 3000) // Poll every 3 seconds
+
+    return () => {
+      console.log('[Feed Polling] Clearing interval')
+      clearInterval(interval)
+    }
+  }, [items])
+
   // render
   if (error)   return <div className="text-red-400">Error loading feed: {error}</div>
   if (items.length === 0 && loading) return (
@@ -192,6 +242,14 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
         <FeedItem
           key={caw.id}
           item={caw}
+          onLikeStateChange={(cawId, likePending) => {
+            console.log('[Feed] Like state changed for caw', cawId, 'pending:', likePending)
+            setItems(current =>
+              current.map(item =>
+                item.id === cawId ? { ...item, likePending } : item
+              )
+            )
+          }}
         />
       ))}
 

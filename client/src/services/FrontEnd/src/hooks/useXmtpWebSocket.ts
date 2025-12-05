@@ -150,10 +150,3 @@ export function useXmtpWebSocket({ userId, username, enabled = true }: UseXmtpWe
     markMessagesRead
   }
 }
-
-// Helper function to generate auth token (should match backend)
-function generateToken(payload: any): string {
-  // In production, this should make a request to get a proper JWT token
-  // For now, we'll use a simple implementation
-  return btoa(JSON.stringify(payload))
-}

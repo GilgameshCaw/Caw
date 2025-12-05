@@ -132,13 +132,15 @@ export function useSignAndSubmitAction() {
     }
 
     // Check for minimum stake based on action type
-    const stakingKey = params.actionType === 'like' || params.actionType === 'unlike' ? 'MIN_STAKE_LIKE' :
+    // Note: unlike and unfollow don't require stake checks
+    const stakingKey = params.actionType === 'like' ? 'MIN_STAKE_LIKE' :
                       params.actionType === 'recaw' ? 'MIN_STAKE_REPOST' :
-                      params.actionType === 'follow' || params.actionType === 'unfollow' ? 'MIN_STAKE_FOLLOW' :
+                      params.actionType === 'follow' ? 'MIN_STAKE_FOLLOW' :
                       params.actionType === 'caw' && params.receiverId ? 'MIN_STAKE_COMMENT' :
-                      'MIN_STAKE_POST'
+                      params.actionType === 'caw' ? 'MIN_STAKE_POST' :
+                      null
 
-    if (!hasMinimumStake(activeToken?.stakedAmount, stakingKey)) {
+    if (stakingKey && !hasMinimumStake(activeToken?.stakedAmount, stakingKey)) {
       const requiredAmount = getRequiredStake(stakingKey)
       const actionTypeForModal = getActionTypeForModal(params.actionType)
       throw new InsufficientStakeError(activeToken?.stakedAmount, requiredAmount, actionTypeForModal)

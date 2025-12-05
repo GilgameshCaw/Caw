@@ -54,6 +54,10 @@ interface UserDocument {
 class ElasticsearchService {
   private client: Client
   private isConnected: boolean = false
+  private reconnectInterval: NodeJS.Timeout | null = null
+  private reconnectAttempts: number = 0
+  private maxReconnectAttempts: number = 5
+  private reconnectDelay: number = 30000 // 30 seconds
 
   constructor() {
     // Initialize with environment variables or defaults
@@ -79,25 +83,90 @@ class ElasticsearchService {
     try {
       // Test connection
       const info = await this.client.info()
-      console.log('Connected to Elasticsearch:', info.version.number)
+      console.log('[Elasticsearch] ✓ Connected successfully - Version:', info.version.number)
       this.isConnected = true
+      this.reconnectAttempts = 0 // Reset reconnect attempts on successful connection
+
+      // Stop any reconnection attempts
+      if (this.reconnectInterval) {
+        clearInterval(this.reconnectInterval)
+        this.reconnectInterval = null
+      }
 
       // Create indices with mappings
       await this.createIndices()
-    } catch (error) {
-      console.error('Failed to connect to Elasticsearch:', error)
+    } catch (error: any) {
       this.isConnected = false
-      // Don't throw - allow the app to run without ES
+
+      // Better error logging
+      if (error.message?.includes('ECONNREFUSED') || error.message?.includes('ConnectionError')) {
+        console.log('[Elasticsearch] ✗ Not available - Running without search functionality')
+        console.log('[Elasticsearch] Search features will be disabled. To enable, start Elasticsearch at http://localhost:9200')
+      } else {
+        console.error('[Elasticsearch] Connection error:', error.message)
+      }
+
+      // Start reconnection attempts if not already running
+      this.scheduleReconnect()
     }
+  }
+
+  /**
+   * Schedule automatic reconnection attempts
+   */
+  private scheduleReconnect(): void {
+    // Don't schedule if already scheduled or max attempts reached
+    if (this.reconnectInterval || this.reconnectAttempts >= this.maxReconnectAttempts) {
+      return
+    }
+
+    console.log(`[Elasticsearch] Will retry connection in ${this.reconnectDelay / 1000} seconds...`)
+
+    this.reconnectInterval = setInterval(async () => {
+      this.reconnectAttempts++
+      console.log(`[Elasticsearch] Reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}...`)
+
+      try {
+        const info = await this.client.info()
+        console.log('[Elasticsearch] ✓ Reconnected successfully - Version:', info.version.number)
+        this.isConnected = true
+        this.reconnectAttempts = 0
+
+        // Stop reconnection attempts
+        if (this.reconnectInterval) {
+          clearInterval(this.reconnectInterval)
+          this.reconnectInterval = null
+        }
+
+        // Create indices if needed
+        await this.createIndices()
+      } catch (error: any) {
+        if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+          console.log(`[Elasticsearch] Max reconnection attempts (${this.maxReconnectAttempts}) reached. Giving up.`)
+          console.log('[Elasticsearch] Search features will remain disabled. Restart the server to retry.')
+
+          if (this.reconnectInterval) {
+            clearInterval(this.reconnectInterval)
+            this.reconnectInterval = null
+          }
+        }
+      }
+    }, this.reconnectDelay)
   }
 
   /**
    * Create indices with appropriate mappings
    */
   private async createIndices(): Promise<void> {
-    // Caws index
-    const cawsIndexExists = await this.client.indices.exists({ index: 'caws' })
-    if (!cawsIndexExists) {
+    if (!this.isConnected) {
+      console.log('[Elasticsearch] Skipping index creation - not connected')
+      return
+    }
+
+    try {
+      // Caws index
+      const cawsIndexExists = await this.client.indices.exists({ index: 'caws' })
+      if (!cawsIndexExists) {
       await this.client.indices.create({
         index: 'caws',
         body: {
@@ -159,7 +228,7 @@ class ElasticsearchService {
           }
         }
       })
-      console.log('Created caws index')
+      console.log('[Elasticsearch] Created caws index')
     }
 
     // Notifications index
@@ -185,7 +254,7 @@ class ElasticsearchService {
           }
         }
       })
-      console.log('Created notifications index')
+      console.log('[Elasticsearch] Created notifications index')
     }
 
     // Users index
@@ -215,7 +284,12 @@ class ElasticsearchService {
           }
         }
       })
-      console.log('Created users index')
+      console.log('[Elasticsearch] Created users index')
+    }
+    } catch (error: any) {
+      console.error('[Elasticsearch] Failed to create indices:', error.message)
+      this.isConnected = false
+      throw error
     }
   }
 
@@ -609,6 +683,17 @@ class ElasticsearchService {
    */
   isAvailable(): boolean {
     return this.isConnected
+  }
+
+  /**
+   * Cleanup - stop reconnection attempts
+   */
+  cleanup(): void {
+    if (this.reconnectInterval) {
+      clearInterval(this.reconnectInterval)
+      this.reconnectInterval = null
+      console.log('[Elasticsearch] Cleanup: stopped reconnection attempts')
+    }
   }
 }
 

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { useSignAndSubmitAction } from '../api/actions'
 import { useTokenDataStore, useActiveToken } from "~/store/tokenDataStore";
 import { useAccount, useChains, useSwitchChain, useConnections } from "wagmi";
@@ -16,6 +16,7 @@ import { apiFetch } from '~/api/client'
 import { HiCalendar, HiClock } from 'react-icons/hi'
 import InsufficientStakeModal from './modals/InsufficientStakeModal'
 import { hasMinimumStake, getRequiredStake } from '~/constants/stakingRequirements'
+import MentionAutocomplete from './MentionAutocomplete'
 
 interface PostFormProps {
   /** if provided, we're replying to this caw */
@@ -32,7 +33,16 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   const connections = useConnections();
   const { isDark } = useTheme()
 
+  // Auto-focus the textarea when component mounts (e.g., when modal opens)
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.focus()
+    }
+  }, [])
+
   const [text, setText] = useState('')
+  const [cursorPosition, setCursorPosition] = useState(0)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [selectedMedia, setSelectedMedia] = useState<any[]>([])
   const [isDragOverTextarea, setIsDragOverTextarea] = useState(false)
   const [showGifPicker, setShowGifPicker] = useState(false)
@@ -76,6 +86,40 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     } else if (index === undefined) {
       setSelectedMedia([])
     }
+  }
+
+  // Handle text change and cursor position for mention autocomplete
+  const handleTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setText(e.target.value)
+    setCursorPosition(e.target.selectionStart)
+  }
+
+  const handleTextClick = (e: React.MouseEvent<HTMLTextAreaElement>) => {
+    setCursorPosition((e.target as HTMLTextAreaElement).selectionStart)
+  }
+
+  const handleTextKeyUp = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    setCursorPosition((e.target as HTMLTextAreaElement).selectionStart)
+  }
+
+  // Handle mention selection from autocomplete
+  const handleMentionSelect = (username: string, startPos: number, endPos: number) => {
+    const beforeMention = text.substring(0, startPos)
+    const afterMention = text.substring(endPos)
+    const newText = `${beforeMention}@${username} ${afterMention}`
+
+    setText(newText)
+
+    // Set cursor position after the inserted mention
+    setTimeout(() => {
+      if (textareaRef.current) {
+        const newCursorPos = startPos + username.length + 2 // +2 for @ and space
+        textareaRef.current.selectionStart = newCursorPos
+        textareaRef.current.selectionEnd = newCursorPos
+        setCursorPosition(newCursorPos)
+        textareaRef.current.focus()
+      }
+    }, 0)
   }
 
   // Helper function to upload media files
@@ -161,6 +205,13 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   }
 
   const handleSubmit = async () => {
+    // Get effective token ID with fallback
+    const effectiveTokenId = activeTokenId || activeToken?.tokenId
+    if (!effectiveTokenId) {
+      console.error('No active token ID - user may not be connected or data not loaded')
+      return
+    }
+
     // Check for minimum stake first
     const requiredStakeType = replyTo ? 'MIN_STAKE_COMMENT' : quote ? 'MIN_STAKE_QUOTE' : 'MIN_STAKE_POST'
     if (!hasMinimumStake(activeToken?.stakedAmount, requiredStakeType)) {
@@ -170,10 +221,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
 
     // Check if this is a scheduled post
     if (showScheduler && scheduledDate && scheduledTime) {
-      if (!activeTokenId) {
-        alert('Please connect your wallet to schedule posts')
-        return
-      }
 
       setIsScheduling(true)
       try {
@@ -197,7 +244,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             scheduledAt: scheduledAt.toISOString(),
             imageData
           }),
-          headers: { 'x-user-id': activeTokenId.toString() }
+          headers: { 'x-user-id': effectiveTokenId.toString() }
         })
 
         // Clear form
@@ -231,12 +278,12 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     const offChainImages = images.filter(img => img.storageType !== 'on-chain')
 
     // Handle off-chain media (images and videos)
-    if ((offChainImages.length > 0 || videos.length > 0) && activeTokenId) {
+    if (offChainImages.length > 0 || videos.length > 0) {
       try {
         // Upload images
         if (offChainImages.length > 0) {
           const imageFiles = offChainImages.map(img => img.file)
-          const uploadResult = await uploadMedia(imageFiles, 'image', activeTokenId)
+          const uploadResult = await uploadMedia(imageFiles, 'image', effectiveTokenId)
 
           if (uploadResult.success && uploadResult.urls) {
             const imageUrls = uploadResult.urls.map(url => `\n${url}`).join('')
@@ -250,7 +297,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         // Upload videos
         if (videos.length > 0) {
           const videoFiles = videos.map(vid => vid.file)
-          const uploadResult = await uploadMedia(videoFiles, 'video', activeTokenId)
+          const uploadResult = await uploadMedia(videoFiles, 'video', effectiveTokenId)
 
           if (uploadResult.success && uploadResult.urls) {
             const videoUrls = uploadResult.urls.map(url => `\nvideo:${url}`).join('')
@@ -291,16 +338,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       }
     }
 
-    // Validate activeTokenId before creating params
-    if (!activeTokenId) {
-      console.error('No active token ID - user may not be connected or data not loaded')
-      alert('Please connect your wallet and ensure your profile is loaded')
-      return
-    }
+    // effectiveTokenId is already defined at the start of handleSubmit
 
     const params: ActionParams = {
       actionType: onChainImages.length > 0 ? 'other' : 'caw',
-      senderId: activeTokenId,
+      senderId: effectiveTokenId,
       text: finalText,
       ...(replyTo && {
         receiverId: replyTo.user.tokenId,
@@ -317,7 +359,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       tempId = addPendingPost({
         content: finalText,
         username: activeToken.username,
-        tokenId: activeTokenId
+        tokenId: effectiveTokenId
       })
     }
 
@@ -387,10 +429,19 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                     )
                 }
                 value={text}
-                onChange={e => setText(e.target.value)}
+                ref={textareaRef}
+                onChange={handleTextChange}
+                onClick={handleTextClick}
+                onKeyUp={handleTextKeyUp}
                 onDragOver={handleTextareaDragOver}
                 onDragLeave={handleTextareaDragLeave}
                 onDrop={handleTextareaDrop}
+              />
+              <MentionAutocomplete
+                text={text}
+                cursorPosition={cursorPosition}
+                onSelect={handleMentionSelect}
+                textareaRef={textareaRef}
               />
               {/* Drag overlay */}
               {isDragOverTextarea && (
@@ -574,10 +625,19 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                 )
             }
             value={text}
-            onChange={e => setText(e.target.value)}
+            ref={textareaRef}
+            onChange={handleTextChange}
+            onClick={handleTextClick}
+            onKeyUp={handleTextKeyUp}
             onDragOver={handleTextareaDragOver}
             onDragLeave={handleTextareaDragLeave}
             onDrop={handleTextareaDrop}
+          />
+          <MentionAutocomplete
+            text={text}
+            cursorPosition={cursorPosition}
+            onSelect={handleMentionSelect}
+            textareaRef={textareaRef}
           />
           {/* Drag overlay */}
           {isDragOverTextarea && (

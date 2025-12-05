@@ -1,11 +1,12 @@
 // src/components/modals/FollowListModal.tsx
 import React, { useState, useEffect } from 'react'
 import { HiX } from 'react-icons/hi'
+import { useNavigate } from 'react-router-dom'
 import { useModalStore } from '~/store/modalStore'
 import { useTheme } from '~/hooks/useTheme'
 import { apiFetch } from '~/api/client'
-import { useSignAndSubmitAction } from '~/api/actions'
 import { useActiveToken } from '~/store/tokenDataStore'
+import { FollowButton } from '~/components/FollowButton'
 
 type UserItem = {
   id: number
@@ -15,6 +16,8 @@ type UserItem = {
   displayName?: string
   bio?: string
   avatarUrl?: string
+  isFollowing?: boolean
+  followPending?: boolean
 }
 
 type Props = {
@@ -24,6 +27,7 @@ type Props = {
 const FollowListModal: React.FC<Props> = ({ type }) => {
   const { modal, modalData, closeModal } = useModalStore()
   const { isDark } = useTheme()
+  const navigate = useNavigate()
   const activeToken = useActiveToken()
   const [users, setUsers] = useState<UserItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -31,8 +35,6 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
   const [nextCursor, setNextCursor] = useState<number | undefined>(undefined)
   const [hasMore, setHasMore] = useState(true)
   const [followingStates, setFollowingStates] = useState<Record<number, boolean>>({})
-  const [pendingFollows, setPendingFollows] = useState<Set<number>>(new Set())
-  const { submitAction } = useSignAndSubmitAction()
 
   const isOpen = modal === (type === 'following' ? 'followingList' : 'followersList')
   const username = modalData?.username
@@ -59,18 +61,10 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
         setNextCursor(response.nextCursor)
         setHasMore(!!response.nextCursor)
 
-        // Initialize following states
+        // Initialize following states from API data
         const states: Record<number, boolean> = {}
         for (const user of response.items) {
-          // Check if current user is following this user
-          if (activeToken?.tokenId) {
-            try {
-              const profileData = await apiFetch(`/api/users/${user.username}`)
-              states[user.tokenId] = profileData.isFollowing || false
-            } catch {
-              states[user.tokenId] = false
-            }
-          }
+          states[user.tokenId] = user.isFollowing || false
         }
         setFollowingStates(states)
       } catch (err) {
@@ -102,17 +96,10 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
       setNextCursor(response.nextCursor)
       setHasMore(!!response.nextCursor)
 
-      // Update following states for new users
+      // Update following states for new users from API data
       const states = { ...followingStates }
       for (const user of response.items) {
-        if (activeToken?.tokenId) {
-          try {
-            const profileData = await apiFetch(`/api/users/${user.username}`)
-            states[user.tokenId] = profileData.isFollowing || false
-          } catch {
-            states[user.tokenId] = false
-          }
-        }
+        states[user.tokenId] = user.isFollowing || false
       }
       setFollowingStates(states)
     } catch (err) {
@@ -120,34 +107,10 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
     }
   }
 
-  // Handle follow/unfollow
-  const handleFollow = async (user: UserItem) => {
-    if (!activeToken || pendingFollows.has(user.tokenId)) return
-
-    setPendingFollows(prev => new Set(prev).add(user.tokenId))
-    const isCurrentlyFollowing = followingStates[user.tokenId]
-
-    try {
-      await submitAction({
-        actionType: isCurrentlyFollowing ? 'UNFOLLOW' : 'FOLLOW',
-        senderId: activeToken.tokenId,
-        targetId: user.tokenId
-      })
-
-      // Optimistically update state
-      setFollowingStates(prev => ({
-        ...prev,
-        [user.tokenId]: !isCurrentlyFollowing
-      }))
-    } catch (err) {
-      console.error('Failed to follow/unfollow:', err)
-    } finally {
-      setPendingFollows(prev => {
-        const next = new Set(prev)
-        next.delete(user.tokenId)
-        return next
-      })
-    }
+  // Handle clicking on a user to navigate to their profile
+  const handleUserClick = (username: string) => {
+    closeModal()
+    navigate(`/users/${username}`)
   }
 
   if (!isOpen) return null
@@ -195,7 +158,10 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
             <div className="divide-y divide-white/10">
               {users.map((user) => (
                 <div key={user.tokenId} className="p-4 flex items-center justify-between">
-                  <div className="flex items-center space-x-3">
+                  <div
+                    className="flex items-center space-x-3 cursor-pointer flex-1"
+                    onClick={() => handleUserClick(user.username)}
+                  >
                     {/* Avatar */}
                     <div className={`w-10 h-10 rounded-full ${
                       isDark ? 'bg-gray-700' : 'bg-gray-200'
@@ -233,31 +199,18 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
 
                   {/* Follow button */}
                   {activeToken && user.tokenId !== activeToken.tokenId && (
-                    <button
-                      onClick={() => handleFollow(user)}
-                      disabled={pendingFollows.has(user.tokenId)}
-                      className={`px-4 py-1.5 rounded-full text-sm font-medium border transition-all duration-200 ${
-                        pendingFollows.has(user.tokenId)
-                          ? 'opacity-50 cursor-not-allowed'
-                          : ''
-                      } ${
-                        followingStates[user.tokenId]
-                          ? isDark
-                            ? 'border-white bg-white text-black hover:bg-white/90'
-                            : 'border-black bg-black text-white hover:bg-black/90'
-                          : isDark
-                            ? 'border-white text-white hover:bg-white hover:text-black'
-                            : 'border-black text-black hover:bg-black hover:text-white'
-                      }`}
-                    >
-                      {pendingFollows.has(user.tokenId) ? (
-                        <span className="animate-pulse">...</span>
-                      ) : followingStates[user.tokenId] ? (
-                        'Following'
-                      ) : (
-                        'Follow'
-                      )}
-                    </button>
+                    <FollowButton
+                      targetUserId={user.tokenId}
+                      initialIsFollowing={followingStates[user.tokenId] || false}
+                      initialIsPending={user.followPending || false}
+                      onFollowStateChange={(newState) => {
+                        setFollowingStates(prev => ({
+                          ...prev,
+                          [user.tokenId]: newState
+                        }))
+                      }}
+                      size="small"
+                    />
                   )}
                 </div>
               ))}

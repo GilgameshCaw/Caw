@@ -9,9 +9,16 @@ const router = Router()
 /**
  * GET /api/caws
  * Query params:
- *   filter=following | liked
+ *   filter=following | liked | media | replies
  *   limit, cursor
- *   user=<username>       ← new!
+ *   user=<username>
+ *
+ * Filter combinations:
+ *   - filter=following: posts from users you follow
+ *   - user=<username>: posts by that user (excluding replies and recaws)
+ *   - user=<username>&filter=liked: posts liked by that user
+ *   - user=<username>&filter=media: posts with images/videos by that user (including their recaws of media)
+ *   - user=<username>&filter=replies: replies by that user
  */
 router.get('/', async (req, res) => {
   try {
@@ -91,17 +98,101 @@ router.get('/', async (req, res) => {
           { likes: { some: { userId: targetUserId } } }
         ]
       }
-    } else if (targetUserId) {
-      // "profile posts" mode: caws they created
+    } else if (filter === 'media' && targetUserId) {
+      // "profile-media" mode: caws with images/videos from this user (including recaws)
       if (Array.isArray(statusConditions)) {
         where.AND = [
           { OR: statusConditions },
-          { userId: targetUserId }
+          {
+            OR: [
+              // Original posts by this user with media
+              {
+                userId: targetUserId,
+                OR: [
+                  { hasImage: true },
+                  { hasVideo: true }
+                ]
+              },
+              // Recaws by this user of posts with media
+              {
+                userId: targetUserId,
+                action: 'RECAW',
+                parent: {
+                  OR: [
+                    { hasImage: true },
+                    { hasVideo: true }
+                  ]
+                }
+              }
+            ]
+          }
         ]
       } else {
         where.AND = [
           statusConditions,
-          { userId: targetUserId }
+          {
+            OR: [
+              // Original posts by this user with media
+              {
+                userId: targetUserId,
+                OR: [
+                  { hasImage: true },
+                  { hasVideo: true }
+                ]
+              },
+              // Recaws by this user of posts with media
+              {
+                userId: targetUserId,
+                action: 'RECAW',
+                parent: {
+                  OR: [
+                    { hasImage: true },
+                    { hasVideo: true }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      }
+    } else if (filter === 'replies' && targetUserId) {
+      // "profile-replies" mode: caws that are replies by this user
+      if (Array.isArray(statusConditions)) {
+        where.AND = [
+          { OR: statusConditions },
+          {
+            userId: targetUserId,
+            originalCawId: { not: null }
+          }
+        ]
+      } else {
+        where.AND = [
+          statusConditions,
+          {
+            userId: targetUserId,
+            originalCawId: { not: null }
+          }
+        ]
+      }
+    } else if (targetUserId) {
+      // "profile posts" mode: caws they created (excluding replies and recaws)
+      if (Array.isArray(statusConditions)) {
+        where.AND = [
+          { OR: statusConditions },
+          {
+            userId: targetUserId,
+            action: 'CAW',
+            originalCawId: null  // Exclude replies
+          }
+        ]
+      } else {
+        where.AND = [
+          statusConditions,
+          {
+            userId: targetUserId,
+            action: 'CAW',
+            originalCawId: null  // Exclude replies
+          }
         ]
       }
     } else {

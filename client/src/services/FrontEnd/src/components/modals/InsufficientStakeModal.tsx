@@ -21,15 +21,21 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
   const navigate = useNavigate()
   const { address } = useAccount()
 
-  // Fetch CAW token balance
+  // Fetch CAW token balance only when modal is open
   const { data: balanceData } = useBalance({
     address: address,
     token: '0xf3b9569f82b18aef890de263b84189bd33ebe452', // CAW token address on Ethereum mainnet
+    query: {
+      enabled: isOpen && !!address, // Only fetch when modal is open and address exists
+      refetchInterval: 10000, // Refetch every 10 seconds instead of default 4 seconds
+    }
   })
 
   if (!isOpen) return null
 
   const walletBalance = balanceData?.value || 0n
+  // Check if user has enough CAW in wallet to cover the required stake
+  const hasEnoughToBuy = requiredAmount !== undefined && walletBalance >= requiredAmount
   const hasZeroBalance = walletBalance === 0n
 
   const handleBuyCAW = () => {
@@ -124,19 +130,38 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
 
             {/* Conditional message based on balance */}
             <p className="text-sm text-gray-400 mt-3">
-              {hasZeroBalance ? (
+              {hasEnoughToBuy ? (
+                <>You have enough CAW in your wallet! Stake it to start participating in the CAW ecosystem.</>
+              ) : hasZeroBalance ? (
                 <>You'll need to buy CAW tokens to get started with the CAW ecosystem.</>
               ) : (
-                <>You have CAW in your wallet! Stake it to start participating in the CAW ecosystem.</>
+                <>You have some CAW, but need more. Buy additional tokens or stake what you have.</>
               )}
             </p>
           </div>
 
           {/* Actions - conditional based on balance */}
           <div className="space-y-3">
-            {hasZeroBalance ? (
+            {hasEnoughToBuy ? (
               <>
-                {/* Primary: Buy CAW */}
+                {/* Primary: Stake CAW (user has enough) */}
+                <button
+                  onClick={handleStakeCAW}
+                  className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all duration-300"
+                >
+                  Stake CAW
+                </button>
+                {/* Secondary: Buy more */}
+                <button
+                  onClick={handleBuyCAW}
+                  className="w-full py-3 border border-white/20 hover:border-white/40 text-white font-semibold rounded-full transition-all duration-300"
+                >
+                  Buy CAW on Uniswap
+                </button>
+              </>
+            ) : (
+              <>
+                {/* Primary: Buy CAW (user doesn't have enough) */}
                 <button
                   onClick={handleBuyCAW}
                   className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all duration-300"
@@ -149,23 +174,6 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
                   className="w-full py-3 border border-white/20 hover:border-white/40 text-white font-semibold rounded-full transition-all duration-300"
                 >
                   Stake CAW
-                </button>
-              </>
-            ) : (
-              <>
-                {/* Primary: Go to staking */}
-                <button
-                  onClick={handleStakeCAW}
-                  className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all duration-300"
-                >
-                  Stake CAW
-                </button>
-                {/* Secondary: Buy more */}
-                <button
-                  onClick={handleBuyCAW}
-                  className="w-full py-3 border border-white/20 hover:border-white/40 text-white font-semibold rounded-full transition-all duration-300"
-                >
-                  Buy More CAW on Uniswap
                 </button>
               </>
             )}

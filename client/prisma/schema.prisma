@@ -66,6 +66,7 @@ model User {
   avatarUrl      String?
   coverPhotoUrl  String?
   profileUpdatePending Boolean @default(false)
+  lastStakedAt   DateTime? // Track when user last staked to show LayerZero pending state
 
   caws          Caw[]
   likes         Like[]
@@ -131,19 +132,22 @@ model Like {
 model Follow {
   id Int @id @default(autoincrement())
 
-  // the “follower” side of the relation — foreign key = followerId
+  // the "follower" side of the relation — foreign key = followerId
   follower   User @relation("Follower", fields: [followerId], references: [tokenId])
   followerId Int
 
-  // the “following” side of the relation — foreign key = followingId
+  // the "following" side of the relation — foreign key = followingId
   following   User @relation("Following", fields: [followingId], references: [tokenId])
   followingId Int
 
   action    ActionType @default(FOLLOW)
+  status    CawStatus  @default(SUCCESS) // Transaction status: SUCCESS, PENDING, FAILED
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 
   @@unique([followerId, followingId])
+  @@index([followerId, status])
+  @@index([followingId, status])
 }
 
 model TxQueue {

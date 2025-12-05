@@ -6,6 +6,50 @@ import { ActionType } from '@prisma/client'
 const router = Router()
 
 /**
+ * GET /api/users/follow-status?followerId=X&followingId=Y
+ * Check the current follow status between two users
+ * IMPORTANT: This route must be defined BEFORE /:username to avoid conflicts
+ */
+router.get('/follow-status', async (req, res) => {
+  try {
+    const followerId = Number(req.query.followerId)
+    const followingId = Number(req.query.followingId)
+
+    if (!followerId || !followingId) {
+      return res.status(400).json({ error: 'followerId and followingId are required' })
+    }
+
+    const follow = await prisma.follow.findUnique({
+      where: {
+        followerId_followingId: {
+          followerId,
+          followingId
+        }
+      },
+      select: {
+        action: true,
+        status: true
+      }
+    })
+
+    if (!follow) {
+      return res.json({
+        isFollowing: false,
+        isPending: false
+      })
+    }
+
+    return res.json({
+      isFollowing: follow.action === 'FOLLOW' && follow.status === 'SUCCESS',
+      isPending: follow.status === 'PENDING'
+    })
+  } catch (err: any) {
+    console.error('GET /api/users/follow-status error', err)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
  * GET /api/users/:username
  * Returns user profile data with accurate counts
  */
@@ -33,6 +77,7 @@ router.get('/:username', async (req, res) => {
         avatarUrl: true,
         coverPhotoUrl: true,
         profileUpdatePending: true,
+        lastStakedAt: true,
         // Include counts
         _count: {
           select: {
@@ -60,6 +105,7 @@ router.get('/:username', async (req, res) => {
 
     // Check if current user is following this user
     let isFollowing = false
+    let followPending = false
     if (currentUserId && currentUserId !== user.tokenId) {
       const follow = await prisma.follow.findUnique({
         where: {
@@ -67,9 +113,19 @@ router.get('/:username', async (req, res) => {
             followerId: currentUserId,
             followingId: user.tokenId
           }
+        },
+        select: {
+          action: true,
+          status: true
         }
       })
-      isFollowing = !!follow
+
+      if (follow) {
+        // Only set isFollowing if action is FOLLOW and status is SUCCESS
+        isFollowing = follow.action === 'FOLLOW' && follow.status === 'SUCCESS'
+        // Set pending if status is PENDING
+        followPending = follow.status === 'PENDING'
+      }
     }
 
     // Format response
@@ -80,6 +136,7 @@ router.get('/:username', async (req, res) => {
       followingCount: user._count.follows,
       likeCount,
       isFollowing,
+      followPending,
       // Remove the _count field
       _count: undefined
     }
@@ -98,6 +155,7 @@ router.get('/:username', async (req, res) => {
 router.get('/:username/followers', async (req, res) => {
   try {
     const { username } = req.params
+    const currentUserId = Number(req.header('x-user-id')) || undefined
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 100)
     const cursor = req.query.cursor ? Number(req.query.cursor) : undefined
 
@@ -137,8 +195,40 @@ router.get('/:username/followers', async (req, res) => {
     })
 
     const hasMore = followers.length > limit
-    const items = followers.slice(0, limit).map(f => f.follower)
+    const followersList = followers.slice(0, limit)
     const nextCursor = hasMore ? followers[limit - 1].id : undefined
+
+    // For each follower, check if current user is following them
+    const items = await Promise.all(followersList.map(async (f) => {
+      let isFollowing = false
+      let followPending = false
+
+      if (currentUserId && currentUserId !== f.follower.tokenId) {
+        const follow = await prisma.follow.findUnique({
+          where: {
+            followerId_followingId: {
+              followerId: currentUserId,
+              followingId: f.follower.tokenId
+            }
+          },
+          select: {
+            action: true,
+            status: true
+          }
+        })
+
+        if (follow) {
+          isFollowing = follow.action === 'FOLLOW' && follow.status === 'SUCCESS'
+          followPending = follow.status === 'PENDING'
+        }
+      }
+
+      return {
+        ...f.follower,
+        isFollowing,
+        followPending
+      }
+    }))
 
     return res.json({ items, nextCursor })
   } catch (err: any) {
@@ -154,6 +244,7 @@ router.get('/:username/followers', async (req, res) => {
 router.get('/:username/following', async (req, res) => {
   try {
     const { username } = req.params
+    const currentUserId = Number(req.header('x-user-id')) || undefined
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 100)
     const cursor = req.query.cursor ? Number(req.query.cursor) : undefined
 
@@ -193,12 +284,113 @@ router.get('/:username/following', async (req, res) => {
     })
 
     const hasMore = following.length > limit
-    const items = following.slice(0, limit).map(f => f.following)
+    const followingList = following.slice(0, limit)
     const nextCursor = hasMore ? following[limit - 1].id : undefined
+
+    // For each following user, check if current user is following them
+    const items = await Promise.all(followingList.map(async (f) => {
+      let isFollowing = false
+      let followPending = false
+
+      if (currentUserId && currentUserId !== f.following.tokenId) {
+        const follow = await prisma.follow.findUnique({
+          where: {
+            followerId_followingId: {
+              followerId: currentUserId,
+              followingId: f.following.tokenId
+            }
+          },
+          select: {
+            action: true,
+            status: true
+          }
+        })
+
+        if (follow) {
+          isFollowing = follow.action === 'FOLLOW' && follow.status === 'SUCCESS'
+          followPending = follow.status === 'PENDING'
+        }
+      }
+
+      return {
+        ...f.following,
+        isFollowing,
+        followPending
+      }
+    }))
 
     return res.json({ items, nextCursor })
   } catch (err: any) {
     console.error('GET /api/users/:username/following error', err)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
+ * GET /api/users/search/:query
+ * Search for users by username prefix (for @mention autocomplete)
+ */
+router.get('/search/:query', async (req, res) => {
+  try {
+    const { query } = req.params
+    const limit = Math.min(parseInt(req.query.limit as string) || 10, 20)
+
+    if (!query || query.length < 1) {
+      return res.json({ users: [] })
+    }
+
+    // Search for users whose username starts with the query (case insensitive)
+    const users = await prisma.user.findMany({
+      where: {
+        username: {
+          startsWith: query.toLowerCase(),
+          mode: 'insensitive'
+        }
+      },
+      select: {
+        tokenId: true,
+        username: true,
+        displayName: true,
+        avatarUrl: true,
+        image: true,
+      },
+      take: limit,
+      orderBy: {
+        username: 'asc'
+      }
+    })
+
+    return res.json({ users })
+  } catch (err: any) {
+    console.error('GET /api/users/search/:query error', err)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
+ * PATCH /api/users/:username
+ * Update user fields (currently just lastStakedAt for LayerZero tracking)
+ */
+router.patch('/:username', async (req, res) => {
+  try {
+    const { username } = req.params
+    const { lastStakedAt } = req.body
+
+    // Only allow updating lastStakedAt for now
+    if (!lastStakedAt) {
+      return res.status(400).json({ error: 'lastStakedAt is required' })
+    }
+
+    await prisma.user.update({
+      where: { username },
+      data: {
+        lastStakedAt: new Date(lastStakedAt)
+      }
+    })
+
+    return res.json({ success: true })
+  } catch (err: any) {
+    console.error('PATCH /api/users/:username error', err)
     return res.status(500).json({ error: 'Internal server error' })
   }
 })

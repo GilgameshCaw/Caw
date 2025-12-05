@@ -32,7 +32,7 @@ import { useOptimisticLikesStore } from '~/store/optimisticLikesStore'
 import { Link } from 'react-router-dom'
 import { User, CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
-import { usePendingPolling, usePendingCawPolling, usePendingLikePolling } from '~/hooks/usePendingPolling'
+import { usePendingPolling, usePendingCawPolling, usePendingLikePolling, usePendingRecawPolling } from '~/hooks/usePendingPolling'
 import ContentWithHashtags from './ContentWithHashtags'
 import { formatEngagementCount } from '~/utils/numberFormat'
 import { apiFetch } from '~/api/client'
@@ -61,11 +61,11 @@ function formatTimeAgo(timestamp: string): string {
   }
 }
 
-const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void }> = ({ item, isMainPost = false, isReply = false, onBookmarkUpdate }) => {
+const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void; onLikeStateChange?: (cawId: string, likePending: boolean) => void }> = ({ item, isMainPost = false, isReply = false, onBookmarkUpdate, onLikeStateChange }) => {
   // Enable polling for pending items
   usePendingCawPolling(parseInt(item.id), item.status === 'PENDING')
-  console.log("status", item.status);
   usePendingLikePolling(parseInt(item.id), item.likePending || false)
+  usePendingRecawPolling(parseInt(item.id), item.recawPending || false)
 
   const activeTokenId     = useTokenDataStore(s => s.activeTokenId)
   const activeToken = useTokenDataStore(s => {
@@ -78,7 +78,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const { isDark } = useTheme()
   const [busyLike, setBusyLike]     = useState(false)
   const [busyRecaw, setBusyRecaw]   = useState(false)
-  const [isRecawed, setIsRecawed]   = useState(false)
+  const [recawPending, setRecawPending] = useState(item.recawPending || false)
   const [likePending, setLikePending] = useState(item.likePending || false)
   const [txSubmitted, setTxSubmitted] = useState(false) // Track if tx was submitted during this session only
   const [pendingLikeAction, setPendingLikeAction] = useState<{ receiverId: number, receiverCawonce: number, actionType: 'like' | 'unlike' } | null>(null) // Track pending like data
@@ -101,9 +101,18 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   // Determine which item to use (handle recaws)
   let useItem = item;
   let headline;
+  let isRecaw = false;
   if (item.content === "" && item.parent) {
-    headline = 'Recawed by ' + (item.user.displayName || item.user.username)
+    // Check if the recaw is by the current user
+    const userId = (item.user as any).tokenId || item.user.id;
+    const currentUserId = activeTokenId || activeToken?.tokenId;
+    const isCurrentUser = currentUserId && (userId == currentUserId);
+
+    headline = isCurrentUser
+      ? 'Recawed by you'
+      : 'Recawed by ' + (item.user.displayName || item.user.username);
     useItem = item.parent;
+    isRecaw = true;
   }
 
   // Auto-trigger like after wallet connection
@@ -158,6 +167,16 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     });
   }, [pendingLikeAction, isConnected, activeTokenId, activeToken, address, signAndSubmit, useItem.id])
 
+  // Sync local likePending state with item.likePending from polling
+  useEffect(() => {
+    setLikePending(item.likePending || false)
+  }, [item.likePending])
+
+  // Sync local recawPending state with item.recawPending from polling
+  useEffect(() => {
+    setRecawPending(item.recawPending || false)
+  }, [item.recawPending])
+
   // Clear wrong wallet error when address changes
   useEffect(() => {
     if (wrongWalletError && activeToken && activeToken.address.toLowerCase() === address?.toLowerCase()) {
@@ -185,7 +204,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   }, [showRecawMenu, showOptionsMenu])
 
   const handleLike = async (event: React.MouseEvent) => {
+    // MUST call these first, before any early returns!
     event.preventDefault()
+    event.stopPropagation()
 
     // Don't allow interactions with pending or failed caws
     if (item.status === 'PENDING' || item.status === 'FAILED') {
@@ -213,7 +234,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     }
 
     // If no active token selected, return
-    if (!activeTokenId || busyLike || likePending) return
+    const effectiveTokenId = activeTokenId || activeToken?.tokenId
+    if (!effectiveTokenId || busyLike || likePending) {
+      return
+    }
 
     // Check for minimum stake
     if (!hasMinimumStake(activeToken?.stakedAmount, 'MIN_STAKE_LIKE')) {
@@ -221,7 +245,6 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       setShowInsufficientStakeModal(true)
       return
     }
-
     setBusyLike(true)
     setTxSubmitted(false) // Reset txSubmitted at start of new like action
 
@@ -231,7 +254,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     const updateLikeWithTxQueueId = useOptimisticLikesStore.getState().updateLikeWithTxQueueId
     if (!useItem.hasLiked) {
       tempLikeId = addOptimisticLike({
-        userId: activeTokenId,
+        userId: effectiveTokenId,
         cawId: useItem.id
       })
     }
@@ -239,7 +262,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     try {
       const response = await signAndSubmit({
         actionType:      useItem.hasLiked ? 'unlike' : 'like',
-        senderId:        activeTokenId,
+        senderId:        effectiveTokenId,
         receiverId:      useItem.user.tokenId,
         receiverCawonce: useItem.cawonce ?? 0,
       })
@@ -252,6 +275,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       // Transaction was successfully submitted to the server
       setLikePending(true)
       setTxSubmitted(true)
+
+      // Notify parent component about like state change
+      if (onLikeStateChange) {
+        onLikeStateChange(useItem.id, true)
+      }
     } catch (err) {
       console.error('Like failed', err)
       // Reset states on error
@@ -290,6 +318,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
   const handleRecaw = async (event: React.MouseEvent) => {
     event.preventDefault()
+    event.stopPropagation() // Prevent navigation to caw page
 
     // Don't allow interactions with pending or failed caws
     if (item.status === 'PENDING' || item.status === 'FAILED') {
@@ -304,8 +333,18 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       return
     }
 
+    // Check if connected to wrong wallet
+    if (activeToken && address && activeToken.address.toLowerCase() !== address.toLowerCase()) {
+      setWrongWalletError(true)
+      setTimeout(() => setWrongWalletError(false), 5000) // Clear error after 5 seconds
+      return
+    }
+
     // If no active token selected, return
-    if (!activeTokenId || busyRecaw) return
+    const effectiveTokenId = activeTokenId || activeToken?.tokenId
+    if (!effectiveTokenId || busyRecaw) {
+      return
+    }
 
     // Check for minimum stake
     if (!hasMinimumStake(activeToken?.stakedAmount, 'MIN_STAKE_REPOST')) {
@@ -318,13 +357,16 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     try {
       await signAndSubmit({
         actionType:      'recaw',
-        senderId:        activeTokenId,
+        senderId:        effectiveTokenId,
         receiverId:      Number(useItem.user.id ?? 0),
         receiverCawonce: useItem.cawonce ?? 0,
       })
-      setIsRecawed(!isRecawed) // Toggle recawed state
+
+      // Set pending state - will be cleared when the recaw caw is confirmed
+      setRecawPending(true)
     } catch (err) {
       console.error('Recaw failed', err)
+      setRecawPending(false)
     } finally {
       setBusyRecaw(false)
     }
@@ -332,13 +374,14 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
   const handleReply = (e: React.MouseEvent) => {
     e.preventDefault()
+    e.stopPropagation() // Prevent navigation to caw page
 
     // Don't allow interactions with pending or failed caws
     if (item.status === 'PENDING' || item.status === 'FAILED') {
       return
     }
 
-    openModal('comment')
+    openModal('comment', item)
   }
 
   const handleBookmark = async (e: React.MouseEvent) => {
@@ -521,21 +564,21 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
   return (
     <>
-      <Link to={`/caws/${item.id}`} className="block">
+      <Link to={`/caws/${useItem.id}`} className="block">
         <div className={`p-4 transition-all duration-300 hover:bg-gray-500/5 cursor-pointer border-b ${
           isDark ? 'border-gray-800' : 'border-gray-200'
         } ${
           (item.status === 'PENDING' || item.status === 'FAILED') ? 'opacity-60' : ''
         }`}>
-          {/* Replying to header */}
-          {item.parent && (
+          {/* Replying to header - left aligned, no extra padding (only for replies, not recaws) */}
+          {item.parent && !isRecaw && (
             <Link to={`/caws/${item.parent.id}`} className={`block text-xs transition-all duration-300 mb-3 truncate md:truncate-none ${
               isDark ? 'text-gray-400' : 'text-gray-600'
             }`}>
               Replying to <span className="underline">@{item.parent.user.username}</span>
             </Link>
           )}
-          
+
           {/* Recawed header */}
           {headline && (
             <div className={`text-xs mb-3 transition-all duration-300 ${
@@ -544,13 +587,27 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               {headline}
             </div>
           )}
-          
+
+          {/* Content wrapper with left padding for replies - applies when isReply OR when it has a parent (reply in main feed), but NOT for recaws */}
+          <div className={`relative ${(isReply || (item.parent && !isRecaw)) ? 'pl-6' : ''}`}>
+            {/* Vertical line for replies */}
+            {(isReply || (item.parent && !isRecaw)) && (
+              <div
+                className="absolute w-px bg-white/20"
+                style={{
+                  left: '7px',
+                  top: '0',
+                  height: '100%'
+                }}
+              ></div>
+            )}
+
           {/* Post Header */}
-          <div className="flex items-center justify-between mb-3">
+          <div className={`flex justify-between mb-3 ${isReply ? 'items-start' : 'items-center'}`}>
             <div className="flex items-center space-x-3">
               {/* Avatar */}
-              <Link 
-                to={`/users/${useItem.user.username}`} 
+              <Link
+                to={`/users/${useItem.user.username}`}
                 className="w-10 h-10 rounded-full cursor-pointer overflow-hidden"
               >
                 <img
@@ -791,7 +848,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           )}
 
           {/* Post Actions */}
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center space-x-6">
               {/* Comments */}
               <button
@@ -814,32 +871,53 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               <div className="relative">
                 <button
                   className={`group flex items-center space-x-2 transition-colors duration-300 ${
-                    item.pending
+                    (item.status === 'PENDING' || item.status === 'FAILED' || recawPending)
                       ? 'cursor-not-allowed opacity-50'
                       : 'hover:text-green-500 cursor-pointer'
                   } ${
-                    isRecawed
+                    useItem.hasRecawed
                       ? 'text-green-500'
                       : isDark ? 'text-gray-400' : 'text-gray-600'
                   }`}
-                  onClick={e => { e.preventDefault(); if (item.status !== 'PENDING' && item.status !== 'FAILED') setShowRecawMenu(show => !show) }}
-                  disabled={item.status === 'PENDING' || item.status === 'FAILED'}
-                  title={item.status === 'PENDING' ? "Cannot recaw pending caw" : item.status === 'FAILED' ? "Cannot recaw failed caw" : "ReCaw"}
+                  onClick={e => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (item.status !== 'PENDING' && item.status !== 'FAILED' && !recawPending) {
+                      setShowRecawMenu(show => !show)
+                    }
+                  }}
+                  disabled={item.status === 'PENDING' || item.status === 'FAILED' || recawPending}
+                  title={
+                    recawPending ? "Processing repost..." :
+                    item.status === 'PENDING' ? "Cannot recaw pending caw" :
+                    item.status === 'FAILED' ? "Cannot recaw failed caw" :
+                    "ReCaw"
+                  }
                 >
-                  <Recaw className={`w-5 h-5 transition-all duration-300 ${
-                    isRecawed ? 'text-green-500' : ''
-                  }`} />
+                  {(busyRecaw || recawPending) ? (
+                    <div className="relative w-5 h-5 group">
+                      <div className="w-5 h-5 border-2 border-gray-400 border-t-green-500 rounded-full animate-spin"></div>
+                      <HiOutlineCheck className="absolute inset-0 w-3 h-3 m-auto text-green-500" />
+                      <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 text-xs bg-black text-white rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap">
+                        Submitted, pending validation
+                      </div>
+                    </div>
+                  ) : (
+                    <Recaw className={`w-5 h-5 transition-all duration-300 ${
+                      useItem.hasRecawed ? 'text-green-500' : ''
+                    }`} />
+                  )}
                   <span className={`text-sm transition-colors duration-300 ${
-                    isRecawed ? 'text-green-500' : ''
+                    useItem.hasRecawed ? 'text-green-500' : ''
                   }`}>{formatEngagementCount(useItem.recawCount)}</span>
                 </button>
 
                 {showRecawMenu && (
                   <div
                     ref={menuRef}
-                    className={`absolute z-10 text-bold rounded-lg p-2 space-y-1 shadow transition-all duration-300 ${
-                      isDark 
-                        ? 'text-white bg-black' 
+                    className={`absolute z-10 text-bold rounded-lg p-2 space-y-1 shadow-lg transition-all duration-300 ${
+                      isDark
+                        ? 'text-white bg-black/85 backdrop-blur-sm'
                         : 'text-black bg-white border border-gray-200'
                     }`}
                     style={{ left: '-3px', top: '0' }}
@@ -848,7 +926,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       className={`flex items-center gap-2 px-3 py-1 cursor-pointer rounded transition-all duration-200 ${
                         isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-100'
                       }`}
-                      onClick={e => { e.preventDefault(); setShowRecawMenu(false); handleRecaw(e) }}
+                      onClick={e => { e.preventDefault(); e.stopPropagation(); setShowRecawMenu(false); handleRecaw(e) }}
                     >
                       <Recaw className={`w-4 h-4 transition-all duration-300 ${
                         isDark ? 'text-white' : 'text-gray-600'
@@ -858,7 +936,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       className={`flex items-center gap-2 px-3 py-1 cursor-pointer rounded transition-all duration-200 ${
                         isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-100'
                       }`}
-                      onClick={e => { e.preventDefault(); setShowRecawMenu(false); openModal('quote') }}
+                      onClick={e => { e.preventDefault(); e.stopPropagation(); setShowRecawMenu(false); openModal('quote', item) }}
                     >
                       <Pencil className={`w-4 h-4 transition-all duration-300 ${
                         isDark ? 'fill-white' : 'fill-gray-600'
@@ -958,14 +1036,19 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
           {/* Wrong wallet error message */}
           {wrongWalletError && (
-            <div className={`mt-2 px-4 py-2 text-sm rounded-md transition-all duration-300 ${
-              isDark
-                ? 'bg-red-900/20 text-red-400 border border-red-800'
-                : 'bg-red-50 text-red-600 border border-red-200'
-            }`}>
-              Please switch to the wallet that owns this profile
+            <div className="mt-2 rounded-md overflow-hidden bg-black">
+              <div className={`px-4 py-2 text-sm rounded-md transition-all duration-300 ${
+                isDark
+                  ? 'bg-red-900/20 text-red-400 border border-red-800'
+                  : 'bg-red-50 text-red-600 border border-red-200'
+              }`}>
+                Please switch to the correct wallet
+              </div>
             </div>
           )}
+
+          </div>
+          {/* End content wrapper */}
         </div>
       </Link>
 

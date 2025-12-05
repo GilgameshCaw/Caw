@@ -3,10 +3,10 @@ import { useParams, Link } from 'react-router-dom'
 import PostForm from "~/components/PostForm";
 import MainLayout from '~/layouts/MainLayout'
 import FeedItem from '~/components/FeedItem'
-import ReplyItem from '~/components/ReplyItem'
 import { apiFetch } from '~/api/client'
 import type { CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
+import { useTokenDataStore } from '~/store/tokenDataStore'
 import { HiArrowLeft } from 'react-icons/hi'
 
 export const CawPage: React.FC = () => {
@@ -16,6 +16,7 @@ export const CawPage: React.FC = () => {
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState<string | null>(null)
   const { isDark } = useTheme()
+  const activeTokenId = useTokenDataStore(s => s.activeTokenId)
 
   // Function to refresh comments after posting a reply
   const refreshComments = async () => {
@@ -29,72 +30,40 @@ export const CawPage: React.FC = () => {
     }
   }
 
+  // Poll for updates when caw is pending
+  useEffect(() => {
+    if (!caw || caw.status !== 'PENDING') return
+
+    const interval = setInterval(async () => {
+      try {
+        const { caw: fetched, comments: fetchedComments } =
+          await apiFetch<{ caw: CawItem; comments: CawItem[] }>(`/api/caws/${id}`)
+        setCaw(fetched)
+        setComments(fetchedComments)
+
+        // Stop polling if no longer pending
+        if (fetched.status !== 'PENDING') {
+          clearInterval(interval)
+        }
+      } catch (error) {
+        console.error('Error polling for caw updates:', error)
+      }
+    }, 2000) // Poll every 2 seconds
+
+    return () => clearInterval(interval)
+  }, [caw?.status, id])
+
+  // Load caw and comments - refetch when id or activeTokenId changes
   useEffect(() => {
     (async () => {
       try {
         setLoading(true)
         setError(null)
-        
-        // Try to fetch from API first
-        try {
-          const { caw: fetched, comments: fetchedComments } =
-            await apiFetch<{ caw: CawItem; comments: CawItem[] }>(`/api/caws/${id}`)
-          setCaw(fetched)
-          setComments(fetchedComments)
-        } catch (apiError) {
-          console.log('API not available, using mock data for caw:', id)
-          
-          // Fallback to mock data
-          const mockCaw: CawItem = {
-            id: id || 'mock-1',
-            user: { tokenId: 1, username: 'cawuser1' },
-            content: 'Just discovered the amazing potential of decentralized social media! The Caw Protocol is revolutionizing how we connect online. This is the future of social networking! 🚀',
-            timestamp: new Date().toISOString(),
-            likeCount: 89,
-            viewCount: 342,
-            hasLiked: false,
-            hasRecawed: false,
-            commentCount: 15,
-            recawCount: 28,
-            cawonce: 1,
-            userId: 1,
-            originalCaw: undefined
-          }
-          
-          const mockComments: CawItem[] = [
-            {
-              id: 'comment-1',
-              user: { tokenId: 2, username: 'blockchaindev' },
-              content: 'Absolutely agree! The staking rewards are incredible too.',
-              timestamp: new Date(Date.now() - 3600000).toISOString(),
-              likeCount: 12,
-              hasLiked: false,
-              hasRecawed: false,
-              commentCount: 3,
-              recawCount: 5,
-              cawonce: 2,
-              userId: 2,
-              originalCaw: undefined
-            },
-            {
-              id: 'comment-2',
-              user: { tokenId: 3, username: 'cryptoenthusiast' },
-              content: 'Been following this project since day one. Amazing work!',
-              timestamp: new Date(Date.now() - 7200000).toISOString(),
-              likeCount: 8,
-              hasLiked: false,
-              hasRecawed: false,
-              commentCount: 1,
-              recawCount: 2,
-              cawonce: 3,
-              userId: 3,
-              originalCaw: undefined
-            }
-          ]
-          
-          setCaw(mockCaw)
-          setComments(mockComments)
-        }
+
+        const { caw: fetched, comments: fetchedComments } =
+          await apiFetch<{ caw: CawItem; comments: CawItem[] }>(`/api/caws/${id}`)
+        setCaw(fetched)
+        setComments(fetchedComments)
       } catch (err) {
         console.error('Error loading caw:', err)
         setError('Failed to load post')
@@ -102,7 +71,7 @@ export const CawPage: React.FC = () => {
         setLoading(false)
       }
     })()
-  }, [id])
+  }, [id, activeTokenId])
 
   if (loading) return <MainLayout><div className="flex items-center justify-center h-64 text-white">Loading…</div></MainLayout>
   if (error) return <MainLayout><div className="flex items-center justify-center h-64 text-red-500">{error}</div></MainLayout>
@@ -130,7 +99,20 @@ export const CawPage: React.FC = () => {
 
         {/* Main Post - Expanded View */}
         <div className="mb-6 relative">
-          
+          {/* Show "Replying to" if this caw is a reply */}
+          {caw.parent && (
+            <div className="px-4 py-2 mb-2">
+              <Link
+                to={`/caws/${caw.parent.id}`}
+                className={`text-sm transition-colors duration-300 hover:underline ${
+                  isDark ? 'text-gray-400 hover:text-gray-300' : 'text-gray-600 hover:text-gray-700'
+                }`}
+              >
+                Replying to @{caw.parent.user.username}
+              </Link>
+            </div>
+          )}
+
           <div className="relative z-10">
             <FeedItem
               item={{
@@ -170,34 +152,28 @@ export const CawPage: React.FC = () => {
         <div className="space-y-0 relative">
           {/* Continuous vertical line connecting all comment avatars */}
           {comments.length > 0 && (
-            <div 
+            <div
               className="absolute w-px bg-white/20 z-0"
               style={{
-                left: '32px', // Perfect center of comment avatars (16px padding + 20px avatar center)
-                top: '20px', // Start from center of first avatar
+                left: '23px',
+                top: '34px',
                 height: `${comments.length * 80 - 40}px` // Height for remaining avatars
               }}
             ></div>
           )}
           
           {comments.map((comm, index) => (
-            <div key={comm.id} className="relative z-10">
-              <ReplyItem
-                item={{
-                  id:           comm.id,
-                  user:         comm.user,
-                  content:      comm.content,
-                  timestamp:    comm.timestamp,
-                  likeCount:    comm.likeCount,
-                  viewCount:    comm.viewCount || 0, // Pass the actual viewCount
-                  hasLiked:     comm.hasLiked,
-                  hasRecawed:   comm.hasRecawed,
-                  commentCount: comm.commentCount,
-                  recawCount:   comm.recawCount,
-                  cawonce:      comm.cawonce,
-                  userId:       comm.user.tokenId,
-                  originalCaw:  comm.originalCaw,
-                  status:       comm.status, // Pass the status field for pending replies
+            <div key={comm.id} className="relative">
+              <FeedItem
+                item={comm}
+                isReply={true}
+                onLikeStateChange={(cawId, likePending) => {
+                  console.log('[CawPage] Like state changed for reply', cawId, 'pending:', likePending)
+                  setComments(current =>
+                    current.map(item =>
+                      item.id === cawId ? { ...item, likePending } : item
+                    )
+                  )
                 }}
               />
             </div>

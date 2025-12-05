@@ -36,16 +36,27 @@ async function cleanupPendingLikes() {
       try {
         // Check if an action exists for this like
         // We need to check both LIKE and UNLIKE actions since the user might have toggled
+        // Match by senderId, receiverId, AND receiverCawonce
         const action = await prisma.action.findFirst({
           where: {
             senderId: pendingLike.userId,
             actionType: {
               in: ['LIKE', 'UNLIKE']
             },
-            data: {
-              path: ['receiverId'],
-              equals: pendingLike.caw.userId
-            }
+            AND: [
+              {
+                data: {
+                  path: ['receiverId'],
+                  equals: pendingLike.caw.userId
+                }
+              },
+              {
+                data: {
+                  path: ['receiverCawonce'],
+                  equals: pendingLike.caw.cawonce
+                }
+              }
+            ]
           },
           orderBy: {
             createdAt: 'desc'
@@ -54,9 +65,10 @@ async function cleanupPendingLikes() {
 
         if (action) {
           // Action exists on-chain, mark like as confirmed
-          logger.log(` Confirming like for user ${pendingLike.userId} on caw ${pendingLike.cawId}`)
+          logger.log(` Confirming like for user ${pendingLike.userId} on caw ${pendingLike.cawId} (cawonce: ${pendingLike.caw.cawonce})`)
 
-          await prisma.like.update({
+          // Update the like and get the previous state
+          const updatedLike = await prisma.like.update({
             where: {
               userId_cawId: {
                 userId: pendingLike.userId,
@@ -68,6 +80,16 @@ async function cleanupPendingLikes() {
               action: action.actionType
             }
           })
+
+          // Increment like count only if the action is LIKE (not UNLIKE) AND the like was pending
+          // This prevents double-incrementing if ActionProcessor already processed it
+          if (action.actionType === 'LIKE' && pendingLike.pending) {
+            await prisma.caw.update({
+              where: { id: pendingLike.cawId },
+              data: { likeCount: { increment: 1 } }
+            })
+            logger.log(` Incremented like count for caw ${pendingLike.cawId}`)
+          }
         } else if (pendingLike.createdAt < thirtyMinutesAgo) {
           // No action found after 30 minutes, delete the optimistic like
           logger.log(` Removing failed like for user ${pendingLike.userId} on caw ${pendingLike.cawId}`)
@@ -100,7 +122,7 @@ async function cleanupPendingLikes() {
           logger.log(` Updated caw ${pendingLike.cawId} like count to ${actualLikeCount}`)
         } else {
           // Still waiting, log but don't delete yet
-          logger.log(` Like still pending (${Math.floor((Date.now() - pendingLike.createdAt.getTime()) / 60000)} minutes): user ${pendingLike.userId} on caw ${pendingLike.cawId}`)
+          logger.log(` Like still pending (${Math.floor((Date.now() - pendingLike.createdAt.getTime()) / 60000)} minutes): user ${pendingLike.userId} on caw ${pendingLike.cawId} (userId: ${pendingLike.caw.userId}, cawonce: ${pendingLike.caw.cawonce})`)
         }
       } catch (err) {
         logger.error(` Error processing pending like ${pendingLike.userId}-${pendingLike.cawId}:`, err)
