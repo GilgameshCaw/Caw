@@ -12,7 +12,7 @@ We will soon be approaching the testing phase, and shortly after, we plan to dep
 
 # This repository contains the following:
 - Solidity files that will be deployed to the mainnet and at least one L2
-- Services to run as a node:
+- Services to run as a node:A “Storage Node” system where the community can provide their own storage (HDD, cloud server) to make CAW’s ideal of “perpetual storage” a reality. 
 	- RawEventsGatherer: reads CAW action events from blockchain
     - ActionProcessor: builds indexed database based on Raw Events
 	- Validator: can be run by anyone to process new Caw actions on chain
