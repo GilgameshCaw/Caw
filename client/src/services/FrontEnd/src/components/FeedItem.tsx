@@ -571,7 +571,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           (item.status === 'PENDING' || item.status === 'FAILED') ? 'opacity-60' : ''
         }`}>
           {/* Replying to header - left aligned, no extra padding (only for replies, not recaws) */}
-          {item.parent && !isRecaw && (
+          {item.parent && !isRecaw && item.parent.user && (
             <Link to={`/caws/${item.parent.id}`} className={`block text-xs transition-all duration-300 mb-3 truncate md:truncate-none ${
               isDark ? 'text-gray-400' : 'text-gray-600'
             }`}>
