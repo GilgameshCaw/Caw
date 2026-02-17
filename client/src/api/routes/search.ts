@@ -39,7 +39,13 @@ router.get('/', async (req, res) => {
         skip: type === 'all' ? 0 : searchOffset, // No pagination for 'all' tab
         orderBy: { createdAt: 'desc' },
         include: {
-          user: { select: { tokenId: true, username: true, image: true } }
+          user: { select: { tokenId: true, username: true, image: true } },
+          parent: {
+            select: {
+              id: true,
+              user: { select: { tokenId: true, username: true, image: true } }
+            }
+          }
         }
       })
 
@@ -58,7 +64,15 @@ router.get('/', async (req, res) => {
           username: caw.user.username,
           image: caw.user.image
         },
-        parent: caw.originalCawId || null,
+        parent: caw.parent ? {
+          id: caw.parent.id.toString(),
+          user: {
+            id: caw.parent.user.tokenId,
+            tokenId: caw.parent.user.tokenId,
+            username: caw.parent.user.username,
+            image: caw.parent.user.image
+          }
+        } : null,
         likeCount: 0,
         viewCount: 0,
         hasLiked: false, // This would need user context
@@ -98,7 +112,15 @@ router.get('/', async (req, res) => {
         orderBy: [
           { followerCount: 'desc' },
           { createdAt: 'desc' }
-        ]
+        ],
+        select: {
+          tokenId: true,
+          username: true,
+          displayName: true,
+          avatarUrl: true,
+          image: true,
+          address: true
+        }
       })
       results.users = users
     }
