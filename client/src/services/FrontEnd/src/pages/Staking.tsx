@@ -22,7 +22,7 @@ import { sepolia, baseSepolia } from 'wagmi/chains'
 import { chains } from '~/config/chains'
 import { Link } from 'react-router-dom'
 import { useTheme } from '~/hooks/useTheme'
-import { HiOutlineTrendingUp, HiOutlineTrendingDown, HiOutlineInformationCircle } from 'react-icons/hi'
+import { HiOutlineTrendingUp, HiOutlineTrendingDown, HiOutlineInformationCircle, HiQuestionMarkCircle } from 'react-icons/hi'
 
 type StakingTab = 'stake' | 'unstake' | 'info'
 
@@ -891,16 +891,40 @@ const Staking = () => {
       <div className="max-w-2xl mx-auto px-6 py-4 bg-black">
         {/* Header */}
         <div className="mb-8">
-          <h1 className={`text-3xl font-bold mb-2 transition-colors duration-300 ${
+          <h1 className={`text-3xl font-bold mb-6 transition-colors duration-300 ${
             isDark ? 'text-white' : 'text-black'
           }`}>
             CAW Staking
           </h1>
-          <p className={`text-base transition-colors duration-300 ${
-            isDark ? 'text-gray-400' : 'text-gray-600'
+          <div className={`p-4 rounded-lg transition-all duration-300 ${
+            isDark ? 'bg-yellow-500/10' : 'bg-yellow-50'
           }`}>
-            Earn rewards from every action across the protocol
-          </p>
+            <h3 className={`text-base font-semibold mb-3 transition-colors duration-300 ${
+              isDark ? 'text-white' : 'text-gray-900'
+            }`}>
+              Earn rewards from every action across the protocol:
+            </h3>
+            <ul className={`text-sm space-y-2 transition-colors duration-300 ${
+              isDark ? 'text-gray-300' : 'text-gray-700'
+            }`}>
+              <li className="flex justify-between items-start">
+                <span><span className={`font-semibold ${isDark ? 'text-yellow-300' : 'text-yellow-700'}`}>Post a CAW:</span> 5,000 CAW</span>
+                <span className={`text-xs ml-2 ${isDark ? 'text-yellow-500/70' : 'text-yellow-600'}`}>100% to stakers</span>
+              </li>
+              <li className="flex justify-between items-start">
+                <span><span className={`font-semibold ${isDark ? 'text-yellow-300' : 'text-yellow-700'}`}>Like a CAW:</span> 2,000 CAW</span>
+                <span className={`text-xs ml-2 ${isDark ? 'text-yellow-500/70' : 'text-yellow-600'}`}>80% to poster, 20% to stakers</span>
+              </li>
+              <li className="flex justify-between items-start">
+                <span><span className={`font-semibold ${isDark ? 'text-yellow-300' : 'text-yellow-700'}`}>ReCAW:</span> 4,000 CAW</span>
+                <span className={`text-xs ml-2 ${isDark ? 'text-yellow-500/70' : 'text-yellow-600'}`}>50% to poster, 50% to stakers</span>
+              </li>
+              <li className="flex justify-between items-start">
+                <span><span className={`font-semibold ${isDark ? 'text-yellow-300' : 'text-yellow-700'}`}>Follow:</span> 30,000 CAW</span>
+                <span className={`text-xs ml-2 ${isDark ? 'text-yellow-500/70' : 'text-yellow-600'}`}>80% to followed, 20% to stakers</span>
+              </li>
+            </ul>
+          </div>
         </div>
 
         {/* Active Account */}
@@ -946,10 +970,21 @@ const Staking = () => {
             <div className={`p-4 rounded-lg border transition-all duration-300 bg-black ${
               isDark ? 'border-white/20' : 'border-gray-300'
             }`}>
-              <div className={`text-sm transition-colors duration-300 ${
+              <div className={`text-sm transition-colors duration-300 flex items-center gap-1 ${
                 isDark ? 'text-gray-400' : 'text-gray-600'
               }`}>
                 Withdrawable
+                <div className="relative group">
+                  <HiQuestionMarkCircle className="w-4 h-4 cursor-help" />
+                  <div className={`absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 z-50 ${
+                    isDark ? 'bg-white text-black' : 'bg-gray-900 text-white'
+                  }`}>
+                    You must unstake your CAW to withdraw it
+                    <div className={`absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent ${
+                      isDark ? 'border-t-white' : 'border-t-gray-900'
+                    }`}></div>
+                  </div>
+                </div>
               </div>
               <div className={`text-lg font-bold transition-colors duration-300 ${
                 isDark ? 'text-yellow-200' : 'text-yellow-800'
