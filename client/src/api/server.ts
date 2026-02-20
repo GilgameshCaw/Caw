@@ -19,6 +19,10 @@ import withdrawalsRouter from './routes/withdrawals'
 import xmtpRouter from './routes/xmtp'
 import xmtpSecureRouter from './routes/xmtp-secure'
 import xmtpProxyRouter from './routes/xmtpProxy'
+import xmtpIdentityRouter from './routes/xmtp-identity'
+import conversationsRouter from './routes/conversations'
+import giphyRouter from './routes/giphy'
+import statsRouter from './routes/stats'
 
 /**
  * natstat: build and configure Express app
@@ -68,6 +72,10 @@ function createApp() {
   // Old insecure XMTP routes commented out - using secure routes instead
   // app.use('/api/xmtp', xmtpRouter)
   app.use('/api/xmtp', xmtpSecureRouter)
+  app.use('/api/xmtp-identity', xmtpIdentityRouter)
+  app.use('/api/conversations', conversationsRouter)
+  app.use('/api/giphy', giphyRouter)
+  app.use('/api/stats', statsRouter)
   // Temporarily disabled xmtpProxy router due to path-to-regexp issue
   // app.use('/api/xmtp-proxy', xmtpProxyRouter)
 

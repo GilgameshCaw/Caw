@@ -6,7 +6,6 @@ import Feed from '~/components/Feed'
 import TrendingHashtags from '~/components/TrendingHashtags'
 import CommunityStats from '~/components/CommunityStats'
 import DiscussionHashtags from '~/components/DiscussionHashtags'
-import LatestUpdates from '~/components/LatestUpdates'
 import MobilePostModal from '~/components/MobilePostModal'
 import SearchBar from '~/components/SearchBar'
 import { useAccount } from "wagmi"
@@ -120,9 +119,9 @@ const ExplorePage: React.FC = () => {
                 <h2 className={`text-lg font-semibold transition-colors duration-300 ${
                   isDark ? 'text-white' : 'text-black'
                 }`}>
-                  Latest updates
+                  Latest posts
                 </h2>
-                <LatestUpdates />
+                <Feed filter="latest" />
               </div>
             </div>
           )}
@@ -143,20 +142,6 @@ const ExplorePage: React.FC = () => {
                 isDark ? 'border-white/20' : 'border-gray-200'
               }`}></div>
 
-              {/* Community Highlights */}
-              <div className="space-y-4">
-                <h2 className={`text-lg font-semibold transition-colors duration-300 ${
-                  isDark ? 'text-white' : 'text-black'
-                }`}>
-                  Community highlights
-                </h2>
-                <Feed filter="For you" />
-              </div>
-
-              <div className={`border-t transition-colors duration-300 ${
-                isDark ? 'border-white/20' : 'border-gray-200'
-              }`}></div>
-
               {/* Discussion Topics */}
               <div className="space-y-4">
                 <h2 className={`text-lg font-semibold transition-colors duration-300 ${
@@ -165,6 +150,20 @@ const ExplorePage: React.FC = () => {
                   Discussion topics
                 </h2>
                 <DiscussionHashtags />
+              </div>
+
+              <div className={`border-t transition-colors duration-300 ${
+                isDark ? 'border-white/20' : 'border-gray-200'
+              }`}></div>
+
+              {/* Community Highlights */}
+              <div className="space-y-4">
+                <h2 className={`text-lg font-semibold transition-colors duration-300 ${
+                  isDark ? 'text-white' : 'text-black'
+                }`}>
+                  Community highlights
+                </h2>
+                <Feed filter="For you" />
               </div>
             </div>
           )}
