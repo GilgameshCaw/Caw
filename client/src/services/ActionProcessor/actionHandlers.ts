@@ -164,7 +164,17 @@ export async function handleRecawAction(
   parentCawId?: number
 ): Promise<void> {
   const userId = await findOrCreateUser(action.senderId)
-  const originalCawId = await findCawId(rawAction.receiverCawonce, action.senderId)
+
+  // Use the parentCawId that was already found in domainProcessor,
+  // or look it up using the receiver's ID (not sender's)
+  let originalCawId = parentCawId
+  if (!originalCawId && rawAction.receiverCawonce != null && rawAction.receiverId != null) {
+    originalCawId = await findCawId(rawAction.receiverCawonce, rawAction.receiverId)
+  }
+
+  if (!originalCawId) {
+    throw new Error(`Cannot create recaw: original caw not found (receiverCawonce: ${rawAction.receiverCawonce}, receiverId: ${rawAction.receiverId})`)
+  }
 
   // Use upsert to prevent duplicate RECAWs
   await tx.caw.upsert({
@@ -187,12 +197,11 @@ export async function handleRecawAction(
     }
   })
 
-  if (parentCawId) {
-    await tx.caw.update({
-      where: { id: parentCawId },
-      data: { recawCount: { increment: 1 } }
-    })
-  }
+  // Update recaw count on the original post
+  await tx.caw.update({
+    where: { id: originalCawId },
+    data: { recawCount: { increment: 1 } }
+  })
 
   // Create repost notification
   try {

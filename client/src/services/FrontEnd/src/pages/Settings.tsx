@@ -1,58 +1,40 @@
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { HiUser, HiBell, HiVolumeOff } from 'react-icons/hi'
 
 // Settings page component with clean, modern design
 export const SettingsPage: React.FC = () => {
-  const { isDark, toggleTheme } = useTheme()
+  const { isDark } = useTheme()
   const [searchQuery, setSearchQuery] = useState('')
+  const navigate = useNavigate()
 
   // Settings menu items in the specified order
   const settingsItems = [
     {
       id: 'account',
       title: 'Account',
-      description: 'Manage your account settings',
+      description: 'View wallet and username info',
+      icon: <HiUser className="w-5 h-5" />,
       hasArrow: true,
-      onClick: () => console.log('Account clicked')
+      onClick: () => navigate('/settings/account')
     },
     {
       id: 'notifications',
       title: 'Notifications',
       description: 'Configure notification preferences',
+      icon: <HiBell className="w-5 h-5" />,
       hasArrow: true,
-      onClick: () => console.log('Notifications clicked')
+      onClick: () => navigate('/settings/notifications')
     },
     {
-      id: 'themes',
-      title: 'Themes',
-      description: 'Customize appearance and themes',
+      id: 'muted-content',
+      title: 'Muted Content',
+      description: 'Manage muted words, accounts, and threads',
+      icon: <HiVolumeOff className="w-5 h-5" />,
       hasArrow: true,
-      onClick: () => {
-        toggleTheme()
-        console.log('Theme toggled')
-      }
-    },
-    {
-      id: 'languages',
-      title: 'Languages',
-      description: 'Select your preferred language',
-      hasArrow: true,
-      onClick: () => console.log('Languages clicked')
-    },
-    {
-      id: 'resources',
-      title: 'Resources',
-      description: 'Additional resources and tools',
-      hasArrow: true,
-      onClick: () => console.log('Resources clicked')
-    },
-    {
-      id: 'help',
-      title: 'Help',
-      description: 'Get help and support',
-      hasArrow: true,
-      onClick: () => console.log('Help clicked')
+      onClick: () => navigate('/settings/muted')
     }
   ]
 
@@ -118,33 +100,48 @@ export const SettingsPage: React.FC = () => {
             <div
               key={item.id}
               onClick={item.onClick}
-              className={`group cursor-pointer py-4 px-0 transition-all duration-200 hover:bg-gray-500/20`}
+              className={`group cursor-pointer py-4 px-4 transition-all duration-200 hover:bg-gray-500/20`}
             >
               <div className="flex items-center justify-between">
-                <div className="flex-1">
-                  <h3 className={`font-normal text-base transition-colors duration-300 ${
-                    isDark ? 'text-white' : 'text-black'
-                  }`}>
-                    {item.title}
-                  </h3>
+                <div className="flex items-center gap-4 flex-1">
+                  {/* Icon */}
+                  {'icon' in item && item.icon && (
+                    <div className={`transition-colors duration-300 ${
+                      isDark ? 'text-white/60' : 'text-gray-500'
+                    }`}>
+                      {item.icon}
+                    </div>
+                  )}
+                  <div>
+                    <h3 className={`font-normal text-base transition-colors duration-300 ${
+                      isDark ? 'text-white' : 'text-black'
+                    }`}>
+                      {item.title}
+                    </h3>
+                    <p className={`text-sm transition-colors duration-300 ${
+                      isDark ? 'text-white/50' : 'text-gray-500'
+                    }`}>
+                      {item.description}
+                    </p>
+                  </div>
                 </div>
-                
+
                 {/* Arrow icon */}
                 {item.hasArrow && (
                   <div className={`ml-4 transition-colors duration-300 ${
                     isDark ? 'text-gray-400' : 'text-gray-500'
                   }`}>
-                    <svg 
-                      className="w-4 h-4" 
-                      fill="none" 
-                      stroke="currentColor" 
+                    <svg
+                      className="w-4 h-4"
+                      fill="none"
+                      stroke="currentColor"
                       viewBox="0 0 24 24"
                     >
-                      <path 
-                        strokeLinecap="round" 
-                        strokeLinejoin="round" 
-                        strokeWidth={2} 
-                        d="M9 5l7 7-7 7" 
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M9 5l7 7-7 7"
                       />
                     </svg>
                   </div>

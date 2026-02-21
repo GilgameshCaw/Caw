@@ -35,35 +35,60 @@ export async function processHashtagsForCaw(cawId: number, content: string): Pro
   // Process each hashtag
   for (const hashtagName of hashtags) {
     try {
-      // Upsert hashtag (create if doesn't exist, update usage count if it does)
-      const hashtag = await prisma.hashtag.upsert({
-        where: { name: hashtagName },
-        create: {
-          name: hashtagName,
-          usageCount: 1,
-        },
-        update: {
-          usageCount: {
-            increment: 1
-          },
-          updatedAt: new Date()
-        }
+      // First, check if this caw-hashtag association already exists
+      // to avoid double-counting when called multiple times for the same caw
+      const existingHashtag = await prisma.hashtag.findUnique({
+        where: { name: hashtagName }
       })
 
-      // Create caw-hashtag association if it doesn't exist
-      await prisma.cawHashtag.upsert({
-        where: {
-          cawId_hashtagId: {
-            cawId: cawId,
-            hashtagId: hashtag.id
+      if (existingHashtag) {
+        // Check if association already exists
+        const existingAssociation = await prisma.cawHashtag.findUnique({
+          where: {
+            cawId_hashtagId: {
+              cawId: cawId,
+              hashtagId: existingHashtag.id
+            }
           }
-        },
-        create: {
-          cawId: cawId,
-          hashtagId: hashtag.id
-        },
-        update: {} // No update needed if association already exists
-      })
+        })
+
+        if (existingAssociation) {
+          // Association already exists, skip to avoid double-counting
+          continue
+        }
+
+        // Association doesn't exist, increment count and create it
+        await prisma.hashtag.update({
+          where: { id: existingHashtag.id },
+          data: {
+            usageCount: { increment: 1 },
+            updatedAt: new Date()
+          }
+        })
+
+        await prisma.cawHashtag.create({
+          data: {
+            cawId: cawId,
+            hashtagId: existingHashtag.id
+          }
+        })
+      } else {
+        // Hashtag doesn't exist, create it with count 1
+        const newHashtag = await prisma.hashtag.create({
+          data: {
+            name: hashtagName,
+            usageCount: 1
+          }
+        })
+
+        // Create caw-hashtag association
+        await prisma.cawHashtag.create({
+          data: {
+            cawId: cawId,
+            hashtagId: newHashtag.id
+          }
+        })
+      }
     } catch (error) {
       console.error(`Error processing hashtag "${hashtagName}" for caw ${cawId}:`, error)
       // Continue processing other hashtags even if one fails

@@ -19,20 +19,28 @@ export class XmtpWebSocketService {
    * Initialize WebSocket server
    */
   initialize(server: HttpServer) {
+    console.log('[XMTP-WS] Initializing WebSocket server on path: /xmtp-ws')
+
     this.io = new SocketIOServer(server, {
       cors: {
         origin: process.env.NODE_ENV === 'development' ? '*' : process.env.ALLOWED_ORIGINS?.split(',') || [],
         methods: ['GET', 'POST'],
         credentials: true
       },
-      path: '/xmtp-ws'
+      path: '/xmtp-ws/'
     })
+
+    console.log('[XMTP-WS] WebSocket server created')
 
     // Authentication middleware
     this.io.use(async (socket: AuthenticatedSocket, next) => {
+      console.log('[XMTP-WS] New connection attempt from:', socket.handshake.address)
+      console.log('[XMTP-WS] Auth data:', socket.handshake.auth)
+
       try {
         const token = socket.handshake.auth.token
         if (!token) {
+          console.error('[XMTP-WS] No token provided')
           return next(new Error('Authentication required'))
         }
 
@@ -41,13 +49,16 @@ export class XmtpWebSocketService {
         // Try JWT verification first
         try {
           decoded = jwt.verify(token, JWT_SECRET) as any
+          console.log('[XMTP-WS] JWT token verified successfully')
         } catch (jwtErr) {
+          console.log('[XMTP-WS] JWT verification failed, trying base64 decode')
           // If JWT verification fails, try base64 decode for development
           try {
             const decodedBase64 = Buffer.from(token, 'base64').toString('utf-8')
             decoded = JSON.parse(decodedBase64)
-            console.log('[XMTP-WS] Using base64-encoded auth token (development mode)')
+            console.log('[XMTP-WS] Using base64-encoded auth token (development mode)', decoded)
           } catch (base64Err) {
+            console.error('[XMTP-WS] Base64 decode failed:', base64Err)
             throw new Error('Invalid token format')
           }
         }
@@ -56,8 +67,11 @@ export class XmtpWebSocketService {
         socket.username = decoded.username
 
         if (!socket.userId || !socket.username) {
+          console.error('[XMTP-WS] Invalid token payload - missing userId or username')
           return next(new Error('Invalid token payload'))
         }
+
+        console.log('[XMTP-WS] Authentication successful for user:', socket.username, 'ID:', socket.userId)
 
         // Track user's socket connections
         if (!this.userSockets.has(socket.userId)) {
@@ -68,6 +82,7 @@ export class XmtpWebSocketService {
         next()
       } catch (err: any) {
         console.error('[XMTP-WS] Authentication error:', err.message)
+        console.error('[XMTP-WS] Error stack:', err.stack)
         next(new Error('Invalid token'))
       }
     })

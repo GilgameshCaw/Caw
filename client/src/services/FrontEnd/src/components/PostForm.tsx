@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { useSignAndSubmitAction } from '../api/actions'
+import { useSignAndSubmitAction, buildTypedData, TYPES, DOMAIN } from '../api/actions'
 import { useTokenDataStore, useActiveToken } from "~/store/tokenDataStore";
-import { useAccount, useChains, useSwitchChain, useConnections } from "wagmi";
+import { useAccount, useChains, useSwitchChain, useConnections, useSignTypedData } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import type { ActionParams } from '~/api/actions'
 import { baseSepolia } from "wagmi/chains";
@@ -17,6 +17,7 @@ import { HiCalendar, HiClock } from 'react-icons/hi'
 import InsufficientStakeModal from './modals/InsufficientStakeModal'
 import { hasMinimumStake, getRequiredStake } from '~/constants/stakingRequirements'
 import MentionAutocomplete from './MentionAutocomplete'
+import GifPicker from './GifPicker'
 
 interface PostFormProps {
   /** if provided, we're replying to this caw */
@@ -43,6 +44,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   const [text, setText] = useState('')
   const [cursorPosition, setCursorPosition] = useState(0)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const [selectedMedia, setSelectedMedia] = useState<any[]>([])
   const [isDragOverTextarea, setIsDragOverTextarea] = useState(false)
   const [showGifPicker, setShowGifPicker] = useState(false)
@@ -54,9 +56,13 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   const [showMediaUpload, setShowMediaUpload] = useState(false)
   const [showMediaOverlay, setShowMediaOverlay] = useState(false)
   const [showInsufficientStakeModal, setShowInsufficientStakeModal] = useState(false)
+  const [showScheduledSuccessModal, setShowScheduledSuccessModal] = useState(false)
+  const [scheduledSuccessTime, setScheduledSuccessTime] = useState<Date | null>(null)
   const activeTokenId = useTokenDataStore(state => state.activeTokenId);
   const activeToken = useActiveToken();
   const signAndSubmit = useSignAndSubmitAction()
+  const { signTypedDataAsync } = useSignTypedData()
+  const bumpCawonce = useTokenDataStore(s => s.bumpCawonce)
   const addPendingPost = usePendingPostsStore((state) => state.addPendingPost)
   const updatePostWithTxQueueId = usePendingPostsStore((state) => state.updatePostWithTxQueueId)
 
@@ -85,6 +91,63 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       })
     } else if (index === undefined) {
       setSelectedMedia([])
+    }
+  }
+
+  // Handle GIF selection from picker
+  const handleGifSelected = (gif: { id: string; url: string; title: string; preview: string; width: number; height: number }) => {
+    // Add GIF as a media item (treated as off-chain image URL)
+    const gifMedia = {
+      type: 'gif' as const,
+      url: gif.url,
+      preview: gif.preview,
+      title: gif.title,
+      width: gif.width,
+      height: gif.height,
+      storageType: 'off-chain'
+    }
+    setSelectedMedia(prev => [...prev, gifMedia])
+    setShowGifPicker(false)
+  }
+
+  // Handle file input selection
+  const handleFileInputChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+
+    const newMedia: any[] = []
+
+    for (const file of Array.from(files)) {
+      const isImage = file.type.startsWith('image/')
+      const isVideo = file.type.startsWith('video/')
+
+      if (!isImage && !isVideo) continue
+
+      // Check limits
+      const currentImages = selectedMedia.filter(m => m.type === 'image').length
+      const currentVideos = selectedMedia.filter(m => m.type === 'video').length
+
+      if (isImage && currentImages + newMedia.filter(m => m.type === 'image').length >= 4) continue
+      if (isVideo && currentVideos + newMedia.filter(m => m.type === 'video').length >= 1) continue
+
+      const mediaFile = {
+        file,
+        type: isImage ? 'image' : 'video',
+        preview: URL.createObjectURL(file),
+        size: file.size,
+        storageType: 'off-chain'
+      }
+
+      newMedia.push(mediaFile)
+    }
+
+    if (newMedia.length > 0) {
+      setSelectedMedia(prev => [...prev, ...newMedia])
+    }
+
+    // Reset input so same file can be selected again
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
     }
   }
 
@@ -237,12 +300,55 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           }
         }
 
+        // Build the post content (same as regular posts)
+        let finalText = text
+        if (imageData) {
+          finalText = text + '\n' + imageData.split('|||').map((img: string) => `image64:${img}`).join('\n')
+        }
+
+        // Handle GIFs (already have URLs from Giphy)
+        const gifs = selectedMedia.filter(m => m.type === 'gif')
+        if (gifs.length > 0) {
+          const gifUrls = gifs.map(gif => `\n${gif.url}`).join('')
+          finalText = finalText + gifUrls
+        }
+
+        // Get current cawonce
+        const currentCawonce = activeToken?.cawonce ?? 0
+
+        // Build EIP-712 typed data (same as regular post)
+        const { domain, types, primaryType, message } = buildTypedData({
+          actionType: 'caw',
+          senderId: effectiveTokenId,
+          text: finalText,
+          cawonce: currentCawonce
+        })
+
+        // Sign the action (user will see the signature request)
+        const signature = await signTypedDataAsync({
+          domain,
+          types: { ActionData: TYPES.ActionData },
+          primaryType,
+          message
+        })
+
+        // Bump cawonce after successful signature
+        bumpCawonce(effectiveTokenId)
+
+        // Send to scheduled API with the signed data
         await apiFetch('/api/scheduled', {
           method: 'POST',
           body: JSON.stringify({
             content: text,
             scheduledAt: scheduledAt.toISOString(),
-            imageData
+            imageData,
+            // Include signed action data for later processing
+            signedAction: {
+              data: message,
+              domain,
+              types,
+              signature
+            }
           }),
           headers: { 'x-user-id': effectiveTokenId.toString() }
         })
@@ -254,11 +360,17 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         setScheduledDate('')
         setScheduledTime('')
 
+        // Show success modal
+        setScheduledSuccessTime(scheduledAt)
+        setShowScheduledSuccessModal(true)
         if (onSuccess) onSuccess()
-        alert('Post scheduled successfully!')
-      } catch (error) {
-        console.error('Failed to schedule post:', error)
-        alert('Failed to schedule post')
+      } catch (error: any) {
+        // Don't show error if user rejected signature
+        if (error?.message?.includes('User rejected') || error?.code === 4001) {
+          console.log('User cancelled signature')
+        } else {
+          console.error('Failed to schedule post:', error)
+        }
       } finally {
         setIsScheduling(false)
       }
@@ -272,6 +384,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     // Separate media by type
     const images = selectedMedia.filter(m => m.type === 'image')
     const videos = selectedMedia.filter(m => m.type === 'video')
+    const gifs = selectedMedia.filter(m => m.type === 'gif')
 
     // Separate images by storage type (each image has its own storage type)
     const onChainImages = images.filter(img => img.storageType === 'on-chain')
@@ -313,6 +426,12 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       }
     }
 
+    // Handle GIFs (already have URLs from Giphy)
+    if (gifs.length > 0) {
+      const gifUrls = gifs.map(gif => `\n${gif.url}`).join('')
+      finalText = finalText + gifUrls
+    }
+
     // Handle on-chain images
     if (onChainImages.length > 0) {
       // Convert images to base64 and calculate cost
@@ -340,13 +459,16 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
 
     // effectiveTokenId is already defined at the start of handleSubmit
 
+    // For replies and quotes, include the original post's info
+    const parentCaw = replyTo || quote
+
     const params: ActionParams = {
       actionType: onChainImages.length > 0 ? 'other' : 'caw',
       senderId: effectiveTokenId,
       text: finalText,
-      ...(replyTo && {
-        receiverId: replyTo.user.tokenId,
-        receiverCawonce: replyTo.cawonce,
+      ...(parentCaw && {
+        receiverId: parentCaw.user.tokenId,
+        receiverCawonce: parentCaw.cawonce,
       }),
       ...(totalCawCost > 0 && {
         amounts: [totalCawCost]
@@ -385,10 +507,12 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     // Add estimated URL lengths for off-chain media
     const offChainImages = selectedMedia.filter(m => m.type === 'image' && m.storageType !== 'on-chain')
     const videos = selectedMedia.filter(m => m.type === 'video')
+    const gifs = selectedMedia.filter(m => m.type === 'gif')
 
-    // Estimate ~80 chars per image URL, ~90 chars per video URL (including newlines and video: prefix)
+    // Estimate ~80 chars per image URL, ~90 chars per video URL, ~100 chars per GIF URL
     totalLength += offChainImages.length * 80
     totalLength += videos.length * 90
+    totalLength += gifs.length * 100
 
     return 420 - totalLength
   }
@@ -398,6 +522,16 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
 
   return (
     <div className={`p-4 transition-all duration-300 ${isDark ? 'bg-black' : 'bg-white'}`}>
+      {/* Hidden file input for media selection */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*,video/*"
+        multiple
+        onChange={handleFileInputChange}
+        className="hidden"
+      />
+
       {/* Mobile Layout - Avatar + Input + Button in one row */}
       <div className="md:hidden flex items-start space-x-3">
         {/* Avatar */}
@@ -500,7 +634,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           <div className="flex items-center space-x-4">
             {/* Media Upload */}
             <button
-              onClick={() => setShowMediaUpload(!showMediaUpload)}
+              onClick={() => fileInputRef.current?.click()}
               className={`p-1 rounded-full transition-all duration-200 cursor-pointer ${
                 selectedMedia.length > 0
                   ? 'text-yellow-500 bg-yellow-400/10'
@@ -552,7 +686,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         </div>
 
         {/* Mobile Selected Media Display */}
-        {selectedMedia.length > 0 && (
+        {selectedMedia.filter(m => m.type !== 'gif').length > 0 && (
           <div
             className={`mt-4 p-2 rounded-lg border-2 transition-all duration-200 ${
               isDragOverTextarea
@@ -566,20 +700,51 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             <MediaUpload
               onMediaSelected={handleMediaSelected}
               onMediaRemoved={handleMediaRemoved}
-              selectedMedia={selectedMedia}
+              selectedMedia={selectedMedia.filter(m => m.type !== 'gif')}
               className=""
             />
           </div>
         )}
 
+        {/* Mobile Selected GIF Preview */}
+        {selectedMedia.filter(m => m.type === 'gif').length > 0 && (
+          <div className="mt-4">
+            {selectedMedia.filter(m => m.type === 'gif').map((gif, index) => (
+              <div key={gif.url} className="relative inline-block">
+                <img
+                  src={gif.preview}
+                  alt={gif.title || 'Selected GIF'}
+                  className="max-h-32 rounded-lg"
+                />
+                <button
+                  onClick={() => {
+                    const gifIndex = selectedMedia.findIndex(m => m.type === 'gif' && m.url === gif.url)
+                    handleMediaRemoved(gifIndex)
+                  }}
+                  className="absolute -top-2 -right-2 p-1 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors"
+                >
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+                <span className={`absolute bottom-1 left-1 px-1.5 py-0.5 text-xs font-medium rounded ${
+                  isDark ? 'bg-black/70 text-white' : 'bg-white/70 text-black'
+                }`}>
+                  GIF
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Mobile GIF Picker */}
         {showGifPicker && (
-          <div className={`mt-4 p-4 border rounded-lg ${
-            isDark ? 'border-gray-600 bg-gray-800' : 'border-gray-200 bg-gray-50'
-          }`}>
-            <p className={`text-center text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-              GIF picker coming soon...
-            </p>
+          <div className="mt-4">
+            <GifPicker
+              initialQuery={text.trim()}
+              onSelect={handleGifSelected}
+              onClose={() => setShowGifPicker(false)}
+            />
           </div>
         )}
 
@@ -653,7 +818,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         </div>
 
         {/* Desktop Selected Media Display */}
-        {selectedMedia.length > 0 && (
+        {selectedMedia.filter(m => m.type !== 'gif').length > 0 && (
           <div
             className={`mt-4 p-2 rounded-lg border-2 transition-all duration-200 ${
               isDragOverTextarea
@@ -667,20 +832,51 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             <MediaUpload
               onMediaSelected={handleMediaSelected}
               onMediaRemoved={handleMediaRemoved}
-              selectedMedia={selectedMedia}
+              selectedMedia={selectedMedia.filter(m => m.type !== 'gif')}
               className=""
             />
           </div>
         )}
 
+        {/* Desktop Selected GIF Preview */}
+        {selectedMedia.filter(m => m.type === 'gif').length > 0 && (
+          <div className="mt-4">
+            {selectedMedia.filter(m => m.type === 'gif').map((gif, index) => (
+              <div key={gif.url} className="relative inline-block">
+                <img
+                  src={gif.preview}
+                  alt={gif.title || 'Selected GIF'}
+                  className="max-h-48 rounded-lg"
+                />
+                <button
+                  onClick={() => {
+                    const gifIndex = selectedMedia.findIndex(m => m.type === 'gif' && m.url === gif.url)
+                    handleMediaRemoved(gifIndex)
+                  }}
+                  className="absolute -top-2 -right-2 p-1.5 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+                <span className={`absolute bottom-2 left-2 px-2 py-1 text-xs font-semibold rounded ${
+                  isDark ? 'bg-black/70 text-white' : 'bg-white/70 text-black'
+                }`}>
+                  GIF
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* GIF Picker */}
         {showGifPicker && (
-          <div className={`mt-4 p-4 border rounded-lg ${
-            isDark ? 'border-gray-600 bg-gray-800' : 'border-gray-200 bg-gray-50'
-          }`}>
-            <p className={`text-center ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-              GIF picker coming soon...
-            </p>
+          <div className="mt-4">
+            <GifPicker
+              initialQuery={text.trim()}
+              onSelect={handleGifSelected}
+              onClose={() => setShowGifPicker(false)}
+            />
           </div>
         )}
 
@@ -764,7 +960,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           <div className="flex items-center space-x-6">
             {/* Media Upload */}
             <button
-              onClick={() => setShowMediaUpload(!showMediaUpload)}
+              onClick={() => fileInputRef.current?.click()}
               className={`p-2 rounded-full transition-all duration-200 cursor-pointer ${
                 selectedMedia.length > 0
                   ? 'text-yellow-500 bg-yellow-400/10'
@@ -884,6 +1080,42 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           replyTo ? 'MIN_STAKE_COMMENT' : quote ? 'MIN_STAKE_QUOTE' : 'MIN_STAKE_POST'
         )}
       />
+
+      {/* Scheduled Post Success Modal */}
+      {showScheduledSuccessModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => setShowScheduledSuccessModal(false)}
+          />
+          <div className={`relative z-10 w-full max-w-sm mx-4 p-6 rounded-2xl shadow-xl ${
+            isDark ? 'bg-gray-900 border border-white/10' : 'bg-white border border-gray-200'
+          }`}>
+            <div className="text-center">
+              <div className={`w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center ${
+                isDark ? 'bg-green-500/20' : 'bg-green-100'
+              }`}>
+                <HiCalendar className="w-8 h-8 text-green-500" />
+              </div>
+              <h3 className={`text-xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                Post Scheduled!
+              </h3>
+              <p className={`text-sm mb-4 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                Your post will be published on
+              </p>
+              <p className={`text-base font-medium mb-6 ${isDark ? 'text-yellow-400' : 'text-yellow-600'}`}>
+                {scheduledSuccessTime?.toLocaleString()}
+              </p>
+              <button
+                onClick={() => setShowScheduledSuccessModal(false)}
+                className="w-full py-3 px-4 rounded-full font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-colors"
+              >
+                Done
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

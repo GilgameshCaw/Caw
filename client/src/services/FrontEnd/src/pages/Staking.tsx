@@ -896,8 +896,8 @@ const Staking = () => {
           }`}>
             CAW Staking
           </h1>
-          <div className={`p-4 rounded-lg transition-all duration-300 ${
-            isDark ? 'bg-yellow-500/10' : 'bg-yellow-50'
+          <div className={`p-4 rounded-lg border transition-all duration-300 ${
+            isDark ? 'bg-yellow-500/10 border-white/20' : 'bg-yellow-50 border-gray-300'
           }`}>
             <h3 className={`text-base font-semibold mb-3 transition-colors duration-300 ${
               isDark ? 'text-white' : 'text-gray-900'

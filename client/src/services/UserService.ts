@@ -11,25 +11,41 @@ const CawNameL1Abi = [
   'function usernames(uint256 index) view returns (string)'
 ]
 
-// Use Base Sepolia Infura WebSocket for L2 queries (owner address)
-const l2Provider = new WebSocketProvider(
-  process.env.L2_RPC_URL || 'wss://base-sepolia.infura.io/ws/v3/YOUR_INFURA_PROJECT_ID'
-)
-const l2NameContract = new Contract(
-  CAW_NAMES_L2_ADDRESS,
-  CawNameL2Abi,
-  l2Provider
-)
+// Lazy-initialized providers - only created when first needed
+let l2Provider: WebSocketProvider | null = null
+let l2NameContract: Contract | null = null
+let l1Provider: WebSocketProvider | null = null
+let l1NameContract: Contract | null = null
 
-// Use Sepolia Infura WebSocket for L1 queries (username)
-const l1Provider = new WebSocketProvider(
-  process.env.L1_RPC_URL || 'wss://eth-sepolia.g.alchemy.com/v2/demo'
-)
-const l1NameContract = new Contract(
-  CAW_NAMES_ADDRESS,
-  CawNameL1Abi,
-  l1Provider
-)
+function getL2Provider() {
+  if (!l2Provider) {
+    console.log('[UserService] Initializing L2 WebSocket provider...')
+    l2Provider = new WebSocketProvider(
+      process.env.L2_RPC_URL || 'wss://base-sepolia.infura.io/ws/v3/YOUR_INFURA_PROJECT_ID'
+    )
+    l2NameContract = new Contract(
+      CAW_NAMES_L2_ADDRESS,
+      CawNameL2Abi,
+      l2Provider
+    )
+  }
+  return { provider: l2Provider, contract: l2NameContract! }
+}
+
+function getL1Provider() {
+  if (!l1Provider) {
+    console.log('[UserService] Initializing L1 WebSocket provider...')
+    l1Provider = new WebSocketProvider(
+      process.env.L1_RPC_URL || 'wss://eth-sepolia.g.alchemy.com/v2/demo'
+    )
+    l1NameContract = new Contract(
+      CAW_NAMES_ADDRESS,
+      CawNameL1Abi,
+      l1Provider
+    )
+  }
+  return { provider: l1Provider, contract: l1NameContract! }
+}
 
 /**
  * findOrCreateUser
@@ -46,10 +62,14 @@ export async function findOrCreateUser(senderId: number) {
   })
 
   if (!user) {
+    // Get providers lazily - only created when needed
+    const { contract: l2Contract } = getL2Provider()
+    const { contract: l1Contract } = getL1Provider()
+
     // Query L2 for owner address and L1 for username
     const [ownerAddress, username] = await Promise.all([
-      l2NameContract.ownerOf(tokenId),
-      l1NameContract.usernames(tokenId - 1) // usernames array is 0-indexed, tokenIds start at 1
+      l2Contract.ownerOf(tokenId),
+      l1Contract.usernames(tokenId - 1) // usernames array is 0-indexed, tokenIds start at 1
     ]);
 
     // Validate username - NEVER use defaults
@@ -82,7 +102,8 @@ export async function findOrCreateUser(senderId: number) {
  */
 async function enrichUser(userId: number, tokenId: number) {
   try {
-    const uri = await nameContract.tokenURI(tokenId)
+    const { contract: l2Contract } = getL2Provider()
+    const uri = await l2Contract.tokenURI(tokenId)
     const b64 = uri.split(',')[1]
     const json = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'))
     await prisma.user.update({

@@ -80,6 +80,23 @@ export DATABASE_URL="postgresql://caw:caw@127.0.0.1:5432/caw"
 
 
 
+## External API Keys
+
+### Giphy (for GIF picker)
+
+To enable the GIF picker in post composition, you need a Giphy API key:
+
+1. Go to [developers.giphy.com](https://developers.giphy.com/) and create an account
+2. Create an app to get an API key
+3. Add to your `.env` file:
+   ```
+   GIPHY_API_KEY=your_api_key_here
+   ```
+
+**Note:** The free tier allows 100 requests per hour. For production usage, you may need a paid plan.
+
+---
+
 ## Structure
 
 this repo is organized into services which should be capable of running across

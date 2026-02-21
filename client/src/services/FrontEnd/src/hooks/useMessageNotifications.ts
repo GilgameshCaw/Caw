@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { io, Socket } from 'socket.io-client'
+import { generateToken } from '~/api/auth'
 
-const SOCKET_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'
+const SOCKET_URL = import.meta.env.VITE_API_HOST || 'http://localhost:4000'
 
 interface Message {
   id: string
@@ -20,12 +21,14 @@ interface Message {
 
 interface UseMessageNotificationsParams {
   userId?: number
+  username?: string
   enabled?: boolean
   onNewMessage?: (message: Message) => void
 }
 
 export function useMessageNotifications({
   userId,
+  username,
   enabled = true,
   onNewMessage
 }: UseMessageNotificationsParams) {
@@ -87,18 +90,29 @@ export function useMessageNotifications({
   }
 
   useEffect(() => {
-    if (!userId || !enabled) return
+    if (!userId || !username || !enabled) {
+      console.log('[MessageNotifications] Skipping WebSocket connection:', { userId, username, enabled })
+      return
+    }
+
+    console.log('[MessageNotifications] Connecting WebSocket for user:', username, userId)
+
+    // Generate auth token for WebSocket
+    const token = generateToken({ userId, username })
 
     // Connect to WebSocket for real-time notifications
     socketRef.current = io(SOCKET_URL, {
-      path: '/xmtp-ws',
-      auth: {
-        token: localStorage.getItem('authToken')
-      },
-      transports: ['websocket', 'polling']
+      path: '/xmtp-ws/',
+      auth: { token },
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: 5,
+      reconnectionDelay: 1000
     })
 
     const socket = socketRef.current
+
+    console.log('[MessageNotifications] WebSocket instance created')
 
     // Listen for new messages
     socket.on('new-message', (message: Message) => {
@@ -132,9 +146,12 @@ export function useMessageNotifications({
     })
 
     return () => {
+      console.log('[MessageNotifications] Cleanup: Disconnecting WebSocket')
       socket.disconnect()
     }
-  }, [userId, enabled, onNewMessage, queryClient])
+    // Intentionally omit onNewMessage from dependencies to avoid reconnection loops
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId, username, enabled, queryClient])
 
   // Check if notifications are enabled
   const areNotificationsEnabled = () => {

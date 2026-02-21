@@ -6,9 +6,14 @@ import { Staking } from "./pages/Staking";
 import { Main } from "./pages/Main";
 import NotificationsPage from "./pages/NotificationsPage";
 import { SettingsPage } from "./pages/Settings";
+import MutedContentPage from "./pages/MutedContent";
+import NotificationSettings from "./pages/NotificationSettings";
+import AccountSettings from "./pages/AccountSettings";
+import HelpPage from "./pages/HelpPage";
 import MessagesPage from "./pages/Messages";
 import BookmarksPage from "./pages/Bookmarks";
 import ExplorePage from "./pages/Explore";
+import ScheduledPage from "./pages/Scheduled";
 import GameFiPage from "./pages/GameFiPage";
 import HashtagPage from "./pages/HashtagPage";
 import SearchResultsPage from "./pages/SearchResultsPage";
@@ -78,8 +83,28 @@ export default [
     component: <SettingsPage />,
   },
   {
+    path: "/settings/muted",
+    component: <MutedContentPage />,
+  },
+  {
+    path: "/settings/notifications",
+    component: <NotificationSettings />,
+  },
+  {
+    path: "/settings/account",
+    component: <AccountSettings />,
+  },
+  {
+    path: "/help",
+    component: <HelpPage />,
+  },
+  {
     path: "/bookmarks",
     component: <BookmarksPage />,
+  },
+  {
+    path: "/scheduled",
+    component: <ScheduledPage />,
   },
   {
     path: "/gamefi",

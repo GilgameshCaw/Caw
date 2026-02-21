@@ -25,22 +25,47 @@ logger.log('CAW API Server Starting...')
 logger.log('Configuration loaded from config.json')
 
 // Add process-level error handlers to prevent crashes
-process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', error)
-  logger.log(`Uncaught Exception: ${error.message}`)
-  logger.log(`Stack: ${error.stack}`)
+// This prevents the entire server from crashing when a single service fails
+process.on('uncaughtException', (error: any) => {
+  console.error('==========================================')
+  console.error('[Server] Uncaught Exception Handler Called!')
+  console.error('[Server] Error:', error.message || error)
+  console.error('==========================================')
+  logger.log(`Uncaught Exception: ${error.message || JSON.stringify(error)}`)
 
-  // Log but don't exit - let the service continue running
-  // The individual services should handle their own errors
-  console.log('Service continuing despite uncaught exception...')
+  // Special handling for WebSocket/network errors - don't crash the server
+  const errorStr = error.message || JSON.stringify(error)
+  const errorCode = error.code || ''
+
+  if (errorStr.includes('429') ||
+      errorStr.includes('Unexpected server response') ||
+      errorStr.includes('WebSocket') ||
+      errorCode === 'ECONNREFUSED' ||
+      errorCode === 'ETIMEDOUT' ||
+      errorCode === 'ENOTFOUND' ||
+      errorCode === 'ENETUNREACH' ||
+      errorStr.includes('rate limit')) {
+    console.log('[Server] Network/rate limit error detected - services will retry')
+    logger.log('Network error detected - API server continuing with degraded functionality')
+    // Explicitly prevent exit - services have retry logic
+    return
+  }
+
+  // For other errors, log but don't crash
+  console.error('[Server] Error stack:', error.stack)
+  logger.log(`Stack: ${error.stack || 'No stack trace'}`)
+  console.log('[Server] Continuing despite uncaught exception - check logs')
 })
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason)
-  logger.log(`Unhandled Rejection: ${reason}`)
+console.log('[Server] Uncaught exception handler registered')
 
-  // Log but don't exit
-  console.log('Service continuing despite unhandled rejection...')
+process.on('unhandledRejection', (reason, promise) => {
+  const reasonStr = reason instanceof Error ? reason.message : String(reason)
+  console.error('[Server] Unhandled Rejection:', reasonStr)
+  logger.log(`Unhandled Rejection: ${reasonStr}`)
+
+  // Don't crash on unhandled rejections either
+  console.log('[Server] Continuing despite unhandled rejection...')
 })
 
 runServices(config)

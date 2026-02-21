@@ -31,7 +31,7 @@ export const VALIDATOR_TIP = BigInt(import.meta.env.VITE_VALIDATOR_TIP || "10000
 
 
 /** natstat: EIP-712 domain */
-const DOMAIN: TypedDataDomain = {
+export const DOMAIN: TypedDataDomain = {
   name:               'Caw Protocol',
   version:            '1',
   chainId:            baseSepolia.id,
@@ -39,7 +39,7 @@ const DOMAIN: TypedDataDomain = {
 }
 
 /** natstat: EIP-712 types */
-const TYPES: Record<string, TypedDataField[]> = {
+export const TYPES: Record<string, TypedDataField[]> = {
   EIP712Domain: [
     { name: 'name',              type: 'string'  },
     { name: 'version',           type: 'string'  },
@@ -73,7 +73,7 @@ export type ActionParams = {
 /**
  * natstat: build the EIP-712 payload, mapping string→enum and inlining CLIENT_ID
  */
-function buildTypedData(params: ActionParams) {
+export function buildTypedData(params: ActionParams) {
   const code = ActionTypeMap[params.actionType]
   if (code === undefined) {
     throw new Error(`Unknown actionType "${params.actionType}"`)

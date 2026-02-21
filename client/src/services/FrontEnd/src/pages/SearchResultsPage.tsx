@@ -1,10 +1,11 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { useSearchParams, useNavigate, useLocation } from 'react-router-dom'
 import { apiFetch } from '~/api/client'
 import Feed from '~/components/Feed'
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { HiUsers, HiHashtag, HiCollection } from 'react-icons/hi'
+import { useMutePreferences } from '~/hooks/useMutePreferences'
 
 interface SearchResults {
   caws: any[]
@@ -25,11 +26,21 @@ const SearchResultsPage: React.FC<SearchResultsPageProps> = ({ defaultTab = 'all
   const { isDark } = useTheme()
   const navigate = useNavigate()
   const location = useLocation()
+  const { preferences } = useMutePreferences()
   const [activeTab, setActiveTab] = useState<'all' | 'caws' | 'users' | 'hashtags'>(defaultTab)
   const [results, setResults] = useState<SearchResults | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [previousTab, setPreviousTab] = useState<'all' | 'caws' | 'users' | 'hashtags'>(defaultTab)
+
+  // Filter users based on muted/blocked accounts
+  const filteredUsers = useMemo(() => {
+    if (!results?.users) return []
+    return results.users.filter(user =>
+      !preferences.mutedAccounts.includes(user.tokenId) &&
+      !preferences.blockedAccounts.includes(user.tokenId)
+    )
+  }, [results?.users, preferences.mutedAccounts, preferences.blockedAccounts])
 
   // Update activeTab based on URL path
   useEffect(() => {
@@ -178,14 +189,14 @@ const SearchResultsPage: React.FC<SearchResultsPageProps> = ({ defaultTab = 'all
           )}
 
           {/* Users Results */}
-          {(activeTab === 'all' || activeTab === 'users') && results?.users && results.users.length > 0 && (
+          {(activeTab === 'all' || activeTab === 'users') && filteredUsers.length > 0 && (
             <div>
               {activeTab === 'all' && (
                 <div className="flex items-center justify-between mb-3">
                   <h2 className={`text-lg font-semibold ${
                     isDark ? 'text-white' : 'text-gray-900'
                   }`}>Users</h2>
-                  {results.hasMoreUsers && (
+                  {results?.hasMoreUsers && (
                     <button
                       onClick={() => {
                         setActiveTab('users')
@@ -203,7 +214,7 @@ const SearchResultsPage: React.FC<SearchResultsPageProps> = ({ defaultTab = 'all
                 </div>
               )}
               <div className="space-y-3">
-                {results.users.map(user => (
+                {filteredUsers.map(user => (
                   <a
                     key={user.id}
                     href={`/profile/${user.username}`}
@@ -268,7 +279,7 @@ const SearchResultsPage: React.FC<SearchResultsPageProps> = ({ defaultTab = 'all
                 {results.hashtags.map(hashtag => (
                   <a
                     key={hashtag.tag}
-                    href={`/hashtag/${hashtag.tag}`}
+                    href={`/hashtags/${hashtag.tag}`}
                     className={`block p-4 rounded-lg transition ${
                       isDark
                         ? 'bg-white/5 hover:bg-white/10'
@@ -299,7 +310,7 @@ const SearchResultsPage: React.FC<SearchResultsPageProps> = ({ defaultTab = 'all
           )}
 
           {/* No Results */}
-          {results && results.caws.length === 0 && results.users.length === 0 && results.hashtags.length === 0 && (
+          {results && results.caws.length === 0 && filteredUsers.length === 0 && results.hashtags.length === 0 && (
             <div className={`text-center py-8 ${
               isDark ? 'text-white/60' : 'text-gray-600'
             }`}>

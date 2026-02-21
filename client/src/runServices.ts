@@ -7,6 +7,7 @@ import { validatorService } from './services/ValidatorService';
 import { frontEndService } from './services/FrontEnd';
 import { apiService } from './services/Api'
 import { dataCleanerService } from './services/DataCleaner';
+import { scheduledPostProcessorService } from './services/ScheduledPostProcessor';
 
 import delay from './tools/delay';
 
@@ -42,6 +43,7 @@ const availableServiceList: Service[] = [
   frontEndService,
   apiService,
   dataCleanerService,
+  scheduledPostProcessorService,
 ];
 
 const availableServices = new Map<string, Service>();
@@ -126,10 +128,10 @@ function runInstance(instance: InstanceReady): {stop(): Promise<void>} {
     let startResult: ReturnType<Service['start']>;
 
     while (alive) {
-      startResult = instance.service.start(instance.config);
-      stopService = async () => startResult.stop();
-
       try {
+        startResult = instance.service.start(instance.config);
+        stopService = async () => startResult.stop();
+
         await startResult.started;
         break;
       } catch (error) {
@@ -138,7 +140,10 @@ function runInstance(instance: InstanceReady): {stop(): Promise<void>} {
           error,
         );
 
-        startResult.stop().catch(console.error);
+        // Try to stop if startResult was created
+        if (startResult!) {
+          startResult.stop().catch(console.error);
+        }
 
         await delay(retryDelay);
         retryDelay *= 1.05;

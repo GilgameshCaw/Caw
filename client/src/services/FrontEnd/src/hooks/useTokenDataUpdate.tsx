@@ -1,6 +1,6 @@
 // client/src/services/FrontEnd/src/hooks/useTokenDataUpdate.tsx
 
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { useAccount, useReadContract } from "wagmi"
 import { Address } from "viem"
 import { baseSepolia, sepolia } from "wagmi/chains"
@@ -10,6 +10,7 @@ import { useTokenDataStore } from "~/store/tokenDataStore"
 import TOKENS from "~/constants/tokens"
 // import { useQuery } from "@tanstack/react-query"
 import { TokenData } from "~/types";
+import { apiFetch } from "~/api/client";
 
 interface RawToken {
   tokenId:       bigint
@@ -102,24 +103,46 @@ export default function useTokenDataUpdate() {
   useEffect(() => {
     if (!rawTokens || balancesLoading || !viewedAddress) return
 
-    const updated: TokenData[] = (rawTokens).map(l1Token => {
-      // const usdPrice = priceMap[meta.coingeckoId]?.usd ?? 0
-      const l2Token = l2TokenData!.find(item => item.tokenId === l1Token.tokenId);
+    // Async function to fetch min-cawonce for each token and update state
+    const updateTokensWithMinCawonce = async () => {
+      const updated: TokenData[] = await Promise.all((rawTokens).map(async l1Token => {
+        const l2Token = l2TokenData!.find(item => item.tokenId === l1Token.tokenId);
+        const onChainCawonce = Number(l2Token!.nextCawonce);
 
-      return {
-        tokenId:      Number(l1Token.tokenId),
-        username:     l1Token.username,
-        withdrawable: l1Token.withdrawable,
-        ownerBalance: l1Token.ownerBalance,
-        address: viewedAddress!,
-        owner: l1Token.owner!,
-        stakedAmount:   l2Token!.cawBalance,
-        cawonce:      Number(l2Token!.nextCawonce),
+        // Fetch min-cawonce from API to account for scheduled posts
+        let effectiveCawonce = onChainCawonce;
+        try {
+          const minCawonceResponse = await apiFetch(`/api/users/min-cawonce/${Number(l1Token.tokenId)}`);
+          if (minCawonceResponse.minSafeCawonce !== null) {
+            // Use the higher of on-chain cawonce or min safe cawonce from scheduled posts
+            effectiveCawonce = Math.max(onChainCawonce, minCawonceResponse.minSafeCawonce);
+            if (effectiveCawonce > onChainCawonce) {
+              console.log(`[cawonce] Token ${l1Token.tokenId}: Using min safe cawonce ${effectiveCawonce} (on-chain: ${onChainCawonce}) due to scheduled posts`);
+            }
+          }
+        } catch (err) {
+          // If API fails, fall back to on-chain value
+          console.warn(`Failed to fetch min-cawonce for token ${l1Token.tokenId}:`, err);
+        }
+
+        return {
+          tokenId:      Number(l1Token.tokenId),
+          username:     l1Token.username,
+          withdrawable: l1Token.withdrawable,
+          ownerBalance: l1Token.ownerBalance,
+          address: viewedAddress!,
+          owner: l1Token.owner!,
+          stakedAmount:   l2Token!.cawBalance,
+          cawonce:      effectiveCawonce,
+        }
+      }));
+
+      if (rawTokens.length > 0) {
+        setTokensForAddress(viewedAddress as Address, updated);
       }
-    })
+    };
 
-    if (rawTokens.length > 0)
-      setTokensForAddress(viewedAddress as Address, updated)
+    updateTokensWithMinCawonce();
 
   }, [rawTokens, l2TokenData, viewedAddress, setTokensForAddress, balancesLoading])
 

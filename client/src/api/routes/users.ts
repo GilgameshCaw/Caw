@@ -50,6 +50,119 @@ router.get('/follow-status', async (req, res) => {
 })
 
 /**
+ * GET /api/users/by-token/:tokenId
+ * Returns user profile data by tokenId
+ * IMPORTANT: This route must be defined BEFORE /:username to avoid conflicts
+ */
+router.get('/by-token/:tokenId', async (req, res) => {
+  try {
+    const tokenId = Number(req.params.tokenId)
+
+    if (!tokenId || isNaN(tokenId)) {
+      return res.status(400).json({ error: 'Invalid tokenId' })
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { tokenId },
+      select: {
+        tokenId: true,
+        username: true,
+        displayName: true,
+        avatarUrl: true,
+        image: true,
+      }
+    })
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' })
+    }
+
+    return res.json(user)
+  } catch (err: any) {
+    console.error('GET /api/users/by-token/:tokenId error', err)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
+ * GET /api/users/min-cawonce/:tokenId
+ * Returns the minimum safe cawonce for a user (accounting for scheduled posts)
+ * This helps prevent cawonce collisions when a user has scheduled posts
+ * IMPORTANT: This route must be defined BEFORE /:username to avoid conflicts
+ */
+router.get('/min-cawonce/:tokenId', async (req, res) => {
+  try {
+    const tokenId = Number(req.params.tokenId)
+
+    if (!tokenId || isNaN(tokenId)) {
+      return res.status(400).json({ error: 'Invalid tokenId' })
+    }
+
+    // Find the highest cawonce used by any pending scheduled post for this user
+    const maxScheduledCawonce = await prisma.scheduledCaw.aggregate({
+      where: {
+        userId: tokenId,
+        status: 'pending',
+        cawonce: { not: null }
+      },
+      _max: {
+        cawonce: true
+      }
+    })
+
+    // The minimum safe cawonce is one higher than the highest scheduled cawonce
+    // If no scheduled posts, return null (frontend should use on-chain value)
+    const minSafeCawonce = maxScheduledCawonce._max.cawonce !== null
+      ? maxScheduledCawonce._max.cawonce + 1
+      : null
+
+    return res.json({
+      minSafeCawonce,
+      hasScheduledPosts: maxScheduledCawonce._max.cawonce !== null
+    })
+  } catch (err: any) {
+    console.error('GET /api/users/min-cawonce/:tokenId error', err)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
+ * GET /api/users/by-address/:address
+ * Returns user profile data by wallet address
+ * IMPORTANT: This route must be defined BEFORE /:username to avoid conflicts
+ */
+router.get('/by-address/:address', async (req, res) => {
+  try {
+    const { address } = req.params
+    const normalizedAddress = address.toLowerCase()
+
+    // Fetch user by address
+    const user = await prisma.user.findFirst({
+      where: { address: normalizedAddress },
+      select: {
+        address: true,
+        tokenId: true,
+        username: true,
+        image: true,
+        displayName: true,
+        avatarUrl: true,
+        bio: true,
+        createdAt: true,
+      }
+    })
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' })
+    }
+
+    return res.json(user)
+  } catch (err: any) {
+    console.error('GET /api/users/by-address/:address error', err)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
  * GET /api/users/:username
  * Returns user profile data with accurate counts
  */
@@ -62,7 +175,6 @@ router.get('/:username', async (req, res) => {
     const user = await prisma.user.findUnique({
       where: { username },
       select: {
-        id: true,
         address: true,
         tokenId: true,
         username: true,
@@ -182,7 +294,6 @@ router.get('/:username/followers', async (req, res) => {
       include: {
         follower: {
           select: {
-            id: true,
             tokenId: true,
             username: true,
             image: true,
@@ -271,7 +382,6 @@ router.get('/:username/following', async (req, res) => {
       include: {
         following: {
           select: {
-            id: true,
             tokenId: true,
             username: true,
             image: true,

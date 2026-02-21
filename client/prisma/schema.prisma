@@ -233,6 +233,8 @@ model ScheduledCaw {
   publishedId Int?     // ID of the published caw
   imageData   String?  @db.Text // Base64 encoded image data
   hasImage    Boolean  @default(false)
+  signedAction Json?   // Signed EIP-712 action data for processing at scheduled time
+  cawonce     Int?     // Reserved cawonce for this scheduled post (to prevent collisions)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -241,6 +243,7 @@ model ScheduledCaw {
   @@index([userId])
   @@index([scheduledAt])
   @@index([status])
+  @@index([userId, status, cawonce]) // Index for finding max reserved cawonce
 }
 
 enum NotificationType {
@@ -288,9 +291,9 @@ enum ConversationType {
 
 model XmtpIdentity {
   id               Int      @id @default(autoincrement())
-  userId           Int      @unique // CAW user token ID
-  walletAddress    String   @unique // Ethereum wallet address
-  installationId   String   @unique // XMTP installation ID
+  userId           Int      @unique // CAW user token ID - each user has one XMTP record
+  walletAddress    String   // Ethereum wallet address - can be shared by multiple users
+  installationId   String   // XMTP installation ID - can be shared by multiple users
   identityKey      String   // Public identity key for XMTP
   preKeys          Json     // Pre-keys for offline messaging
   signedPreKey     Json     // Signed pre-key
@@ -310,7 +313,7 @@ model XmtpIdentity {
 model Conversation {
   id               String   @id @default(uuid())
   type             ConversationType
-  topic            String   @unique // XMTP conversation topic
+  topic            String   // XMTP conversation topic - can be shared by multiple user pairs from same wallet
   name             String?  // Group name (for groups)
   description      String?  // Group description
   avatarUrl        String?  // Group avatar
@@ -324,6 +327,7 @@ model Conversation {
   participants     ConversationParticipant[]
   messages         Message[]
 
+  @@index([topic])
   @@index([lastMessageAt])
   @@index([creatorId])
 }
@@ -401,4 +405,40 @@ model WithdrawalRequest {
   @@index([userId, status])
   @@index([status])
   @@index([cawonce])
+}
+
+// Muted threads - silences notifications for a thread
+model MutedThread {
+  id        Int      @id @default(autoincrement())
+  userId    Int      // token ID of the user who muted the thread
+  cawId     Int      // The root caw of the thread being muted
+  createdAt DateTime @default(now())
+
+  @@unique([userId, cawId])
+  @@index([userId])
+  @@index([cawId])
+}
+
+// Muted accounts - hides posts and silences notifications from the muted user
+model MutedAccount {
+  id            Int      @id @default(autoincrement())
+  userId        Int      // token ID of the user who muted the account
+  mutedUserId   Int      // token ID of the muted user
+  createdAt     DateTime @default(now())
+
+  @@unique([userId, mutedUserId])
+  @@index([userId])
+  @@index([mutedUserId])
+}
+
+// Blocked accounts - prevents all interaction with the blocked user
+model BlockedAccount {
+  id              Int      @id @default(autoincrement())
+  userId          Int      // token ID of the user who blocked the account
+  blockedUserId   Int      // token ID of the blocked user
+  createdAt       DateTime @default(now())
+
+  @@unique([userId, blockedUserId])
+  @@index([userId])
+  @@index([blockedUserId])
 }

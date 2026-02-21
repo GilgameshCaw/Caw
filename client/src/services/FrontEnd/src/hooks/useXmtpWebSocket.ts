@@ -3,7 +3,7 @@ import { io, Socket } from 'socket.io-client'
 import { useQueryClient } from '@tanstack/react-query'
 import { generateToken } from '~/api/auth'
 
-const SOCKET_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000'
+const SOCKET_URL = import.meta.env.VITE_API_HOST || 'http://localhost:4000'
 
 interface UseXmtpWebSocketParams {
   userId?: number
@@ -21,14 +21,19 @@ export function useXmtpWebSocket({ userId, username, enabled = true }: UseXmtpWe
     // Generate auth token for WebSocket
     const token = generateToken({ userId, username })
 
+    console.log('[XMTP-WS Client] Connecting to:', SOCKET_URL, 'with path: /xmtp-ws/')
+    console.log('[XMTP-WS Client] Token:', token)
+
     socketRef.current = io(SOCKET_URL, {
-      path: '/xmtp-ws',
+      path: '/xmtp-ws/',
       auth: { token },
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 5,
       reconnectionDelay: 1000
     })
+
+    console.log('[XMTP-WS Client] Socket.IO instance created')
 
     const socket = socketRef.current
 

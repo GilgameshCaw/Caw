@@ -118,6 +118,16 @@ const Sidebar: React.FC = () => {
           </NavLink>
 
           <NavLink
+            to="/scheduled"
+            className={({ isActive }) =>
+              `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+            }
+          >
+            <HiOutlineClock className="w-7 h-7 sm:w-7 sm:h-7" />
+            <span className="font-medium text-lg sm:text-lg">Scheduled</span>
+          </NavLink>
+
+          <NavLink
             to="/staking"
             className={({ isActive }) =>
               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`

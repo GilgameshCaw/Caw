@@ -1,5 +1,5 @@
 import path from "path";
-import { defineConfig } from "vite";
+import { defineConfig, Plugin } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react-swc";
 import svgr from "vite-plugin-svgr";
@@ -7,6 +7,22 @@ import commonjs from '@rollup/plugin-commonjs';
 
 import tsconfigPaths from "vite-tsconfig-paths";
 import { ViteImageOptimizer } from "vite-plugin-image-optimizer";
+
+// Plugin to add COEP headers to worker responses
+function coepHeadersPlugin(): Plugin {
+  return {
+    name: 'configure-server',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        // Apply headers to all responses, including workers
+        res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
+        res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+        res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+        next();
+      });
+    }
+  };
+}
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -39,6 +55,14 @@ export default defineConfig({
   },
   server: {
     allowedHosts: ["local.caw.com"],
+    headers: {
+      // Required for XMTP Browser SDK to use Origin Private File System (OPFS)
+      // These headers enable cross-origin isolation for OPFS and SharedArrayBuffer
+      "Cross-Origin-Embedder-Policy": "credentialless",
+      "Cross-Origin-Opener-Policy": "same-origin",
+      // Allow resources to be loaded by this document
+      "Cross-Origin-Resource-Policy": "cross-origin",
+    },
     proxy: {
       '/api': {
         target: 'http://localhost:4000',
@@ -47,6 +71,7 @@ export default defineConfig({
     }
   },
   plugins: [
+    coepHeadersPlugin(),
     tailwindcss(),
     react(),
     svgr(),

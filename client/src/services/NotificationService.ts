@@ -4,6 +4,163 @@ import { elasticsearchService } from './ElasticsearchService'
 
 export class NotificationService {
   /**
+   * Get the root thread ID for a caw (follows parent chain to find root)
+   */
+  static async getThreadRootId(cawId: number): Promise<number> {
+    let currentId = cawId
+    let maxDepth = 100 // Prevent infinite loops
+
+    while (maxDepth > 0) {
+      const caw = await prisma.caw.findUnique({
+        where: { id: currentId },
+        select: { id: true, originalCawId: true }
+      })
+
+      if (!caw || !caw.originalCawId) {
+        return currentId // This is the root
+      }
+
+      currentId = caw.originalCawId
+      maxDepth--
+    }
+
+    return currentId
+  }
+
+  /**
+   * Check if a user has muted a thread containing this caw
+   */
+  static async isThreadMutedForUser(userId: number, cawId: number): Promise<boolean> {
+    const threadRootId = await this.getThreadRootId(cawId)
+
+    // Check if user has muted any caw in this thread's ancestry
+    // We check the root and the caw itself
+    const mutedThread = await prisma.mutedThread.findFirst({
+      where: {
+        userId,
+        cawId: { in: [threadRootId, cawId] }
+      }
+    })
+
+    return !!mutedThread
+  }
+
+  /**
+   * Check if a user has muted or blocked another user
+   * Returns true if the actor should not be able to send notifications to the user
+   */
+  static async isUserMutedOrBlocked(userId: number, actorId: number): Promise<boolean> {
+    // Check if actor is muted
+    const muted = await prisma.mutedAccount.findUnique({
+      where: {
+        userId_mutedUserId: { userId, mutedUserId: actorId }
+      }
+    })
+    if (muted) return true
+
+    // Check if actor is blocked
+    const blocked = await prisma.blockedAccount.findUnique({
+      where: {
+        userId_blockedUserId: { userId, blockedUserId: actorId }
+      }
+    })
+    return !!blocked
+  }
+
+  // --- Muted Account Management ---
+
+  /**
+   * Mute an account for a user
+   */
+  static async muteAccount(userId: number, mutedUserId: number): Promise<void> {
+    await prisma.mutedAccount.upsert({
+      where: {
+        userId_mutedUserId: { userId, mutedUserId }
+      },
+      create: { userId, mutedUserId },
+      update: {}
+    })
+  }
+
+  /**
+   * Unmute an account for a user
+   */
+  static async unmuteAccount(userId: number, mutedUserId: number): Promise<void> {
+    await prisma.mutedAccount.deleteMany({
+      where: { userId, mutedUserId }
+    })
+  }
+
+  /**
+   * Get all muted accounts for a user
+   */
+  static async getMutedAccounts(userId: number): Promise<number[]> {
+    const muted = await prisma.mutedAccount.findMany({
+      where: { userId },
+      select: { mutedUserId: true }
+    })
+    return muted.map(m => m.mutedUserId)
+  }
+
+  /**
+   * Check if an account is muted
+   */
+  static async isAccountMuted(userId: number, mutedUserId: number): Promise<boolean> {
+    const muted = await prisma.mutedAccount.findUnique({
+      where: {
+        userId_mutedUserId: { userId, mutedUserId }
+      }
+    })
+    return !!muted
+  }
+
+  // --- Blocked Account Management ---
+
+  /**
+   * Block an account for a user
+   */
+  static async blockAccount(userId: number, blockedUserId: number): Promise<void> {
+    await prisma.blockedAccount.upsert({
+      where: {
+        userId_blockedUserId: { userId, blockedUserId }
+      },
+      create: { userId, blockedUserId },
+      update: {}
+    })
+  }
+
+  /**
+   * Unblock an account for a user
+   */
+  static async unblockAccount(userId: number, blockedUserId: number): Promise<void> {
+    await prisma.blockedAccount.deleteMany({
+      where: { userId, blockedUserId }
+    })
+  }
+
+  /**
+   * Get all blocked accounts for a user
+   */
+  static async getBlockedAccounts(userId: number): Promise<number[]> {
+    const blocked = await prisma.blockedAccount.findMany({
+      where: { userId },
+      select: { blockedUserId: true }
+    })
+    return blocked.map(b => b.blockedUserId)
+  }
+
+  /**
+   * Check if an account is blocked
+   */
+  static async isAccountBlocked(userId: number, blockedUserId: number): Promise<boolean> {
+    const blocked = await prisma.blockedAccount.findUnique({
+      where: {
+        userId_blockedUserId: { userId, blockedUserId }
+      }
+    })
+    return !!blocked
+  }
+  /**
    * Extract @mentions from a caw content
    */
   static extractMentions(content: string): string[] {
@@ -34,8 +191,17 @@ export class NotificationService {
       }
     })
 
+    // Filter out users who have muted or blocked the actor
+    const filteredUsers = []
+    for (const user of mentionedUsers) {
+      const isMutedOrBlocked = await this.isUserMutedOrBlocked(user.tokenId, actorId)
+      if (!isMutedOrBlocked) {
+        filteredUsers.push(user)
+      }
+    }
+
     // Create notifications for each mentioned user
-    const notifications = mentionedUsers.map(user => ({
+    const notifications = filteredUsers.map(user => ({
       userId: user.tokenId,
       actorId,
       type: NotificationType.MENTION,
@@ -57,6 +223,11 @@ export class NotificationService {
     // Don't notify if user follows themselves
     if (followedId === followerId) return
 
+    // Check if the recipient has muted or blocked the actor
+    if (await this.isUserMutedOrBlocked(followedId, followerId)) {
+      return // User is muted/blocked, don't send notification
+    }
+
     await prisma.notification.create({
       data: {
         userId: followedId,
@@ -77,6 +248,16 @@ export class NotificationService {
     })
 
     if (!caw || caw.userId === likerId) return // Don't notify for self-likes
+
+    // Check if the recipient has muted or blocked the actor
+    if (await this.isUserMutedOrBlocked(caw.userId, likerId)) {
+      return // User is muted/blocked, don't send notification
+    }
+
+    // Check if the recipient has muted this thread
+    if (await this.isThreadMutedForUser(caw.userId, cawId)) {
+      return // Thread is muted, don't send notification
+    }
 
     // Check if notification already exists to avoid duplicates
     const existing = await prisma.notification.findFirst({
@@ -113,6 +294,16 @@ export class NotificationService {
 
     if (!parentCaw || parentCaw.userId === replierId) return // Don't notify for self-replies
 
+    // Check if the recipient has muted or blocked the actor
+    if (await this.isUserMutedOrBlocked(parentCaw.userId, replierId)) {
+      return // User is muted/blocked, don't send notification
+    }
+
+    // Check if the recipient has muted this thread
+    if (await this.isThreadMutedForUser(parentCaw.userId, parentCawId)) {
+      return // Thread is muted, don't send notification
+    }
+
     await prisma.notification.create({
       data: {
         userId: parentCaw.userId,
@@ -134,6 +325,16 @@ export class NotificationService {
     })
 
     if (!originalCaw || originalCaw.userId === reposterId) return // Don't notify for self-reposts
+
+    // Check if the recipient has muted or blocked the actor
+    if (await this.isUserMutedOrBlocked(originalCaw.userId, reposterId)) {
+      return // User is muted/blocked, don't send notification
+    }
+
+    // Check if the recipient has muted this thread
+    if (await this.isThreadMutedForUser(originalCaw.userId, originalCawId)) {
+      return // Thread is muted, don't send notification
+    }
 
     await prisma.notification.create({
       data: {
@@ -157,6 +358,16 @@ export class NotificationService {
     })
 
     if (!originalCaw || originalCaw.userId === quoterId) return // Don't notify for self-quotes
+
+    // Check if the recipient has muted or blocked the actor
+    if (await this.isUserMutedOrBlocked(originalCaw.userId, quoterId)) {
+      return // User is muted/blocked, don't send notification
+    }
+
+    // Check if the recipient has muted this thread
+    if (await this.isThreadMutedForUser(originalCaw.userId, originalCawId)) {
+      return // Thread is muted, don't send notification
+    }
 
     await prisma.notification.create({
       data: {
@@ -200,5 +411,50 @@ export class NotificationService {
         isRead: false
       }
     })
+  }
+
+  /**
+   * Mute a thread for a user (no notifications from this thread)
+   */
+  static async muteThread(userId: number, cawId: number): Promise<void> {
+    await prisma.mutedThread.upsert({
+      where: {
+        userId_cawId: { userId, cawId }
+      },
+      create: { userId, cawId },
+      update: {} // No update needed, just ensure it exists
+    })
+  }
+
+  /**
+   * Unmute a thread for a user
+   */
+  static async unmuteThread(userId: number, cawId: number): Promise<void> {
+    await prisma.mutedThread.deleteMany({
+      where: { userId, cawId }
+    })
+  }
+
+  /**
+   * Get all muted threads for a user
+   */
+  static async getMutedThreads(userId: number): Promise<number[]> {
+    const mutedThreads = await prisma.mutedThread.findMany({
+      where: { userId },
+      select: { cawId: true }
+    })
+    return mutedThreads.map(t => t.cawId)
+  }
+
+  /**
+   * Check if a specific thread is muted by a user
+   */
+  static async isThreadMuted(userId: number, cawId: number): Promise<boolean> {
+    const muted = await prisma.mutedThread.findUnique({
+      where: {
+        userId_cawId: { userId, cawId }
+      }
+    })
+    return !!muted
   }
 }

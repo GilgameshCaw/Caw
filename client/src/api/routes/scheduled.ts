@@ -44,7 +44,7 @@ router.get('/', async (req, res) => {
 
 /**
  * POST /api/scheduled
- * Create a new scheduled caw
+ * Create a new scheduled caw with signed action data
  */
 router.post('/', async (req, res) => {
   try {
@@ -54,10 +54,14 @@ router.post('/', async (req, res) => {
       return res.status(401).json({ error: 'User not authenticated' })
     }
 
-    const { content, scheduledAt, imageData } = req.body
+    const { content, scheduledAt, imageData, signedAction } = req.body
 
     if (!content || !scheduledAt) {
       return res.status(400).json({ error: 'Content and scheduled time are required' })
+    }
+
+    if (!signedAction || !signedAction.signature) {
+      return res.status(400).json({ error: 'Signed action data is required' })
     }
 
     // Validate scheduled time is in the future
@@ -66,13 +70,22 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Scheduled time must be in the future' })
     }
 
+    // Extract cawonce from the signed action data
+    const cawonce = signedAction.data?.cawonce
+    if (cawonce === undefined || cawonce === null) {
+      return res.status(400).json({ error: 'Signed action must include cawonce' })
+    }
+
     const scheduled = await prisma.scheduledCaw.create({
       data: {
         userId,
         content,
         scheduledAt: scheduledDate,
         imageData,
-        hasImage: !!imageData
+        hasImage: !!imageData,
+        // Store the signed action for later processing
+        signedAction: signedAction as any,
+        cawonce: cawonce // Store cawonce separately for collision detection
       },
       include: {
         user: true

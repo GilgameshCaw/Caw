@@ -46,19 +46,33 @@ const ProfileChooser: React.FC = () => {
     };
   }, [isDropdownOpen]);
 
-  if (hasHydrated && !selectedToken)
+  if (hasHydrated && !selectedToken) {
+    // Check if there are ANY profiles in the browser
+    const hasAnyProfiles = Object.values(tokensByAddress).some(tokens => tokens.length > 0);
+
+    // If no wallet connected and no profiles exist, show "Connect Wallet"
+    if (!isConnected && !hasAnyProfiles) {
+      return (
+        <div className="mb-2">
+          <ConnectButton />
+        </div>
+      );
+    }
+
+    // Otherwise show "create your profile"
     return (
       <div className="mb-2">
-      <a href="/mint" className={`inline-flex items-center gap-2 px-4 py-3 rounded-2xl transition-all duration-200 font-medium text-sm shadow-lg hover:shadow-xl hover:scale-105 ${
-        isDark
-          ? 'bg-white/10 text-white border border-white/20 hover:bg-white/20 hover:border-white/30'
-          : 'bg-gray-200 text-black border border-gray-300 hover:bg-gray-300 hover:border-gray-400'
-      }`}>
-        <span className="text-lg">+</span>
-        create your profile
-      </a>
+        <a href="/mint" className={`inline-flex items-center gap-2 px-4 py-3 rounded-2xl transition-all duration-200 font-medium text-sm shadow-lg hover:shadow-xl hover:scale-105 ${
+          isDark
+            ? 'bg-white/10 text-white border border-white/20 hover:bg-white/20 hover:border-white/30'
+            : 'bg-gray-200 text-black border border-gray-300 hover:bg-gray-300 hover:border-gray-400'
+        }`}>
+          <span className="text-lg">+</span>
+          create your profile
+        </a>
       </div>
     );
+  }
 
   // --- handlers ---
   const toggleDropdown = () => setDropdownOpen(open => !open);

@@ -45,3 +45,24 @@ export function formatUsageCount(count: number): string {
 export function formatEngagementCount(count: number): string {
   return formatLargeNumber(count)
 }
+
+/**
+ * Format CAW token amounts (converts from wei to human readable)
+ * @param amount - The amount in wei as string or bigint
+ * @returns Formatted string with CAW suffix (e.g., "1.5M CAW")
+ */
+export function formatCAWAmount(amount: string | bigint): string {
+  if (!amount || amount === '0') return '0 CAW'
+
+  // Convert to bigint if string
+  const amountBigInt = typeof amount === 'string' ? BigInt(amount) : amount
+
+  // Convert from wei (18 decimals) to whole CAW
+  const cawAmount = Number(amountBigInt) / 1e18
+
+  if (cawAmount < 1) {
+    return cawAmount.toFixed(2) + ' CAW'
+  }
+
+  return formatLargeNumber(Math.floor(cawAmount)) + ' CAW'
+}

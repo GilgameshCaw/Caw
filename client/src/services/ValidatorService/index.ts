@@ -41,21 +41,8 @@ export const validatorService: Service = {
     let cawActions: Contract
     let iface: any
 
-    // Add global error handler for WebSocket-related uncaught exceptions
-    const handleUncaughtException = (error: Error) => {
-      if (error.message?.includes('WebSocket was closed') ||
-          error.message?.includes('provider destroyed') ||
-          error.message?.includes('UNSUPPORTED_OPERATION')) {
-        console.log('[Validator] Caught WebSocket error (non-fatal):', error.message)
-        console.log('[Validator] Connection will be reinitialized on next operation')
-        // Don't crash the process
-      } else {
-        // Re-throw other errors as they might be important
-        console.error('[Validator] Uncaught exception:', error)
-        throw error
-      }
-    }
-    process.on('uncaughtException', handleUncaughtException)
+    // Note: Uncaught exception handling is done at the process level in programs/start.ts
+    // No need for service-specific handlers
 
     // Function to initialize/reinitialize the WebSocket connection
     async function initializeConnection() {
@@ -110,28 +97,62 @@ export const validatorService: Service = {
         }
       }
 
-      // Create new provider
-      provider = new WebSocketProvider(l2RpcUrl)
-      wallet = new Wallet(privateKey, provider)
-      cawActions = new Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi, wallet)
-      iface = cawActions.interface
-
-      // Wait for the provider to be ready
+      // Create new provider with error handling
       try {
-        await provider.getNetwork()
-        console.log('[Validator] WebSocket connection initialized and ready')
+        provider = new WebSocketProvider(l2RpcUrl)
+
+        // Add error handler to the WebSocket immediately to catch connection errors
+        const ws = (provider as any)._websocket || (provider as any).websocket
+        if (ws) {
+          ws.on('error', (error: Error) => {
+            if (error.message?.includes('429')) {
+              console.log('[Validator] WebSocket rate limited (429), will retry later')
+            } else {
+              console.log('[Validator] WebSocket error:', error.message)
+            }
+          })
+        }
+
+        wallet = new Wallet(privateKey, provider)
+        cawActions = new Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi, wallet)
+        iface = cawActions.interface
+
+        // Wait for the provider to be ready
+        try {
+          await provider.getNetwork()
+          console.log('[Validator] WebSocket connection initialized and ready')
+        } catch (e: any) {
+          console.log('[Validator] WebSocket connection initialized (network check failed, will retry):', e.message)
+        }
       } catch (e: any) {
-        console.log('[Validator] WebSocket connection initialized (network check failed, will retry):', e.message)
+        console.log('[Validator] Error creating WebSocket provider:', e.message)
+        // Create a dummy provider to prevent errors
+        provider = null as any
       }
     }
 
     // Initialize connection
-    initializeConnection()
+    initializeConnection().catch(e => {
+      console.log('[Validator] Error during initial connection, will retry:', e.message)
+    })
 
     let timer: NodeJS.Timeout
 
     /** natstat: load all pending queue entries */
     async function fetchPendingQueue() {
+      // First, reset any 'processing' entries older than 2 minutes (likely stale from crash)
+      const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000)
+      const resetCount = await prisma.txQueue.updateMany({
+        where: {
+          status: 'processing',
+          updatedAt: { lt: twoMinutesAgo }
+        },
+        data: { status: 'pending' }
+      })
+      if (resetCount.count > 0) {
+        console.log(`[Validator] Reset ${resetCount.count} stale 'processing' entries back to 'pending'`)
+      }
+
       return prisma.txQueue.findMany({
         where: { status: 'pending' },
         orderBy: { createdAt: 'asc' },
@@ -416,14 +437,31 @@ export const validatorService: Service = {
       validatorId: number,
       multiData: { actions: any[]; v: number[]; r: string[]; s: string[] },
       messagingFee: bigint,
-      rawGasLimit: bigint
+      rawGasLimit: bigint,
+      retryCount: number = 0
     ) {
+      const maxRetries = 3
+      const gasBumpPercent = 15 // Increase gas by 15% on each retry
+
       console.log("will submit ", multiData.actions.length, multiData)
-      console.log("[submitProcessActions] Getting fee data...")
+      console.log("[submitProcessActions] Getting fee data..." + (retryCount > 0 ? ` (retry ${retryCount}/${maxRetries})` : ''))
       const feeData = await provider.getFeeData();
+
+      // Bump gas fees on retry to handle REPLACEMENT_UNDERPRICED errors
+      let maxFeePerGas = feeData.maxFeePerGas ?? BigInt(0)
+      let maxPriorityFeePerGas = feeData.maxPriorityFeePerGas ?? BigInt(0)
+
+      if (retryCount > 0) {
+        const multiplier = BigInt(100 + (gasBumpPercent * retryCount))
+        maxFeePerGas = (maxFeePerGas * multiplier) / BigInt(100)
+        maxPriorityFeePerGas = (maxPriorityFeePerGas * multiplier) / BigInt(100)
+        console.log(`[submitProcessActions] Bumped gas fees by ${gasBumpPercent * retryCount}% for retry`)
+      }
+
       console.log("[submitProcessActions] Fee data:", {
-        maxFeePerGas: feeData.maxFeePerGas?.toString(),
-        maxPriorityFeePerGas: feeData.maxPriorityFeePerGas?.toString()
+        maxFeePerGas: maxFeePerGas.toString(),
+        maxPriorityFeePerGas: maxPriorityFeePerGas.toString(),
+        retryCount
       })
 
       console.log("[submitProcessActions] Sending transaction with params:", {
@@ -434,42 +472,74 @@ export const validatorService: Service = {
         gasLimit: rawGasLimit.toString()
       })
 
-      // sendTransaction
-      const tx = await wallet.sendTransaction({
-        to:    CAW_ACTIONS_ADDRESS,
-        data:  iface.encodeFunctionData('processActions', [
-          validatorId,
-          { actions: multiData.actions, v: multiData.v, r: multiData.r, s: multiData.s },
-          0
-        ]),
-        value: messagingFee,
-        gasLimit: rawGasLimit,
-        maxFeePerGas: feeData.maxFeePerGas,
-        maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
-      })
-      console.log("[submitProcessActions] Transaction sent! Hash:", tx.hash)
-      console.log("[submitProcessActions] Waiting for confirmation...")
+      try {
+        // sendTransaction
+        const tx = await wallet.sendTransaction({
+          to:    CAW_ACTIONS_ADDRESS,
+          data:  iface.encodeFunctionData('processActions', [
+            validatorId,
+            { actions: multiData.actions, v: multiData.v, r: multiData.r, s: multiData.s },
+            0
+          ]),
+          value: messagingFee,
+          gasLimit: rawGasLimit,
+          maxFeePerGas,
+          maxPriorityFeePerGas,
+        })
+        console.log("[submitProcessActions] Transaction sent! Hash:", tx.hash)
+        console.log("[submitProcessActions] Waiting for confirmation...")
 
-      const receipt = await tx.wait()
-      console.log("[submitProcessActions] Transaction confirmed! Block:", receipt?.blockNumber, "Status:", receipt?.status)
+        const receipt = await tx.wait()
+        console.log("[submitProcessActions] Transaction confirmed! Block:", receipt?.blockNumber, "Status:", receipt?.status)
 
-      const evt = receipt?.logs
-        ?.map(log => { try { return iface.parseLog(log) } catch { return null } })
-        ?.find(x => x?.name === 'ActionsProcessed')
+        const evt = receipt?.logs
+          ?.map(log => { try { return iface.parseLog(log) } catch { return null } })
+          ?.find(x => x?.name === 'ActionsProcessed')
 
-      if (!evt) {
-        console.error("[submitProcessActions] ActionsProcessed event missing from receipt!")
-        console.error("[submitProcessActions] Receipt logs:", receipt?.logs)
-        throw new Error('ActionsProcessed event missing')
+        if (!evt) {
+          console.error("[submitProcessActions] ActionsProcessed event missing from receipt!")
+          console.error("[submitProcessActions] Receipt logs:", receipt?.logs)
+          throw new Error('ActionsProcessed event missing')
+        }
+
+        console.log("[submitProcessActions] ActionsProcessed event found:", evt.args)
+        const processed = (evt.args.actions as any[]).map(a => ({
+          senderId:     Number(a.senderId),
+          cawonce:      Number(a.cawonce)
+        }))
+        console.log("[submitProcessActions] Processed actions:", processed)
+        return processed
+      } catch (err: any) {
+        // Handle REPLACEMENT_UNDERPRICED - retry with higher gas
+        if (err.code === 'REPLACEMENT_UNDERPRICED' || err.message?.includes('replacement transaction underpriced')) {
+          if (retryCount < maxRetries) {
+            console.log(`[submitProcessActions] REPLACEMENT_UNDERPRICED error - retrying with higher gas (attempt ${retryCount + 1}/${maxRetries})`)
+            // Wait a moment for the mempool to update
+            await new Promise(resolve => setTimeout(resolve, 1000))
+            return submitProcessActions(validatorId, multiData, messagingFee, rawGasLimit, retryCount + 1)
+          } else {
+            console.error(`[submitProcessActions] Max retries (${maxRetries}) exceeded for REPLACEMENT_UNDERPRICED error`)
+          }
+        }
+
+        // Handle "already known" - transaction is already in mempool, wait for it
+        if (err.code === 'ALREADY_KNOWN' || err.message?.includes('already known')) {
+          console.log('[submitProcessActions] Transaction already known in mempool - waiting for confirmation...')
+          // Wait and check if it gets mined
+          await new Promise(resolve => setTimeout(resolve, 5000))
+          // The transaction might have been mined by now, but we can't track it without the hash
+          // Just propagate the error and let it retry on next poll
+        }
+
+        // Handle nonce issues - get fresh nonce and retry
+        if (err.message?.includes('nonce') && retryCount < maxRetries) {
+          console.log(`[submitProcessActions] Nonce issue detected - waiting and retrying (attempt ${retryCount + 1}/${maxRetries})`)
+          await new Promise(resolve => setTimeout(resolve, 2000))
+          return submitProcessActions(validatorId, multiData, messagingFee, rawGasLimit, retryCount + 1)
+        }
+
+        throw err
       }
-
-      console.log("[submitProcessActions] ActionsProcessed event found:", evt.args)
-      const processed = (evt.args.actions as any[]).map(a => ({
-        senderId:     Number(a.senderId),
-        cawonce:      Number(a.cawonce)
-      }))
-      console.log("[submitProcessActions] Processed actions:", processed)
-      return processed
     }
 
     /** natstat: update each queue entry to done/failed based on simulation + submission */
@@ -632,6 +702,13 @@ console.log("succeededKeys", succeededKeys)
         console.log(`\n========== [Validator] NEW POLL CYCLE ==========`)
         console.log(`[Validator] Processing ${entries.length} pending transactions`)
         console.log(`[Validator] Queue IDs: ${entries.map(e => e.id).join(', ')}`)
+
+        // Immediately mark entries as 'processing' to prevent duplicate pickup by next poll
+        await prisma.txQueue.updateMany({
+          where: { id: { in: entries.map(e => e.id) } },
+          data: { status: 'processing' }
+        })
+        console.log(`[Validator] Marked ${entries.length} entries as 'processing'`)
 
         // Log transaction details for debugging
         entries.forEach(entry => {
@@ -1123,7 +1200,7 @@ console.log("succeededKeys", succeededKeys)
       started: Promise.resolve(),
       async stop() {
         clearInterval(timer)
-        process.off('uncaughtException', handleUncaughtException)
+        // No need to remove handler since it's managed globally
         if (provider) {
           try {
             provider.destroy()

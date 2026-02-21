@@ -37,6 +37,8 @@ import ContentWithHashtags from './ContentWithHashtags'
 import { formatEngagementCount } from '~/utils/numberFormat'
 import { apiFetch } from '~/api/client'
 import InsufficientStakeModal from './modals/InsufficientStakeModal'
+import MuteWordsModal from './modals/MuteWordsModal'
+import MuteConfirmModal, { shouldShowMuteConfirmModal } from './modals/MuteConfirmModal'
 import { hasMinimumStake, getRequiredStake } from '~/constants/stakingRequirements'
 
 // Helper function to format relative time
@@ -95,6 +97,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const [isRetrying, setIsRetrying] = useState(false)
   const [showInsufficientStakeModal, setShowInsufficientStakeModal] = useState(false)
   const [insufficientStakeAction, setInsufficientStakeAction] = useState<'post' | 'like' | 'repost'>('post')
+  const [showMuteWordsModal, setShowMuteWordsModal] = useState(false)
+  const [showMuteConfirmModal, setShowMuteConfirmModal] = useState(false)
+  const [muteConfirmAction, setMuteConfirmAction] = useState<'hide-post' | 'mute-thread' | 'mute-account' | 'block-account' | 'mute-words'>('hide-post')
   const menuRef = useRef<HTMLDivElement>(null)
   const optionsMenuRef = useRef<HTMLDivElement>(null)
 
@@ -358,7 +363,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       await signAndSubmit({
         actionType:      'recaw',
         senderId:        effectiveTokenId,
-        receiverId:      Number(useItem.user.id ?? 0),
+        receiverId:      Number(useItem.user.tokenId ?? 0),
         receiverCawonce: useItem.cawonce ?? 0,
       })
 
@@ -500,48 +505,79 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         alert('You will see fewer posts like this')
         break
       case 'mute-thread':
-        // Store muted thread IDs
-        const mutedThreads = JSON.parse(localStorage.getItem('mutedThreads') || '[]')
-        mutedThreads.push(useItem.id)
-        localStorage.setItem('mutedThreads', JSON.stringify([...new Set(mutedThreads)]))
-        alert('Thread muted. You won\'t receive notifications from this conversation')
+        if (shouldShowMuteConfirmModal()) {
+          setMuteConfirmAction('mute-thread')
+          setShowMuteConfirmModal(true)
+        } else {
+          // Call API to mute thread (server-side for notifications)
+          const effectiveTokenId = activeTokenId || activeToken?.tokenId
+          if (effectiveTokenId) {
+            apiFetch(`/api/notifications/mute-thread/${useItem.id}`, {
+              method: 'POST',
+              headers: { 'x-user-id': effectiveTokenId.toString() }
+            }).catch(err => console.error('Failed to mute thread:', err))
+          }
+        }
         break
       case 'mute-words':
-        // Open prompt for words to mute
-        const wordsToMute = prompt('Enter words or tags to mute (comma-separated):')
-        if (wordsToMute) {
-          const mutedWords = JSON.parse(localStorage.getItem('mutedWords') || '[]')
-          const newWords = wordsToMute.split(',').map(w => w.trim().toLowerCase())
-          mutedWords.push(...newWords)
-          localStorage.setItem('mutedWords', JSON.stringify([...new Set(mutedWords)]))
-          alert(`Muted: ${newWords.join(', ')}`)
-        }
+        // Open modal for word selection
+        setShowMuteWordsModal(true)
         break
       case 'hide-post':
-        // Store hidden post IDs
-        const hiddenPosts = JSON.parse(localStorage.getItem('hiddenPosts') || '[]')
-        hiddenPosts.push(useItem.id)
-        localStorage.setItem('hiddenPosts', JSON.stringify([...new Set(hiddenPosts)]))
-        // Optionally trigger a callback to remove from feed
-        if (typeof window !== 'undefined') {
-          window.dispatchEvent(new CustomEvent('hidePost', { detail: { postId: useItem.id } }))
+        // Show modal first if needed, then hide on close
+        // Use useItem.id (the original post) - for recaws this hides the original, which also hides all recaws
+        if (shouldShowMuteConfirmModal()) {
+          setMuteConfirmAction('hide-post')
+          setShowMuteConfirmModal(true)
+          // Don't save yet - will save when modal closes
+        } else {
+          // No modal needed, save immediately
+          const hiddenPosts = JSON.parse(localStorage.getItem('hiddenPosts') || '[]')
+          hiddenPosts.push(useItem.id)
+          localStorage.setItem('hiddenPosts', JSON.stringify([...new Set(hiddenPosts)]))
+          window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
         }
-        alert('Post hidden from your feed')
         break
-      case 'mute-account':
-        // Store muted account IDs
-        const mutedAccounts = JSON.parse(localStorage.getItem('mutedAccounts') || '[]')
-        mutedAccounts.push(useItem.user.tokenId)
-        localStorage.setItem('mutedAccounts', JSON.stringify([...new Set(mutedAccounts)]))
-        alert(`@${useItem.user.username} has been muted`)
+      case 'mute-account': {
+        const effectiveTokenId = activeTokenId || activeToken?.tokenId
+        if (shouldShowMuteConfirmModal()) {
+          setMuteConfirmAction('mute-account')
+          setShowMuteConfirmModal(true)
+        } else {
+          const mutedAccounts = JSON.parse(localStorage.getItem('mutedAccounts') || '[]')
+          mutedAccounts.push(useItem.user.tokenId)
+          localStorage.setItem('mutedAccounts', JSON.stringify([...new Set(mutedAccounts)]))
+          window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
+          // Sync to server for notification filtering
+          if (effectiveTokenId) {
+            apiFetch(`/api/notifications/mute-account/${useItem.user.tokenId}`, {
+              method: 'POST',
+              headers: { 'x-user-id': effectiveTokenId.toString() }
+            }).catch(err => console.error('Failed to sync mute to server:', err))
+          }
+        }
         break
-      case 'block-account':
-        // Store blocked account IDs
-        const blockedAccounts = JSON.parse(localStorage.getItem('blockedAccounts') || '[]')
-        blockedAccounts.push(useItem.user.tokenId)
-        localStorage.setItem('blockedAccounts', JSON.stringify([...new Set(blockedAccounts)]))
-        alert(`@${useItem.user.username} has been blocked`)
+      }
+      case 'block-account': {
+        const effectiveTokenId = activeTokenId || activeToken?.tokenId
+        if (shouldShowMuteConfirmModal()) {
+          setMuteConfirmAction('block-account')
+          setShowMuteConfirmModal(true)
+        } else {
+          const blockedAccounts = JSON.parse(localStorage.getItem('blockedAccounts') || '[]')
+          blockedAccounts.push(useItem.user.tokenId)
+          localStorage.setItem('blockedAccounts', JSON.stringify([...new Set(blockedAccounts)]))
+          window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
+          // Sync to server for notification filtering
+          if (effectiveTokenId) {
+            apiFetch(`/api/notifications/block-account/${useItem.user.tokenId}`, {
+              method: 'POST',
+              headers: { 'x-user-id': effectiveTokenId.toString() }
+            }).catch(err => console.error('Failed to sync block to server:', err))
+          }
+        }
         break
+      }
       case 'report':
         // Store reported posts with reason
         const reason = prompt('Why are you reporting this post?\n1. Spam\n2. Harassment\n3. Inappropriate content\n4. Other')
@@ -1055,29 +1091,52 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       {/* Modal profesional con Portal y positioning calculado */}
       {showOptionsMenu && createPortal(
         <>
-          {/* Overlay de fondo profesional */}
-          <div 
+          {/* Overlay */}
+          <div
             className="fixed inset-0 bg-black/50 z-[40]"
             onClick={() => setShowOptionsMenu(false)}
           />
           
-          {/* Modal con positioning calculado */}
+          {/* Menu */}
           <div
-            className={`fixed z-[50] w-64 rounded-lg shadow-xl border transition-all duration-300 ${
-              isDark 
-                ? 'bg-black border-white/20 text-white' 
+            onMouseDown={(e) => e.stopPropagation()}
+            className={`fixed z-[50] w-64 rounded-lg shadow-xl border transition-all duration-300 pointer-events-auto ${
+              isDark
+                ? 'bg-black border-white/20 text-white'
                 : 'bg-white border-gray-200 text-black'
             }`}
-            style={{
-              top: optionsMenuRef.current ? 
-                `${optionsMenuRef.current.getBoundingClientRect().bottom + 8}px` : '20px',
-              right: optionsMenuRef.current ? 
-                `${window.innerWidth - optionsMenuRef.current.getBoundingClientRect().right}px` : '16px'
-            }}
+            style={(() => {
+              if (!optionsMenuRef.current) {
+                return { top: '20px', right: '16px' }
+              }
+              const rect = optionsMenuRef.current.getBoundingClientRect()
+              const menuHeight = 500 // Approximate menu height
+              const viewportHeight = window.innerHeight
+              const spaceBelow = viewportHeight - rect.bottom - 8
+              const spaceAbove = rect.top - 8
+
+              // If not enough space below, position above the button
+              if (spaceBelow < menuHeight && spaceAbove > spaceBelow) {
+                return {
+                  bottom: `${viewportHeight - rect.top + 8}px`,
+                  right: `${window.innerWidth - rect.right}px`,
+                  maxHeight: `${Math.min(menuHeight, spaceAbove)}px`,
+                  overflowY: 'auto' as const
+                }
+              }
+
+              // Default: position below with max height if needed
+              return {
+                top: `${rect.bottom + 8}px`,
+                right: `${window.innerWidth - rect.right}px`,
+                maxHeight: `${Math.min(menuHeight, spaceBelow)}px`,
+                overflowY: 'auto' as const
+              }
+            })()}
           >
             <div className="py-2">
               <button
-                onClick={(e) => {
+                onMouseDown={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
                   handleMenuAction('translate')
@@ -1089,9 +1148,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 <HiOutlineTranslate className="w-5 h-5" />
                 Translate
               </button>
-              
+
               <button
-                onClick={(e) => {
+                onMouseDown={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
                   handleMenuAction('copy')
@@ -1112,9 +1171,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   </>
                 )}
               </button>
-              
+
               <button
-                onClick={(e) => {
+                onMouseDown={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
                   handleMenuAction('show-more')
@@ -1126,9 +1185,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 <HiOutlineThumbUp className="w-5 h-5" />
                 Show more like this
               </button>
-              
+
               <button
-                onClick={(e) => {
+                onMouseDown={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
                   handleMenuAction('show-less')
@@ -1140,13 +1199,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 <HiOutlineThumbDown className="w-5 h-5" />
                 Show less like this
               </button>
-              
+
               <div className={`border-t my-1 ${
                 isDark ? 'border-white/20' : 'border-gray-200'
               }`}></div>
-              
+
               <button
-                onClick={(e) => {
+                onMouseDown={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
                   handleMenuAction('mute-thread')
@@ -1158,9 +1217,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 <HiOutlineVolumeOff className="w-5 h-5" />
                 Mute thread
               </button>
-              
+
               <button
-                onClick={(e) => {
+                onMouseDown={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
                   handleMenuAction('mute-words')
@@ -1174,7 +1233,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               </button>
               
               <button
-                onClick={(e) => {
+                onMouseDown={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
                   handleMenuAction('hide-post')
@@ -1192,7 +1251,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               }`}></div>
               
               <button
-                onClick={(e) => {
+                onMouseDown={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
                   handleMenuAction('mute-account')
@@ -1204,9 +1263,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 <HiOutlineVolumeOff className="w-5 h-5" />
                 Mute this account
               </button>
-              
+
               <button
-                onClick={(e) => {
+                onMouseDown={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
                   handleMenuAction('block-account')
@@ -1218,9 +1277,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 <HiOutlineUserRemove className="w-5 h-5" />
                 Block account
               </button>
-              
+
               <button
-                onClick={(e) => {
+                onMouseDown={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
                   handleMenuAction('report')
@@ -1258,6 +1317,86 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           insufficientStakeAction === 'repost' ? 'MIN_STAKE_REPOST' :
           'MIN_STAKE_POST'
         )}
+      />
+
+      {/* Mute Words Modal */}
+      <MuteWordsModal
+        isOpen={showMuteWordsModal}
+        onClose={() => setShowMuteWordsModal(false)}
+        postContent={useItem.content}
+        existingMutedWords={JSON.parse(localStorage.getItem('mutedWords') || '[]')}
+        onMute={(words) => {
+          const mutedWords = JSON.parse(localStorage.getItem('mutedWords') || '[]')
+          mutedWords.push(...words)
+          localStorage.setItem('mutedWords', JSON.stringify([...new Set(mutedWords)]))
+          window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
+          if (shouldShowMuteConfirmModal()) {
+            setMuteConfirmAction('mute-words')
+            setShowMuteConfirmModal(true)
+          }
+        }}
+      />
+
+      {/* Mute Confirmation Modal */}
+      <MuteConfirmModal
+        isOpen={showMuteConfirmModal}
+        onClose={() => setShowMuteConfirmModal(false)}
+        actionType={muteConfirmAction}
+        targetName={muteConfirmAction === 'mute-account' || muteConfirmAction === 'block-account' ? useItem.user.username : undefined}
+        onConfirm={() => {
+          // When modal closes, save the action
+          switch (muteConfirmAction) {
+            case 'hide-post': {
+              // Use useItem.id (the original post) - for recaws this hides the original, which also hides all recaws
+              const hiddenPosts = JSON.parse(localStorage.getItem('hiddenPosts') || '[]')
+              hiddenPosts.push(useItem.id)
+              localStorage.setItem('hiddenPosts', JSON.stringify([...new Set(hiddenPosts)]))
+              window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
+              break
+            }
+            case 'mute-thread': {
+              // Call API to mute thread (server-side for notifications)
+              const effectiveTokenId = activeTokenId || activeToken?.tokenId
+              if (effectiveTokenId) {
+                apiFetch(`/api/notifications/mute-thread/${useItem.id}`, {
+                  method: 'POST',
+                  headers: { 'x-user-id': effectiveTokenId.toString() }
+                }).catch(err => console.error('Failed to mute thread:', err))
+              }
+              break
+            }
+            case 'mute-account': {
+              const mutedAccounts = JSON.parse(localStorage.getItem('mutedAccounts') || '[]')
+              mutedAccounts.push(useItem.user.tokenId)
+              localStorage.setItem('mutedAccounts', JSON.stringify([...new Set(mutedAccounts)]))
+              window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
+              // Sync to server for notification filtering
+              const muteTokenId = activeTokenId || activeToken?.tokenId
+              if (muteTokenId) {
+                apiFetch(`/api/notifications/mute-account/${useItem.user.tokenId}`, {
+                  method: 'POST',
+                  headers: { 'x-user-id': muteTokenId.toString() }
+                }).catch(err => console.error('Failed to sync mute to server:', err))
+              }
+              break
+            }
+            case 'block-account': {
+              const blockedAccounts = JSON.parse(localStorage.getItem('blockedAccounts') || '[]')
+              blockedAccounts.push(useItem.user.tokenId)
+              localStorage.setItem('blockedAccounts', JSON.stringify([...new Set(blockedAccounts)]))
+              window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
+              // Sync to server for notification filtering
+              const blockTokenId = activeTokenId || activeToken?.tokenId
+              if (blockTokenId) {
+                apiFetch(`/api/notifications/block-account/${useItem.user.tokenId}`, {
+                  method: 'POST',
+                  headers: { 'x-user-id': blockTokenId.toString() }
+                }).catch(err => console.error('Failed to sync block to server:', err))
+              }
+              break
+            }
+          }
+        }}
       />
     </>
   )

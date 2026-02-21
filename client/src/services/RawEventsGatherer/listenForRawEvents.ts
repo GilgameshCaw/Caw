@@ -158,8 +158,70 @@ export default async function listenForRawEvents(
     }
   })
 
+  // Track last synced block for polling
+  let lastSyncedBlock = startBlock
+
+  // Periodic polling to catch missed events (every 30 seconds)
+  const pollInterval = setInterval(async () => {
+    try {
+      const currentBlock = await provider.getBlockNumber()
+      if (currentBlock > lastSyncedBlock) {
+        console.log(`[RawEventsGatherer] Polling for missed events from block ${lastSyncedBlock + 1} to ${currentBlock}`)
+        const events = await contract.queryFilter(
+          contract.filters.ActionsProcessed(),
+          lastSyncedBlock + 1,
+          currentBlock
+        ) as unknown as Log[]
+
+        for (const ev of events) {
+          const rawData = ev.data ?? '0x'
+          const decoded = contract.interface.decodeEventLog(
+            'ActionsProcessed',
+            rawData,
+            ev.topics
+          )
+          for (const tuple of decoded.actions as any[]) {
+            const action = {
+              actionType:      Number(tuple[0]),
+              senderId:        Number(tuple[1]),
+              receiverId:      Number(tuple[2]),
+              receiverCawonce: Number(tuple[3]),
+              clientId:        Number(tuple[4]),
+              cawonce:         Number(tuple[5]),
+              recipients:      tuple[6],
+              amounts:         tuple[7],
+              text:            tuple[8]
+            }
+            const logIndex = ev.logIndex ?? 0
+            lastHash = hashNext(lastHash, action)
+            await config.rawEventsProvider.storeEvent({
+              chainId:         config.chainId,
+              blockNumber:     ev.blockNumber,
+              logIndex,
+              transactionHash: ev.transactionHash,
+              parentHash:      lastHash,
+              data:            action,
+              topics:          ev.topics,
+              contractAddress: ev.address
+            })
+          }
+        }
+
+        if (events.length > 0) {
+          console.log(`[RawEventsGatherer] Polled ${events.length} missed event(s)`)
+        }
+        lastSyncedBlock = currentBlock
+      }
+    } catch (err) {
+      console.error('[RawEventsGatherer] Polling error:', err)
+    }
+  }, 30000) // Poll every 30 seconds
+
   return {
-    stop() { ;(provider as any).destroy?.() }
+    stop() {
+      clearInterval(pollInterval)
+      ;(provider as any).destroy?.()
+    }
   }
 }
 

@@ -86,7 +86,7 @@ const SearchBar: React.FC = () => {
 
     // Navigate to search results page
     if (finalQuery.startsWith('#')) {
-      navigate(`/hashtag/${finalQuery.substring(1)}`)
+      navigate(`/hashtags/${finalQuery.substring(1)}`)
     } else if (finalQuery.startsWith('@')) {
       navigate(`/profile/${finalQuery.substring(1)}`)
     } else {

@@ -1,5 +1,5 @@
 // src/services/FrontEnd/src/components/Feed.tsx
-import React, { useEffect, useState, useCallback, forwardRef, useImperativeHandle } from 'react'
+import React, { useEffect, useState, useCallback, forwardRef, useImperativeHandle, useMemo } from 'react'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import FeedItem from './FeedItem'
 import { apiFetch } from '../api/client'
@@ -7,6 +7,7 @@ import { User, CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import { useViewTracking } from '~/hooks/useViewTracking'
+import { useMutePreferences, shouldFilterPost } from '~/hooks/useMutePreferences'
 
 type Props = {
   filter: 'For you' | 'Following' | 'profile' | 'profile-likes' | 'profile-replies' | 'profile-media' | string
@@ -28,11 +29,17 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const pendingPosts = usePendingPostsStore(s => s.pendingPosts)
   const { isDark } = useTheme()
+  const { preferences } = useMutePreferences()
   const [items,      setItems]      = useState<CawItem[]>([])
   const [nextCursor, setNextCursor] = useState<number|undefined>(undefined)
   const [hasMore,    setHasMore]    = useState(true)
   const [loading,    setLoading]    = useState(false)
   const [error,      setError]      = useState<string>()
+
+  // Filter items based on mute preferences
+  const filteredItems = useMemo(() => {
+    return items.filter(item => !shouldFilterPost(item, preferences))
+  }, [items, preferences])
 
   // Expose refresh method via ref
   useImperativeHandle(ref, () => ({
@@ -44,8 +51,8 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
     }
   }), [])
 
-  // Track views for visible caws
-  const visibleCawIds = items.map(item => item.id).filter(id => id != null)
+  // Track views for visible caws (use filtered items)
+  const visibleCawIds = filteredItems.map(item => item.id).filter(id => id != null)
   useViewTracking(visibleCawIds)
 
   // load one "page" of results
@@ -224,6 +231,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
     </div>
   )
   if (items.length === 0) return <div className="text-gray-400 text-center py-8">No posts yet.</div>
+  if (filteredItems.length === 0) return <div className="text-gray-400 text-center py-8">No posts to show (some may be hidden by your mute settings).</div>
 
   return (
     <div>
@@ -238,7 +246,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
       ))}
 
       {/* Posts with consistent styling across all pages */}
-      {items.map(caw => (
+      {filteredItems.map(caw => (
         <FeedItem
           key={caw.id}
           item={caw}
