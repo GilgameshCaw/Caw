@@ -163,16 +163,14 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
                     onClick={() => handleUserClick(user.username)}
                   >
                     {/* Avatar */}
-                    <div className={`w-10 h-10 rounded-full ${
+                    <div className={`w-10 h-10 rounded-full overflow-hidden ${
                       isDark ? 'bg-gray-700' : 'bg-gray-200'
                     }`}>
-                      {user.avatarUrl && (
-                        <img
-                          src={user.avatarUrl}
-                          alt={user.username}
-                          className="w-full h-full rounded-full object-cover"
-                        />
-                      )}
+                      <img
+                        src={user.avatarUrl || user.image || "/images/logo.jpeg"}
+                        alt={user.username}
+                        className="w-full h-full rounded-full object-cover"
+                      />
                     </div>
 
                     {/* User info */}
