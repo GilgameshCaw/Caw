@@ -27,7 +27,6 @@ const ProfileChooser: React.FC = () => {
   const selectedToken = activeToken;
 
   const hasHydrated = useTokenDataStore(s => s.hasHydrated);
-  console.log("tokens by address", hasHydrated, tokensByAddress)
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -88,7 +87,22 @@ const ProfileChooser: React.FC = () => {
 
   const notCurrentAddress = address?.toLowerCase() != activeToken?.address?.toLowerCase();
 
-  const visibleTokensByAddress = { ...tokensByAddress }
+  // Normalize all addresses to lowercase to prevent duplicates with different cases
+  const normalizedTokensByAddress: Record<Address, TokenData[]> = {}
+  for (const [addr, tokens] of Object.entries(tokensByAddress)) {
+    const normalizedAddr = addr.toLowerCase() as Address
+    if (!normalizedTokensByAddress[normalizedAddr]) {
+      normalizedTokensByAddress[normalizedAddr] = []
+    }
+    // Add tokens if not already present (by tokenId)
+    for (const token of tokens) {
+      if (!normalizedTokensByAddress[normalizedAddr].some(t => t.tokenId === token.tokenId)) {
+        normalizedTokensByAddress[normalizedAddr].push(token)
+      }
+    }
+  }
+
+  const visibleTokensByAddress = { ...normalizedTokensByAddress }
   const normalizedAddress = address?.toLowerCase() as Address | undefined
   if (normalizedAddress && (!visibleTokensByAddress[normalizedAddress] || visibleTokensByAddress[normalizedAddress].length == 0))
       visibleTokensByAddress[normalizedAddress] = [];
@@ -126,7 +140,7 @@ const ProfileChooser: React.FC = () => {
 
       {isDropdownOpen && (
         <ul
-          className={`absolute bottom-0 mt-2 shadow-lg rounded-md overflow-hidden z-10 transition-all duration-300 ${
+          className={`absolute bottom-0 mt-2 shadow-lg rounded-md overflow-hidden z-50 transition-all duration-300 ${
             isDark ? 'bg-black border border-white/20' : 'bg-white border border-gray-200'
           }`}
           style={{
