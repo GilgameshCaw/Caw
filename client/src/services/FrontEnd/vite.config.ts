@@ -8,15 +8,20 @@ import commonjs from '@rollup/plugin-commonjs';
 import tsconfigPaths from "vite-tsconfig-paths";
 import { ViteImageOptimizer } from "vite-plugin-image-optimizer";
 
-// Plugin to add COEP headers to worker responses
+// Plugin to add COEP headers to worker responses (only on localhost for security)
 function coepHeadersPlugin(): Plugin {
   return {
     name: 'configure-server',
     configureServer(server) {
       server.middlewares.use((req, res, next) => {
-        // Apply headers to all responses, including workers
-        res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
-        res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+        // Only apply COOP/COEP headers on localhost (browsers ignore them on non-HTTPS non-localhost)
+        const host = req.headers.host || '';
+        const isLocalhost = host.startsWith('localhost:') || host === 'localhost';
+
+        if (isLocalhost) {
+          res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
+          res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+        }
         res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
         next();
       });
@@ -55,18 +60,18 @@ export default defineConfig({
   },
   server: {
     allowedHosts: ["local.caw.com"],
-    headers: {
-      // Required for XMTP Browser SDK to use Origin Private File System (OPFS)
-      // These headers enable cross-origin isolation for OPFS and SharedArrayBuffer
-      "Cross-Origin-Embedder-Policy": "credentialless",
-      "Cross-Origin-Opener-Policy": "same-origin",
-      // Allow resources to be loaded by this document
-      "Cross-Origin-Resource-Policy": "cross-origin",
-    },
+    // Note: COOP/COEP headers are set conditionally in coepHeadersPlugin()
+    // They only work on localhost or HTTPS origins (browsers ignore them otherwise)
     proxy: {
       '/api': {
         target: 'http://localhost:4000',
         changeOrigin: true,
+      },
+      // Only proxy /s/ paths (short URLs), not /src/
+      '^/s/': {
+        target: 'http://localhost:4000',
+        changeOrigin: true,
+        rewrite: (path) => path // Keep path as-is
       }
     }
   },
