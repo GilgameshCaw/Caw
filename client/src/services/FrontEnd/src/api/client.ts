@@ -36,7 +36,6 @@ export async function apiFetch(
     // only add x-user-id if we actually have one (including 0)
     ...(activeTokenId !== undefined ? { 'x-user-id': String(activeTokenId) } : {})
   }
-  console.log("WILL FETCH WITH USER:", headers, "activeTokenId:", activeTokenId)
 
   const res = await fetch(`${API_HOST}${path}`, {
     ...init,

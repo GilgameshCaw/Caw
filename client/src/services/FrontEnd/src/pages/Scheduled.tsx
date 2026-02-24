@@ -221,7 +221,7 @@ const ScheduledPage: React.FC = () => {
 
                   {item.status === 'published' && item.publishedId && (
                     <a
-                      href={`/caw/${item.user.username}/${item.publishedId}`}
+                      href={`/caws/${item.publishedId}`}
                       className={`text-sm px-3 py-1.5 rounded-full transition-colors ${
                         isDark
                           ? 'text-yellow-400 hover:bg-yellow-500/20'

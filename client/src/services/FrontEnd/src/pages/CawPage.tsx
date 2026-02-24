@@ -15,6 +15,7 @@ export const CawPage: React.FC = () => {
   const [comments, setComments] = useState<CawItem[]>([])
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState<string | null>(null)
+  const [initialLoadDone, setInitialLoadDone] = useState(false)
   const { isDark } = useTheme()
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
 
@@ -53,17 +54,27 @@ export const CawPage: React.FC = () => {
     return () => clearInterval(interval)
   }, [caw?.status, id])
 
+  // Reset initial load state when navigating to a different caw
+  useEffect(() => {
+    setInitialLoadDone(false)
+    setLoading(true)
+  }, [id])
+
   // Load caw and comments - refetch when id or activeTokenId changes
   useEffect(() => {
     (async () => {
       try {
-        setLoading(true)
+        // Only show loading spinner for initial load, not account switches
+        if (!initialLoadDone) {
+          setLoading(true)
+        }
         setError(null)
 
         const { caw: fetched, comments: fetchedComments } =
           await apiFetch<{ caw: CawItem; comments: CawItem[] }>(`/api/caws/${id}`)
         setCaw(fetched)
         setComments(fetchedComments)
+        setInitialLoadDone(true)
       } catch (err) {
         console.error('Error loading caw:', err)
         setError('Failed to load post')

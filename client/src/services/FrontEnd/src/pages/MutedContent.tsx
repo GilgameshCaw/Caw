@@ -211,7 +211,7 @@ const MutedContentPage: React.FC = () => {
         <div className="flex items-center gap-4 mb-6">
           <Link
             to="/settings"
-            className={`p-2 rounded-full transition-colors ${
+            className={`p-2 rounded-full transition-colors cursor-pointer ${
               isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'
             }`}
           >

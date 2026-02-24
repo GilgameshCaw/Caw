@@ -241,10 +241,13 @@ export function useSignAndSubmitAction() {
     if (!isConnected) {
       setPendingParams(params)
       openConnectModal?.()
+      return null
     } else if (activeToken.address?.toLowerCase() !== address?.toLowerCase()) {
       console.error("That profile tokenId is not owned by your connected wallet")
-      return
-    } else await requestAndSubmit(params)
+      return null
+    } else {
+      return await requestAndSubmit(params)
+    }
   }
 }
 

@@ -13,7 +13,7 @@ interface MentionAutocompleteProps {
   text: string
   cursorPosition: number
   onSelect: (username: string, startPos: number, endPos: number) => void
-  textareaRef: React.RefObject<HTMLTextAreaElement>
+  textareaRef: React.RefObject<HTMLTextAreaElement | null>
 }
 
 const MentionAutocomplete: React.FC<MentionAutocompleteProps> = ({
@@ -25,9 +25,10 @@ const MentionAutocomplete: React.FC<MentionAutocompleteProps> = ({
   const { isDark } = useTheme()
   const [users, setUsers] = useState<User[]>([])
   const [selectedIndex, setSelectedIndex] = useState(0)
-  const [position, setPosition] = useState<{ top: number; left: number } | null>(null)
+  const [isVisible, setIsVisible] = useState(false)
   const [mentionStart, setMentionStart] = useState<number | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [dropdownPosition, setDropdownPosition] = useState<{ top: number; left: number } | null>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
   // Detect @ mentions and search for users
@@ -40,18 +41,28 @@ const MentionAutocomplete: React.FC<MentionAutocompleteProps> = ({
     if (lastAtIndex === -1 || lastAtIndex < textBeforeCursor.length - 20) {
       setUsers([])
       setMentionStart(null)
+      setIsVisible(false)
       return
     }
 
     // Extract the query after @ (only alphanumeric and underscore)
     const textAfterAt = textBeforeCursor.substring(lastAtIndex + 1)
-    const spaceIndex = textAfterAt.indexOf(' ')
-    const query = spaceIndex === -1 ? textAfterAt : textAfterAt.substring(0, spaceIndex)
+
+    // Hide if there's a space after the @ query (user finished typing the mention)
+    if (textAfterAt.includes(' ')) {
+      setUsers([])
+      setMentionStart(null)
+      setIsVisible(false)
+      return
+    }
+
+    const query = textAfterAt
 
     // Only show suggestions if @ is followed by valid username characters
     if (!/^[a-z0-9_]*$/i.test(query)) {
       setUsers([])
       setMentionStart(null)
+      setIsVisible(false)
       return
     }
 
@@ -63,65 +74,95 @@ const MentionAutocomplete: React.FC<MentionAutocompleteProps> = ({
       fetch(`/api/users/search/${encodeURIComponent(query)}`)
         .then(res => res.json())
         .then(data => {
-          setUsers(data.users || [])
+          const foundUsers = data.users || []
+          setUsers(foundUsers)
           setSelectedIndex(0)
+          setIsVisible(foundUsers.length > 0)
         })
         .catch(err => {
           console.error('Failed to search users:', err)
           setUsers([])
+          setIsVisible(false)
         })
     } else {
       setUsers([])
+      setIsVisible(false)
     }
   }, [text, cursorPosition])
 
-  // Calculate dropdown position based on cursor
+  // Calculate dropdown position based on cursor position in textarea
   useEffect(() => {
-    if (users.length === 0 || !textareaRef.current || mentionStart === null) {
-      setPosition(null)
+    if (!isVisible || !textareaRef.current || mentionStart === null) {
+      setDropdownPosition(null)
       return
     }
 
     const textarea = textareaRef.current
-    const { offsetTop, offsetLeft, scrollTop, scrollLeft } = textarea
-
-    // Create a temporary div to measure text position
-    const div = document.createElement('div')
-    const style = window.getComputedStyle(textarea)
-
-    // Copy relevant styles
-    ;['fontFamily', 'fontSize', 'fontWeight', 'letterSpacing', 'lineHeight', 'padding', 'border', 'whiteSpace', 'wordWrap'].forEach(prop => {
-      div.style[prop as any] = style[prop as any]
-    })
-
-    div.style.position = 'absolute'
-    div.style.visibility = 'hidden'
-    div.style.width = `${textarea.clientWidth}px`
-    div.textContent = text.substring(0, mentionStart + 1)
-
-    document.body.appendChild(div)
-
-    const span = document.createElement('span')
-    span.textContent = '@'
-    div.appendChild(span)
-
-    const rect = span.getBoundingClientRect()
     const textareaRect = textarea.getBoundingClientRect()
 
-    document.body.removeChild(div)
+    // Create a mirror div to measure text position
+    const mirror = document.createElement('div')
+    const style = window.getComputedStyle(textarea)
+
+    // Copy textarea styles to mirror
+    const stylesToCopy = [
+      'fontFamily', 'fontSize', 'fontWeight', 'fontStyle',
+      'letterSpacing', 'lineHeight', 'textTransform',
+      'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+      'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+      'boxSizing', 'wordWrap', 'whiteSpace', 'wordBreak'
+    ]
+
+    stylesToCopy.forEach(prop => {
+      mirror.style[prop as any] = style.getPropertyValue(prop.replace(/([A-Z])/g, '-$1').toLowerCase())
+    })
+
+    mirror.style.position = 'absolute'
+    mirror.style.top = '-9999px'
+    mirror.style.left = '-9999px'
+    mirror.style.visibility = 'hidden'
+    mirror.style.width = `${textarea.clientWidth}px`
+    mirror.style.height = 'auto'
+    mirror.style.overflow = 'hidden'
+
+    // Add text up to the @ symbol
+    const textUpToMention = text.substring(0, mentionStart)
+    mirror.textContent = textUpToMention
+
+    // Add a span for the @ to get its position
+    const marker = document.createElement('span')
+    marker.textContent = '@'
+    mirror.appendChild(marker)
+
+    document.body.appendChild(mirror)
+
+    const markerRect = marker.getBoundingClientRect()
+    const mirrorRect = mirror.getBoundingClientRect()
+
+    // Calculate position relative to textarea
+    const relativeTop = markerRect.top - mirrorRect.top
+    const relativeLeft = markerRect.left - mirrorRect.left
+
+    document.body.removeChild(mirror)
 
     // Position dropdown below the @ symbol
-    setPosition({
-      top: rect.bottom - textareaRect.top + 5,
-      left: rect.left - textareaRect.left
+    const top = textareaRect.top + relativeTop + parseInt(style.paddingTop) + 20 // 20px below the line
+    const left = Math.max(textareaRect.left + relativeLeft, textareaRect.left) // Don't go past textarea left edge
+
+    // Make sure dropdown doesn't go off-screen to the right
+    const maxLeft = window.innerWidth - 290 // 280px width + 10px margin
+
+    setDropdownPosition({
+      top: Math.min(top, window.innerHeight - 220), // Don't go past bottom
+      left: Math.min(left, maxLeft)
     })
-  }, [users, text, mentionStart, textareaRef])
+  }, [isVisible, textareaRef, mentionStart, text])
 
   // Handle keyboard navigation
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (users.length === 0) return
+    if (!isVisible || users.length === 0) return
 
+    const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
         setSelectedIndex(prev => (prev + 1) % users.length)
@@ -129,18 +170,22 @@ const MentionAutocomplete: React.FC<MentionAutocompleteProps> = ({
         e.preventDefault()
         setSelectedIndex(prev => (prev - 1 + users.length) % users.length)
       } else if (e.key === 'Enter' || e.key === 'Tab') {
-        if (users[selectedIndex]) {
+        if (users[selectedIndex] && mentionStart !== null) {
           e.preventDefault()
-          handleSelect(users[selectedIndex])
+          onSelect(users[selectedIndex].username, mentionStart, mentionStart + searchQuery.length + 1)
+          setUsers([])
+          setMentionStart(null)
+          setIsVisible(false)
         }
       } else if (e.key === 'Escape') {
+        setIsVisible(false)
         setUsers([])
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [users, selectedIndex])
+  }, [isVisible, users, selectedIndex, mentionStart, searchQuery, onSelect])
 
   const handleSelect = (user: User) => {
     if (mentionStart === null) return
@@ -149,19 +194,20 @@ const MentionAutocomplete: React.FC<MentionAutocompleteProps> = ({
     onSelect(user.username, mentionStart, mentionStart + searchQuery.length + 1)
     setUsers([])
     setMentionStart(null)
+    setIsVisible(false)
   }
 
-  if (users.length === 0 || !position) return null
+  if (!isVisible || users.length === 0 || !dropdownPosition) return null
 
   return (
     <div
       ref={dropdownRef}
-      className={`absolute z-50 min-w-[200px] max-w-[300px] rounded-lg border shadow-lg ${
-        isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
+      className={`fixed z-[9999] w-[280px] rounded-lg border shadow-lg ${
+        isDark ? 'bg-gray-900 border-white/20' : 'bg-white border-gray-200'
       }`}
       style={{
-        top: `${position.top}px`,
-        left: `${position.left}px`,
+        top: `${dropdownPosition.top}px`,
+        left: `${dropdownPosition.left}px`,
       }}
     >
       <div className="max-h-[200px] overflow-y-auto">

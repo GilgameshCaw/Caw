@@ -14,7 +14,7 @@ import MessagesPage from "./pages/Messages";
 import BookmarksPage from "./pages/Bookmarks";
 import ExplorePage from "./pages/Explore";
 import ScheduledPage from "./pages/Scheduled";
-import GameFiPage from "./pages/GameFiPage";
+// import GameFiPage from "./pages/GameFiPage";
 import HashtagPage from "./pages/HashtagPage";
 import SearchResultsPage from "./pages/SearchResultsPage";
 import { Navigate } from "react-router-dom";
@@ -106,10 +106,10 @@ export default [
     path: "/scheduled",
     component: <ScheduledPage />,
   },
-  {
-    path: "/gamefi",
-    component: <GameFiPage />,
-  },
+  // {
+  //   path: "/gamefi",
+  //   component: <GameFiPage />,
+  // },
   {
     path: "/search",
     component: <SearchResultsPage />,

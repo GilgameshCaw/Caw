@@ -48,6 +48,13 @@ type TabType = 'all' | 'mentions'
 function formatRelativeTime(timestamp: string): string {
   const now = new Date()
   const time = new Date(timestamp)
+
+  // Check for invalid date
+  if (isNaN(time.getTime())) {
+    console.error('Invalid timestamp:', timestamp)
+    return 'unknown'
+  }
+
   const diffInMs = now.getTime() - time.getTime()
   const diffInMinutes = Math.floor(diffInMs / (1000 * 60))
   const diffInHours = Math.floor(diffInMs / (1000 * 60 * 60))
@@ -64,6 +71,22 @@ function formatRelativeTime(timestamp: string): string {
   } else {
     return time.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   }
+}
+
+// Format the full date/time for tooltip
+function formatFullDateTime(timestamp: string): string {
+  const time = new Date(timestamp)
+  if (isNaN(time.getTime())) {
+    return 'Invalid date'
+  }
+  return time.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: true
+  })
 }
 
 const Notifications: React.FC = () => {
@@ -91,6 +114,17 @@ const Notifications: React.FC = () => {
       const data = await apiFetch<NotificationsResponse>(
         `/api/notifications?userId=${activeToken.tokenId}&type=${type}&limit=50&offset=${currentOffset}`
       )
+
+      // Debug: log notification timestamps
+      if (data.notifications.length > 0) {
+        console.log('Notification timestamps:', data.notifications.map(n => ({
+          id: n.id,
+          type: n.type,
+          createdAt: n.createdAt,
+          parsed: new Date(n.createdAt).toISOString(),
+          relative: formatRelativeTime(n.createdAt)
+        })))
+      }
 
       if (reset) {
         setNotifications(data.notifications)
@@ -230,7 +264,7 @@ const Notifications: React.FC = () => {
   useEffect(() => {
     setOffset(0)
     fetchNotifications(true)
-  }, [activeTab])
+  }, [activeTab, activeToken?.tokenId])
 
   useEffect(() => {
     // Set up polling for new notifications
@@ -380,9 +414,12 @@ const Notifications: React.FC = () => {
                       {notification.caw.content}
                     </p>
                   )}
-                  <p className={`text-xs mt-1 ${
-                    isDark ? 'text-white/40' : 'text-gray-500'
-                  }`}>
+                  <p
+                    className={`text-xs mt-1 ${
+                      isDark ? 'text-white/40' : 'text-gray-500'
+                    }`}
+                    title={formatFullDateTime(notification.createdAt)}
+                  >
                     {formatRelativeTime(notification.createdAt)}
                   </p>
                 </div>

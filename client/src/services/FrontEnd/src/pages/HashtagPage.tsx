@@ -157,7 +157,7 @@ export const HashtagPage: React.FC = () => {
         <div className="flex items-center mb-6">
           <button
             onClick={handleBack}
-            className="mr-4 p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            className="mr-4 p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer"
           >
             <HiArrowLeft className="h-5 w-5 text-gray-600 dark:text-gray-400" />
           </button>
