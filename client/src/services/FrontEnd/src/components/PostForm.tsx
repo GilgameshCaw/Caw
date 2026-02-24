@@ -18,6 +18,44 @@ import InsufficientStakeModal from './modals/InsufficientStakeModal'
 import { hasMinimumStake, getRequiredStake } from '~/constants/stakingRequirements'
 import MentionAutocomplete from './MentionAutocomplete'
 import GifPicker from './GifPicker'
+import HighlightedTextarea from './HighlightedTextarea'
+
+// URL detection regex - matches http(s) URLs
+const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`[\]]+/gi
+
+// Helper function to shorten URLs in text
+async function shortenUrlsInText(text: string): Promise<string> {
+  const urls = text.match(URL_REGEX)
+  console.log('[URL Shortener] Input text:', text)
+  console.log('[URL Shortener] Found URLs:', urls)
+  if (!urls || urls.length === 0) return text
+
+  // Deduplicate URLs
+  const uniqueUrls = [...new Set(urls)]
+  console.log('[URL Shortener] Unique URLs to shorten:', uniqueUrls)
+
+  try {
+    const response = await apiFetch('/api/shorturl/bulk', {
+      method: 'POST',
+      body: JSON.stringify({ urls: uniqueUrls })
+    }) as { results: Record<string, { shortUrl: string }> }
+    console.log('[URL Shortener] API response:', response)
+
+    let shortenedText = text
+    for (const [originalUrl, data] of Object.entries(response.results)) {
+      // Replace all occurrences of this URL with the short URL
+      console.log('[URL Shortener] Replacing:', originalUrl, '->', data.shortUrl)
+      shortenedText = shortenedText.split(originalUrl).join(data.shortUrl)
+    }
+
+    console.log('[URL Shortener] Final text:', shortenedText)
+    return shortenedText
+  } catch (error) {
+    console.error('[URL Shortener] Failed to shorten URLs:', error)
+    // Return original text if shortening fails
+    return text
+  }
+}
 
 interface PostFormProps {
   /** if provided, we're replying to this caw */
@@ -94,12 +132,27 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     }
   }
 
-  // Handle GIF selection from picker
-  const handleGifSelected = (gif: { id: string; url: string; title: string; preview: string; width: number; height: number }) => {
-    // Add GIF as a media item (treated as off-chain image URL)
+  // Handle GIF selection from picker - shorten URL immediately
+  const handleGifSelected = async (gif: { id: string; url: string; title: string; preview: string; width: number; height: number }) => {
+    // Shorten the GIF URL immediately
+    let shortUrl = gif.url
+    try {
+      const response = await apiFetch('/api/shorturl', {
+        method: 'POST',
+        body: JSON.stringify({ url: gif.url })
+      }) as { shortUrl: string; code: string }
+      shortUrl = response.shortUrl
+      console.log('[GIF] Shortened URL:', gif.url, '->', shortUrl)
+    } catch (error) {
+      console.error('[GIF] Failed to shorten URL:', error)
+      // Continue with original URL if shortening fails
+    }
+
+    // Add GIF as a media item with shortened URL
     const gifMedia = {
       type: 'gif' as const,
-      url: gif.url,
+      url: shortUrl, // Use shortened URL
+      originalUrl: gif.url, // Keep original for preview display
       preview: gif.preview,
       title: gif.title,
       width: gif.width,
@@ -313,6 +366,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           finalText = finalText + gifUrls
         }
 
+        // Shorten any URLs in the text (including GIF URLs)
+        finalText = await shortenUrlsInText(finalText)
+
         // Get current cawonce
         const currentCawonce = activeToken?.cawonce ?? 0
 
@@ -432,6 +488,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       finalText = finalText + gifUrls
     }
 
+    // Shorten any URLs in the text (including GIF URLs)
+    finalText = await shortenUrlsInText(finalText)
+
     // Handle on-chain images
     if (onChainImages.length > 0) {
       // Convert images to base64 and calculate cost
@@ -475,21 +534,24 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       })
     }
 
-    // Add pending post to store (only if not a reply)
-    let tempId: string | undefined
-    if (!replyTo && activeToken) {
-      tempId = addPendingPost({
-        content: finalText,
-        username: activeToken.username,
-        tokenId: effectiveTokenId
-      })
-    }
-
     const response = await signAndSubmit(params)
 
-    // Update pending post with txQueue ID if we have both
-    if (tempId && response?.txQueueId) {
-      updatePostWithTxQueueId(tempId, response.txQueueId)
+    // Only add pending post AFTER signing succeeds (not before)
+    // This prevents showing the post before user confirms the signature
+    if (response && !replyTo && activeToken) {
+      const tempId = addPendingPost({
+        content: finalText,
+        username: activeToken.username,
+        tokenId: effectiveTokenId,
+        displayName: activeToken.displayName,
+        image: activeToken.image,
+        avatarUrl: activeToken.avatarUrl
+      })
+
+      // Update pending post with txQueue ID if available
+      if (response.txQueueId) {
+        updatePostWithTxQueueId(tempId, response.txQueueId)
+      }
     }
 
     // Reset form
@@ -547,13 +609,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           <div className="flex items-center space-x-3">
             {/* Input */}
             <div className="flex-1 relative">
-              <textarea
-                className={`w-full resize-none transition-all duration-300 border-none outline-none text-base ${
-                  isDark
-                    ? 'bg-transparent text-white placeholder-gray-500'
-                    : 'bg-transparent text-black placeholder-gray-600'
-                }`}
-                style={{ boxShadow: 'none', padding: '2px 8px 0', marginBottom: '26px' }}
+              <HighlightedTextarea
+                value={text}
+                onChange={handleTextChange}
+                onClick={handleTextClick}
+                onKeyUp={handleTextKeyUp}
+                onDragOver={handleTextareaDragOver}
+                onDragLeave={handleTextareaDragLeave}
+                onDrop={handleTextareaDrop}
                 rows={1}
                 placeholder={
                   replyTo
@@ -562,14 +625,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                       quote ? "Add a comment" : "What's happening?"
                     )
                 }
-                value={text}
-                ref={textareaRef}
-                onChange={handleTextChange}
-                onClick={handleTextClick}
-                onKeyUp={handleTextKeyUp}
-                onDragOver={handleTextareaDragOver}
-                onDragLeave={handleTextareaDragLeave}
-                onDrop={handleTextareaDrop}
+                textareaRef={textareaRef}
+                fontSize="base"
               />
               <MentionAutocomplete
                 text={text}
@@ -774,13 +831,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       {/* Desktop Layout - Original */}
       <div className="hidden md:block">
         <div className="relative">
-          <textarea
-            className={`w-full resize-none border-none outline-none text-xl ${
-              isDark
-                ? 'bg-transparent text-white placeholder-gray-500'
-                : 'bg-transparent text-black placeholder-gray-600'
-            }`}
-            style={{ boxShadow: 'none', padding: '2px 8px 26px 8px' }}
+          <HighlightedTextarea
+            value={text}
+            onChange={handleTextChange}
+            onClick={handleTextClick}
+            onKeyUp={handleTextKeyUp}
+            onDragOver={handleTextareaDragOver}
+            onDragLeave={handleTextareaDragLeave}
+            onDrop={handleTextareaDrop}
             rows={3}
             placeholder={
               replyTo
@@ -789,14 +847,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                   quote ? "Add a comment" : "What's happening?"
                 )
             }
-            value={text}
-            ref={textareaRef}
-            onChange={handleTextChange}
-            onClick={handleTextClick}
-            onKeyUp={handleTextKeyUp}
-            onDragOver={handleTextareaDragOver}
-            onDragLeave={handleTextareaDragLeave}
-            onDrop={handleTextareaDrop}
+            textareaRef={textareaRef}
+            fontSize="xl"
           />
           <MentionAutocomplete
             text={text}

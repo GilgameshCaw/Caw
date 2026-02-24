@@ -5,7 +5,8 @@ import { startApi, stopApi } from '../../api/server'
 
 const Config = z.object({
   port:            z.number().int().positive().default(4000),
-  allowedOrigins:  z.array(z.string().url()).optional()
+  allowedOrigins:  z.array(z.string().url()).optional(),
+  shortUrlDomain:  z.string().url().optional() // Domain for short URLs (e.g., https://caw.is)
 })
 
 type Config = z.infer<typeof Config>
@@ -21,11 +22,16 @@ export const apiService: Service = {
   },
 
   start(cfg: unknown) {
-    const { port, allowedOrigins } = Config.parse(cfg)
+    const { port, allowedOrigins, shortUrlDomain } = Config.parse(cfg)
 
     // inject allowedOrigins into process.env so server picks it up
     if (allowedOrigins) {
       process.env.ALLOWED_ORIGINS = allowedOrigins.join(',')
+    }
+
+    // inject shortUrlDomain into process.env
+    if (shortUrlDomain) {
+      process.env.SHORTURL_DOMAIN = shortUrlDomain
     }
 
     const server = startApi(port)
