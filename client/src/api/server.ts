@@ -12,7 +12,6 @@ import usersRouter from './routes/users'
 import txQueueRouter from './routes/txqueue'
 import viewsRouter from './routes/views'
 import searchRouter from './routes/search'
-import bookmarksRouter from './routes/bookmarks'
 import scheduledRouter from './routes/scheduled'
 import notificationsRouter from './routes/notifications'
 import withdrawalsRouter from './routes/withdrawals'
@@ -23,6 +22,8 @@ import xmtpIdentityRouter from './routes/xmtp-identity'
 import conversationsRouter from './routes/conversations'
 import giphyRouter from './routes/giphy'
 import statsRouter from './routes/stats'
+import shorturlRouter from './routes/shorturl'
+import { prisma } from '../prismaClient'
 
 /**
  * natstat: build and configure Express app
@@ -55,6 +56,32 @@ function createApp() {
   // Serve static uploaded files
   app.use('/uploads', express.static(path.join(process.cwd(), 'public', 'uploads')))
 
+  // Short URL redirect handler (before API routes)
+  app.get('/s/:code', async (req, res) => {
+    try {
+      const { code } = req.params
+      const shortUrl = await prisma.shortUrl.findUnique({
+        where: { code }
+      })
+
+      if (!shortUrl) {
+        return res.status(404).send('Short URL not found')
+      }
+
+      // Increment click count (fire and forget)
+      prisma.shortUrl.update({
+        where: { code },
+        data: { clickCount: { increment: 1 } }
+      }).catch(err => console.error('Failed to update click count:', err))
+
+      // Redirect to original URL
+      return res.redirect(302, shortUrl.originalUrl)
+    } catch (error) {
+      console.error('GET /s/:code error:', error)
+      return res.status(500).send('Server error')
+    }
+  })
+
   // API routes
   app.use('/api/actions', actionsRouter)
   app.use('/api/caws', cawRouter)
@@ -65,7 +92,6 @@ function createApp() {
   app.use('/api/txqueue', txQueueRouter)
   app.use('/api/views', viewsRouter)
   app.use('/api/search', searchRouter)
-  app.use('/api/bookmarks', bookmarksRouter)
   app.use('/api/scheduled', scheduledRouter)
   app.use('/api/notifications', notificationsRouter)
   app.use('/api/withdrawals', withdrawalsRouter)
@@ -76,6 +102,7 @@ function createApp() {
   app.use('/api/conversations', conversationsRouter)
   app.use('/api/giphy', giphyRouter)
   app.use('/api/stats', statsRouter)
+  app.use('/api/shorturl', shorturlRouter)
   // Temporarily disabled xmtpProxy router due to path-to-regexp issue
   // app.use('/api/xmtp-proxy', xmtpProxyRouter)
 

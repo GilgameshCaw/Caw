@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
-import { HiOutlineSearch } from 'react-icons/hi'
+import { HiOutlineSearch, HiOutlineInformationCircle } from 'react-icons/hi'
 import FeedItem from '~/components/FeedItem'
 import type { CawItem } from '~/types'
 import MobilePostModal from '~/components/MobilePostModal'
@@ -10,7 +10,7 @@ import { useConnectModal } from "@rainbow-me/rainbowkit"
 import { HiOutlinePlus } from "react-icons/hi"
 import { BsWallet } from 'react-icons/bs'
 import { apiFetch } from '~/api/client'
-import { useTokenDataStore } from '~/store/tokenDataStore'
+import { useBookmarksStore } from '~/store/bookmarksStore'
 
 const BookmarksPage: React.FC = () => {
   const { isDark } = useTheme()
@@ -18,51 +18,42 @@ const BookmarksPage: React.FC = () => {
   const [isMobilePostModalOpen, setIsMobilePostModalOpen] = useState(false)
   const { isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
-  const tokenId = useTokenDataStore(state => state.activeTokenId)
+
+  // Bookmarks are stored in localStorage (browser-only)
+  const bookmarkedIds = useBookmarksStore(state => state.bookmarkedCawIds)
+  const removeBookmark = useBookmarksStore(state => state.removeBookmark)
+
   const [bookmarkedPosts, setBookmarkedPosts] = useState<CawItem[]>([])
   const [loading, setLoading] = useState(true)
-  const [hasMore, setHasMore] = useState(true)
-  const [offset, setOffset] = useState(0)
-  const limit = 20
 
-  const fetchBookmarks = async (isLoadMore = false) => {
-    if (!tokenId) {
+  const fetchBookmarks = async () => {
+    if (bookmarkedIds.length === 0) {
+      setBookmarkedPosts([])
       setLoading(false)
       return
     }
 
     try {
-      const params = new URLSearchParams({
-        limit: limit.toString(),
-        offset: (isLoadMore ? offset : 0).toString()
-      })
-      const data = await apiFetch(`/api/bookmarks?${params}`, {
-        method: 'GET',
-        headers: {
-          'x-user-id': tokenId.toString()
-        }
+      // Convert string IDs to numbers for the API
+      const numericIds = bookmarkedIds.map(id => parseInt(id)).filter(id => !isNaN(id))
+
+      const data = await apiFetch('/api/caws/by-ids', {
+        method: 'POST',
+        body: JSON.stringify({ ids: numericIds })
       })
 
-      const { items, nextCursor } = data
+      const { items } = data
 
       // Transform the data to match CawItem format
       const transformedItems = items.map((item: any) => ({
         ...item,
         id: item.id.toString(),
         timestamp: item.createdAt,
-        hasRecawed: false, // You can check this from the database if needed
         isBookmarked: true,
         hashtags: item.hashtags?.map((h: any) => h.hashtag) || []
       }))
 
-      if (isLoadMore) {
-        setBookmarkedPosts(prev => [...prev, ...transformedItems])
-      } else {
-        setBookmarkedPosts(transformedItems)
-      }
-
-      setHasMore(!!nextCursor)
-      setOffset(nextCursor || offset + limit)
+      setBookmarkedPosts(transformedItems)
     } catch (error) {
       console.error('Failed to fetch bookmarks:', error)
     } finally {
@@ -72,11 +63,11 @@ const BookmarksPage: React.FC = () => {
 
   useEffect(() => {
     fetchBookmarks()
-  }, [tokenId])
+  }, [bookmarkedIds])
 
   const handleBookmarkUpdate = (cawId: number, isBookmarked: boolean) => {
     if (!isBookmarked) {
-      // Remove from list when unbookmarked
+      // Remove from list when unbookmarked (store already updated by FeedItem)
       setBookmarkedPosts(prev => prev.filter(caw => caw.id !== cawId.toString()))
     }
   }
@@ -97,6 +88,12 @@ const BookmarksPage: React.FC = () => {
           }`}>
             Bookmarks
           </h1>
+          <div className={`flex items-center gap-2 mt-2 text-sm ${
+            isDark ? 'text-gray-400' : 'text-gray-500'
+          }`}>
+            <HiOutlineInformationCircle className="w-4 h-4" />
+            <span>Bookmarks are stored in your browser and are private to you.</span>
+          </div>
         </div>
 
         {/* Search Bar */}
@@ -157,7 +154,12 @@ const BookmarksPage: React.FC = () => {
             <p className={`transition-colors duration-300 ${
               isDark ? 'text-gray-400' : 'text-gray-600'
             }`}>
-              {tokenId ? 'Save posts you want to read later by clicking the bookmark icon' : 'Connect your wallet to view bookmarks'}
+              Save posts you want to read later by clicking the bookmark icon.
+            </p>
+            <p className={`text-sm mt-2 transition-colors duration-300 ${
+              isDark ? 'text-gray-500' : 'text-gray-400'
+            }`}>
+              Bookmarks are stored locally in your browser.
             </p>
           </div>
         )}

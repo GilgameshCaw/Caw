@@ -100,6 +100,21 @@ router.get('/', async (req, res) => {
       }
     } else if (filter === 'media' && targetUserId) {
       // "profile-media" mode: caws with images/videos from this user (including recaws)
+      // Also detect posts containing image/gif URLs in content
+      const mediaConditions = [
+        { hasImage: true },
+        { hasVideo: true },
+        // Detect common image URL patterns in content
+        { content: { contains: '.gif', mode: 'insensitive' as const } },
+        { content: { contains: '.jpg', mode: 'insensitive' as const } },
+        { content: { contains: '.jpeg', mode: 'insensitive' as const } },
+        { content: { contains: '.png', mode: 'insensitive' as const } },
+        { content: { contains: '.webp', mode: 'insensitive' as const } },
+        { content: { contains: 'giphy.com', mode: 'insensitive' as const } },
+        { content: { contains: 'imgur.com', mode: 'insensitive' as const } },
+        { content: { contains: 'tenor.com', mode: 'insensitive' as const } },
+      ]
+
       if (Array.isArray(statusConditions)) {
         where.AND = [
           { OR: statusConditions },
@@ -108,20 +123,14 @@ router.get('/', async (req, res) => {
               // Original posts by this user with media
               {
                 userId: targetUserId,
-                OR: [
-                  { hasImage: true },
-                  { hasVideo: true }
-                ]
+                OR: mediaConditions
               },
               // Recaws by this user of posts with media
               {
                 userId: targetUserId,
                 action: 'RECAW',
                 parent: {
-                  OR: [
-                    { hasImage: true },
-                    { hasVideo: true }
-                  ]
+                  OR: mediaConditions
                 }
               }
             ]
@@ -135,20 +144,14 @@ router.get('/', async (req, res) => {
               // Original posts by this user with media
               {
                 userId: targetUserId,
-                OR: [
-                  { hasImage: true },
-                  { hasVideo: true }
-                ]
+                OR: mediaConditions
               },
               // Recaws by this user of posts with media
               {
                 userId: targetUserId,
                 action: 'RECAW',
                 parent: {
-                  OR: [
-                    { hasImage: true },
-                    { hasVideo: true }
-                  ]
+                  OR: mediaConditions
                 }
               }
             ]
@@ -227,6 +230,48 @@ router.get('/', async (req, res) => {
   } catch (err: any) {
     console.error('GET /api/caws error', err)
     return res.status(500).json({ error: 'Internal server error', items: [], nextCursor: undefined })
+  }
+})
+
+/**
+ * POST /api/caws/by-ids
+ * Fetch multiple caws by their IDs (for bookmarks page)
+ * Body: { ids: number[] }
+ */
+router.post('/by-ids', async (req, res) => {
+  try {
+    const { ids } = req.body as { ids: number[] }
+
+    if (!ids || !Array.isArray(ids) || ids.length === 0) {
+      return res.json({ items: [] })
+    }
+
+    // Limit to prevent abuse
+    const limitedIds = ids.slice(0, 100)
+
+    const userIdHeader = req.header('x-user-id')
+    const currentUserId = userIdHeader ? Number(userIdHeader) : undefined
+
+    const raws = await prisma.caw.findMany({
+      where: {
+        id: { in: limitedIds },
+        status: 'SUCCESS' // Only show successful caws
+      },
+      include: getCawIncludeConfig({ currentUserId }),
+      orderBy: { createdAt: 'desc' }
+    })
+
+    // Maintain the order from the input IDs
+    const cawMap = new Map(raws.map(caw => [caw.id, caw]))
+    const orderedCaws = limitedIds
+      .map(id => cawMap.get(id))
+      .filter(Boolean)
+      .map(shapeCaw)
+
+    return res.json({ items: orderedCaws })
+  } catch (error) {
+    console.error('POST /api/caws/by-ids error:', error)
+    return res.status(500).json({ error: 'Failed to fetch caws' })
   }
 })
 
