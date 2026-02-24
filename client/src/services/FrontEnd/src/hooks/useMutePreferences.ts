@@ -291,34 +291,21 @@ export function useMutePreferences() {
     }
   }, [])
 
-  const addBlockedAccount = useCallback((blockedTokenId: number, currentUserTokenId?: number) => {
+  // Blocking is browser-only (localStorage) - no server sync needed
+  const addBlockedAccount = useCallback((blockedTokenId: number, _currentUserTokenId?: number) => {
     setPreferences(prev => {
       const updated = [...new Set([...prev.blockedAccounts, blockedTokenId])]
       saveToStorage(STORAGE_KEYS.blockedAccounts, updated)
       return { ...prev, blockedAccounts: updated }
     })
-    // Also sync to server if user tokenId provided
-    if (currentUserTokenId) {
-      fetch(`/api/notifications/block-account/${blockedTokenId}`, {
-        method: 'POST',
-        headers: { 'x-user-id': currentUserTokenId.toString() }
-      }).catch(err => console.error('Failed to sync block to server:', err))
-    }
   }, [])
 
-  const removeBlockedAccount = useCallback((blockedTokenId: number, currentUserTokenId?: number) => {
+  const removeBlockedAccount = useCallback((blockedTokenId: number, _currentUserTokenId?: number) => {
     setPreferences(prev => {
       const updated = prev.blockedAccounts.filter(id => id !== blockedTokenId)
       saveToStorage(STORAGE_KEYS.blockedAccounts, updated)
       return { ...prev, blockedAccounts: updated }
     })
-    // Also sync to server if user tokenId provided
-    if (currentUserTokenId) {
-      fetch(`/api/notifications/block-account/${blockedTokenId}`, {
-        method: 'DELETE',
-        headers: { 'x-user-id': currentUserTokenId.toString() }
-      }).catch(err => console.error('Failed to sync unblock to server:', err))
-    }
   }, [])
 
   const clearAllMutes = useCallback(() => {

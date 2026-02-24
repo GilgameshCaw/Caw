@@ -19,6 +19,7 @@ import { useTokenDataStore } from '~/store/tokenDataStore'
 import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
 import { hasMinimumStake, getRequiredStake } from '~/constants/stakingRequirements'
 import { useFollowButton } from '~/hooks/useFollowButton'
+import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 
 type ProfileTab = 'profile' | 'profile-likes' | 'profile-replies' | 'profile-media'
 
@@ -83,6 +84,15 @@ export const Profile: React.FC = () => {
 
   const [followButtonHovered, setFollowButtonHovered] = useState(false)
 
+  // Options menu state (mute/block)
+  const [showOptionsMenu, setShowOptionsMenu] = useState(false)
+  const [isMuted, setIsMuted] = useState(false)
+  const [showBlockConfirmModal, setShowBlockConfirmModal] = useState(false)
+
+  // Browser-level blocking from localStorage
+  const { blockUser, unblockUser, isBlocked: checkIsBlocked } = useBlockedUsersStore()
+  const isBlocked = profileData?.tokenId ? checkIsBlocked(profileData.tokenId) : false
+
   // Use username from params or fallback to activeToken's username
   const displayUsername = username || activeToken?.username || 'user'
 
@@ -130,6 +140,81 @@ export const Profile: React.FC = () => {
       })
     }
   }, [profileData])
+
+  // Fetch mute status when viewing another user's profile (muting still uses API)
+  useEffect(() => {
+    const fetchMuteStatus = async () => {
+      if (!activeToken?.tokenId || !profileData?.tokenId || activeToken.tokenId === profileData.tokenId) {
+        return
+      }
+
+      try {
+        const muteRes = await apiFetch<{ isMuted: boolean }>(`/api/notifications/is-account-muted/${profileData.tokenId}`)
+        setIsMuted(muteRes.isMuted)
+      } catch (err) {
+        console.error('Failed to fetch mute status:', err)
+      }
+    }
+
+    fetchMuteStatus()
+  }, [activeToken?.tokenId, profileData?.tokenId])
+
+  // Handle mute/unmute (still uses API - requires auth)
+  const handleToggleMute = async () => {
+    if (!activeToken?.tokenId || !profileData?.tokenId) return
+
+    try {
+      if (isMuted) {
+        await apiFetch(`/api/notifications/mute-account/${profileData.tokenId}`, { method: 'DELETE' })
+        setIsMuted(false)
+      } else {
+        await apiFetch(`/api/notifications/mute-account/${profileData.tokenId}`, { method: 'POST' })
+        setIsMuted(true)
+      }
+    } catch (err) {
+      console.error('Failed to toggle mute:', err)
+    } finally {
+      setShowOptionsMenu(false)
+    }
+  }
+
+  // Handle block/unblock (browser-level, localStorage)
+  const handleToggleBlock = () => {
+    if (!profileData?.tokenId) return
+
+    if (isBlocked) {
+      // Unblock directly
+      unblockUser(profileData.tokenId)
+      setShowOptionsMenu(false)
+    } else {
+      // Show confirmation modal for blocking
+      setShowOptionsMenu(false)
+      setShowBlockConfirmModal(true)
+    }
+  }
+
+  // Actually perform the block after confirmation (browser-level)
+  const handleConfirmBlock = () => {
+    if (!profileData?.tokenId || !profileData?.username) return
+
+    blockUser(profileData.tokenId, profileData.username)
+    setShowBlockConfirmModal(false)
+  }
+
+  // Close options menu and modals on Escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (showBlockConfirmModal) {
+          setShowBlockConfirmModal(false)
+        } else if (showOptionsMenu) {
+          setShowOptionsMenu(false)
+        }
+      }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [showOptionsMenu, showBlockConfirmModal])
 
   // Image handling state
   const [avatarPreview, setAvatarPreview] = useState<string | undefined>(undefined)
@@ -388,8 +473,38 @@ export const Profile: React.FC = () => {
     { id: 'profile-likes', label: 'Likes'  },
   ]
 
-  // Debug theme
-  console.log('Profile - isDark:', isDark, 'displayUsername:', displayUsername)
+  // If this user is blocked, show blocked state (even if they're selected as active account)
+  if (isBlocked && profileData) {
+    return (
+      <MainLayout>
+        <div className="max-w-2xl mx-auto px-6 py-16 text-center">
+          <div className={`mb-6 w-24 h-24 mx-auto rounded-full flex items-center justify-center ${
+            isDark ? 'bg-gray-800' : 'bg-gray-200'
+          }`}>
+            <svg className={`w-12 h-12 ${isDark ? 'text-gray-600' : 'text-gray-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+            </svg>
+          </div>
+          <h2 className={`text-xl font-bold mb-2 ${isDark ? 'text-white' : 'text-black'}`}>
+            You blocked @{profileData.username}
+          </h2>
+          <p className={`mb-6 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+            You won't see their posts in your feed while they're blocked.
+          </p>
+          <button
+            onClick={handleToggleBlock}
+            className={`px-6 py-2 rounded-full font-medium transition-all duration-200 ${
+              isDark
+                ? 'bg-white text-black hover:bg-gray-200'
+                : 'bg-black text-white hover:bg-gray-800'
+            }`}
+          >
+            Unblock
+          </button>
+        </div>
+      </MainLayout>
+    )
+  }
 
   return (
     <MainLayout>
@@ -461,7 +576,7 @@ export const Profile: React.FC = () => {
 
               {/* Stats - Alineadas horizontalmente */}
               <div className="flex space-x-8 mb-6">
-                <div>
+                <div className="text-center">
                   <div className={`text-lg font-bold transition-all duration-300 ${
                     isDark ? 'text-white' : 'text-black'
                   }`}>
@@ -625,16 +740,54 @@ export const Profile: React.FC = () => {
                         <HiOutlineMail className="w-5 h-5" />
                       </button>
                       
-                      <button 
-                        className={`p-2 rounded-full border transition-all duration-200 cursor-pointer hover:bg-white/10 ${
-                          isDark 
-                            ? 'border-white/60 text-white hover:bg-white/10' 
-                            : 'border-black/60 text-black hover:bg-black/10'
-                        }`}
-                        title="More options"
-                      >
-                        <HiDotsHorizontal className="w-5 h-5" />
-                      </button>
+                      <div className="relative">
+                        <button
+                          onClick={() => setShowOptionsMenu(!showOptionsMenu)}
+                          className={`p-2 rounded-full border transition-all duration-200 cursor-pointer hover:bg-white/10 ${
+                            isDark
+                              ? 'border-white/60 text-white hover:bg-white/10'
+                              : 'border-black/60 text-black hover:bg-black/10'
+                          }`}
+                          title="More options"
+                        >
+                          <HiDotsHorizontal className="w-5 h-5" />
+                        </button>
+
+                        {/* Dropdown menu */}
+                        {showOptionsMenu && (
+                          <>
+                            {/* Backdrop to close menu */}
+                            <div
+                              className="fixed inset-0 z-40"
+                              onClick={() => setShowOptionsMenu(false)}
+                            />
+                            <div className={`absolute right-0 top-full mt-2 w-48 rounded-lg shadow-lg z-50 overflow-hidden ${
+                              isDark ? 'bg-gray-900 border border-white/20' : 'bg-white border border-gray-200'
+                            }`}>
+                              <button
+                                onClick={handleToggleMute}
+                                className={`w-full px-4 py-3 text-left text-sm transition-colors ${
+                                  isDark
+                                    ? 'hover:bg-white/10 text-white'
+                                    : 'hover:bg-gray-100 text-black'
+                                }`}
+                              >
+                                {isMuted ? 'Unmute @' : 'Mute @'}{profileData?.username}
+                              </button>
+                              <button
+                                onClick={handleToggleBlock}
+                                className={`w-full px-4 py-3 text-left text-sm transition-colors ${
+                                  isBlocked
+                                    ? (isDark ? 'hover:bg-white/10 text-white' : 'hover:bg-gray-100 text-black')
+                                    : 'hover:bg-red-500/20 text-red-500'
+                                }`}
+                              >
+                                {isBlocked ? 'Unblock @' : 'Block @'}{profileData?.username}
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -1036,6 +1189,49 @@ export const Profile: React.FC = () => {
         requiredAmount={stakeError.requiredAmount}
         actionType={stakeError.actionType}
       />
+
+      {/* Block Confirmation Modal */}
+      {showBlockConfirmModal && (
+        <div
+          className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+          onClick={() => setShowBlockConfirmModal(false)}
+        >
+          <div
+            className={`w-full max-w-md rounded-2xl p-6 transition-all duration-300 ${
+              isDark ? 'bg-gray-900 border border-white/20' : 'bg-white border border-gray-200'
+            }`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-black'}`}>
+              Block @{profileData?.username}?
+            </h3>
+            <div className={`space-y-3 mb-6 text-sm ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>
+              <p>You won't see their posts in your feed or be able to view their profile.</p>
+              <p className={`p-3 rounded-lg ${isDark ? 'bg-yellow-500/10 text-yellow-400' : 'bg-yellow-50 text-yellow-700'}`}>
+                Note: This block is stored in your browser and applies to all your accounts. It will persist until you clear your browser data or unblock them.
+              </p>
+            </div>
+            <div className="flex space-x-3">
+              <button
+                onClick={() => setShowBlockConfirmModal(false)}
+                className={`flex-1 px-4 py-2 rounded-full font-medium transition-all duration-200 ${
+                  isDark
+                    ? 'border border-gray-600 text-gray-300 hover:bg-gray-800'
+                    : 'border border-gray-300 text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmBlock}
+                className="flex-1 px-4 py-2 rounded-full font-medium transition-all duration-200 bg-red-500 text-white hover:bg-red-600"
+              >
+                Block
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </MainLayout>
   )
 }

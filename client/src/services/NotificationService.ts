@@ -58,13 +58,8 @@ export class NotificationService {
     })
     if (muted) return true
 
-    // Check if actor is blocked
-    const blocked = await prisma.blockedAccount.findUnique({
-      where: {
-        userId_blockedUserId: { userId, blockedUserId: actorId }
-      }
-    })
-    return !!blocked
+    // Blocking is handled client-side (localStorage), not server-side
+    return false
   }
 
   // --- Muted Account Management ---
@@ -114,52 +109,9 @@ export class NotificationService {
     return !!muted
   }
 
-  // --- Blocked Account Management ---
+  // Note: Blocking is handled client-side (localStorage) for privacy reasons.
+  // No server-side blocked account management needed.
 
-  /**
-   * Block an account for a user
-   */
-  static async blockAccount(userId: number, blockedUserId: number): Promise<void> {
-    await prisma.blockedAccount.upsert({
-      where: {
-        userId_blockedUserId: { userId, blockedUserId }
-      },
-      create: { userId, blockedUserId },
-      update: {}
-    })
-  }
-
-  /**
-   * Unblock an account for a user
-   */
-  static async unblockAccount(userId: number, blockedUserId: number): Promise<void> {
-    await prisma.blockedAccount.deleteMany({
-      where: { userId, blockedUserId }
-    })
-  }
-
-  /**
-   * Get all blocked accounts for a user
-   */
-  static async getBlockedAccounts(userId: number): Promise<number[]> {
-    const blocked = await prisma.blockedAccount.findMany({
-      where: { userId },
-      select: { blockedUserId: true }
-    })
-    return blocked.map(b => b.blockedUserId)
-  }
-
-  /**
-   * Check if an account is blocked
-   */
-  static async isAccountBlocked(userId: number, blockedUserId: number): Promise<boolean> {
-    const blocked = await prisma.blockedAccount.findUnique({
-      where: {
-        userId_blockedUserId: { userId, blockedUserId }
-      }
-    })
-    return !!blocked
-  }
   /**
    * Extract @mentions from a caw content
    */
@@ -241,22 +193,36 @@ export class NotificationService {
    * Create notification for a like action
    */
   static async createLikeNotification(cawId: number, likerId: number) {
+    console.log(`[createLikeNotification] Starting: cawId=${cawId}, likerId=${likerId}`)
+
     // Get the caw to find its owner
     const caw = await prisma.caw.findUnique({
       where: { id: cawId },
       select: { userId: true }
     })
 
-    if (!caw || caw.userId === likerId) return // Don't notify for self-likes
+    console.log(`[createLikeNotification] Found caw:`, caw)
+
+    if (!caw) {
+      console.log(`[createLikeNotification] Caw not found, skipping`)
+      return
+    }
+
+    if (caw.userId === likerId) {
+      console.log(`[createLikeNotification] Self-like detected (caw.userId=${caw.userId} === likerId=${likerId}), skipping`)
+      return
+    }
 
     // Check if the recipient has muted or blocked the actor
     if (await this.isUserMutedOrBlocked(caw.userId, likerId)) {
-      return // User is muted/blocked, don't send notification
+      console.log(`[createLikeNotification] User ${likerId} is muted/blocked by ${caw.userId}, skipping`)
+      return
     }
 
     // Check if the recipient has muted this thread
     if (await this.isThreadMutedForUser(caw.userId, cawId)) {
-      return // Thread is muted, don't send notification
+      console.log(`[createLikeNotification] Thread ${cawId} is muted by user ${caw.userId}, skipping`)
+      return
     }
 
     // Check if notification already exists to avoid duplicates
@@ -269,8 +235,11 @@ export class NotificationService {
       }
     })
 
+    console.log(`[createLikeNotification] Existing notification:`, existing)
+
     if (!existing) {
-      await prisma.notification.create({
+      console.log(`[createLikeNotification] Creating new notification for userId=${caw.userId}`)
+      const notification = await prisma.notification.create({
         data: {
           userId: caw.userId,
           actorId: likerId,
@@ -279,6 +248,9 @@ export class NotificationService {
           groupKey: `like_caw_${cawId}`
         }
       })
+      console.log(`[createLikeNotification] Created notification:`, notification)
+    } else {
+      console.log(`[createLikeNotification] Notification already exists, skipping`)
     }
   }
 

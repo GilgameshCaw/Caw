@@ -1,5 +1,5 @@
 // src/services/FrontEnd/src/components/Feed.tsx
-import React, { useEffect, useState, useCallback, forwardRef, useImperativeHandle, useMemo } from 'react'
+import React, { useEffect, useState, useCallback, forwardRef, useImperativeHandle, useMemo, useRef } from 'react'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import FeedItem from './FeedItem'
 import { apiFetch } from '../api/client'
@@ -8,6 +8,8 @@ import { useTheme } from '~/hooks/useTheme'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import { useViewTracking } from '~/hooks/useViewTracking'
 import { useMutePreferences, shouldFilterPost } from '~/hooks/useMutePreferences'
+import { setFeedRefreshCallback } from '~/hooks/useTxQueueMonitor'
+import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 
 type Props = {
   filter: 'For you' | 'Following' | 'profile' | 'profile-likes' | 'profile-replies' | 'profile-media' | string
@@ -30,16 +32,24 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
   const pendingPosts = usePendingPostsStore(s => s.pendingPosts)
   const { isDark } = useTheme()
   const { preferences } = useMutePreferences()
+  const blockedUsers = useBlockedUsersStore(s => s.blockedUsers)
   const [items,      setItems]      = useState<CawItem[]>([])
   const [nextCursor, setNextCursor] = useState<number|undefined>(undefined)
   const [hasMore,    setHasMore]    = useState(true)
   const [loading,    setLoading]    = useState(false)
   const [error,      setError]      = useState<string>()
 
-  // Filter items based on mute preferences
+  // Filter items based on mute preferences and blocked users
   const filteredItems = useMemo(() => {
-    return items.filter(item => !shouldFilterPost(item, preferences))
-  }, [items, preferences])
+    const blockedUserIds = blockedUsers.map(u => u.tokenId)
+    return items.filter(item => {
+      // Filter out muted content
+      if (shouldFilterPost(item, preferences)) return false
+      // Filter out blocked users
+      if (blockedUserIds.includes(item.user.tokenId)) return false
+      return true
+    })
+  }, [items, preferences, blockedUsers])
 
   // Expose refresh method via ref
   useImperativeHandle(ref, () => ({
@@ -54,6 +64,9 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
   // Track views for visible caws (use filtered items)
   const visibleCawIds = filteredItems.map(item => item.id).filter(id => id != null)
   useViewTracking(visibleCawIds)
+
+  // Ref for loadPage to use in callbacks
+  const loadPageRef = useRef<((force?: boolean) => Promise<void>) | null>(null)
 
   // load one "page" of results
   const loadPage = useCallback(async (force = false) => {
@@ -160,6 +173,33 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
     }
   }, [filter, nextCursor, hasMore, loading, apiEndpoint, username])
 
+  // Keep loadPage ref updated
+  useEffect(() => {
+    loadPageRef.current = loadPage
+  }, [loadPage])
+
+  // Register feed refresh callback for txQueue monitor (only for main feeds)
+  useEffect(() => {
+    if (filter === 'For you' || filter === 'Following') {
+      const refreshCallback = () => {
+        console.log('[Feed] Refresh triggered by txQueue monitor')
+        setItems([])
+        setNextCursor(undefined)
+        setHasMore(true)
+        setTimeout(() => {
+          if (loadPageRef.current) {
+            loadPageRef.current(true)
+          }
+        }, 50)
+      }
+      setFeedRefreshCallback(refreshCallback)
+
+      return () => {
+        setFeedRefreshCallback(null)
+      }
+    }
+  }, [filter])
+
   // when filter changes, reset everything & load first page
   useEffect(() => {
     setItems([])
@@ -231,18 +271,13 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
     </div>
   )
   if (items.length === 0) return <div className="text-gray-400 text-center py-8">No posts yet.</div>
-  if (filteredItems.length === 0) return <div className="text-gray-400 text-center py-8">No posts to show (some may be hidden by your mute settings).</div>
+  if (filteredItems.length === 0) return <div className="text-gray-400 text-center py-8">No posts to show (some may be hidden by your settings).</div>
 
   return (
     <div>
-      {/* Show pending posts at the top (only on main feed, not profiles) */}
-      {filter === 'For you' && pendingPosts.map(post => (
-        <div key={post.tempId} className="opacity-60 relative">
-          <div className="absolute top-2 right-2 text-xs text-gray-500 bg-gray-800 px-2 py-1 rounded">
-            Pending...
-          </div>
-          <FeedItem item={post as CawItem} />
-        </div>
+      {/* Show pending posts at the top (on main feeds, not profiles) */}
+      {(filter === 'For you' || filter === 'Following') && pendingPosts.map(post => (
+        <FeedItem key={post.tempId} item={post as CawItem} />
       ))}
 
       {/* Posts with consistent styling across all pages */}

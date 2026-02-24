@@ -472,87 +472,34 @@ router.delete('/mute-account/:tokenId', async (req, res) => {
   }
 })
 
-// ==================== Blocked Accounts ====================
-
 /**
- * GET /api/notifications/blocked-accounts
- * Get all blocked accounts for a user
+ * GET /api/notifications/is-account-muted/:tokenId
+ * Check if a specific account is muted by the user
  */
-router.get('/blocked-accounts', async (req, res) => {
+router.get('/is-account-muted/:tokenId', async (req, res) => {
   try {
     const userId = Number(req.header('x-user-id'))
+    const targetUserId = parseInt(req.params.tokenId)
 
     if (!userId) {
       return res.status(400).json({ error: 'x-user-id header is required' })
     }
 
-    const blockedUserIds = await NotificationService.getBlockedAccounts(userId)
-
-    return res.json({ blockedAccounts: blockedUserIds })
-
-  } catch (error) {
-    console.error('GET /api/notifications/blocked-accounts error:', error)
-    return res.status(500).json({ error: 'Failed to get blocked accounts' })
-  }
-})
-
-/**
- * POST /api/notifications/block-account/:tokenId
- * Block an account
- */
-router.post('/block-account/:tokenId', async (req, res) => {
-  try {
-    const userId = Number(req.header('x-user-id'))
-    const blockedUserId = parseInt(req.params.tokenId)
-
-    if (!userId) {
-      return res.status(400).json({ error: 'x-user-id header is required' })
-    }
-
-    if (!blockedUserId || isNaN(blockedUserId)) {
+    if (!targetUserId || isNaN(targetUserId)) {
       return res.status(400).json({ error: 'Valid tokenId is required' })
     }
 
-    // Don't allow blocking yourself
-    if (userId === blockedUserId) {
-      return res.status(400).json({ error: 'Cannot block yourself' })
-    }
+    const isMuted = await NotificationService.isAccountMuted(userId, targetUserId)
 
-    await NotificationService.blockAccount(userId, blockedUserId)
-
-    return res.json({ success: true, message: 'Account blocked' })
+    return res.json({ isMuted })
 
   } catch (error) {
-    console.error('POST /api/notifications/block-account error:', error)
-    return res.status(500).json({ error: 'Failed to block account' })
+    console.error('GET /api/notifications/is-account-muted error:', error)
+    return res.status(500).json({ error: 'Failed to check mute status' })
   }
 })
 
-/**
- * DELETE /api/notifications/block-account/:tokenId
- * Unblock an account
- */
-router.delete('/block-account/:tokenId', async (req, res) => {
-  try {
-    const userId = Number(req.header('x-user-id'))
-    const blockedUserId = parseInt(req.params.tokenId)
-
-    if (!userId) {
-      return res.status(400).json({ error: 'x-user-id header is required' })
-    }
-
-    if (!blockedUserId || isNaN(blockedUserId)) {
-      return res.status(400).json({ error: 'Valid tokenId is required' })
-    }
-
-    await NotificationService.unblockAccount(userId, blockedUserId)
-
-    return res.json({ success: true, message: 'Account unblocked' })
-
-  } catch (error) {
-    console.error('DELETE /api/notifications/block-account error:', error)
-    return res.status(500).json({ error: 'Failed to unblock account' })
-  }
-})
+// Note: Blocked accounts are handled client-side (localStorage) for privacy reasons.
+// No server-side blocked account routes needed.
 
 export default router
