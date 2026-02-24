@@ -1,5 +1,5 @@
 // src/services/RawEventsGatherer/listenForRawEvents.ts
-import { ContractEventPayload, WebSocketProvider, Contract, keccak256, toUtf8Bytes, getBytes, concat } from 'ethers'
+import { ContractEventPayload, WebSocketProvider, JsonRpcProvider, Contract, keccak256, toUtf8Bytes, getBytes, concat } from 'ethers'
 import type { Log } from '@ethersproject/abstract-provider'
 import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
 import delay from '../../tools/delay'
@@ -13,6 +13,33 @@ export type RawEventInput = {
   data: any
   topics: string[]
   contractAddress: string
+}
+
+const CONTRACT_ABI = [
+  'event ActionsProcessed(' +
+  'tuple(' +
+    'uint8 actionType,' +
+    'uint32 senderId,' +
+    'uint32 receiverId,' +
+    'uint32 receiverCawonce,' +
+    'uint32 clientId,' +
+    'uint32 cawonce,' +
+    'uint32[] recipients,' +
+    'uint128[] amounts,' +
+    'string text' +
+  ')[] actions' +
+  ')'
+]
+
+/**
+ * Convert WebSocket URL to HTTP URL for fallback polling
+ * Handles Infura and other providers that have /ws in the WebSocket path
+ */
+function wsToHttp(wsUrl: string): string {
+  return wsUrl
+    .replace(/^wss:\/\//, 'https://')
+    .replace(/^ws:\/\//, 'http://')
+    .replace(/\/ws\//, '/')  // Remove /ws/ from path (Infura format)
 }
 
 /**
@@ -34,26 +61,15 @@ export default async function listenForRawEvents(
     }
   }
 ): Promise<{ stop(): void }> {
-  const provider = new WebSocketProvider(config.rpcUrl)
-  const contract = new Contract(
-    CAW_ACTIONS_ADDRESS,
-    [
-      'event ActionsProcessed(' +
-      'tuple(' +
-        'uint8 actionType,' +
-        'uint32 senderId,' +
-        'uint32 receiverId,' +
-        'uint32 receiverCawonce,' +
-        'uint32 clientId,' +
-        'uint32 cawonce,' +
-        'uint32[] recipients,' +
-        'uint128[] amounts,' +
-        'string text' +
-      ')[] actions' +
-      ')'
-    ],
-    provider
-  )
+  let wsProvider: WebSocketProvider | null = null
+  let wsContract: Contract | null = null
+  let isReconnecting = false
+  let isStopped = false
+
+  // HTTP provider for reliable polling (WebSocket can die silently)
+  const httpRpcUrl = wsToHttp(config.rpcUrl)
+  const httpProvider = new JsonRpcProvider(httpRpcUrl)
+  const httpContract = new Contract(CAW_ACTIONS_ADDRESS, CONTRACT_ABI, httpProvider)
 
   const last = await config.rawEventsProvider.getLastProcessedEvent()
   const startBlock = last ? last.blockNumber : 0
@@ -74,61 +90,17 @@ export default async function listenForRawEvents(
     return keccak256(input)
   }
 
-
-  let past: Log[]
-  while (true) {
-    try {
-      const raw = await contract.queryFilter(
-        contract.filters.ActionsProcessed(),
-        startBlock
+  // Process events from a Log array (used by both historical fetch and polling)
+  async function processEvents(events: Log[], contract: Contract) {
+    for (const ev of events) {
+      const rawData = ev.data ?? '0x'
+      const decoded = contract.interface.decodeEventLog(
+        'ActionsProcessed',
+        rawData,
+        ev.topics
       )
-      past = raw as unknown as Log[]
-      break
-    } catch (err) {
-      console.error('Error fetching past events, retrying in 5s', err)
-      await delay(5000)
-    }
-  }
-
-  for (const ev of past) {
-    const rawData = ev.data ?? '0x'
-    const decoded = contract.interface.decodeEventLog(
-      'ActionsProcessed',
-      rawData,
-      ev.topics
-    )
-    console.log("Will store: ", ev)
-    for (const tuple of decoded.actions as any[]) {
-      const action = {
-        actionType:      Number(tuple[0]),
-        senderId:        Number(tuple[1]),
-        receiverId:      Number(tuple[2]),
-        receiverCawonce: Number(tuple[3]),
-        clientId:        Number(tuple[4]),
-        cawonce:         Number(tuple[5]),
-        recipients:      tuple[6],
-        amounts:         tuple[7],
-        text:            tuple[8]
-      }
-      const logIndex = ev.logIndex ?? 0
-      lastHash = hashNext(lastHash, action)
-      await config.rawEventsProvider.storeEvent({
-        chainId:         config.chainId,
-        blockNumber:     ev.blockNumber,
-        logIndex,
-        transactionHash: ev.transactionHash,
-        parentHash:      lastHash,
-        data:            action,
-        topics:          ev.topics,
-        contractAddress: ev.address
-      })
-    }
-  }
-
-  contract.on('ActionsProcessed', async (rawActions: any[], ev: ContractEventPayload) => {
-    console.log("Raw event received", rawActions, ev)
-    try {
-      for (const tuple of rawActions as any[]) {
+      console.log("Will store: ", ev)
+      for (const tuple of decoded.actions as any[]) {
         const action = {
           actionType:      Number(tuple[0]),
           senderId:        Number(tuple[1]),
@@ -140,47 +112,53 @@ export default async function listenForRawEvents(
           amounts:         tuple[7],
           text:            tuple[8]
         }
-        const logIndex = ev.log.index ?? 0
+        const logIndex = ev.logIndex ?? 0
         lastHash = hashNext(lastHash, action)
         await config.rawEventsProvider.storeEvent({
           chainId:         config.chainId,
-          blockNumber:     ev.log.blockNumber,
+          blockNumber:     ev.blockNumber,
           logIndex,
-          transactionHash: ev.log.transactionHash,
+          transactionHash: ev.transactionHash,
           parentHash:      lastHash,
           data:            action,
-          topics:          [ ...ev.log.topics ] ,
-          contractAddress: ev.log.address
+          topics:          ev.topics,
+          contractAddress: ev.address
         })
       }
-    } catch (err) {
-      console.error("FAILED to process raw event", err)
     }
-  })
+  }
 
-  // Track last synced block for polling
-  let lastSyncedBlock = startBlock
-
-  // Periodic polling to catch missed events (every 30 seconds)
-  const pollInterval = setInterval(async () => {
+  // Fetch historical events using HTTP provider (more reliable)
+  let past: Log[]
+  while (true) {
     try {
-      const currentBlock = await provider.getBlockNumber()
-      if (currentBlock > lastSyncedBlock) {
-        console.log(`[RawEventsGatherer] Polling for missed events from block ${lastSyncedBlock + 1} to ${currentBlock}`)
-        const events = await contract.queryFilter(
-          contract.filters.ActionsProcessed(),
-          lastSyncedBlock + 1,
-          currentBlock
-        ) as unknown as Log[]
+      const raw = await httpContract.queryFilter(
+        httpContract.filters.ActionsProcessed(),
+        startBlock
+      )
+      past = raw as unknown as Log[]
+      break
+    } catch (err) {
+      console.error('[RawEventsGatherer] Error fetching past events, retrying in 5s', err)
+      await delay(5000)
+    }
+  }
 
-        for (const ev of events) {
-          const rawData = ev.data ?? '0x'
-          const decoded = contract.interface.decodeEventLog(
-            'ActionsProcessed',
-            rawData,
-            ev.topics
-          )
-          for (const tuple of decoded.actions as any[]) {
+  await processEvents(past, httpContract)
+
+  // Setup WebSocket for real-time events
+  async function setupWebSocket() {
+    if (isStopped) return
+
+    try {
+      console.log('[RawEventsGatherer] Setting up WebSocket connection...')
+      wsProvider = new WebSocketProvider(config.rpcUrl)
+      wsContract = new Contract(CAW_ACTIONS_ADDRESS, CONTRACT_ABI, wsProvider)
+
+      wsContract.on('ActionsProcessed', async (rawActions: any[], ev: ContractEventPayload) => {
+        console.log("[RawEventsGatherer] Raw event received via WebSocket", rawActions, ev)
+        try {
+          for (const tuple of rawActions as any[]) {
             const action = {
               actionType:      Number(tuple[0]),
               senderId:        Number(tuple[1]),
@@ -192,35 +170,109 @@ export default async function listenForRawEvents(
               amounts:         tuple[7],
               text:            tuple[8]
             }
-            const logIndex = ev.logIndex ?? 0
+            const logIndex = ev.log.index ?? 0
             lastHash = hashNext(lastHash, action)
             await config.rawEventsProvider.storeEvent({
               chainId:         config.chainId,
-              blockNumber:     ev.blockNumber,
+              blockNumber:     ev.log.blockNumber,
               logIndex,
-              transactionHash: ev.transactionHash,
+              transactionHash: ev.log.transactionHash,
               parentHash:      lastHash,
               data:            action,
-              topics:          ev.topics,
-              contractAddress: ev.address
+              topics:          [ ...ev.log.topics ] ,
+              contractAddress: ev.log.address
             })
           }
+        } catch (err) {
+          console.error("[RawEventsGatherer] FAILED to process raw event from WebSocket", err)
         }
+      })
+
+      // Monitor WebSocket connection health
+      wsProvider.websocket.on('close', () => {
+        if (!isStopped) {
+          console.log('[RawEventsGatherer] WebSocket connection closed, will reconnect...')
+          scheduleReconnect()
+        }
+      })
+
+      wsProvider.websocket.on('error', (err: any) => {
+        console.error('[RawEventsGatherer] WebSocket error:', err)
+        scheduleReconnect()
+      })
+
+      console.log('[RawEventsGatherer] WebSocket connection established')
+    } catch (err) {
+      console.error('[RawEventsGatherer] Failed to setup WebSocket:', err)
+      scheduleReconnect()
+    }
+  }
+
+  function scheduleReconnect() {
+    if (isReconnecting || isStopped) return
+    isReconnecting = true
+
+    // Clean up old connection
+    if (wsContract) {
+      try { wsContract.removeAllListeners() } catch {}
+    }
+    if (wsProvider) {
+      try { (wsProvider as any).destroy?.() } catch {}
+    }
+    wsProvider = null
+    wsContract = null
+
+    // Reconnect after 5 seconds
+    setTimeout(async () => {
+      isReconnecting = false
+      if (!isStopped) {
+        await setupWebSocket()
+      }
+    }, 5000)
+  }
+
+  // Initial WebSocket setup
+  await setupWebSocket()
+
+  // Track last synced block for polling - start from the latest processed event
+  let lastSyncedBlock = past.length > 0 ? past[past.length - 1].blockNumber : startBlock
+
+  // Periodic polling using HTTP provider (more reliable than WebSocket)
+  const pollInterval = setInterval(async () => {
+    if (isStopped) return
+
+    try {
+      const currentBlock = await httpProvider.getBlockNumber()
+      if (currentBlock > lastSyncedBlock) {
+        console.log(`[RawEventsGatherer] Polling for missed events from block ${lastSyncedBlock + 1} to ${currentBlock}`)
+        const events = await httpContract.queryFilter(
+          httpContract.filters.ActionsProcessed(),
+          lastSyncedBlock + 1,
+          currentBlock
+        ) as unknown as Log[]
 
         if (events.length > 0) {
+          await processEvents(events, httpContract)
           console.log(`[RawEventsGatherer] Polled ${events.length} missed event(s)`)
         }
         lastSyncedBlock = currentBlock
       }
     } catch (err) {
       console.error('[RawEventsGatherer] Polling error:', err)
+      // Don't update lastSyncedBlock on error, will retry next interval
     }
-  }, 30000) // Poll every 30 seconds
+  }, 15000) // Poll every 15 seconds (was 30s, now faster for better responsiveness)
 
   return {
     stop() {
+      isStopped = true
       clearInterval(pollInterval)
-      ;(provider as any).destroy?.()
+      if (wsContract) {
+        try { wsContract.removeAllListeners() } catch {}
+      }
+      if (wsProvider) {
+        try { (wsProvider as any).destroy?.() } catch {}
+      }
     }
   }
 }
