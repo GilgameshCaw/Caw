@@ -54,15 +54,18 @@ const Sidebar: React.FC = () => {
       <div className="flex flex-col h-full sm:flex-1">
         {/* Logo Section - Hidden on mobile */}
         <div className="hidden sm:block p-4 pl-0">
-          <NavLink 
-            to="/home" 
+          <NavLink
+            to="/home"
             className="flex items-center pl-3 cursor-pointer hover:opacity-80 transition-opacity duration-200"
           >
-            <img 
-              src={cawLogo} 
-              alt="CAW Logo" 
+            <img
+              src={cawLogo}
+              alt="CAW Logo"
               className="w-10 h-10 object-contain"
             />
+            <span className={`ml-2 text-xl font-bold ${isDark ? 'text-white' : 'text-black'}`}>
+              CAW
+            </span>
           </NavLink>
         </div>
 
@@ -145,30 +148,6 @@ const Sidebar: React.FC = () => {
           >
             <HiOutlineColorSwatch className="w-7 h-7 sm:w-7 sm:h-7" />
             <span className="font-medium text-lg sm:text-lg">Mint</span>
-          </NavLink>
-
-          <NavLink
-            to="/gamefi"
-            className={({ isActive }) =>
-              `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
-            }
-          >
-            <svg className="w-7 h-7 sm:w-7 sm:h-7" fill="none" stroke="currentColor" viewBox="0 0 32 32">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M30.9,25l-3-14.9c-0.3-1.3-1.1-2.5-2.2-3.2c-1.9-1.1-4.3-0.8-5.8,0.7L18.6,9h-2h-1.1h-2l-1.4-1.4 c-1.5-1.5-3.9-1.8-5.8-0.7c-1.2,0.7-2,1.8-2.2,3.2L1.1,25c-0.3,1.6,0.9,3,2.5,3c0.6,0,1.1-0.2,1.5-0.7L8.8,23c1.7-1.9,4.1-3,6.6-3 h1.1c2.5,0,5,1.1,6.6,3l3.8,4.3c0.4,0.4,0.9,0.7,1.5,0.7C30.1,28,31.3,26.5,30.9,25z" />
-              <circle strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" cx="23" cy="14" r="2" />
-              <line strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" x1="9" y1="16" x2="9" y2="12" />
-              <line strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" x1="11" y1="14" x2="7" y2="14" />
-              <line strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" x1="17" y1="13" x2="15" y2="13" />
-              <line strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" x1="17" y1="16" x2="15" y2="16" />
-            </svg>
-            <span className="font-medium text-lg sm:text-lg">GameFi</span>
-            <span className={`px-1.5 py-0.5 text-xs font-semibold rounded-full transition-colors duration-300 ${
-              isDark 
-                ? 'bg-yellow-500 text-black' 
-                : 'bg-yellow-500 text-black'
-            }`}>
-              New
-            </span>
           </NavLink>
 
           <NavLink
