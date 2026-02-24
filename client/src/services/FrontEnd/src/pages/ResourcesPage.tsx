@@ -99,7 +99,7 @@ const ResourcesPage: React.FC = () => {
         <div className="flex items-center gap-4 mb-6">
           <Link
             to="/settings"
-            className={`p-2 rounded-full transition-colors ${
+            className={`p-2 rounded-full transition-colors cursor-pointer ${
               isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'
             }`}
           >
@@ -179,7 +179,7 @@ const ResourcesPage: React.FC = () => {
                   Social Protocol
                 </h4>
                 <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-                  Gasless actions via signature-based contracts on Base
+                  Gasless actions via signature-based contracts on L2 networks
                 </p>
               </div>
             </div>

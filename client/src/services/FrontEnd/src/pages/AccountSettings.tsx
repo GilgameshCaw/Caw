@@ -95,7 +95,7 @@ const AccountSettings: React.FC = () => {
         <div className="flex items-center gap-4 mb-6">
           <Link
             to="/settings"
-            className={`p-2 rounded-full transition-colors ${
+            className={`p-2 rounded-full transition-colors cursor-pointer ${
               isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'
             }`}
           >
@@ -245,7 +245,7 @@ const AccountSettings: React.FC = () => {
                   </a>
                 </div>
                 <p className={`text-xs ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-                  CAW is deployed on Ethereum mainnet. Username NFTs are on Base.
+                  CAW is deployed on Ethereum mainnet. Username NFTs are on L2 networks.
                 </p>
               </div>
             </section>

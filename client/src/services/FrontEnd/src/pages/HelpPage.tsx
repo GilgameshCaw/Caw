@@ -81,7 +81,7 @@ const HelpPage: React.FC = () => {
         <div className="flex items-center gap-4 mb-6">
           <Link
             to="/"
-            className={`p-2 rounded-full transition-colors ${
+            className={`p-2 rounded-full transition-colors cursor-pointer ${
               isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'
             }`}
           >
@@ -586,10 +586,10 @@ const HelpPage: React.FC = () => {
                   Architecture
                 </h3>
                 <p>
-                  For economic feasibility, social actions are validated on Base (L2) where gas costs are significantly lower. The validator submits batched transactions to the CawActions contract on Base, which processes likes, posts, follows, and other interactions at a fraction of mainnet costs.
+                  For economic feasibility, social actions are validated on L2 networks where gas costs are significantly lower. The validator submits batched transactions to the CawActions contract on L2, which processes likes, posts, follows, and other interactions at a fraction of mainnet costs.
                 </p>
                 <p className="mt-2">
-                  Username NFTs and CAW token balances live on Ethereum mainnet. LayerZero enables cross-chain messaging between L1 and L2, allowing users to bridge their CAW balance to Base for use in the social protocol while maintaining the security of mainnet for core assets.
+                  Username NFTs and CAW token balances live on Ethereum mainnet. LayerZero enables cross-chain messaging between L1 and L2, allowing users to bridge their CAW balance to L2 networks for use in the social protocol while maintaining the security of mainnet for core assets.
                 </p>
               </div>
             </div>
@@ -770,7 +770,7 @@ const HelpPage: React.FC = () => {
                   </div>
                   <div className={`border-t pt-4 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
                     <h4 className={`text-sm font-medium mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>Social Protocol</h4>
-                    <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>Gasless actions via signature-based contracts on Base</p>
+                    <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>Gasless actions via signature-based contracts on L2 networks</p>
                   </div>
                 </div>
               </div>
