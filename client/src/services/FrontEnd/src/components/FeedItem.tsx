@@ -11,8 +11,6 @@ import {
   HiOutlineDotsHorizontal,
   HiOutlineTranslate,
   HiOutlineClipboard,
-  HiOutlineThumbUp,
-  HiOutlineThumbDown,
   HiOutlineVolumeOff,
   HiOutlineFilter,
   HiOutlineEyeOff,
@@ -29,7 +27,8 @@ import { useTokenDataStore } from '~/store/tokenDataStore'
 import { ShareModal } from './ShareModal'
 import { useModalStore } from '~/store/modalStore'
 import { useOptimisticLikesStore } from '~/store/optimisticLikesStore'
-import { Link } from 'react-router-dom'
+import { useBookmarksStore } from '~/store/bookmarksStore'
+import { Link, useNavigate } from 'react-router-dom'
 import { User, CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
 import { usePendingPolling, usePendingCawPolling, usePendingLikePolling, usePendingRecawPolling } from '~/hooks/usePendingPolling'
@@ -64,10 +63,14 @@ function formatTimeAgo(timestamp: string): string {
 }
 
 const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void; onLikeStateChange?: (cawId: string, likePending: boolean) => void }> = ({ item, isMainPost = false, isReply = false, onBookmarkUpdate, onLikeStateChange }) => {
-  // Enable polling for pending items
+  // Local pending states (declared early so polling can use them)
+  const [likePending, setLikePending] = useState(item.likePending || false)
+  const [recawPending, setRecawPending] = useState(item.recawPending || false)
+
+  // Enable polling for pending items - use local state so it works with auto-trigger
   usePendingCawPolling(parseInt(item.id), item.status === 'PENDING')
-  usePendingLikePolling(parseInt(item.id), item.likePending || false)
-  usePendingRecawPolling(parseInt(item.id), item.recawPending || false)
+  usePendingLikePolling(parseInt(item.id), likePending)
+  usePendingRecawPolling(parseInt(item.id), recawPending)
 
   const activeTokenId     = useTokenDataStore(s => s.activeTokenId)
   const activeToken = useTokenDataStore(s => {
@@ -78,10 +81,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const { isConnected, address } = useAccount()
   const { openConnectModal } = useConnectModal()
   const { isDark } = useTheme()
+  const navigate = useNavigate()
   const [busyLike, setBusyLike]     = useState(false)
   const [busyRecaw, setBusyRecaw]   = useState(false)
-  const [recawPending, setRecawPending] = useState(item.recawPending || false)
-  const [likePending, setLikePending] = useState(item.likePending || false)
   const [txSubmitted, setTxSubmitted] = useState(false) // Track if tx was submitted during this session only
   const [pendingLikeAction, setPendingLikeAction] = useState<{ receiverId: number, receiverCawonce: number, actionType: 'like' | 'unlike' } | null>(null) // Track pending like data
   const [wrongWalletError, setWrongWalletError] = useState(false) // Track if wrong wallet is connected
@@ -90,8 +92,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const [showOptionsMenu, setShowOptionsMenu] = useState(false)
   const [showShareModal, setShowShareModal] = useState(false)
   const [textCopied, setTextCopied] = useState(false)
-  const [isBookmarked, setIsBookmarked] = useState(item.isBookmarked || false)
-  const [busyBookmark, setBusyBookmark] = useState(false)
+  // Bookmarks are browser-only (localStorage)
+  const bookmarksStore = useBookmarksStore()
+  const isBookmarked = bookmarksStore.isBookmarked(item.id)
   const [translatedText, setTranslatedText] = useState<string | null>(null)
   const [isTranslating, setIsTranslating] = useState(false)
   const [isRetrying, setIsRetrying] = useState(false)
@@ -102,6 +105,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const [muteConfirmAction, setMuteConfirmAction] = useState<'hide-post' | 'mute-thread' | 'mute-account' | 'block-account' | 'mute-words'>('hide-post')
   const menuRef = useRef<HTMLDivElement>(null)
   const optionsMenuRef = useRef<HTMLDivElement>(null)
+  const isSubmittingLikeRef = useRef(false) // Prevent duplicate like submissions
 
   // Determine which item to use (handle recaws)
   let useItem = item;
@@ -122,7 +126,8 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
   // Auto-trigger like after wallet connection
   useEffect(() => {
-    if (!pendingLikeAction || !isConnected || !activeTokenId || !activeToken) return;
+    // Skip if no pending action, not connected, or already submitting
+    if (!pendingLikeAction || !isConnected || !activeTokenId || !activeToken || isSubmittingLikeRef.current) return;
 
     // Check if connected to correct wallet
     if (activeToken.address.toLowerCase() !== address?.toLowerCase()) {
@@ -131,6 +136,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       setTimeout(() => setWrongWalletError(false), 5000);
       return;
     }
+
+    // Prevent duplicate submissions
+    isSubmittingLikeRef.current = true;
 
     // Clear pending action FIRST to prevent re-triggers
     const actionData = pendingLikeAction;
@@ -163,12 +171,17 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       }
       setLikePending(true);
       setTxSubmitted(true);
+      // Notify parent component about like state change
+      if (onLikeStateChange) {
+        onLikeStateChange(useItem.id, true);
+      }
     }).catch(err => {
       console.error('Like failed', err);
       setLikePending(false);
       setTxSubmitted(false);
     }).finally(() => {
       setBusyLike(false);
+      isSubmittingLikeRef.current = false;
     });
   }, [pendingLikeAction, isConnected, activeTokenId, activeToken, address, signAndSubmit, useItem.id])
 
@@ -220,6 +233,8 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
     // If wallet not connected, open connect modal and set pending action
     if (!isConnected) {
+      // Reset submitting ref for new action
+      isSubmittingLikeRef.current = false;
       setPendingLikeAction({
         receiverId: useItem.user.tokenId,
         receiverCawonce: useItem.cawonce ?? 0,
@@ -389,47 +404,16 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     openModal('comment', item)
   }
 
-  const handleBookmark = async (e: React.MouseEvent) => {
+  const handleBookmark = (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
 
-    if (!activeTokenId) {
-      if (openConnectModal) {
-        openConnectModal()
-      }
-      return
-    }
+    // Bookmarks are browser-only (localStorage) - no auth required
+    const cawId = useItem.id
+    const newState = bookmarksStore.toggleBookmark(cawId)
 
-    setBusyBookmark(true)
-    const cawId = parseInt(useItem.id)
-
-    try {
-      if (isBookmarked) {
-        // Remove bookmark
-        await apiFetch(`/api/bookmarks/${cawId}`, {
-          method: 'DELETE',
-          headers: { 'x-user-id': activeTokenId.toString() }
-        })
-        setIsBookmarked(false)
-        if (onBookmarkUpdate) {
-          onBookmarkUpdate(cawId, false)
-        }
-      } else {
-        // Add bookmark
-        await apiFetch(`/api/bookmarks/${cawId}`, {
-          method: 'POST',
-          body: JSON.stringify({}),
-          headers: { 'x-user-id': activeTokenId.toString() }
-        })
-        setIsBookmarked(true)
-        if (onBookmarkUpdate) {
-          onBookmarkUpdate(cawId, true)
-        }
-      }
-    } catch (error) {
-      console.error('Failed to toggle bookmark:', error)
-    } finally {
-      setBusyBookmark(false)
+    if (onBookmarkUpdate) {
+      onBookmarkUpdate(parseInt(cawId), newState)
     }
   }
 
@@ -488,22 +472,6 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         setTextCopied(true)
         setTimeout(() => setTextCopied(false), 2000)
         break
-      case 'show-more':
-        // Store preference for similar content
-        const moreLikeThis = JSON.parse(localStorage.getItem('moreLikeThis') || '[]')
-        const keywords = useItem.content.toLowerCase().split(' ').filter(w => w.length > 4)
-        moreLikeThis.push(...keywords)
-        localStorage.setItem('moreLikeThis', JSON.stringify([...new Set(moreLikeThis)]))
-        alert('You will see more posts like this')
-        break
-      case 'show-less':
-        // Store preference against similar content
-        const lessLikeThis = JSON.parse(localStorage.getItem('lessLikeThis') || '[]')
-        const lessKeywords = useItem.content.toLowerCase().split(' ').filter(w => w.length > 4)
-        lessLikeThis.push(...lessKeywords)
-        localStorage.setItem('lessLikeThis', JSON.stringify([...new Set(lessLikeThis)]))
-        alert('You will see fewer posts like this')
-        break
       case 'mute-thread':
         if (shouldShowMuteConfirmModal()) {
           setMuteConfirmAction('mute-thread')
@@ -559,22 +527,15 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         break
       }
       case 'block-account': {
-        const effectiveTokenId = activeTokenId || activeToken?.tokenId
         if (shouldShowMuteConfirmModal()) {
           setMuteConfirmAction('block-account')
           setShowMuteConfirmModal(true)
         } else {
+          // Blocking is browser-only (localStorage)
           const blockedAccounts = JSON.parse(localStorage.getItem('blockedAccounts') || '[]')
           blockedAccounts.push(useItem.user.tokenId)
           localStorage.setItem('blockedAccounts', JSON.stringify([...new Set(blockedAccounts)]))
           window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
-          // Sync to server for notification filtering
-          if (effectiveTokenId) {
-            apiFetch(`/api/notifications/block-account/${useItem.user.tokenId}`, {
-              method: 'POST',
-              headers: { 'x-user-id': effectiveTokenId.toString() }
-            }).catch(err => console.error('Failed to sync block to server:', err))
-          }
         }
         break
       }
@@ -598,9 +559,18 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     }
   }
 
+  const handleCardClick = (e: React.MouseEvent) => {
+    // Don't navigate if clicking on interactive elements (they handle their own navigation)
+    const target = e.target as HTMLElement
+    if (target.closest('a') || target.closest('button')) {
+      return
+    }
+    navigate(`/caws/${useItem.id}`)
+  }
+
   return (
     <>
-      <Link to={`/caws/${useItem.id}`} className="block">
+      <div onClick={handleCardClick} className="block">
         <div className={`p-4 transition-all duration-300 hover:bg-gray-500/5 cursor-pointer border-b ${
           isDark ? 'border-gray-800' : 'border-gray-200'
         } ${
@@ -1029,10 +999,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
             </div>
 
             <div className="flex items-center space-x-4">
-              {/* Bookmark */}
+              {/* Bookmark (browser-only, stored in localStorage) */}
               <button
                 onClick={handleBookmark}
-                disabled={busyBookmark}
                 className={`transition-colors duration-300 hover:text-yellow-500 cursor-pointer ${
                   isBookmarked
                     ? 'text-yellow-500'
@@ -1040,15 +1009,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 }`}
                 title={isBookmarked ? "Remove bookmark" : "Save"}
               >
-                {busyBookmark ? (
-                  <div className="w-5 h-5 border-2 border-gray-400 border-t-yellow-500 rounded-full animate-spin"></div>
-                ) : (
-                  <Bookmark className={`w-5 h-5 transition-all duration-300 ${
-                    isBookmarked
-                      ? 'fill-yellow-500 stroke-yellow-500'
-                      : isDark ? 'stroke-white stroke-[1.5]' : 'stroke-gray-600'
-                  }`} />
-                )}
+                <Bookmark className={`w-5 h-5 transition-all duration-300 ${
+                  isBookmarked
+                    ? 'fill-yellow-500 stroke-yellow-500'
+                    : isDark ? 'stroke-white stroke-[1.5]' : 'stroke-gray-600'
+                }`} />
               </button>
 
               {/* Share */}
@@ -1086,7 +1051,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           </div>
           {/* End content wrapper */}
         </div>
-      </Link>
+      </div>
 
       {/* Modal profesional con Portal y positioning calculado */}
       {showOptionsMenu && createPortal(
@@ -1170,34 +1135,6 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     Copy post text
                   </>
                 )}
-              </button>
-
-              <button
-                onMouseDown={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  handleMenuAction('show-more')
-                }}
-                className={`w-full px-4 py-3 text-left text-sm transition-colors duration-200 flex items-center gap-3 cursor-pointer ${
-                  isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'
-                }`}
-              >
-                <HiOutlineThumbUp className="w-5 h-5" />
-                Show more like this
-              </button>
-
-              <button
-                onMouseDown={(e) => {
-                  e.preventDefault()
-                  e.stopPropagation()
-                  handleMenuAction('show-less')
-                }}
-                className={`w-full px-4 py-3 text-left text-sm transition-colors duration-200 flex items-center gap-3 cursor-pointer ${
-                  isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'
-                }`}
-              >
-                <HiOutlineThumbDown className="w-5 h-5" />
-                Show less like this
               </button>
 
               <div className={`border-t my-1 ${
@@ -1381,18 +1318,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               break
             }
             case 'block-account': {
+              // Blocking is browser-only (localStorage)
               const blockedAccounts = JSON.parse(localStorage.getItem('blockedAccounts') || '[]')
               blockedAccounts.push(useItem.user.tokenId)
               localStorage.setItem('blockedAccounts', JSON.stringify([...new Set(blockedAccounts)]))
               window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
-              // Sync to server for notification filtering
-              const blockTokenId = activeTokenId || activeToken?.tokenId
-              if (blockTokenId) {
-                apiFetch(`/api/notifications/block-account/${useItem.user.tokenId}`, {
-                  method: 'POST',
-                  headers: { 'x-user-id': blockTokenId.toString() }
-                }).catch(err => console.error('Failed to sync block to server:', err))
-              }
               break
             }
           }
