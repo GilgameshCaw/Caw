@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useCallback } from "react";
 import { useAccount } from "wagmi";
 import { Modal, useModalStore } from "~/store";
 import { CommentModal } from "~/components/modals/CommentModal";
@@ -11,6 +11,18 @@ const KEEP_MODALS: Modal[] = ["network", "comment", "quote", "message", "followi
 
 export const Modals: React.FC = () => {
   const { modal, modalData, closeModal } = useModalStore();
+
+  // Close modal on Escape key
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (e.key === 'Escape' && modal) {
+      closeModal();
+    }
+  }, [modal, closeModal]);
+
+  useEffect(() => {
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [handleKeyDown]);
 
   useEffect(() => {
     if (modal && !KEEP_MODALS.includes(modal)) {
