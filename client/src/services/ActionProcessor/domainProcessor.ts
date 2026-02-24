@@ -52,15 +52,19 @@ export async function processDomainEffects(
       break
 
     case 'LIKE':
+      console.log(`[domainProcessor] Processing LIKE action, parentCawId=${parentCawId}, receiverCawonce=${rawAction.receiverCawonce}, receiverId=${rawAction.receiverId}`)
       // For likes, we need to find the caw being liked
       if (!parentCawId && rawAction.receiverCawonce) {
         // The receiverId in a like might be 0, so we search by cawonce only
+        console.log(`[domainProcessor] Searching for caw by cawonce=${rawAction.receiverCawonce}`)
         const targetCaw = await tx.caw.findFirst({
           where: { cawonce: rawAction.receiverCawonce },
           orderBy: { createdAt: 'asc' }
         })
         parentCawId = targetCaw?.id
+        console.log(`[domainProcessor] Found targetCaw:`, targetCaw?.id)
       }
+      console.log(`[domainProcessor] Calling handleLikeAction with parentCawId=${parentCawId}`)
       await handleLikeAction(tx, action, rawAction, parentCawId)
       break
 

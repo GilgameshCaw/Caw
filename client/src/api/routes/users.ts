@@ -190,14 +190,10 @@ router.get('/:username', async (req, res) => {
         coverPhotoUrl: true,
         profileUpdatePending: true,
         lastStakedAt: true,
-        // Include counts
-        _count: {
-          select: {
-            caws: true,
-            followers: true,
-            follows: true,
-          }
-        }
+        // Counter cache fields
+        cawCount: true,
+        followerCount: true,
+        followingCount: true,
       }
     })
 
@@ -240,18 +236,19 @@ router.get('/:username', async (req, res) => {
       }
     }
 
-    // Format response
+    // Format response - use cached counts from User model
+    // Ensure counts are never negative
     const response = {
       ...user,
-      cawCount: user._count.caws,
-      followerCount: user._count.followers,
-      followingCount: user._count.follows,
+      cawCount: Math.max(0, user.cawCount),
+      followerCount: Math.max(0, user.followerCount),
+      followingCount: Math.max(0, user.followingCount),
       likeCount,
       isFollowing,
       followPending,
-      // Remove the _count field
-      _count: undefined
     }
+
+    console.log(`[users API] ${username}: followerCount=${user.followerCount}, followingCount=${user.followingCount}`)
 
     return res.json(response)
   } catch (err: any) {

@@ -237,12 +237,14 @@ export async function handleLikeAction(
     where: { userId_cawId: { userId, cawId: parentCawId } }
   })
 
-  console.log("Create like: ", existing)
+  console.log("Create like: ", existing, "parentCawId:", parentCawId, "userId:", userId)
 
   if (existing) {
     // Update the action field and clear pending status
     // If it was pending, we need to increment the counter
+    console.log("[handleLikeAction] Existing like found, pending:", existing.pending)
     if (existing.pending) {
+      console.log("[handleLikeAction] Confirming pending like, will create notification")
       await tx.like.update({
         where: { userId_cawId: { userId, cawId: parentCawId } },
         data: { action: 'LIKE', pending: false }
@@ -252,7 +254,17 @@ export async function handleLikeAction(
         where: { id: parentCawId },
         data: { likeCount: { increment: 1 } }
       })
+
+      // Create like notification for pending->confirmed transition
+      try {
+        console.log("[handleLikeAction] Creating like notification for caw", parentCawId, "from user", userId)
+        await NotificationService.createLikeNotification(parentCawId, userId)
+        console.log("[handleLikeAction] Like notification created successfully")
+      } catch (err) {
+        console.error(`Failed to create like notification for confirmed pending like:`, err)
+      }
     } else {
+      console.log("[handleLikeAction] Like already confirmed, skipping notification")
       // Already processed, just ensure it's marked as LIKE
       await tx.like.update({
         where: { userId_cawId: { userId, cawId: parentCawId } },
@@ -300,12 +312,9 @@ export async function handleUnlikeAction(
       where: { userId_cawId: { userId, cawId } }
     })
 
-    // If it wasn't pending, decrement the count
+    // If it wasn't pending, decrement the count (ensure not negative)
     if (!existing.pending) {
-      await tx.caw.update({
-        where: { id: cawId },
-        data: { likeCount: { decrement: 1 } }
-      })
+      await tx.$executeRaw`UPDATE "Caw" SET "likeCount" = GREATEST(0, "likeCount" - 1) WHERE "id" = ${cawId}`
     }
   }
 }
@@ -375,6 +384,8 @@ export async function handleFollowAction(
     }
   } else if (existingFollow.action !== 'FOLLOW' || existingFollow.status !== 'SUCCESS') {
     // Update existing relationship back to FOLLOW or mark pending as success
+    const wasPending = existingFollow.status === 'PENDING'
+
     await tx.follow.update({
       where: {
         followerId_followingId: {
@@ -402,6 +413,15 @@ export async function handleFollowAction(
     }
 
     console.log(`User ${followerId} re-followed user ${followingId}`)
+
+    // Create follow notification if this was a pending follow being confirmed
+    if (wasPending) {
+      try {
+        await NotificationService.createFollowNotification(followingId, followerId)
+      } catch (err) {
+        console.error(`Failed to create follow notification:`, err)
+      }
+    }
   }
 }
 
@@ -427,14 +447,9 @@ export async function handleUnfollowAction(
 
   if (deleted.count > 0) {
     // Update counts: decrement follower's followingCount and following's followerCount
-    await tx.user.update({
-      where: { tokenId: followerId },
-      data: { followingCount: { decrement: 1 } }
-    })
-    await tx.user.update({
-      where: { tokenId: followingId },
-      data: { followerCount: { decrement: 1 } }
-    })
+    // Use raw SQL to ensure counts don't go negative
+    await tx.$executeRaw`UPDATE "User" SET "followingCount" = GREATEST(0, "followingCount" - 1) WHERE "tokenId" = ${followerId}`
+    await tx.$executeRaw`UPDATE "User" SET "followerCount" = GREATEST(0, "followerCount" - 1) WHERE "tokenId" = ${followingId}`
 
     console.log(`User ${followerId} unfollowed user ${followingId}`)
   } else {
