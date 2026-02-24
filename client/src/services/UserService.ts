@@ -19,10 +19,12 @@ let l1NameContract: Contract | null = null
 
 function getL2Provider() {
   if (!l2Provider) {
+    const rpcUrl = process.env.L2_RPC_URL
+    if (!rpcUrl) {
+      throw new Error('Missing L2_RPC_URL in environment variables')
+    }
     console.log('[UserService] Initializing L2 WebSocket provider...')
-    l2Provider = new WebSocketProvider(
-      process.env.L2_RPC_URL || 'wss://base-sepolia.infura.io/ws/v3/YOUR_INFURA_PROJECT_ID'
-    )
+    l2Provider = new WebSocketProvider(rpcUrl)
     l2NameContract = new Contract(
       CAW_NAMES_L2_ADDRESS,
       CawNameL2Abi,
@@ -34,10 +36,12 @@ function getL2Provider() {
 
 function getL1Provider() {
   if (!l1Provider) {
+    const rpcUrl = process.env.L1_RPC_URL
+    if (!rpcUrl) {
+      throw new Error('Missing L1_RPC_URL in environment variables')
+    }
     console.log('[UserService] Initializing L1 WebSocket provider...')
-    l1Provider = new WebSocketProvider(
-      process.env.L1_RPC_URL || 'wss://eth-sepolia.g.alchemy.com/v2/demo'
-    )
+    l1Provider = new WebSocketProvider(rpcUrl)
     l1NameContract = new Contract(
       CAW_NAMES_ADDRESS,
       CawNameL1Abi,

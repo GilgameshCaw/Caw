@@ -31,7 +31,14 @@ export const validatorService: Service = {
   },
 
   start(rawCfg) {
-    const { l2RpcUrl, validatorId, checkInterval } = ValidatorConfig.parse(rawCfg)
+    const cfg = ValidatorConfig.parse(rawCfg)
+    // Prefer environment variable for RPC URL (never commit API keys to config)
+    const l2RpcUrl = process.env.L2_RPC_URL || cfg.l2RpcUrl
+    const { validatorId, checkInterval } = cfg
+
+    if (!l2RpcUrl || l2RpcUrl.includes('${')) {
+      throw new Error('Missing L2_RPC_URL in environment variables')
+    }
 
     const privateKey = process.env.VALIDATOR_PRIVATE_KEY
     if (!privateKey) throw new Error('Missing VALIDATOR_PRIVATE_KEY in env')
@@ -264,7 +271,7 @@ export const validatorService: Service = {
         })
 
         const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('RPC call timeout after 60 seconds')), 60000)
+          setTimeout(() => reject(new Error('RPC call timeout after 15 seconds')), 15000)
         })
 
         let returnData: string

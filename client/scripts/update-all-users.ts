@@ -1,3 +1,4 @@
+import 'dotenv/config'
 import { prisma } from '../src/prismaClient'
 import { CAW_NAMES_L2_ADDRESS, CAW_NAMES_ADDRESS } from '../src/abi/addresses'
 import { Contract, WebSocketProvider } from 'ethers'
@@ -10,10 +11,18 @@ const CawNameL1Abi = [
   'function usernames(uint256 index) view returns (string)'
 ]
 
-const l2Provider = new WebSocketProvider('wss://base-sepolia.infura.io/ws/v3/YOUR_INFURA_PROJECT_ID')
+const l2RpcUrl = process.env.L2_RPC_URL
+const l1RpcUrl = process.env.L1_RPC_URL
+
+if (!l2RpcUrl || !l1RpcUrl) {
+  console.error('Missing L2_RPC_URL or L1_RPC_URL in environment variables')
+  process.exit(1)
+}
+
+const l2Provider = new WebSocketProvider(l2RpcUrl)
 const l2NameContract = new Contract(CAW_NAMES_L2_ADDRESS, CawNameL2Abi, l2Provider)
 
-const l1Provider = new WebSocketProvider('wss://eth-sepolia.g.alchemy.com/v2/demo')
+const l1Provider = new WebSocketProvider(l1RpcUrl)
 const l1NameContract = new Contract(CAW_NAMES_ADDRESS, CawNameL1Abi, l1Provider)
 
 async function updateAllUsers() {

@@ -29,7 +29,15 @@ export const rawEventsGathererService: Service = {
   },
 
   start(configParam: unknown) {
-    const { rpcUrl, chainId, redisUrl } = Config.parse(configParam)
+    const cfg = Config.parse(configParam)
+    // Prefer environment variable for RPC URL (never commit API keys to config)
+    const rpcUrl = process.env.L2_RPC_URL || cfg.rpcUrl
+    const { chainId, redisUrl } = cfg
+
+    if (!rpcUrl || rpcUrl.includes('${')) {
+      throw new Error('Missing L2_RPC_URL in environment variables')
+    }
+
     const redis = new Redis(redisUrl)
     let stopListener: () => void
 

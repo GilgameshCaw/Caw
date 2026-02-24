@@ -24,7 +24,7 @@
   {
     "service": "Validator",
     "config": {
-      "l2RpcUrl":      "wss://base-sepolia.infura.io/ws/v3/xxx",
+      "l2RpcUrl":      "${L2_RPC_URL}",
       "validatorId":   1,
       "checkInterval": 30000
     }
@@ -33,7 +33,7 @@
     "service": "RawEventsGatherer",
     "config": {
       "chainId": 84532,
-      "rpcUrl": "wss://base-sepolia.infura.io/ws/v3/xxx"
+      "rpcUrl": "${L2_RPC_URL}"
     }
   }
 ]

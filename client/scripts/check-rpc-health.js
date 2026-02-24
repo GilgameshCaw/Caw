@@ -1,10 +1,16 @@
+require('dotenv').config();
 const { ethers } = require('ethers');
 
 async function checkRPCHealth() {
-  const rpcUrls = [
-    'wss://base-sepolia.infura.io/ws/v3/YOUR_INFURA_PROJECT_ID',
-    'https://base-sepolia.infura.io/v3/YOUR_INFURA_PROJECT_ID'
-  ];
+  const wsUrl = process.env.L2_RPC_URL;
+  const httpUrl = process.env.L2_RPC_URL_HTTP;
+
+  if (!wsUrl || !httpUrl) {
+    console.error('Missing L2_RPC_URL or L2_RPC_URL_HTTP in environment variables');
+    process.exit(1);
+  }
+
+  const rpcUrls = [wsUrl, httpUrl];
 
   for (const url of rpcUrls) {
     console.log(`\nTesting RPC: ${url.replace(/\/v3\/.*/, '/v3/[API_KEY]')}`);
