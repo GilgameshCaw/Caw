@@ -1,40 +1,19 @@
-// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-generator client {
-  provider = "prisma-client-js"
-}
-
-// all possible user actions
-enum ActionType {
-  CAW
-  LIKE
-  UNLIKE
-  RECAW
-  FOLLOW
-  UNFOLLOW
-  WITHDRAW
-  OTHER
-}
-
-// Transaction status for Caws
-enum CawStatus {
-  SUCCESS
-  PENDING
-  FAILED
-}
-
 model RawEvent {
   id              Int      @id @default(autoincrement())
-  chainId         Int // ← which network this came from
+  chainId         Int
   blockNumber     BigInt
   logIndex        Int
   transactionHash String
-  parentHash      String // ← chain-of-events hash
+  parentHash      String
   data            Json
   topics          Json
   contractAddress String
@@ -46,104 +25,91 @@ model RawEvent {
 }
 
 model User {
-  id             Int      @id @default(autoincrement())
-  address        String
-  tokenId        Int      @unique
-  username       String   @unique
-  image          String?
-  cawCount       Int      @default(0)
-  followerCount  Int      @default(0)
-  followingCount Int      @default(0)
-  likeCount      Int      @default(0)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-
-  // Profile fields
-  bio            String?  @db.Text
-  displayName    String?
-  location       String?
-  website        String?
-  avatarUrl      String?
-  coverPhotoUrl  String?
-  profileUpdatePending Boolean @default(false)
-  lastStakedAt   DateTime? // Track when user last staked to show LayerZero pending state
-
-  caws          Caw[]
-  likes         Like[]
-  bookmarks     Bookmark[]
-  scheduledCaws ScheduledCaw[]
-  follows       Follow[] @relation("Following") // whom *I* follow
-  followers     Follow[] @relation("Follower") // who follows *me*
-  notificationsReceived Notification[] @relation("NotificationRecipient")
+  id                    Int            @id @default(autoincrement())
+  address               String
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+  cawCount              Int            @default(0)
+  followerCount         Int            @default(0)
+  followingCount        Int            @default(0)
+  image                 String?
+  likeCount             Int            @default(0)
+  tokenId               Int            @unique
+  username              String         @unique
+  avatarUrl             String?
+  bio                   String?
+  coverPhotoUrl         String?
+  displayName           String?
+  location              String?
+  profileUpdatePending  Boolean        @default(false)
+  website               String?
+  lastStakedAt          DateTime?
+  caws                  Caw[]
+  followers             Follow[]       @relation("Follower")
+  follows               Follow[]       @relation("Following")
+  likes                 Like[]
   notificationsSent     Notification[] @relation("NotificationActor")
-  xmtpIdentity  XmtpIdentity?
+  notificationsReceived Notification[] @relation("NotificationRecipient")
+  scheduledCaws         ScheduledCaw[]
+  xmtpIdentity          XmtpIdentity?
 }
 
 model Caw {
-  id            Int        @id @default(autoincrement())
+  id            Int            @id @default(autoincrement())
   userId        Int
   content       String
   action        ActionType
+  createdAt     DateTime       @default(now())
   originalCawId Int?
   cawonce       Int
-  imageData     String?    @db.Text // Base64 encoded image data for on-chain storage
-  hasImage      Boolean    @default(false)
-  videoData     String?    @db.Text // Video URLs for off-chain storage
-  hasVideo      Boolean    @default(false)
-  status        CawStatus  @default(SUCCESS) // Transaction status: SUCCESS, PENDING, FAILED
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
-
-  parent        Caw?       @relation("CawToRecaws", fields: [originalCawId], references: [id])
-  recaws        Caw[]      @relation("CawToRecaws")
-  user      User         @relation(fields: [userId], references: [tokenId])
-  likes     Like[]
-  bookmarks Bookmark[]
-  hashtags  CawHashtag[]
+  commentCount  Int            @default(0)
+  recawCount    Int            @default(0)
+  likeCount     Int            @default(0)
+  updatedAt     DateTime       @updatedAt
+  hasImage      Boolean        @default(false)
+  hasVideo      Boolean        @default(false)
+  imageData     String?
+  status        CawStatus      @default(SUCCESS)
+  videoData     String?
+  viewCount     Int            @default(0)
+  parent        Caw?           @relation("CawToRecaws", fields: [originalCawId], references: [id])
+  recaws        Caw[]          @relation("CawToRecaws")
+  user          User           @relation(fields: [userId], references: [tokenId])
+  hashtags      CawHashtag[]
+  likes         Like[]
   notifications Notification[]
-
-  // counter caches:
-  commentCount Int @default(0)
-  recawCount   Int @default(0)
-  likeCount    Int @default(0)
-  viewCount    Int @default(0)
 
   @@unique([userId, cawonce])
   @@index([userId, action, createdAt])
   @@index([originalCawId])
-  @@index([status, userId]) // Index for filtering by status and user
+  @@index([status, userId])
 }
 
 model Like {
-  userId Int
-  cawId  Int
-  action ActionType
-  pending Boolean @default(false) // Track pending state for optimistic UI
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  userId    Int
+  cawId     Int
+  action    ActionType
+  createdAt DateTime   @default(now())
+  pending   Boolean    @default(false)
+  updatedAt DateTime   @updatedAt
+  id        Int        @id @default(autoincrement())
+  caw       Caw        @relation(fields: [cawId], references: [id])
+  user      User       @relation(fields: [userId], references: [tokenId])
 
-  user User @relation(fields: [userId], references: [tokenId])
-  caw  Caw  @relation(fields: [cawId], references: [id])
-
-  @@unique([userId, cawId]) // ← prevent duplicate likes
-  @@index([cawId]) // ← to count likes / filter by cawId
+  @@unique([userId, cawId])
+  @@index([cawId])
 }
 
 model Follow {
-  id Int @id @default(autoincrement())
-
-  // the "follower" side of the relation — foreign key = followerId
-  follower   User @relation("Follower", fields: [followerId], references: [tokenId])
-  followerId Int
-
-  // the "following" side of the relation — foreign key = followingId
-  following   User @relation("Following", fields: [followingId], references: [tokenId])
+  id          Int        @id @default(autoincrement())
+  followerId  Int
   followingId Int
-
-  action    ActionType @default(FOLLOW)
-  status    CawStatus  @default(SUCCESS) // Transaction status: SUCCESS, PENDING, FAILED
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  action      ActionType @default(FOLLOW)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  status      CawStatus  @default(SUCCESS)
+  follower    User       @relation("Follower", fields: [followerId], references: [tokenId])
+  following   User       @relation("Following", fields: [followingId], references: [tokenId])
 
   @@unique([followerId, followingId])
   @@index([followerId, status])
@@ -151,99 +117,266 @@ model Follow {
 }
 
 model TxQueue {
-  id       Int    @id @default(autoincrement())
-  senderId Int
-  payload  Json
-  signedTx String
-  status   String @default("pending")
-  reason   String? // Reason for failure if status is "failed"
-
+  id        Int      @id @default(autoincrement())
+  payload   Json
+  signedTx  String   @unique
+  status    String   @default("pending")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  senderId  Int
+  reason    String?
 
-  @@unique([signedTx])
   @@index([senderId, status])
 }
 
 model Action {
-  id         Int      @id @default(autoincrement())
-  rawEvent   RawEvent @relation(fields: [rawEventId], references: [id])
+  id         Int        @id @default(autoincrement())
   rawEventId Int
-
   chainId    Int
   senderId   Int
   cawonce    Int
   actionType ActionType
   data       Json
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+  rawEvent   RawEvent   @relation(fields: [rawEventId], references: [id])
 
   @@unique([chainId, senderId, cawonce])
 }
 
 model Hashtag {
-  id         Int      @id @default(autoincrement())
-  name       String   @unique // hashtag without the # symbol
-  usageCount Int      @default(0)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-
-  caws CawHashtag[]
+  id         Int          @id @default(autoincrement())
+  name       String       @unique
+  usageCount Int          @default(0)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+  caws       CawHashtag[]
 
   @@index([name])
   @@index([usageCount])
 }
 
 model CawHashtag {
-  id        Int     @id @default(autoincrement())
+  id        Int      @id @default(autoincrement())
   cawId     Int
   hashtagId Int
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  caw     Caw     @relation(fields: [cawId], references: [id], onDelete: Cascade)
-  hashtag Hashtag @relation(fields: [hashtagId], references: [id], onDelete: Cascade)
+  caw       Caw      @relation(fields: [cawId], references: [id], onDelete: Cascade)
+  hashtag   Hashtag  @relation(fields: [hashtagId], references: [id], onDelete: Cascade)
 
   @@unique([cawId, hashtagId])
   @@index([hashtagId])
   @@index([cawId])
 }
 
-model Bookmark {
+model ScheduledCaw {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  content      String
+  scheduledAt  DateTime
+  status       String   @default("pending")
+  publishedId  Int?
+  imageData    String?
+  hasImage     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  signedAction Json?
+  cawonce      Int?
+  user         User     @relation(fields: [userId], references: [tokenId], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([scheduledAt])
+  @@index([status])
+  @@index([userId, status, cawonce])
+}
+
+model Notification {
+  id        Int              @id @default(autoincrement())
+  userId    Int
+  actorId   Int
+  type      NotificationType
+  cawId     Int?
+  groupKey  String?
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  actor     User             @relation("NotificationActor", fields: [actorId], references: [tokenId], onDelete: Cascade)
+  caw       Caw?             @relation(fields: [cawId], references: [id], onDelete: Cascade)
+  user      User             @relation("NotificationRecipient", fields: [userId], references: [tokenId], onDelete: Cascade)
+
+  @@index([userId, isRead, createdAt])
+  @@index([userId, type])
+  @@index([groupKey])
+  @@index([createdAt])
+}
+
+model XmtpIdentity {
+  id             Int                       @id @default(autoincrement())
+  userId         Int                       @unique
+  walletAddress  String
+  installationId String
+  identityKey    String
+  preKeys        Json
+  signedPreKey   Json
+  registrationId Int
+  encryptionKey  String?
+  createdAt      DateTime                  @default(now())
+  updatedAt      DateTime                  @updatedAt
+  conversations  ConversationParticipant[]
+  sentMessages   Message[]                 @relation("MessageSender")
+  user           User                      @relation(fields: [userId], references: [tokenId])
+
+  @@index([walletAddress])
+  @@index([installationId])
+}
+
+model Conversation {
+  id            String                    @id @default(uuid())
+  type          ConversationType
+  topic         String
+  name          String?
+  description   String?
+  avatarUrl     String?
+  creatorId     Int
+  metadata      Json?
+  lastMessageAt DateTime?
+  lastMessageId String?
+  createdAt     DateTime                  @default(now())
+  updatedAt     DateTime                  @updatedAt
+  participants  ConversationParticipant[]
+  messages      Message[]
+
+  @@index([topic])
+  @@index([lastMessageAt])
+  @@index([creatorId])
+}
+
+model ConversationParticipant {
+  id             Int          @id @default(autoincrement())
+  conversationId String
+  userId         Int
+  joinedAt       DateTime     @default(now())
+  leftAt         DateTime?
+  isAdmin        Boolean      @default(false)
+  isMuted        Boolean      @default(false)
+  lastReadAt     DateTime?
+  unreadCount    Int          @default(0)
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  identity       XmtpIdentity @relation(fields: [userId], references: [userId])
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+  @@index([conversationId])
+}
+
+model Message {
+  id               String           @id @default(uuid())
+  conversationId   String
+  senderId         Int
+  senderWallet     String?
+  encryptedPayload String
+  messageTopic     String?
+  contentType      String           @default("text")
+  metadata         Json?
+  status           MessageStatus    @default(SENT)
+  editedAt         DateTime?
+  deletedAt        DateTime?
+  parentMessageId  String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  conversation     Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  parent           Message?         @relation("MessageReplies", fields: [parentMessageId], references: [id])
+  replies          Message[]        @relation("MessageReplies")
+  sender           XmtpIdentity     @relation("MessageSender", fields: [senderId], references: [userId])
+  receipts         MessageReceipt[]
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+  @@index([parentMessageId])
+}
+
+model MessageReceipt {
+  id          Int       @id @default(autoincrement())
+  messageId   String
+  userId      Int
+  deliveredAt DateTime?
+  readAt      DateTime?
+  message     Message   @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([userId])
+}
+
+model WithdrawalRequest {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  amount      String
+  status      String    @default("pending")
+  txHash      String?
+  cawonce     Int
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+
+  @@index([userId, status])
+  @@index([status])
+  @@index([cawonce])
+}
+
+model MutedThread {
   id        Int      @id @default(autoincrement())
   userId    Int
   cawId     Int
   createdAt DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  caw  Caw  @relation(fields: [cawId], references: [id], onDelete: Cascade)
 
   @@unique([userId, cawId])
   @@index([userId])
   @@index([cawId])
 }
 
-model ScheduledCaw {
+model MutedAccount {
   id          Int      @id @default(autoincrement())
   userId      Int
-  content     String   @db.Text
-  scheduledAt DateTime
-  status      String   @default("pending") // pending, published, failed, cancelled
-  publishedId Int?     // ID of the published caw
-  imageData   String?  @db.Text // Base64 encoded image data
-  hasImage    Boolean  @default(false)
-  signedAction Json?   // Signed EIP-712 action data for processing at scheduled time
-  cawonce     Int?     // Reserved cawonce for this scheduled post (to prevent collisions)
+  mutedUserId Int
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, mutedUserId])
+  @@index([userId])
+  @@index([mutedUserId])
+}
+
+model ShortUrl {
+  id          Int      @id @default(autoincrement())
+  code        String   @unique @db.VarChar(10)
+  originalUrl String
+  title       String?  @db.VarChar(255)
+  description String?
+  imageUrl    String?
+  siteName    String?  @db.VarChar(100)
+  clickCount  Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [tokenId], onDelete: Cascade)
+  @@index([code])
+  @@index([originalUrl])
+}
 
-  @@index([userId])
-  @@index([scheduledAt])
-  @@index([status])
-  @@index([userId, status, cawonce]) // Index for finding max reserved cawonce
+enum ActionType {
+  CAW
+  LIKE
+  UNLIKE
+  RECAW
+  FOLLOW
+  UNFOLLOW
+  WITHDRAW
+  OTHER
+}
+
+enum CawStatus {
+  SUCCESS
+  PENDING
+  FAILED
 }
 
 enum NotificationType {
@@ -255,28 +388,6 @@ enum NotificationType {
   MENTION
 }
 
-model Notification {
-  id         Int              @id @default(autoincrement())
-  userId     Int              // The user receiving the notification
-  actorId    Int              // The user who triggered the notification
-  type       NotificationType
-  cawId      Int?             // Related caw if applicable
-  groupKey   String?          // For grouping similar notifications (e.g., "like_cawId_123")
-  isRead     Boolean          @default(false)
-  createdAt  DateTime         @default(now())
-  updatedAt  DateTime         @updatedAt
-
-  user  User @relation("NotificationRecipient", fields: [userId], references: [tokenId], onDelete: Cascade)
-  actor User @relation("NotificationActor", fields: [actorId], references: [tokenId], onDelete: Cascade)
-  caw   Caw? @relation(fields: [cawId], references: [id], onDelete: Cascade)
-
-  @@index([userId, isRead, createdAt])
-  @@index([userId, type])
-  @@index([groupKey])
-  @@index([createdAt])
-}
-
-// XMTP Message Models
 enum MessageStatus {
   SENT
   DELIVERED
@@ -287,158 +398,4 @@ enum MessageStatus {
 enum ConversationType {
   DM
   GROUP
-}
-
-model XmtpIdentity {
-  id               Int      @id @default(autoincrement())
-  userId           Int      @unique // CAW user token ID - each user has one XMTP record
-  walletAddress    String   // Ethereum wallet address - can be shared by multiple users
-  installationId   String   // XMTP installation ID - can be shared by multiple users
-  identityKey      String   // Public identity key for XMTP
-  preKeys          Json     // Pre-keys for offline messaging
-  signedPreKey     Json     // Signed pre-key
-  registrationId   Int      // XMTP registration ID
-  encryptionKey    String?  // XMTP client encryption key (added for SDK v4)
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  user             User     @relation(fields: [userId], references: [tokenId])
-  sentMessages     Message[] @relation("MessageSender")
-  conversations    ConversationParticipant[]
-
-  @@index([walletAddress])
-  @@index([installationId])
-}
-
-model Conversation {
-  id               String   @id @default(uuid())
-  type             ConversationType
-  topic            String   // XMTP conversation topic - can be shared by multiple user pairs from same wallet
-  name             String?  // Group name (for groups)
-  description      String?  // Group description
-  avatarUrl        String?  // Group avatar
-  creatorId        Int      // User who created the conversation
-  metadata         Json?    // Additional metadata
-  lastMessageAt    DateTime?
-  lastMessageId    String?
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  participants     ConversationParticipant[]
-  messages         Message[]
-
-  @@index([topic])
-  @@index([lastMessageAt])
-  @@index([creatorId])
-}
-
-model ConversationParticipant {
-  id               Int      @id @default(autoincrement())
-  conversationId   String
-  userId           Int
-  joinedAt         DateTime @default(now())
-  leftAt           DateTime?
-  isAdmin          Boolean  @default(false)
-  isMuted          Boolean  @default(false)
-  lastReadAt       DateTime?
-  unreadCount      Int      @default(0)
-
-  conversation     Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  identity         XmtpIdentity @relation(fields: [userId], references: [userId])
-
-  @@unique([conversationId, userId])
-  @@index([userId])
-  @@index([conversationId])
-}
-
-model Message {
-  id               String   @id @default(uuid())
-  conversationId   String
-  senderId         Int
-  senderWallet     String?  // Wallet address that sent the message
-  encryptedPayload String   @db.Text // XMTP encrypted envelope/ciphertext
-  messageTopic     String?  // XMTP topic identifier
-  contentType      String   @default("text") // text, image, file, etc.
-  metadata         Json?    // Non-sensitive metadata only
-  status           MessageStatus @default(SENT)
-  editedAt         DateTime?
-  deletedAt        DateTime?
-  parentMessageId  String?  // For replies/threads
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-
-  conversation     Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender           XmtpIdentity @relation("MessageSender", fields: [senderId], references: [userId])
-  parent           Message?  @relation("MessageReplies", fields: [parentMessageId], references: [id])
-  replies          Message[] @relation("MessageReplies")
-  receipts         MessageReceipt[]
-
-  @@index([conversationId, createdAt])
-  @@index([senderId])
-  @@index([parentMessageId])
-}
-
-model MessageReceipt {
-  id               Int      @id @default(autoincrement())
-  messageId        String
-  userId           Int
-  deliveredAt      DateTime?
-  readAt           DateTime?
-
-  message          Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
-
-  @@unique([messageId, userId])
-  @@index([userId])
-}
-
-model WithdrawalRequest {
-  id               Int      @id @default(autoincrement())
-  userId           Int      // token ID of the user
-  amount           String   // Amount in wei as string (to handle bigint)
-  status           String   @default("pending") // pending, completed, failed
-  txHash           String?  // Transaction hash when completed
-  cawonce          Int      // Cawonce of the withdrawal action
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
-  completedAt      DateTime?
-
-  @@index([userId, status])
-  @@index([status])
-  @@index([cawonce])
-}
-
-// Muted threads - silences notifications for a thread
-model MutedThread {
-  id        Int      @id @default(autoincrement())
-  userId    Int      // token ID of the user who muted the thread
-  cawId     Int      // The root caw of the thread being muted
-  createdAt DateTime @default(now())
-
-  @@unique([userId, cawId])
-  @@index([userId])
-  @@index([cawId])
-}
-
-// Muted accounts - hides posts and silences notifications from the muted user
-model MutedAccount {
-  id            Int      @id @default(autoincrement())
-  userId        Int      // token ID of the user who muted the account
-  mutedUserId   Int      // token ID of the muted user
-  createdAt     DateTime @default(now())
-
-  @@unique([userId, mutedUserId])
-  @@index([userId])
-  @@index([mutedUserId])
-}
-
-// Blocked accounts - prevents all interaction with the blocked user
-model BlockedAccount {
-  id              Int      @id @default(autoincrement())
-  userId          Int      // token ID of the user who blocked the account
-  blockedUserId   Int      // token ID of the blocked user
-  createdAt       DateTime @default(now())
-
-  @@unique([userId, blockedUserId])
-  @@index([userId])
-  @@index([blockedUserId])
 }
