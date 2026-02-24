@@ -1,7 +1,14 @@
-import { useEffect } from 'react'
+import { useEffect, useRef, useCallback } from 'react'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import { useOptimisticLikesStore } from '~/store/optimisticLikesStore'
 import { apiFetch } from '~/api/client'
+
+// Global callbacks for feed refresh - set by Feed component
+let feedRefreshCallback: (() => void) | null = null
+
+export function setFeedRefreshCallback(callback: (() => void) | null) {
+  feedRefreshCallback = callback
+}
 
 /**
  * Monitor txQueue status and update optimistic state accordingly
@@ -11,6 +18,7 @@ export function useTxQueueMonitor() {
   const pendingPosts = usePendingPostsStore(state => state.pendingPosts)
   const removeOptimisticLikeByTxQueueId = useOptimisticLikesStore(state => state.removeOptimisticLikeByTxQueueId)
   const optimisticLikes = useOptimisticLikesStore(state => state.optimisticLikes)
+  const processedIds = useRef(new Set<number>())
 
   useEffect(() => {
     // Don't poll if there are no pending posts or likes with txQueue IDs
@@ -40,18 +48,32 @@ export function useTxQueueMonitor() {
         if (!response || !response.statuses) return
 
         // Process each status update
+        let needsRefresh = false
         response.statuses.forEach((status: any) => {
+          // Skip already processed IDs to avoid duplicate refreshes
+          if (processedIds.current.has(status.id)) return
+
           if (status.status === 'failed') {
             // Remove the optimistic post or like associated with this failed txQueue entry
-            console.log(`Removing optimistic updates for failed txQueue ID: ${status.id}`)
+            console.log(`[TxQueueMonitor] Removing optimistic updates for failed txQueue ID: ${status.id}`)
             removePendingPostByTxQueueId(status.id)
             removeOptimisticLikeByTxQueueId(status.id)
+            processedIds.current.add(status.id)
           } else if (status.status === 'done') {
-            // The action was successful, it will be removed automatically when the real data appears
-            // or after the timeout period
-            console.log(`TxQueue ID ${status.id} succeeded, optimistic updates will auto-remove`)
+            // The action was successful - remove the pending post and refresh the feed
+            console.log(`[TxQueueMonitor] TxQueue ID ${status.id} succeeded, removing pending post and refreshing feed`)
+            removePendingPostByTxQueueId(status.id)
+            removeOptimisticLikeByTxQueueId(status.id)
+            processedIds.current.add(status.id)
+            needsRefresh = true
           }
         })
+
+        // Refresh the feed if any actions completed
+        if (needsRefresh && feedRefreshCallback) {
+          console.log('[TxQueueMonitor] Triggering feed refresh')
+          feedRefreshCallback()
+        }
       } catch (error) {
         console.error('Error checking txQueue status:', error)
       }

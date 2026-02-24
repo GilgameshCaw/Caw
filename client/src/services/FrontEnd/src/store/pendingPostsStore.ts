@@ -5,6 +5,7 @@ interface PendingPost extends Partial<CawItem> {
   tempId: string
   content: string
   timestamp: string
+  status: 'PENDING' | 'FAILED'
   isPending: true
   isFailed?: boolean // Track if the post failed to submit
   txQueueId?: number // Track the associated txQueue ID
@@ -12,7 +13,7 @@ interface PendingPost extends Partial<CawItem> {
 
 interface PendingPostsStore {
   pendingPosts: PendingPost[]
-  addPendingPost: (post: { content: string; username: string; tokenId: number }) => string
+  addPendingPost: (post: { content: string; username: string; tokenId: number; displayName?: string; image?: string; avatarUrl?: string }) => string
   updatePostWithTxQueueId: (tempId: string, txQueueId: number) => void
   markPostAsFailed: (txQueueId: number) => void
   removePendingPost: (tempId: string) => void
@@ -30,9 +31,13 @@ export const usePendingPostsStore = create<PendingPostsStore>((set) => ({
       id: tempId,
       content: post.content,
       timestamp: new Date().toISOString(),
+      status: 'PENDING',
       user: {
         tokenId: post.tokenId,
         username: post.username,
+        displayName: post.displayName,
+        image: post.image,
+        avatarUrl: post.avatarUrl,
         id: post.tokenId
       },
       likeCount: 0,

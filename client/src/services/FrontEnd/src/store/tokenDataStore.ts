@@ -188,7 +188,6 @@ export const useTokenDataStore = create<TokenDataStore>()(
           const str = JSON.stringify(value, (_key, value) =>
             typeof value === 'bigint' ? value.toString() : value
           )
-          console.log("LOCAK SET ITEM:", name, str)
           localStorage.setItem(name, str)
         },
         removeItem: (name) => {
@@ -199,15 +198,36 @@ export const useTokenDataStore = create<TokenDataStore>()(
         const persistedState = (persisted || {}) as Partial<TokenDataStore>;
         const currentState = current as TokenDataStore;
 
+        // Normalize all persisted addresses to lowercase to prevent duplicates
+        const normalizedTokensByAddress: Record<Address, TokenData[]> = {}
+        for (const [addr, tokens] of Object.entries(persistedState.tokensByAddress || {})) {
+          const normalizedAddr = addr.toLowerCase() as Address
+          if (!normalizedTokensByAddress[normalizedAddr]) {
+            normalizedTokensByAddress[normalizedAddr] = []
+          }
+          for (const token of tokens) {
+            if (!normalizedTokensByAddress[normalizedAddr].some(t => t.tokenId === token.tokenId)) {
+              normalizedTokensByAddress[normalizedAddr].push(token)
+            }
+          }
+        }
+
+        const normalizedActiveTokenIdByAddress: Record<Address, number> = {}
+        for (const [addr, tokenId] of Object.entries(persistedState.activeTokenIdByAddress || {})) {
+          const normalizedAddr = addr.toLowerCase() as Address
+          // Keep the last one if there are duplicates
+          normalizedActiveTokenIdByAddress[normalizedAddr] = tokenId as number
+        }
+
         return {
           ...currentState, // current provides defaults
           ...persistedState, // persisted wins at top level (opposite of before!)
           tokensByAddress: {
-            ...(persistedState.tokensByAddress || {}),
+            ...normalizedTokensByAddress,
             ...(currentState.tokensByAddress || {}), // current wins per address for fresh data
           },
           activeTokenIdByAddress: {
-            ...(persistedState.activeTokenIdByAddress || {}),
+            ...normalizedActiveTokenIdByAddress,
             ...(currentState.activeTokenIdByAddress || {}),
           },
         };
