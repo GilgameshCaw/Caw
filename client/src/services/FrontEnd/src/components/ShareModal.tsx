@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { HiX, HiLink, HiMail, HiShare, HiCheck } from 'react-icons/hi'
-import { FaTwitter, FaFacebook, FaWhatsapp, FaTelegram } from 'react-icons/fa'
+import { FaXTwitter, FaFacebook, FaWhatsapp, FaTelegram } from 'react-icons/fa6'
 import { useTheme } from '~/hooks/useTheme'
 
 interface ShareModalProps {
@@ -50,10 +50,10 @@ export const ShareModal: React.FC<ShareModalProps> = ({
 
   const shareOptions = [
     {
-      name: 'Twitter',
-      icon: FaTwitter,
-      color: 'text-blue-400',
-      url: `https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(shareUrl)}`
+      name: 'X',
+      icon: FaXTwitter,
+      color: isDark ? 'text-white' : 'text-black',
+      url: `https://x.com/intent/tweet?text=${encodeURIComponent(shareText)}&url=${encodeURIComponent(shareUrl)}`
     },
     {
       name: 'Facebook',
