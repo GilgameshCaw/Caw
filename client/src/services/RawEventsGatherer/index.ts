@@ -9,7 +9,7 @@ import { prisma } from '../../prismaClient'
 
 const Config = z.object({
   chainId:         z.number().int().positive(),
-  rpcUrl:          z.string().regex(/^wss?:\/\//),
+  rpcUrl:          z.string(), // Validated at runtime after env var substitution
   redisUrl:        z.string().optional().default('redis://127.0.0.1:6379')
 })
 
