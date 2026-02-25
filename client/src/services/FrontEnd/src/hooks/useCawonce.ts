@@ -24,19 +24,18 @@ export function useCawonceSync() {
     queryFn: async () => {
       console.log("Fetch cawonce", activeTokenId, 'id')
 
-      if (!activeTokenId) return undefined;
-      // Wagmi’s readContract will use your default public client automatically
+      // Wagmi's readContract will use your default public client automatically
       const result = await readContract(wagmiConfig, {
         address:      CAW_ACTIONS_ADDRESS,
         abi:          cawActionsAbi,
         functionName: "nextCawonce",
-        args:         [activeTokenId],
+        args:         [activeTokenId!],
         chainId:      baseSepolia.id,
       });
       // The return value is a BigInt in v1
       return (typeof result === "bigint" ? result : BigInt(result as any)) as bigint;
     },
-    query: {enabled:   Boolean(activeTokenId)},
+    enabled: Boolean(activeTokenId),
     staleTime: 30_000,
   })
 
