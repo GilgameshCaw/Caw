@@ -216,8 +216,8 @@ const SearchResultsPage: React.FC<SearchResultsPageProps> = ({ defaultTab = 'all
               <div className="space-y-3">
                 {filteredUsers.map(user => (
                   <a
-                    key={user.id}
-                    href={`/profile/${user.username}`}
+                    key={user.tokenId}
+                    href={`/users/${user.username}`}
                     className={`block p-4 rounded-lg transition ${
                       isDark
                         ? 'bg-white/5 hover:bg-white/10'
@@ -225,7 +225,17 @@ const SearchResultsPage: React.FC<SearchResultsPageProps> = ({ defaultTab = 'all
                     }`}
                   >
                     <div className="flex items-center space-x-3">
-                      <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-500" />
+                      {user.image || user.avatarUrl ? (
+                        <img
+                          src={user.image || user.avatarUrl}
+                          alt={user.username}
+                          className="w-10 h-10 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white font-bold">
+                          {user.username?.charAt(0).toUpperCase()}
+                        </div>
+                      )}
                       <div className="flex-1">
                         <div className="flex items-center space-x-2">
                           <span className={`font-semibold ${
