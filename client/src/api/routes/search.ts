@@ -5,8 +5,170 @@ import { elasticsearchService } from '../../services/ElasticsearchService'
 const router = Router()
 
 /**
+ * Search caws using Prisma (PostgreSQL fallback)
+ */
+async function searchCawsWithPrisma(query: string, limit: number, offset: number) {
+  const caws = await prisma.caw.findMany({
+    where: {
+      content: { contains: query, mode: 'insensitive' },
+      status: 'SUCCESS'
+    },
+    take: limit + 1,
+    skip: offset,
+    orderBy: { createdAt: 'desc' },
+    include: {
+      user: { select: { tokenId: true, username: true, image: true } },
+      parent: {
+        select: {
+          id: true,
+          user: { select: { tokenId: true, username: true, image: true } }
+        }
+      }
+    }
+  })
+
+  const hasMore = caws.length > limit
+  const items = hasMore ? caws.slice(0, limit) : caws
+
+  return {
+    items: items.map((caw: any) => ({
+      id: caw.id.toString(),
+      content: caw.content,
+      timestamp: caw.createdAt.toISOString(),
+      user: {
+        id: caw.user.tokenId,
+        tokenId: caw.user.tokenId,
+        username: caw.user.username,
+        image: caw.user.image
+      },
+      parent: caw.parent ? {
+        id: caw.parent.id.toString(),
+        user: {
+          id: caw.parent.user.tokenId,
+          tokenId: caw.parent.user.tokenId,
+          username: caw.parent.user.username,
+          image: caw.parent.user.image
+        }
+      } : null,
+      likeCount: caw.likeCount || 0,
+      viewCount: caw.viewCount || 0,
+      hasLiked: false,
+      hasRecawed: false,
+      commentCount: caw.commentCount || 0,
+      recawCount: caw.recawCount || 0,
+      cawonce: caw.cawonce,
+      imageData: caw.imageData,
+      imageUrl: null,
+      hasImage: caw.hasImage,
+      videoData: caw.videoData,
+      hasVideo: caw.hasVideo,
+      pending: false
+    })),
+    hasMore
+  }
+}
+
+/**
+ * Search caws using Elasticsearch
+ */
+async function searchCawsWithES(query: string, limit: number, offset: number) {
+  const response = await elasticsearchService.search(query, 'caws', limit + 1, offset)
+  if (!response?.hits?.hits) return null
+
+  const hits = response.hits.hits
+  const hasMore = hits.length > limit
+  const items = hasMore ? hits.slice(0, limit) : hits
+
+  // Get full caw data from database for the matched IDs
+  const cawIds = items.map((hit: any) => parseInt(hit._id))
+  if (cawIds.length === 0) return { items: [], hasMore: false }
+
+  const caws = await prisma.caw.findMany({
+    where: { id: { in: cawIds }, status: 'SUCCESS' },
+    include: {
+      user: { select: { tokenId: true, username: true, image: true } },
+      parent: {
+        select: {
+          id: true,
+          user: { select: { tokenId: true, username: true, image: true } }
+        }
+      }
+    }
+  })
+
+  // Maintain ES relevance order
+  const cawMap = new Map(caws.map(c => [c.id, c]))
+  const orderedCaws = cawIds.map(id => cawMap.get(id)).filter(Boolean)
+
+  return {
+    items: orderedCaws.map((caw: any) => ({
+      id: caw.id.toString(),
+      content: caw.content,
+      timestamp: caw.createdAt.toISOString(),
+      user: {
+        id: caw.user.tokenId,
+        tokenId: caw.user.tokenId,
+        username: caw.user.username,
+        image: caw.user.image
+      },
+      parent: caw.parent ? {
+        id: caw.parent.id.toString(),
+        user: {
+          id: caw.parent.user.tokenId,
+          tokenId: caw.parent.user.tokenId,
+          username: caw.parent.user.username,
+          image: caw.parent.user.image
+        }
+      } : null,
+      likeCount: caw.likeCount || 0,
+      viewCount: caw.viewCount || 0,
+      hasLiked: false,
+      hasRecawed: false,
+      commentCount: caw.commentCount || 0,
+      recawCount: caw.recawCount || 0,
+      cawonce: caw.cawonce,
+      imageData: caw.imageData,
+      imageUrl: null,
+      hasImage: caw.hasImage,
+      videoData: caw.videoData,
+      hasVideo: caw.hasVideo,
+      pending: false
+    })),
+    hasMore
+  }
+}
+
+/**
+ * Search users using Elasticsearch
+ */
+async function searchUsersWithES(query: string, limit: number, offset: number) {
+  const response = await elasticsearchService.search(query, 'users', limit, offset)
+  if (!response?.hits?.hits) return null
+
+  const tokenIds = response.hits.hits.map((hit: any) => parseInt(hit._id))
+  if (tokenIds.length === 0) return []
+
+  const users = await prisma.user.findMany({
+    where: { tokenId: { in: tokenIds } },
+    select: {
+      tokenId: true,
+      username: true,
+      displayName: true,
+      avatarUrl: true,
+      image: true,
+      address: true
+    }
+  })
+
+  // Maintain ES relevance order
+  const userMap = new Map(users.map(u => [u.tokenId, u]))
+  return tokenIds.map(id => userMap.get(id)).filter(Boolean)
+}
+
+/**
  * GET /api/search
  * Search for caws, users, and hashtags
+ * Uses Elasticsearch when available, falls back to PostgreSQL
  */
 router.get('/', async (req, res) => {
   try {
@@ -19,6 +181,7 @@ router.get('/', async (req, res) => {
     const query = q.trim()
     const searchLimit = Math.min(Number(limit), 50)
     const searchOffset = Number(offset)
+    const useES = elasticsearchService.isAvailable()
 
     const results: any = {
       caws: [],
@@ -28,113 +191,73 @@ router.get('/', async (req, res) => {
 
     // Search caws if type is 'all' or 'caws'
     if (type === 'all' || type === 'caws') {
-      // Limit to 10 caws for 'all' tab, use full limit for 'caws' tab
       const cawLimit = type === 'all' ? 10 : searchLimit
-      const caws = await prisma.caw.findMany({
-        where: {
-          content: { contains: query, mode: 'insensitive' },
-          status: 'SUCCESS'  // Only show public SUCCESS caws in search results
-        },
-        take: cawLimit + 1, // Take one more to check if there are more results
-        skip: type === 'all' ? 0 : searchOffset, // No pagination for 'all' tab
-        orderBy: { createdAt: 'desc' },
-        include: {
-          user: { select: { tokenId: true, username: true, image: true } },
-          parent: {
-            select: {
-              id: true,
-              user: { select: { tokenId: true, username: true, image: true } }
-            }
-          }
-        }
-      })
+      const cawOffset = type === 'all' ? 0 : searchOffset
 
-      // Check if there are more results
-      const hasMore = caws.length > cawLimit
-      const items = hasMore ? caws.slice(0, cawLimit) : caws
+      let cawResults
+      if (useES) {
+        cawResults = await searchCawsWithES(query, cawLimit, cawOffset)
+      }
+      // Fall back to Prisma if ES failed or not available
+      if (!cawResults) {
+        cawResults = await searchCawsWithPrisma(query, cawLimit, cawOffset)
+      }
 
-      // Format caws similar to the feed response format
-      const formattedCaws = items.map((caw: any) => ({
-        id: caw.id.toString(),
-        content: caw.content,
-        timestamp: caw.createdAt.toISOString(),
-        user: {
-          id: caw.user.tokenId,
-          tokenId: caw.user.tokenId,
-          username: caw.user.username,
-          image: caw.user.image
-        },
-        parent: caw.parent ? {
-          id: caw.parent.id.toString(),
-          user: {
-            id: caw.parent.user.tokenId,
-            tokenId: caw.parent.user.tokenId,
-            username: caw.parent.user.username,
-            image: caw.parent.user.image
-          }
-        } : null,
-        likeCount: 0,
-        viewCount: 0,
-        hasLiked: false, // This would need user context
-        hasRecawed: false, // This would need user context
-        commentCount: 0,
-        recawCount: 0,
-        cawonce: caw.cawonce,
-        imageData: caw.imageData,
-        imageUrl: null,
-        hasImage: caw.hasImage,
-        videoData: caw.videoData,
-        hasVideo: caw.hasVideo,
-        pending: caw.pending || false
-      }))
+      results.caws = cawResults.items
 
-      results.caws = formattedCaws
-
-      // If searching for caws only, return in Feed format
       if (type === 'caws') {
         return res.json({
-          items: formattedCaws,
-          nextCursor: hasMore ? searchOffset + searchLimit : undefined
+          items: cawResults.items,
+          nextCursor: cawResults.hasMore ? searchOffset + searchLimit : undefined
         })
       }
     }
 
     // Search users if type is 'all' or 'users'
     if (type === 'all' || type === 'users') {
-      // Limit to 5 users for 'all' tab, use full limit for 'users' tab
       const userLimit = type === 'all' ? 5 : searchLimit
-      const users = await prisma.user.findMany({
-        where: {
-          username: { contains: query, mode: 'insensitive' }
-        },
-        take: userLimit,
-        skip: type === 'all' ? 0 : searchOffset, // No pagination for 'all' tab
-        orderBy: [
-          { followerCount: 'desc' },
-          { createdAt: 'desc' }
-        ],
-        select: {
-          tokenId: true,
-          username: true,
-          displayName: true,
-          avatarUrl: true,
-          image: true,
-          address: true
-        }
-      })
+      const userOffset = type === 'all' ? 0 : searchOffset
+
+      let users
+      if (useES) {
+        users = await searchUsersWithES(query, userLimit, userOffset)
+      }
+      // Fall back to Prisma if ES failed or not available
+      if (!users) {
+        users = await prisma.user.findMany({
+          where: {
+            username: { contains: query, mode: 'insensitive' }
+          },
+          take: userLimit,
+          skip: userOffset,
+          orderBy: [
+            { followerCount: 'desc' },
+            { createdAt: 'desc' }
+          ],
+          select: {
+            tokenId: true,
+            username: true,
+            displayName: true,
+            avatarUrl: true,
+            image: true,
+            address: true
+          }
+        })
+      }
       results.users = users
     }
 
-    // Search hashtags
+    // Search hashtags (always use Prisma - hashtags are simple lookups)
     if (type === 'all' || type === 'hashtags') {
-      // Limit to 5 hashtags for 'all' tab, use full limit for 'hashtags' tab
       const hashtagLimit = type === 'all' ? 5 : searchLimit
+      const hashtagOffset = type === 'all' ? 0 : searchOffset
+
       const hashtags = await prisma.hashtag.findMany({
         where: {
           name: { contains: query.replace('#', ''), mode: 'insensitive' }
         },
         take: hashtagLimit,
-        skip: type === 'all' ? 0 : searchOffset, // No pagination for 'all' tab
+        skip: hashtagOffset,
         orderBy: { usageCount: 'desc' },
         select: {
           name: true,
@@ -147,7 +270,6 @@ router.get('/', async (req, res) => {
     // Add hasMore flags for 'all' tab to show "View more" links
     if (type === 'all') {
       const response: any = { ...results }
-      // Check if there are more results than what we're showing
       if (results.caws.length === 10) response.hasMoreCaws = true
       if (results.users.length === 5) response.hasMoreUsers = true
       if (results.hashtags.length === 5) response.hasMoreHashtags = true
@@ -239,15 +361,37 @@ router.get('/suggestions', async (req, res) => {
  */
 router.get('/trending', async (req, res) => {
   try {
-    // Get trending hashtags
-    const trendingHashtags = await prisma.hashtag.findMany({
-      take: 10,
-      orderBy: { usageCount: 'desc' },
-      select: {
-        name: true,
-        usageCount: true
+    const useES = elasticsearchService.isAvailable()
+    let trendingHashtags: any[] = []
+
+    // Try to get trending hashtags from Elasticsearch (time-windowed)
+    if (useES) {
+      const esHashtags = await elasticsearchService.getTrendingHashtags('24h', 10)
+      if (esHashtags.length > 0) {
+        // Get usage counts from database
+        const hashtagData = await prisma.hashtag.findMany({
+          where: { name: { in: esHashtags } },
+          select: { name: true, usageCount: true }
+        })
+        const countMap = new Map(hashtagData.map(h => [h.name.toLowerCase(), h.usageCount]))
+        trendingHashtags = esHashtags.map(tag => ({
+          name: tag.replace('#', ''),
+          usageCount: countMap.get(tag.replace('#', '').toLowerCase()) || 0
+        }))
       }
-    })
+    }
+
+    // Fall back to Prisma if ES not available or returned no results
+    if (trendingHashtags.length === 0) {
+      trendingHashtags = await prisma.hashtag.findMany({
+        take: 10,
+        orderBy: { usageCount: 'desc' },
+        select: {
+          name: true,
+          usageCount: true
+        }
+      })
+    }
 
     // Get trending users (most followed recently)
     const trendingUsers = await prisma.user.findMany({
@@ -274,6 +418,36 @@ router.get('/trending', async (req, res) => {
     console.error('GET /api/search/trending error:', error)
     return res.status(500).json({ error: 'Failed to get trending' })
   }
+})
+
+/**
+ * POST /api/search/sync
+ * Trigger a full sync of data to Elasticsearch
+ */
+router.post('/sync', async (req, res) => {
+  try {
+    if (!elasticsearchService.isAvailable()) {
+      return res.status(503).json({ error: 'Elasticsearch is not available' })
+    }
+
+    // Run sync in background
+    elasticsearchService.syncAllData().catch(console.error)
+
+    return res.json({ message: 'Sync started in background' })
+  } catch (error) {
+    console.error('POST /api/search/sync error:', error)
+    return res.status(500).json({ error: 'Failed to start sync' })
+  }
+})
+
+/**
+ * GET /api/search/status
+ * Check Elasticsearch status
+ */
+router.get('/status', async (_req, res) => {
+  return res.json({
+    elasticsearch: elasticsearchService.isAvailable() ? 'connected' : 'disconnected'
+  })
 })
 
 export default router
