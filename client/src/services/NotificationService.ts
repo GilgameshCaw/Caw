@@ -180,13 +180,24 @@ export class NotificationService {
       return // User is muted/blocked, don't send notification
     }
 
-    await prisma.notification.create({
-      data: {
+    // Check if notification already exists to avoid duplicates
+    const existing = await prisma.notification.findFirst({
+      where: {
         userId: followedId,
         actorId: followerId,
         type: NotificationType.FOLLOW
       }
     })
+
+    if (!existing) {
+      await prisma.notification.create({
+        data: {
+          userId: followedId,
+          actorId: followerId,
+          type: NotificationType.FOLLOW
+        }
+      })
+    }
   }
 
   /**
