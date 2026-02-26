@@ -505,7 +505,10 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         })
 
         const imageData = base64.split(',')[1] // Remove data:image/...;base64, prefix
-        const cawCost = calculateOnChainCost(img.size)
+        // Calculate cost from base64 length to match backend exactly
+        // Backend uses: originalSize = ceil((base64.length * 3) / 4)
+        const estimatedOriginalSize = Math.ceil((imageData.length * 3) / 4)
+        const cawCost = calculateOnChainCost(estimatedOriginalSize)
         totalCawCost += BigInt(cawCost)
         return `image64:${imageData}`
       }))
