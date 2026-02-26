@@ -117,7 +117,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   const canPost = !hasNoToken && isTokenOwner && !wrongChain && isConnected;
 
   const handleMediaSelected = (media: any[]) => {
-    setSelectedMedia(media)
+    // Preserve GIFs when MediaUpload updates non-gif media
+    const existingGifs = selectedMedia.filter(m => m.type === 'gif')
+    setSelectedMedia([...media, ...existingGifs])
   }
 
   const handleMediaRemoved = (index?: number) => {
@@ -763,28 +765,32 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           </div>
         )}
 
-        {/* Mobile Selected GIF Preview */}
+        {/* Mobile Selected GIF Preview - same styling as MediaUpload */}
         {selectedMedia.filter(m => m.type === 'gif').length > 0 && (
-          <div className="mt-4">
+          <div className="mt-4 grid grid-cols-3 gap-2">
             {selectedMedia.filter(m => m.type === 'gif').map((gif, index) => (
-              <div key={gif.url} className="relative inline-block">
-                <img
-                  src={gif.preview}
-                  alt={gif.title || 'Selected GIF'}
-                  className="max-h-32 rounded-lg"
-                />
+              <div key={gif.url} className={`relative rounded-lg overflow-hidden border ${
+                isDark ? 'border-gray-600 bg-gray-800' : 'border-gray-200 bg-gray-50'
+              }`}>
+                <div className="relative aspect-square bg-black">
+                  <img
+                    src={gif.preview || gif.originalUrl || gif.url}
+                    alt={gif.title || 'Selected GIF'}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
                 <button
                   onClick={() => {
                     const gifIndex = selectedMedia.findIndex(m => m.type === 'gif' && m.url === gif.url)
                     handleMediaRemoved(gifIndex)
                   }}
-                  className="absolute -top-2 -right-2 p-1 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors"
+                  className="absolute top-1 right-1 p-0.5 rounded-full bg-black/50 hover:bg-black/70 transition-colors"
                 >
-                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
-                <span className={`absolute bottom-1 left-1 px-1.5 py-0.5 text-xs font-medium rounded ${
+                <span className={`absolute bottom-1 left-1 px-1 py-0.5 text-xs font-medium rounded ${
                   isDark ? 'bg-black/70 text-white' : 'bg-white/70 text-black'
                 }`}>
                   GIF
@@ -890,28 +896,32 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           </div>
         )}
 
-        {/* Desktop Selected GIF Preview */}
+        {/* Desktop Selected GIF Preview - same styling as MediaUpload */}
         {selectedMedia.filter(m => m.type === 'gif').length > 0 && (
-          <div className="mt-4">
+          <div className="mt-4 grid grid-cols-3 md:grid-cols-4 gap-2">
             {selectedMedia.filter(m => m.type === 'gif').map((gif, index) => (
-              <div key={gif.url} className="relative inline-block">
-                <img
-                  src={gif.preview}
-                  alt={gif.title || 'Selected GIF'}
-                  className="max-h-48 rounded-lg"
-                />
+              <div key={gif.url} className={`relative rounded-lg overflow-hidden border ${
+                isDark ? 'border-gray-600 bg-gray-800' : 'border-gray-200 bg-gray-50'
+              }`}>
+                <div className="relative aspect-square bg-black">
+                  <img
+                    src={gif.preview || gif.originalUrl || gif.url}
+                    alt={gif.title || 'Selected GIF'}
+                    className="w-full h-full object-cover"
+                  />
+                </div>
                 <button
                   onClick={() => {
                     const gifIndex = selectedMedia.findIndex(m => m.type === 'gif' && m.url === gif.url)
                     handleMediaRemoved(gifIndex)
                   }}
-                  className="absolute -top-2 -right-2 p-1.5 bg-red-500 text-white rounded-full hover:bg-red-600 transition-colors"
+                  className="absolute top-1 right-1 p-0.5 rounded-full bg-black/50 hover:bg-black/70 transition-colors"
                 >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="h-3 w-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                   </svg>
                 </button>
-                <span className={`absolute bottom-2 left-2 px-2 py-1 text-xs font-semibold rounded ${
+                <span className={`absolute bottom-1 left-1 px-1 py-0.5 text-xs font-semibold rounded ${
                   isDark ? 'bg-black/70 text-white' : 'bg-white/70 text-black'
                 }`}>
                   GIF
