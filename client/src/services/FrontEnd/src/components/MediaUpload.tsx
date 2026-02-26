@@ -36,6 +36,7 @@ interface MediaUploadProps {
   className?: string
   isOverlay?: boolean
   onClose?: () => void
+  isProcessingOnChain?: boolean
 }
 
 const SIZE_LIMITS = {
@@ -51,6 +52,7 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
   maxImages = 4,
   maxVideos = 1,
   className = '',
+  isProcessingOnChain = false,
   isOverlay = false,
   onClose
 }) => {
@@ -548,6 +550,23 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
                       </span>
                     )}
                   </>
+                )}
+
+                {/* Processing overlay for on-chain images */}
+                {isProcessingOnChain && media.type === 'image' && media.storageType === 'on-chain' && !(media as any).processedBase64 && (
+                  <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center">
+                    <div className="animate-spin rounded-full h-8 w-8 border-2 border-yellow-500 border-t-transparent mb-2"></div>
+                    <span className="text-white text-xs font-medium">Processing...</span>
+                  </div>
+                )}
+
+                {/* Processed checkmark for on-chain images */}
+                {media.type === 'image' && media.storageType === 'on-chain' && (media as any).processedBase64 && (
+                  <div className="absolute top-1 left-1 bg-green-500 rounded-full p-0.5">
+                    <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                    </svg>
+                  </div>
                 )}
               </div>
 

@@ -91,6 +91,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   const [scheduledDate, setScheduledDate] = useState('')
   const [scheduledTime, setScheduledTime] = useState('')
   const [isScheduling, setIsScheduling] = useState(false)
+  const [isProcessingOnChain, setIsProcessingOnChain] = useState(false)
   const [showMediaUpload, setShowMediaUpload] = useState(false)
   const [showMediaOverlay, setShowMediaOverlay] = useState(false)
   const [showInsufficientStakeModal, setShowInsufficientStakeModal] = useState(false)
@@ -322,6 +323,57 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     }
   }
 
+  // Process on-chain images (convert to base64 and calculate cost)
+  const handleUploadOnChain = async () => {
+    const onChainImages = selectedMedia.filter(m => m.type === 'image' && m.storageType === 'on-chain' && !m.processedBase64)
+
+    if (onChainImages.length === 0) return
+
+    setIsProcessingOnChain(true)
+
+    try {
+      const updatedMedia = await Promise.all(
+        selectedMedia.map(async (media) => {
+          // Skip non-images, off-chain images, and already processed images
+          if (media.type !== 'image' || media.storageType !== 'on-chain' || media.processedBase64) {
+            return media
+          }
+
+          // Read file as base64
+          const base64 = await new Promise<string>((resolve) => {
+            const reader = new FileReader()
+            reader.onloadend = () => resolve(reader.result as string)
+            reader.readAsDataURL(media.file)
+          })
+
+          const imageData = base64.split(',')[1] // Remove data:image/...;base64, prefix
+
+          // Calculate cost from base64 length to match backend exactly
+          const estimatedOriginalSize = Math.ceil((imageData.length * 3) / 4)
+          const cawCost = calculateOnChainCost(estimatedOriginalSize)
+
+          return {
+            ...media,
+            processedBase64: imageData,
+            processedCost: cawCost,
+            isProcessed: true
+          }
+        })
+      )
+
+      setSelectedMedia(updatedMedia)
+    } catch (error) {
+      console.error('Error processing on-chain images:', error)
+    } finally {
+      setIsProcessingOnChain(false)
+    }
+  }
+
+  // Check if there are unprocessed on-chain images
+  const hasUnprocessedOnChainImages = selectedMedia.some(
+    m => m.type === 'image' && m.storageType === 'on-chain' && !m.processedBase64
+  )
+
   const handleSubmit = async () => {
     // Get effective token ID with fallback
     const effectiveTokenId = activeTokenId || activeToken?.tokenId
@@ -493,31 +545,27 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     // Shorten any URLs in the text (including GIF URLs)
     finalText = await shortenUrlsInText(finalText)
 
-    // Handle on-chain images
+    // Handle on-chain images - use pre-processed data if available
     if (onChainImages.length > 0) {
-      // Convert images to base64 and calculate cost
-      const imageDataArray = await Promise.all(onChainImages.map(async img => {
-        // Read file as base64
-        const base64 = await new Promise<string>((resolve) => {
-          const reader = new FileReader()
-          reader.onloadend = () => resolve(reader.result as string)
-          reader.readAsDataURL(img.file)
-        })
-
-        const imageData = base64.split(',')[1] // Remove data:image/...;base64, prefix
-        // Calculate cost from base64 length to match backend exactly
-        // Backend uses: originalSize = ceil((base64.length * 3) / 4)
-        const estimatedOriginalSize = Math.ceil((imageData.length * 3) / 4)
-        const cawCost = calculateOnChainCost(estimatedOriginalSize)
-        totalCawCost += BigInt(cawCost)
-        return `image64:${imageData}`
-      }))
+      const imageDataArray = onChainImages.map(img => {
+        if (img.processedBase64 && img.processedCost) {
+          // Use pre-processed data
+          totalCawCost += BigInt(img.processedCost)
+          return `image64:${img.processedBase64}`
+        } else {
+          // Fallback: should not happen if upload flow is followed
+          console.warn('On-chain image not pre-processed, this should not happen')
+          return null
+        }
+      }).filter(Boolean)
 
       // Combine with text
-      if (finalText.trim()) {
-        finalText = `${imageDataArray.join('\n')}\n\n${finalText}`
-      } else {
-        finalText = imageDataArray.join('\n')
+      if (imageDataArray.length > 0) {
+        if (finalText.trim()) {
+          finalText = `${imageDataArray.join('\n')}\n\n${finalText}`
+        } else {
+          finalText = imageDataArray.join('\n')
+        }
       }
     }
 
@@ -683,15 +731,15 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             ) : (
               <button
                 className="px-4 py-2 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer"
-                disabled={(!text && selectedMedia.length === 0) || isOverLimit || !canPost}
-                onClick={handleSubmit}
+                disabled={(!text && selectedMedia.length === 0) || isOverLimit || !canPost || isProcessingOnChain}
+                onClick={hasUnprocessedOnChainImages ? handleUploadOnChain : handleSubmit}
                 title={!isTokenOwner && activeTokenId ? 'You do not own this token' : hasNoToken ? 'Please select a token' : ''}
               >
-                {!isTokenOwner && activeTokenId ? 'Wrong Address' : hasNoToken ? 'No Token' : replyTo ? 'Reply' : selectedMedia.some(m => m.type === 'image' && m.storageType === 'on-chain') ? 'Upload' : 'Post'}
+                {!isTokenOwner && activeTokenId ? 'Wrong Address' : hasNoToken ? 'No Token' : replyTo ? 'Reply' : isProcessingOnChain ? 'Uploading...' : hasUnprocessedOnChainImages ? 'Upload' : 'Post'}
               </button>
             ) }
           </div>
-          
+
           {/* Mobile Icons Row */}
           <div className="flex items-center space-x-4">
             {/* Media Upload */}
@@ -763,6 +811,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               onMediaSelected={handleMediaSelected}
               onMediaRemoved={handleMediaRemoved}
               selectedMedia={selectedMedia.filter(m => m.type !== 'gif')}
+              isProcessingOnChain={isProcessingOnChain}
               className=""
             />
           </div>
@@ -894,6 +943,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               onMediaSelected={handleMediaSelected}
               onMediaRemoved={handleMediaRemoved}
               selectedMedia={selectedMedia.filter(m => m.type !== 'gif')}
+              isProcessingOnChain={isProcessingOnChain}
               className=""
             />
           </div>
@@ -1124,11 +1174,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           ) : (
               <button
                 className="px-5 py-2 bg-yellow-500 text-black font-semibold text-base rounded-full hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer"
-                disabled={(!text && selectedMedia.length === 0) || isOverLimit || !canPost}
-                onClick={handleSubmit}
+                disabled={(!text && selectedMedia.length === 0) || isOverLimit || !canPost || isProcessingOnChain}
+                onClick={hasUnprocessedOnChainImages ? handleUploadOnChain : handleSubmit}
                 title={!isTokenOwner && activeTokenId ? 'You do not own this token' : hasNoToken ? 'Please select a token' : ''}
               >
-                {!isTokenOwner && activeTokenId ? 'Wrong Address' : hasNoToken ? 'No Token' : replyTo ? 'Reply' : selectedMedia.some(m => m.type === 'image' && m.storageType === 'on-chain') ? 'Upload' : 'Post'}
+                {!isTokenOwner && activeTokenId ? 'Wrong Address' : hasNoToken ? 'No Token' : replyTo ? 'Reply' : isProcessingOnChain ? 'Uploading...' : hasUnprocessedOnChainImages ? 'Upload' : 'Post'}
               </button>
             ) }
           </div>
