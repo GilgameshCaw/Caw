@@ -33,28 +33,15 @@ process.on('uncaughtException', (error: any) => {
   console.error('==========================================')
   logger.log(`Uncaught Exception: ${error.message || JSON.stringify(error)}`)
 
-  // Special handling for WebSocket/network errors - don't crash the server
-  const errorStr = error.message || JSON.stringify(error)
-  const errorCode = error.code || ''
-
-  if (errorStr.includes('429') ||
-      errorStr.includes('Unexpected server response') ||
-      errorStr.includes('WebSocket') ||
-      errorCode === 'ECONNREFUSED' ||
-      errorCode === 'ETIMEDOUT' ||
-      errorCode === 'ENOTFOUND' ||
-      errorCode === 'ENETUNREACH' ||
-      errorStr.includes('rate limit')) {
-    console.log('[Server] Network/rate limit error detected - services will retry')
-    logger.log('Network error detected - API server continuing with degraded functionality')
-    // Explicitly prevent exit - services have retry logic
-    return
+  // Log the stack trace
+  if (error.stack) {
+    console.error('[Server] Stack:', error.stack)
   }
 
-  // For other errors, log but don't crash
-  console.error('[Server] Error stack:', error.stack)
-  logger.log(`Stack: ${error.stack || 'No stack trace'}`)
-  console.log('[Server] Continuing despite uncaught exception - check logs')
+  // ALWAYS continue - never let the process crash from uncaught exceptions
+  // The individual services have their own retry/recovery logic
+  console.log('[Server] Continuing despite uncaught exception - API server remains running')
+  logger.log('Uncaught exception handled - API server continuing')
 })
 
 console.log('[Server] Uncaught exception handler registered')

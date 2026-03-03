@@ -62,8 +62,9 @@ async function processScheduledPost(scheduledPost: any): Promise<boolean> {
       })
 
       if (!user) {
+        // Create user if doesn't exist (id = tokenId)
         await prisma.user.create({
-          data: { tokenId: data.senderId, username: `user${data.senderId}`, address: '0x0' }
+          data: { id: data.senderId, tokenId: data.senderId, username: `user_${data.senderId}` }
         })
       }
 

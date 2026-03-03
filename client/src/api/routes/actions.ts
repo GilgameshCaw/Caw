@@ -57,9 +57,13 @@ router.post('/', async (req, res) => {
         })
 
         if (!user) {
-          // Create user if doesn't exist
+          // Create user if doesn't exist (id = tokenId)
           await prisma.user.create({
-            data: { tokenId: data.senderId }
+            data: {
+              id: data.senderId,
+              tokenId: data.senderId,
+              username: `user_${data.senderId}`
+            }
           })
         }
 
@@ -210,17 +214,17 @@ router.post('/', async (req, res) => {
       console.log('Follower:', data.senderId, 'Following:', data.receiverId)
 
       try {
-        // Ensure both users exist
+        // Ensure both users exist (id = tokenId)
         await Promise.all([
           prisma.user.upsert({
             where: { tokenId: data.senderId },
             update: {},
-            create: { tokenId: data.senderId, username: `user${data.senderId}`, address: '0x0' }
+            create: { id: data.senderId, tokenId: data.senderId, username: `user_${data.senderId}` }
           }),
           prisma.user.upsert({
             where: { tokenId: data.receiverId },
             update: {},
-            create: { tokenId: data.receiverId, username: `user${data.receiverId}`, address: '0x0' }
+            create: { id: data.receiverId, tokenId: data.receiverId, username: `user_${data.receiverId}` }
           })
         ])
 
