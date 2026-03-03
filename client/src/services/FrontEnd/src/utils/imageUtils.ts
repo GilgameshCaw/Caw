@@ -206,9 +206,10 @@ export function calculateOnChainCost(sizeInBytes: number): number {
   // Calculate base cost
   const baseCost = Math.ceil(totalGas * effectiveGasPrice * cawPerGwei)
 
-  // Add 50% markup for validator compensation (increased from 20%)
-  // This covers: gas volatility, operational costs, and profit margin
-  const totalCost = Math.ceil(baseCost * 1.5)
+  // Add 150% markup for validator compensation
+  // This covers: gas volatility (can spike 2-3x), operational costs, and profit margin
+  // Better to overestimate than have transactions fail - unused CAW is not charged
+  const totalCost = Math.ceil(baseCost * 2.5)
 
   // For small images, ensure minimum viable compensation
   // For a 10KB image: ~2400 CAW
