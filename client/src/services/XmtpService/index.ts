@@ -61,12 +61,13 @@ export class XmtpIdentityService {
     })
 
     if (!user) {
-      // Create the user if it doesn't exist
+      // Create the user if it doesn't exist (id = tokenId)
       await prisma.user.create({
         data: {
+          id: userId,
           tokenId: userId,
           address: walletAddress,
-          username: `user${userId}` // Default username
+          username: `user_${userId}`
         }
       })
     }

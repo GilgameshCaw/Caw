@@ -132,17 +132,11 @@ export class SecureXmtpStorageService {
       where: {
         tokenId: data.tokenId || 0
       },
-      update: {
-        xmtpEnabled: true,
-        xmtpRegisteredAt: data.registeredAt,
-        walletAddress: data.walletAddress
-      },
+      update: {},
       create: {
+        id: data.tokenId || 0,
         tokenId: data.tokenId || 0,
-        username: `user_${data.tokenId || Date.now()}`,
-        walletAddress: data.walletAddress,
-        xmtpEnabled: true,
-        xmtpRegisteredAt: data.registeredAt
+        username: `user_${data.tokenId || Date.now()}`
       }
     })
 
