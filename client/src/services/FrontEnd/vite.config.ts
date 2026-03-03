@@ -59,7 +59,7 @@ export default defineConfig({
     format: 'es'
   },
   server: {
-    allowedHosts: ["local.caw.com"],
+    allowedHosts: true, // Allow all hosts in development
     // Note: COOP/COEP headers are set conditionally in coepHeadersPlugin()
     // They only work on localhost or HTTPS origins (browsers ignore them otherwise)
     proxy: {
