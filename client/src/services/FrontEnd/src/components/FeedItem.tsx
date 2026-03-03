@@ -565,6 +565,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     if (target.closest('a') || target.closest('button')) {
       return
     }
+    // Don't navigate for pending or failed posts (they have tempIds, not real IDs)
+    if (item.status === 'PENDING' || item.status === 'FAILED') {
+      return
+    }
     navigate(`/caws/${useItem.id}`)
   }
 
@@ -777,13 +781,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     // Off-chain images stored as URLs
                     const urls = useItem.imageData.replace('urls:', '').split('|||')
                     return (
-                      <div className={`grid ${urls.length > 1 ? 'grid-cols-2 gap-2' : 'grid-cols-1'} max-w-2xl`}>
+                      <div className={`${urls.length > 1 ? 'grid grid-cols-2 gap-2 max-w-2xl' : 'inline-block'}`}>
                         {urls.map((url, index) => (
-                          <div key={index} className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
+                          <div key={index} className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 inline-block">
                             <img
                               src={url}
                               alt={`Caw image ${index + 1}`}
-                              className="w-full h-auto cursor-pointer hover:opacity-90 transition-opacity"
+                              className="max-w-full max-h-96 h-auto cursor-pointer hover:opacity-90 transition-opacity"
                               onClick={(e) => {
                                 e.preventDefault()
                                 e.stopPropagation()
@@ -802,13 +806,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     // On-chain images stored as base64
                     const images = useItem.imageData.split('|||')
                     return (
-                      <div className={`grid ${images.length > 1 ? 'grid-cols-2 gap-2' : 'grid-cols-1'} max-w-2xl`}>
+                      <div className={`${images.length > 1 ? 'grid grid-cols-2 gap-2 max-w-2xl' : 'inline-block'}`}>
                         {images.map((imageBase64, index) => (
-                          <div key={index} className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
+                          <div key={index} className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 inline-block">
                             <img
                               src={`data:image/jpeg;base64,${imageBase64}`}
                               alt={`Caw image ${index + 1}`}
-                              className="w-full h-auto cursor-pointer hover:opacity-90 transition-opacity"
+                              className="max-w-full max-h-96 h-auto cursor-pointer hover:opacity-90 transition-opacity"
                               onClick={(e) => {
                                 e.preventDefault()
                                 e.stopPropagation()
@@ -830,11 +834,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 } else if (useItem.imageUrl) {
                   // Legacy single image URL
                   return (
-                    <div className="relative max-w-md rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
+                    <div className="relative inline-block rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
                       <img
                         src={useItem.imageUrl}
                         alt="Caw image"
-                        className="w-full h-auto cursor-pointer hover:opacity-90 transition-opacity"
+                        className="max-w-full max-h-96 h-auto cursor-pointer hover:opacity-90 transition-opacity"
                         onClick={(e) => {
                           e.preventDefault()
                           e.stopPropagation()

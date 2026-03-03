@@ -1,5 +1,6 @@
 // src/components/MediaUpload.tsx
 import React, { useState, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import {
   HiOutlinePhotograph,
   HiOutlineVideoCamera,
@@ -7,13 +8,14 @@ import {
   HiOutlineCloudUpload,
   HiOutlineCube,
   HiOutlineExclamationCircle,
-  HiOutlinePlay
+  HiOutlinePlay,
+  HiX
 } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
 import { calculateOnChainCost } from '~/utils/imageUtils'
 import { formatEngagementCount } from '~/utils/numberFormat'
 
-export type MediaType = 'image' | 'video'
+export type MediaType = 'image' | 'video' | 'gif'
 export type StorageType = 'off-chain' | 'on-chain'
 
 interface MediaFile {
@@ -42,7 +44,7 @@ interface MediaUploadProps {
 const SIZE_LIMITS = {
   IMAGE_MAX: 10 * 1024 * 1024, // 10MB for images
   VIDEO_MAX: 100 * 1024 * 1024, // 100MB for videos
-  ON_CHAIN_MAX: 50 * 1024 // 50KB for on-chain storage (images only)
+  ON_CHAIN_MAX: 90 * 1024 // 90KB for on-chain storage (images only)
 }
 
 const MediaUpload: React.FC<MediaUploadProps> = ({
@@ -61,8 +63,17 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
   const [isDragOver, setIsDragOver] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showCompressModal, setShowCompressModal] = useState(false)
+  const [compressModalIndex, setCompressModalIndex] = useState<number | null>(null)
+  const [compressPreviews, setCompressPreviews] = useState<Array<{ url: string; size: number; file: File; label: string }>>([])
+  const [isGeneratingPreview, setIsGeneratingPreview] = useState(false)
+  const [selectedPreviewIndex, setSelectedPreviewIndex] = useState<number | null>(null)
 
-  const currentImages = selectedMedia.filter(m => m.type === 'image').length
+  // Drag-and-drop reordering state
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null)
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
+
+  const currentImages = selectedMedia.filter(m => m.type === 'image' || m.type === 'gif').length
   const currentVideos = selectedMedia.filter(m => m.type === 'video').length
   const canAddImage = currentImages < maxImages
   const canAddVideo = currentVideos < maxVideos
@@ -210,15 +221,84 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
     }
   }
 
+  // Drag-and-drop reordering handlers
+  const handleReorderDragStart = (e: React.DragEvent, index: number) => {
+    setDraggedIndex(index)
+    e.dataTransfer.effectAllowed = 'move'
+    // Add a slight delay to allow the drag image to be captured
+    setTimeout(() => {
+      const target = e.target as HTMLElement
+      target.style.opacity = '0.5'
+    }, 0)
+  }
+
+  const handleReorderDragEnd = (e: React.DragEvent) => {
+    const target = e.target as HTMLElement
+    target.style.opacity = '1'
+    setDraggedIndex(null)
+    setDragOverIndex(null)
+  }
+
+  const handleReorderDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (draggedIndex !== null && draggedIndex !== index) {
+      setDragOverIndex(index)
+    }
+  }
+
+  const handleReorderDragLeave = () => {
+    setDragOverIndex(null)
+  }
+
+  const handleReorderDrop = (e: React.DragEvent, dropIndex: number) => {
+    e.preventDefault()
+    if (draggedIndex === null || draggedIndex === dropIndex) {
+      setDraggedIndex(null)
+      setDragOverIndex(null)
+      return
+    }
+
+    // Reorder the media array
+    const newMedia = [...selectedMedia]
+    const [draggedItem] = newMedia.splice(draggedIndex, 1)
+    newMedia.splice(dropIndex, 0, draggedItem)
+    onMediaSelected(newMedia)
+
+    setDraggedIndex(null)
+    setDragOverIndex(null)
+  }
+
   const toggleStorageType = (index: number) => {
     const media = selectedMedia[index]
     if (media.type !== 'image') return // Only images can be on-chain
 
     const newStorageType = media.storageType === 'on-chain' ? 'off-chain' : 'on-chain'
 
-    // Check size limit for on-chain storage
-    if (newStorageType === 'on-chain' && media.size > SIZE_LIMITS.ON_CHAIN_MAX) {
-      setError('Image too large for on-chain storage (max 50KB)')
+    // If toggling OFF and there's an original file stored, restore it
+    if (newStorageType === 'off-chain' && (media as any).originalFile) {
+      const updatedMedia = [...selectedMedia]
+      updatedMedia[index] = {
+        ...media,
+        file: (media as any).originalFile,
+        size: (media as any).originalSize,
+        preview: (media as any).originalPreview,
+        storageType: 'off-chain',
+        // Clear the stored originals since we're back to original
+        originalFile: undefined,
+        originalPreview: undefined,
+        originalSize: undefined
+      }
+      onMediaSelected(updatedMedia)
+      return
+    }
+
+    // Check size limit for on-chain storage (use original size if available)
+    const sizeToCheck = (media as any).originalSize || media.size
+    if (newStorageType === 'on-chain' && sizeToCheck > SIZE_LIMITS.ON_CHAIN_MAX) {
+      // Show compression modal instead of browser confirm
+      setCompressModalIndex(index)
+      setShowCompressModal(true)
       return
     }
 
@@ -228,6 +308,82 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
       storageType: newStorageType
     }
     onMediaSelected(updatedMedia)
+  }
+
+  const handleCompressConfirm = async () => {
+    if (compressModalIndex !== null && selectedPreviewIndex !== null && compressPreviews[selectedPreviewIndex]) {
+      const selectedPreview = compressPreviews[selectedPreviewIndex]
+      const media = selectedMedia[compressModalIndex]
+
+      const updatedMedia = [...selectedMedia]
+      updatedMedia[compressModalIndex] = {
+        ...media,
+        file: selectedPreview.file,
+        size: selectedPreview.size,
+        preview: selectedPreview.url,
+        storageType: 'on-chain',
+        // Store original file/preview so user can reset by toggling off on-chain
+        originalFile: (media as any).originalFile || media.file,
+        originalPreview: (media as any).originalPreview || media.preview,
+        originalSize: (media as any).originalSize || media.size
+      }
+      onMediaSelected(updatedMedia)
+    }
+    setShowCompressModal(false)
+    setCompressModalIndex(null)
+    setCompressPreviews([])
+    setSelectedPreviewIndex(null)
+  }
+
+  const handleCompressCancel = () => {
+    // Clean up preview URLs
+    compressPreviews.forEach(p => URL.revokeObjectURL(p.url))
+    setShowCompressModal(false)
+    setCompressModalIndex(null)
+    setCompressPreviews([])
+    setSelectedPreviewIndex(null)
+  }
+
+  const handleGeneratePreview = async () => {
+    if (compressModalIndex === null) return
+    const media = selectedMedia[compressModalIndex]
+    if (!media?.file) return
+
+    setIsGeneratingPreview(true)
+    try {
+      const targets = [
+        { size: 30 * 1024, label: 'Small (30KB)' },
+        { size: 60 * 1024, label: 'Medium (60KB)' },
+        { size: 90 * 1024, label: 'Large (90KB)' }
+      ]
+
+      const previews = await Promise.all(
+        targets.map(async (target) => {
+          const compressed = await compressImageToSize(media.file, target.size)
+          if (compressed) {
+            return {
+              url: URL.createObjectURL(compressed),
+              size: compressed.size,
+              file: compressed,
+              label: target.label
+            }
+          }
+          return null
+        })
+      )
+
+      const validPreviews = previews.filter((p): p is NonNullable<typeof p> => p !== null)
+      setCompressPreviews(validPreviews)
+
+      // Auto-select the first one that's under 90KB
+      const defaultIndex = validPreviews.findIndex(p => p.size <= 90 * 1024)
+      setSelectedPreviewIndex(defaultIndex >= 0 ? defaultIndex : 0)
+    } catch (err) {
+      console.error('Preview generation failed:', err)
+      setError('Could not generate previews')
+    } finally {
+      setIsGeneratingPreview(false)
+    }
   }
 
   const formatDuration = (seconds: number) => {
@@ -243,9 +399,14 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
   }
 
   const compressImage = async (file: File): Promise<File | null> => {
+    return compressImageToSize(file, 50 * 1024) // Default to 50KB target
+  }
+
+  // Compress image to target a specific size (in bytes)
+  const compressImageToSize = async (file: File, targetSize: number): Promise<File | null> => {
     return new Promise((resolve) => {
       const img = new Image()
-      img.onload = () => {
+      img.onload = async () => {
         const canvas = document.createElement('canvas')
         const ctx = canvas.getContext('2d')
 
@@ -253,29 +414,66 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
         let width = img.width
         let height = img.height
 
-        // Scale down if needed
-        const maxDimension = 2048
-        if (width > maxDimension || height > maxDimension) {
-          const scale = maxDimension / Math.max(width, height)
-          width = width * scale
-          height = height * scale
-        }
+        // Calculate initial scale based on target size
+        // Rough estimate: smaller target = more scaling needed
+        const originalArea = width * height
+        const bytesPerPixel = file.size / originalArea
+        const targetArea = targetSize / bytesPerPixel / 0.5 // 0.5 accounts for JPEG compression
+        const initialScale = Math.min(1, Math.sqrt(targetArea / originalArea))
+
+        // Also cap max dimension
+        const maxDimension = targetSize <= 30 * 1024 ? 800 : targetSize <= 60 * 1024 ? 1200 : 1600
+        const dimScale = Math.min(width, height) > maxDimension
+          ? maxDimension / Math.max(width, height)
+          : 1
+
+        const scale = Math.min(initialScale, dimScale, 1)
+        width = Math.round(width * scale)
+        height = Math.round(height * scale)
 
         canvas.width = width
         canvas.height = height
         ctx?.drawImage(img, 0, 0, width, height)
 
-        canvas.toBlob((blob) => {
-          if (blob && blob.size < file.size) {
-            const compressedFile = new File([blob], file.name, {
-              type: 'image/jpeg',
-              lastModified: Date.now()
-            })
-            resolve(compressedFile)
-          } else {
-            resolve(null)
+        // Try different quality levels to hit target size
+        const tryQuality = async (quality: number): Promise<Blob | null> => {
+          return new Promise((res) => {
+            canvas.toBlob((blob) => res(blob), 'image/jpeg', quality)
+          })
+        }
+
+        // Binary search for the right quality
+        let minQ = 0.1
+        let maxQ = 0.95
+        let bestBlob: Blob | null = null
+
+        for (let i = 0; i < 8; i++) {
+          const midQ = (minQ + maxQ) / 2
+          const blob = await tryQuality(midQ)
+          if (blob) {
+            if (blob.size <= targetSize) {
+              bestBlob = blob
+              minQ = midQ // Try higher quality
+            } else {
+              maxQ = midQ // Need lower quality
+            }
           }
-        }, 'image/jpeg', 0.85)
+        }
+
+        // If we couldn't get under target, use lowest quality result
+        if (!bestBlob) {
+          bestBlob = await tryQuality(0.1)
+        }
+
+        if (bestBlob) {
+          const compressedFile = new File([bestBlob], file.name, {
+            type: 'image/jpeg',
+            lastModified: Date.now()
+          })
+          resolve(compressedFile)
+        } else {
+          resolve(null)
+        }
       }
 
       img.onerror = () => resolve(null)
@@ -283,7 +481,7 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
     })
   }
 
-  const handleCompressImage = async (index: number) => {
+  const handleCompressImage = async (index: number, setOnChainAfter: boolean = false) => {
     const media = selectedMedia[index]
     if (media.type !== 'image') return
 
@@ -292,14 +490,22 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
 
     if (compressed) {
       const updatedMedia = [...selectedMedia]
+      const canSetOnChain = setOnChainAfter && compressed.size <= SIZE_LIMITS.ON_CHAIN_MAX
       updatedMedia[index] = {
         ...media,
         file: compressed,
         size: compressed.size,
-        preview: URL.createObjectURL(compressed)
+        preview: URL.createObjectURL(compressed),
+        ...(canSetOnChain ? { storageType: 'on-chain' } : {})
       }
       onMediaSelected(updatedMedia)
-      setError(`Image compressed from ${formatFileSize(media.size)} to ${formatFileSize(compressed.size)}`)
+      if (canSetOnChain) {
+        setError(`Compressed to ${formatFileSize(compressed.size)} and set to on-chain`)
+      } else if (setOnChainAfter) {
+        setError(`Compressed to ${formatFileSize(compressed.size)} - still too large for on-chain (max 50KB)`)
+      } else {
+        setError(`Image compressed from ${formatFileSize(media.size)} to ${formatFileSize(compressed.size)}`)
+      }
     } else {
       setError('Could not compress image further')
     }
@@ -393,14 +599,27 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
               <div className="space-y-3">
                 <h4 className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
                   Selected Media ({selectedMedia.length})
+                  {selectedMedia.length > 1 && (
+                    <span className="ml-2 text-xs font-normal text-yellow-500">• Drag to reorder</span>
+                  )}
                 </h4>
                 <div className="grid grid-cols-2 gap-3">
                   {selectedMedia.map((media, index) => (
                     <div
                       key={index}
-                      className={`relative rounded-lg overflow-hidden border ${
-                        isDark ? 'border-gray-600 bg-gray-800' : 'border-gray-200 bg-gray-50'
-                      }`}
+                      draggable={selectedMedia.length > 1}
+                      onDragStart={(e) => handleReorderDragStart(e, index)}
+                      onDragEnd={handleReorderDragEnd}
+                      onDragOver={(e) => handleReorderDragOver(e, index)}
+                      onDragLeave={handleReorderDragLeave}
+                      onDrop={(e) => handleReorderDrop(e, index)}
+                      className={`relative rounded-lg overflow-hidden border-2 transition-all ${
+                        dragOverIndex === index
+                          ? 'border-yellow-500 scale-105'
+                          : draggedIndex === index
+                            ? 'border-yellow-500/50 opacity-50'
+                            : isDark ? 'border-gray-600 bg-gray-800' : 'border-gray-200 bg-gray-50'
+                      } ${selectedMedia.length > 1 ? 'cursor-grab active:cursor-grabbing' : ''}`}
                     >
                       {/* Media Preview */}
                       {media.type === 'image' ? (
@@ -420,6 +639,12 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
                               <HiOutlinePlay className="w-6 h-6 text-white" />
                             </div>
                           </div>
+                          {/* VIDEO label */}
+                          <span className={`absolute bottom-2 left-2 px-1.5 py-0.5 text-xs font-semibold rounded ${
+                            isDark ? 'bg-black/70 text-white' : 'bg-white/70 text-black'
+                          }`}>
+                            VIDEO
+                          </span>
                           {media.duration && (
                             <span className="absolute bottom-2 right-2 text-xs text-white bg-black/60 px-2 py-1 rounded">
                               {formatDuration(media.duration)}
@@ -510,8 +735,11 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
         <p className={`text-xs ${
           isDark ? 'text-gray-500' : 'text-gray-500'
         }`}>
-          {selectedMedia.filter(m => m.type === 'image').length}/4 images •
+          {selectedMedia.filter(m => m.type === 'image' || m.type === 'gif').length}/4 images •
           {selectedMedia.filter(m => m.type === 'video').length}/1 video
+          {selectedMedia.length > 1 && (
+            <span className="ml-2 text-yellow-600 dark:text-yellow-400">• Drag to reorder</span>
+          )}
         </p>
       )}
 
@@ -521,18 +749,38 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
           {selectedMedia.map((media, index) => (
             <div
               key={index}
-              className={`relative rounded-lg overflow-hidden border ${
-                isDark ? 'border-gray-600 bg-gray-800' : 'border-gray-200 bg-gray-50'
-              }`}
+              draggable={selectedMedia.length > 1}
+              onDragStart={(e) => handleReorderDragStart(e, index)}
+              onDragEnd={handleReorderDragEnd}
+              onDragOver={(e) => handleReorderDragOver(e, index)}
+              onDragLeave={handleReorderDragLeave}
+              onDrop={(e) => handleReorderDrop(e, index)}
+              className={`relative rounded-lg overflow-hidden border-2 transition-all ${
+                dragOverIndex === index
+                  ? 'border-yellow-500 scale-105'
+                  : draggedIndex === index
+                    ? 'border-yellow-500/50 opacity-50'
+                    : isDark ? 'border-gray-600 bg-gray-800' : 'border-gray-200 bg-gray-50'
+              } ${selectedMedia.length > 1 ? 'cursor-grab active:cursor-grabbing' : ''}`}
             >
               {/* Media Preview - 1:1 aspect ratio */}
               <div className="relative aspect-square bg-black">
-                {media.type === 'image' ? (
-                  <img
-                    src={media.preview}
-                    alt={`Selected ${index + 1}`}
-                    className="w-full h-full object-cover"
-                  />
+                {media.type === 'image' || media.type === 'gif' ? (
+                  <>
+                    <img
+                      src={(media as any).preview || (media as any).originalUrl || (media as any).url}
+                      alt={`Selected ${index + 1}`}
+                      className="w-full h-full object-cover"
+                    />
+                    {/* GIPHY label for GIFs */}
+                    {media.type === 'gif' && (
+                      <span className={`absolute bottom-1 left-1 px-1 py-0.5 text-xs font-semibold rounded ${
+                        isDark ? 'bg-black/70 text-white' : 'bg-white/70 text-black'
+                      }`}>
+                        GIPHY
+                      </span>
+                    )}
+                  </>
                 ) : (
                   <>
                     <video
@@ -544,6 +792,12 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
                         <HiOutlinePlay className="w-4 h-4 text-white" />
                       </div>
                     </div>
+                    {/* VIDEO label */}
+                    <span className={`absolute bottom-1 left-1 px-1 py-0.5 text-xs font-semibold rounded ${
+                      isDark ? 'bg-black/70 text-white' : 'bg-white/70 text-black'
+                    }`}>
+                      VIDEO
+                    </span>
                     {media.duration && (
                       <span className="absolute bottom-1 right-1 text-xs text-white bg-black/60 px-1 py-0.5 rounded">
                         {formatDuration(media.duration)}
@@ -552,19 +806,37 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
                   </>
                 )}
 
-                {/* Processing overlay for on-chain images */}
-                {isProcessingOnChain && media.type === 'image' && media.storageType === 'on-chain' && !(media as any).processedBase64 && (
-                  <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center">
+                {/* Processing overlay for on-chain images during initial upload */}
+                {isProcessingOnChain && media.type === 'image' && media.storageType === 'on-chain' && !(media as any).uploadStatus && (
+                  <div className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center z-50">
                     <div className="animate-spin rounded-full h-8 w-8 border-2 border-yellow-500 border-t-transparent mb-2"></div>
-                    <span className="text-white text-xs font-medium">Processing...</span>
+                    <span className="text-white text-xs font-medium">Signing...</span>
                   </div>
                 )}
 
-                {/* Processed checkmark for on-chain images */}
-                {media.type === 'image' && media.storageType === 'on-chain' && (media as any).processedBase64 && (
-                  <div className="absolute top-1 left-1 bg-green-500 rounded-full p-0.5">
-                    <svg className="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                {/* Pending indicator - tx submitted but not confirmed */}
+                {media.type === 'image' && (media as any).uploadStatus === 'pending' && (
+                  <div className="absolute top-1 left-1 bg-yellow-500 rounded-full p-1 z-10">
+                    <svg className="w-3.5 h-3.5 text-white animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                  </div>
+                )}
+
+                {/* Success checkmark - tx confirmed */}
+                {media.type === 'image' && (media as any).uploadStatus === 'success' && (
+                  <div className="absolute top-1 left-1 bg-green-500 rounded-full p-1 z-10">
+                    <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                    </svg>
+                  </div>
+                )}
+
+                {/* Failed indicator - tx failed */}
+                {media.type === 'image' && (media as any).uploadStatus === 'failed' && (
+                  <div className="absolute top-1 left-1 bg-red-500 rounded-full p-1 z-10">
+                    <svg className="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
                     </svg>
                   </div>
                 )}
@@ -591,49 +863,227 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
                 </button>
               )}
 
-              {/* Storage toggle for images - full width banner at bottom */}
+              {/* Storage toggle for images only (not GIFs or videos) - full width banner at bottom */}
               {media.type === 'image' && (
                 <div className={`absolute bottom-0 left-0 right-0 ${
-                  media.storageType === 'on-chain'
-                    ? 'bg-yellow-500/95'
-                    : isDark ? 'bg-gray-900/95' : 'bg-white/95'
+                  (media as any).uploadStatus === 'success'
+                    ? 'bg-green-500/95'
+                    : (media as any).uploadStatus === 'pending'
+                      ? 'bg-yellow-500/95'
+                      : (media as any).uploadStatus === 'failed'
+                        ? 'bg-red-500/95'
+                        : media.storageType === 'on-chain'
+                          ? 'bg-yellow-500/95'
+                          : isDark ? 'bg-gray-900/95' : 'bg-white/95'
                 } backdrop-blur-sm p-2 transition-colors`}>
-                  <label className="flex items-center justify-between cursor-pointer">
+                  {(media as any).uploadStatus === 'success' ? (
+                    // Successfully uploaded or from library
                     <div className="flex flex-col">
-                      <span className={`text-xs font-medium ${
-                        media.storageType === 'on-chain'
-                          ? 'text-black'
-                          : isDark ? 'text-gray-300' : 'text-gray-700'
-                      }`}>
-                        On-chain
+                      <span className="text-xs font-medium text-white">
+                        {(media as any).isFromLibrary ? 'From Library' : 'Uploaded'}
                       </span>
+                      <span className="text-xs text-white/80">
+                        On-Chain
+                      </span>
+                    </div>
+                  ) : (media as any).uploadStatus === 'pending' ? (
+                    // Pending - tx submitted but not confirmed
+                    <div className="flex flex-col">
+                      <span className="text-xs font-medium text-black">
+                        Pending...
+                      </span>
+                      <span className="text-xs text-black/70">
+                        Confirming tx
+                      </span>
+                    </div>
+                  ) : (media as any).uploadStatus === 'failed' ? (
+                    // Failed upload
+                    <div className="flex flex-col">
+                      <span className="text-xs font-medium text-white">
+                        Failed
+                      </span>
+                      <span className="text-xs text-white/80">
+                        Tap to retry
+                      </span>
+                    </div>
+                  ) : (
+                    // Not uploaded yet - show toggle
+                    <div className="flex flex-col gap-1">
+                      <label className="flex items-center justify-between cursor-pointer">
+                        <span className={`text-xs font-medium ${
+                          media.storageType === 'on-chain'
+                            ? 'text-black'
+                            : isDark ? 'text-gray-300' : 'text-gray-700'
+                        }`}>
+                          On-chain
+                        </span>
+                        <div className="relative flex items-center">
+                          <input
+                            type="checkbox"
+                            checked={media.storageType === 'on-chain'}
+                            onChange={() => toggleStorageType(index)}
+                            className="sr-only"
+                          />
+                          <div className={`w-9 h-5 rounded-full transition-colors flex items-center ${
+                            media.storageType === 'on-chain' ? 'bg-black/30' : 'bg-gray-300 dark:bg-gray-600'
+                          }`}>
+                            <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform ml-0.5 ${
+                              media.storageType === 'on-chain' ? 'translate-x-4' : 'translate-x-0'
+                            }`} />
+                          </div>
+                        </div>
+                      </label>
                       {media.storageType === 'on-chain' && (
                         <span className="text-xs text-black/80">
-                          {formatEngagementCount(calculateOnChainCost(media.size))} CAW
+                          {formatEngagementCount(
+                            (media as any).processedCost || calculateOnChainCost(media.size)
+                          )} CAW
                         </span>
                       )}
                     </div>
-                    <div className="relative flex items-center">
-                      <input
-                        type="checkbox"
-                        checked={media.storageType === 'on-chain'}
-                        onChange={() => toggleStorageType(index)}
-                        className="sr-only"
-                      />
-                      <div className={`w-9 h-5 rounded-full transition-colors flex items-center ${
-                        media.storageType === 'on-chain' ? 'bg-black/30' : 'bg-gray-300 dark:bg-gray-600'
-                      }`}>
-                        <div className={`w-4 h-4 bg-white rounded-full shadow-md transform transition-transform ml-0.5 ${
-                          media.storageType === 'on-chain' ? 'translate-x-4' : 'translate-x-0'
-                        }`} />
-                      </div>
-                    </div>
-                  </label>
+                  )}
                 </div>
               )}
             </div>
           ))}
         </div>
+      )}
+
+      {/* Compression Confirmation Modal */}
+      {showCompressModal && compressModalIndex !== null && createPortal(
+        <>
+          {/* Backdrop */}
+          <div
+            className="fixed inset-0 bg-black/60 z-[80]"
+            onClick={handleCompressCancel}
+          />
+
+          {/* Modal */}
+          <div className="fixed z-[90] top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[calc(100%-2rem)] max-w-2xl rounded-xl shadow-2xl border bg-black border-yellow-500/30">
+            {/* Header */}
+            <div className="flex items-center justify-between px-4 py-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-full bg-yellow-500/20">
+                  <HiOutlineCube className="w-5 h-5 text-yellow-500" />
+                </div>
+                <h3 className="text-lg font-semibold text-white">
+                  Image Too Large
+                </h3>
+              </div>
+              <button
+                onClick={handleCompressCancel}
+                className="p-1 rounded-full transition-colors text-white/60 hover:text-white hover:bg-white/10"
+              >
+                <HiX className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="px-4 pb-4">
+              <p className="text-sm mb-2 text-white/70">
+                This image is <span className="font-semibold text-white">{Math.round(selectedMedia[compressModalIndex]?.size / 1024)}KB</span>. Choose a compression level for on-chain storage:
+              </p>
+
+              <p className="text-sm mb-4 text-yellow-500/80">
+                <span className="font-medium">On-chain images live forever</span> — stored permanently on the blockchain, not on any server.
+              </p>
+
+              {/* Preview options grid */}
+              {compressPreviews.length > 0 ? (
+                <div className="mb-4">
+                  <div className="grid grid-cols-3 gap-2 sm:gap-3">
+                    {compressPreviews.map((preview, index) => (
+                      <button
+                        key={index}
+                        onClick={() => setSelectedPreviewIndex(index)}
+                        className={`relative rounded-lg overflow-hidden border-2 transition-all ${
+                          selectedPreviewIndex === index
+                            ? 'border-yellow-500 ring-2 ring-yellow-500/30'
+                            : 'border-white/20 hover:border-white/40'
+                        }`}
+                      >
+                        <div className="aspect-square bg-black/50">
+                          <img
+                            src={preview.url}
+                            alt={preview.label}
+                            className="w-full h-full object-cover"
+                          />
+                        </div>
+                        <div className={`absolute bottom-0 left-0 right-0 px-1 sm:px-2 py-1 sm:py-1.5 ${
+                          selectedPreviewIndex === index ? 'bg-yellow-500' : 'bg-black/80'
+                        }`}>
+                          <p className={`text-[10px] sm:text-xs font-medium truncate ${
+                            selectedPreviewIndex === index ? 'text-black' : 'text-white'
+                          }`}>
+                            {preview.label}
+                          </p>
+                          <p className={`text-[10px] sm:text-xs ${
+                            selectedPreviewIndex === index ? 'text-black/70' : 'text-white/60'
+                          }`}>
+                            {Math.round(preview.size / 1024)}KB · {formatEngagementCount(calculateOnChainCost(preview.size))} CAW
+                          </p>
+                        </div>
+                        {selectedPreviewIndex === index && (
+                          <div className="absolute top-1 right-1 sm:top-2 sm:right-2 w-4 h-4 sm:w-5 sm:h-5 bg-yellow-500 rounded-full flex items-center justify-center">
+                            <svg className="w-2.5 h-2.5 sm:w-3 sm:h-3 text-black" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                            </svg>
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Selected preview larger view */}
+                  {selectedPreviewIndex !== null && compressPreviews[selectedPreviewIndex] && (
+                    <div className="mt-4">
+                      <p className="text-xs text-white/50 mb-2">Selected preview:</p>
+                      <div className="rounded-lg overflow-hidden border border-white/20 bg-black/50">
+                        <img
+                          src={compressPreviews[selectedPreviewIndex].url}
+                          alt="Selected preview"
+                          className="max-w-full max-h-64 mx-auto"
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm mb-4 text-white/50">
+                  Generate previews to see how your image will look at different compression levels.
+                </p>
+              )}
+
+              {/* Buttons */}
+              <div className="flex gap-3">
+                <button
+                  onClick={handleCompressCancel}
+                  className="flex-1 py-2.5 px-4 rounded-lg text-sm font-medium border border-white/20 text-white hover:bg-white/10 transition-colors"
+                >
+                  Cancel
+                </button>
+                {compressPreviews.length > 0 ? (
+                  <button
+                    onClick={handleCompressConfirm}
+                    disabled={selectedPreviewIndex === null}
+                    className="flex-1 py-2.5 px-4 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition-colors disabled:opacity-50"
+                  >
+                    Use Selected
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleGeneratePreview}
+                    disabled={isGeneratingPreview}
+                    className="flex-1 py-2.5 px-4 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition-colors disabled:opacity-50"
+                  >
+                    {isGeneratingPreview ? 'Generating...' : 'Show Options'}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </>,
+        document.body
       )}
     </div>
   )
