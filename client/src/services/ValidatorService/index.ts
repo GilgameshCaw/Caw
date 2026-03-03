@@ -6,12 +6,83 @@ import { Service } from '../../Service'
 import { prisma }  from '../../prismaClient'
 import getActionType from '../../abi/getActionType'
 import { cawActionsAbi } from '../../abi/generated'
-import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
-import { WebSocketProvider, Contract, Wallet } from 'ethers'
+import { CAW_ACTIONS_ADDRESS, CAW_ADDRESS, WETH_ADDRESS } from '../../abi/addresses'
+import { WebSocketProvider, JsonRpcProvider, Contract, Wallet } from 'ethers'
+
+// Uniswap V2 Router ABI (minimal for getAmountsOut)
+const UNISWAP_V2_ROUTER_ABI = [
+  {
+    constant: true,
+    inputs: [
+      { name: 'amountIn', type: 'uint256' },
+      { name: 'path', type: 'address[]' }
+    ],
+    name: 'getAmountsOut',
+    outputs: [{ name: 'amounts', type: 'uint256[]' }],
+    type: 'function'
+  }
+]
+
+const UNISWAP_V2_ROUTER = '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D'
+
+// Base Sepolia chain ID for testnet detection
+const BASE_SEPOLIA_CHAIN_ID = 84532
+
+// On testnet, gas is essentially free but we still want to validate the check works.
+// This factor scales down the gas cost to simulate mainnet-like economics.
+// e.g., if testnet gas is 1000x cheaper, we divide gas cost by 1000.
+const TESTNET_GAS_SCALE_FACTOR = BigInt(10000)
+
+// Cache for Uniswap router instance
+let cachedRouter: Contract | null = null
+let cachedMainnetProvider: JsonRpcProvider | null = null
+
+/**
+ * Get or create Uniswap V2 Router instance
+ */
+function getUniswapRouter(mainnetRpcUrl: string): Contract {
+  if (!cachedRouter || !cachedMainnetProvider) {
+    cachedMainnetProvider = new JsonRpcProvider(mainnetRpcUrl)
+    cachedRouter = new Contract(UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_ABI, cachedMainnetProvider)
+  }
+  return cachedRouter
+}
+
+/**
+ * Convert CAW amount to ETH using Uniswap V2 getAmountsOut
+ * @param cawAmount - Amount of CAW tokens (in wei, i.e., with 18 decimals)
+ * @param mainnetRpcUrl - Mainnet RPC URL for Uniswap query
+ * @returns Amount of ETH (in wei) that the CAW would swap to
+ */
+async function cawToEth(cawAmount: bigint, mainnetRpcUrl: string): Promise<bigint> {
+  if (cawAmount === BigInt(0)) {
+    return BigInt(0)
+  }
+
+  try {
+    const router = getUniswapRouter(mainnetRpcUrl)
+    const path = [CAW_ADDRESS, WETH_ADDRESS]
+
+    // CAW has 18 decimals, so cawAmount should already be in the correct units
+    // But our tip is just the raw CAW count, so we need to add 18 decimals
+    const cawAmountWithDecimals = cawAmount * BigInt(10 ** 18)
+
+    const amounts = await router.getAmountsOut(cawAmountWithDecimals, path)
+    const ethOut = BigInt(amounts[1])
+
+    return ethOut
+  } catch (error: any) {
+    console.error('[Validator] Failed to convert CAW to ETH via Uniswap:', error.message)
+    // Fallback: use approximate rate (this is a safety net)
+    // ~16M wei per CAW based on historical rates
+    return cawAmount * BigInt(16140000)
+  }
+}
 
 /** natstat: validator configuration schema */
 const ValidatorConfig = z.object({
   l2RpcUrl:      z.string(),
+  ethMainnetRpcUrl: z.string().optional(), // Ethereum L1 mainnet for Uniswap CAW price
   validatorId:   z.number().int(),
   checkInterval: z.number().default(10_000)  // ms
 })
@@ -34,6 +105,8 @@ export const validatorService: Service = {
     const cfg = ValidatorConfig.parse(rawCfg)
     // Prefer environment variable for RPC URL (never commit API keys to config)
     const l2RpcUrl = process.env.L2_RPC_URL || cfg.l2RpcUrl
+    // ETH L1 mainnet RPC for Uniswap CAW price queries (separate from L2 RPC)
+    const ethMainnetRpcUrl = process.env.ETH_MAINNET_RPC_URL || cfg.ethMainnetRpcUrl || 'https://eth.llamarpc.com'
     const { validatorId, checkInterval } = cfg
 
     if (!l2RpcUrl || l2RpcUrl.includes('${')) {
@@ -683,7 +756,7 @@ console.log("succeededKeys", succeededKeys)
         const effectiveGasPrice = 8
         const cawPerGwei = 0.03
         const baseCost = Math.ceil(totalGas * effectiveGasPrice * cawPerGwei)
-        const totalCost = Math.ceil(baseCost * 1.5)
+        const totalCost = Math.ceil(baseCost * 2.5) // Match frontend 2.5x markup
         totalRequiredCaw += Math.max(MIN_CAW_COST, totalCost)
       }
 
@@ -691,11 +764,18 @@ console.log("succeededKeys", succeededKeys)
       const amounts = action.amounts || []
       const providedCaw = amounts.length > 0 ? Number(amounts[0]) : 0
 
+      console.log(`[Validator] Image upload validation:`)
+      console.log(`  - Image count: ${imageMatches.length}`)
+      console.log(`  - Total data size: ${imageMatches.reduce((sum, m) => sum + m.replace('image64:', '').length, 0)} chars`)
+      console.log(`  - Provided CAW: ${providedCaw}`)
+      console.log(`  - Required CAW: ${totalRequiredCaw}`)
+
       if (providedCaw < totalRequiredCaw) {
-        console.log(`Insufficient CAW for image storage: provided ${providedCaw}, required ${totalRequiredCaw}`)
+        console.log(`[Validator] ❌ Insufficient CAW for image storage: provided ${providedCaw}, required ${totalRequiredCaw}`)
         return { valid: false, requiredCaw: totalRequiredCaw, underpriced: true }
       }
 
+      console.log(`[Validator] ✅ Image upload CAW check passed`)
       return { valid: true }
     }
 
@@ -891,11 +971,13 @@ console.log("succeededKeys", succeededKeys)
         successfulActions.map(a => `${a.senderId}-${a.cawonce}`)
       )
 
-      // TODO : live fetch this price:
-      // TODO : live fetch this price:
-      // TODO : live fetch this price:
-      // TODO : live fetch this price:
-      const ethPerCaw = 16140000n;
+      // Check if we're on testnet
+      const network = await provider.getNetwork()
+      const isTestnet = Number(network.chainId) === BASE_SEPOLIA_CHAIN_ID
+
+      if (isTestnet) {
+        console.log('[Validator] Running on testnet (Base Sepolia) - gas cost will be scaled down')
+      }
 
       // filter down to only those queue-rows that actually succeeded
       console.log("[Validator] Filtering succeeded entries from", validatedEntries.length, "total entries")
@@ -936,24 +1018,53 @@ console.log("succeededKeys", succeededKeys)
       console.log("[Validator] Estimated gas limit:", rawGasLimit.toString())
 
       // recompute tip from only the successful ones
-      const totalTip = computeTotalTip(succeededEntries)
-      const tipInWei = ethPerCaw * totalTip
-      console.log(`[Validator] Tip calculation:`)
-      console.log(`  - Total tip: ${totalTip} CAW`)
-      console.log(`  - ETH per CAW: ${ethPerCaw}`)
-      console.log(`  - Tip in wei: ${tipInWei} (${tipInWei.toString()})`)
-      console.log(`  - Gas cost: ${gasCost} (${gasCost.toString()})`)
-      console.log(`  - Tip >= Gas cost? ${tipInWei >= gasCost}`)
+      const totalTipCaw = computeTotalTip(succeededEntries)
 
-      if (totalTip * ethPerCaw < gasCost) {
+      // Convert CAW tip to ETH using Uniswap getAmountsOut
+      console.log(`[Validator] Converting ${totalTipCaw} CAW to ETH via Uniswap...`)
+      const tipInWei = await cawToEth(totalTipCaw, ethMainnetRpcUrl)
+
+      // On testnet, scale down gas cost to simulate mainnet economics
+      // (testnet gas is essentially free, but we want the check to still work)
+      const effectiveGasCost = isTestnet ? gasCost / TESTNET_GAS_SCALE_FACTOR : gasCost
+
+      console.log(`[Validator] Tip calculation:`)
+      console.log(`  - Total tip: ${totalTipCaw} CAW`)
+      console.log(`  - Tip value: ${tipInWei.toString()} wei (${Number(tipInWei) / 1e18} ETH)`)
+      console.log(`  - Raw gas cost: ${gasCost.toString()} wei`)
+      if (isTestnet) {
+        console.log(`  - Scaled gas cost (testnet): ${effectiveGasCost.toString()} wei (÷${TESTNET_GAS_SCALE_FACTOR})`)
+      }
+      console.log(`  - Tip >= Gas cost? ${tipInWei >= effectiveGasCost}`)
+
+      // Check if tip covers gas cost
+      if (tipInWei < effectiveGasCost) {
         console.log("[Validator] ❌ SKIPPING - Tip is less than gas cost!")
-        console.log(`[Validator] Need at least ${gasCost / ethPerCaw} CAW tip, but only have ${totalTip} CAW`)
+        console.log(`[Validator] ========== GAS COST FAILURE DETAILS ==========`)
+        console.log(`[Validator]   Network:            ${isTestnet ? 'Base Sepolia (testnet)' : 'Base Mainnet'}`)
+        console.log(`[Validator]   Raw gas cost (wei): ${gasCost.toString()}`)
+        if (isTestnet) {
+          console.log(`[Validator]   Scale factor:       ÷${TESTNET_GAS_SCALE_FACTOR}`)
+        }
+        console.log(`[Validator]   Effective gas cost: ${effectiveGasCost.toString()} wei`)
+        console.log(`[Validator]   Tip provided (CAW): ${totalTipCaw.toString()}`)
+        console.log(`[Validator]   Tip value (wei):    ${tipInWei.toString()}`)
+        console.log(`[Validator]   Tip value (ETH):    ${Number(tipInWei) / 1e18}`)
+        console.log(`[Validator]   Shortfall (wei):    ${(effectiveGasCost - tipInWei).toString()}`)
+        // Log each action's amounts
+        succeededEntries.forEach((entry, i) => {
+          const action = (entry.payload as any).data
+          console.log(`[Validator]   Action ${i} (${getActionType(action.actionType)}): amounts = [${action.amounts?.join(', ') || 'none'}]`)
+        })
+        console.log(`[Validator] ==============================================`)
         // Mark all entries as failed due to insufficient tip
+        const failReason = `Insufficient tip: ${totalTipCaw} CAW (${Number(tipInWei) / 1e18} ETH) < gas cost ${Number(effectiveGasCost) / 1e18} ETH`
         await updateQueueStatuses(entries, [],
-          entries.map(() => 'Insufficient tip to cover gas costs'))
+          entries.map(() => failReason))
         return
       }
-      console.log("[Validator] ✅ Tip check passed - proceeding with submission")
+
+      console.log(`[Validator] ✅ Tip check passed${isTestnet ? ' (testnet scaled)' : ''} - proceeding with submission`)
 
       console.log("[Validator] Submitting transaction with", multiSucceeded.actions.length, "actions")
       console.log("[Validator] Actions to submit:", multiSucceeded.actions.map((a: any) => ({
@@ -1182,6 +1293,65 @@ console.log("succeededKeys", succeededKeys)
             }
           }
         }
+
+        // Check if this is an OTHER action (actionType: 7) - could be on-chain image
+        if (data.actionType === 7 || getActionType(data.actionType).toString() === 'OTHER') {
+          const text = data.text || ''
+          // Check if this is an on-chain image upload (has image64: content)
+          if (text.includes('image64:')) {
+            const imageRef = `img:${data.senderId}:${data.cawonce}`
+
+            // Extract base64 data from text for creating record if it doesn't exist
+            const imageMatch = text.match(/image64:([^\n]+)/)
+            const base64Data = imageMatch ? imageMatch[1] : ''
+            // Calculate cawCost from the data size (same formula as frontend)
+            const cawCost = base64Data ? Math.ceil(base64Data.length / 1000) : 0
+
+            if (succeeded) {
+              // Upsert on-chain image as SUCCESS (creates if doesn't exist)
+              try {
+                await prisma.onChainImage.upsert({
+                  where: { imageRef },
+                  update: { status: 'SUCCESS' },
+                  create: {
+                    userId: data.senderId,
+                    imageRef,
+                    cawonce: data.cawonce,
+                    base64Data,
+                    cawCost,
+                    status: 'SUCCESS'
+                  }
+                })
+                console.log(`[ValidatorService] Upserted OnChainImage as SUCCESS: ${imageRef}`)
+              } catch (imageUpdateErr: any) {
+                console.error('[ValidatorService] Failed to upsert OnChainImage status to SUCCESS:', imageUpdateErr)
+              }
+            } else {
+              // Upsert on-chain image as FAILED
+              try {
+                await prisma.onChainImage.upsert({
+                  where: { imageRef },
+                  update: {
+                    status: 'FAILED',
+                    reason: reason || 'Transaction failed'
+                  },
+                  create: {
+                    userId: data.senderId,
+                    imageRef,
+                    cawonce: data.cawonce,
+                    base64Data,
+                    cawCost,
+                    status: 'FAILED',
+                    reason: reason || 'Transaction failed'
+                  }
+                })
+                console.log(`[ValidatorService] Upserted OnChainImage as FAILED: ${imageRef} - ${reason}`)
+              } catch (imageUpdateErr: any) {
+                console.error('[ValidatorService] Failed to upsert OnChainImage status to FAILED:', imageUpdateErr)
+              }
+            }
+          }
+        }
       }))
       } catch (err: any) {
         console.error("[Validator] Poll loop error:", {
@@ -1195,7 +1365,8 @@ console.log("succeededKeys", succeededKeys)
 
     // start polling
     console.log(`[Validator] Starting validator service with:`);
-    console.log(`  - RPC URL: ${l2RpcUrl}`);
+    console.log(`  - L2 RPC URL: ${l2RpcUrl}`);
+    console.log(`  - ETH Mainnet RPC URL: ${ethMainnetRpcUrl}`);
     console.log(`  - Validator ID: ${validatorId}`);
     console.log(`  - Check Interval: ${checkInterval}ms`);
     console.log(`  - Wallet Address: ${wallet.address}`);
