@@ -25,8 +25,8 @@ model RawEvent {
 }
 
 model User {
-  id                    Int            @id @default(autoincrement())
-  address               String
+  id                    Int            @id // Set to tokenId when creating user
+  address               String         @default("")
   createdAt             DateTime       @default(now())
   updatedAt             DateTime       @updatedAt
   cawCount              Int            @default(0)
@@ -34,7 +34,7 @@ model User {
   followingCount        Int            @default(0)
   image                 String?
   likeCount             Int            @default(0)
-  tokenId               Int            @unique
+  tokenId               Int            @unique // Kept for backwards compatibility, always equals id
   username              String         @unique
   avatarUrl             String?
   bio                   String?
@@ -52,6 +52,7 @@ model User {
   notificationsReceived Notification[] @relation("NotificationRecipient")
   scheduledCaws         ScheduledCaw[]
   xmtpIdentity          XmtpIdentity?
+  onChainImages         OnChainImage[]
 }
 
 model Caw {
@@ -360,6 +361,28 @@ model ShortUrl {
 
   @@index([code])
   @@index([originalUrl])
+}
+
+model OnChainImage {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  txQueueId   Int?
+  imageRef    String    @unique // Format: img:senderId:cawonce
+  cawonce     Int
+  base64Data  String    @db.Text // The actual image data
+  status      CawStatus @default(PENDING)
+  cawCost     Int       // CAW tokens paid for upload
+  reason      String?   // Failure reason if status is FAILED
+  postedAt    DateTime? // When this image was first used in a post
+  ignored     Boolean   @default(false) // User dismissed the "not posted" badge
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  user        User      @relation(fields: [userId], references: [tokenId], onDelete: Cascade)
+
+  @@unique([userId, cawonce])
+  @@index([userId, status])
+  @@index([status])
+  @@index([createdAt])
 }
 
 enum ActionType {
