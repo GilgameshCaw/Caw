@@ -97,51 +97,71 @@ export default function useTokenDataUpdate() {
   //
   // })
 
+  // Get the active token ID for the current address
+  const activeTokenId = activeTokenIdByAddress[viewedAddress?.toLowerCase() as Address]
+
+  // First effect: Update token data from on-chain (without min-cawonce API calls)
   useEffect(() => {
-    if (!rawTokens || balancesLoading || !viewedAddress) return
+    if (!rawTokens || balancesLoading || !viewedAddress || !l2TokenData) return
 
-    // Async function to fetch min-cawonce for each token and update state
-    const updateTokensWithMinCawonce = async () => {
-      const updated: TokenData[] = await Promise.all((rawTokens).map(async l1Token => {
-        const l2Token = l2TokenData!.find(item => item.tokenId === l1Token.tokenId);
-        const onChainCawonce = Number(l2Token!.nextCawonce);
+    const updated: TokenData[] = rawTokens.map(l1Token => {
+      const l2Token = l2TokenData.find(item => item.tokenId === l1Token.tokenId);
+      const onChainCawonce = Number(l2Token!.nextCawonce);
 
-        // Fetch min-cawonce from API to account for scheduled posts
-        let effectiveCawonce = onChainCawonce;
-        try {
-          const minCawonceResponse = await apiFetch(`/api/users/min-cawonce/${Number(l1Token.tokenId)}`);
-          if (minCawonceResponse.minSafeCawonce !== null) {
-            // Use the higher of on-chain cawonce or min safe cawonce from scheduled posts
-            effectiveCawonce = Math.max(onChainCawonce, minCawonceResponse.minSafeCawonce);
-            if (effectiveCawonce > onChainCawonce) {
-              console.log(`[cawonce] Token ${l1Token.tokenId}: Using min safe cawonce ${effectiveCawonce} (on-chain: ${onChainCawonce}) due to scheduled posts`);
-            }
+      // Get existing token data to preserve any previously fetched min-cawonce
+      const existingTokens = tokensByAddress[viewedAddress.toLowerCase() as Address] || [];
+      const existingToken = existingTokens.find(t => t.tokenId === Number(l1Token.tokenId));
+
+      // Use existing cawonce if it's higher (from previous min-cawonce fetch), otherwise use on-chain
+      const cawonce = existingToken?.cawonce && existingToken.cawonce > onChainCawonce
+        ? existingToken.cawonce
+        : onChainCawonce;
+
+      return {
+        tokenId:      Number(l1Token.tokenId),
+        username:     l1Token.username,
+        withdrawable: l1Token.withdrawable,
+        ownerBalance: l1Token.ownerBalance,
+        address: viewedAddress!,
+        owner: l1Token.owner!,
+        stakedAmount:   l2Token!.cawBalance,
+        cawonce,
+      }
+    });
+
+    if (rawTokens.length > 0) {
+      setTokensForAddress(viewedAddress as Address, updated);
+    }
+  }, [rawTokens, l2TokenData, viewedAddress, setTokensForAddress, balancesLoading])
+
+  const setCawonce = useTokenDataStore(s => s.setCawonce)
+
+  // Second effect: Fetch min-cawonce only for the active token
+  useEffect(() => {
+    if (!activeTokenId || !l2TokenData) return
+
+    const l2Token = l2TokenData.find(item => item.tokenId === BigInt(activeTokenId));
+    if (!l2Token) return;
+
+    const onChainCawonce = Number(l2Token.nextCawonce);
+
+    const fetchMinCawonce = async () => {
+      try {
+        const minCawonceResponse = await apiFetch(`/api/users/min-cawonce/${activeTokenId}`);
+        if (minCawonceResponse.minSafeCawonce !== null) {
+          const effectiveCawonce = Math.max(onChainCawonce, minCawonceResponse.minSafeCawonce);
+          if (effectiveCawonce > onChainCawonce) {
+            console.log(`[cawonce] Token ${activeTokenId}: Using min safe cawonce ${effectiveCawonce} (on-chain: ${onChainCawonce}) due to scheduled posts`);
+            setCawonce(activeTokenId, effectiveCawonce);
           }
-        } catch (err) {
-          // If API fails, fall back to on-chain value
-          console.warn(`Failed to fetch min-cawonce for token ${l1Token.tokenId}:`, err);
         }
-
-        return {
-          tokenId:      Number(l1Token.tokenId),
-          username:     l1Token.username,
-          withdrawable: l1Token.withdrawable,
-          ownerBalance: l1Token.ownerBalance,
-          address: viewedAddress!,
-          owner: l1Token.owner!,
-          stakedAmount:   l2Token!.cawBalance,
-          cawonce:      effectiveCawonce,
-        }
-      }));
-
-      if (rawTokens.length > 0) {
-        setTokensForAddress(viewedAddress as Address, updated);
+      } catch (err) {
+        console.warn(`Failed to fetch min-cawonce for token ${activeTokenId}:`, err);
       }
     };
 
-    updateTokensWithMinCawonce();
-
-  }, [rawTokens, l2TokenData, viewedAddress, setTokensForAddress, balancesLoading])
+    fetchMinCawonce();
+  }, [activeTokenId, l2TokenData, setCawonce])
 
 }
 
