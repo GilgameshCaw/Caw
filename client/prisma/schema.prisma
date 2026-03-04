@@ -325,28 +325,6 @@ model WithdrawalRequest {
   @@index([cawonce])
 }
 
-model MutedThread {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  cawId     Int
-  createdAt DateTime @default(now())
-
-  @@unique([userId, cawId])
-  @@index([userId])
-  @@index([cawId])
-}
-
-model MutedAccount {
-  id          Int      @id @default(autoincrement())
-  userId      Int
-  mutedUserId Int
-  createdAt   DateTime @default(now())
-
-  @@unique([userId, mutedUserId])
-  @@index([userId])
-  @@index([mutedUserId])
-}
-
 model ShortUrl {
   id          Int      @id @default(autoincrement())
   code        String   @unique @db.VarChar(10)

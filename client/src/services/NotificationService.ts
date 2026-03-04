@@ -27,90 +27,8 @@ export class NotificationService {
     return currentId
   }
 
-  /**
-   * Check if a user has muted a thread containing this caw
-   */
-  static async isThreadMutedForUser(userId: number, cawId: number): Promise<boolean> {
-    const threadRootId = await this.getThreadRootId(cawId)
-
-    // Check if user has muted any caw in this thread's ancestry
-    // We check the root and the caw itself
-    const mutedThread = await prisma.mutedThread.findFirst({
-      where: {
-        userId,
-        cawId: { in: [threadRootId, cawId] }
-      }
-    })
-
-    return !!mutedThread
-  }
-
-  /**
-   * Check if a user has muted or blocked another user
-   * Returns true if the actor should not be able to send notifications to the user
-   */
-  static async isUserMutedOrBlocked(userId: number, actorId: number): Promise<boolean> {
-    // Check if actor is muted
-    const muted = await prisma.mutedAccount.findUnique({
-      where: {
-        userId_mutedUserId: { userId, mutedUserId: actorId }
-      }
-    })
-    if (muted) return true
-
-    // Blocking is handled client-side (localStorage), not server-side
-    return false
-  }
-
-  // --- Muted Account Management ---
-
-  /**
-   * Mute an account for a user
-   */
-  static async muteAccount(userId: number, mutedUserId: number): Promise<void> {
-    await prisma.mutedAccount.upsert({
-      where: {
-        userId_mutedUserId: { userId, mutedUserId }
-      },
-      create: { userId, mutedUserId },
-      update: {}
-    })
-  }
-
-  /**
-   * Unmute an account for a user
-   */
-  static async unmuteAccount(userId: number, mutedUserId: number): Promise<void> {
-    await prisma.mutedAccount.deleteMany({
-      where: { userId, mutedUserId }
-    })
-  }
-
-  /**
-   * Get all muted accounts for a user
-   */
-  static async getMutedAccounts(userId: number): Promise<number[]> {
-    const muted = await prisma.mutedAccount.findMany({
-      where: { userId },
-      select: { mutedUserId: true }
-    })
-    return muted.map(m => m.mutedUserId)
-  }
-
-  /**
-   * Check if an account is muted
-   */
-  static async isAccountMuted(userId: number, mutedUserId: number): Promise<boolean> {
-    const muted = await prisma.mutedAccount.findUnique({
-      where: {
-        userId_mutedUserId: { userId, mutedUserId }
-      }
-    })
-    return !!muted
-  }
-
-  // Note: Blocking is handled client-side (localStorage) for privacy reasons.
-  // No server-side blocked account management needed.
+  // Note: Muting accounts/threads is handled client-side (localStorage) for privacy reasons.
+  // No server-side mute management needed.
 
   /**
    * Extract @mentions from a caw content
@@ -394,50 +312,5 @@ export class NotificationService {
         isRead: false
       }
     })
-  }
-
-  /**
-   * Mute a thread for a user (no notifications from this thread)
-   */
-  static async muteThread(userId: number, cawId: number): Promise<void> {
-    await prisma.mutedThread.upsert({
-      where: {
-        userId_cawId: { userId, cawId }
-      },
-      create: { userId, cawId },
-      update: {} // No update needed, just ensure it exists
-    })
-  }
-
-  /**
-   * Unmute a thread for a user
-   */
-  static async unmuteThread(userId: number, cawId: number): Promise<void> {
-    await prisma.mutedThread.deleteMany({
-      where: { userId, cawId }
-    })
-  }
-
-  /**
-   * Get all muted threads for a user
-   */
-  static async getMutedThreads(userId: number): Promise<number[]> {
-    const mutedThreads = await prisma.mutedThread.findMany({
-      where: { userId },
-      select: { cawId: true }
-    })
-    return mutedThreads.map(t => t.cawId)
-  }
-
-  /**
-   * Check if a specific thread is muted by a user
-   */
-  static async isThreadMuted(userId: number, cawId: number): Promise<boolean> {
-    const muted = await prisma.mutedThread.findUnique({
-      where: {
-        userId_cawId: { userId, cawId }
-      }
-    })
-    return !!muted
   }
 }

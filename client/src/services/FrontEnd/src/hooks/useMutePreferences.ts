@@ -261,34 +261,20 @@ export function useMutePreferences() {
     })
   }, [])
 
-  const addMutedAccount = useCallback((mutedTokenId: number, currentUserTokenId?: number) => {
+  const addMutedAccount = useCallback((mutedTokenId: number, _currentUserTokenId?: number) => {
     setPreferences(prev => {
       const updated = [...new Set([...prev.mutedAccounts, mutedTokenId])]
       saveToStorage(STORAGE_KEYS.mutedAccounts, updated)
       return { ...prev, mutedAccounts: updated }
     })
-    // Also sync to server if user tokenId provided
-    if (currentUserTokenId) {
-      fetch(`/api/notifications/mute-account/${mutedTokenId}`, {
-        method: 'POST',
-        headers: { 'x-user-id': currentUserTokenId.toString() }
-      }).catch(err => console.error('Failed to sync mute to server:', err))
-    }
   }, [])
 
-  const removeMutedAccount = useCallback((mutedTokenId: number, currentUserTokenId?: number) => {
+  const removeMutedAccount = useCallback((mutedTokenId: number, _currentUserTokenId?: number) => {
     setPreferences(prev => {
       const updated = prev.mutedAccounts.filter(id => id !== mutedTokenId)
       saveToStorage(STORAGE_KEYS.mutedAccounts, updated)
       return { ...prev, mutedAccounts: updated }
     })
-    // Also sync to server if user tokenId provided
-    if (currentUserTokenId) {
-      fetch(`/api/notifications/mute-account/${mutedTokenId}`, {
-        method: 'DELETE',
-        headers: { 'x-user-id': currentUserTokenId.toString() }
-      }).catch(err => console.error('Failed to sync unmute to server:', err))
-    }
   }, [])
 
   // Blocking is browser-only (localStorage) - no server sync needed

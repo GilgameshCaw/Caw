@@ -30,7 +30,7 @@ interface UserData {
 }
 
 interface MutedThreadData {
-  id: number
+  id: string
   content: string
   createdAt: string
   user: {
@@ -39,6 +39,8 @@ interface MutedThreadData {
     displayName?: string
     avatarUrl?: string
   }
+  loading: boolean
+  error: boolean
 }
 
 const MutedContentPage: React.FC = () => {
@@ -46,6 +48,7 @@ const MutedContentPage: React.FC = () => {
   const {
     preferences,
     removeMutedWord,
+    removeMutedThread,
     removeHiddenPost,
     removeMutedAccount,
     removeBlockedAccount,
@@ -61,45 +64,51 @@ const MutedContentPage: React.FC = () => {
   const [expandedPosts, setExpandedPosts] = useState<Set<string>>(new Set())
   const [postData, setPostData] = useState<Record<string, HiddenPostData>>({})
   const [userData, setUserData] = useState<Record<string, UserData>>({})
-  const [mutedThreads, setMutedThreads] = useState<MutedThreadData[]>([])
-  const [loadingThreads, setLoadingThreads] = useState(false)
+  const [threadData, setThreadData] = useState<Record<string, MutedThreadData>>({})
 
-  // Fetch muted threads from server
+  // Fetch thread data for muted threads (from localStorage)
   useEffect(() => {
-    const fetchMutedThreads = async () => {
-      const effectiveTokenId = activeTokenId || activeToken?.tokenId
-      if (!effectiveTokenId) return
+    const fetchThreadData = async (threadId: string) => {
+      if (threadData[threadId]) return // Already fetched
 
-      setLoadingThreads(true)
+      setThreadData(prev => ({
+        ...prev,
+        [threadId]: { id: threadId, content: '', createdAt: '', user: { tokenId: 0, username: '' }, loading: true, error: false }
+      }))
+
       try {
-        const response = await apiFetch<{ mutedThreads: MutedThreadData[] }>('/api/notifications/muted-threads', {
-          headers: { 'x-user-id': effectiveTokenId.toString() }
-        })
-        setMutedThreads(response.mutedThreads)
+        const response = await apiFetch<{ caw: CawItem }>(`/api/caws/${threadId}`)
+        if (response?.caw) {
+          setThreadData(prev => ({
+            ...prev,
+            [threadId]: {
+              id: threadId,
+              content: response.caw.content || '',
+              createdAt: response.caw.createdAt,
+              user: {
+                tokenId: response.caw.user?.tokenId || 0,
+                username: response.caw.user?.username || 'Unknown',
+                displayName: response.caw.user?.displayName,
+                avatarUrl: response.caw.user?.avatarUrl
+              },
+              loading: false,
+              error: false
+            }
+          }))
+        }
       } catch (err) {
-        console.error('Failed to fetch muted threads:', err)
-      } finally {
-        setLoadingThreads(false)
+        console.error('Failed to fetch thread data:', err)
+        setThreadData(prev => ({
+          ...prev,
+          [threadId]: { id: threadId, content: '', createdAt: '', user: { tokenId: 0, username: '' }, loading: false, error: true }
+        }))
       }
     }
 
-    fetchMutedThreads()
-  }, [activeTokenId, activeToken?.tokenId])
-
-  const unmuteThread = async (cawId: number) => {
-    const effectiveTokenId = activeTokenId || activeToken?.tokenId
-    if (!effectiveTokenId) return
-
-    try {
-      await apiFetch(`/api/notifications/mute-thread/${cawId}`, {
-        method: 'DELETE',
-        headers: { 'x-user-id': effectiveTokenId.toString() }
-      })
-      setMutedThreads(prev => prev.filter(t => t.id !== cawId))
-    } catch (err) {
-      console.error('Failed to unmute thread:', err)
-    }
-  }
+    preferences.mutedThreads.forEach(threadId => {
+      fetchThreadData(threadId)
+    })
+  }, [preferences.mutedThreads])
 
   // Fetch user data for muted/blocked accounts
   useEffect(() => {
@@ -298,53 +307,67 @@ const MutedContentPage: React.FC = () => {
             <HiVolumeOff className="w-5 h-5" />
             <h2 className="font-semibold">Muted Threads</h2>
             <span className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-              ({mutedThreads.length})
+              ({preferences.mutedThreads.length})
             </span>
           </div>
-          {loadingThreads ? (
-            <p className={`text-sm py-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-              Loading muted threads...
-            </p>
-          ) : !activeTokenId && !activeToken?.tokenId ? (
-            <p className={`text-sm py-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-              Connect your wallet to see muted threads.
-            </p>
-          ) : mutedThreads.length === 0 ? (
+          {preferences.mutedThreads.length === 0 ? (
             <p className={`text-sm py-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
               No muted threads. You won't receive notifications from muted threads.
             </p>
           ) : (
             <div className="space-y-2">
-              {mutedThreads.map(thread => (
-                <div
-                  key={thread.id}
-                  className={`flex items-center justify-between px-4 py-3 rounded-lg ${
-                    isDark ? 'bg-white/5' : 'bg-gray-50'
-                  }`}
-                >
-                  <div className="flex-1 min-w-0">
-                    <Link
-                      to={`/caws/${thread.id}`}
-                      className={`text-sm ${isDark ? 'text-blue-400' : 'text-blue-600'} hover:underline`}
-                    >
-                      @{thread.user.username}: {formatDate(thread.createdAt)}
-                    </Link>
-                    <p className={`text-xs truncate mt-1 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-                      {thread.content.slice(0, 100)}{thread.content.length > 100 ? '...' : ''}
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => unmuteThread(thread.id)}
-                    className={`text-sm px-3 py-1 rounded transition-colors ml-2 ${
-                      isDark
-                        ? 'text-white/60 hover:text-white hover:bg-white/10'
-                        : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+              {preferences.mutedThreads.map(threadId => {
+                const thread = threadData[threadId]
+                return (
+                  <div
+                    key={threadId}
+                    className={`flex items-center justify-between px-4 py-3 rounded-lg ${
+                      isDark ? 'bg-white/5' : 'bg-gray-50'
                     }`}
                   >
-                    Unmute
-                  </button>
-                </div>
-              ))}
+                    <div className="flex-1 min-w-0">
+                      {thread?.loading ? (
+                        <span className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+                          Loading...
+                        </span>
+                      ) : thread?.error ? (
+                        <Link
+                          to={`/caws/${threadId}`}
+                          className={`text-sm ${isDark ? 'text-blue-400' : 'text-blue-600'} hover:underline`}
+                        >
+                          Thread #{threadId}
+                        </Link>
+                      ) : thread ? (
+                        <>
+                          <Link
+                            to={`/caws/${threadId}`}
+                            className={`text-sm ${isDark ? 'text-blue-400' : 'text-blue-600'} hover:underline`}
+                          >
+                            @{thread.user.username}: {formatDate(thread.createdAt)}
+                          </Link>
+                          <p className={`text-xs truncate mt-1 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+                            {thread.content.slice(0, 100)}{thread.content.length > 100 ? '...' : ''}
+                          </p>
+                        </>
+                      ) : (
+                        <span className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+                          Thread #{threadId}
+                        </span>
+                      )}
+                    </div>
+                    <button
+                      onClick={() => removeMutedThread(threadId)}
+                      className={`text-sm px-3 py-1 rounded transition-colors ml-2 ${
+                        isDark
+                          ? 'text-white/60 hover:text-white hover:bg-white/10'
+                          : 'text-gray-600 hover:text-gray-900 hover:bg-gray-100'
+                      }`}
+                    >
+                      Unmute
+                    </button>
+                  </div>
+                )
+              })}
             </div>
           )}
         </section>

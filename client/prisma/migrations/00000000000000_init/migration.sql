@@ -285,26 +285,6 @@ CREATE TABLE "WithdrawalRequest" (
 );
 
 -- CreateTable
-CREATE TABLE "MutedThread" (
-    "id" SERIAL NOT NULL,
-    "userId" INTEGER NOT NULL,
-    "cawId" INTEGER NOT NULL,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "MutedThread_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
-CREATE TABLE "MutedAccount" (
-    "id" SERIAL NOT NULL,
-    "userId" INTEGER NOT NULL,
-    "mutedUserId" INTEGER NOT NULL,
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "MutedAccount_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
 CREATE TABLE "ShortUrl" (
     "id" SERIAL NOT NULL,
     "code" VARCHAR(10) NOT NULL,
@@ -476,24 +456,6 @@ CREATE INDEX "WithdrawalRequest_status_idx" ON "WithdrawalRequest"("status");
 
 -- CreateIndex
 CREATE INDEX "WithdrawalRequest_cawonce_idx" ON "WithdrawalRequest"("cawonce");
-
--- CreateIndex
-CREATE INDEX "MutedThread_userId_idx" ON "MutedThread"("userId");
-
--- CreateIndex
-CREATE INDEX "MutedThread_cawId_idx" ON "MutedThread"("cawId");
-
--- CreateIndex
-CREATE UNIQUE INDEX "MutedThread_userId_cawId_key" ON "MutedThread"("userId", "cawId");
-
--- CreateIndex
-CREATE INDEX "MutedAccount_userId_idx" ON "MutedAccount"("userId");
-
--- CreateIndex
-CREATE INDEX "MutedAccount_mutedUserId_idx" ON "MutedAccount"("mutedUserId");
-
--- CreateIndex
-CREATE UNIQUE INDEX "MutedAccount_userId_mutedUserId_key" ON "MutedAccount"("userId", "mutedUserId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "ShortUrl_code_key" ON "ShortUrl"("code");
