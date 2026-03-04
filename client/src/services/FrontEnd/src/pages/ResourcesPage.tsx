@@ -2,7 +2,10 @@ import React from 'react'
 import { Link } from 'react-router-dom'
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
-import { HiArrowLeft, HiExternalLink, HiCode, HiDocumentText, HiGlobe, HiCurrencyDollar, HiUserGroup, HiChartBar } from 'react-icons/hi'
+import { HiArrowLeft, HiExternalLink, HiCode, HiDocumentText, HiGlobe, HiCurrencyDollar, HiUserGroup, HiChartBar, HiBeaker } from 'react-icons/hi'
+import { useChainId } from 'wagmi'
+import { chains } from '~/config/chains'
+import { sepolia, baseSepolia } from 'wagmi/chains'
 
 interface ResourceItem {
   icon: React.ReactNode
@@ -13,6 +16,11 @@ interface ResourceItem {
 
 const ResourcesPage: React.FC = () => {
   const { isDark } = useTheme()
+  const chainId = useChainId()
+
+  // Check if we're on a testnet
+  const isTestnet = chainId === sepolia.id || chainId === baseSepolia.id ||
+    chains.l1.chainId === sepolia.id || chains.l2.chainId === baseSepolia.id
 
   const officialResources: ResourceItem[] = [
     {
@@ -114,6 +122,41 @@ const ResourcesPage: React.FC = () => {
             </p>
           </div>
         </div>
+
+        {/* Testnet Section - only show on testnet */}
+        {isTestnet && (
+          <section className="mb-8">
+            <h2 className={`text-sm font-semibold mb-3 uppercase tracking-wide ${
+              isDark ? 'text-yellow-500/60' : 'text-yellow-600'
+            }`}>
+              Testnet Tools
+            </h2>
+            <div className="space-y-2">
+              <Link
+                to="/faucet"
+                className={`flex items-start gap-4 p-4 rounded-xl transition-colors ${
+                  isDark
+                    ? 'bg-yellow-500/10 hover:bg-yellow-500/20 border border-yellow-500/20'
+                    : 'bg-yellow-50 hover:bg-yellow-100 border border-yellow-200'
+                }`}
+              >
+                <div className={`p-2 rounded-lg ${
+                  isDark ? 'bg-yellow-500/20 text-yellow-500' : 'bg-yellow-200 text-yellow-700'
+                }`}>
+                  <HiBeaker className="w-6 h-6" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                    mCAW Faucet
+                  </h3>
+                  <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+                    Mint testnet mCAW tokens for testing
+                  </p>
+                </div>
+              </Link>
+            </div>
+          </section>
+        )}
 
         {/* Official Section */}
         <section className="mb-8">

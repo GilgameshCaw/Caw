@@ -17,6 +17,8 @@ import ScheduledPage from "./pages/Scheduled";
 // import GameFiPage from "./pages/GameFiPage";
 import HashtagPage from "./pages/HashtagPage";
 import SearchResultsPage from "./pages/SearchResultsPage";
+import ResourcesPage from "./pages/ResourcesPage";
+import FaucetPage from "./pages/FaucetPage";
 import { Navigate } from "react-router-dom";
 
 
@@ -125,5 +127,13 @@ export default [
   {
     path: "/search/hashtags",
     component: <SearchResultsPage defaultTab="hashtags" />,
+  },
+  {
+    path: "/settings/resources",
+    component: <ResourcesPage />,
+  },
+  {
+    path: "/faucet",
+    component: <FaucetPage />,
   },
 ];
