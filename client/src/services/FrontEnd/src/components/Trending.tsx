@@ -36,7 +36,7 @@ const Trending: React.FC = () => {
             isDark ? 'text-gray-600' : 'text-gray-400'
           }`}>-</span>
           <Link
-            to="/help?tab=resources"
+            to="/settings/resources"
             className={`transition-colors duration-200 hover:underline cursor-pointer ${
               isDark ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-black'
             }`}
@@ -47,12 +47,12 @@ const Trending: React.FC = () => {
             isDark ? 'text-gray-600' : 'text-gray-400'
           }`}>-</span>
           <Link
-            to="/help"
+            to="/faq"
             className={`transition-colors duration-200 hover:underline cursor-pointer ${
               isDark ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-black'
             }`}
           >
-            Help
+            FAQ
           </Link>
         </div>
       </div>

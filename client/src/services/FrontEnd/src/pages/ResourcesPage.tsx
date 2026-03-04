@@ -225,6 +225,62 @@ const ResourcesPage: React.FC = () => {
                   Gasless actions via signature-based contracts on L2 networks
                 </p>
               </div>
+
+              <div className={`border-t pt-4 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+                <h4 className={`text-sm font-medium mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  Cross-Chain Archiving
+                </h4>
+                <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
+                  All actions are automatically archived to Arbitrum for censorship resistance. Your posts, likes, and follows are permanently stored across multiple chains.
+                </p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Censorship Resistance FAQ */}
+        <section className="mb-8">
+          <h2 className={`text-sm font-semibold mb-3 uppercase tracking-wide ${
+            isDark ? 'text-white/40' : 'text-gray-400'
+          }`}>
+            Censorship Resistance FAQ
+          </h2>
+
+          <div className={`space-y-4 ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
+            <div className={`p-4 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+              <h4 className={`font-medium mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                How is my data protected from censorship?
+              </h4>
+              <p className="text-sm">
+                Every action you take on CAW is automatically archived to multiple blockchain networks via LayerZero cross-chain messaging. Even if one network were to censor your content, the data remains permanently accessible on archive chains like Arbitrum.
+              </p>
+            </div>
+
+            <div className={`p-4 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+              <h4 className={`font-medium mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                What happens to on-chain images?
+              </h4>
+              <p className="text-sm">
+                Images stored on-chain are included in the archive. The cost of storing images includes both the L2 storage fee and the cross-chain archiving fee, ensuring your visual content is preserved across networks.
+              </p>
+            </div>
+
+            <div className={`p-4 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+              <h4 className={`font-medium mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                Can clients add additional archive chains?
+              </h4>
+              <p className="text-sm">
+                Yes. CAW clients (apps built on the protocol) can configure additional archive chains for their users. This allows different communities to choose where their data is stored based on their trust preferences and regional requirements.
+              </p>
+            </div>
+
+            <div className={`p-4 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+              <h4 className={`font-medium mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                How can I recover my data if needed?
+              </h4>
+              <p className="text-sm">
+                All archived actions are stored as events on the archive chains. Anyone can read these events and reconstruct the complete history of CAW actions. This means your data can never be lost as long as at least one archive chain remains accessible.
+              </p>
             </div>
           </div>
         </section>

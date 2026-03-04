@@ -1,39 +1,50 @@
-import React, { useState, useEffect } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import React, { useState } from 'react'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { HiArrowLeft, HiChevronDown, HiChevronUp, HiExternalLink } from 'react-icons/hi'
 
-type TabType = 'history' | 'manifesto' | 'faq' | 'howto' | 'developers' | 'resources'
+type TabType = 'faq' | 'history' | 'manifesto' | 'howto' | 'developers'
 
 interface FAQItem {
   question: string
   answer: string
 }
 
-const HelpPage: React.FC = () => {
+interface HelpPageProps {
+  defaultTab?: TabType
+}
+
+const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
   const { isDark } = useTheme()
-  const [searchParams] = useSearchParams()
+  const location = useLocation()
+  const navigate = useNavigate()
   const [expandedFAQ, setExpandedFAQ] = useState<number | null>(null)
 
-  // Get initial tab from URL or default to 'history'
-  const getInitialTab = (): TabType => {
-    const tab = searchParams.get('tab')
-    if (tab && ['history', 'manifesto', 'faq', 'howto', 'developers', 'resources'].includes(tab)) {
-      return tab as TabType
-    }
-    return 'history'
+  // Determine active tab from URL path
+  const getActiveTab = (): TabType => {
+    if (defaultTab) return defaultTab
+    const path = location.pathname
+    if (path === '/faq' || path === '/help') return 'faq'
+    if (path === '/help/history') return 'history'
+    if (path === '/help/manifesto') return 'manifesto'
+    if (path === '/help/howto') return 'howto'
+    if (path === '/help/developers') return 'developers'
+    return 'faq'
   }
 
-  const [activeSection, setActiveSection] = useState<TabType>(getInitialTab)
+  const activeSection = getActiveTab()
 
-  // Update active section when URL changes
-  useEffect(() => {
-    const tab = searchParams.get('tab')
-    if (tab && ['history', 'manifesto', 'faq', 'howto', 'developers', 'resources'].includes(tab)) {
-      setActiveSection(tab as TabType)
+  const handleTabClick = (tab: TabType) => {
+    const routes: Record<TabType, string> = {
+      faq: '/faq',
+      history: '/help/history',
+      manifesto: '/help/manifesto',
+      howto: '/help/howto',
+      developers: '/help/developers'
     }
-  }, [searchParams])
+    navigate(routes[tab])
+  }
 
   const faqItems: FAQItem[] = [
     {
@@ -74,6 +85,22 @@ const HelpPage: React.FC = () => {
     setExpandedFAQ(expandedFAQ === index ? null : index)
   }
 
+  const TabButton: React.FC<{ tab: TabType; label: string }> = ({ tab, label }) => (
+    <button
+      onClick={() => handleTabClick(tab)}
+      className={`px-4 py-3 text-sm font-medium transition-colors relative ${
+        activeSection === tab
+          ? isDark ? 'text-yellow-500' : 'text-yellow-600'
+          : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
+      }`}
+    >
+      {label}
+      {activeSection === tab && (
+        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
+      )}
+    </button>
+  )
+
   return (
     <MainLayout>
       <div className="max-w-2xl mx-auto px-6 py-4">
@@ -98,86 +125,48 @@ const HelpPage: React.FC = () => {
         </div>
 
         {/* Tab Navigation */}
-        <div className={`flex border-b mb-6 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
-          <button
-            onClick={() => setActiveSection('history')}
-            className={`px-4 py-3 text-sm font-medium transition-colors relative ${
-              activeSection === 'history'
-                ? isDark ? 'text-yellow-500' : 'text-yellow-600'
-                : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
-            }`}
-          >
-            History
-            {activeSection === 'history' && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
-            )}
-          </button>
-          <button
-            onClick={() => setActiveSection('manifesto')}
-            className={`px-4 py-3 text-sm font-medium transition-colors relative ${
-              activeSection === 'manifesto'
-                ? isDark ? 'text-yellow-500' : 'text-yellow-600'
-                : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
-            }`}
-          >
-            Manifesto
-            {activeSection === 'manifesto' && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
-            )}
-          </button>
-          <button
-            onClick={() => setActiveSection('howto')}
-            className={`px-4 py-3 text-sm font-medium transition-colors relative ${
-              activeSection === 'howto'
-                ? isDark ? 'text-yellow-500' : 'text-yellow-600'
-                : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
-            }`}
-          >
-            How It Works
-            {activeSection === 'howto' && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
-            )}
-          </button>
-          <button
-            onClick={() => setActiveSection('faq')}
-            className={`px-4 py-3 text-sm font-medium transition-colors relative ${
-              activeSection === 'faq'
-                ? isDark ? 'text-yellow-500' : 'text-yellow-600'
-                : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
-            }`}
-          >
-            FAQ
-            {activeSection === 'faq' && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
-            )}
-          </button>
-          <button
-            onClick={() => setActiveSection('developers')}
-            className={`px-4 py-3 text-sm font-medium transition-colors relative ${
-              activeSection === 'developers'
-                ? isDark ? 'text-yellow-500' : 'text-yellow-600'
-                : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
-            }`}
-          >
-            Developers
-            {activeSection === 'developers' && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
-            )}
-          </button>
-          <button
-            onClick={() => setActiveSection('resources')}
-            className={`px-4 py-3 text-sm font-medium transition-colors relative ${
-              activeSection === 'resources'
-                ? isDark ? 'text-yellow-500' : 'text-yellow-600'
-                : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
-            }`}
-          >
-            Resources
-            {activeSection === 'resources' && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
-            )}
-          </button>
+        <div className={`flex border-b mb-6 overflow-x-auto ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+          <TabButton tab="faq" label="FAQ" />
+          <TabButton tab="history" label="History" />
+          <TabButton tab="manifesto" label="Manifesto" />
+          <TabButton tab="howto" label="How It Works" />
+          <TabButton tab="developers" label="Developers" />
         </div>
+
+        {/* FAQ Section */}
+        {activeSection === 'faq' && (
+          <div className="space-y-2">
+            {faqItems.map((item, index) => (
+              <div
+                key={index}
+                className={`rounded-lg overflow-hidden ${
+                  isDark ? 'bg-white/5' : 'bg-gray-50'
+                }`}
+              >
+                <button
+                  onClick={() => toggleFAQ(index)}
+                  className={`w-full flex items-center justify-between p-4 text-left transition-colors ${
+                    isDark ? 'hover:bg-white/5' : 'hover:bg-gray-100'
+                  }`}
+                >
+                  <span className={`font-medium pr-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                    {item.question}
+                  </span>
+                  {expandedFAQ === index ? (
+                    <HiChevronUp className={`w-5 h-5 flex-shrink-0 ${isDark ? 'text-white/60' : 'text-gray-500'}`} />
+                  ) : (
+                    <HiChevronDown className={`w-5 h-5 flex-shrink-0 ${isDark ? 'text-white/60' : 'text-gray-500'}`} />
+                  )}
+                </button>
+                {expandedFAQ === index && (
+                  <div className={`px-4 pt-2 pb-4 text-sm whitespace-pre-wrap ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
+                    {item.answer}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* History Section */}
         {activeSection === 'history' && (
@@ -481,41 +470,6 @@ const HelpPage: React.FC = () => {
           </div>
         )}
 
-        {/* FAQ Section */}
-        {activeSection === 'faq' && (
-          <div className="space-y-2">
-            {faqItems.map((item, index) => (
-              <div
-                key={index}
-                className={`rounded-lg overflow-hidden ${
-                  isDark ? 'bg-white/5' : 'bg-gray-50'
-                }`}
-              >
-                <button
-                  onClick={() => toggleFAQ(index)}
-                  className={`w-full flex items-center justify-between p-4 text-left transition-colors ${
-                    isDark ? 'hover:bg-white/5' : 'hover:bg-gray-100'
-                  }`}
-                >
-                  <span className={`font-medium pr-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                    {item.question}
-                  </span>
-                  {expandedFAQ === index ? (
-                    <HiChevronUp className={`w-5 h-5 flex-shrink-0 ${isDark ? 'text-white/60' : 'text-gray-500'}`} />
-                  ) : (
-                    <HiChevronDown className={`w-5 h-5 flex-shrink-0 ${isDark ? 'text-white/60' : 'text-gray-500'}`} />
-                  )}
-                </button>
-                {expandedFAQ === index && (
-                  <div className={`px-4 pt-2 pb-4 text-sm whitespace-pre-wrap ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
-                    {item.answer}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-
         {/* Developers Section */}
         {activeSection === 'developers' && (
           <div className="space-y-6">
@@ -608,183 +562,6 @@ const HelpPage: React.FC = () => {
               View source on GitHub
               <HiExternalLink className="w-4 h-4" />
             </a>
-          </div>
-        )}
-
-        {/* Resources Section */}
-        {activeSection === 'resources' && (
-          <div className="space-y-6">
-            {/* Official */}
-            <div>
-              <h2 className={`text-sm font-semibold mb-3 uppercase tracking-wide ${
-                isDark ? 'text-white/40' : 'text-gray-400'
-              }`}>
-                Official
-              </h2>
-              <div className="space-y-2">
-                <a
-                  href="https://caw.is"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={`flex items-start gap-4 p-4 rounded-xl transition-colors ${
-                    isDark ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-50 hover:bg-gray-100'
-                  }`}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>CAW Manifesto</h3>
-                      <HiExternalLink className={`w-4 h-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`} />
-                    </div>
-                    <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>The original vision for decentralized social media</p>
-                  </div>
-                </a>
-                <a
-                  href="https://github.com/cawdevelopment"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={`flex items-start gap-4 p-4 rounded-xl transition-colors ${
-                    isDark ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-50 hover:bg-gray-100'
-                  }`}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>GitHub</h3>
-                      <HiExternalLink className={`w-4 h-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`} />
-                    </div>
-                    <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>Source code and development repositories</p>
-                  </div>
-                </a>
-                <a
-                  href="https://t.me/cawbuilders"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={`flex items-start gap-4 p-4 rounded-xl transition-colors ${
-                    isDark ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-50 hover:bg-gray-100'
-                  }`}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>Telegram Community</h3>
-                      <HiExternalLink className={`w-4 h-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`} />
-                    </div>
-                    <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>Join the CAW builders community</p>
-                  </div>
-                </a>
-              </div>
-            </div>
-
-            {/* Contracts & Markets */}
-            <div>
-              <h2 className={`text-sm font-semibold mb-3 uppercase tracking-wide ${
-                isDark ? 'text-white/40' : 'text-gray-400'
-              }`}>
-                Contracts & Markets
-              </h2>
-              <div className="space-y-2">
-                <a
-                  href="https://etherscan.io/token/0xf3b9569F82B18aEf890De263B84189bd33EBe452"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={`flex items-start gap-4 p-4 rounded-xl transition-colors ${
-                    isDark ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-50 hover:bg-gray-100'
-                  }`}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>CAW Token (Ethereum)</h3>
-                      <HiExternalLink className={`w-4 h-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`} />
-                    </div>
-                    <p className={`text-sm truncate ${isDark ? 'text-white/50' : 'text-gray-500'}`}>0xf3b9569F82B18aEf890De263B84189bd33EBe452</p>
-                  </div>
-                </a>
-                <a
-                  href="https://www.coingecko.com/en/coins/a-hunters-dream"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={`flex items-start gap-4 p-4 rounded-xl transition-colors ${
-                    isDark ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-50 hover:bg-gray-100'
-                  }`}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>CoinGecko</h3>
-                      <HiExternalLink className={`w-4 h-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`} />
-                    </div>
-                    <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>Price charts and market data</p>
-                  </div>
-                </a>
-                <a
-                  href="https://coinmarketcap.com/currencies/caw/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={`flex items-start gap-4 p-4 rounded-xl transition-colors ${
-                    isDark ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-50 hover:bg-gray-100'
-                  }`}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>CoinMarketCap</h3>
-                      <HiExternalLink className={`w-4 h-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`} />
-                    </div>
-                    <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>Market cap and trading info</p>
-                  </div>
-                </a>
-                <a
-                  href="https://www.dextools.io/app/ether/pair-explorer/0xf3b9569F82B18aEf890De263B84189bd33EBe452"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={`flex items-start gap-4 p-4 rounded-xl transition-colors ${
-                    isDark ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-50 hover:bg-gray-100'
-                  }`}
-                >
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>Dextools</h3>
-                      <HiExternalLink className={`w-4 h-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`} />
-                    </div>
-                    <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>Trading charts and analytics</p>
-                  </div>
-                </a>
-              </div>
-            </div>
-
-            {/* Network Info */}
-            <div>
-              <h2 className={`text-sm font-semibold mb-3 uppercase tracking-wide ${
-                isDark ? 'text-white/40' : 'text-gray-400'
-              }`}>
-                Network Information
-              </h2>
-              <div className={`p-4 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
-                <div className="space-y-4">
-                  <div>
-                    <h4 className={`text-sm font-medium mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>CAW Token</h4>
-                    <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>ERC-20 token on Ethereum mainnet</p>
-                    <code className={`text-xs mt-1 block break-all ${isDark ? 'text-yellow-500' : 'text-yellow-700'}`}>
-                      0xf3b9569F82B18aEf890De263B84189bd33EBe452
-                    </code>
-                  </div>
-                  <div className={`border-t pt-4 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
-                    <h4 className={`text-sm font-medium mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>Username NFTs</h4>
-                    <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>ERC-721 on Ethereum mainnet</p>
-                  </div>
-                  <div className={`border-t pt-4 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
-                    <h4 className={`text-sm font-medium mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>Social Protocol</h4>
-                    <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>Gasless actions via signature-based contracts on L2 networks</p>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Disclaimer */}
-            <div className={`p-4 rounded-lg text-sm ${
-              isDark ? 'bg-white/5 text-white/50' : 'bg-gray-50 text-gray-500'
-            }`}>
-              <p>
-                CAW has no official socials, partner projects, or further releases beyond what was described in the manifesto.
-                Be cautious of scams claiming to be official CAW projects.
-              </p>
-            </div>
           </div>
         )}
 

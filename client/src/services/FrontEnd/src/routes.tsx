@@ -97,8 +97,28 @@ export default [
     component: <AccountSettings />,
   },
   {
+    path: "/faq",
+    component: <HelpPage />,
+  },
+  {
     path: "/help",
     component: <HelpPage />,
+  },
+  {
+    path: "/help/history",
+    component: <HelpPage defaultTab="history" />,
+  },
+  {
+    path: "/help/manifesto",
+    component: <HelpPage defaultTab="manifesto" />,
+  },
+  {
+    path: "/help/howto",
+    component: <HelpPage defaultTab="howto" />,
+  },
+  {
+    path: "/help/developers",
+    component: <HelpPage defaultTab="developers" />,
   },
   {
     path: "/bookmarks",
