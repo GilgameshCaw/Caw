@@ -17,7 +17,6 @@ import ScheduledPage from "./pages/Scheduled";
 // import GameFiPage from "./pages/GameFiPage";
 import HashtagPage from "./pages/HashtagPage";
 import SearchResultsPage from "./pages/SearchResultsPage";
-import ResourcesPage from "./pages/ResourcesPage";
 import FaucetPage from "./pages/FaucetPage";
 import { Navigate } from "react-router-dom";
 
@@ -97,12 +96,12 @@ export default [
     component: <AccountSettings />,
   },
   {
-    path: "/faq",
+    path: "/help",
     component: <HelpPage />,
   },
   {
-    path: "/help",
-    component: <HelpPage />,
+    path: "/help/faq",
+    component: <HelpPage defaultTab="faq" />,
   },
   {
     path: "/help/history",
@@ -119,6 +118,10 @@ export default [
   {
     path: "/help/developers",
     component: <HelpPage defaultTab="developers" />,
+  },
+  {
+    path: "/help/resources",
+    component: <HelpPage defaultTab="resources" />,
   },
   {
     path: "/bookmarks",
@@ -147,10 +150,6 @@ export default [
   {
     path: "/search/hashtags",
     component: <SearchResultsPage defaultTab="hashtags" />,
-  },
-  {
-    path: "/settings/resources",
-    component: <ResourcesPage />,
   },
   {
     path: "/faucet",

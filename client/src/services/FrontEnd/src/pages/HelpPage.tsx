@@ -2,9 +2,12 @@ import React, { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
-import { HiArrowLeft, HiChevronDown, HiChevronUp, HiExternalLink } from 'react-icons/hi'
+import { HiArrowLeft, HiChevronDown, HiChevronUp, HiExternalLink, HiCode, HiDocumentText, HiGlobe, HiCurrencyDollar, HiUserGroup, HiChartBar, HiBeaker } from 'react-icons/hi'
+import { useChainId } from 'wagmi'
+import { chains } from '~/config/chains'
+import { sepolia, baseSepolia } from 'wagmi/chains'
 
-type TabType = 'faq' | 'history' | 'manifesto' | 'howto' | 'developers'
+type TabType = 'faq' | 'history' | 'manifesto' | 'howto' | 'developers' | 'resources'
 
 interface FAQItem {
   question: string
@@ -21,15 +24,22 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
   const navigate = useNavigate()
   const [expandedFAQ, setExpandedFAQ] = useState<number | null>(null)
 
+  const chainId = useChainId()
+
+  // Check if we're on a testnet
+  const isTestnet = chainId === sepolia.id || chainId === baseSepolia.id ||
+    chains.l1.chainId === sepolia.id || chains.l2.chainId === baseSepolia.id
+
   // Determine active tab from URL path
   const getActiveTab = (): TabType => {
     if (defaultTab) return defaultTab
     const path = location.pathname
-    if (path === '/faq' || path === '/help') return 'faq'
+    if (path === '/help/faq' || path === '/help') return 'faq'
     if (path === '/help/history') return 'history'
     if (path === '/help/manifesto') return 'manifesto'
     if (path === '/help/howto') return 'howto'
     if (path === '/help/developers') return 'developers'
+    if (path === '/help/resources') return 'resources'
     return 'faq'
   }
 
@@ -37,14 +47,100 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
 
   const handleTabClick = (tab: TabType) => {
     const routes: Record<TabType, string> = {
-      faq: '/faq',
+      faq: '/help/faq',
       history: '/help/history',
       manifesto: '/help/manifesto',
       howto: '/help/howto',
-      developers: '/help/developers'
+      developers: '/help/developers',
+      resources: '/help/resources'
     }
     navigate(routes[tab])
   }
+
+  interface ResourceItem {
+    icon: React.ReactNode
+    title: string
+    description: string
+    url: string
+  }
+
+  const officialResources: ResourceItem[] = [
+    {
+      icon: <HiDocumentText className="w-6 h-6" />,
+      title: 'CAW Manifesto',
+      description: 'The original vision for decentralized social media',
+      url: 'https://caw.is'
+    },
+    {
+      icon: <HiCode className="w-6 h-6" />,
+      title: 'GitHub',
+      description: 'Source code and development repositories',
+      url: 'https://github.com/cawdevelopment'
+    },
+    {
+      icon: <HiUserGroup className="w-6 h-6" />,
+      title: 'Telegram Community',
+      description: 'Join the CAW builders community',
+      url: 'https://t.me/cawbuilders'
+    },
+  ]
+
+  const contractResources: ResourceItem[] = [
+    {
+      icon: <HiCurrencyDollar className="w-6 h-6" />,
+      title: 'CAW Token (Ethereum)',
+      description: '0xf3b9569F82B18aEf890De263B84189bd33EBe452',
+      url: 'https://etherscan.io/token/0xf3b9569F82B18aEf890De263B84189bd33EBe452'
+    },
+    {
+      icon: <HiChartBar className="w-6 h-6" />,
+      title: 'CoinGecko',
+      description: 'Price charts and market data',
+      url: 'https://www.coingecko.com/en/coins/a-hunters-dream'
+    },
+    {
+      icon: <HiChartBar className="w-6 h-6" />,
+      title: 'CoinMarketCap',
+      description: 'Market cap and trading info',
+      url: 'https://coinmarketcap.com/currencies/caw/'
+    },
+    {
+      icon: <HiGlobe className="w-6 h-6" />,
+      title: 'Dextools',
+      description: 'Trading charts and analytics',
+      url: 'https://www.dextools.io/app/ether/pair-explorer/0xf3b9569F82B18aEf890De263B84189bd33EBe452'
+    },
+  ]
+
+  const ResourceCard: React.FC<{ item: ResourceItem }> = ({ item }) => (
+    <a
+      href={item.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={`flex items-start gap-4 p-4 rounded-xl transition-colors ${
+        isDark
+          ? 'bg-white/5 hover:bg-white/10'
+          : 'bg-gray-50 hover:bg-gray-100'
+      }`}
+    >
+      <div className={`p-2 rounded-lg ${
+        isDark ? 'bg-yellow-500/10 text-yellow-500' : 'bg-yellow-100 text-yellow-700'
+      }`}>
+        {item.icon}
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+            {item.title}
+          </h3>
+          <HiExternalLink className={`w-4 h-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`} />
+        </div>
+        <p className={`text-sm truncate ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+          {item.description}
+        </p>
+      </div>
+    </a>
+  )
 
   const faqItems: FAQItem[] = [
     {
@@ -78,6 +174,22 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
     {
       question: "What happens to the CAW I spend on the platform?",
       answer: "CAW spent on the platform is distributed to participants:\n• Posting: CAW goes to stakers\n• Liking: CAW goes to the original poster\n• ReCawing: Split between the poster and stakers\n• Following: CAW goes to stakers\n\nThis creates an economic ecosystem rewarding content creators and supporters."
+    },
+    {
+      question: "How is my data protected from censorship?",
+      answer: "Every action you take on CAW is automatically archived to multiple blockchain networks via LayerZero cross-chain messaging. Even if one network were to censor your content, the data remains permanently accessible on archive chains like Arbitrum."
+    },
+    {
+      question: "What happens to on-chain images?",
+      answer: "Images stored on-chain are included in the archive. The cost of storing images includes both the L2 storage fee and the cross-chain archiving fee, ensuring your visual content is preserved across networks."
+    },
+    {
+      question: "Can clients add additional archive chains?",
+      answer: "Yes. CAW clients (apps built on the protocol) can configure additional archive chains for their users. This allows different communities to choose where their data is stored based on their trust preferences and regional requirements."
+    },
+    {
+      question: "How can I recover my data if needed?",
+      answer: "All archived actions are stored as events on the archive chains. Anyone can read these events and reconstruct the complete history of CAW actions. This means your data can never be lost as long as at least one archive chain remains accessible."
     }
   ]
 
@@ -88,7 +200,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
   const TabButton: React.FC<{ tab: TabType; label: string }> = ({ tab, label }) => (
     <button
       onClick={() => handleTabClick(tab)}
-      className={`px-4 py-3 text-sm font-medium transition-colors relative ${
+      className={`px-4 py-3 text-sm font-medium transition-colors relative cursor-pointer ${
         activeSection === tab
           ? isDark ? 'text-yellow-500' : 'text-yellow-600'
           : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
@@ -131,6 +243,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
           <TabButton tab="manifesto" label="Manifesto" />
           <TabButton tab="howto" label="How It Works" />
           <TabButton tab="developers" label="Developers" />
+          <TabButton tab="resources" label="Resources" />
         </div>
 
         {/* FAQ Section */}
@@ -189,7 +302,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                 <p>
                   Rather than a traditional launch, CAW was revealed through an elaborate cryptographic scavenger hunt.
                   Community members decoded clues, solved puzzles, and pieced together fragments scattered across the
-                  blockchain and web. The hunt eventually led to the CAW Manifesto — a vision for a truly decentralized
+                  blockchain and web. The hunt eventually led to the <Link to="/help/manifesto" className={`underline ${isDark ? 'text-yellow-500 hover:text-yellow-400' : 'text-yellow-700 hover:text-yellow-600'}`}>CAW Manifesto</Link> — a vision for a truly decentralized
                   social protocol.
                 </p>
 
@@ -210,6 +323,9 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
         {activeSection === 'manifesto' && (
           <div className="space-y-6">
             <div className={`p-6 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+              <p className={`text-xs mb-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+                Pulled verbatim from the decoded <Link to="/help/history" className={`underline ${isDark ? 'text-yellow-500/60 hover:text-yellow-500' : 'text-yellow-700/60 hover:text-yellow-700'}`}>cryptographic scavenger hunt</Link>
+              </p>
               <h2 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 A Manifesto on a Decentralized Social Clearing House ...(AKA) CAW
               </h2>
@@ -562,6 +678,136 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
               View source on GitHub
               <HiExternalLink className="w-4 h-4" />
             </a>
+          </div>
+        )}
+
+        {/* Resources Section */}
+        {activeSection === 'resources' && (
+          <div className="space-y-6">
+            {/* Testnet Section - only show on testnet */}
+            {isTestnet && (
+              <section>
+                <h2 className={`text-sm font-semibold mb-3 uppercase tracking-wide ${
+                  isDark ? 'text-yellow-500/60' : 'text-yellow-600'
+                }`}>
+                  Testnet Tools
+                </h2>
+                <div className="space-y-2">
+                  <Link
+                    to="/faucet"
+                    className={`flex items-start gap-4 p-4 rounded-xl transition-colors ${
+                      isDark
+                        ? 'bg-yellow-500/10 hover:bg-yellow-500/20 border border-yellow-500/20'
+                        : 'bg-yellow-50 hover:bg-yellow-100 border border-yellow-200'
+                    }`}
+                  >
+                    <div className={`p-2 rounded-lg ${
+                      isDark ? 'bg-yellow-500/20 text-yellow-500' : 'bg-yellow-200 text-yellow-700'
+                    }`}>
+                      <HiBeaker className="w-6 h-6" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                        mCAW Faucet
+                      </h3>
+                      <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+                        Mint testnet mCAW tokens for testing
+                      </p>
+                    </div>
+                  </Link>
+                </div>
+              </section>
+            )}
+
+            {/* Official Section */}
+            <section>
+              <h2 className={`text-sm font-semibold mb-3 uppercase tracking-wide ${
+                isDark ? 'text-white/40' : 'text-gray-400'
+              }`}>
+                Official
+              </h2>
+              <div className="space-y-2">
+                {officialResources.map((item, index) => (
+                  <ResourceCard key={index} item={item} />
+                ))}
+              </div>
+            </section>
+
+            {/* Contracts & Markets Section */}
+            <section>
+              <h2 className={`text-sm font-semibold mb-3 uppercase tracking-wide ${
+                isDark ? 'text-white/40' : 'text-gray-400'
+              }`}>
+                Contracts & Markets
+              </h2>
+              <div className="space-y-2">
+                {contractResources.map((item, index) => (
+                  <ResourceCard key={index} item={item} />
+                ))}
+              </div>
+            </section>
+
+            {/* Network Info */}
+            <section>
+              <h2 className={`text-sm font-semibold mb-3 uppercase tracking-wide ${
+                isDark ? 'text-white/40' : 'text-gray-400'
+              }`}>
+                Network Information
+              </h2>
+
+              <div className={`p-4 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+                <div className="space-y-4">
+                  <div>
+                    <h4 className={`text-sm font-medium mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                      CAW Token
+                    </h4>
+                    <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
+                      ERC-20 token on Ethereum mainnet
+                    </p>
+                    <code className={`text-xs mt-1 block break-all ${isDark ? 'text-yellow-500' : 'text-yellow-700'}`}>
+                      0xf3b9569F82B18aEf890De263B84189bd33EBe452
+                    </code>
+                  </div>
+
+                  <div className={`border-t pt-4 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+                    <h4 className={`text-sm font-medium mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                      Username NFTs
+                    </h4>
+                    <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
+                      ERC-721 on Ethereum mainnet
+                    </p>
+                  </div>
+
+                  <div className={`border-t pt-4 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+                    <h4 className={`text-sm font-medium mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                      Social Protocol
+                    </h4>
+                    <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
+                      Gasless actions via signature-based contracts on L2 networks
+                    </p>
+                  </div>
+
+                  <div className={`border-t pt-4 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+                    <h4 className={`text-sm font-medium mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                      Cross-Chain Archiving
+                    </h4>
+                    <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
+                      All actions are automatically archived to Arbitrum for censorship resistance. Your posts, likes, and follows are permanently stored across multiple chains.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* Disclaimer */}
+            <div className={`p-4 rounded-lg text-sm ${
+              isDark ? 'bg-white/5 text-white/50' : 'bg-gray-50 text-gray-500'
+            }`}>
+              <p>
+                CAW has no official socials, partner projects, or further releases beyond what was described in the manifesto.
+                Be cautious of scams claiming to be official CAW projects.
+              </p>
+            </div>
           </div>
         )}
 

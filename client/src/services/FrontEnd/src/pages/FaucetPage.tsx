@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { HiArrowLeft, HiRefresh } from 'react-icons/hi'
-import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi'
+import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract, useSwitchChain, useChainId } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { CAW_ADDRESS } from '~/../../../abi/addresses'
 import { parseUnits, formatUnits } from 'viem'
@@ -41,7 +41,13 @@ const FaucetPage: React.FC = () => {
   const { isDark } = useTheme()
   const { address, isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
+  const currentChainId = useChainId()
+  const { switchChain, isPending: isSwitching } = useSwitchChain()
   const [selectedAmount, setSelectedAmount] = useState(MINT_AMOUNTS[1].value)
+  const [customAmount, setCustomAmount] = useState(MINT_AMOUNTS[1].value)
+  const [useCustom, setUseCustom] = useState(false)
+
+  const isOnCorrectChain = currentChainId === chains.l1.chainId
 
   const { writeContract, data: hash, isPending, error: writeError } = useWriteContract()
 
@@ -60,14 +66,44 @@ const FaucetPage: React.FC = () => {
     }
   })
 
+  const getMintAmount = () => {
+    if (useCustom && customAmount) {
+      return customAmount
+    }
+    return selectedAmount
+  }
+
+  const isValidAmount = (amount: string) => {
+    if (!amount) return false
+    // Check if it's a valid number (allows decimals)
+    const num = parseFloat(amount)
+    return !isNaN(num) && num > 0
+  }
+
+  const getDisplayAmount = () => {
+    const amount = getMintAmount()
+    const num = parseFloat(amount)
+    if (isNaN(num)) return '0'
+    if (num >= 1e12) return `${(num / 1e12).toFixed(2)}T`
+    if (num >= 1e9) return `${(num / 1e9).toFixed(2)}B`
+    if (num >= 1e6) return `${(num / 1e6).toFixed(2)}M`
+    if (num >= 1e3) return `${(num / 1e3).toFixed(2)}K`
+    // For small numbers, show up to 4 decimal places if needed
+    if (num < 1) return num.toFixed(Math.min(4, amount.split('.')[1]?.length || 0))
+    return num.toLocaleString()
+  }
+
   const handleMint = async () => {
     if (!address) return
+
+    const amount = getMintAmount()
+    if (!isValidAmount(amount)) return
 
     writeContract({
       address: CAW_ADDRESS,
       abi: mintableCawAbi,
       functionName: 'mint',
-      args: [address, parseUnits(selectedAmount, 18)],
+      args: [address, parseUnits(amount, 18)],
       chainId: chains.l1.chainId,
     })
   }
@@ -87,7 +123,7 @@ const FaucetPage: React.FC = () => {
         {/* Header */}
         <div className="flex items-center gap-4 mb-6">
           <Link
-            to="/settings/resources"
+            to="/help/resources"
             className={`p-2 rounded-full transition-colors cursor-pointer ${
               isDark ? 'hover:bg-white/10' : 'hover:bg-gray-100'
             }`}
@@ -153,9 +189,13 @@ const FaucetPage: React.FC = () => {
               {MINT_AMOUNTS.map((amt) => (
                 <button
                   key={amt.value}
-                  onClick={() => setSelectedAmount(amt.value)}
+                  onClick={() => {
+                    setSelectedAmount(amt.value)
+                    setCustomAmount(amt.value)
+                    setUseCustom(false)
+                  }}
                   className={`p-3 rounded-lg text-sm font-medium transition-colors ${
-                    selectedAmount === amt.value
+                    selectedAmount === amt.value && !useCustom
                       ? 'bg-yellow-500 text-black'
                       : isDark
                         ? 'bg-white/10 text-white hover:bg-white/20'
@@ -166,36 +206,84 @@ const FaucetPage: React.FC = () => {
                 </button>
               ))}
             </div>
+
+            {/* Custom Amount */}
+            <div className="mt-4">
+              <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
+                Or enter custom amount
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={customAmount}
+                  onChange={(e) => {
+                    const val = e.target.value.replace(/[^0-9.]/g, '')
+                    setCustomAmount(val)
+                    if (val) setUseCustom(true)
+                  }}
+                  onFocus={() => customAmount && setUseCustom(true)}
+                  placeholder="e.g. 1000000"
+                  className={`flex-1 p-3 rounded-lg text-sm transition-colors outline-none ${
+                    useCustom && customAmount
+                      ? 'ring-2 ring-yellow-500'
+                      : ''
+                  } ${
+                    isDark
+                      ? 'bg-white/10 text-white placeholder-white/30'
+                      : 'bg-gray-200 text-gray-900 placeholder-gray-400'
+                  }`}
+                />
+                <span className={`p-3 text-sm font-medium ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
+                  mCAW
+                </span>
+              </div>
+              <p className={`text-xs mt-1 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+                Supports decimals (e.g. 0.5, 1.25)
+              </p>
+            </div>
           </div>
 
           {/* Mint Button */}
           {!isConnected ? (
             <button
               onClick={openConnectModal}
-              className="w-full py-3 px-4 bg-yellow-500 text-black font-semibold rounded-xl hover:bg-yellow-400 transition-colors"
+              className="w-full py-3 px-4 bg-yellow-500 text-black font-semibold rounded-xl hover:bg-yellow-400 transition-colors cursor-pointer"
             >
               Connect Wallet
+            </button>
+          ) : !isOnCorrectChain ? (
+            <button
+              onClick={() => switchChain({ chainId: chains.l1.chainId })}
+              disabled={isSwitching}
+              className="w-full py-3 px-4 bg-yellow-500 text-black font-semibold rounded-xl hover:bg-yellow-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+            >
+              {isSwitching ? 'Switching...' : 'Switch to Sepolia'}
             </button>
           ) : (
             <button
               onClick={handleMint}
-              disabled={isPending || isConfirming}
-              className="w-full py-3 px-4 bg-yellow-500 text-black font-semibold rounded-xl hover:bg-yellow-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              disabled={isPending || isConfirming || !isValidAmount(getMintAmount())}
+              className="w-full py-3 px-4 bg-yellow-500 text-black font-semibold rounded-xl hover:bg-yellow-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
             >
-              {isPending ? 'Confirm in Wallet...' : isConfirming ? 'Minting...' : 'Mint mCAW'}
+              {isPending ? 'Confirm in Wallet...' : isConfirming ? 'Minting...' : `Mint ${getDisplayAmount()} mCAW`}
             </button>
           )}
 
           {/* Status Messages */}
           {writeError && (
             <div className={`mt-4 p-3 rounded-lg ${isDark ? 'bg-red-500/10 text-red-400' : 'bg-red-50 text-red-600'}`}>
-              <p className="text-sm">Error: {writeError.message}</p>
+              <p className="text-sm">
+                {writeError.message.includes('User rejected')
+                  ? 'Transaction rejected'
+                  : writeError.message.split('\n')[0].replace(/^Error:\s*/, '').slice(0, 100)}
+              </p>
             </div>
           )}
 
           {isSuccess && (
             <div className={`mt-4 p-3 rounded-lg ${isDark ? 'bg-green-500/10 text-green-400' : 'bg-green-50 text-green-600'}`}>
-              <p className="text-sm">Successfully minted {MINT_AMOUNTS.find(a => a.value === selectedAmount)?.label} mCAW!</p>
+              <p className="text-sm">Successfully minted {getDisplayAmount()} mCAW!</p>
             </div>
           )}
         </div>
