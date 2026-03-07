@@ -14,9 +14,24 @@ var pems = process.env.PRIVATE_KEYS
       '0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6'
     ];
 
-// Load Infura project ID from environment variable
-const infuraProjectId = process.env.INFURA_PROJECT_ID || 'YOUR_INFURA_PROJECT_ID';
-console.log("INFURA PROJECT ID: ", infuraProjectId);
+// RPC URLs from environment variables
+// Defaults provided for common public endpoints (may have rate limits)
+const rpcUrls = {
+  // Testnets
+  sepolia: process.env.RPC_SEPOLIA || 'https://eth-sepolia.public.blastapi.io',
+  baseSepolia: process.env.RPC_BASE_SEPOLIA || 'https://sepolia.base.org',
+  arbitrumSepolia: process.env.RPC_ARBITRUM_SEPOLIA || 'https://sepolia-rollup.arbitrum.io/rpc',
+  // Mainnets
+  ethereum: process.env.RPC_ETHEREUM || 'https://eth.public-rpc.com',
+  base: process.env.RPC_BASE || 'https://mainnet.base.org',
+  arbitrum: process.env.RPC_ARBITRUM || 'https://arb1.arbitrum.io/rpc',
+  // Local development
+  devL1: process.env.RPC_DEV_L1 || 'http://localhost:8545',
+  devL2: process.env.RPC_DEV_L2 || 'http://localhost:8546',
+  devArchive: process.env.RPC_DEV_ARCHIVE || 'http://localhost:8547',
+};
+
+console.log("RPC URLs configured for networks");
 /**
  * Use this file to configure your truffle project. It's seeded with some
  * common settings for different networks and features like migrations,
@@ -85,7 +100,7 @@ module.exports = {
       provider: function() {
         return new HDWalletProvider(
           pems,
-          "http://localhost:8546",
+          rpcUrls.devL2,
           0, // Active address index
           pems.length,
         );
@@ -98,7 +113,7 @@ module.exports = {
       provider: function() {
         return new HDWalletProvider(
           pems,
-          "http://localhost:8545",
+          rpcUrls.devL1,
           0, // Active address index
           pems.length,
         );
@@ -109,72 +124,84 @@ module.exports = {
       provider: function() {
         return new HDWalletProvider(
           pems,
-          `https://sepolia.infura.io/v3/${infuraProjectId}`,
-          // 'wss://sepolia.drpc.org',
-          // "wss://sepolia.infura.io/ws/v3/YOUR_INFURA_PROJECT_ID",
-          // 'https://eth-sepolia.public.blastapi.io',
-          // 'wss://ethereum-sepolia-rpc.publicnode.com',
-          // 'https://api.zan.top/eth-sepolia',
-          // "wss://ethereum-sepolia-rpc.publicnode.com",
-          // "https://1rpc.io/sepolia",
-          // "https://sepolia.drpc.org",
-          // "wss://sepolia.drpc.org",
+          rpcUrls.sepolia,
           0, // Active address index
           pems.length,
         );
       },
-      // gas: 1000000,
-      // gasPrice: 500000000000,
-      // gas: 4500000,
-      // networkCheckTimeout: 1200000,
-      // gasPrice: 45000010000,
     },
     testnetL2: {
       provider: function() {
         return new HDWalletProvider(
           pems,
-          // "https://sepolia.base.org",
-          // "wss://base-sepolia.drpc.org",
-          // https://base-sepolia.gateway.tenderly.com",
-          `wss://base-sepolia.infura.io/ws/v3/${infuraProjectId}`,
-          // "wss://base-sepolia-rpc.publicnode.com",
+          rpcUrls.baseSepolia,
           0, // Active address index
           pems.length,
         );
       },
       network_id: 84532,
-      // gas: 4500000,
-      // networkCheckTimeout: 1200000,
-      // gasPrice: 45000010000,
     },
-    rinkeby: {
+    // Archive chain - Arbitrum Sepolia for censorship-resistant action storage
+    testnetArchive: {
       provider: function() {
         return new HDWalletProvider(
           pems,
-          "https://rinkeby.infura.io/v3/INFURA_ID",
-          0, // Active address index
+          rpcUrls.arbitrumSepolia,
+          0,
           pems.length,
         );
       },
-      network_id: 4,
-      // gas: 4500000,
-      // networkCheckTimeout: 1200000,
-      // gasPrice: 45000010000,
+      network_id: 421614,
+    },
+    devArchive: {
+      host: "localhost",
+      port: 8547,
+      network_id: "*",
+      provider: function() {
+        return new HDWalletProvider(
+          pems,
+          rpcUrls.devArchive,
+          0,
+          pems.length,
+        );
+      },
     },
     eth: {
       provider: function() {
         return new HDWalletProvider(
           pems,
-          "https://rinkeby.infura.io/v3/INFURA_ID",
+          rpcUrls.ethereum,
           0, // Active address index
           pems.length,
         );
       },
       network_id: 1,
-      // gas: 4500000,
-      // networkCheckTimeout: 1200000,
       gasPrice: 190000010000,
-      skipDryRun: true     // Skip dry run before migrations? (default: false for public nets )
+      skipDryRun: true
+    },
+    // Mainnet L2 (Base)
+    L2: {
+      provider: function() {
+        return new HDWalletProvider(
+          pems,
+          rpcUrls.base,
+          0,
+          pems.length,
+        );
+      },
+      network_id: 8453,
+    },
+    // Mainnet Archive (Arbitrum)
+    Archive: {
+      provider: function() {
+        return new HDWalletProvider(
+          pems,
+          rpcUrls.arbitrum,
+          0,
+          pems.length,
+        );
+      },
+      network_id: 42161,
     },
       //
     // Another network with more advanced options...

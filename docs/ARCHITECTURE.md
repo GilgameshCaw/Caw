@@ -18,6 +18,7 @@ CAW Protocol is a decentralized social network built on blockchain technology, d
 - **Decentralized**: No single point of control or failure
 - **Trustless**: Actions are cryptographically signed and verified
 - **Censorship-resistant**: Content stored on blockchain cannot be removed
+- **Cross-chain archiving**: Actions replicated to multiple chains via LayerZero
 - **Scalable**: Off-chain processing with on-chain settlement
 - **Multi-chain**: Supports both L1 (Ethereum) and L2 (Base) deployments
 
@@ -187,6 +188,18 @@ User Action → PENDING → Validator Processing → On-chain Submission → SUC
 #### CawClientManager.sol
 - Manages registered clients/validators
 - Tracks client permissions and capabilities
+
+#### CawActionsReplicator.sol
+- Cross-chain archiving via LayerZero
+- Sends action data to archive chains for censorship resistance
+- Supports protocol-level archive (always on) and client-specific archives
+- Client owners can configure additional archive chains for their users
+
+#### CawActionsArchive.sol
+- Deployed on archive chains (e.g., Arbitrum)
+- Receives action data via LayerZero
+- Emits `ActionsArchived` events for permanent storage
+- Minimal gas cost - just event emission for data preservation
 
 ### Backend Services (TypeScript/Node.js)
 
@@ -394,6 +407,103 @@ Validators can run independently:
 - Database query optimization
 - CDN for media content
 - WebSocket connection pooling
+
+## Cross-Chain Archiving
+
+CAW Protocol implements cross-chain archiving to ensure censorship resistance. Actions are replicated to archive chains where they are permanently stored as blockchain events.
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    L2 (Base) - Primary Chain                     │
+│  ┌─────────────────┐     ┌─────────────────────────────────┐    │
+│  │   CawActions    │────▶│    CawActionsReplicator         │    │
+│  │ (processes all  │     │  • Reads client's replication   │    │
+│  │  social actions)│     │    config from CawClientManager │    │
+│  └─────────────────┘     └──────────────┬──────────────────┘    │
+└─────────────────────────────────────────┼───────────────────────┘
+                                          │ LayerZero
+                    ┌─────────────────────┼─────────────────────┐
+                    │                     │                     │
+                    ▼                     ▼                     ▼
+        ┌───────────────────┐  ┌───────────────────┐  ┌───────────────────┐
+        │  Client 1 Archive │  │  Client 2 Archive │  │  Client 3 Archive │
+        │   (Arbitrum)      │  │   (Optimism)      │  │   (Polygon)       │
+        │                   │  │                   │  │                   │
+        │ CawActionsArchive │  │ CawActionsArchive │  │ CawActionsArchive │
+        │   └─ Events       │  │   └─ Events       │  │   └─ Events       │
+        └───────────────────┘  └───────────────────┘  └───────────────────┘
+```
+
+### Client Replication
+
+Each action belongs to a client. When an action is processed, it is replicated to that client's configured archive destinations:
+
+- Clients can deploy their own `CawActionsArchive` contracts to any chain
+- Client owners register their archive addresses in `CawClientManager`
+- Allows communities to choose trusted archive destinations and maintain control
+- Up to 4 replication destinations per client
+- Archive costs are factored into the action's CAW payment
+
+### Data Preservation
+
+Actions are stored as events on archive chains:
+```solidity
+event ActionsArchived(
+    uint32 indexed sourceChainId,
+    bytes32 indexed guid,
+    bytes data  // Full action payload including signatures
+);
+```
+
+This ensures:
+- **Permanent storage**: Events are immutable blockchain history
+- **Verifiable**: Original signatures preserved for authenticity
+- **Recoverable**: Full history can be reconstructed from events
+- **Cost-effective**: Event emission is minimal gas cost
+
+### Archive Cost Calculation
+
+Archive costs are factored into action pricing:
+- LayerZero base fee (~0.0005 ETH per chain)
+- Destination chain gas (~50k gas for event emission)
+- Multiplied by number of archive chains
+- 50% buffer for fee volatility
+
+For a typical post:
+- L2 storage cost: ~2,400 CAW (10KB)
+- Archive cost: ~750 CAW per chain
+- Total: ~3,150 CAW for L2 + 1 archive chain
+
+### Client Replication Management
+
+Clients can deploy their own `CawActionsArchive` contracts to any chain and register them with their client configuration. This allows communities to:
+- Choose their own trusted archive chains
+- Deploy archives to chains with favorable storage costs
+- Maintain full control over their archiving infrastructure
+
+Client owners manage replication destinations via `CawClientManager`:
+
+```solidity
+// Deploy your own CawActionsArchive on a target chain, then register it:
+clientManager.addReplication(clientId, eid, archiveContractAddress);
+
+// Remove a replication destination
+clientManager.removeReplication(clientId, eid);
+
+// Enable/disable replication for your client
+clientManager.setReplicationEnabled(clientId, true);
+
+// Query current replication destinations
+ReplicationDestination[] memory replications = clientManager.getReplications(clientId);
+```
+
+The `ReplicationDestination` struct contains:
+- `eid`: LayerZero endpoint ID of the chain
+- `target`: Address of the deployed contract (e.g., `CawActionsArchive`)
+
+Each client can have up to 4 replication destinations.
 
 ## Future Enhancements
 

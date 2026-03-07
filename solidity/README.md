@@ -1,24 +1,80 @@
-# CawUsernames
+# CAW Protocol Smart Contracts
 
-This is a solidity repository focused on building a fully decentralized social network 
-as described by the CAW Manifesto, found at https://caw.is
+Solidity smart contracts for the CAW decentralized social network as described in the [CAW Manifesto](https://caw.is).
 
+## Contracts
 
-# Deployment:
+### Core Contracts
+- **CawActions.sol** - Processes social actions (post, like, follow, etc.)
+- **CawName.sol** - ERC-721 username NFTs on L1 (Ethereum)
+- **CawNameL2.sol** - Username state mirror on L2 (Base)
+- **CawClientManager.sol** - Client/app registration, fee management, and replication configuration
+- **CawNameMinter.sol** - Username minting with CAW token burning
 
-## deploy mintable Caw (if not mainnnet)
+### Cross-Chain Replication
+- **CawActionsReplicator.sol** - Replicates action data to other chains via LayerZero
+- **CawActionsArchive.sol** - Receives and stores action data on archive chains (deploy to your archive chain)
+
+Clients can deploy their own replication contracts to any chain and register them in `CawClientManager` using `addReplication(clientId, eid, targetAddress)`. It is recommended that the data replicated to at least one `CawActionsArchive` contract on another chain to ensure permanence.
+
+## Deployment
+
+### Prerequisites
+Copy `.env.example` to `.env` and configure your RPC URLs:
+```bash
+cp .env.example .env
+```
+
+### Deploy Commands
+
+```bash
+# Deploy mintable CAW token (testnet/devnet only)
 npx truffle deploy --network devL1
 
-## deploy CawNamesL2
+# Deploy CawNamesL2 on L2
 npx truffle deploy --network devL2
 
-## deploy 
+# Deploy L1 contracts (CawName, CawClientManager, etc.)
 npx truffle deploy --network devL1
 
-# Goerli Testnet
+# Deploy archive contract on archive chain
+npx truffle deploy --network testnetArchive
 
-The current contracts have been deployed on the Goerli testnet.
-You can view <a href='./docs/TESTNET_MINTING.md'>here</a>, along with instructions on how to mint a testnet username
+# Deploy replicator on L2 (after archive is deployed)
+npx truffle deploy --network testnetL2
+```
+
+## Networks
+
+| Network | Chain | Description |
+|---------|-------|-------------|
+| `devL1` | localhost:8545 | Local L1 development |
+| `devL2` | localhost:8546 | Local L2 development |
+| `devArchive` | localhost:8547 | Local archive chain |
+| `testnetL1` | Sepolia | L1 testnet |
+| `testnetL2` | Base Sepolia | L2 testnet |
+| `testnetArchive` | Arbitrum Sepolia | Archive chain testnet |
+| `eth` | Ethereum Mainnet | L1 production |
+| `L2` | Base Mainnet | L2 production |
+| `Archive` | Arbitrum Mainnet | Archive chain production |
+
+## Environment Variables
+
+Configure in `.env`:
+```env
+# RPC URLs (use your own endpoints for reliability)
+RPC_SEPOLIA=https://your-sepolia-rpc
+RPC_BASE_SEPOLIA=https://your-base-sepolia-rpc
+RPC_ARBITRUM_SEPOLIA=https://your-arbitrum-sepolia-rpc
+
+# Private keys (never commit real keys!)
+PRIVATE_KEYS=0x...,0x...
+```
+
+## Testnet Contracts
+
+The contracts are deployed on Sepolia/Base Sepolia testnets.
+See [TESTNET_MINTING.md](./docs/TESTNET_MINTING.md) for minting instructions
 
 
 

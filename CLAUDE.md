@@ -33,15 +33,19 @@ CAW Protocol is a trustless and decentralized social clearing-house focused on f
 Uses Truffle for deployment and testing. Networks configured include:
 - `dev`/`devL1` - Local development (port 8545)
 - `devL2` - Local L2 development (port 8546)
+- `devArchive` - Local archive chain (port 8547)
 - `testnetL1` - Sepolia testnet
 - `testnetL2` - Base Sepolia testnet
+- `testnetArchive` - Arbitrum Sepolia testnet (archive chain)
 
 ## Architecture
 
 ### Smart Contracts
 - **CawActions.sol** - Core contract for CAW social actions (post, like, follow, etc.)
 - **CawName.sol** / **CawNameL2.sol** - Name service contracts for L1/L2
-- **CawClientManager.sol** - Client management system
+- **CawClientManager.sol** - Client management system with archive chain configuration
+- **CawActionsReplicator.sol** - Cross-chain archiving via LayerZero
+- **CawActionsArchive.sol** - Archive contract deployed on archive chains
 - Uses LayerZero for cross-chain functionality
 - EIP712 signing for action verification
 

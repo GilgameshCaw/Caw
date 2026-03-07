@@ -7,6 +7,8 @@ const CawNameURI = artifacts.require("CawNameURI");
 const CawActions = artifacts.require("CawActions");
 const CawNameMinter = artifacts.require("CawNameMinter");
 const EndpointV2 = artifacts.require("ILayerZeroEndpointV2");
+const CawActionsReplicator = artifacts.require("CawActionsReplicator");
+const CawActionsArchive = artifacts.require("CawActionsArchive");
 
 
 
@@ -29,6 +31,8 @@ module.exports = async function (deployer, network, accounts) {
   var cawNamesMinterAddress;
   var cawNamesL2MainnetAddress;
   var cawActionsMainnetAddress;
+  var cawActionsArchiveAddress;
+  var cawActionsReplicatorAddress;
   var buyAndBurnAddress = accounts[0];
 
 
@@ -52,6 +56,9 @@ module.exports = async function (deployer, network, accounts) {
     cawNamesL2Address = '0x5fe2f174fe51474Cd198939C96e7dB65983EA307';
     cawActionsAddress = '0x81ED8e0325B17A266B2aF225570679cfd635d0bb';
 
+    // Archive chain deploy (devArchive)
+    // cawActionsArchiveAddress = '';
+    // cawActionsReplicatorAddress = '';
 
   } else if (network.match(/testnet/)) {
     // First L1 Deploy
@@ -75,6 +82,13 @@ module.exports = async function (deployer, network, accounts) {
     // // // Second L2 Deploy
     // // npx truffle deploy --network testnetL2
     cawActionsAddress = "0x793b884C8e64166d3faCDD03115F168Dbf539ae1"
+
+    // // Archive chain deploy
+    // // npx truffle deploy --network testnetArchive
+    // cawActionsArchiveAddress = '';
+    // // Then on L2:
+    // // npx truffle deploy --network testnetL2
+    // cawActionsReplicatorAddress = '';
   } else {
     cawAddress = '0xf3b9569F82B18aEf890De263B84189bd33EBe452';
 
@@ -113,8 +127,10 @@ module.exports = async function (deployer, network, accounts) {
     L2: '0x1a44076050125825900e736c501f859c50fe728c',
     devL1: '0x1a44076050125825900e736c501f859c50fe728c',
     devL2: '0x1a44076050125825900e736c501f859c50fe728c',
+    devArchive: '0x1a44076050125825900e736c501f859c50fe728c',
     testnetL2: '0x6EDCE65403992e310A62460808c4b910D972f10f', // base sepolia testnet
     testnetL1: '0x6EDCE65403992e310A62460808c4b910D972f10f', // sepolia Testnet
+    testnetArchive: '0x6EDCE65403992e310A62460808c4b910D972f10f', // arbitrum sepolia testnet
   }[network];
 
   let dvnAddress = {
@@ -129,10 +145,13 @@ module.exports = async function (deployer, network, accounts) {
   let lzNetworkIds = {
     L1: 30101,
     L2: 30184,
+    Archive: 30110, // Arbitrum mainnet
     devL1: 30101,
     devL2: 40161,
+    devArchive: 40231, // Arbitrum Sepolia (for dev, use same as testnet)
     testnetL1: 40161,
     testnetL2: 40245,
+    testnetArchive: 40231, // Arbitrum Sepolia
   };
 
   let peerNetworkId = lzNetworkIds[peerNetwork];
@@ -219,9 +238,21 @@ module.exports = async function (deployer, network, accounts) {
     await cawNames.setMinter(minter.address);
     console.log("minter set");
 
-    await deployer.deploy(CawActions, cawNamesL2MainnetAddress);
+    // Deploy CawActions on L1 first (without replicator - will be zero address)
+    // Replication on L1 requires a separate deployment pass after CawNameL2Mainnet is ready
+    await deployer.deploy(CawActions, cawNamesL2MainnetAddress, "0x0000000000000000000000000000000000000000");
     var cawActionsMainnet = await CawActions.deployed();
+    console.log("CawActions (L1) deployed at:", cawActionsMainnet.address);
+    cawActionsMainnetAddress = cawActionsMainnet.address;
+
     await cawNamesL2Mainnet.setCawActions(cawActionsMainnet.address);
+    console.log("CawActions linked to CawNameL2 (mainnet)");
+
+    // Note: To enable L1 replication, you need a separate deployment:
+    // 1. Deploy CawActionsReplicator with (lzEndpoint, cawActionsMainnetAddress, cawNamesL2MainnetAddress)
+    // 2. Redeploy CawActions with the replicator address
+    // 3. Re-link CawNameL2Mainnet to the new CawActions
+    // This is optional - most replication will happen on L2 where most actions occur.
   }
 
 
@@ -235,12 +266,87 @@ module.exports = async function (deployer, network, accounts) {
   }
 
   if (network.match(/L2/) && cawNamesL2Address && cawNamesAddress && !cawActionsAddress) {
-    await deployer.deploy(CawActions, cawNamesL2Address);
+    var cawNamesL2 = await CawNameL2.at(cawNamesL2Address);
+
+    // Deploy CawActions first without replicator (chicken-and-egg: replicator needs CawActions address)
+    await deployer.deploy(CawActions, cawNamesL2Address, "0x0000000000000000000000000000000000000000");
     var cawActions = await CawActions.deployed();
-    console.log("DEPLOYed action ", cawActions.address)
+    cawActionsAddress = cawActions.address;
+    console.log("CawActions (L2) deployed at:", cawActionsAddress);
 
     await cawNamesL2.setCawActions(cawActions.address);
-    console.log("Caw Actions Set");
+    console.log("CawActions linked to CawNameL2");
+
+    // Now deploy CawActionsReplicator with the CawActions address
+    await deployer.deploy(CawActionsReplicator, lzEndpoint, cawActionsAddress, cawNamesL2Address);
+    var cawActionsReplicator = await CawActionsReplicator.deployed();
+    cawActionsReplicatorAddress = cawActionsReplicator.address;
+    console.log("CawActionsReplicator deployed at:", cawActionsReplicatorAddress);
+
+    // Link CawNameL2 to replicator so it can forward peer updates
+    await cawNamesL2.setCawActionsReplicator(cawActionsReplicatorAddress);
+    console.log("CawNameL2 linked to replicator");
+
+    // IMPORTANT: CawActions was deployed without replicator (immutable).
+    // To enable replication, you must redeploy CawActions in a second pass:
+    // 1. Set cawActionsReplicatorAddress in the config above
+    // 2. Comment out the CawActions deployment above
+    // 3. Uncomment and run the following:
+    //
+    // await deployer.deploy(CawActions, cawNamesL2Address, cawActionsReplicatorAddress);
+    // var cawActionsWithReplicator = await CawActions.deployed();
+    // await cawNamesL2.setCawActions(cawActionsWithReplicator.address);
+    // console.log("CawActions (with replicator) deployed at:", cawActionsWithReplicator.address);
+    //
+    console.log("");
+    console.log("=== REPLICATION SETUP REQUIRED ===");
+    console.log("CawActions deployed WITHOUT replicator (immutable field).");
+    console.log("To enable replication, update the migration script with the replicator address");
+    console.log("and redeploy CawActions. See comments in migration script.");
+    console.log("Replicator address:", cawActionsReplicatorAddress);
+  }
+
+  // ==========================================
+  // L1 POST-DEPLOYMENT: LINK CawName to CawClientManager and CawNameL2
+  // ==========================================
+  // CawClientManager routes replication config through CawName -> CawNameL2 -> Replicator
+  // This is set up automatically when CawName is deployed with clientManagerAddress
+
+  if (network.match(/L1/) && cawNamesAddress && clientManagerAddress) {
+    var clientManager = await CawClientManager.at(clientManagerAddress);
+
+    // Set CawName and default L2 eid on ClientManager so it can route replication sync calls
+    if ((await clientManager.cawName()) === '0x0000000000000000000000000000000000000000') {
+      await clientManager.setCawName(cawNamesAddress, peerNetworkId);
+      console.log("CawName and default L2 eid set on ClientManager");
+    }
+  }
+
+  // ==========================================
+  // ARCHIVE CHAIN DEPLOYMENT
+  // ==========================================
+  //
+  // Deployment order:
+  // 1. Deploy CawActionsArchive on archive chain (testnetArchive/devArchive)
+  // 2. On L1: Call clientManager.addReplication(clientId, archiveEid, archiveAddress)
+  //    This syncs via: CawClientManager -> CawName -> CawNameL2 -> CawActionsReplicator
+  //    The replicator stores the peer mapping for the client
+  //
+  // npx truffle deploy --network testnetArchive
+  // Then on L1: clientManager.addReplication(clientId, archiveNetworkId, archiveAddress)
+
+  // Deploy CawActionsArchive on archive chain
+  if (network.match(/Archive/) && !cawActionsArchiveAddress) {
+    await deployer.deploy(CawActionsArchive, lzEndpoint);
+    var cawActionsArchive = await CawActionsArchive.deployed();
+    cawActionsArchiveAddress = cawActionsArchive.address;
+    console.log("CawActionsArchive deployed at:", cawActionsArchiveAddress);
+    console.log("");
+    console.log("NEXT STEPS:");
+    console.log("1. Note down the archive address:", cawActionsArchiveAddress);
+    console.log("2. On L1, call: clientManager.addReplication(clientId, archiveEid, archiveAddress)");
+    console.log("   archiveEid for this network:", lzNetworkIds[network]);
   }
 
 };
+

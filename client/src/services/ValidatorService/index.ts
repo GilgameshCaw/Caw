@@ -5,8 +5,8 @@ import 'dotenv/config'
 import { Service } from '../../Service'
 import { prisma }  from '../../prismaClient'
 import getActionType from '../../abi/getActionType'
-import { cawActionsAbi } from '../../abi/generated'
-import { CAW_ACTIONS_ADDRESS, CAW_ADDRESS, WETH_ADDRESS } from '../../abi/addresses'
+import { cawActionsAbi, cawClientManagerAbi } from '../../abi/generated'
+import { CAW_ACTIONS_ADDRESS, CAW_ADDRESS, WETH_ADDRESS, CLIENT_MANAGER_ADDRESS } from '../../abi/addresses'
 import { WebSocketProvider, JsonRpcProvider, Contract, Wallet } from 'ethers'
 
 // Uniswap V2 Router ABI (minimal for getAmountsOut)
@@ -37,6 +37,17 @@ const TESTNET_GAS_SCALE_FACTOR = BigInt(10000)
 let cachedRouter: Contract | null = null
 let cachedMainnetProvider: JsonRpcProvider | null = null
 
+// Cache for ClientManager contract (L2)
+let cachedClientManager: Contract | null = null
+let cachedL2Provider: JsonRpcProvider | null = null
+
+// Cache for replication counts (clientId -> count) - refreshes every 5 minutes
+const replicationCountCache: Map<number, { count: number; timestamp: number }> = new Map()
+const REPLICATION_CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+
+// Maximum unique clients per batch (matches CawActions.sol limit)
+const MAX_CLIENTS_PER_BATCH = 4
+
 /**
  * Get or create Uniswap V2 Router instance
  */
@@ -46,6 +57,81 @@ function getUniswapRouter(mainnetRpcUrl: string): Contract {
     cachedRouter = new Contract(UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_ABI, cachedMainnetProvider)
   }
   return cachedRouter
+}
+
+/**
+ * Get or create ClientManager contract instance
+ */
+function getClientManager(l2RpcUrl: string): Contract {
+  if (!cachedClientManager || !cachedL2Provider) {
+    cachedL2Provider = new JsonRpcProvider(l2RpcUrl)
+    cachedClientManager = new Contract(CLIENT_MANAGER_ADDRESS, cawClientManagerAbi, cachedL2Provider)
+  }
+  return cachedClientManager
+}
+
+/**
+ * Get replication count for a client
+ * @param clientId - The client ID
+ * @param l2RpcUrl - L2 RPC URL for contract query
+ * @returns Number of replication destinations for this client
+ */
+async function getReplicationCount(clientId: number, l2RpcUrl: string): Promise<number> {
+  // Check cache first
+  const cached = replicationCountCache.get(clientId)
+  if (cached && Date.now() - cached.timestamp < REPLICATION_CACHE_TTL) {
+    return cached.count
+  }
+
+  try {
+    const clientManager = getClientManager(l2RpcUrl)
+
+    // Check if replication is enabled for this client
+    const enabled = await clientManager.clientReplicationEnabled(clientId)
+    if (!enabled) {
+      replicationCountCache.set(clientId, { count: 0, timestamp: Date.now() })
+      return 0
+    }
+
+    const count = Number(await clientManager.getReplicationCount(clientId))
+
+    // Cache the result
+    replicationCountCache.set(clientId, { count, timestamp: Date.now() })
+
+    console.log(`[Validator] Replication count for client ${clientId}: ${count}`)
+    return count
+  } catch (error: any) {
+    console.error('[Validator] Failed to get replication count:', error.message)
+    // Fallback to 0 if we can't query the contract
+    return 0
+  }
+}
+
+/**
+ * Get unique client IDs from a batch of actions
+ */
+function getUniqueClientIds(actions: any[]): number[] {
+  const clientIds = new Set<number>()
+  for (const action of actions) {
+    clientIds.add(action.clientId ?? 1)
+  }
+  return Array.from(clientIds)
+}
+
+/**
+ * Split actions by client ID for batching
+ * Returns map of clientId -> indices of actions for that client
+ */
+function groupActionsByClient(actions: any[]): Map<number, number[]> {
+  const groups = new Map<number, number[]>()
+  for (let i = 0; i < actions.length; i++) {
+    const clientId = actions[i].clientId ?? 1
+    if (!groups.has(clientId)) {
+      groups.set(clientId, [])
+    }
+    groups.get(clientId)!.push(i)
+  }
+  return groups
 }
 
 /**
@@ -300,28 +386,78 @@ export const validatorService: Service = {
           cawonce: a.cawonce
         })));
 
-        var withdraws = multiData.actions.filter(function(action: any) {return getActionType(action.actionType).toString() == 'WITHDRAW'});
-        var quote = { nativeFee: BigInt(0) }; // Default quote for non-withdrawal actions
+        // Get withdrawal quote if there are any withdrawals
+        const withdraws = multiData.actions.filter((action: any) => getActionType(action.actionType).toString() === 'WITHDRAW')
+        let withdrawQuote = { nativeFee: BigInt(0), lzTokenFee: BigInt(0) }
         if (withdraws.length > 0) {
-          var tokenIds = withdraws.map(function(action){return action.senderId});
-          console.log("get tokenIds:", tokenIds)
-          var amounts = withdraws.map(function(action){return action.amounts[0]});
-          console.log("meow amounts", amounts)
+          const tokenIds = withdraws.map((action: any) => action.senderId)
+          const amounts = withdraws.map((action: any) => action.amounts[0])
+          console.log("[Validator] Getting withdraw quote for tokenIds:", tokenIds, "amounts:", amounts)
           try {
-            quote = await cawActions.withdrawQuote(tokenIds, amounts, false) as any;
+            withdrawQuote = await cawActions.withdrawQuote(tokenIds, amounts, false) as any
+            console.log('[Validator] Withdraw quote:', withdrawQuote)
           } catch (err) {
-            console.error("[Validator] Failed to get withdraw quote:", err);
-            // Continue with default quote instead of failing
+            console.error("[Validator] Failed to get withdraw quote:", err)
           }
-          console.log('withdraw quote returned:', quote);
         }
 
-        // ABI‐encode
-        console.log("Before native process", quote)
+        // Get replication quote for each unique client
+        // For simulation, we need to estimate the total replication cost across all clients
+        const uniqueClientIds = getUniqueClientIds(multiData.actions)
+        let totalReplicationFee = BigInt(0)
+        let totalReplicationLzToken = BigInt(0)
+
+        for (const clientId of uniqueClientIds) {
+          try {
+            // Get actions for this client to build payload for quote
+            const clientActions = multiData.actions.filter((a: any) => (a.clientId ?? 1) === clientId)
+            const clientIndices = multiData.actions.map((a: any, i: number) => (a.clientId ?? 1) === clientId ? i : -1).filter(i => i >= 0)
+            const clientData = {
+              actions: clientActions,
+              v: clientIndices.map(i => multiData.v[i]),
+              r: clientIndices.map(i => multiData.r[i]),
+              s: clientIndices.map(i => multiData.s[i])
+            }
+
+            const replicationQuote = await cawActions.replicationQuote(clientId, clientData, false) as any
+            if (replicationQuote && replicationQuote.quote) {
+              totalReplicationFee += BigInt(replicationQuote.quote.nativeFee || 0)
+              totalReplicationLzToken += BigInt(replicationQuote.quote.lzTokenFee || 0)
+              console.log(`[Validator] Replication quote for client ${clientId}: nativeFee=${replicationQuote.quote.nativeFee}, chainCount=${replicationQuote.chainCount}`)
+            }
+          } catch (err: any) {
+            // Replication might not be configured for this client - that's OK
+            if (!err.message?.includes('Replicator not set')) {
+              console.log(`[Validator] Failed to get replication quote for client ${clientId}:`, err.message)
+            }
+          }
+        }
+
+        // Total native fee = withdraw fee + replication fee
+        const totalNativeFee = BigInt(withdrawQuote.nativeFee || 0) + totalReplicationFee
+
+        // Build the quote object with all fees
+        const quote = {
+          nativeFee: totalNativeFee,
+          withdrawFee: BigInt(withdrawQuote.nativeFee || 0),
+          withdrawLzTokenAmount: BigInt(withdrawQuote.lzTokenFee || 0),
+          replicationFee: totalReplicationFee,
+          replicationLzTokenAmount: totalReplicationLzToken
+        }
+
+        console.log("[Validator] Total fees:", {
+          withdrawFee: quote.withdrawFee.toString(),
+          replicationFee: quote.replicationFee.toString(),
+          totalNativeFee: quote.nativeFee.toString()
+        })
+
+        // ABI‐encode with the new 5-argument signature
         const calldata = iface.encodeFunctionData('safeProcessActions', [
           validatorId,
           { actions: multiData.actions, v: multiData.v, r: multiData.r, s: multiData.s },
-          0
+          quote.withdrawFee,
+          quote.withdrawLzTokenAmount,
+          quote.replicationLzTokenAmount
         ])
         console.log(`Call data prepared, simulating transaction...`)
         console.log(`  - Contract: ${CAW_ACTIONS_ADDRESS}`)
@@ -468,18 +604,20 @@ export const validatorService: Service = {
     async function estimateProcessGasCost(
       validatorId: number,
       multiData: { actions: any[]; v: number[]; r: string[]; s: string[] },
-      messagingFee: bigint
+      quote: { nativeFee: bigint; withdrawFee: bigint; withdrawLzTokenAmount: bigint; replicationFee: bigint; replicationLzTokenAmount: bigint }
     ) {
       const calldata = iface.encodeFunctionData('processActions', [
         validatorId,
         { actions: multiData.actions, v: multiData.v, r: multiData.r, s: multiData.s },
-        0
+        quote.withdrawFee,
+        quote.withdrawLzTokenAmount,
+        quote.replicationLzTokenAmount
       ])
 
       const gasLimitRaw = await provider.estimateGas({
         to:    CAW_ACTIONS_ADDRESS,
         data:  calldata,
-        value: messagingFee
+        value: quote.nativeFee
       })
 
       const feeData = await provider.getFeeData()
@@ -493,20 +631,22 @@ export const validatorService: Service = {
     async function estimateGasLimit(
       validatorId: number,
       multiData: { actions: any[]; v: number[]; r: string[]; s: string[] },
-      messagingFee: bigint
+      quote: { nativeFee: bigint; withdrawFee: bigint; withdrawLzTokenAmount: bigint; replicationFee: bigint; replicationLzTokenAmount: bigint }
     ): Promise<bigint> {
-      // 1) ABI-encode the same calldata you’d send on-chain
+      // 1) ABI-encode the same calldata you'd send on-chain
       const calldata = iface.encodeFunctionData('processActions', [
         validatorId,
         { actions: multiData.actions, v: multiData.v, r: multiData.r, s: multiData.s },
-        0,
+        quote.withdrawFee,
+        quote.withdrawLzTokenAmount,
+        quote.replicationLzTokenAmount
       ]);
 
       // 2) Ask the provider directly for the gas estimate
       const estimate = await provider.estimateGas({
         to:             CAW_ACTIONS_ADDRESS,
         data:           calldata,
-        value:          messagingFee,
+        value:          quote.nativeFee,
       });
 
       return estimate;
@@ -516,7 +656,7 @@ export const validatorService: Service = {
     async function submitProcessActions(
       validatorId: number,
       multiData: { actions: any[]; v: number[]; r: string[]; s: string[] },
-      messagingFee: bigint,
+      quote: { nativeFee: bigint; withdrawFee: bigint; withdrawLzTokenAmount: bigint; replicationFee: bigint; replicationLzTokenAmount: bigint },
       rawGasLimit: bigint,
       retryCount: number = 0
     ) {
@@ -548,20 +688,24 @@ export const validatorService: Service = {
         to: CAW_ACTIONS_ADDRESS,
         validatorId,
         actionsCount: multiData.actions.length,
-        messagingFee: messagingFee.toString(),
+        totalNativeFee: quote.nativeFee.toString(),
+        withdrawFee: quote.withdrawFee.toString(),
+        replicationFee: quote.replicationFee.toString(),
         gasLimit: rawGasLimit.toString()
       })
 
       try {
-        // sendTransaction
+        // sendTransaction with full 5-argument signature
         const tx = await wallet.sendTransaction({
           to:    CAW_ACTIONS_ADDRESS,
           data:  iface.encodeFunctionData('processActions', [
             validatorId,
             { actions: multiData.actions, v: multiData.v, r: multiData.r, s: multiData.s },
-            0
+            quote.withdrawFee,
+            quote.withdrawLzTokenAmount,
+            quote.replicationLzTokenAmount
           ]),
-          value: messagingFee,
+          value: quote.nativeFee,
           gasLimit: rawGasLimit,
           maxFeePerGas,
           maxPriorityFeePerGas,
@@ -596,7 +740,7 @@ export const validatorService: Service = {
             console.log(`[submitProcessActions] REPLACEMENT_UNDERPRICED error - retrying with higher gas (attempt ${retryCount + 1}/${maxRetries})`)
             // Wait a moment for the mempool to update
             await new Promise(resolve => setTimeout(resolve, 1000))
-            return submitProcessActions(validatorId, multiData, messagingFee, rawGasLimit, retryCount + 1)
+            return submitProcessActions(validatorId, multiData, quote, rawGasLimit, retryCount + 1)
           } else {
             console.error(`[submitProcessActions] Max retries (${maxRetries}) exceeded for REPLACEMENT_UNDERPRICED error`)
           }
@@ -615,7 +759,7 @@ export const validatorService: Service = {
         if (err.message?.includes('nonce') && retryCount < maxRetries) {
           console.log(`[submitProcessActions] Nonce issue detected - waiting and retrying (attempt ${retryCount + 1}/${maxRetries})`)
           await new Promise(resolve => setTimeout(resolve, 2000))
-          return submitProcessActions(validatorId, multiData, messagingFee, rawGasLimit, retryCount + 1)
+          return submitProcessActions(validatorId, multiData, quote, rawGasLimit, retryCount + 1)
         }
 
         throw err
@@ -709,10 +853,114 @@ console.log("succeededKeys", succeededKeys)
       }, BigInt(0))
     }
 
+    /**
+     * Recalculate quote for a specific set of actions
+     * Used after filtering to succeeded actions to get accurate fees
+     */
+    async function recalculateQuoteForActions(
+      multiData: { actions: any[]; v: number[]; r: string[]; s: string[] }
+    ): Promise<{ nativeFee: bigint; withdrawFee: bigint; withdrawLzTokenAmount: bigint; replicationFee: bigint; replicationLzTokenAmount: bigint }> {
+      // Get withdrawal quote
+      const withdraws = multiData.actions.filter((action: any) => getActionType(action.actionType).toString() === 'WITHDRAW')
+      let withdrawQuote = { nativeFee: BigInt(0), lzTokenFee: BigInt(0) }
+      if (withdraws.length > 0) {
+        const tokenIds = withdraws.map((action: any) => action.senderId)
+        const amounts = withdraws.map((action: any) => action.amounts[0])
+        try {
+          withdrawQuote = await cawActions.withdrawQuote(tokenIds, amounts, false) as any
+        } catch (err) {
+          console.error("[Validator] Failed to get withdraw quote:", err)
+        }
+      }
+
+      // Get replication quote for each unique client
+      const uniqueClientIds = getUniqueClientIds(multiData.actions)
+      let totalReplicationFee = BigInt(0)
+      let totalReplicationLzToken = BigInt(0)
+
+      for (const clientId of uniqueClientIds) {
+        try {
+          const clientActions = multiData.actions.filter((a: any) => (a.clientId ?? 1) === clientId)
+          const clientIndices = multiData.actions.map((a: any, i: number) => (a.clientId ?? 1) === clientId ? i : -1).filter(i => i >= 0)
+          const clientData = {
+            actions: clientActions,
+            v: clientIndices.map(i => multiData.v[i]),
+            r: clientIndices.map(i => multiData.r[i]),
+            s: clientIndices.map(i => multiData.s[i])
+          }
+
+          const replicationQuote = await cawActions.replicationQuote(clientId, clientData, false) as any
+          if (replicationQuote && replicationQuote.quote) {
+            totalReplicationFee += BigInt(replicationQuote.quote.nativeFee || 0)
+            totalReplicationLzToken += BigInt(replicationQuote.quote.lzTokenFee || 0)
+          }
+        } catch (err: any) {
+          if (!err.message?.includes('Replicator not set')) {
+            console.log(`[Validator] Failed to get replication quote for client ${clientId}:`, err.message)
+          }
+        }
+      }
+
+      return {
+        nativeFee: BigInt(withdrawQuote.nativeFee || 0) + totalReplicationFee,
+        withdrawFee: BigInt(withdrawQuote.nativeFee || 0),
+        withdrawLzTokenAmount: BigInt(withdrawQuote.lzTokenFee || 0),
+        replicationFee: totalReplicationFee,
+        replicationLzTokenAmount: totalReplicationLzToken
+      }
+    }
+
+    /**
+     * Check if a batch has too many unique clients and needs to be split
+     * Returns true if batch has more than MAX_CLIENTS_PER_BATCH unique clients
+     */
+    function needsClientSplitting(actions: any[]): boolean {
+      const uniqueClients = getUniqueClientIds(actions)
+      return uniqueClients.length > MAX_CLIENTS_PER_BATCH
+    }
+
+    /**
+     * Split entries into batches with at most MAX_CLIENTS_PER_BATCH unique clients each
+     * This ensures we don't hit the contract's 4-client limit
+     */
+    function splitEntriesByClientLimit(
+      entries: Array<{ id: number; payload: any; signedTx: string }>
+    ): Array<Array<{ id: number; payload: any; signedTx: string }>> {
+      const clientGroups = groupActionsByClient(entries.map(e => (e.payload as any).data))
+
+      // If 4 or fewer clients, no splitting needed
+      if (clientGroups.size <= MAX_CLIENTS_PER_BATCH) {
+        return [entries]
+      }
+
+      console.log(`[Validator] Batch has ${clientGroups.size} unique clients, splitting into sub-batches (max ${MAX_CLIENTS_PER_BATCH} per batch)`)
+
+      const batches: Array<Array<{ id: number; payload: any; signedTx: string }>> = []
+      const clientIds = Array.from(clientGroups.keys())
+
+      // Create batches of MAX_CLIENTS_PER_BATCH clients each
+      for (let i = 0; i < clientIds.length; i += MAX_CLIENTS_PER_BATCH) {
+        const batchClientIds = clientIds.slice(i, i + MAX_CLIENTS_PER_BATCH)
+        const batchEntries: typeof entries = []
+
+        for (const clientId of batchClientIds) {
+          const indices = clientGroups.get(clientId)!
+          for (const idx of indices) {
+            batchEntries.push(entries[idx])
+          }
+        }
+
+        batches.push(batchEntries)
+        console.log(`[Validator]   Sub-batch ${batches.length}: ${batchEntries.length} entries for clients [${batchClientIds.join(', ')}]`)
+      }
+
+      return batches
+    }
+
     /** natstat: check if OTHER actions have sufficient CAW payment for their content */
-    function validateOtherActionCost(
+    async function validateOtherActionCost(
       action: any
-    ): { valid: boolean; requiredCaw?: number; underpriced?: boolean } {
+    ): Promise<{ valid: boolean; requiredCaw?: number; underpriced?: boolean }> {
       // Check if this is an 'other' action type
       if (getActionType(action.actionType).toString() !== 'OTHER') {
         return { valid: true }
@@ -741,13 +989,18 @@ console.log("succeededKeys", succeededKeys)
         return { valid: true }
       }
 
+      // Get clientId from action to determine replication chain count
+      const clientId = action.clientId ?? 1 // Default to client 1 if not specified
+      const replicationChainCount = await getReplicationCount(clientId, l2RpcUrl)
+
       // Calculate required CAW for all images
       let totalRequiredCaw = 0
       for (const match of imageMatches) {
         const base64Data = match.replace('image64:', '')
         // Base64 encoding increases size by ~33%
         const originalSize = Math.ceil((base64Data.length * 3) / 4)
-        // Using same calculation as frontend
+
+        // L2 storage cost calculation (same as frontend)
         const MIN_CAW_COST = 500
         const l1GasPerByte = 16
         const l1DataGas = originalSize * l1GasPerByte
@@ -756,7 +1009,24 @@ console.log("succeededKeys", succeededKeys)
         const effectiveGasPrice = 8
         const cawPerGwei = 0.03
         const baseCost = Math.ceil(totalGas * effectiveGasPrice * cawPerGwei)
-        const totalCost = Math.ceil(baseCost * 2.5) // Match frontend 2.5x markup
+        const l2Cost = Math.ceil(baseCost * 2.5) // Match frontend 2.5x markup
+
+        // Replication cost calculation (cross-chain replication)
+        // Query actual replication chain count from contract
+        let archiveCost = 0
+        if (replicationChainCount > 0) {
+          const BASE_LZ_FEE_GWEI = 500000 // ~0.0005 ETH base fee per chain
+          const ARCHIVE_GAS_LIMIT = 50000
+          const dataGas = originalSize * l1GasPerByte
+          const totalGasPerChain = ARCHIVE_GAS_LIMIT + Math.min(dataGas, 100000)
+          const archiveGasPrice = 5
+          const executionCost = totalGasPerChain * archiveGasPrice
+          const perChainCostGwei = BASE_LZ_FEE_GWEI + executionCost
+          const perChainCostCaw = Math.ceil(perChainCostGwei * cawPerGwei)
+          archiveCost = Math.ceil(perChainCostCaw * replicationChainCount * 1.5) // 50% buffer
+        }
+
+        const totalCost = l2Cost + archiveCost
         totalRequiredCaw += Math.max(MIN_CAW_COST, totalCost)
       }
 
@@ -766,7 +1036,8 @@ console.log("succeededKeys", succeededKeys)
 
       console.log(`[Validator] Image upload validation:`)
       console.log(`  - Image count: ${imageMatches.length}`)
-      console.log(`  - Total data size: ${imageMatches.reduce((sum, m) => sum + m.replace('image64:', '').length, 0)} chars`)
+      console.log(`  - Total data size: ${imageMatches.reduce((sum: number, m: string) => sum + m.replace('image64:', '').length, 0)} chars`)
+      console.log(`  - Replication chains: ${replicationChainCount}`)
       console.log(`  - Provided CAW: ${providedCaw}`)
       console.log(`  - Required CAW: ${totalRequiredCaw}`)
 
@@ -811,25 +1082,23 @@ console.log("succeededKeys", succeededKeys)
 
         // Pre-filter entries that don't have sufficient CAW for OTHER actions
         const validatedEntries: typeof entries = []
-        const underpricedEntries: typeof entries = []
+        const underpricedEntries: Array<{ entry: typeof entries[0]; requiredCaw: number }> = []
 
         for (const entry of entries) {
           const action = (entry.payload as any).data
-          const validation = validateOtherActionCost(action)
+          const validation = await validateOtherActionCost(action)
           if (validation.valid) {
             validatedEntries.push(entry)
           } else if (validation.underpriced) {
-            underpricedEntries.push(entry)
+            underpricedEntries.push({ entry, requiredCaw: validation.requiredCaw || 0 })
             console.log(`[Validator] Marking txQueue entry ${entry.id} as underpriced: required ${validation.requiredCaw} CAW`)
           }
         }
 
         // Mark underpriced entries with 'underpriced' status for potential relay to other validators
         if (underpricedEntries.length > 0) {
-          await Promise.all(underpricedEntries.map(entry => {
-            const action = (entry.payload as any).data
-            const validation = validateOtherActionCost(action)
-            const reason = `Insufficient CAW: required ${validation.requiredCaw} CAW`
+          await Promise.all(underpricedEntries.map(({ entry, requiredCaw }) => {
+            const reason = `Insufficient CAW: required ${requiredCaw} CAW`
 
             return prisma.txQueue.update({
               where: { id: entry.id },
@@ -845,6 +1114,102 @@ console.log("succeededKeys", succeededKeys)
         if (!validatedEntries.length) {
           console.log("[Validator] No valid entries to process after filtering")
           return
+        }
+
+        // Check if we need to split the batch due to too many unique clients
+        // The contract limits batches to MAX_CLIENTS_PER_BATCH (4) unique clients
+        const allActions = validatedEntries.map(e => (e.payload as any).data)
+        const uniqueClientIds = getUniqueClientIds(allActions)
+        if (uniqueClientIds.length > MAX_CLIENTS_PER_BATCH) {
+          console.log(`[Validator] ⚠️  Batch has ${uniqueClientIds.length} unique clients (max ${MAX_CLIENTS_PER_BATCH})`)
+          console.log(`[Validator] Client IDs: ${uniqueClientIds.join(', ')}`)
+
+          // Split entries by client and process in groups of MAX_CLIENTS_PER_BATCH
+          const clientGroups = groupActionsByClient(allActions)
+          const clientIdList = Array.from(clientGroups.keys())
+
+          // Process in chunks of MAX_CLIENTS_PER_BATCH clients
+          for (let i = 0; i < clientIdList.length; i += MAX_CLIENTS_PER_BATCH) {
+            const chunkClientIds = clientIdList.slice(i, i + MAX_CLIENTS_PER_BATCH)
+            const chunkIndices: number[] = []
+            for (const clientId of chunkClientIds) {
+              chunkIndices.push(...clientGroups.get(clientId)!)
+            }
+
+            // Build sub-batch entries
+            const subBatchEntries = chunkIndices.map(idx => validatedEntries[idx])
+            console.log(`[Validator] Processing client group ${Math.floor(i / MAX_CLIENTS_PER_BATCH) + 1}: clients [${chunkClientIds.join(', ')}] with ${subBatchEntries.length} entries`)
+
+            // Mark these as processing (they already are, but be explicit)
+            const subBatch = buildMultiActionData(subBatchEntries)
+
+            try {
+              // Simulate this sub-batch
+              const simResult = await simulateActions(validatorId, subBatch)
+              if (!simResult || !simResult.successfulActions?.length) {
+                console.log(`[Validator] Sub-batch simulation failed or no successful actions`)
+                // Mark entries as failed
+                await Promise.all(subBatchEntries.map((entry, idx) => {
+                  return prisma.txQueue.update({
+                    where: { id: entry.id },
+                    data: {
+                      status: 'failed',
+                      reason: simResult?.rejectionMessages?.[idx] || 'Simulation failed'
+                    }
+                  })
+                }))
+                continue
+              }
+
+              // Get succeeded entries
+              const succeededKeys = new Set(
+                simResult.successfulActions.map((a: any) => `${a.senderId}-${a.cawonce}`)
+              )
+              const succeededSubEntries = subBatchEntries.filter(e => {
+                const data = (e.payload as any).data
+                return succeededKeys.has(`${data.senderId}-${data.cawonce}`)
+              })
+
+              if (succeededSubEntries.length === 0) {
+                console.log(`[Validator] No successful actions in sub-batch`)
+                continue
+              }
+
+              // Build and submit succeeded actions
+              const succeededData = buildMultiActionData(succeededSubEntries)
+              const subQuote = await recalculateQuoteForActions(succeededData)
+              const gasLimit = await estimateGasLimit(validatorId, succeededData, subQuote)
+
+              const finalized = await submitProcessActions(validatorId, succeededData, subQuote, gasLimit)
+              console.log(`[Validator] Sub-batch submitted: ${finalized.length} actions finalized`)
+
+              // Update statuses
+              const finalizedKeys = new Set(finalized.map((f: any) => `${f.senderId}-${f.cawonce}`))
+              await Promise.all(subBatchEntries.map(async (entry, idx) => {
+                const data = (entry.payload as any).data
+                const key = `${data.senderId}-${data.cawonce}`
+                const succeeded = finalizedKeys.has(key)
+                await prisma.txQueue.update({
+                  where: { id: entry.id },
+                  data: {
+                    status: succeeded ? 'done' : 'failed',
+                    reason: succeeded ? null : (simResult.rejectionMessages?.[idx] || 'Transaction failed')
+                  }
+                })
+              }))
+            } catch (err: any) {
+              console.error(`[Validator] Sub-batch processing failed:`, err.message)
+              // Mark sub-batch entries as failed
+              await Promise.all(subBatchEntries.map(entry => {
+                return prisma.txQueue.update({
+                  where: { id: entry.id },
+                  data: { status: 'failed', reason: err.message }
+                })
+              }))
+            }
+          }
+
+          return // All sub-batches processed
         }
 
         console.log(`[Validator] ${validatedEntries.length} valid entries to simulate`)
@@ -1004,16 +1369,20 @@ console.log("succeededKeys", succeededKeys)
 
 
 
+      // Recalculate quote for the succeeded actions only (may have different clients)
+      // This ensures we only pay for replication of successful actions
+      const succeededQuote = await recalculateQuoteForActions(multiSucceeded)
+
       // 2) estimate gas cost
       console.log("[Validator] Estimating gas cost...")
       const gasCost = await estimateProcessGasCost(
-        validatorId, multiSucceeded, quote.nativeFee
+        validatorId, multiSucceeded, succeededQuote
       )
       console.log("[Validator] Estimated gas cost:", gasCost.toString(), "wei")
 
       console.log("[Validator] Estimating gas limit...")
       const rawGasLimit = await estimateGasLimit(
-        validatorId, multiSucceeded, quote.nativeFee
+        validatorId, multiSucceeded, succeededQuote
       );
       console.log("[Validator] Estimated gas limit:", rawGasLimit.toString())
 
@@ -1080,7 +1449,7 @@ console.log("succeededKeys", succeededKeys)
       try {
         console.log("[Validator] ========== SUBMITTING TRANSACTION TO BLOCKCHAIN ==========")
         finalized = await submitProcessActions(
-           validatorId, multiSucceeded, quote.nativeFee, rawGasLimit
+           validatorId, multiSucceeded, succeededQuote, rawGasLimit
          )
         console.log("[Validator] ========== TRANSACTION SUBMISSION SUCCESSFUL ==========")
         console.log(`[Validator] ${finalized.length} actions finalized on chain`)
