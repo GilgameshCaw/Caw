@@ -10,6 +10,10 @@ import "./interfaces/ICawActions.sol";
 import "./CawNameURI.sol";
 import "./CawName.sol";
 
+interface ICawActionsReplicator {
+  function updatePeer(uint32 clientId, uint32 destEid, address target) external;
+}
+
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
 contract CawNameL2 is 
@@ -27,6 +31,9 @@ contract CawNameL2 is
   uint256 public totalCaw;
 
   ICawActions public cawActions;
+
+  /// @notice The CawActionsReplicator contract for forwarding replication config
+  address public cawActionsReplicator;
 
   // In a normal ERC271, ownerOf reverts if there is no owner,
   // here, since it's not a real ERC721, just a pretender,
@@ -93,6 +100,10 @@ contract CawNameL2 is
 
   function setCawActions(address _cawActions) external onlyOwner {
     cawActions = ICawActions(_cawActions);
+  }
+
+  function setCawActionsReplicator(address _replicator) external onlyOwner {
+    cawActionsReplicator = _replicator;
   }
 
   function cawBalanceOf(uint32 tokenId) public view returns (uint256){
@@ -168,6 +179,29 @@ contract CawNameL2 is
     authenticated[cawClientId][tokenId] = true;
   }
 
+  // ============================================
+  // REPLICATION CONFIG
+  // ============================================
+
+  event ReplicationPeerSet(uint32 indexed clientId, uint32 indexed archiveEid, address target);
+
+  /**
+   * @notice Set a replication peer for a client. Called from L1 via LayerZero.
+   * @dev Forwards the config to CawActionsReplicator.
+   * @param clientId The client ID
+   * @param archiveEid The archive chain endpoint ID
+   * @param target The archive contract address (address(0) to remove)
+   */
+  function setReplicationPeer(uint32 clientId, uint32 archiveEid, address target) public {
+    require(fromLZ || (bypassLZ && msg.sender == address(cawName)), "only callable from L1");
+    require(cawActionsReplicator != address(0), "Replicator not set");
+
+    // Forward to replicator
+    ICawActionsReplicator(cawActionsReplicator).updatePeer(clientId, archiveEid, target);
+
+    emit ReplicationPeerSet(clientId, archiveEid, target);
+  }
+
   function deposit(uint32 cawClientId, uint32 tokenId, uint256 amount) external onlyOnMainnet {
     totalCaw += amount;
     auth(cawClientId, tokenId);
@@ -237,10 +271,11 @@ contract CawNameL2 is
   // Helper function to verify if the function selector is authorized
   function isAuthorizedFunction(bytes4 selector) private pure returns (bool) {
     // Add all authorized function selectors here
-    return selector == bytes4(keccak256("depositAndUpdateOwners(uint32,uint32,uint256,uint32[],address[])")) || 
+    return selector == bytes4(keccak256("depositAndUpdateOwners(uint32,uint32,uint256,uint32[],address[])")) ||
       selector == bytes4(keccak256("authenticateAndUpdateOwners(uint32,uint32,uint32[],address[])")) ||
       selector == bytes4(keccak256("mintAndUpdateOwners(uint32,address,string,uint32[],address[])")) ||
-      selector == bytes4(keccak256("updateOwners(uint32[],address[])"));
+      selector == bytes4(keccak256("updateOwners(uint32[],address[])")) ||
+      selector == bytes4(keccak256("setReplicationPeer(uint32,uint32,address)"));
   }
 
   function withdraw(uint32 tokenId, uint256 amount) external {

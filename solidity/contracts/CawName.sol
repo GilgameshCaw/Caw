@@ -14,7 +14,7 @@ import "./CawNameURI.sol";
 import "./CawNameL2.sol";
 
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
-import { CawClientManager } from "./CawClientManager.sol";
+import { CawClientManager, ReplicationDestination } from "./CawClientManager.sol";
 
 contract CawName is 
   Context,
@@ -44,6 +44,7 @@ contract CawName is
   bytes4 public addToBalanceSelector = bytes4(keccak256("depositAndUpdateOwners(uint32,uint32,uint256,uint32[],address[])"));
   bytes4 public authSelector = bytes4(keccak256("authenticateAndUpdateOwners(uint32,uint32,uint32[],address[])"));
   bytes4 public updateOwnersSelector = bytes4(keccak256("updateOwners(uint32[],address[])"));
+  bytes4 public setReplicationPeerSelector = bytes4(keccak256("setReplicationPeer(uint32,uint32,address)"));
 
   // Keeping track of clients to which the user has authenticated
   mapping(uint32 => mapping(uint32 => bool)) public authenticated;
@@ -248,6 +249,78 @@ contract CawName is
 
     CAW.transfer(msg.sender, amount);
     _updateNewOwners(peerWithMaxPendingTransfers(), lzEthAmount, lzTokenAmount);
+  }
+
+  // ============================================
+  // REPLICATION CONFIG SYNC
+  // ============================================
+
+  /**
+   * @notice Sync a replication peer config to the L2. Called by CawClientManager.
+   * @dev Only callable by CawClientManager (auto-sync on add/remove).
+   * @param clientId The client ID
+   * @param archiveEid The archive chain endpoint ID
+   * @param target The target address (or address(0) for removal)
+   * @param lzDestId The L2 endpoint ID to sync to
+   */
+  function syncReplicationInternal(uint32 clientId, uint32 archiveEid, address target, uint32 lzDestId) external payable {
+    require(msg.sender == address(clientManager), "Only CawClientManager");
+    _syncReplicationPeer(clientId, archiveEid, target, lzDestId, msg.value, 0);
+  }
+
+  /**
+   * @notice Manually sync a replication peer config to the L2.
+   * @dev Only callable by the client owner. Reads config from CawClientManager.
+   * @param clientId The client ID
+   * @param replicationIndex Index into the client's replication array (or type(uint256).max to sync all)
+   * @param lzDestId The L2 endpoint ID to sync to
+   * @param lzTokenAmount LZ token amount for fees
+   */
+  function syncReplication(uint32 clientId, uint256 replicationIndex, uint32 lzDestId, uint256 lzTokenAmount) external payable {
+    require(clientManager.getClientOwner(clientId) == msg.sender, "Not the client owner");
+
+    ReplicationDestination[] memory replications = clientManager.getReplications(clientId);
+
+    if (replicationIndex == type(uint256).max) {
+      // Sync all replications
+      for (uint i = 0; i < replications.length; i++) {
+        _syncReplicationPeer(clientId, replications[i].eid, replications[i].target, lzDestId, msg.value / replications.length, lzTokenAmount / replications.length);
+      }
+    } else {
+      require(replicationIndex < replications.length, "Invalid replication index");
+      _syncReplicationPeer(clientId, replications[replicationIndex].eid, replications[replicationIndex].target, lzDestId, msg.value, lzTokenAmount);
+    }
+  }
+
+  /**
+   * @notice Manually sync removal of a replication peer to the L2.
+   * @dev Only callable by the client owner. Useful if auto-sync failed.
+   * @param clientId The client ID
+   * @param archiveEid The archive chain endpoint ID being removed
+   * @param lzDestId The L2 endpoint ID to sync to
+   * @param lzTokenAmount LZ token amount for fees
+   */
+  function syncReplicationRemoval(uint32 clientId, uint32 archiveEid, uint32 lzDestId, uint256 lzTokenAmount) external payable {
+    require(clientManager.getClientOwner(clientId) == msg.sender, "Not the client owner");
+    _syncReplicationPeer(clientId, archiveEid, address(0), lzDestId, msg.value, lzTokenAmount);
+  }
+
+  function _syncReplicationPeer(uint32 clientId, uint32 archiveEid, address target, uint32 lzDestId, uint256 lzEthAmount, uint256 lzTokenAmount) internal {
+    if (lzDestId == mainnetLzId) {
+      // Direct call on mainnet
+      cawNameL2.setReplicationPeer(clientId, archiveEid, target);
+    } else {
+      bytes memory payload = abi.encodeWithSelector(setReplicationPeerSelector, clientId, archiveEid, target);
+      lzSend(lzDestId, setReplicationPeerSelector, payload, lzEthAmount, lzTokenAmount);
+    }
+  }
+
+  /**
+   * @notice Get quote for syncing replication config to L2
+   */
+  function syncReplicationQuote(uint32 clientId, uint32 archiveEid, address target, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+    bytes memory payload = abi.encodeWithSelector(setReplicationPeerSelector, clientId, archiveEid, target);
+    return lzQuote(setReplicationPeerSelector, payload, lzDestId, payInLzToken);
   }
 
   function setWithdrawable(uint32[] memory tokenIds, uint256[] memory amounts) external {
@@ -478,6 +551,8 @@ contract CawName is
       return 300000;
     else if (selector == authSelector)
       return 300000;
+    else if (selector == setReplicationPeerSelector)
+      return 100000; // Simple storage update + forwarding to replicator
     else revert('unexpected selector');
   }
 
