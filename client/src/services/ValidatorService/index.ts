@@ -8,8 +8,9 @@ import getActionType from '../../abi/getActionType'
 import { cawActionsAbi, cawClientManagerAbi } from '../../abi/generated'
 import { CAW_ACTIONS_ADDRESS, CAW_ADDRESS, WETH_ADDRESS, CLIENT_MANAGER_ADDRESS } from '../../abi/addresses'
 import { WebSocketProvider, JsonRpcProvider, Contract, Wallet } from 'ethers'
+import { cawToEthCached, isPriceFresh, getReplicationCount as getReplicationCountFromCache } from '../ChainSyncService'
 
-// Uniswap V2 Router ABI (minimal for getAmountsOut)
+// Uniswap V2 Router ABI (minimal for getAmountsOut) - fallback if cache is stale
 const UNISWAP_V2_ROUTER_ABI = [
   {
     constant: true,
@@ -61,10 +62,16 @@ function getUniswapRouter(mainnetRpcUrl: string): Contract {
 
 /**
  * Get or create ClientManager contract instance
+ * Uses L2_RPC_URL_HTTP for JSON-RPC calls (WebSocket URLs don't work with JsonRpcProvider)
  */
-function getClientManager(l2RpcUrl: string): Contract {
+function getClientManager(): Contract {
   if (!cachedClientManager || !cachedL2Provider) {
-    cachedL2Provider = new JsonRpcProvider(l2RpcUrl)
+    // Use HTTP URL for JsonRpcProvider (WebSocket URL won't work)
+    const l2HttpUrl = process.env.L2_RPC_URL_HTTP
+    if (!l2HttpUrl) {
+      throw new Error('Missing L2_RPC_URL_HTTP in environment variables')
+    }
+    cachedL2Provider = new JsonRpcProvider(l2HttpUrl)
     cachedClientManager = new Contract(CLIENT_MANAGER_ADDRESS, cawClientManagerAbi, cachedL2Provider)
   }
   return cachedClientManager
@@ -72,19 +79,31 @@ function getClientManager(l2RpcUrl: string): Contract {
 
 /**
  * Get replication count for a client
+ * Uses ChainSyncService cache first, falls back to direct contract query
  * @param clientId - The client ID
- * @param l2RpcUrl - L2 RPC URL for contract query
  * @returns Number of replication destinations for this client
  */
-async function getReplicationCount(clientId: number, l2RpcUrl: string): Promise<number> {
-  // Check cache first
+async function getReplicationCount(clientId: number): Promise<number> {
+  // Try ChainSyncService cache first (synced every 30 minutes)
+  try {
+    const cachedCount = await getReplicationCountFromCache(clientId)
+    // If we got a result from DB, use it
+    if (cachedCount !== undefined) {
+      return cachedCount
+    }
+  } catch (err) {
+    // Cache miss, continue to direct query
+  }
+
+  // Check local memory cache
   const cached = replicationCountCache.get(clientId)
   if (cached && Date.now() - cached.timestamp < REPLICATION_CACHE_TTL) {
     return cached.count
   }
 
+  // Fallback to direct contract query
   try {
-    const clientManager = getClientManager(l2RpcUrl)
+    const clientManager = getClientManager()
 
     // Check if replication is enabled for this client
     const enabled = await clientManager.clientReplicationEnabled(clientId)
@@ -105,6 +124,67 @@ async function getReplicationCount(clientId: number, l2RpcUrl: string): Promise<
     // Fallback to 0 if we can't query the contract
     return 0
   }
+}
+
+// Tip constants - must match frontend actions.ts
+// These are in CAW wei (18 decimals) - amounts are passed directly to addToBalance
+// 10,000 CAW tokens = 10000 * 10^18 wei
+// At ~500k CAW = $0.01, 10k CAW ≈ $0.0002 per action
+const CAW_DECIMALS = BigInt(10 ** 18)
+const BASE_VALIDATOR_TIP = BigInt(process.env.VALIDATOR_BASE_TIP || "10000") * CAW_DECIMALS // 10k CAW base tip
+const TIP_PER_REPLICATION_CHAIN = BigInt(process.env.VALIDATOR_TIP_PER_CHAIN || "5000") * CAW_DECIMALS // 5k CAW per replication chain
+
+/**
+ * Calculate the minimum required tip for an action based on replication chain count
+ * @param replicationChainCount - Number of replication destinations for the client
+ * @returns Minimum required tip in CAW
+ */
+function calculateMinimumTip(replicationChainCount: number): bigint {
+  return BASE_VALIDATOR_TIP + (TIP_PER_REPLICATION_CHAIN * BigInt(replicationChainCount))
+}
+
+/**
+ * Validate that an action's tip is sufficient for the client's replication count
+ * @param action - The action data
+ * @param l2RpcUrl - L2 RPC URL for contract query
+ * @returns Validation result with details
+ */
+async function validateActionTip(
+  action: any,
+  l2RpcUrl: string
+): Promise<{ valid: boolean; reason?: string; required?: bigint; provided?: bigint }> {
+  const clientId = action.clientId ?? 1
+  const replicationCount = await getReplicationCount(clientId)
+
+  // Get the tip from the action's amounts array (last element is the tip)
+  const amounts = action.amounts || []
+  if (amounts.length === 0) {
+    return {
+      valid: false,
+      reason: `No tip provided. Required: ${calculateMinimumTip(replicationCount).toString()} CAW`,
+      required: calculateMinimumTip(replicationCount),
+      provided: BigInt(0)
+    }
+  }
+
+  const providedTip = BigInt(amounts[amounts.length - 1] || '0')
+  const requiredTip = calculateMinimumTip(replicationCount)
+
+  if (providedTip < requiredTip) {
+    console.log(`[Validator] Insufficient tip for action:`)
+    console.log(`  - Client ID: ${clientId}`)
+    console.log(`  - Replication chains: ${replicationCount}`)
+    console.log(`  - Required tip: ${requiredTip.toString()} CAW`)
+    console.log(`  - Provided tip: ${providedTip.toString()} CAW`)
+    return {
+      valid: false,
+      reason: `Insufficient tip: provided ${providedTip.toString()} CAW, required ${requiredTip.toString()} CAW (base + ${replicationCount} chains)`,
+      required: requiredTip,
+      provided: providedTip
+    }
+  }
+
+  return { valid: true }
 }
 
 /**
@@ -135,9 +215,9 @@ function groupActionsByClient(actions: any[]): Map<number, number[]> {
 }
 
 /**
- * Convert CAW amount to ETH using Uniswap V2 getAmountsOut
- * @param cawAmount - Amount of CAW tokens (in wei, i.e., with 18 decimals)
- * @param mainnetRpcUrl - Mainnet RPC URL for Uniswap query
+ * Convert CAW amount to ETH using cached price or Uniswap V2 getAmountsOut
+ * @param cawAmount - Amount of CAW tokens (raw count, not wei)
+ * @param mainnetRpcUrl - Mainnet RPC URL for Uniswap query (fallback)
  * @returns Amount of ETH (in wei) that the CAW would swap to
  */
 async function cawToEth(cawAmount: bigint, mainnetRpcUrl: string): Promise<bigint> {
@@ -145,6 +225,17 @@ async function cawToEth(cawAmount: bigint, mainnetRpcUrl: string): Promise<bigin
     return BigInt(0)
   }
 
+  // Try to use cached price first (refreshed every 5 minutes by ChainSyncService)
+  if (isPriceFresh(10 * 60 * 1000)) { // Accept prices up to 10 minutes old
+    const cachedResult = cawToEthCached(cawAmount)
+    if (cachedResult !== null) {
+      console.log(`[Validator] Using cached CAW/ETH price`)
+      return cachedResult
+    }
+  }
+
+  // Fallback to direct Uniswap query if cache is stale
+  console.log(`[Validator] Cache miss - querying Uniswap directly`)
   try {
     const router = getUniswapRouter(mainnetRpcUrl)
     const path = [CAW_ADDRESS, WETH_ADDRESS]
@@ -991,7 +1082,7 @@ console.log("succeededKeys", succeededKeys)
 
       // Get clientId from action to determine replication chain count
       const clientId = action.clientId ?? 1 // Default to client 1 if not specified
-      const replicationChainCount = await getReplicationCount(clientId, l2RpcUrl)
+      const replicationChainCount = await getReplicationCount(clientId)
 
       // Calculate required CAW for all images
       let totalRequiredCaw = 0
@@ -1080,26 +1171,41 @@ console.log("succeededKeys", succeededKeys)
           console.log(`  - Created: ${entry.createdAt}`)
         })
 
-        // Pre-filter entries that don't have sufficient CAW for OTHER actions
+        // Pre-filter entries that don't have sufficient CAW for OTHER actions or insufficient tip
         const validatedEntries: typeof entries = []
-        const underpricedEntries: Array<{ entry: typeof entries[0]; requiredCaw: number }> = []
+        const underpricedEntries: Array<{ entry: typeof entries[0]; reason: string }> = []
 
         for (const entry of entries) {
           const action = (entry.payload as any).data
-          const validation = await validateOtherActionCost(action)
-          if (validation.valid) {
-            validatedEntries.push(entry)
-          } else if (validation.underpriced) {
-            underpricedEntries.push({ entry, requiredCaw: validation.requiredCaw || 0 })
-            console.log(`[Validator] Marking txQueue entry ${entry.id} as underpriced: required ${validation.requiredCaw} CAW`)
+
+          // First, check if this is an OTHER action with insufficient CAW for content
+          const otherValidation = await validateOtherActionCost(action)
+          if (!otherValidation.valid && otherValidation.underpriced) {
+            underpricedEntries.push({
+              entry,
+              reason: `Insufficient CAW for content: required ${otherValidation.requiredCaw} CAW`
+            })
+            console.log(`[Validator] Marking txQueue entry ${entry.id} as underpriced (content): required ${otherValidation.requiredCaw} CAW`)
+            continue
           }
+
+          // Then, validate the tip is sufficient for replication costs
+          const tipValidation = await validateActionTip(action, l2RpcUrl)
+          if (!tipValidation.valid) {
+            underpricedEntries.push({
+              entry,
+              reason: tipValidation.reason || 'Insufficient tip'
+            })
+            console.log(`[Validator] Marking txQueue entry ${entry.id} as underpriced (tip): ${tipValidation.reason}`)
+            continue
+          }
+
+          validatedEntries.push(entry)
         }
 
         // Mark underpriced entries with 'underpriced' status for potential relay to other validators
         if (underpricedEntries.length > 0) {
-          await Promise.all(underpricedEntries.map(({ entry, requiredCaw }) => {
-            const reason = `Insufficient CAW: required ${requiredCaw} CAW`
-
+          await Promise.all(underpricedEntries.map(({ entry, reason }) => {
             return prisma.txQueue.update({
               where: { id: entry.id },
               data: {
