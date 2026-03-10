@@ -6,6 +6,82 @@ import { ActionType } from '@prisma/client'
 const router = Router()
 
 /**
+ * GET /api/users/top-followed
+ * Returns the top followed users (for suggestions)
+ * IMPORTANT: This route must be defined BEFORE /:username to avoid conflicts
+ */
+router.get('/top-followed', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit as string) || 10, 20)
+    const currentUserId = Number(req.header('x-user-id')) || undefined
+
+    // Get users ordered by follower count
+    const users = await prisma.user.findMany({
+      where: {
+        followerCount: { gt: 0 }
+      },
+      select: {
+        tokenId: true,
+        username: true,
+        displayName: true,
+        avatarUrl: true,
+        image: true,
+        followerCount: true,
+      },
+      orderBy: {
+        followerCount: 'desc'
+      },
+      take: limit
+    })
+
+    // Get total likes received for each user
+    const usersWithLikes = await Promise.all(users.map(async (user) => {
+      const likeCount = await prisma.like.count({
+        where: {
+          caw: { userId: user.tokenId },
+          action: ActionType.LIKE
+        }
+      })
+
+      // Check if current user is following this user
+      let isFollowing = false
+      let followPending = false
+      if (currentUserId && currentUserId !== user.tokenId) {
+        const follow = await prisma.follow.findUnique({
+          where: {
+            followerId_followingId: {
+              followerId: currentUserId,
+              followingId: user.tokenId
+            }
+          },
+          select: {
+            action: true,
+            status: true
+          }
+        })
+
+        if (follow) {
+          isFollowing = follow.action === 'FOLLOW' && follow.status === 'SUCCESS'
+          followPending = follow.status === 'PENDING'
+        }
+      }
+
+      return {
+        ...user,
+        likeCount,
+        isFollowing,
+        followPending
+      }
+    }))
+
+    return res.json({ users: usersWithLikes })
+  } catch (err: any) {
+    console.error('GET /api/users/top-followed error', err)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
  * GET /api/users/follow-status?followerId=X&followingId=Y
  * Check the current follow status between two users
  * IMPORTANT: This route must be defined BEFORE /:username to avoid conflicts
