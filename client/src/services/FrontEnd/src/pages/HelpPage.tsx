@@ -764,9 +764,14 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                     <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
                       ERC-20 token on Ethereum mainnet
                     </p>
-                    <code className={`text-xs mt-1 block break-all ${isDark ? 'text-yellow-500' : 'text-yellow-700'}`}>
+                    <a
+                      href="https://etherscan.io/token/0xf3b9569F82B18aEf890De263B84189bd33EBe452"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={`text-xs mt-1 block break-all hover:underline ${isDark ? 'text-yellow-500 hover:text-yellow-400' : 'text-yellow-700 hover:text-yellow-600'}`}
+                    >
                       0xf3b9569F82B18aEf890De263B84189bd33EBe452
-                    </code>
+                    </a>
                   </div>
 
                   <div className={`border-t pt-4 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
