@@ -3,11 +3,11 @@ import { SubmitButton } from "~/components/buttons/SubmitButton"
 import React, { useState, useCallback, useMemo } from 'react'
 import { useReadContract, useAccount, useConnections, useSwitchChain } from 'wagmi'
 import useAllowance from "~/hooks/useAllowance";
-import { maxUint256, parseUnits } from "viem";
+import { maxUint256, parseUnits, erc20Abi } from "viem";
 import MainLayout from '~/layouts/MainLayout'
 import useContractCall, { UseContractCallReturn } from '~/hooks/useContractCall'
-import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_MINTER_ADDRESS } from '~/../../../abi/addresses'  // ← your real values
-import { erc20Abi, cawNameAbi, cawNameMinterAbi } from '~/../../../abi/generated'  // ← your real values
+import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_MINTER_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
+import { cawNameAbi, cawNameMinterAbi, cawNameQuoterAbi } from '~/../../../abi/generated'
 import { useActiveToken, useTokenDataStore } from "~/store/tokenDataStore";
 import { chains } from '~/config/chains'
 import UsernameSvg from '~/components/UsernameSvg'
@@ -49,6 +49,7 @@ export const NewProfile: React.FC = () => {
   const [mintSuccess, setMintSuccess] = useState(false)
   const [mintedTokenId, setMintedTokenId] = useState<number | null>(null)
   const [hasResetForm, setHasResetForm] = useState(false)
+  const [isApprovePending, setIsApprovePending] = useState(false)
   const useAddress = address || activeToken?.owner;
   const setActiveTokenId = useTokenDataStore(state => state.setActiveTokenId);
 
@@ -84,12 +85,12 @@ export const NewProfile: React.FC = () => {
   })
 console.log("BALANCE:", balance)
 
-  // quote on‐chain L2 deposit fee
+  // quote on‐chain L2 deposit fee from CawNameQuoter
   const { data: quote, error,failureReason, fetchStatus } = useReadContract({
-    abi: cawNameAbi,
+    abi: cawNameQuoterAbi,
     chainId: chains.l1.chainId,
     functionName: "mintQuote",
-    address: CAW_NAMES_ADDRESS,
+    address: CAW_NAME_QUOTER_ADDRESS,
     args: [ CLIENT_ID, false ],
     query: { enabled: true }
   })
@@ -116,6 +117,15 @@ console.log("BALANCE:", balance)
     functionName: "approve",
     args: [CAW_NAMES_MINTER_ADDRESS, maxUint256],
     disabled: wrongChain || !needsApproval,
+    onPending: () => {
+      setIsApprovePending(true)
+    },
+    onSuccess: () => {
+      setIsApprovePending(false)
+    },
+    onError: () => {
+      setIsApprovePending(false)
+    },
   });
 
 
@@ -158,7 +168,7 @@ console.log("BALANCE:", balance)
     onError:      err  => console.error(err),
   })
 
-  const waiting = Boolean(approveStatus.match(/pending/)) || Boolean(mintStatus.match(/pending/))
+  const waiting = isApprovePending || Boolean(mintStatus.match(/pending/))
 
   const handleSubmit = useCallback(async () => {
     if (wrongChain) {
@@ -194,7 +204,7 @@ console.log("BALANCE:", balance)
           <span>Minting...</span>
         </div>
       )
-    } else if (approveStatus === 'pending') {
+    } else if (isApprovePending) {
       submitText = (
         <div className="flex items-center justify-center space-x-2">
           <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
@@ -219,41 +229,33 @@ console.log("BALANCE:", balance)
       <MainLayout>
         <div className="max-w-md mx-auto p-6 space-y-4 mt-8">
           <div className="text-center space-y-6">
-            {/* Loading animation */}
-            <div className="flex justify-center">
-              <div className="w-32 h-32 rounded-full bg-yellow-500/20 flex items-center justify-center">
-                <svg className="animate-spin h-20 w-20 text-yellow-500" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
-                </svg>
-              </div>
-            </div>
-
             <h1 className="text-4xl font-bold text-white">Minting Your Username...</h1>
 
-            <div className="space-y-2">
-              <p className="text-xl text-gray-300">
-                Creating
-              </p>
-              <p className="text-3xl font-bold text-yellow-500">
-                @{username}
-              </p>
-            </div>
-
-            {/* Show the username SVG */}
+            {/* Show the username SVG with loader overlay */}
             <div className="flex justify-center items-center my-8">
-              <div className="w-44 h-44 opacity-50">
+              <div className="relative w-64 h-64 border border-yellow-500/30 overflow-hidden" style={{ borderRadius: '22px' }}>
                 <UsernameSvg username={username}/>
+                {/* Loader overlay */}
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="w-16 h-16 rounded-full bg-black/60 flex items-center justify-center">
+                    <svg className="animate-spin h-10 w-10 text-yellow-500" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                    </svg>
+                  </div>
+                </div>
               </div>
             </div>
 
             <div className="space-y-4">
-              <p className="text-gray-400">
-                Please wait while your transaction is being processed on the blockchain...
-              </p>
+              {mintStatus === 'pending' && (
+                <p className="text-gray-400">
+                  Please confirm the transaction in your wallet...
+                </p>
+              )}
               {mintStatus === 'success' && (
-                <p className="text-yellow-500 text-sm">
-                  Transaction submitted! Waiting for confirmation...
+                <p className="text-gray-400">
+                  Please wait while your transaction is being processed on the blockchain...
                 </p>
               )}
             </div>
@@ -338,14 +340,14 @@ console.log("BALANCE:", balance)
       <div className="max-w-md mx-auto p-6 space-y-4 mt-8"> {/* Cambiado de mt-16 a mt-8 para subir todo el contenido */}
         <div className="text-center space-y-3">
           <h1 className="text-4xl font-bold">Mint a Username</h1>
-          <p className="text-gray-400 text-sm max-w-lg mx-auto">
+          <p className="text-gray-400 text-sm mx-auto" style={{ width: '85%' }}>
             Your username is a tradeable NFT that will be used to access your account and posts. Minting a username requires CAW to be burnt, fewer characters increase in cost and rarity.
           </p>
         </div>
 
         {/* Imagen generada del username - siempre visible */}
         <div className="flex justify-center items-center mb-6 mt-16">
-            <div className="w-64 h-64">
+            <div className="w-64 h-64 border border-yellow-500/30 overflow-hidden" style={{ borderRadius: '22px' }}>
                 <UsernameSvg username={username}/>
             </div>
         </div>
@@ -450,10 +452,21 @@ console.log("BALANCE:", balance)
             </SubmitButton>
 
             {gasCostEth != null && (
-                <div className="text-sm text-gray-500">
+                <div className="text-sm text-gray-500 text-center">
                     est. gas: {gasCostEth.toFixed(4)} ETH
                 </div>
             )}
+
+            <div className="text-center">
+              <a
+                href="https://app.uniswap.org/#/swap?inputCurrency=ETH&outputCurrency=0xf3b9569F82B18aEf890De263B84189bd33EBe452"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-yellow-500/70 hover:text-yellow-500 transition-colors cursor-pointer"
+              >
+                Need more CAW? Click here.
+              </a>
+            </div>
         </div>
       </div>
     </MainLayout>

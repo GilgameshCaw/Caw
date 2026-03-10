@@ -14,9 +14,9 @@ import useAllowance from "~/hooks/useAllowance";
 import { useAccount, useConnections, useReadContract, useSwitchChain, useChainId } from "wagmi"
 import { useConnectModal } from "@rainbow-me/rainbowkit"
 import { useActiveToken, useTokenDataStore } from "~/store/tokenDataStore"
-import { erc20Abi, cawNameAbi, cawNameL2Abi } from "~/../../../abi/generated"
-import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_L2_ADDRESS } from "~/../../../abi/addresses"
-import { maxUint256, parseUnits, formatUnits } from "viem";
+import { cawNameAbi, cawNameL2Abi, cawNameQuoterAbi } from "~/../../../abi/generated"
+import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_L2_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from "~/../../../abi/addresses"
+import { maxUint256, parseUnits, formatUnits, erc20Abi } from "viem";
 import MainLayout from '~/layouts/MainLayout'
 import { sepolia, baseSepolia } from 'wagmi/chains'
 import { chains } from '~/config/chains'
@@ -102,22 +102,22 @@ const Staking = () => {
     }
   })
 
-  // Get deposit quote
+  // Get deposit quote from CawNameQuoter
   const { data: depositQuote } = useReadContract({
-    abi: cawNameAbi,
+    abi: cawNameQuoterAbi,
     chainId: chains.l1.chainId,
     functionName: "depositQuote",
-    address: CAW_NAMES_ADDRESS,
+    address: CAW_NAME_QUOTER_ADDRESS,
     args: [CLIENT_ID, tokenId ?? 0, parseUnits(amount || "0", 18), chains.l2.layerZero, false],
     query: {
       enabled: !!tokenId && !!amount && activeTab === 'stake'
     }
   })
 
-  // Get withdraw quote
+  // Get withdraw quote from CawNameQuoter
   const { data: withdrawQuote } = useReadContract({
-    address: CAW_NAMES_ADDRESS,
-    abi: cawNameAbi,
+    address: CAW_NAME_QUOTER_ADDRESS,
+    abi: cawNameQuoterAbi,
     chainId: chains.l1.chainId,
     functionName: "withdrawQuote",
     args: [CLIENT_ID, false],
@@ -552,11 +552,11 @@ const Staking = () => {
             ? 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
             : (!tokenId || (!isTokenOwner && !wrongChainForStake) || (!wrongChainForStake && !needsApproval && (!amount || depositFee === 0n)))
             ? (isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed')
-            : (isStakePending || isApprovePending || stake.status === 'pending' || approve.status === 'pending')
+            : (isStakePending || isApprovePending)
             ? 'bg-yellow-600 text-black cursor-not-allowed'
             : 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
         }`}
-        disabled={isConnected && (!tokenId || (!isTokenOwner && !wrongChainForStake) || (!wrongChainForStake && ((!needsApproval && (!amount || depositFee === 0n || isStakePending || stake.status === 'pending')) || (needsApproval && (isApprovePending || approve.status === 'pending')))))}
+        disabled={isConnected && (!tokenId || (!isTokenOwner && !wrongChainForStake) || (!wrongChainForStake && ((!needsApproval && (!amount || depositFee === 0n || isStakePending)) || (needsApproval && isApprovePending))))}
       >
         {isSwitchingNetwork
           ? 'Switching...'
@@ -564,9 +564,9 @@ const Staking = () => {
           ? 'Connect Wallet'
           : !isTokenOwner && activeToken && !wrongChainForStake
           ? 'Wrong Address'
-          : (isStakePending || stake.status === 'pending')
+          : isStakePending
           ? 'Staking...'
-          : (isApprovePending || approve.status === 'pending')
+          : isApprovePending
           ? 'Approving...'
           : wrongChainForStake
           ? 'Switch Network'
@@ -576,6 +576,17 @@ const Staking = () => {
           ? "Insufficient Balance"
           : "Stake CAW"}
       </button>
+
+      <div className="text-center mt-4">
+        <a
+          href="https://app.uniswap.org/#/swap?inputCurrency=ETH&outputCurrency=0xf3b9569F82B18aEf890De263B84189bd33EBe452"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-sm text-yellow-500/70 hover:text-yellow-500 transition-colors cursor-pointer"
+        >
+          Need more CAW? Click here.
+        </a>
+      </div>
     </div>
   )
 
@@ -952,74 +963,75 @@ const Staking = () => {
             Portfolio Overview
           </h3>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <div className={`p-4 rounded-lg border transition-all duration-300 bg-black ${
+            <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 bg-black flex flex-col items-center justify-between ${
               isDark ? 'border-white/20' : 'border-gray-300'
-            }`}>
-              <div className={`text-sm transition-colors duration-300 ${
-                isDark ? 'text-gray-400' : 'text-gray-600'
-              }`}>
-                Staked CAW
-              </div>
-              <div className={`text-lg font-bold transition-colors duration-300 ${
+            }`} style={{ paddingTop: '10px' }}>
+              <div className={`text-3xl font-bold transition-colors duration-300 text-center flex-1 flex items-center ${
                 isDark ? 'text-white' : 'text-black'
               }`}>
                 {activeToken ? formatUnitsCompact(activeToken.stakedAmount || 0n, 18) : '-'}
               </div>
-            </div>
-
-            <div className={`p-4 rounded-lg border transition-all duration-300 bg-black ${
-              isDark ? 'border-white/20' : 'border-gray-300'
-            }`}>
-              <div className={`text-sm transition-colors duration-300 flex items-center gap-1 ${
+              <div className={`text-sm transition-colors duration-300 text-center ${
                 isDark ? 'text-gray-400' : 'text-gray-600'
               }`}>
-                Withdrawable
-                <div className="relative group">
-                  <HiQuestionMarkCircle className="w-4 h-4 cursor-help" />
-                  <div className={`absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 z-50 ${
-                    isDark ? 'bg-white text-black' : 'bg-gray-900 text-white'
-                  }`}>
-                    You must unstake your CAW to withdraw it
-                    <div className={`absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent ${
-                      isDark ? 'border-t-white' : 'border-t-gray-900'
-                    }`}></div>
-                  </div>
+                Staked CAW
+              </div>
+            </div>
+
+            <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 bg-black flex flex-col items-center justify-between relative ${
+              isDark ? 'border-white/20' : 'border-gray-300'
+            }`} style={{ paddingTop: '10px' }}>
+              {/* Question mark icon in top right */}
+              <div className="absolute top-1.5 right-1.5 group">
+                <HiQuestionMarkCircle className={`w-4 h-4 cursor-help ${isDark ? 'text-gray-400' : 'text-gray-500'}`} />
+                <div className={`absolute bottom-full right-0 mb-2 px-3 py-2 text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 z-50 ${
+                  isDark ? 'bg-white text-black' : 'bg-gray-900 text-white'
+                }`}>
+                  You must unstake your CAW to withdraw it
+                  <div className={`absolute top-full right-2 border-4 border-transparent ${
+                    isDark ? 'border-t-white' : 'border-t-gray-900'
+                  }`}></div>
                 </div>
               </div>
-              <div className={`text-lg font-bold transition-colors duration-300 ${
+              <div className={`text-3xl font-bold transition-colors duration-300 text-center flex-1 flex items-center ${
                 isDark ? 'text-yellow-200' : 'text-yellow-800'
               }`}>
                 {activeToken ? formatUnitsCompact(activeToken.withdrawable || 0n, 18) : '-'}
               </div>
-            </div>
-
-            <div className={`p-4 rounded-lg border transition-all duration-300 bg-black ${
-              isDark ? 'border-white/20' : 'border-gray-300'
-            }`}>
-              <div className={`text-sm transition-colors duration-300 ${
+              <div className={`text-sm transition-colors duration-300 text-center ${
                 isDark ? 'text-gray-400' : 'text-gray-600'
               }`}>
-                Wallet Balance
+                Withdrawable
               </div>
-              <div className={`text-lg font-bold transition-colors duration-300 ${
+            </div>
+
+            <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 bg-black flex flex-col items-center justify-between ${
+              isDark ? 'border-white/20' : 'border-gray-300'
+            }`} style={{ paddingTop: '10px' }}>
+              <div className={`text-3xl font-bold transition-colors duration-300 text-center flex-1 flex items-center ${
                 isDark ? 'text-white' : 'text-black'
               }`}>
                 {activeToken ? formatUnitsCompact(activeToken.ownerBalance || 0n, 18) : '-'}
               </div>
-            </div>
-
-            <div className={`p-4 rounded-lg border transition-all duration-300 bg-black ${
-              isDark ? 'border-white/20' : 'border-gray-300'
-            }`}>
-              <div className={`text-sm transition-colors duration-300 ${
+              <div className={`text-sm transition-colors duration-300 text-center ${
                 isDark ? 'text-gray-400' : 'text-gray-600'
               }`}>
-                Actions
+                Wallet Balance
               </div>
-              <div className={`text-lg font-bold transition-colors duration-300 ${
+            </div>
+
+            <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 bg-black flex flex-col items-center justify-between ${
+              isDark ? 'border-white/20' : 'border-gray-300'
+            }`} style={{ paddingTop: '10px' }}>
+              <div className={`text-3xl font-bold transition-colors duration-300 text-center flex-1 flex items-center ${
                 isDark ? 'text-white' : 'text-black'
               }`}>
                 {activeToken ? mockData.actions.toLocaleString() : '-'}
+              </div>
+              <div className={`text-sm transition-colors duration-300 text-center ${
+                isDark ? 'text-gray-400' : 'text-gray-600'
+              }`}>
+                Actions
               </div>
             </div>
           </div>

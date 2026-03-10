@@ -170,10 +170,52 @@ export async function createImageFile(file: File): Promise<ImageFile> {
 }
 
 /**
+ * Calculate archive cost for cross-chain replication
+ * LayerZero message fees for archiving data to censorship-resistant chains
+ */
+export function calculateArchiveCost(sizeInBytes: number, archiveChainCount: number = 1): number {
+  if (archiveChainCount === 0) return 0
+
+  // LayerZero costs are primarily based on:
+  // - Base fee per message (~0.0001 ETH on testnet, ~0.0005 ETH on mainnet)
+  // - DVN (Data Verification Network) fees
+  // - Executor gas on destination chain
+  //
+  // The archive contract only emits events, so execution gas is minimal (~50k gas)
+  // Main cost is the cross-chain messaging fee
+
+  const BASE_LZ_FEE_GWEI = 500000 // ~0.0005 ETH base fee per chain
+  const GAS_PER_BYTE = 16 // Calldata cost on destination
+  const ARCHIVE_GAS_LIMIT = 50000 // Gas for event emission
+
+  // Calculate per-chain cost
+  const dataGas = sizeInBytes * GAS_PER_BYTE
+  const totalGasPerChain = ARCHIVE_GAS_LIMIT + Math.min(dataGas, 100000) // Cap data gas contribution
+
+  // Cost in gwei (destination chain gas + LZ overhead)
+  const gasPrice = 5 // Conservative average gwei
+  const executionCost = totalGasPerChain * gasPrice
+  const perChainCostGwei = BASE_LZ_FEE_GWEI + executionCost
+
+  // Convert to CAW (1 gwei = 0.03 CAW at assumed rates)
+  const cawPerGwei = 0.03
+  const perChainCostCaw = Math.ceil(perChainCostGwei * cawPerGwei)
+
+  // Total cost for all archive chains
+  const totalArchiveCost = perChainCostCaw * archiveChainCount
+
+  // Add 50% buffer for fee volatility
+  return Math.ceil(totalArchiveCost * 1.5)
+}
+
+/**
  * Calculate on-chain storage cost in CAW tokens
  * Based on Base chain gas costs for data storage
+ *
+ * @param sizeInBytes - Size of data to store
+ * @param archiveChainCount - Number of archive chains (0 to disable archive cost)
  */
-export function calculateOnChainCost(sizeInBytes: number): number {
+export function calculateOnChainCost(sizeInBytes: number, archiveChainCount: number = 1): number {
   // Base chain storage costs (2025 data):
   // - Each non-zero calldata byte costs 16 gas (post EIP-2028)
   // - Base64 encoded images are mostly non-zero bytes
@@ -209,11 +251,17 @@ export function calculateOnChainCost(sizeInBytes: number): number {
   // Add 150% markup for validator compensation
   // This covers: gas volatility (can spike 2-3x), operational costs, and profit margin
   // Better to overestimate than have transactions fail - unused CAW is not charged
-  const totalCost = Math.ceil(baseCost * 2.5)
+  const l2Cost = Math.ceil(baseCost * 2.5)
+
+  // Add archive costs for cross-chain replication
+  const archiveCost = calculateArchiveCost(sizeInBytes, archiveChainCount)
+
+  // Total cost = L2 storage + archive replication
+  const totalCost = l2Cost + archiveCost
 
   // For small images, ensure minimum viable compensation
-  // For a 10KB image: ~2400 CAW
-  // For a 50KB image: ~12000 CAW
+  // For a 10KB image: ~2400 CAW (L2) + ~750 CAW (archive) = ~3150 CAW
+  // For a 50KB image: ~12000 CAW (L2) + ~1000 CAW (archive) = ~13000 CAW
   return Math.max(MIN_CAW_COST, totalCost)
 }
 

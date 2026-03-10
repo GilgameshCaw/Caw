@@ -9,7 +9,8 @@ import { useActiveToken } from '~/store/tokenDataStore'
 import { useModalStore } from '~/store/modalStore'
 import { HiPencil, HiX, HiCamera, HiGlobe, HiLocationMarker, HiOutlineMail, HiDotsHorizontal } from 'react-icons/hi'
 import { apiFetch } from '~/api/client'
-import { useAccount } from 'wagmi'
+import { useAccount, useSwitchChain, useChainId } from 'wagmi'
+import { chains } from '~/config/chains'
 import { useSignAndSubmitAction } from '~/api/actions'
 import { useSignAndSubmitWithStakeCheck } from '~/hooks/useSignAndSubmitWithStakeCheck'
 import { InsufficientStakeError } from '~/errors/InsufficientStakeError'
@@ -57,6 +58,8 @@ export const Profile: React.FC = () => {
   const activeToken = useActiveToken()
   const { openModal } = useModalStore()
   const { isConnected, address } = useAccount()
+  const currentChainId = useChainId()
+  const { switchChain, isPending: isSwitchingChain } = useSwitchChain()
   const signAndSubmit = useSignAndSubmitAction()
   const { openConnectModal } = useConnectModal()
   const navigate = useNavigate()
@@ -64,6 +67,8 @@ export const Profile: React.FC = () => {
   const [isSaving, setIsSaving] = useState(false)
   const [updateCost, setUpdateCost] = useState(0)
   const { signAndSubmit: submitActionWithStakeCheck, stakeError, closeStakeModal } = useSignAndSubmitWithStakeCheck()
+
+  const isOnCorrectChain = currentChainId === chains.l2.chainId
 
   // Follow button logic with hook
   const {
@@ -88,6 +93,9 @@ export const Profile: React.FC = () => {
   const [showOptionsMenu, setShowOptionsMenu] = useState(false)
   const [isMuted, setIsMuted] = useState(false)
   const [showBlockConfirmModal, setShowBlockConfirmModal] = useState(false)
+  const [showCostExplanation, setShowCostExplanation] = useState(false)
+  const [profileError, setProfileError] = useState<string | null>(null)
+  const [localProfileUpdatePending, setLocalProfileUpdatePending] = useState(false)
 
   // Browser-level blocking from localStorage
   const { blockUser, unblockUser, isBlocked: checkIsBlocked } = useBlockedUsersStore()
@@ -230,15 +238,17 @@ export const Profile: React.FC = () => {
 
     // Validate file type
     if (!file.type.startsWith('image/')) {
-      alert('Please select a valid image file')
+      setProfileError('Please select a valid image file')
       return
     }
 
     // Validate file size (max 5MB)
     if (file.size > 5 * 1024 * 1024) {
-      alert('Image size must be less than 5MB')
+      setProfileError('Image size must be less than 5MB')
       return
     }
+
+    setProfileError(null)
 
     setIsUploading(true)
 
@@ -281,7 +291,7 @@ export const Profile: React.FC = () => {
       calculateUpdateCost()
     } catch (err) {
       console.error('Failed to upload image:', err)
-      alert('Failed to upload image. Please try again.')
+      setProfileError('Failed to upload image. Please try again.')
     } finally {
       setIsUploading(false)
     }
@@ -344,12 +354,23 @@ export const Profile: React.FC = () => {
       return
     }
 
-    // Check if user has an active token
-    if (!activeToken) {
-      alert('Please select a token')
+    // Check if on correct chain, if not switch
+    if (!isOnCorrectChain) {
+      try {
+        await switchChain({ chainId: chains.l2.chainId })
+      } catch (err) {
+        console.error('Failed to switch chain:', err)
+      }
       return
     }
 
+    // Check if user has an active token
+    if (!activeToken) {
+      setProfileError('Please select a token')
+      return
+    }
+
+    setProfileError(null)
     setIsSaving(true)
 
     // Declare variables in outer scope so they're accessible in catch block
@@ -383,7 +404,7 @@ export const Profile: React.FC = () => {
 
       // If no changes, don't submit
       if (Object.keys(profileUpdateData).length === 0) {
-        alert('No changes to save')
+        setProfileError('No changes to save')
         setIsSaving(false)
         return
       }
@@ -405,6 +426,9 @@ export const Profile: React.FC = () => {
         amounts: [totalCost]
       })
 
+      // Set local pending state immediately
+      setLocalProfileUpdatePending(true)
+
       // Close modal and refresh profile data
       setIsEditModalOpen(false)
 
@@ -413,11 +437,6 @@ export const Profile: React.FC = () => {
       setCoverPreview(undefined)
       setAvatarUrl(undefined)
       setCoverUrl(undefined)
-
-      // Refresh profile data after a short delay
-      setTimeout(() => {
-        window.location.reload()
-      }, 2000)
     } catch (err: any) {
       console.error('Failed to update profile:', err)
       console.error('Error details:', {
@@ -429,9 +448,21 @@ export const Profile: React.FC = () => {
         activeToken,
         updateCost
       })
-      // Don't show alert for insufficient stake errors - the modal handles that
+      // Don't show error for insufficient stake errors - the modal handles that
       if (!(err instanceof InsufficientStakeError)) {
-        alert(`Failed to update profile: ${err?.message || 'Unknown error'}`)
+        // Extract a clean error message
+        let errorMessage = 'Failed to update profile'
+        if (err?.message) {
+          if (err.message.includes('User rejected') || err.message.includes('user rejected')) {
+            errorMessage = 'Transaction rejected'
+          } else if (err.message.includes('chainId should be same')) {
+            errorMessage = 'Please switch to the correct network'
+          } else {
+            // Take first line and trim
+            errorMessage = err.message.split('\n')[0].slice(0, 100)
+          }
+        }
+        setProfileError(errorMessage)
       }
     } finally {
       setIsSaving(false)
@@ -683,16 +714,33 @@ export const Profile: React.FC = () => {
               {/* Edit Button */}
               <div>
                 {isOwnProfile ? (
-                  <button 
+                  <button
                     onClick={() => setIsEditModalOpen(true)}
+                    disabled={profileData?.profileUpdatePending || localProfileUpdatePending}
                     className={`px-4 py-2 rounded-full font-semibold border transition-all duration-200 ${
-                      isDark 
-                        ? 'border-white/60 text-white hover:bg-white hover:text-black' 
+                      profileData?.profileUpdatePending || localProfileUpdatePending
+                        ? 'opacity-60 cursor-not-allowed'
+                        : 'cursor-pointer'
+                    } ${
+                      isDark
+                        ? 'border-white/60 text-white hover:bg-white hover:text-black'
                         : 'border-black/60 text-black hover:bg-black hover:text-white'
                     }`}
                   >
-                    <HiPencil className="w-4 h-4 inline mr-2" />
-                    Edit Profile
+                    {(profileData?.profileUpdatePending || localProfileUpdatePending) ? (
+                      <>
+                        <svg className="w-4 h-4 inline mr-2 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Updating...
+                      </>
+                    ) : (
+                      <>
+                        <HiPencil className="w-4 h-4 inline mr-2" />
+                        Edit Profile
+                      </>
+                    )}
                   </button>
                 ) : (
                   <div className="flex flex-col space-y-3">
@@ -818,11 +866,11 @@ export const Profile: React.FC = () => {
       {isEditModalOpen && (
         <div
           className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
-          onClick={() => setIsEditModalOpen(false)}
+          onClick={() => { setIsEditModalOpen(false); setProfileError(null) }}
         >
           <div
             className={`w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl transition-all duration-300 ${
-              isDark ? 'bg-black border border-white/20' : 'bg-white border border-gray-200'
+              isDark ? 'bg-black border border-yellow-500/30' : 'bg-white border border-gray-200'
             }`}
             onClick={(e) => e.stopPropagation()}
           >
@@ -843,13 +891,23 @@ export const Profile: React.FC = () => {
             />
             {/* Modal Header */}
             <div className="flex items-center justify-between p-6 border-b border-white/10">
-              <h2 className={`text-xl font-bold transition-colors duration-300 ${
-                isDark ? 'text-white' : 'text-black'
-              }`}>
-                Edit Profile
-              </h2>
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-full bg-yellow-500/20">
+                  <img
+                    src="/icons/crow-1.svg"
+                    alt=""
+                    className="w-12 h-12"
+                    style={{ filter: 'invert(70%) sepia(98%) saturate(1000%) hue-rotate(360deg) brightness(103%) contrast(106%)' }}
+                  />
+                </div>
+                <h2 className={`text-xl font-bold transition-colors duration-300 ${
+                  isDark ? 'text-white' : 'text-black'
+                }`}>
+                  Edit Profile
+                </h2>
+              </div>
               <button
-                onClick={() => setIsEditModalOpen(false)}
+                onClick={() => { setIsEditModalOpen(false); setProfileError(null) }}
                 className={`p-2 rounded-full transition-all duration-300 hover:bg-gray-500/10 ${
                   isDark ? 'text-white' : 'text-black'
                 }`}
@@ -1144,37 +1202,98 @@ export const Profile: React.FC = () => {
             </div>
 
             {/* Modal Footer */}
-            <div className="flex justify-end space-x-3 p-6 border-t border-white/10">
+            <div className="p-6 border-t border-white/10">
+              <div className="flex justify-end">
+                <div className="inline-flex flex-col items-center">
+                  <div className="flex space-x-3">
+                    <button
+                      onClick={() => { setIsEditModalOpen(false); setProfileError(null) }}
+                      className={`px-6 py-2 rounded-full font-medium transition-all duration-300 cursor-pointer ${
+                        isDark
+                          ? 'border border-gray-600 text-gray-300 hover:bg-gray-800'
+                          : 'border border-gray-300 text-gray-600 hover:bg-gray-50'
+                      }`}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleProfileUpdate}
+                      disabled={isSaving || isUploading || isSwitchingChain || (isConnected && activeToken && address?.toLowerCase() !== activeToken.address?.toLowerCase()) || (isConnected && activeToken && isOnCorrectChain && updateCost === 0)}
+                      className={`px-6 py-2 rounded-full font-medium transition-all duration-300 ${
+                        isSaving || isUploading || isSwitchingChain || (isConnected && activeToken && address?.toLowerCase() !== activeToken.address?.toLowerCase()) || (isConnected && activeToken && isOnCorrectChain && updateCost === 0)
+                          ? 'bg-gray-500 cursor-not-allowed'
+                          : 'bg-yellow-500 hover:bg-yellow-600 cursor-pointer'
+                      } text-black`}
+                    >
+                      {isSaving ? (
+                        <span>Updating...</span>
+                      ) : isSwitchingChain ? (
+                        <span>Switching...</span>
+                      ) : !isConnected ? (
+                        <span>Connect Wallet</span>
+                      ) : !isOnCorrectChain ? (
+                        <span>Switch to Base Sepolia</span>
+                      ) : activeToken && address?.toLowerCase() !== activeToken.address?.toLowerCase() ? (
+                        <span>Wrong Address</span>
+                      ) : (
+                        <span>
+                          Save Changes {updateCost > 0 && `(${updateCost.toLocaleString()} CAW)`}
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                  {updateCost > 0 && (
+                    <button
+                      onClick={() => setShowCostExplanation(true)}
+                      className={`mt-2 text-xs cursor-pointer ${
+                        isDark ? 'text-yellow-500/70 hover:text-yellow-500' : 'text-yellow-700/70 hover:text-yellow-700'
+                      }`}
+                    >
+                      Why does this cost CAW?
+                    </button>
+                  )}
+                </div>
+              </div>
+              {/* Error message */}
+              {profileError && (
+                <div className={`mt-3 p-2 rounded-lg text-sm ${isDark ? 'bg-red-500/10 text-red-400' : 'bg-red-50 text-red-600'}`}>
+                  {profileError}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cost Explanation Modal */}
+      {showCostExplanation && (
+        <div
+          className="fixed inset-0 bg-black/70 flex items-center justify-center z-[60] p-4"
+          onClick={() => setShowCostExplanation(false)}
+        >
+          <div
+            className={`w-full max-w-md rounded-2xl p-6 transition-all duration-300 ${
+              isDark ? 'bg-gray-900 border border-yellow-500/30' : 'bg-white border border-gray-200'
+            }`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-black'}`}>
+              Why does this cost CAW?
+            </h3>
+            <div className={`space-y-3 mb-6 text-sm ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>
+              <p>
+                Your profile changes are stored permanently on the blockchain, making them censorship-resistant and truly owned by you.
+              </p>
+              <p className={`p-3 rounded-lg ${isDark ? 'bg-yellow-500/10 text-yellow-400' : 'bg-yellow-50 text-yellow-700'}`}>
+                The CAW cost covers the on-chain storage and is distributed to stakers who help secure the network.
+              </p>
+            </div>
+            <div className="flex space-x-3">
               <button
-                onClick={() => setIsEditModalOpen(false)}
-                className={`px-6 py-2 rounded-full font-medium transition-all duration-300 ${
-                  isDark 
-                    ? 'border border-gray-600 text-gray-300 hover:bg-gray-800' 
-                    : 'border border-gray-300 text-gray-600 hover:bg-gray-50'
-                }`}
+                onClick={() => setShowCostExplanation(false)}
+                className="flex-1 px-4 py-2 rounded-full font-medium transition-all duration-200 bg-yellow-500 text-black hover:bg-yellow-400 cursor-pointer"
               >
-                Cancel
-              </button>
-              <button
-                onClick={handleProfileUpdate}
-                disabled={isSaving || isUploading || (isConnected && activeToken && address?.toLowerCase() !== activeToken.address?.toLowerCase()) || (isConnected && activeToken && updateCost === 0)}
-                className={`px-6 py-2 rounded-full font-medium transition-all duration-300 ${
-                  isSaving || isUploading || (isConnected && activeToken && address?.toLowerCase() !== activeToken.address?.toLowerCase()) || (isConnected && activeToken && updateCost === 0)
-                    ? 'bg-gray-500 cursor-not-allowed'
-                    : 'bg-yellow-500 hover:bg-yellow-600'
-                } text-black`}
-              >
-                {isSaving ? (
-                  <span>Updating...</span>
-                ) : !isConnected ? (
-                  <span>Connect Wallet</span>
-                ) : activeToken && address?.toLowerCase() !== activeToken.address?.toLowerCase() ? (
-                  <span>Wrong Address</span>
-                ) : (
-                  <span>
-                    Save Changes {updateCost > 0 && `(${updateCost.toLocaleString()} CAW)`}
-                  </span>
-                )}
+                Got it
               </button>
             </div>
           </div>
@@ -1198,7 +1317,7 @@ export const Profile: React.FC = () => {
         >
           <div
             className={`w-full max-w-md rounded-2xl p-6 transition-all duration-300 ${
-              isDark ? 'bg-gray-900 border border-white/20' : 'bg-white border border-gray-200'
+              isDark ? 'bg-gray-900 border border-yellow-500/30' : 'bg-white border border-gray-200'
             }`}
             onClick={(e) => e.stopPropagation()}
           >
