@@ -38,6 +38,7 @@ import { apiFetch } from '~/api/client'
 import InsufficientStakeModal from './modals/InsufficientStakeModal'
 import MuteWordsModal from './modals/MuteWordsModal'
 import MuteConfirmModal, { shouldShowMuteConfirmModal } from './modals/MuteConfirmModal'
+import ReportPostModal, { ReportReason } from './modals/ReportPostModal'
 import { hasMinimumStake, getRequiredStake } from '~/constants/stakingRequirements'
 
 // Helper function to format relative time
@@ -103,6 +104,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const [showMuteWordsModal, setShowMuteWordsModal] = useState(false)
   const [showMuteConfirmModal, setShowMuteConfirmModal] = useState(false)
   const [muteConfirmAction, setMuteConfirmAction] = useState<'hide-post' | 'mute-thread' | 'mute-account' | 'block-account' | 'mute-words'>('hide-post')
+  const [showReportModal, setShowReportModal] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
   const optionsMenuRef = useRef<HTMLDivElement>(null)
   const isSubmittingLikeRef = useRef(false) // Prevent duplicate like submissions
@@ -540,19 +542,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         break
       }
       case 'report':
-        // Store reported posts with reason
-        const reason = prompt('Why are you reporting this post?\n1. Spam\n2. Harassment\n3. Inappropriate content\n4. Other')
-        if (reason) {
-          const reportedPosts = JSON.parse(localStorage.getItem('reportedPosts') || '[]')
-          reportedPosts.push({
-            postId: useItem.id,
-            userId: useItem.user.tokenId,
-            reason,
-            timestamp: new Date().toISOString()
-          })
-          localStorage.setItem('reportedPosts', JSON.stringify(reportedPosts))
-          alert('Thank you for your report. We will review it shortly.')
-        }
+        setShowReportModal(true)
         break
       default:
         break
@@ -1330,6 +1320,42 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               break
             }
           }
+        }}
+      />
+
+      {/* Report Post Modal */}
+      <ReportPostModal
+        isOpen={showReportModal}
+        onClose={() => setShowReportModal(false)}
+        postId={parseInt(useItem.id)}
+        postAuthorId={useItem.user.tokenId}
+        postAuthorUsername={useItem.user.username}
+        onSubmit={async (reason: ReportReason, details: string) => {
+          const reporterId = activeTokenId || activeToken?.tokenId
+
+          // Submit report to API
+          await apiFetch('/api/reports', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              reporterId,
+              postId: parseInt(useItem.id),
+              postAuthorId: useItem.user.tokenId,
+              reason,
+              details: details || undefined
+            })
+          })
+
+          // Also store locally so we can hide it from the user's feed
+          const reportedPosts = JSON.parse(localStorage.getItem('reportedPosts') || '[]')
+          reportedPosts.push({
+            postId: useItem.id,
+            userId: useItem.user.tokenId,
+            reason,
+            timestamp: new Date().toISOString()
+          })
+          localStorage.setItem('reportedPosts', JSON.stringify(reportedPosts))
+          window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
         }}
       />
     </>

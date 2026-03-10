@@ -24,6 +24,8 @@ import giphyRouter from './routes/giphy'
 import statsRouter from './routes/stats'
 import shorturlRouter from './routes/shorturl'
 import onChainImagesRouter from './routes/on-chain-images'
+import clientsRouter from './routes/clients'
+import reportsRouter from './routes/reports'
 import { prisma } from '../prismaClient'
 
 /**
@@ -105,6 +107,8 @@ function createApp() {
   app.use('/api/stats', statsRouter)
   app.use('/api/shorturl', shorturlRouter)
   app.use('/api/on-chain-images', onChainImagesRouter)
+  app.use('/api/clients', clientsRouter)
+  app.use('/api/reports', reportsRouter)
   // Temporarily disabled xmtpProxy router due to path-to-regexp issue
   // app.use('/api/xmtp-proxy', xmtpProxyRouter)
 
