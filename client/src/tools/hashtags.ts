@@ -154,24 +154,76 @@ export async function updateHashtagsForCaw(cawId: number, newContent: string): P
 }
 
 /**
- * Get trending hashtags
- * Returns hashtags ordered by usage count
+ * Get trending hashtags within a time window
+ * @param since - Date to start counting from (null for all time)
+ * @param limit - Max number of results
  */
-export async function getTrendingHashtags(limit: number = 20): Promise<Array<{name: string, usageCount: number}>> {
-  try {
+async function getHashtagsInWindow(since: Date | null, limit: number): Promise<Array<{name: string, usageCount: number}>> {
+  if (since) {
+    const hashtags = await prisma.$queryRaw<Array<{name: string, usageCount: bigint}>>`
+      SELECT h.name, COUNT(ch.id) as "usageCount"
+      FROM "Hashtag" h
+      INNER JOIN "CawHashtag" ch ON ch."hashtagId" = h.id
+      INNER JOIN "Caw" c ON c.id = ch."cawId"
+      WHERE c.status = 'SUCCESS'
+        AND c."createdAt" >= ${since}
+      GROUP BY h.id, h.name
+      ORDER BY COUNT(ch.id) DESC
+      LIMIT ${limit}
+    `
+    return hashtags.map(h => ({ name: h.name, usageCount: Number(h.usageCount) }))
+  } else {
+    // All time - use the simpler indexed query
     const hashtags = await prisma.hashtag.findMany({
       orderBy: { usageCount: 'desc' },
       take: limit,
-      select: {
-        name: true,
-        usageCount: true
-      }
+      select: { name: true, usageCount: true }
     })
-
     return hashtags
+  }
+}
+
+/**
+ * Get trending hashtags
+ * Returns hashtags based on recent usage (last 24 hours), with fallback to longer periods
+ * if there aren't enough recent hashtags
+ */
+export async function getTrendingHashtags(limit: number = 20): Promise<Array<{name: string, usageCount: number}>> {
+  try {
+    // Time windows to try: 24 hours, 7 days, 30 days, all time
+    const timeWindows = [
+      { hours: 24, minResults: Math.ceil(limit / 2) },  // Need at least half for 24h
+      { hours: 24 * 7, minResults: Math.ceil(limit / 2) },  // Need at least half for 7d
+      { hours: 24 * 30, minResults: 1 },  // Need at least 1 for 30d
+      { hours: null, minResults: 0 }  // All time fallback
+    ]
+
+    for (const window of timeWindows) {
+      const since = window.hours
+        ? new Date(Date.now() - window.hours * 60 * 60 * 1000)
+        : null
+
+      const results = await getHashtagsInWindow(since, limit)
+
+      if (results.length >= window.minResults || window.hours === null) {
+        return results
+      }
+    }
+
+    return []
   } catch (error) {
     console.error('Error fetching trending hashtags:', error)
-    return []
+    // Fallback to simple query if raw query fails
+    try {
+      const hashtags = await prisma.hashtag.findMany({
+        orderBy: { usageCount: 'desc' },
+        take: limit,
+        select: { name: true, usageCount: true }
+      })
+      return hashtags
+    } catch {
+      return []
+    }
   }
 }
 
