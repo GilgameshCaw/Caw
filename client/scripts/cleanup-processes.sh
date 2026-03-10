@@ -70,4 +70,14 @@ if [ -n "$zombie_nodes" ]; then
   echo "$zombie_nodes" | xargs kill 2>/dev/null
 fi
 
+# Kill any existing Elasticsearch processes to avoid lock conflicts
+es_pids=$(pgrep -f "elasticsearch" 2>/dev/null)
+if [ -n "$es_pids" ]; then
+  es_count=$(echo "$es_pids" | wc -l | tr -d ' ')
+  echo "[Cleanup] Found $es_count Elasticsearch process(es), cleaning up..."
+  echo "$es_pids" | xargs kill 2>/dev/null
+  # Give Elasticsearch time to release locks
+  sleep 2
+fi
+
 echo "[Cleanup] Cleanup complete!"
