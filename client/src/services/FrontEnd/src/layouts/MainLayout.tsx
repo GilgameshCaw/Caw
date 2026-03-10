@@ -71,10 +71,10 @@ const MainLayout = ({ children }: MainLayoutProps) => {
       </div>
       
       {/* Main Content */}
-      <main className={`w-full max-w-lg mr-2 md:ml-22 md:max-w-none transition-all duration-300 ${
+      <main className={`flex-1 min-w-0 transition-all duration-300 ${
         isDark ? 'bg-black text-white' : 'bg-white text-black'
       } ${isMobileMenuOpen ? 'md:pt-0 pt-16' : 'pt-16 md:pt-0'}`}>
-        <div className="p-3 md:pr-3">
+        <div className="p-3">
           {children}
         </div>
       </main>
@@ -84,7 +84,7 @@ const MainLayout = ({ children }: MainLayoutProps) => {
         containerStyle={{ marginTop: "40px" }}
         toastOptions={{ removeDelay: 0 }}
       />
-      <div className="hidden md:block w-[280px]">
+      <div className="hidden lg:block w-[280px]">
         <div className={`fixed border-l h-full w-[280px] transition-all duration-300 ${
           isDark ? 'border-white/20' : 'border-gray-300'
         }`}>

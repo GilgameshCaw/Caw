@@ -1156,17 +1156,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         className="hidden"
       />
 
-      {/* Mobile Layout - Avatar + Input + Button in one row */}
-      <div className="md:hidden flex items-start space-x-3">
-        {/* Avatar */}
-        <div className="flex-shrink-0">
-          <div className="w-10 h-10 rounded-full bg-yellow-500 flex items-center justify-center">
-            <span className="text-black font-bold text-sm">U</span>
-          </div>
-        </div>
-
-        {/* Input and Button Container */}
-        <div className="flex-1 flex flex-col space-y-2">
+      {/* Mobile Layout - Input + Button */}
+      <div className="md:hidden flex flex-col space-y-2">
           {/* Input and Reply Button Row */}
           <div className="flex items-center space-x-3">
             {/* Input */}
@@ -1321,7 +1312,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               </svg>
             </button>
           </div>
-        </div>
 
         {/* Mobile Selected Media Display */}
         {selectedMedia.length > 0 && (

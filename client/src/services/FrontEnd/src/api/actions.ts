@@ -5,6 +5,7 @@ import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useSignTypedData, useAccount } from 'wagmi'
 import type { TypedDataDomain, TypedDataField } from '@ethersproject/abstract-signer'
 import { useActiveToken, useTokenDataStore } from "~/store/tokenDataStore";
+import { useClientConfigStore } from "~/store/clientConfigStore";
 import { CAW_ACTIONS_ADDRESS } from '~/../../../abi/addresses'
 import { hasMinimumStake, getRequiredStake, STAKING_REQUIREMENTS } from '~/constants/stakingRequirements'
 import { InsufficientStakeError, getActionTypeForModal } from '~/errors/InsufficientStakeError'
@@ -24,8 +25,34 @@ const ActionTypeMap = {
 export type ActionTypeKey = keyof typeof ActionTypeMap
 
 /** natstat: singleton client ID (one per front-end) */
-const CLIENT_ID = Number(import.meta.env.VITE_CLIENT_ID) || 1
-export const VALIDATOR_TIP = BigInt(import.meta.env.VITE_VALIDATOR_TIP || "1000000000000000")
+export const CLIENT_ID = Number(import.meta.env.VITE_CLIENT_ID) || 1
+
+/**
+ * Validator tip constants (in CAW wei - 18 decimals)
+ *
+ * Base tip: Default tip for validator to cover L2 gas costs
+ * Per-chain tip: Additional tip per replication chain to cover LZ fees
+ *
+ * 1,000 CAW tokens = 1000 * 10^18 wei
+ * At ~500k CAW = $0.01, 1k CAW ≈ $0.00002 per action
+ */
+const CAW_DECIMALS = BigInt(10 ** 18)
+const BASE_VALIDATOR_TIP = BigInt(import.meta.env.VITE_VALIDATOR_TIP || "1000") * CAW_DECIMALS // 1k CAW base
+
+/** Additional tip per replication chain (to cover share of LZ fees) */
+const TIP_PER_REPLICATION_CHAIN = BigInt(import.meta.env.VITE_TIP_PER_CHAIN || "500") * CAW_DECIMALS // 500 CAW per chain
+
+/**
+ * Calculate the validator tip based on replication chain count
+ * This compensates the validator for the LayerZero fees they pay for replication
+ */
+export function getValidatorTip(): bigint {
+  const chainCount = useClientConfigStore.getState().getReplicationChainCount()
+  return BASE_VALIDATOR_TIP + (TIP_PER_REPLICATION_CHAIN * BigInt(chainCount))
+}
+
+/** Legacy export for backwards compatibility */
+export const VALIDATOR_TIP = BASE_VALIDATOR_TIP
 
 
 
@@ -83,9 +110,9 @@ export function buildTypedData(params: ActionParams) {
 
   // For OTHER actions with amounts already provided, don't add validator tip
   // (the amount already includes the tip plus any additional costs)
-  // For all other cases, add the validator tip
+  // For all other cases, add the validator tip (dynamic based on replication chains)
   if (params.actionType !== 'other' || amounts.length === 0) {
-    amounts.push(BigInt(VALIDATOR_TIP));
+    amounts.push(getValidatorTip());
   }
 
 

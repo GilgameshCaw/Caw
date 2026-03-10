@@ -93,7 +93,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
       <div className="fixed inset-x-0 bottom-0 md:inset-0 md:flex md:items-center md:justify-center z-50 px-4 md:px-0">
         <div
           className={`w-full md:w-96 rounded-t-2xl md:rounded-2xl ${
-            isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
+            isDark ? 'bg-black border-yellow-500/30' : 'bg-white border-gray-200'
           } border overflow-hidden animate-slide-up md:animate-fade-in`}
         >
           {/* Header */}

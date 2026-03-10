@@ -58,7 +58,7 @@ export const MessageModal: React.FC<MessageModalProps> = ({ recipient, onClose }
       onClick={onClose}
     >
       <div
-        className="bg-black p-6 rounded-lg w-full max-w-md relative mx-4 border border-white/20"
+        className="bg-black p-6 rounded-lg w-full max-w-md relative mx-4 border border-yellow-500/30"
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}

@@ -69,29 +69,27 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
       >
         {/* Modal */}
         <div
-          className="bg-black border border-white/20 rounded-2xl p-6 max-w-md w-full mx-4"
+          className="bg-black border border-yellow-500/30 rounded-2xl p-6 max-w-md w-full mx-4"
           onClick={(e) => e.stopPropagation()}
         >
           {/* Header */}
           <div className="flex justify-between items-center mb-4">
-            <h2 className="text-xl font-bold text-white">Insufficient CAW Staked</h2>
+            <div className="flex items-center gap-3">
+              <div className="w-14 h-14 rounded-full bg-red-500/20 flex items-center justify-center flex-shrink-0">
+                <svg className="w-9 h-9 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-bold text-white">Insufficient CAW Staked</h2>
+            </div>
             <button
               onClick={onClose}
-              className="text-gray-400 hover:text-white transition-colors"
+              className="text-gray-400 hover:text-white transition-colors cursor-pointer"
             >
               <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
-          </div>
-
-          {/* Icon */}
-          <div className="flex justify-center mb-4">
-            <div className="w-16 h-16 rounded-full bg-red-500/20 flex items-center justify-center">
-              <svg className="w-10 h-10 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-            </div>
           </div>
 
           {/* Message */}
@@ -147,14 +145,14 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
                 {/* Primary: Stake CAW (user has enough) */}
                 <button
                   onClick={handleStakeCAW}
-                  className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all duration-300"
+                  className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all duration-300 cursor-pointer"
                 >
                   Stake CAW
                 </button>
                 {/* Secondary: Buy more */}
                 <button
                   onClick={handleBuyCAW}
-                  className="w-full py-3 border border-white/20 hover:border-white/40 text-white font-semibold rounded-full transition-all duration-300"
+                  className="w-full py-3 border border-white/20 hover:border-white/40 text-white font-semibold rounded-full transition-all duration-300 cursor-pointer"
                 >
                   Buy CAW on Uniswap
                 </button>
@@ -164,14 +162,14 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
                 {/* Primary: Buy CAW (user doesn't have enough) */}
                 <button
                   onClick={handleBuyCAW}
-                  className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all duration-300"
+                  className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all duration-300 cursor-pointer"
                 >
                   Buy CAW on Uniswap
                 </button>
                 {/* Secondary: Stake CAW */}
                 <button
                   onClick={handleStakeCAW}
-                  className="w-full py-3 border border-white/20 hover:border-white/40 text-white font-semibold rounded-full transition-all duration-300"
+                  className="w-full py-3 border border-white/20 hover:border-white/40 text-white font-semibold rounded-full transition-all duration-300 cursor-pointer"
                 >
                   Stake CAW
                 </button>
@@ -179,7 +177,7 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
             )}
             <button
               onClick={onClose}
-              className="w-full py-3 text-gray-400 hover:text-white transition-colors"
+              className="w-full py-3 text-gray-400 hover:text-white transition-colors cursor-pointer"
             >
               Cancel
             </button>

@@ -10,6 +10,7 @@ import { useViewTracking } from '~/hooks/useViewTracking'
 import { useMutePreferences, shouldFilterPost } from '~/hooks/useMutePreferences'
 import { setFeedRefreshCallback } from '~/hooks/useTxQueueMonitor'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
+import SuggestedUsers from './SuggestedUsers'
 
 type Props = {
   filter: 'For you' | 'Following' | 'profile' | 'profile-likes' | 'profile-replies' | 'profile-media' | string
@@ -270,7 +271,20 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
       ))}
     </div>
   )
-  if (items.length === 0) return <div className="text-gray-400 text-center py-8">No posts yet.</div>
+  if (items.length === 0) {
+    // Show suggested users when Following feed is empty
+    if (filter === 'Following') {
+      return (
+        <div className="py-4">
+          <p className={`text-center mb-4 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+            You're not following anyone yet.<br />Here are some popular users to get started:
+          </p>
+          <SuggestedUsers onFollowChange={() => loadPage(true)} />
+        </div>
+      )
+    }
+    return <div className="text-gray-400 text-center py-8">No posts yet.</div>
+  }
   if (filteredItems.length === 0) return <div className="text-gray-400 text-center py-8">No posts to show (some may be hidden by your settings).</div>
 
   return (

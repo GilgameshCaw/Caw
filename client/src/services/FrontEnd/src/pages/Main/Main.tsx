@@ -27,14 +27,14 @@ export const Main: React.FC = () => {
 
   return (
     <MainLayout>
-      <div className="max-w-2xl mx-auto px-3 sm:px-6 py-4">
+      <div className="max-w-2xl md:max-w-none lg:max-w-2xl mx-auto px-3 sm:px-6 py-4">
         <Tabs<MainTab>
           tabs={mainTabs}
           active={activeTab}
           onChange={setActiveTab}
         />
-        {/* PostForm - Hidden on mobile */}
-        <div className="hidden md:block border-b border-white/20">
+        {/* PostForm - Always visible */}
+        <div className="border-b border-white/20">
           <PostForm onSuccess={() => feedRef.current?.refresh()}/>
         </div>
         <div className="w-full">

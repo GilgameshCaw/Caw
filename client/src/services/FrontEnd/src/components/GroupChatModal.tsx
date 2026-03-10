@@ -72,7 +72,7 @@ const GroupChatModal: React.FC<GroupChatModalProps> = ({
     >
       <div
         className={`w-full max-w-md rounded-2xl transition-all duration-300 ${
-          isDark ? 'bg-black border border-white/20' : 'bg-white border border-gray-200'
+          isDark ? 'bg-black border border-yellow-500/30' : 'bg-white border border-gray-200'
         }`}
         onClick={(e) => e.stopPropagation()}
       >

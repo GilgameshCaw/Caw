@@ -67,7 +67,7 @@ const ProfileChooser: React.FC = () => {
             : 'bg-gray-200 text-black border border-gray-300 hover:bg-gray-300 hover:border-gray-400'
         }`}>
           <span className="text-lg">+</span>
-          create your profile
+          Create a profile
         </a>
       </div>
     );

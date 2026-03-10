@@ -119,7 +119,7 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50" onClick={closeModal}>
       <div
         className={`w-full max-w-lg mx-4 rounded-2xl max-h-[80vh] overflow-hidden transition-all duration-300 ${
-          isDark ? 'bg-black border border-white/20' : 'bg-white border border-gray-200'
+          isDark ? 'bg-black border border-yellow-500/30' : 'bg-white border border-gray-200'
         }`}
         onClick={(e) => e.stopPropagation()}
       >

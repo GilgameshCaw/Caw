@@ -28,7 +28,21 @@ export class NotificationService {
   }
 
   // Note: Muting accounts/threads is handled client-side (localStorage) for privacy reasons.
-  // No server-side mute management needed.
+  // These stub functions always return false since the server doesn't track mutes/blocks.
+
+  /**
+   * Check if a user has muted or blocked another user (stub - always returns false)
+   */
+  static async isUserMutedOrBlocked(_userId: number, _actorId: number): Promise<boolean> {
+    return false
+  }
+
+  /**
+   * Check if a thread is muted for a user (stub - always returns false)
+   */
+  static async isThreadMutedForUser(_userId: number, _threadId: number): Promise<boolean> {
+    return false
+  }
 
   /**
    * Extract @mentions from a caw content
