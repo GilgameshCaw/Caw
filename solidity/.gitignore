@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+
+# Build artifacts
+artifacts/
+cache/
+build/
+
+# Environment
+.env
+.env.local
+
+# Deployment state (contains addresses - don't commit until production)
+.deploy-state.json
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store

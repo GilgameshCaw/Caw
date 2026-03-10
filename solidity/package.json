@@ -11,5 +11,8 @@
     "solregex": "^0.3.1",
     "truffle-assertions": "^0.9.2",
     "truffle-plugin-verify": "^0.5.26"
+  },
+  "devDependencies": {
+    "ethers": "^6.16.0"
   }
 }

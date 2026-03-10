@@ -1,4 +1,148 @@
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// CawNameQuoter
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const cawNameQuoterAbi = [
+  {
+    type: 'constructor',
+    inputs: [{ name: '_cawName', internalType: 'address', type: 'address' }],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'cawName',
+    outputs: [{ name: '', internalType: 'contract ICawNameForQuoter', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+      { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
+    ],
+    name: 'authenticateQuote',
+    outputs: [
+      {
+        name: 'quote',
+        internalType: 'struct MessagingFee',
+        type: 'tuple',
+        components: [
+          { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
+          { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+      { name: 'amount', internalType: 'uint256', type: 'uint256' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+      { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
+    ],
+    name: 'depositQuote',
+    outputs: [
+      {
+        name: 'quote',
+        internalType: 'struct MessagingFee',
+        type: 'tuple',
+        components: [
+          { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
+          { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
+    ],
+    name: 'mintQuote',
+    outputs: [
+      {
+        name: 'quote',
+        internalType: 'struct MessagingFee',
+        type: 'tuple',
+        components: [
+          { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
+          { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
+    ],
+    name: 'withdrawQuote',
+    outputs: [
+      {
+        name: 'quote',
+        internalType: 'struct MessagingFee',
+        type: 'tuple',
+        components: [
+          { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
+          { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'payInLzToken', internalType: 'bool', type: 'bool' }],
+    name: 'updateOwnerQuote',
+    outputs: [
+      {
+        name: 'quote',
+        internalType: 'struct MessagingFee',
+        type: 'tuple',
+        components: [
+          { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
+          { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'archiveEid', internalType: 'uint32', type: 'uint32' },
+      { name: 'target', internalType: 'address', type: 'address' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+      { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
+    ],
+    name: 'syncReplicationQuote',
+    outputs: [
+      {
+        name: 'quote',
+        internalType: 'struct MessagingFee',
+        type: 'tuple',
+        components: [
+          { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
+          { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+] as const;
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // CawActions
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -73,15 +217,32 @@ export const cawActionsAbi = [
   {
     type: 'function',
     inputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
-    name: 'currentCawonceMap',
+    name: 'clientActionCount',
     outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
     stateMutability: 'view',
   },
   {
     type: 'function',
-    inputs: [],
-    name: 'currentHash',
+    inputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
+    name: 'clientCurrentHash',
     outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '', internalType: 'uint32', type: 'uint32' },
+      { name: '', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'clientHashAtCheckpoint',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
+    name: 'currentCawonceMap',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
     stateMutability: 'view',
   },
   {
@@ -109,9 +270,26 @@ export const cawActionsAbi = [
   },
   {
     type: 'function',
-    inputs: [],
-    name: 'getCurrentHash',
-    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    inputs: [{ name: 'clientId', internalType: 'uint32', type: 'uint32' }],
+    name: 'getReplicationCount',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'clientId', internalType: 'uint32', type: 'uint32' }],
+    name: 'getReplicationDestinations',
+    outputs: [
+      {
+        name: '',
+        internalType: 'struct ReplicationDestination[]',
+        type: 'tuple[]',
+        components: [
+          { name: 'target', internalType: 'address', type: 'address' },
+          { name: 'eid', internalType: 'uint32', type: 'uint32' },
+        ],
+      },
+    ],
     stateMutability: 'view',
   },
   {
@@ -205,8 +383,14 @@ export const cawActionsAbi = [
           { name: 's', internalType: 'bytes32[]', type: 'bytes32[]' },
         ],
       },
+      { name: 'withdrawFee', internalType: 'uint256', type: 'uint256' },
       {
-        name: 'lzTokenAmountForWithdraws',
+        name: 'withdrawLzTokenAmount',
+        internalType: 'uint256',
+        type: 'uint256',
+      },
+      {
+        name: 'replicationLzTokenAmount',
         internalType: 'uint256',
         type: 'uint256',
       },
@@ -214,6 +398,78 @@ export const cawActionsAbi = [
     name: 'processActions',
     outputs: [],
     stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      {
+        name: 'data',
+        internalType: 'struct CawActions.MultiActionData',
+        type: 'tuple',
+        components: [
+          {
+            name: 'actions',
+            internalType: 'struct CawActions.ActionData[]',
+            type: 'tuple[]',
+            components: [
+              {
+                name: 'actionType',
+                internalType: 'enum CawActions.ActionType',
+                type: 'uint8',
+              },
+              { name: 'senderId', internalType: 'uint32', type: 'uint32' },
+              { name: 'receiverId', internalType: 'uint32', type: 'uint32' },
+              {
+                name: 'receiverCawonce',
+                internalType: 'uint32',
+                type: 'uint32',
+              },
+              { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+              { name: 'cawonce', internalType: 'uint32', type: 'uint32' },
+              {
+                name: 'recipients',
+                internalType: 'uint32[]',
+                type: 'uint32[]',
+              },
+              { name: 'amounts', internalType: 'uint128[]', type: 'uint128[]' },
+              { name: 'text', internalType: 'string', type: 'string' },
+            ],
+          },
+          { name: 'v', internalType: 'uint8[]', type: 'uint8[]' },
+          { name: 'r', internalType: 'bytes32[]', type: 'bytes32[]' },
+          { name: 's', internalType: 'bytes32[]', type: 'bytes32[]' },
+        ],
+      },
+      { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
+    ],
+    name: 'replicationQuote',
+    outputs: [
+      {
+        name: 'quote',
+        internalType: 'struct MessagingFee',
+        type: 'tuple',
+        components: [
+          { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
+          { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+      { name: 'chainCount', internalType: 'uint256', type: 'uint256' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'replicator',
+    outputs: [
+      {
+        name: '',
+        internalType: 'contract CawActionsReplicator',
+        type: 'address',
+      },
+    ],
+    stateMutability: 'view',
   },
   {
     type: 'function',
@@ -257,8 +513,14 @@ export const cawActionsAbi = [
           { name: 's', internalType: 'bytes32[]', type: 'bytes32[]' },
         ],
       },
+      { name: 'withdrawFee', internalType: 'uint256', type: 'uint256' },
       {
-        name: 'lzTokenAmountForWithdraws',
+        name: 'withdrawLzTokenAmount',
+        internalType: 'uint256',
+        type: 'uint256',
+      },
+      {
+        name: 'replicationLzTokenAmount',
         internalType: 'uint256',
         type: 'uint256',
       },
@@ -288,6 +550,13 @@ export const cawActionsAbi = [
       { name: 'rejections', internalType: 'string[]', type: 'string[]' },
     ],
     stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '_replicator', internalType: 'address', type: 'address' }],
+    name: 'setReplicator',
+    outputs: [],
+    stateMutability: 'nonpayable',
   },
   {
     type: 'function',
@@ -354,6 +623,732 @@ export const cawActionsAbi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// CawActionsArchive
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const cawActionsArchiveAbi = [
+  {
+    type: 'constructor',
+    inputs: [{ name: '_endpoint', internalType: 'address', type: 'address' }],
+    stateMutability: 'nonpayable',
+  },
+  { type: 'error', inputs: [], name: 'InvalidDelegate' },
+  { type: 'error', inputs: [], name: 'InvalidEndpointCall' },
+  { type: 'error', inputs: [], name: 'LzTokenUnavailable' },
+  {
+    type: 'error',
+    inputs: [{ name: 'eid', internalType: 'uint32', type: 'uint32' }],
+    name: 'NoPeer',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'msgValue', internalType: 'uint256', type: 'uint256' }],
+    name: 'NotEnoughNative',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'addr', internalType: 'address', type: 'address' }],
+    name: 'OnlyEndpoint',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'eid', internalType: 'uint32', type: 'uint32' },
+      { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'OnlyPeer',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'sourceChainId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      { name: 'guid', internalType: 'bytes32', type: 'bytes32', indexed: true },
+      { name: 'data', internalType: 'bytes', type: 'bytes', indexed: false },
+    ],
+    name: 'ActionsArchived',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'previousOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'newOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipTransferred',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
+      {
+        name: 'peer',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+    ],
+    name: 'PeerSet',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: 'origin',
+        internalType: 'struct Origin',
+        type: 'tuple',
+        components: [
+          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
+          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
+        ],
+      },
+    ],
+    name: 'allowInitializePath',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'endpoint',
+    outputs: [
+      {
+        name: '',
+        internalType: 'contract ILayerZeroEndpointV2',
+        type: 'address',
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: '',
+        internalType: 'struct Origin',
+        type: 'tuple',
+        components: [
+          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
+          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
+        ],
+      },
+      { name: '', internalType: 'bytes', type: 'bytes' },
+      { name: '_sender', internalType: 'address', type: 'address' },
+    ],
+    name: 'isComposeMsgSender',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: '_origin',
+        internalType: 'struct Origin',
+        type: 'tuple',
+        components: [
+          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
+          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
+        ],
+      },
+      { name: '_guid', internalType: 'bytes32', type: 'bytes32' },
+      { name: '_message', internalType: 'bytes', type: 'bytes' },
+      { name: '_executor', internalType: 'address', type: 'address' },
+      { name: '_extraData', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'lzReceive',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '', internalType: 'uint32', type: 'uint32' },
+      { name: '', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'nextNonce',
+    outputs: [{ name: 'nonce', internalType: 'uint64', type: 'uint64' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'oAppVersion',
+    outputs: [
+      { name: 'senderVersion', internalType: 'uint64', type: 'uint64' },
+      { name: 'receiverVersion', internalType: 'uint64', type: 'uint64' },
+    ],
+    stateMutability: 'pure',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'owner',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'eid', internalType: 'uint32', type: 'uint32' }],
+    name: 'peers',
+    outputs: [{ name: 'peer', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'renounceOwnership',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '_delegate', internalType: 'address', type: 'address' }],
+    name: 'setDelegate',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+      { name: '_peer', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'setPeer',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
+    name: 'transferOwnership',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// CawActionsReplicator
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const cawActionsReplicatorAbi = [
+  {
+    type: 'constructor',
+    inputs: [
+      { name: '_endpoint', internalType: 'address', type: 'address' },
+      { name: '_cawActions', internalType: 'address', type: 'address' },
+      { name: '_cawNameL2', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  { type: 'error', inputs: [], name: 'InvalidDelegate' },
+  { type: 'error', inputs: [], name: 'InvalidEndpointCall' },
+  {
+    type: 'error',
+    inputs: [{ name: 'optionType', internalType: 'uint16', type: 'uint16' }],
+    name: 'InvalidOptionType',
+  },
+  { type: 'error', inputs: [], name: 'LzTokenUnavailable' },
+  {
+    type: 'error',
+    inputs: [{ name: 'eid', internalType: 'uint32', type: 'uint32' }],
+    name: 'NoPeer',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'msgValue', internalType: 'uint256', type: 'uint256' }],
+    name: 'NotEnoughNative',
+  },
+  {
+    type: 'error',
+    inputs: [{ name: 'addr', internalType: 'address', type: 'address' }],
+    name: 'OnlyEndpoint',
+  },
+  {
+    type: 'error',
+    inputs: [
+      { name: 'eid', internalType: 'uint32', type: 'uint32' },
+      { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'OnlyPeer',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'checkpointId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: true,
+      },
+      {
+        name: 'offset',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'count',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'MigrationBatchProcessed',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'previousOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'newOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipTransferred',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
+      {
+        name: 'peer',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+    ],
+    name: 'PeerSet',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'clientId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: true },
+      {
+        name: 'target',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'PeerUpdated',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'destEid',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      {
+        name: 'guid',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+      {
+        name: 'payloadSize',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'clientId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+    ],
+    name: 'Replicated',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'destEid',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      {
+        name: 'clientId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      {
+        name: 'reason',
+        internalType: 'string',
+        type: 'string',
+        indexed: false,
+      },
+    ],
+    name: 'ReplicationFailed',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'RECEIVE_GAS_LIMIT',
+    outputs: [{ name: '', internalType: 'uint128', type: 'uint128' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: 'origin',
+        internalType: 'struct Origin',
+        type: 'tuple',
+        components: [
+          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
+          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
+        ],
+      },
+    ],
+    name: 'allowInitializePath',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'cawActions',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'cawNameL2',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '', internalType: 'uint32', type: 'uint32' },
+      { name: '', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'clientPeers',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
+    name: 'clientReplicationEnabled',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '', internalType: 'uint32', type: 'uint32' },
+      { name: '', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'clientReplications',
+    outputs: [
+      { name: 'target', internalType: 'address', type: 'address' },
+      { name: 'eid', internalType: 'uint32', type: 'uint32' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'destEid', internalType: 'uint32', type: 'uint32' },
+      { name: 'payload', internalType: 'bytes', type: 'bytes' },
+      { name: 'options', internalType: 'bytes', type: 'bytes' },
+      { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
+      { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'doLzSend',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'endpoint',
+    outputs: [
+      {
+        name: '',
+        internalType: 'contract ILayerZeroEndpointV2',
+        type: 'address',
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'clientId', internalType: 'uint32', type: 'uint32' }],
+    name: 'getReplicationCount',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'clientId', internalType: 'uint32', type: 'uint32' }],
+    name: 'getReplicationDestinations',
+    outputs: [
+      {
+        name: '',
+        internalType: 'struct ReplicationDestination[]',
+        type: 'tuple[]',
+        components: [
+          { name: 'target', internalType: 'address', type: 'address' },
+          { name: 'eid', internalType: 'uint32', type: 'uint32' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: '',
+        internalType: 'struct Origin',
+        type: 'tuple',
+        components: [
+          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
+          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
+        ],
+      },
+      { name: '', internalType: 'bytes', type: 'bytes' },
+      { name: '_sender', internalType: 'address', type: 'address' },
+    ],
+    name: 'isComposeMsgSender',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: '_origin',
+        internalType: 'struct Origin',
+        type: 'tuple',
+        components: [
+          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
+          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
+          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
+        ],
+      },
+      { name: '_guid', internalType: 'bytes32', type: 'bytes32' },
+      { name: '_message', internalType: 'bytes', type: 'bytes' },
+      { name: '_executor', internalType: 'address', type: 'address' },
+      { name: '_extraData', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'lzReceive',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      {
+        name: 'params',
+        internalType: 'struct CawActionsReplicator.MigrationParams',
+        type: 'tuple',
+        components: [
+          { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+          { name: 'destEid', internalType: 'uint32', type: 'uint32' },
+          { name: 'checkpointId', internalType: 'uint256', type: 'uint256' },
+          { name: 'offset', internalType: 'uint256', type: 'uint256' },
+          { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+      {
+        name: 'actions',
+        internalType: 'struct ICawActionsForReplicator.ActionData[]',
+        type: 'tuple[]',
+        components: [
+          { name: 'actionType', internalType: 'uint8', type: 'uint8' },
+          { name: 'senderId', internalType: 'uint32', type: 'uint32' },
+          { name: 'receiverId', internalType: 'uint32', type: 'uint32' },
+          { name: 'receiverCawonce', internalType: 'uint32', type: 'uint32' },
+          { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+          { name: 'cawonce', internalType: 'uint32', type: 'uint32' },
+          { name: 'recipients', internalType: 'uint32[]', type: 'uint32[]' },
+          { name: 'amounts', internalType: 'uint128[]', type: 'uint128[]' },
+          { name: 'text', internalType: 'string', type: 'string' },
+        ],
+      },
+      { name: 'v', internalType: 'uint8[]', type: 'uint8[]' },
+      { name: 'r', internalType: 'bytes32[]', type: 'bytes32[]' },
+      { name: 's', internalType: 'bytes32[]', type: 'bytes32[]' },
+      { name: 'allR', internalType: 'bytes32[256]', type: 'bytes32[256]' },
+    ],
+    name: 'migrateHistoricalBatch',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '', internalType: 'uint32', type: 'uint32' },
+      { name: '', internalType: 'uint32', type: 'uint32' },
+      { name: '', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'migrationBitmap',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '', internalType: 'uint32', type: 'uint32' },
+      { name: '', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'nextNonce',
+    outputs: [{ name: 'nonce', internalType: 'uint64', type: 'uint64' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'oAppVersion',
+    outputs: [
+      { name: 'senderVersion', internalType: 'uint64', type: 'uint64' },
+      { name: 'receiverVersion', internalType: 'uint64', type: 'uint64' },
+    ],
+    stateMutability: 'pure',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'owner',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'eid', internalType: 'uint32', type: 'uint32' }],
+    name: 'peers',
+    outputs: [{ name: 'peer', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'payload', internalType: 'bytes', type: 'bytes' },
+      { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
+    ],
+    name: 'quoteReplication',
+    outputs: [
+      {
+        name: 'totalFee',
+        internalType: 'struct MessagingFee',
+        type: 'tuple',
+        components: [
+          { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
+          { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+      { name: 'chainCount', internalType: 'uint256', type: 'uint256' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'renounceOwnership',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'payload', internalType: 'bytes', type: 'bytes' },
+      { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'replicate',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '_delegate', internalType: 'address', type: 'address' }],
+    name: 'setDelegate',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_eid', internalType: 'uint32', type: 'uint32' },
+      { name: '_peer', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'setPeer',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
+    name: 'transferOwnership',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'destEid', internalType: 'uint32', type: 'uint32' },
+      { name: 'target', internalType: 'address', type: 'address' },
+    ],
+    name: 'updatePeer',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // CawClientManager
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -368,10 +1363,10 @@ export const cawClientManagerAbi = [
     anonymous: false,
     inputs: [
       {
-        name: 'nextClientId',
+        name: 'clientId',
         internalType: 'uint32',
         type: 'uint32',
-        indexed: false,
+        indexed: true,
       },
       {
         name: 'client',
@@ -392,6 +1387,79 @@ export const cawClientManagerAbi = [
     name: 'ClientCreated',
   },
   {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'clientId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: true },
+      {
+        name: 'target',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'ClientReplicationAdded',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'clientId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      { name: 'enabled', internalType: 'bool', type: 'bool', indexed: false },
+    ],
+    name: 'ClientReplicationEnabledChanged',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'clientId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: true },
+    ],
+    name: 'ClientReplicationRemoved',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'eid', internalType: 'uint32', type: 'uint32' },
+      { name: 'target', internalType: 'address', type: 'address' },
+    ],
+    name: 'addReplication',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'buyAndBurnAddress',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'cawName',
+    outputs: [{ name: '', internalType: 'contract ICawName', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
     type: 'function',
     inputs: [
       { name: 'clientId', internalType: 'uint32', type: 'uint32' },
@@ -400,6 +1468,26 @@ export const cawClientManagerAbi = [
     name: 'changeOwner',
     outputs: [],
     stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
+    name: 'clientReplicationEnabled',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '', internalType: 'uint32', type: 'uint32' },
+      { name: '', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'clientReplications',
+    outputs: [
+      { name: 'target', internalType: 'address', type: 'address' },
+      { name: 'eid', internalType: 'uint32', type: 'uint32' },
+    ],
+    stateMutability: 'view',
   },
   {
     type: 'function',
@@ -428,6 +1516,13 @@ export const cawClientManagerAbi = [
     name: 'createClient',
     outputs: [],
     stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'defaultL2Eid',
+    outputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
+    stateMutability: 'view',
   },
   {
     type: 'function',
@@ -471,6 +1566,13 @@ export const cawClientManagerAbi = [
   {
     type: 'function',
     inputs: [{ name: 'clientId', internalType: 'uint32', type: 'uint32' }],
+    name: 'getClientOwner',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'clientId', internalType: 'uint32', type: 'uint32' }],
     name: 'getDepositFee',
     outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
     stateMutability: 'view',
@@ -505,6 +1607,30 @@ export const cawClientManagerAbi = [
   {
     type: 'function',
     inputs: [{ name: 'clientId', internalType: 'uint32', type: 'uint32' }],
+    name: 'getReplicationCount',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'clientId', internalType: 'uint32', type: 'uint32' }],
+    name: 'getReplications',
+    outputs: [
+      {
+        name: '',
+        internalType: 'struct ReplicationDestination[]',
+        type: 'tuple[]',
+        components: [
+          { name: 'target', internalType: 'address', type: 'address' },
+          { name: 'eid', internalType: 'uint32', type: 'uint32' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'clientId', internalType: 'uint32', type: 'uint32' }],
     name: 'getWithdrawFee',
     outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
     stateMutability: 'view',
@@ -528,11 +1654,65 @@ export const cawClientManagerAbi = [
   },
   {
     type: 'function',
+    inputs: [],
+    name: 'owner',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'eid', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'removeReplication',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'renounceOwnership',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'archiveEid', internalType: 'uint32', type: 'uint32' },
+      { name: 'target', internalType: 'address', type: 'address' },
+    ],
+    name: 'replicationSyncQuote',
+    outputs: [
+      {
+        name: '',
+        internalType: 'struct MessagingFee',
+        type: 'tuple',
+        components: [
+          { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
+          { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     inputs: [
       { name: 'clientId', internalType: 'uint32', type: 'uint32' },
       { name: 'fee', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'setAuthFee',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '_cawName', internalType: 'address', type: 'address' },
+      { name: '_defaultL2Eid', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'setCawName',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -563,6 +1743,16 @@ export const cawClientManagerAbi = [
       { name: 'fee', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'setMintFee',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'enabled', internalType: 'bool', type: 'bool' },
+    ],
+    name: 'setReplicationEnabled',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -1234,6 +2424,13 @@ export const cawNameAbi = [
   },
   {
     type: 'function',
+    inputs: [],
+    name: 'setReplicationPeerSelector',
+    outputs: [{ name: '', internalType: 'bytes4', type: 'bytes4' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     inputs: [{ name: '_gui', internalType: 'address', type: 'address' }],
     name: 'setUriGenerator',
     outputs: [],
@@ -1261,6 +2458,85 @@ export const cawNameAbi = [
     inputs: [],
     name: 'symbol',
     outputs: [{ name: '', internalType: 'string', type: 'string' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'replicationIndex', internalType: 'uint256', type: 'uint256' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+      { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'syncReplication',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'archiveEid', internalType: 'uint32', type: 'uint32' },
+      { name: 'target', internalType: 'address', type: 'address' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'syncReplicationInternal',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'archiveEid', internalType: 'uint32', type: 'uint32' },
+      { name: 'target', internalType: 'address', type: 'address' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+      { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
+    ],
+    name: 'syncReplicationQuote',
+    outputs: [
+      {
+        name: 'quote',
+        internalType: 'struct MessagingFee',
+        type: 'tuple',
+        components: [
+          { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
+          { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'archiveEid', internalType: 'uint32', type: 'uint32' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+      { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'syncReplicationRemoval',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'tokenId', internalType: 'uint32', type: 'uint32' }],
+    name: 'token',
+    outputs: [
+      {
+        name: '',
+        internalType: 'struct CawName.Token',
+        type: 'tuple',
+        components: [
+          { name: 'withdrawable', internalType: 'uint256', type: 'uint256' },
+          { name: 'ownerBalance', internalType: 'uint256', type: 'uint256' },
+          { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
+          { name: 'username', internalType: 'string', type: 'string' },
+          { name: 'owner', internalType: 'address', type: 'address' },
+        ],
+      },
+    ],
     stateMutability: 'view',
   },
   {
@@ -1441,7 +2717,10 @@ export const cawNameAbi = [
 export const cawNameL2Abi = [
   {
     type: 'constructor',
-    inputs: [{ name: '_endpoint', internalType: 'address', type: 'address' }],
+    inputs: [
+      { name: '_endpointId', internalType: 'uint32', type: 'uint32' },
+      { name: '_endpoint', internalType: 'address', type: 'address' },
+    ],
     stateMutability: 'nonpayable',
   },
   { type: 'error', inputs: [], name: 'InvalidDelegate' },
@@ -1551,6 +2830,31 @@ export const cawNameL2Abi = [
     anonymous: false,
     inputs: [
       {
+        name: 'clientId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      {
+        name: 'archiveEid',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      {
+        name: 'target',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'ReplicationPeerSet',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
         name: 'tokenId',
         internalType: 'uint32',
         type: 'uint32',
@@ -1574,33 +2878,6 @@ export const cawNameL2Abi = [
     name: 'addToBalance',
     outputs: [],
     stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    name: 'getTokens',
-    inputs: [
-      {
-        internalType: 'uint32[]',
-        name: 'tokenIds',
-        type: 'uint32[]'
-      }
-    ],
-    outputs: [
-      {
-        // Tuple since it returns an array of structs
-        internalType: 'struct Token[]',
-        name: '',
-        type: 'tuple[]',
-        components: [
-          { name: 'tokenId',    internalType: 'uint256', type: 'uint256' },
-          { name: 'balance',    internalType: 'uint256', type: 'uint256' },
-          { name: 'username',   internalType: 'string',  type: 'string'  },
-          { name: 'cawBalance', internalType: 'uint256', type: 'uint256' },
-          { name: 'nextCawonce',internalType: 'uint256', type: 'uint256' }
-        ]
-      }
-    ],
-    stateMutability: 'view'
   },
   {
     type: 'function',
@@ -1673,6 +2950,15 @@ export const cawNameL2Abi = [
     type: 'function',
     inputs: [],
     name: 'cawActions',
+    outputs: [
+      { name: '', internalType: 'contract ICawActions', type: 'address' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'cawActionsReplicator',
     outputs: [{ name: '', internalType: 'address', type: 'address' }],
     stateMutability: 'view',
   },
@@ -1746,6 +3032,26 @@ export const cawNameL2Abi = [
     inputs: [{ name: 'selector', internalType: 'bytes4', type: 'bytes4' }],
     name: 'gasLimitFor',
     outputs: [{ name: '', internalType: 'uint128', type: 'uint128' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'tokenIds', internalType: 'uint32[]', type: 'uint32[]' }],
+    name: 'getTokens',
+    outputs: [
+      {
+        name: '',
+        internalType: 'struct CawNameL2.Token[]',
+        type: 'tuple[]',
+        components: [
+          { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
+          { name: 'balance', internalType: 'uint256', type: 'uint256' },
+          { name: 'username', internalType: 'string', type: 'string' },
+          { name: 'cawBalance', internalType: 'uint256', type: 'uint256' },
+          { name: 'nextCawonce', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
     stateMutability: 'view',
   },
   {
@@ -1913,6 +3219,13 @@ export const cawNameL2Abi = [
   },
   {
     type: 'function',
+    inputs: [{ name: '_replicator', internalType: 'address', type: 'address' }],
+    name: 'setCawActionsReplicator',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
     inputs: [{ name: '_delegate', internalType: 'address', type: 'address' }],
     name: 'setDelegate',
     outputs: [],
@@ -1946,6 +3259,17 @@ export const cawNameL2Abi = [
       { name: '_peer', internalType: 'bytes32', type: 'bytes32' },
     ],
     name: 'setPeer',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'archiveEid', internalType: 'uint32', type: 'uint32' },
+      { name: 'target', internalType: 'address', type: 'address' },
+    ],
+    name: 'setReplicationPeer',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -2025,6 +3349,13 @@ export const cawNameL2Abi = [
     name: 'updateOwners',
     outputs: [],
     stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
+    name: 'usernames',
+    outputs: [{ name: '', internalType: 'string', type: 'string' }],
+    stateMutability: 'view',
   },
   {
     type: 'function',
@@ -2175,2241 +3506,111 @@ export const cawNameUriAbi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// DVNOptions
+// ICawActionsForReplicator
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-export const dvnOptionsAbi = [
-  { type: 'error', inputs: [], name: 'DVN_InvalidDVNIdx' },
-  {
-    type: 'error',
-    inputs: [{ name: 'cursor', internalType: 'uint256', type: 'uint256' }],
-    name: 'DVN_InvalidDVNOptions',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// EIP712
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const eip712Abi = [
-  { type: 'error', inputs: [], name: 'InvalidShortString' },
-  {
-    type: 'error',
-    inputs: [{ name: 'str', internalType: 'string', type: 'string' }],
-    name: 'StringTooLong',
-  },
-  { type: 'event', anonymous: false, inputs: [], name: 'EIP712DomainChanged' },
+export const iCawActionsForReplicatorAbi = [
   {
     type: 'function',
-    inputs: [],
-    name: 'eip712Domain',
-    outputs: [
-      { name: 'fields', internalType: 'bytes1', type: 'bytes1' },
-      { name: 'name', internalType: 'string', type: 'string' },
-      { name: 'version', internalType: 'string', type: 'string' },
-      { name: 'chainId', internalType: 'uint256', type: 'uint256' },
-      { name: 'verifyingContract', internalType: 'address', type: 'address' },
-      { name: 'salt', internalType: 'bytes32', type: 'bytes32' },
-      { name: 'extensions', internalType: 'uint256[]', type: 'uint256[]' },
-    ],
-    stateMutability: 'view',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ERC165
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const erc165Abi = [
-  {
-    type: 'function',
-    inputs: [{ name: 'interfaceId', internalType: 'bytes4', type: 'bytes4' }],
-    name: 'supportsInterface',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ERC20
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const erc20Abi = [
-  {
-    type: 'constructor',
-    inputs: [
-      { name: 'name_', internalType: 'string', type: 'string' },
-      { name: 'symbol_', internalType: 'string', type: 'string' },
-    ],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'owner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'spender',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'value',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: false,
-      },
-    ],
-    name: 'Approval',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address', indexed: true },
-      { name: 'to', internalType: 'address', type: 'address', indexed: true },
-      {
-        name: 'value',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: false,
-      },
-    ],
-    name: 'Transfer',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'owner', internalType: 'address', type: 'address' },
-      { name: 'spender', internalType: 'address', type: 'address' },
-    ],
-    name: 'allowance',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'spender', internalType: 'address', type: 'address' },
-      { name: 'amount', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'approve',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'account', internalType: 'address', type: 'address' }],
-    name: 'balanceOf',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'decimals',
-    outputs: [{ name: '', internalType: 'uint8', type: 'uint8' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'spender', internalType: 'address', type: 'address' },
-      { name: 'subtractedValue', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'decreaseAllowance',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'spender', internalType: 'address', type: 'address' },
-      { name: 'addedValue', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'increaseAllowance',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'name',
-    outputs: [{ name: '', internalType: 'string', type: 'string' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'symbol',
-    outputs: [{ name: '', internalType: 'string', type: 'string' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'totalSupply',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'amount', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'transfer',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'amount', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'transferFrom',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ERC721
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const erc721Abi = [
-  {
-    type: 'constructor',
-    inputs: [
-      { name: 'name_', internalType: 'string', type: 'string' },
-      { name: 'symbol_', internalType: 'string', type: 'string' },
-    ],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'owner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'approved',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'tokenId',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: true,
-      },
-    ],
-    name: 'Approval',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'owner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'operator',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      { name: 'approved', internalType: 'bool', type: 'bool', indexed: false },
-    ],
-    name: 'ApprovalForAll',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address', indexed: true },
-      { name: 'to', internalType: 'address', type: 'address', indexed: true },
-      {
-        name: 'tokenId',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: true,
-      },
-    ],
-    name: 'Transfer',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'approve',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'owner', internalType: 'address', type: 'address' }],
-    name: 'balanceOf',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'tokenId', internalType: 'uint256', type: 'uint256' }],
-    name: 'getApproved',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'owner', internalType: 'address', type: 'address' },
-      { name: 'operator', internalType: 'address', type: 'address' },
-    ],
-    name: 'isApprovedForAll',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'name',
-    outputs: [{ name: '', internalType: 'string', type: 'string' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'tokenId', internalType: 'uint256', type: 'uint256' }],
-    name: 'ownerOf',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'safeTransferFrom',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
-      { name: 'data', internalType: 'bytes', type: 'bytes' },
-    ],
-    name: 'safeTransferFrom',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'operator', internalType: 'address', type: 'address' },
-      { name: 'approved', internalType: 'bool', type: 'bool' },
-    ],
-    name: 'setApprovalForAll',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'interfaceId', internalType: 'bytes4', type: 'bytes4' }],
-    name: 'supportsInterface',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'symbol',
-    outputs: [{ name: '', internalType: 'string', type: 'string' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'tokenId', internalType: 'uint256', type: 'uint256' }],
-    name: 'tokenURI',
-    outputs: [{ name: '', internalType: 'string', type: 'string' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'transferFrom',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ERC721Enumerable
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const erc721EnumerableAbi = [
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'owner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'approved',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'tokenId',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: true,
-      },
-    ],
-    name: 'Approval',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'owner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'operator',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      { name: 'approved', internalType: 'bool', type: 'bool', indexed: false },
-    ],
-    name: 'ApprovalForAll',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address', indexed: true },
-      { name: 'to', internalType: 'address', type: 'address', indexed: true },
-      {
-        name: 'tokenId',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: true,
-      },
-    ],
-    name: 'Transfer',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'approve',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'owner', internalType: 'address', type: 'address' }],
-    name: 'balanceOf',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'tokenId', internalType: 'uint256', type: 'uint256' }],
-    name: 'getApproved',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'owner', internalType: 'address', type: 'address' },
-      { name: 'operator', internalType: 'address', type: 'address' },
-    ],
-    name: 'isApprovedForAll',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'name',
-    outputs: [{ name: '', internalType: 'string', type: 'string' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'tokenId', internalType: 'uint256', type: 'uint256' }],
-    name: 'ownerOf',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'safeTransferFrom',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
-      { name: 'data', internalType: 'bytes', type: 'bytes' },
-    ],
-    name: 'safeTransferFrom',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'operator', internalType: 'address', type: 'address' },
-      { name: 'approved', internalType: 'bool', type: 'bool' },
-    ],
-    name: 'setApprovalForAll',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'interfaceId', internalType: 'bytes4', type: 'bytes4' }],
-    name: 'supportsInterface',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'symbol',
-    outputs: [{ name: '', internalType: 'string', type: 'string' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'index', internalType: 'uint256', type: 'uint256' }],
-    name: 'tokenByIndex',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'owner', internalType: 'address', type: 'address' },
-      { name: 'index', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'tokenOfOwnerByIndex',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'tokenId', internalType: 'uint256', type: 'uint256' }],
-    name: 'tokenURI',
-    outputs: [{ name: '', internalType: 'string', type: 'string' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'totalSupply',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'transferFrom',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ExecutorOptions
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const executorOptionsAbi = [
-  { type: 'error', inputs: [], name: 'Executor_InvalidLzComposeOption' },
-  { type: 'error', inputs: [], name: 'Executor_InvalidLzReceiveOption' },
-  { type: 'error', inputs: [], name: 'Executor_InvalidNativeDropOption' },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// IERC165
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const ierc165Abi = [
-  {
-    type: 'function',
-    inputs: [{ name: 'interfaceId', internalType: 'bytes4', type: 'bytes4' }],
-    name: 'supportsInterface',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// IERC20
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const ierc20Abi = [
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'owner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'spender',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'value',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: false,
-      },
-    ],
-    name: 'Approval',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address', indexed: true },
-      { name: 'to', internalType: 'address', type: 'address', indexed: true },
-      {
-        name: 'value',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: false,
-      },
-    ],
-    name: 'Transfer',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'owner', internalType: 'address', type: 'address' },
-      { name: 'spender', internalType: 'address', type: 'address' },
-    ],
-    name: 'allowance',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'spender', internalType: 'address', type: 'address' },
-      { name: 'amount', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'approve',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'account', internalType: 'address', type: 'address' }],
-    name: 'balanceOf',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'totalSupply',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'amount', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'transfer',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'amount', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'transferFrom',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// IERC20Metadata
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const ierc20MetadataAbi = [
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'owner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'spender',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'value',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: false,
-      },
-    ],
-    name: 'Approval',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address', indexed: true },
-      { name: 'to', internalType: 'address', type: 'address', indexed: true },
-      {
-        name: 'value',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: false,
-      },
-    ],
-    name: 'Transfer',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'owner', internalType: 'address', type: 'address' },
-      { name: 'spender', internalType: 'address', type: 'address' },
-    ],
-    name: 'allowance',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'spender', internalType: 'address', type: 'address' },
-      { name: 'amount', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'approve',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'account', internalType: 'address', type: 'address' }],
-    name: 'balanceOf',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'decimals',
-    outputs: [{ name: '', internalType: 'uint8', type: 'uint8' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'name',
-    outputs: [{ name: '', internalType: 'string', type: 'string' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'symbol',
-    outputs: [{ name: '', internalType: 'string', type: 'string' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'totalSupply',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'amount', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'transfer',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'amount', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'transferFrom',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// IERC20Permit
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const ierc20PermitAbi = [
-  {
-    type: 'function',
-    inputs: [],
-    name: 'DOMAIN_SEPARATOR',
+    inputs: [{ name: 'clientId', internalType: 'uint32', type: 'uint32' }],
+    name: 'clientCurrentHash',
     outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
     stateMutability: 'view',
   },
   {
     type: 'function',
-    inputs: [{ name: 'owner', internalType: 'address', type: 'address' }],
-    name: 'nonces',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'checkpointId', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'clientHashAtCheckpoint',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
     stateMutability: 'view',
   },
   {
     type: 'function',
     inputs: [
-      { name: 'owner', internalType: 'address', type: 'address' },
-      { name: 'spender', internalType: 'address', type: 'address' },
-      { name: 'value', internalType: 'uint256', type: 'uint256' },
-      { name: 'deadline', internalType: 'uint256', type: 'uint256' },
+      { name: 'senderId', internalType: 'uint32', type: 'uint32' },
+      { name: 'cawonce', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'isCawonceUsed',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
       { name: 'v', internalType: 'uint8', type: 'uint8' },
       { name: 'r', internalType: 'bytes32', type: 'bytes32' },
       { name: 's', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'permit',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// IERC5267
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const ierc5267Abi = [
-  { type: 'event', anonymous: false, inputs: [], name: 'EIP712DomainChanged' },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'eip712Domain',
-    outputs: [
-      { name: 'fields', internalType: 'bytes1', type: 'bytes1' },
-      { name: 'name', internalType: 'string', type: 'string' },
-      { name: 'version', internalType: 'string', type: 'string' },
-      { name: 'chainId', internalType: 'uint256', type: 'uint256' },
-      { name: 'verifyingContract', internalType: 'address', type: 'address' },
-      { name: 'salt', internalType: 'bytes32', type: 'bytes32' },
-      { name: 'extensions', internalType: 'uint256[]', type: 'uint256[]' },
-    ],
-    stateMutability: 'view',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// IERC721
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const ierc721Abi = [
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
       {
-        name: 'owner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'approved',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'tokenId',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: true,
-      },
-    ],
-    name: 'Approval',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'owner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'operator',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      { name: 'approved', internalType: 'bool', type: 'bool', indexed: false },
-    ],
-    name: 'ApprovalForAll',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address', indexed: true },
-      { name: 'to', internalType: 'address', type: 'address', indexed: true },
-      {
-        name: 'tokenId',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: true,
-      },
-    ],
-    name: 'Transfer',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'approve',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'owner', internalType: 'address', type: 'address' }],
-    name: 'balanceOf',
-    outputs: [{ name: 'balance', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'tokenId', internalType: 'uint256', type: 'uint256' }],
-    name: 'getApproved',
-    outputs: [{ name: 'operator', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'owner', internalType: 'address', type: 'address' },
-      { name: 'operator', internalType: 'address', type: 'address' },
-    ],
-    name: 'isApprovedForAll',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'tokenId', internalType: 'uint256', type: 'uint256' }],
-    name: 'ownerOf',
-    outputs: [{ name: 'owner', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'safeTransferFrom',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
-      { name: 'data', internalType: 'bytes', type: 'bytes' },
-    ],
-    name: 'safeTransferFrom',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'operator', internalType: 'address', type: 'address' },
-      { name: 'approved', internalType: 'bool', type: 'bool' },
-    ],
-    name: 'setApprovalForAll',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'interfaceId', internalType: 'bytes4', type: 'bytes4' }],
-    name: 'supportsInterface',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'transferFrom',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// IERC721Enumerable
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const ierc721EnumerableAbi = [
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'owner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'approved',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'tokenId',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: true,
-      },
-    ],
-    name: 'Approval',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'owner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'operator',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      { name: 'approved', internalType: 'bool', type: 'bool', indexed: false },
-    ],
-    name: 'ApprovalForAll',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address', indexed: true },
-      { name: 'to', internalType: 'address', type: 'address', indexed: true },
-      {
-        name: 'tokenId',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: true,
-      },
-    ],
-    name: 'Transfer',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'approve',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'owner', internalType: 'address', type: 'address' }],
-    name: 'balanceOf',
-    outputs: [{ name: 'balance', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'tokenId', internalType: 'uint256', type: 'uint256' }],
-    name: 'getApproved',
-    outputs: [{ name: 'operator', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'owner', internalType: 'address', type: 'address' },
-      { name: 'operator', internalType: 'address', type: 'address' },
-    ],
-    name: 'isApprovedForAll',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'tokenId', internalType: 'uint256', type: 'uint256' }],
-    name: 'ownerOf',
-    outputs: [{ name: 'owner', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'safeTransferFrom',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
-      { name: 'data', internalType: 'bytes', type: 'bytes' },
-    ],
-    name: 'safeTransferFrom',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'operator', internalType: 'address', type: 'address' },
-      { name: 'approved', internalType: 'bool', type: 'bool' },
-    ],
-    name: 'setApprovalForAll',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'interfaceId', internalType: 'bytes4', type: 'bytes4' }],
-    name: 'supportsInterface',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'index', internalType: 'uint256', type: 'uint256' }],
-    name: 'tokenByIndex',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'owner', internalType: 'address', type: 'address' },
-      { name: 'index', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'tokenOfOwnerByIndex',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'totalSupply',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'transferFrom',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// IERC721Metadata
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const ierc721MetadataAbi = [
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'owner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'approved',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'tokenId',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: true,
-      },
-    ],
-    name: 'Approval',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'owner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'operator',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      { name: 'approved', internalType: 'bool', type: 'bool', indexed: false },
-    ],
-    name: 'ApprovalForAll',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address', indexed: true },
-      { name: 'to', internalType: 'address', type: 'address', indexed: true },
-      {
-        name: 'tokenId',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: true,
-      },
-    ],
-    name: 'Transfer',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'approve',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'owner', internalType: 'address', type: 'address' }],
-    name: 'balanceOf',
-    outputs: [{ name: 'balance', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'tokenId', internalType: 'uint256', type: 'uint256' }],
-    name: 'getApproved',
-    outputs: [{ name: 'operator', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'owner', internalType: 'address', type: 'address' },
-      { name: 'operator', internalType: 'address', type: 'address' },
-    ],
-    name: 'isApprovedForAll',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'name',
-    outputs: [{ name: '', internalType: 'string', type: 'string' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'tokenId', internalType: 'uint256', type: 'uint256' }],
-    name: 'ownerOf',
-    outputs: [{ name: 'owner', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'safeTransferFrom',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
-      { name: 'data', internalType: 'bytes', type: 'bytes' },
-    ],
-    name: 'safeTransferFrom',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'operator', internalType: 'address', type: 'address' },
-      { name: 'approved', internalType: 'bool', type: 'bool' },
-    ],
-    name: 'setApprovalForAll',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'interfaceId', internalType: 'bytes4', type: 'bytes4' }],
-    name: 'supportsInterface',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'symbol',
-    outputs: [{ name: '', internalType: 'string', type: 'string' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'tokenId', internalType: 'uint256', type: 'uint256' }],
-    name: 'tokenURI',
-    outputs: [{ name: '', internalType: 'string', type: 'string' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'transferFrom',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// IERC721Receiver
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const ierc721ReceiverAbi = [
-  {
-    type: 'function',
-    inputs: [
-      { name: 'operator', internalType: 'address', type: 'address' },
-      { name: 'from', internalType: 'address', type: 'address' },
-      { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
-      { name: 'data', internalType: 'bytes', type: 'bytes' },
-    ],
-    name: 'onERC721Received',
-    outputs: [{ name: '', internalType: 'bytes4', type: 'bytes4' }],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ILayerZeroEndpointV2
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const iLayerZeroEndpointV2Abi = [
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'from',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-      { name: 'to', internalType: 'address', type: 'address', indexed: false },
-      {
-        name: 'guid',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
-      { name: 'index', internalType: 'uint16', type: 'uint16', indexed: false },
-    ],
-    name: 'ComposeDelivered',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'from',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-      { name: 'to', internalType: 'address', type: 'address', indexed: false },
-      {
-        name: 'guid',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
-      { name: 'index', internalType: 'uint16', type: 'uint16', indexed: false },
-      { name: 'message', internalType: 'bytes', type: 'bytes', indexed: false },
-    ],
-    name: 'ComposeSent',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
-      {
-        name: 'newLib',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-    ],
-    name: 'DefaultReceiveLibrarySet',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
-      {
-        name: 'oldLib',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-      {
-        name: 'expiry',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: false,
-      },
-    ],
-    name: 'DefaultReceiveLibraryTimeoutSet',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
-      {
-        name: 'newLib',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-    ],
-    name: 'DefaultSendLibrarySet',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'sender',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-      {
-        name: 'delegate',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-    ],
-    name: 'DelegateSet',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'srcEid',
-        internalType: 'uint32',
-        type: 'uint32',
-        indexed: false,
-      },
-      {
-        name: 'sender',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
-      {
-        name: 'receiver',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-      { name: 'nonce', internalType: 'uint64', type: 'uint64', indexed: false },
-    ],
-    name: 'InboundNonceSkipped',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'newLib',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-    ],
-    name: 'LibraryRegistered',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address', indexed: true },
-      { name: 'to', internalType: 'address', type: 'address', indexed: true },
-      {
-        name: 'executor',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'guid',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
-      { name: 'index', internalType: 'uint16', type: 'uint16', indexed: false },
-      { name: 'gas', internalType: 'uint256', type: 'uint256', indexed: false },
-      {
-        name: 'value',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: false,
-      },
-      { name: 'message', internalType: 'bytes', type: 'bytes', indexed: false },
-      {
-        name: 'extraData',
-        internalType: 'bytes',
-        type: 'bytes',
-        indexed: false,
-      },
-      { name: 'reason', internalType: 'bytes', type: 'bytes', indexed: false },
-    ],
-    name: 'LzComposeAlert',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'receiver',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'executor',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'origin',
-        internalType: 'struct Origin',
+        name: 'data',
+        internalType: 'struct ICawActionsForReplicator.ActionData',
         type: 'tuple',
         components: [
-          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
-          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
+          { name: 'actionType', internalType: 'uint8', type: 'uint8' },
+          { name: 'senderId', internalType: 'uint32', type: 'uint32' },
+          { name: 'receiverId', internalType: 'uint32', type: 'uint32' },
+          { name: 'receiverCawonce', internalType: 'uint32', type: 'uint32' },
+          { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+          { name: 'cawonce', internalType: 'uint32', type: 'uint32' },
+          { name: 'recipients', internalType: 'uint32[]', type: 'uint32[]' },
+          { name: 'amounts', internalType: 'uint128[]', type: 'uint128[]' },
+          { name: 'text', internalType: 'string', type: 'string' },
         ],
-        indexed: false,
-      },
-      {
-        name: 'guid',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
-      { name: 'gas', internalType: 'uint256', type: 'uint256', indexed: false },
-      {
-        name: 'value',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: false,
-      },
-      { name: 'message', internalType: 'bytes', type: 'bytes', indexed: false },
-      {
-        name: 'extraData',
-        internalType: 'bytes',
-        type: 'bytes',
-        indexed: false,
-      },
-      { name: 'reason', internalType: 'bytes', type: 'bytes', indexed: false },
-    ],
-    name: 'LzReceiveAlert',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'token',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
       },
     ],
-    name: 'LzTokenSet',
+    name: 'verifySignature',
+    outputs: [],
+    stateMutability: 'view',
   },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'srcEid',
-        internalType: 'uint32',
-        type: 'uint32',
-        indexed: false,
-      },
-      {
-        name: 'sender',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
-      {
-        name: 'receiver',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-      { name: 'nonce', internalType: 'uint64', type: 'uint64', indexed: false },
-      {
-        name: 'payloadHash',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
-    ],
-    name: 'PacketBurnt',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'origin',
-        internalType: 'struct Origin',
-        type: 'tuple',
-        components: [
-          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
-          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
-        ],
-        indexed: false,
-      },
-      {
-        name: 'receiver',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-    ],
-    name: 'PacketDelivered',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'srcEid',
-        internalType: 'uint32',
-        type: 'uint32',
-        indexed: false,
-      },
-      {
-        name: 'sender',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
-      {
-        name: 'receiver',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-      { name: 'nonce', internalType: 'uint64', type: 'uint64', indexed: false },
-      {
-        name: 'payloadHash',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
-    ],
-    name: 'PacketNilified',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'encodedPayload',
-        internalType: 'bytes',
-        type: 'bytes',
-        indexed: false,
-      },
-      { name: 'options', internalType: 'bytes', type: 'bytes', indexed: false },
-      {
-        name: 'sendLibrary',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-    ],
-    name: 'PacketSent',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'origin',
-        internalType: 'struct Origin',
-        type: 'tuple',
-        components: [
-          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
-          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
-        ],
-        indexed: false,
-      },
-      {
-        name: 'receiver',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-      {
-        name: 'payloadHash',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
-    ],
-    name: 'PacketVerified',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'receiver',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
-      {
-        name: 'newLib',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-    ],
-    name: 'ReceiveLibrarySet',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'receiver',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
-      {
-        name: 'oldLib',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-      {
-        name: 'timeout',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: false,
-      },
-    ],
-    name: 'ReceiveLibraryTimeoutSet',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'sender',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
-      {
-        name: 'newLib',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-    ],
-    name: 'SendLibrarySet',
-  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ICawActionsReplicator
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const iCawActionsReplicatorAbi = [
   {
     type: 'function',
     inputs: [
-      { name: '_oapp', internalType: 'address', type: 'address' },
-      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
-      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_nonce', internalType: 'uint64', type: 'uint64' },
-      { name: '_payloadHash', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'destEid', internalType: 'uint32', type: 'uint32' },
+      { name: 'target', internalType: 'address', type: 'address' },
     ],
-    name: 'burn',
+    name: 'updatePeer',
     outputs: [],
     stateMutability: 'nonpayable',
   },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ICawName
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const iCawNameAbi = [
   {
     type: 'function',
     inputs: [
-      { name: '_oapp', internalType: 'address', type: 'address' },
-      {
-        name: '_origin',
-        internalType: 'struct Origin',
-        type: 'tuple',
-        components: [
-          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
-          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
-        ],
-      },
-      { name: '_guid', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_message', internalType: 'bytes', type: 'bytes' },
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'archiveEid', internalType: 'uint32', type: 'uint32' },
+      { name: 'target', internalType: 'address', type: 'address' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
     ],
-    name: 'clear',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_from', internalType: 'address', type: 'address' },
-      { name: '_to', internalType: 'address', type: 'address' },
-      { name: '_guid', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_index', internalType: 'uint16', type: 'uint16' },
-    ],
-    name: 'composeQueue',
-    outputs: [
-      { name: 'messageHash', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_eid', internalType: 'uint32', type: 'uint32' }],
-    name: 'defaultReceiveLibrary',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_eid', internalType: 'uint32', type: 'uint32' }],
-    name: 'defaultReceiveLibraryTimeout',
-    outputs: [
-      { name: 'lib', internalType: 'address', type: 'address' },
-      { name: 'expiry', internalType: 'uint256', type: 'uint256' },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_eid', internalType: 'uint32', type: 'uint32' }],
-    name: 'defaultSendLibrary',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'eid',
-    outputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_oapp', internalType: 'address', type: 'address' },
-      { name: '_lib', internalType: 'address', type: 'address' },
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_configType', internalType: 'uint32', type: 'uint32' },
-    ],
-    name: 'getConfig',
-    outputs: [{ name: 'config', internalType: 'bytes', type: 'bytes' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_receiver', internalType: 'address', type: 'address' },
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-    ],
-    name: 'getReceiveLibrary',
-    outputs: [
-      { name: 'lib', internalType: 'address', type: 'address' },
-      { name: 'isDefault', internalType: 'bool', type: 'bool' },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'getRegisteredLibraries',
-    outputs: [{ name: '', internalType: 'address[]', type: 'address[]' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'getSendContext',
-    outputs: [
-      { name: 'dstEid', internalType: 'uint32', type: 'uint32' },
-      { name: 'sender', internalType: 'address', type: 'address' },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_sender', internalType: 'address', type: 'address' },
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-    ],
-    name: 'getSendLibrary',
-    outputs: [{ name: 'lib', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_receiver', internalType: 'address', type: 'address' },
-      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
-      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'inboundNonce',
-    outputs: [{ name: '', internalType: 'uint64', type: 'uint64' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_receiver', internalType: 'address', type: 'address' },
-      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
-      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_nonce', internalType: 'uint64', type: 'uint64' },
-    ],
-    name: 'inboundPayloadHash',
-    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      {
-        name: '_origin',
-        internalType: 'struct Origin',
-        type: 'tuple',
-        components: [
-          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
-          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
-        ],
-      },
-      { name: '_receiver', internalType: 'address', type: 'address' },
-    ],
-    name: 'initializable',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_sender', internalType: 'address', type: 'address' },
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-    ],
-    name: 'isDefaultSendLibrary',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_lib', internalType: 'address', type: 'address' }],
-    name: 'isRegisteredLibrary',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'isSendingMessage',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_eid', internalType: 'uint32', type: 'uint32' }],
-    name: 'isSupportedEid',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_receiver', internalType: 'address', type: 'address' },
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_lib', internalType: 'address', type: 'address' },
-    ],
-    name: 'isValidReceiveLibrary',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_receiver', internalType: 'address', type: 'address' },
-      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
-      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'lazyInboundNonce',
-    outputs: [{ name: '', internalType: 'uint64', type: 'uint64' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_from', internalType: 'address', type: 'address' },
-      { name: '_to', internalType: 'address', type: 'address' },
-      { name: '_guid', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_index', internalType: 'uint16', type: 'uint16' },
-      { name: '_message', internalType: 'bytes', type: 'bytes' },
-      { name: '_extraData', internalType: 'bytes', type: 'bytes' },
-    ],
-    name: 'lzCompose',
+    name: 'syncReplicationInternal',
     outputs: [],
     stateMutability: 'payable',
   },
   {
     type: 'function',
     inputs: [
-      {
-        name: '_origin',
-        internalType: 'struct Origin',
-        type: 'tuple',
-        components: [
-          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
-          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
-        ],
-      },
-      { name: '_receiver', internalType: 'address', type: 'address' },
-      { name: '_guid', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_message', internalType: 'bytes', type: 'bytes' },
-      { name: '_extraData', internalType: 'bytes', type: 'bytes' },
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'archiveEid', internalType: 'uint32', type: 'uint32' },
+      { name: 'target', internalType: 'address', type: 'address' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+      { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
     ],
-    name: 'lzReceive',
-    outputs: [],
-    stateMutability: 'payable',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'lzToken',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'nativeToken',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_sender', internalType: 'address', type: 'address' },
-      { name: '_dstEid', internalType: 'uint32', type: 'uint32' },
-      { name: '_receiver', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'nextGuid',
-    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_oapp', internalType: 'address', type: 'address' },
-      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
-      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_nonce', internalType: 'uint64', type: 'uint64' },
-      { name: '_payloadHash', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'nilify',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_sender', internalType: 'address', type: 'address' },
-      { name: '_dstEid', internalType: 'uint32', type: 'uint32' },
-      { name: '_receiver', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'outboundNonce',
-    outputs: [{ name: '', internalType: 'uint64', type: 'uint64' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      {
-        name: '_params',
-        internalType: 'struct MessagingParams',
-        type: 'tuple',
-        components: [
-          { name: 'dstEid', internalType: 'uint32', type: 'uint32' },
-          { name: 'receiver', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'message', internalType: 'bytes', type: 'bytes' },
-          { name: 'options', internalType: 'bytes', type: 'bytes' },
-          { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
-        ],
-      },
-      { name: '_sender', internalType: 'address', type: 'address' },
-    ],
-    name: 'quote',
+    name: 'syncReplicationQuote',
     outputs: [
       {
         name: '',
@@ -4422,1617 +3623,6 @@ export const iLayerZeroEndpointV2Abi = [
       },
     ],
     stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_receiver', internalType: 'address', type: 'address' },
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-    ],
-    name: 'receiveLibraryTimeout',
-    outputs: [
-      { name: 'lib', internalType: 'address', type: 'address' },
-      { name: 'expiry', internalType: 'uint256', type: 'uint256' },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_lib', internalType: 'address', type: 'address' }],
-    name: 'registerLibrary',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      {
-        name: '_params',
-        internalType: 'struct MessagingParams',
-        type: 'tuple',
-        components: [
-          { name: 'dstEid', internalType: 'uint32', type: 'uint32' },
-          { name: 'receiver', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'message', internalType: 'bytes', type: 'bytes' },
-          { name: 'options', internalType: 'bytes', type: 'bytes' },
-          { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
-        ],
-      },
-      { name: '_refundAddress', internalType: 'address', type: 'address' },
-    ],
-    name: 'send',
-    outputs: [
-      {
-        name: '',
-        internalType: 'struct MessagingReceipt',
-        type: 'tuple',
-        components: [
-          { name: 'guid', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
-          {
-            name: 'fee',
-            internalType: 'struct MessagingFee',
-            type: 'tuple',
-            components: [
-              { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
-              { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
-            ],
-          },
-        ],
-      },
-    ],
-    stateMutability: 'payable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_to', internalType: 'address', type: 'address' },
-      { name: '_guid', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_index', internalType: 'uint16', type: 'uint16' },
-      { name: '_message', internalType: 'bytes', type: 'bytes' },
-    ],
-    name: 'sendCompose',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_oapp', internalType: 'address', type: 'address' },
-      { name: '_lib', internalType: 'address', type: 'address' },
-      {
-        name: '_params',
-        internalType: 'struct SetConfigParam[]',
-        type: 'tuple[]',
-        components: [
-          { name: 'eid', internalType: 'uint32', type: 'uint32' },
-          { name: 'configType', internalType: 'uint32', type: 'uint32' },
-          { name: 'config', internalType: 'bytes', type: 'bytes' },
-        ],
-      },
-    ],
-    name: 'setConfig',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_newLib', internalType: 'address', type: 'address' },
-      { name: '_gracePeriod', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'setDefaultReceiveLibrary',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_lib', internalType: 'address', type: 'address' },
-      { name: '_expiry', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'setDefaultReceiveLibraryTimeout',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_newLib', internalType: 'address', type: 'address' },
-    ],
-    name: 'setDefaultSendLibrary',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_delegate', internalType: 'address', type: 'address' }],
-    name: 'setDelegate',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_lzToken', internalType: 'address', type: 'address' }],
-    name: 'setLzToken',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_oapp', internalType: 'address', type: 'address' },
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_newLib', internalType: 'address', type: 'address' },
-      { name: '_gracePeriod', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'setReceiveLibrary',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_oapp', internalType: 'address', type: 'address' },
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_lib', internalType: 'address', type: 'address' },
-      { name: '_expiry', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'setReceiveLibraryTimeout',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_oapp', internalType: 'address', type: 'address' },
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_newLib', internalType: 'address', type: 'address' },
-    ],
-    name: 'setSendLibrary',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_oapp', internalType: 'address', type: 'address' },
-      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
-      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_nonce', internalType: 'uint64', type: 'uint64' },
-    ],
-    name: 'skip',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      {
-        name: '_origin',
-        internalType: 'struct Origin',
-        type: 'tuple',
-        components: [
-          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
-          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
-        ],
-      },
-      { name: '_receiver', internalType: 'address', type: 'address' },
-    ],
-    name: 'verifiable',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      {
-        name: '_origin',
-        internalType: 'struct Origin',
-        type: 'tuple',
-        components: [
-          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
-          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
-        ],
-      },
-      { name: '_receiver', internalType: 'address', type: 'address' },
-      { name: '_payloadHash', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'verify',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ILayerZeroReceiver
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const iLayerZeroReceiverAbi = [
-  {
-    type: 'function',
-    inputs: [
-      {
-        name: '_origin',
-        internalType: 'struct Origin',
-        type: 'tuple',
-        components: [
-          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
-          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
-        ],
-      },
-    ],
-    name: 'allowInitializePath',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      {
-        name: '_origin',
-        internalType: 'struct Origin',
-        type: 'tuple',
-        components: [
-          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
-          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
-        ],
-      },
-      { name: '_guid', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_message', internalType: 'bytes', type: 'bytes' },
-      { name: '_executor', internalType: 'address', type: 'address' },
-      { name: '_extraData', internalType: 'bytes', type: 'bytes' },
-    ],
-    name: 'lzReceive',
-    outputs: [],
-    stateMutability: 'payable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'nextNonce',
-    outputs: [{ name: '', internalType: 'uint64', type: 'uint64' }],
-    stateMutability: 'view',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// IMessageLibManager
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const iMessageLibManagerAbi = [
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
-      {
-        name: 'newLib',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-    ],
-    name: 'DefaultReceiveLibrarySet',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
-      {
-        name: 'oldLib',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-      {
-        name: 'expiry',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: false,
-      },
-    ],
-    name: 'DefaultReceiveLibraryTimeoutSet',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
-      {
-        name: 'newLib',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-    ],
-    name: 'DefaultSendLibrarySet',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'newLib',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-    ],
-    name: 'LibraryRegistered',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'receiver',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
-      {
-        name: 'newLib',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-    ],
-    name: 'ReceiveLibrarySet',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'receiver',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
-      {
-        name: 'oldLib',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-      {
-        name: 'timeout',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: false,
-      },
-    ],
-    name: 'ReceiveLibraryTimeoutSet',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'sender',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
-      {
-        name: 'newLib',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-    ],
-    name: 'SendLibrarySet',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_eid', internalType: 'uint32', type: 'uint32' }],
-    name: 'defaultReceiveLibrary',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_eid', internalType: 'uint32', type: 'uint32' }],
-    name: 'defaultReceiveLibraryTimeout',
-    outputs: [
-      { name: 'lib', internalType: 'address', type: 'address' },
-      { name: 'expiry', internalType: 'uint256', type: 'uint256' },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_eid', internalType: 'uint32', type: 'uint32' }],
-    name: 'defaultSendLibrary',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_oapp', internalType: 'address', type: 'address' },
-      { name: '_lib', internalType: 'address', type: 'address' },
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_configType', internalType: 'uint32', type: 'uint32' },
-    ],
-    name: 'getConfig',
-    outputs: [{ name: 'config', internalType: 'bytes', type: 'bytes' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_receiver', internalType: 'address', type: 'address' },
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-    ],
-    name: 'getReceiveLibrary',
-    outputs: [
-      { name: 'lib', internalType: 'address', type: 'address' },
-      { name: 'isDefault', internalType: 'bool', type: 'bool' },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'getRegisteredLibraries',
-    outputs: [{ name: '', internalType: 'address[]', type: 'address[]' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_sender', internalType: 'address', type: 'address' },
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-    ],
-    name: 'getSendLibrary',
-    outputs: [{ name: 'lib', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_sender', internalType: 'address', type: 'address' },
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-    ],
-    name: 'isDefaultSendLibrary',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_lib', internalType: 'address', type: 'address' }],
-    name: 'isRegisteredLibrary',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_eid', internalType: 'uint32', type: 'uint32' }],
-    name: 'isSupportedEid',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_receiver', internalType: 'address', type: 'address' },
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_lib', internalType: 'address', type: 'address' },
-    ],
-    name: 'isValidReceiveLibrary',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_receiver', internalType: 'address', type: 'address' },
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-    ],
-    name: 'receiveLibraryTimeout',
-    outputs: [
-      { name: 'lib', internalType: 'address', type: 'address' },
-      { name: 'expiry', internalType: 'uint256', type: 'uint256' },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_lib', internalType: 'address', type: 'address' }],
-    name: 'registerLibrary',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_oapp', internalType: 'address', type: 'address' },
-      { name: '_lib', internalType: 'address', type: 'address' },
-      {
-        name: '_params',
-        internalType: 'struct SetConfigParam[]',
-        type: 'tuple[]',
-        components: [
-          { name: 'eid', internalType: 'uint32', type: 'uint32' },
-          { name: 'configType', internalType: 'uint32', type: 'uint32' },
-          { name: 'config', internalType: 'bytes', type: 'bytes' },
-        ],
-      },
-    ],
-    name: 'setConfig',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_newLib', internalType: 'address', type: 'address' },
-      { name: '_gracePeriod', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'setDefaultReceiveLibrary',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_lib', internalType: 'address', type: 'address' },
-      { name: '_expiry', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'setDefaultReceiveLibraryTimeout',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_newLib', internalType: 'address', type: 'address' },
-    ],
-    name: 'setDefaultSendLibrary',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_oapp', internalType: 'address', type: 'address' },
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_newLib', internalType: 'address', type: 'address' },
-      { name: '_gracePeriod', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'setReceiveLibrary',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_oapp', internalType: 'address', type: 'address' },
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_lib', internalType: 'address', type: 'address' },
-      { name: '_expiry', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'setReceiveLibraryTimeout',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_oapp', internalType: 'address', type: 'address' },
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_newLib', internalType: 'address', type: 'address' },
-    ],
-    name: 'setSendLibrary',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// IMessagingChannel
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const iMessagingChannelAbi = [
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'srcEid',
-        internalType: 'uint32',
-        type: 'uint32',
-        indexed: false,
-      },
-      {
-        name: 'sender',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
-      {
-        name: 'receiver',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-      { name: 'nonce', internalType: 'uint64', type: 'uint64', indexed: false },
-    ],
-    name: 'InboundNonceSkipped',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'srcEid',
-        internalType: 'uint32',
-        type: 'uint32',
-        indexed: false,
-      },
-      {
-        name: 'sender',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
-      {
-        name: 'receiver',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-      { name: 'nonce', internalType: 'uint64', type: 'uint64', indexed: false },
-      {
-        name: 'payloadHash',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
-    ],
-    name: 'PacketBurnt',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'srcEid',
-        internalType: 'uint32',
-        type: 'uint32',
-        indexed: false,
-      },
-      {
-        name: 'sender',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
-      {
-        name: 'receiver',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-      { name: 'nonce', internalType: 'uint64', type: 'uint64', indexed: false },
-      {
-        name: 'payloadHash',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
-    ],
-    name: 'PacketNilified',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_oapp', internalType: 'address', type: 'address' },
-      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
-      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_nonce', internalType: 'uint64', type: 'uint64' },
-      { name: '_payloadHash', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'burn',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'eid',
-    outputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_receiver', internalType: 'address', type: 'address' },
-      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
-      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'inboundNonce',
-    outputs: [{ name: '', internalType: 'uint64', type: 'uint64' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_receiver', internalType: 'address', type: 'address' },
-      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
-      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_nonce', internalType: 'uint64', type: 'uint64' },
-    ],
-    name: 'inboundPayloadHash',
-    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_receiver', internalType: 'address', type: 'address' },
-      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
-      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'lazyInboundNonce',
-    outputs: [{ name: '', internalType: 'uint64', type: 'uint64' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_sender', internalType: 'address', type: 'address' },
-      { name: '_dstEid', internalType: 'uint32', type: 'uint32' },
-      { name: '_receiver', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'nextGuid',
-    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_oapp', internalType: 'address', type: 'address' },
-      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
-      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_nonce', internalType: 'uint64', type: 'uint64' },
-      { name: '_payloadHash', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'nilify',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_sender', internalType: 'address', type: 'address' },
-      { name: '_dstEid', internalType: 'uint32', type: 'uint32' },
-      { name: '_receiver', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'outboundNonce',
-    outputs: [{ name: '', internalType: 'uint64', type: 'uint64' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_oapp', internalType: 'address', type: 'address' },
-      { name: '_srcEid', internalType: 'uint32', type: 'uint32' },
-      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_nonce', internalType: 'uint64', type: 'uint64' },
-    ],
-    name: 'skip',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// IMessagingComposer
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const iMessagingComposerAbi = [
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'from',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-      { name: 'to', internalType: 'address', type: 'address', indexed: false },
-      {
-        name: 'guid',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
-      { name: 'index', internalType: 'uint16', type: 'uint16', indexed: false },
-    ],
-    name: 'ComposeDelivered',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'from',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-      { name: 'to', internalType: 'address', type: 'address', indexed: false },
-      {
-        name: 'guid',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
-      { name: 'index', internalType: 'uint16', type: 'uint16', indexed: false },
-      { name: 'message', internalType: 'bytes', type: 'bytes', indexed: false },
-    ],
-    name: 'ComposeSent',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      { name: 'from', internalType: 'address', type: 'address', indexed: true },
-      { name: 'to', internalType: 'address', type: 'address', indexed: true },
-      {
-        name: 'executor',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'guid',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
-      { name: 'index', internalType: 'uint16', type: 'uint16', indexed: false },
-      { name: 'gas', internalType: 'uint256', type: 'uint256', indexed: false },
-      {
-        name: 'value',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: false,
-      },
-      { name: 'message', internalType: 'bytes', type: 'bytes', indexed: false },
-      {
-        name: 'extraData',
-        internalType: 'bytes',
-        type: 'bytes',
-        indexed: false,
-      },
-      { name: 'reason', internalType: 'bytes', type: 'bytes', indexed: false },
-    ],
-    name: 'LzComposeAlert',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_from', internalType: 'address', type: 'address' },
-      { name: '_to', internalType: 'address', type: 'address' },
-      { name: '_guid', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_index', internalType: 'uint16', type: 'uint16' },
-    ],
-    name: 'composeQueue',
-    outputs: [
-      { name: 'messageHash', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_from', internalType: 'address', type: 'address' },
-      { name: '_to', internalType: 'address', type: 'address' },
-      { name: '_guid', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_index', internalType: 'uint16', type: 'uint16' },
-      { name: '_message', internalType: 'bytes', type: 'bytes' },
-      { name: '_extraData', internalType: 'bytes', type: 'bytes' },
-    ],
-    name: 'lzCompose',
-    outputs: [],
-    stateMutability: 'payable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_to', internalType: 'address', type: 'address' },
-      { name: '_guid', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_index', internalType: 'uint16', type: 'uint16' },
-      { name: '_message', internalType: 'bytes', type: 'bytes' },
-    ],
-    name: 'sendCompose',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// IMessagingContext
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const iMessagingContextAbi = [
-  {
-    type: 'function',
-    inputs: [],
-    name: 'getSendContext',
-    outputs: [
-      { name: 'dstEid', internalType: 'uint32', type: 'uint32' },
-      { name: 'sender', internalType: 'address', type: 'address' },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'isSendingMessage',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// IMint
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const iMintAbi = [
-  {
-    type: 'function',
-    inputs: [
-      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
-      { name: 'sender', internalType: 'address', type: 'address' },
-      { name: 'username', internalType: 'string', type: 'string' },
-      { name: 'newId', internalType: 'uint32', type: 'uint32' },
-      { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'mint',
-    outputs: [],
-    stateMutability: 'payable',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'nextId',
-    outputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// IOAppCore
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const ioAppCoreAbi = [
-  { type: 'error', inputs: [], name: 'InvalidDelegate' },
-  { type: 'error', inputs: [], name: 'InvalidEndpointCall' },
-  {
-    type: 'error',
-    inputs: [{ name: 'eid', internalType: 'uint32', type: 'uint32' }],
-    name: 'NoPeer',
-  },
-  {
-    type: 'error',
-    inputs: [
-      { name: 'eid', internalType: 'uint32', type: 'uint32' },
-      { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'OnlyPeer',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
-      {
-        name: 'peer',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
-    ],
-    name: 'PeerSet',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'endpoint',
-    outputs: [
-      {
-        name: 'iEndpoint',
-        internalType: 'contract ILayerZeroEndpointV2',
-        type: 'address',
-      },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'oAppVersion',
-    outputs: [
-      { name: 'senderVersion', internalType: 'uint64', type: 'uint64' },
-      { name: 'receiverVersion', internalType: 'uint64', type: 'uint64' },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_eid', internalType: 'uint32', type: 'uint32' }],
-    name: 'peers',
-    outputs: [{ name: 'peer', internalType: 'bytes32', type: 'bytes32' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_delegate', internalType: 'address', type: 'address' }],
-    name: 'setDelegate',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_peer', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'setPeer',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// IOAppReceiver
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const ioAppReceiverAbi = [
-  {
-    type: 'function',
-    inputs: [
-      {
-        name: '_origin',
-        internalType: 'struct Origin',
-        type: 'tuple',
-        components: [
-          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
-          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
-        ],
-      },
-    ],
-    name: 'allowInitializePath',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      {
-        name: '_origin',
-        internalType: 'struct Origin',
-        type: 'tuple',
-        components: [
-          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
-          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
-        ],
-      },
-      { name: '_message', internalType: 'bytes', type: 'bytes' },
-      { name: '_sender', internalType: 'address', type: 'address' },
-    ],
-    name: 'isComposeMsgSender',
-    outputs: [{ name: 'isSender', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      {
-        name: '_origin',
-        internalType: 'struct Origin',
-        type: 'tuple',
-        components: [
-          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
-          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
-        ],
-      },
-      { name: '_guid', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_message', internalType: 'bytes', type: 'bytes' },
-      { name: '_executor', internalType: 'address', type: 'address' },
-      { name: '_extraData', internalType: 'bytes', type: 'bytes' },
-    ],
-    name: 'lzReceive',
-    outputs: [],
-    stateMutability: 'payable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_sender', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'nextNonce',
-    outputs: [{ name: '', internalType: 'uint64', type: 'uint64' }],
-    stateMutability: 'view',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ISpend
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const iSpendAbi = [
-  {
-    type: 'function',
-    inputs: [
-      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
-      { name: 'amount', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'addToBalance',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
-      { name: 'amount', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'addTokensToBalance',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'tokenId', internalType: 'uint256', type: 'uint256' }],
-    name: 'ownerOf',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
-      { name: 'amountToSpend', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountToDistribute', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'spendAndDistribute',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
-      { name: 'amountToSpend', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountToDistribute', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'spendAndDistributeTokens',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ISwapRouter
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const iSwapRouterAbi = [
-  {
-    type: 'function',
-    inputs: [],
-    name: 'WETH',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'pure',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'tokenA', internalType: 'address', type: 'address' },
-      { name: 'tokenB', internalType: 'address', type: 'address' },
-      { name: 'amountADesired', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountBDesired', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountAMin', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountBMin', internalType: 'uint256', type: 'uint256' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'deadline', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'addLiquidity',
-    outputs: [
-      { name: 'amountA', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountB', internalType: 'uint256', type: 'uint256' },
-      { name: 'liquidity', internalType: 'uint256', type: 'uint256' },
-    ],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'token', internalType: 'address', type: 'address' },
-      { name: 'amountTokenDesired', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountTokenMin', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountETHMin', internalType: 'uint256', type: 'uint256' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'deadline', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'addLiquidityAVAX',
-    outputs: [
-      { name: 'amountToken', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountETH', internalType: 'uint256', type: 'uint256' },
-      { name: 'liquidity', internalType: 'uint256', type: 'uint256' },
-    ],
-    stateMutability: 'payable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'token', internalType: 'address', type: 'address' },
-      { name: 'amountTokenDesired', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountTokenMin', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountETHMin', internalType: 'uint256', type: 'uint256' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'deadline', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'addLiquidityETH',
-    outputs: [
-      { name: 'amountToken', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountETH', internalType: 'uint256', type: 'uint256' },
-      { name: 'liquidity', internalType: 'uint256', type: 'uint256' },
-    ],
-    stateMutability: 'payable',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'factory',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'pure',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'amountOut', internalType: 'uint256', type: 'uint256' },
-      { name: 'reserveIn', internalType: 'uint256', type: 'uint256' },
-      { name: 'reserveOut', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'getAmountIn',
-    outputs: [{ name: 'amountIn', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'pure',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'amountIn', internalType: 'uint256', type: 'uint256' },
-      { name: 'reserveIn', internalType: 'uint256', type: 'uint256' },
-      { name: 'reserveOut', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'getAmountOut',
-    outputs: [{ name: 'amountOut', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'pure',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'amountOut', internalType: 'uint256', type: 'uint256' },
-      { name: 'path', internalType: 'address[]', type: 'address[]' },
-    ],
-    name: 'getAmountsIn',
-    outputs: [
-      { name: 'amounts', internalType: 'uint256[]', type: 'uint256[]' },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'amountIn', internalType: 'uint256', type: 'uint256' },
-      { name: 'path', internalType: 'address[]', type: 'address[]' },
-    ],
-    name: 'getAmountsOut',
-    outputs: [
-      { name: 'amounts', internalType: 'uint256[]', type: 'uint256[]' },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'amountA', internalType: 'uint256', type: 'uint256' },
-      { name: 'reserveA', internalType: 'uint256', type: 'uint256' },
-      { name: 'reserveB', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'quote',
-    outputs: [{ name: 'amountB', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'pure',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'tokenA', internalType: 'address', type: 'address' },
-      { name: 'tokenB', internalType: 'address', type: 'address' },
-      { name: 'liquidity', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountAMin', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountBMin', internalType: 'uint256', type: 'uint256' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'deadline', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'removeLiquidity',
-    outputs: [
-      { name: 'amountA', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountB', internalType: 'uint256', type: 'uint256' },
-    ],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'token', internalType: 'address', type: 'address' },
-      { name: 'liquidity', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountTokenMin', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountETHMin', internalType: 'uint256', type: 'uint256' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'deadline', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'removeLiquidityAVAX',
-    outputs: [
-      { name: 'amountToken', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountETH', internalType: 'uint256', type: 'uint256' },
-    ],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'token', internalType: 'address', type: 'address' },
-      { name: 'liquidity', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountTokenMin', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountETHMin', internalType: 'uint256', type: 'uint256' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'deadline', internalType: 'uint256', type: 'uint256' },
-      { name: 'approveMax', internalType: 'bool', type: 'bool' },
-      { name: 'v', internalType: 'uint8', type: 'uint8' },
-      { name: 'r', internalType: 'bytes32', type: 'bytes32' },
-      { name: 's', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'removeLiquidityAVAXWithPermit',
-    outputs: [
-      { name: 'amountToken', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountETH', internalType: 'uint256', type: 'uint256' },
-    ],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'token', internalType: 'address', type: 'address' },
-      { name: 'liquidity', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountTokenMin', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountETHMin', internalType: 'uint256', type: 'uint256' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'deadline', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'removeLiquidityETH',
-    outputs: [
-      { name: 'amountToken', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountETH', internalType: 'uint256', type: 'uint256' },
-    ],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'token', internalType: 'address', type: 'address' },
-      { name: 'liquidity', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountTokenMin', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountETHMin', internalType: 'uint256', type: 'uint256' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'deadline', internalType: 'uint256', type: 'uint256' },
-      { name: 'approveMax', internalType: 'bool', type: 'bool' },
-      { name: 'v', internalType: 'uint8', type: 'uint8' },
-      { name: 'r', internalType: 'bytes32', type: 'bytes32' },
-      { name: 's', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'removeLiquidityETHWithPermit',
-    outputs: [
-      { name: 'amountToken', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountETH', internalType: 'uint256', type: 'uint256' },
-    ],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'tokenA', internalType: 'address', type: 'address' },
-      { name: 'tokenB', internalType: 'address', type: 'address' },
-      { name: 'liquidity', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountAMin', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountBMin', internalType: 'uint256', type: 'uint256' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'deadline', internalType: 'uint256', type: 'uint256' },
-      { name: 'approveMax', internalType: 'bool', type: 'bool' },
-      { name: 'v', internalType: 'uint8', type: 'uint8' },
-      { name: 'r', internalType: 'bytes32', type: 'bytes32' },
-      { name: 's', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'removeLiquidityWithPermit',
-    outputs: [
-      { name: 'amountA', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountB', internalType: 'uint256', type: 'uint256' },
-    ],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'amountOut', internalType: 'uint256', type: 'uint256' },
-      { name: 'path', internalType: 'address[]', type: 'address[]' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'deadline', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'swapAVAXForExactTokens',
-    outputs: [
-      { name: 'amounts', internalType: 'uint256[]', type: 'uint256[]' },
-    ],
-    stateMutability: 'payable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'amountOut', internalType: 'uint256', type: 'uint256' },
-      { name: 'path', internalType: 'address[]', type: 'address[]' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'deadline', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'swapETHForExactTokens',
-    outputs: [
-      { name: 'amounts', internalType: 'uint256[]', type: 'uint256[]' },
-    ],
-    stateMutability: 'payable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'amountOutMin', internalType: 'uint256', type: 'uint256' },
-      { name: 'path', internalType: 'address[]', type: 'address[]' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'deadline', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'swapExactAVAXForTokens',
-    outputs: [
-      { name: 'amounts', internalType: 'uint256[]', type: 'uint256[]' },
-    ],
-    stateMutability: 'payable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'amountOutMin', internalType: 'uint256', type: 'uint256' },
-      { name: 'path', internalType: 'address[]', type: 'address[]' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'deadline', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'swapExactETHForTokens',
-    outputs: [
-      { name: 'amounts', internalType: 'uint256[]', type: 'uint256[]' },
-    ],
-    stateMutability: 'payable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'amountIn', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountOutMin', internalType: 'uint256', type: 'uint256' },
-      { name: 'path', internalType: 'address[]', type: 'address[]' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'deadline', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'swapExactTokensForAVAX',
-    outputs: [
-      { name: 'amounts', internalType: 'uint256[]', type: 'uint256[]' },
-    ],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'amountIn', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountOutMin', internalType: 'uint256', type: 'uint256' },
-      { name: 'path', internalType: 'address[]', type: 'address[]' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'deadline', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'swapExactTokensForETH',
-    outputs: [
-      { name: 'amounts', internalType: 'uint256[]', type: 'uint256[]' },
-    ],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'amountIn', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountOutMin', internalType: 'uint256', type: 'uint256' },
-      { name: 'path', internalType: 'address[]', type: 'address[]' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'deadline', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'swapExactTokensForTokens',
-    outputs: [
-      { name: 'amounts', internalType: 'uint256[]', type: 'uint256[]' },
-    ],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'amountOut', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountInMax', internalType: 'uint256', type: 'uint256' },
-      { name: 'path', internalType: 'address[]', type: 'address[]' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'deadline', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'swapTokensForExactAVAX',
-    outputs: [
-      { name: 'amounts', internalType: 'uint256[]', type: 'uint256[]' },
-    ],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'amountOut', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountInMax', internalType: 'uint256', type: 'uint256' },
-      { name: 'path', internalType: 'address[]', type: 'address[]' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'deadline', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'swapTokensForExactETH',
-    outputs: [
-      { name: 'amounts', internalType: 'uint256[]', type: 'uint256[]' },
-    ],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'amountOut', internalType: 'uint256', type: 'uint256' },
-      { name: 'amountInMax', internalType: 'uint256', type: 'uint256' },
-      { name: 'path', internalType: 'address[]', type: 'address[]' },
-      { name: 'to', internalType: 'address', type: 'address' },
-      { name: 'deadline', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'swapTokensForExactTokens',
-    outputs: [
-      { name: 'amounts', internalType: 'uint256[]', type: 'uint256[]' },
-    ],
-    stateMutability: 'nonpayable',
   },
 ] as const
 
@@ -6189,752 +3779,3 @@ export const mintableCawAbi = [
     stateMutability: 'nonpayable',
   },
 ] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// OApp
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const oAppAbi = [
-  { type: 'error', inputs: [], name: 'InvalidDelegate' },
-  { type: 'error', inputs: [], name: 'InvalidEndpointCall' },
-  { type: 'error', inputs: [], name: 'LzTokenUnavailable' },
-  {
-    type: 'error',
-    inputs: [{ name: 'eid', internalType: 'uint32', type: 'uint32' }],
-    name: 'NoPeer',
-  },
-  {
-    type: 'error',
-    inputs: [{ name: 'msgValue', internalType: 'uint256', type: 'uint256' }],
-    name: 'NotEnoughNative',
-  },
-  {
-    type: 'error',
-    inputs: [{ name: 'addr', internalType: 'address', type: 'address' }],
-    name: 'OnlyEndpoint',
-  },
-  {
-    type: 'error',
-    inputs: [
-      { name: 'eid', internalType: 'uint32', type: 'uint32' },
-      { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'OnlyPeer',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'previousOwner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'newOwner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-    ],
-    name: 'OwnershipTransferred',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
-      {
-        name: 'peer',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
-    ],
-    name: 'PeerSet',
-  },
-  {
-    type: 'function',
-    inputs: [
-      {
-        name: 'origin',
-        internalType: 'struct Origin',
-        type: 'tuple',
-        components: [
-          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
-          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
-        ],
-      },
-    ],
-    name: 'allowInitializePath',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'endpoint',
-    outputs: [
-      {
-        name: '',
-        internalType: 'contract ILayerZeroEndpointV2',
-        type: 'address',
-      },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      {
-        name: '',
-        internalType: 'struct Origin',
-        type: 'tuple',
-        components: [
-          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
-          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
-        ],
-      },
-      { name: '', internalType: 'bytes', type: 'bytes' },
-      { name: '_sender', internalType: 'address', type: 'address' },
-    ],
-    name: 'isComposeMsgSender',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      {
-        name: '_origin',
-        internalType: 'struct Origin',
-        type: 'tuple',
-        components: [
-          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
-          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
-        ],
-      },
-      { name: '_guid', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_message', internalType: 'bytes', type: 'bytes' },
-      { name: '_executor', internalType: 'address', type: 'address' },
-      { name: '_extraData', internalType: 'bytes', type: 'bytes' },
-    ],
-    name: 'lzReceive',
-    outputs: [],
-    stateMutability: 'payable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '', internalType: 'uint32', type: 'uint32' },
-      { name: '', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'nextNonce',
-    outputs: [{ name: 'nonce', internalType: 'uint64', type: 'uint64' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'oAppVersion',
-    outputs: [
-      { name: 'senderVersion', internalType: 'uint64', type: 'uint64' },
-      { name: 'receiverVersion', internalType: 'uint64', type: 'uint64' },
-    ],
-    stateMutability: 'pure',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'owner',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'eid', internalType: 'uint32', type: 'uint32' }],
-    name: 'peers',
-    outputs: [{ name: 'peer', internalType: 'bytes32', type: 'bytes32' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'renounceOwnership',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_delegate', internalType: 'address', type: 'address' }],
-    name: 'setDelegate',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_peer', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'setPeer',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
-    name: 'transferOwnership',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// OAppCore
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const oAppCoreAbi = [
-  { type: 'error', inputs: [], name: 'InvalidDelegate' },
-  { type: 'error', inputs: [], name: 'InvalidEndpointCall' },
-  {
-    type: 'error',
-    inputs: [{ name: 'eid', internalType: 'uint32', type: 'uint32' }],
-    name: 'NoPeer',
-  },
-  {
-    type: 'error',
-    inputs: [
-      { name: 'eid', internalType: 'uint32', type: 'uint32' },
-      { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'OnlyPeer',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'previousOwner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'newOwner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-    ],
-    name: 'OwnershipTransferred',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
-      {
-        name: 'peer',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
-    ],
-    name: 'PeerSet',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'endpoint',
-    outputs: [
-      {
-        name: '',
-        internalType: 'contract ILayerZeroEndpointV2',
-        type: 'address',
-      },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'oAppVersion',
-    outputs: [
-      { name: 'senderVersion', internalType: 'uint64', type: 'uint64' },
-      { name: 'receiverVersion', internalType: 'uint64', type: 'uint64' },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'owner',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'eid', internalType: 'uint32', type: 'uint32' }],
-    name: 'peers',
-    outputs: [{ name: 'peer', internalType: 'bytes32', type: 'bytes32' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'renounceOwnership',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_delegate', internalType: 'address', type: 'address' }],
-    name: 'setDelegate',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_peer', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'setPeer',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
-    name: 'transferOwnership',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// OAppReceiver
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const oAppReceiverAbi = [
-  { type: 'error', inputs: [], name: 'InvalidDelegate' },
-  { type: 'error', inputs: [], name: 'InvalidEndpointCall' },
-  {
-    type: 'error',
-    inputs: [{ name: 'eid', internalType: 'uint32', type: 'uint32' }],
-    name: 'NoPeer',
-  },
-  {
-    type: 'error',
-    inputs: [{ name: 'addr', internalType: 'address', type: 'address' }],
-    name: 'OnlyEndpoint',
-  },
-  {
-    type: 'error',
-    inputs: [
-      { name: 'eid', internalType: 'uint32', type: 'uint32' },
-      { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'OnlyPeer',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'previousOwner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'newOwner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-    ],
-    name: 'OwnershipTransferred',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
-      {
-        name: 'peer',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
-    ],
-    name: 'PeerSet',
-  },
-  {
-    type: 'function',
-    inputs: [
-      {
-        name: 'origin',
-        internalType: 'struct Origin',
-        type: 'tuple',
-        components: [
-          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
-          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
-        ],
-      },
-    ],
-    name: 'allowInitializePath',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'endpoint',
-    outputs: [
-      {
-        name: '',
-        internalType: 'contract ILayerZeroEndpointV2',
-        type: 'address',
-      },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      {
-        name: '',
-        internalType: 'struct Origin',
-        type: 'tuple',
-        components: [
-          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
-          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
-        ],
-      },
-      { name: '', internalType: 'bytes', type: 'bytes' },
-      { name: '_sender', internalType: 'address', type: 'address' },
-    ],
-    name: 'isComposeMsgSender',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      {
-        name: '_origin',
-        internalType: 'struct Origin',
-        type: 'tuple',
-        components: [
-          { name: 'srcEid', internalType: 'uint32', type: 'uint32' },
-          { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-          { name: 'nonce', internalType: 'uint64', type: 'uint64' },
-        ],
-      },
-      { name: '_guid', internalType: 'bytes32', type: 'bytes32' },
-      { name: '_message', internalType: 'bytes', type: 'bytes' },
-      { name: '_executor', internalType: 'address', type: 'address' },
-      { name: '_extraData', internalType: 'bytes', type: 'bytes' },
-    ],
-    name: 'lzReceive',
-    outputs: [],
-    stateMutability: 'payable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '', internalType: 'uint32', type: 'uint32' },
-      { name: '', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'nextNonce',
-    outputs: [{ name: 'nonce', internalType: 'uint64', type: 'uint64' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'oAppVersion',
-    outputs: [
-      { name: 'senderVersion', internalType: 'uint64', type: 'uint64' },
-      { name: 'receiverVersion', internalType: 'uint64', type: 'uint64' },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'owner',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'eid', internalType: 'uint32', type: 'uint32' }],
-    name: 'peers',
-    outputs: [{ name: 'peer', internalType: 'bytes32', type: 'bytes32' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'renounceOwnership',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_delegate', internalType: 'address', type: 'address' }],
-    name: 'setDelegate',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_peer', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'setPeer',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
-    name: 'transferOwnership',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// OAppSender
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const oAppSenderAbi = [
-  { type: 'error', inputs: [], name: 'InvalidDelegate' },
-  { type: 'error', inputs: [], name: 'InvalidEndpointCall' },
-  { type: 'error', inputs: [], name: 'LzTokenUnavailable' },
-  {
-    type: 'error',
-    inputs: [{ name: 'eid', internalType: 'uint32', type: 'uint32' }],
-    name: 'NoPeer',
-  },
-  {
-    type: 'error',
-    inputs: [{ name: 'msgValue', internalType: 'uint256', type: 'uint256' }],
-    name: 'NotEnoughNative',
-  },
-  {
-    type: 'error',
-    inputs: [
-      { name: 'eid', internalType: 'uint32', type: 'uint32' },
-      { name: 'sender', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'OnlyPeer',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'previousOwner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'newOwner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-    ],
-    name: 'OwnershipTransferred',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: false },
-      {
-        name: 'peer',
-        internalType: 'bytes32',
-        type: 'bytes32',
-        indexed: false,
-      },
-    ],
-    name: 'PeerSet',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'endpoint',
-    outputs: [
-      {
-        name: '',
-        internalType: 'contract ILayerZeroEndpointV2',
-        type: 'address',
-      },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'oAppVersion',
-    outputs: [
-      { name: 'senderVersion', internalType: 'uint64', type: 'uint64' },
-      { name: 'receiverVersion', internalType: 'uint64', type: 'uint64' },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'owner',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'eid', internalType: 'uint32', type: 'uint32' }],
-    name: 'peers',
-    outputs: [{ name: 'peer', internalType: 'bytes32', type: 'bytes32' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'renounceOwnership',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_delegate', internalType: 'address', type: 'address' }],
-    name: 'setDelegate',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '_eid', internalType: 'uint32', type: 'uint32' },
-      { name: '_peer', internalType: 'bytes32', type: 'bytes32' },
-    ],
-    name: 'setPeer',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
-    name: 'transferOwnership',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// OptionsBuilder
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const optionsBuilderAbi = [
-  {
-    type: 'error',
-    inputs: [{ name: 'optionType', internalType: 'uint16', type: 'uint16' }],
-    name: 'InvalidOptionType',
-  },
-  {
-    type: 'error',
-    inputs: [
-      { name: 'max', internalType: 'uint256', type: 'uint256' },
-      { name: 'actual', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'InvalidSize',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Ownable
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const ownableAbi = [
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'previousOwner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'newOwner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-    ],
-    name: 'OwnershipTransferred',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'owner',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'renounceOwnership',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
-    name: 'transferOwnership',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ShortStrings
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const shortStringsAbi = [
-  { type: 'error', inputs: [], name: 'InvalidShortString' },
-  {
-    type: 'error',
-    inputs: [{ name: 'str', internalType: 'string', type: 'string' }],
-    name: 'StringTooLong',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Test
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const testAbi = [
-  {
-    type: 'function',
-    inputs: [],
-    name: 'test',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-] as const
-

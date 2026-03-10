@@ -129,6 +129,9 @@ module.exports = {
           pems.length,
         );
       },
+      networkCheckTimeout: 160000,  // 60 seconds
+      timeoutBlocks: 600,
+      skipDryRun: true,
     },
     testnetL2: {
       provider: function() {

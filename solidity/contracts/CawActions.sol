@@ -11,8 +11,8 @@ import { CawActionsReplicator, ReplicationDestination } from "./CawActionsReplic
 import { MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
 contract CawActions is Context {
-  /// @notice Replicator for archiving actions to other chains (immutable, set at deployment)
-  CawActionsReplicator public immutable replicator;
+  /// @notice Replicator for archiving actions to other chains (can only be set once)
+  CawActionsReplicator public replicator;
   enum ActionType { CAW, LIKE, UNLIKE, RECAW, FOLLOW, UNFOLLOW, WITHDRAW, OTHER }
 
   struct ActionData {
@@ -63,11 +63,18 @@ contract CawActions is Context {
     "ActionData(uint8 actionType,uint32 senderId,uint32 receiverId,uint32 receiverCawonce,uint32 clientId,uint32 cawonce,uint32[] recipients,uint128[] amounts,string text)"
   );
 
-  constructor(address _cawNames, address _replicator) {
-    replicator = CawActionsReplicator(_replicator);
+  constructor(address _cawNames) {
     eip712DomainHash = generateDomainHash();
     externalSelf = CawActions(this);
     cawName = CawNameL2(_cawNames);
+  }
+
+  /// @notice Set the replicator address (can only be called once)
+  /// @param _replicator The address of the CawActionsReplicator contract
+  function setReplicator(address _replicator) external {
+    require(address(replicator) == address(0), "Replicator already set");
+    require(_replicator != address(0), "Invalid replicator address");
+    replicator = CawActionsReplicator(_replicator);
   }
 
   function processAction(uint32 validatorId, ActionData calldata action, uint8 v, bytes32 r, bytes32 s) external {

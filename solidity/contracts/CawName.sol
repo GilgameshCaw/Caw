@@ -73,7 +73,7 @@ contract CawName is
     address owner;
   }
 
-  CawClientManager clientManager;
+  CawClientManager public clientManager;
   address buyAndBurnCaw;
 
   constructor(address _caw, address _gui, address _buyAndBurn, address _clientManager, address _endpoint, uint32 mainnetEid)
@@ -315,13 +315,7 @@ contract CawName is
     }
   }
 
-  /**
-   * @notice Get quote for syncing replication config to L2
-   */
-  function syncReplicationQuote(uint32 clientId, uint32 archiveEid, address target, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
-    bytes memory payload = abi.encodeWithSelector(setReplicationPeerSelector, clientId, archiveEid, target);
-    return lzQuote(setReplicationPeerSelector, payload, lzDestId, payInLzToken);
-  }
+  // syncReplicationQuote moved to CawNameQuoter contract
 
   function setWithdrawable(uint32[] memory tokenIds, uint256[] memory amounts) external {
     require(fromLZ, "setWithdrawable only callable internally");
@@ -482,66 +476,14 @@ contract CawName is
   }
 
 
-  function authenticateQuote(uint32 clientId, uint32 tokenId, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
-    uint32[] memory tokenIds; address[] memory owners;
-    (tokenIds, owners) = pendingTransferUpdates(lzDestId, msg.sender, tokenId);
-
-    bytes memory payload = abi.encodeWithSelector(
-      authSelector, clientId, tokenId, tokenIds, owners
-    );
-
-    quote = lzQuote(authSelector, payload, lzDestId, payInLzToken);
-    quote.nativeFee += clientManager.getAuthFee(clientId) * 2;
-    return quote;
-  }
-
-  function depositQuote(uint32 clientId, uint32 tokenId, uint256 amount, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
-    uint32[] memory tokenIds; address[] memory owners;
-    (tokenIds, owners) = pendingTransferUpdates(lzDestId, msg.sender, tokenId);
-
-    bytes memory payload = abi.encodeWithSelector(
-      addToBalanceSelector, clientId, tokenId, amount, tokenIds, owners
-    );
-
-    quote = lzQuote(addToBalanceSelector, payload, lzDestId, payInLzToken);
-    quote.nativeFee += clientManager.getDepositFee(clientId) * 2;
-
-    if (!authenticated[clientId][tokenId])
-      quote.nativeFee += clientManager.getAuthFee(clientId) * 2;
-
-    return quote;
-  }
-
-  function mintQuote(uint32 clientId, bool payInLzToken) public view returns (MessagingFee memory quote) {
-    quote = updateOwnerQuote(payInLzToken);
-    quote.nativeFee += clientManager.getMintFee(clientId) * 2;
-    return quote;
-  }
-
-  function withdrawQuote(uint32 clientId, bool payInLzToken) public view returns (MessagingFee memory quote) {
-    quote = updateOwnerQuote(payInLzToken);
-    quote.nativeFee += clientManager.getWithdrawFee(clientId) * 2;
-    return quote;
-  }
-
-  function updateOwnerQuote(bool payInLzToken) public view returns (MessagingFee memory quote) {
-    uint32[] memory tokenIds; address[] memory owners;
-    uint32 lzDestId = peerWithMaxPendingTransfers();
-    (tokenIds, owners) = pendingTransferUpdates(lzDestId);
-
-    if (tokenIds.length == 0) return MessagingFee(0, 0);
-    bytes memory payload = abi.encodeWithSelector(
-      updateOwnersSelector, tokenIds, owners
-    ); return lzQuote(updateOwnersSelector, payload, lzDestId, payInLzToken);
-  }
+  // Most quote functions moved to CawNameQuoter contract to reduce contract size
+  // lzQuote stays here since it needs access to inherited _quote from OApp
 
   function lzQuote(bytes4 selector, bytes memory payload, uint32 lzDestId, bool _payInLzToken) public view returns (MessagingFee memory quote) {
     bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(selector), 0);
     return _quote(lzDestId, payload, _options, _payInLzToken);
   }
 
-  // TODO:
-  // Find real values for these:
   function gasLimitFor(bytes4 selector) public view returns (uint128) {
     if (selector == addToBalanceSelector)
       return 600000;
@@ -552,8 +494,8 @@ contract CawName is
     else if (selector == authSelector)
       return 300000;
     else if (selector == setReplicationPeerSelector)
-      return 100000; // Simple storage update + forwarding to replicator
-    else revert('unexpected selector');
+      return 100000;
+    else revert("unexpected selector");
   }
 
   receive() external payable {}
