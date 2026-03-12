@@ -31,7 +31,8 @@ export async function checkDomainObjectExists(
 }
 
 /**
- * Check if a caw already exists for the given action
+ * Check if a caw already exists AND has been fully processed
+ * Returns false for PENDING caws so ActionProcessor still handles them
  */
 async function checkCawExists(
   tx: PrismaTransactionClient,
@@ -45,11 +46,13 @@ async function checkCawExists(
       action: 'CAW'
     }
   })
-  return !!existingCaw
+  // Only skip if caw exists AND is already SUCCESS (fully processed)
+  return existingCaw?.status === 'SUCCESS'
 }
 
 /**
- * Check if a like already exists for the given action
+ * Check if a like already exists AND has been fully processed
+ * Returns false for pending likes so ActionProcessor still handles them
  */
 async function checkLikeExists(
   tx: PrismaTransactionClient,
@@ -67,7 +70,8 @@ async function checkLikeExists(
     const existingLike = await tx.like.findUnique({
       where: { userId_cawId: { userId, cawId: parentCawId } }
     })
-    return !!existingLike
+    // Only skip if like exists AND is not pending (fully processed)
+    return existingLike ? !existingLike.pending : false
   } catch {
     // If we can't find the parent caw, assume like doesn't exist
     return false
