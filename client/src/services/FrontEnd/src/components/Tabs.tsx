@@ -24,7 +24,7 @@ export function Tabs<T extends string>({ tabs, active, onChange }: Props<T>) {
         <button
           key={t.id}
           onClick={() => onChange(t.id)}
-          className={`py-4 px-8 sm:flex-1 text-center font-medium text-lg transition-all duration-200 cursor-pointer ${
+          className={`py-4 px-2 sm:px-8 sm:flex-1 text-center font-medium text-lg transition-all duration-200 cursor-pointer whitespace-nowrap ${
             t.id === active
               ? `${isDark 
                   ? 'text-white border-white' 
