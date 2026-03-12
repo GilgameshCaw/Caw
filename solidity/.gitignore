@@ -10,9 +10,6 @@ build/
 .env
 .env.local
 
-# Deployment state (contains addresses - don't commit until production)
-.deploy-state.json
-
 # IDE
 .idea/
 .vscode/
