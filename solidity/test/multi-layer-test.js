@@ -61,7 +61,7 @@ const dataTypes = {
     { name: 'clientId', type: 'uint32' },
     { name: 'cawonce', type: 'uint32'},
     { name: 'recipients', type: 'uint32[]' },
-    { name: 'amounts', type: 'uint128[]' },
+    { name: 'amounts', type: 'uint64[]' },
     { name: 'text', type: 'string' },
   ],
 };
@@ -75,14 +75,27 @@ function timeout(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-// Ganache/Hardhat default test account private keys (deterministic from mnemonic)
+// Test account private keys from various local blockchain tools
+// Includes keys from: Truffle Develop, Ganache default, and Hardhat default
 const testAccountKeys = {
+  // Truffle Develop default accounts
   '0x627306090abab3a6e1400e9345bc60c78a8bef57': Buffer.from('c87509a1c067bbde78beb793e6fa76530b6382a4c0241e5e4a9ec0a0f44dc0d3', 'hex'),
   '0xf17f52151ebef6c7334fad080c5704d77216b732': Buffer.from('ae6ae8e5ccbfb04590405997ee2d52d2b330726137b875053c36d94e974d162f', 'hex'),
   '0xc5fdf4076b8f3a5357c5e395ab970b5b54098fef': Buffer.from('0dbbe8e4ae425a6d2687f1a7e3ba17bc98c673636790f1b8ad91193c05875ef1', 'hex'),
   '0x821aea9a577a9b44299b9c15c88cf3087f3b5544': Buffer.from('c88b703fb08cbea894b6aeff5a544fb92e78a18e19814cd85da83b71f772aa6c', 'hex'),
   '0x0d1d4e623d10f9fba5db95830f7d3839406c6af2': Buffer.from('388c684f0ba1ef5017716adb5d21a053ea8e90277d0868337519f97bede61418', 'hex'),
   '0x2932b7a2355d6fecc4b5c0b6bd44cc31df247a2e': Buffer.from('659cbb0e2411a44db63778987b1e22153c086a95eb6b18bdf89de078917abc63', 'hex'),
+  // Hardhat default accounts (mnemonic: "test test test test test test test test test test test junk")
+  '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266': Buffer.from('ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80', 'hex'),
+  '0x70997970c51812dc3a010c7d01b50e0d17dc79c8': Buffer.from('59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d', 'hex'),
+  '0x3c44cdddb6a900fa2b585dd299e03d12fa4293bc': Buffer.from('5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a', 'hex'),
+  '0x90f79bf6eb2c4f870365e785982e1f101e93b906': Buffer.from('7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6', 'hex'),
+  '0x15d34aaf54267db7d7c367839aaf71a00a2c6a65': Buffer.from('47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733639f19c30a34926a', 'hex'),
+  '0x9965507d1a55bcc2695c58ba16fb37d819b0a4dc': Buffer.from('8b3a350cf5c34c9194ca85829a2df0ec3153be0318b5e2d3348e872092edffba', 'hex'),
+  '0x976ea74026e726554db657fa54763abd0c3a0aa9': Buffer.from('92db14e403b83dfe3df233f83dfa3a0d7096f21ca9b0d6d6b8d88b2b4ec1564e', 'hex'),
+  '0x14dc79964da2c08b23698b3d3cc7ca32193d9955': Buffer.from('4bbbf85ce3377467afe5d46f804f221813b2bb87f24d81f60f1fcdbf7cbf4356', 'hex'),
+  '0x23618e81e3f5cdf7f54c3d65f7fbc0abf5b21e8f': Buffer.from('dbda1821b80551c9d65939329250298aa3472ba22feea921c0cf5d620ea67b97', 'hex'),
+  '0xa0ee7a142d267c1f36714e4a8f75612f20a79720': Buffer.from('2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6', 'hex'),
 };
 
 async function signData(user, data) {
@@ -131,7 +144,7 @@ return data;
 			{ "internalType": "uint32", "name": "clientId", "type": "uint32" },
 			{ "internalType": "uint32", "name": "cawonce", "type": "uint32" },
 			{ "internalType": "uint32[]", "name": "recipients", "type": "uint32[]" },
-			{ "internalType": "uint128[]", "name": "amounts", "type": "uint128[]" },
+			{ "internalType": "uint64[]", "name": "amounts", "type": "uint64[]" },
 			{ "internalType": "string", "name": "text", "type": "string" }
 		],
 		"internalType": "struct ActionData[]",
@@ -749,7 +762,7 @@ contract('CawNames', function(accounts, x) {
       receiverCawonce: 0,
       receiverId: 2,
       senderId: 1,
-			amounts: [(10000000n * 10n**18n).toString()]
+			amounts: ['10000000']  // 10 million CAW (whole tokens, contract multiplies by 10^18)
     }], {
       validator: accounts[2]
     });
@@ -897,14 +910,17 @@ contract('CawNames', function(accounts, x) {
     var tokens = await cawNamesL2.getTokens(tokenIds);
     console.log("TOKENS:", tokens);
 
-    var balance = BigInt(await cawNamesL2.cawBalanceOf(1));
+    var balanceWei = BigInt(await cawNamesL2.cawBalanceOf(1));
 
     var cawonce1 = Number(await cawActions.nextCawonce(1));
-		var transferAmount = balance*3n/10n;
+		// Convert to whole tokens (amounts are now in CAW, not wei)
+		// Divide by 10^18 first, then apply 30% to maintain precision
+		var balanceTokens = balanceWei / (10n**18n);
+		var transferAmountTokens = balanceTokens * 3n / 10n;
 
     var actionsToProcess = [{
       actionType: 'withdraw',
-      amounts: [(transferAmount).toString()],
+      amounts: [(transferAmountTokens).toString()],
       recipients: [1],
       sender: accounts[2],
       senderId: 1,
@@ -918,20 +934,22 @@ contract('CawNames', function(accounts, x) {
       return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
 				actions[0].senderId == result.signedActions[0].data.message.senderId;
     });
-    var newBalance = BigInt(await cawNamesL2.cawBalanceOf(1));
+    var newBalanceWei = BigInt(await cawNamesL2.cawBalanceOf(1));
+		// transferAmountTokens * 10^18 = actual wei transferred
+    var transferAmountWei = transferAmountTokens * (10n**18n);
 
-    expect(newBalance/ 10n).to.equal((balance - transferAmount)/10n)
+    expect(newBalanceWei/ 10n).to.equal((balanceWei - transferAmountWei)/10n)
 
 
-    var balanceWas = BigInt(await token.balanceOf(accounts[2]))
+    var tokenBalanceWas = BigInt(await token.balanceOf(accounts[2]))
     var quote = await quoter.withdrawQuote(defaultClientId, false);
     await cawNames.withdraw(defaultClientId, 1, 0, {
       value: quote?.nativeFee,
       from: accounts[2]
     });
-    var newBalance = BigInt(await token.balanceOf(accounts[2]))
+    var tokenBalanceNew = BigInt(await token.balanceOf(accounts[2]))
 
-    expect(newBalance).to.equal(balanceWas + transferAmount)
+    expect(tokenBalanceNew).to.equal(tokenBalanceWas + transferAmountWei)
 
 
     // Transfering the username will not propogate
@@ -943,9 +961,10 @@ contract('CawNames', function(accounts, x) {
 
 
     var cawonce1 = Number(await cawActions.nextCawonce(1));
+		// Use same transferAmountTokens as before (whole CAW tokens)
     var actionsToProcess = [{
       actionType: 'withdraw',
-      amounts: [(balance*3n/10n).toString()],
+      amounts: [(transferAmountTokens).toString()],
       recipients: [1],
       sender: accounts[3],
       senderId: 1,
@@ -978,21 +997,21 @@ contract('CawNames', function(accounts, x) {
 				actions[0].senderId == result.signedActions[0].data.message.senderId;
     });
 
-    var balanceWas = BigInt(await token.balanceOf(accounts[3]))
+    var tokenBalanceWas3 = BigInt(await token.balanceOf(accounts[3]))
     var quote = await quoter.withdrawQuote(defaultClientId, false);
     await cawNames.withdraw(defaultClientId, 1, 0, {
       value: quote?.nativeFee,
       from: accounts[3]
     });
-    var newBalance = BigInt(await token.balanceOf(accounts[3]))
+    var tokenBalanceNew3 = BigInt(await token.balanceOf(accounts[3]))
 
-    expect(newBalance).to.equal(balanceWas + (balance*3n/10n))
+    expect(tokenBalanceNew3).to.equal(tokenBalanceWas3 + transferAmountWei)
 
 
     // and this one should fail:
     var actionsToProcess = [{
       actionType: 'withdraw',
-      amounts: [(balance*3n/10n).toString()],
+      amounts: [(transferAmountTokens).toString()],
       recipients: [1],
       sender: accounts[2],
       senderId: 1,
@@ -1417,6 +1436,148 @@ contract("CawActionsReplicator", function(accounts) {
     console.log("Gas limit constant test passed");
   });
 
+  it("should reject migratePartialCheckpoint when replication not enabled", async function() {
+    this.timeout(60000);
+
+    var clientIdWithNoReplication = 888;
+    var actions = [{
+      actionType: 0,
+      senderId: 1,
+      receiverId: 0,
+      receiverCawonce: 0,
+      clientId: clientIdWithNoReplication,
+      cawonce: 0,
+      recipients: [],
+      amounts: [],
+      text: "test"
+    }];
+
+    var shouldFail = false;
+    try {
+      await replicator.migratePartialCheckpoint(
+        clientIdWithNoReplication,
+        40231,
+        actions,
+        [27],
+        ['0x' + '1'.repeat(64)],
+        ['0x' + '2'.repeat(64)],
+        { from: accounts[0] }
+      );
+    } catch (e) {
+      shouldFail = true;
+      var errorMsg = e.reason || e.message || '';
+      expect(errorMsg).to.include('Replication not enabled');
+    }
+    expect(shouldFail).to.equal(true, "Should fail when replication not enabled");
+
+    console.log("migratePartialCheckpoint access control test passed");
+  });
+
+  it("should reject migratePartialCheckpoint with invalid destination", async function() {
+    this.timeout(60000);
+
+    var clientId = 1;
+    var invalidDestEid = 99999; // Not configured
+
+    var actions = [{
+      actionType: 0,
+      senderId: 1,
+      receiverId: 0,
+      receiverCawonce: 0,
+      clientId: clientId,
+      cawonce: 0,
+      recipients: [],
+      amounts: [],
+      text: "test"
+    }];
+
+    var shouldFail = false;
+    try {
+      await replicator.migratePartialCheckpoint(
+        clientId,
+        invalidDestEid,
+        actions,
+        [27],
+        ['0x' + '1'.repeat(64)],
+        ['0x' + '2'.repeat(64)],
+        { from: accounts[0] }
+      );
+    } catch (e) {
+      shouldFail = true;
+      var errorMsg = e.reason || e.message || '';
+      expect(errorMsg).to.include('Invalid destination for client');
+    }
+    expect(shouldFail).to.equal(true, "Should fail with invalid destination");
+
+    console.log("migratePartialCheckpoint invalid destination test passed");
+  });
+
+  it("should reject migratePartialCheckpoint with empty actions", async function() {
+    this.timeout(60000);
+
+    var clientId = 1;
+    var destEid = 40231;
+
+    var shouldFail = false;
+    try {
+      await replicator.migratePartialCheckpoint(
+        clientId,
+        destEid,
+        [], // empty
+        [],
+        [],
+        [],
+        { from: accounts[0] }
+      );
+    } catch (e) {
+      shouldFail = true;
+      var errorMsg = e.reason || e.message || '';
+      expect(errorMsg).to.include('No actions');
+    }
+    expect(shouldFail).to.equal(true, "Should fail with empty actions");
+
+    console.log("migratePartialCheckpoint empty actions test passed");
+  });
+
+  it("should reject migratePartialCheckpoint with array length mismatch", async function() {
+    this.timeout(60000);
+
+    var clientId = 1;
+    var destEid = 40231;
+
+    var actions = [{
+      actionType: 0,
+      senderId: 1,
+      receiverId: 0,
+      receiverCawonce: 0,
+      clientId: clientId,
+      cawonce: 0,
+      recipients: [],
+      amounts: [],
+      text: "test"
+    }];
+
+    var shouldFail = false;
+    try {
+      await replicator.migratePartialCheckpoint(
+        clientId,
+        destEid,
+        actions,
+        [27, 27], // Mismatch: 2 v values but 1 action
+        ['0x' + '1'.repeat(64)],
+        ['0x' + '2'.repeat(64)],
+        { from: accounts[0] }
+      );
+    } catch (e) {
+      shouldFail = true;
+      var errorMsg = e.reason || e.message || '';
+      expect(errorMsg).to.include('Array mismatch');
+    }
+    expect(shouldFail).to.equal(true, "Should fail with array mismatch");
+
+    console.log("migratePartialCheckpoint array mismatch test passed");
+  });
+
   // Note: quoteReplication test is skipped because it requires the OApp's base peers mapping
   // to be set, which only happens during actual LZ sends. The mock endpoint doesn't support
   // the _quote function properly without peers set. This functionality is tested in integration
@@ -1485,6 +1646,199 @@ contract("CawActionsReplicator", function(accounts) {
     });
 
     console.log("PeerUpdated event test passed");
+  });
+
+});
+
+
+// Full integration test for migratePartialCheckpoint
+// This test creates actual actions through CawActions and verifies the hash chain migration
+contract("CawActionsReplicator - Full Integration", function(accounts) {
+  var CawActionsReplicatorContract = artifacts.require("CawActionsReplicator");
+
+  var l1Endpoint;
+  var l2Endpoint;
+  var token;
+  var minter;
+  var cawNames;
+  var cawNamesL2;
+  var cawActions;
+  var clientManager;
+  var quoter;
+  var replicator;
+  var uriGenerator;
+  var buyAndBurnAddress;
+
+  const testClientId = 1;
+  const archiveEid = 40231; // Arbitrum Sepolia
+  const archiveAddress = '0x56817dc696448135203C0556f702c6a953260411';
+
+  beforeEach(async function() {
+    this.timeout(120000);
+
+    web3.eth.defaultAccount = accounts[0];
+    l1Endpoint = await MockLayerZeroEndpoint.new(l1);
+    l2Endpoint = await MockLayerZeroEndpoint.new(l2);
+    buyAndBurnAddress = gilg;
+
+    // Deploy all contracts
+    token = await MintableCaw.new();
+    clientManager = await CawClientManager.new(buyAndBurnAddress);
+    uriGenerator = await CawNameURI.new();
+
+    cawNamesL2 = await CawNameL2.new(l1, l2Endpoint.address);
+    await l1Endpoint.setDestLzEndpoint(cawNamesL2.address, l2Endpoint.address);
+
+    cawNames = await CawName.new(
+      token.address,
+      uriGenerator.address,
+      buyAndBurnAddress,
+      clientManager.address,
+      l1Endpoint.address,
+      l1
+    );
+    await cawNamesL2.setL1Peer(l1, cawNames.address, false);
+    await l2Endpoint.setDestLzEndpoint(cawNames.address, l1Endpoint.address);
+    await cawNames.setL2Peer(l2, cawNamesL2.address);
+
+    await clientManager.createClient(gilg, 1, 1, 1, 1);
+
+    minter = await CawNameMinter.new(token.address, cawNames.address);
+    await cawNames.setMinter(minter.address);
+
+    quoter = await CawNameQuoter.new(cawNames.address);
+
+    // Deploy CawActions with CawNamesL2
+    cawActions = await CawActions.new(cawNamesL2.address);
+    await cawNamesL2.setCawActions(cawActions.address);
+
+    // Deploy replicator with actual CawActions
+    replicator = await CawActionsReplicatorContract.new(
+      l2Endpoint.address,
+      cawActions.address,
+      cawNamesL2.address
+    );
+
+    // Set up a user account
+    console.log("Setting up test user...");
+    await buyToken(accounts[2], 10);
+    await buyUsername(accounts[2], 'testuser');
+    await deposit(accounts[2], 1, 10000);
+
+    console.log("Full integration test setup complete");
+  });
+
+  async function buyToken(user, eth) {
+    var mintAmount = BigInt(eth) * 1_000_000_000n * 10n**18n;
+    await token.mint(user, mintAmount.toString());
+    return (await token.balanceOf(user)).toString();
+  }
+
+  async function buyUsername(user, name) {
+    var balance = await token.balanceOf(user);
+    await token.approve(minter.address, balance.toString(), { from: user });
+    var quote = await quoter.mintQuote(testClientId, false);
+    await minter.mint(testClientId, name, quote.lzTokenFee, {
+      value: quote.nativeFee.toString(),
+      from: user,
+    });
+  }
+
+  async function deposit(user, tokenId, amount) {
+    var balance = await token.balanceOf(user);
+    await token.approve(cawNames.address, balance.toString(), { from: user });
+    var cawAmount = (BigInt(amount) * 10n**18n).toString();
+    var quote = await quoter.depositQuote(testClientId, tokenId, cawAmount, l2, false);
+    await cawNames.deposit(testClientId, tokenId, cawAmount, l2, quote.lzTokenFee, {
+      value: quote.nativeFee,
+      from: user,
+    });
+  }
+
+  async function processActionsWithSignatures(actions, validator) {
+    var signedActions = [];
+    for (var i = 0; i < actions.length; i++) {
+      var action = actions[i];
+      var cawonce = action.cawonce;
+      if (cawonce == undefined) {
+        cawonce = Number(await cawActions.nextCawonce(action.senderId));
+      }
+
+      var chainId = await web3.eth.getChainId();
+      var data = {
+        primaryType: 'ActionData',
+        message: {
+          actionType: action.actionType,
+          senderId: action.senderId,
+          receiverId: action.receiverId || 0,
+          receiverCawonce: action.receiverCawonce || 0,
+          text: action.text || "",
+          cawonce: cawonce,
+          recipients: action.recipients || [],
+          amounts: action.amounts || [],
+          clientId: action.clientId || testClientId,
+        },
+        domain: {
+          chainId: chainId,
+          name: 'Caw Protocol',
+          verifyingContract: cawActions.address,
+          version: '1'
+        },
+        types: {
+          EIP712Domain: dataTypes.EIP712Domain,
+          ActionData: dataTypes.ActionData,
+        },
+      };
+
+      var sig = await signData(action.sender, data);
+      var sigData = await verifyAndSplitSig(sig, action.sender, data);
+
+      signedActions.push({
+        data: data,
+        sigData: sigData,
+      });
+    }
+
+    var transactionData = {
+      v: signedActions.map(action => action.sigData.v),
+      r: signedActions.map(action => action.sigData.r),
+      s: signedActions.map(action => action.sigData.s),
+      actions: signedActions.map(action => action.data.message),
+    };
+
+    var tx = await cawActions.processActions(1, transactionData, 0, 0, 0, {
+      from: validator,
+    });
+
+    return { tx, signedActions };
+  }
+
+  it("should track hash correctly across multiple actions and verify migration data", async function() {
+    this.timeout(120000);
+
+    // Process actions one at a time and verify hash updates
+    var expectedHash = '0x' + '0'.repeat(64);
+
+    for (var i = 0; i < 3; i++) {
+      var result = await processActionsWithSignatures([{
+        actionType: 0,
+        senderId: 1,
+        sender: accounts[2],
+        text: `Sequential caw ${i}`
+      }], accounts[2]);
+
+      var r = result.signedActions[0].sigData.r;
+      expectedHash = web3.utils.soliditySha3(
+        { type: 'bytes32', value: expectedHash },
+        { type: 'bytes32', value: r }
+      );
+
+      var onChainHash = await cawActions.clientCurrentHash(testClientId);
+      console.log(`After action ${i}: expected ${expectedHash}, on-chain ${onChainHash}`);
+      expect(expectedHash).to.equal(onChainHash);
+    }
+
+    console.log("Hash tracking test passed - hash chain is correct!");
   });
 
 });

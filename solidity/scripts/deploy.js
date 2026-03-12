@@ -46,6 +46,7 @@
 const { ethers } = require('ethers');
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 require('dotenv').config();
 
 // ============================================
@@ -825,6 +826,7 @@ async function main() {
   let reset = false;
   let dryRun = false;
   let showState = false;
+  let skipAbi = false;
 
   for (let i = 0; i < args.length; i++) {
     switch (args[i]) {
@@ -843,6 +845,9 @@ async function main() {
       case '--state':
         showState = true;
         break;
+      case '--skip-abi':
+        skipAbi = true;
+        break;
       case '--help':
         console.log(`
 Multi-Chain Deployment Script
@@ -856,6 +861,7 @@ Options:
   --reset             Clear all deployment state and start fresh
   --dry-run           Show what would be deployed without deploying
   --state             Print current deployment state
+  --skip-abi          Skip ABI regeneration after deployment
   --help              Show this help
 
 Deployment Phases:
@@ -863,6 +869,8 @@ Deployment Phases:
   Phase 2: Deploy all L1 contracts and link them
   Phase 3: Deploy remaining L2 contracts and link them
   Phase 4: Deploy Archive chain contracts
+
+After deployment, ABIs are automatically regenerated for the frontend.
         `);
         process.exit(0);
     }
@@ -902,6 +910,23 @@ Deployment Phases:
 
   deployer.printState();
   console.log('\n✅ Deployment complete!');
+
+  // Regenerate ABIs for frontend
+  if (!skipAbi) {
+    console.log('\n🔄 Regenerating ABIs for frontend...');
+    try {
+      execSync('npx wagmi generate', {
+        cwd: path.join(__dirname, '..'),
+        stdio: 'inherit'
+      });
+      console.log('✅ ABIs regenerated successfully');
+    } catch (e) {
+      console.warn('⚠️  Failed to regenerate ABIs:', e.message);
+      console.warn('   You can manually run: cd solidity && npx wagmi generate');
+    }
+  } else {
+    console.log('\n⏭️  Skipping ABI regeneration (--skip-abi flag)');
+  }
 }
 
 main().catch(e => {

@@ -21,8 +21,9 @@ interface ICawActionsForReplicator {
     string text;
   }
 
-  function clientHashAtCheckpoint(uint32 clientId, uint256 checkpointId) external view returns (bytes32);
+  function clientActionCount(uint32 clientId) external view returns (uint256);
   function clientCurrentHash(uint32 clientId) external view returns (bytes32);
+  function clientHashAtCheckpoint(uint32 clientId, uint256 checkpointId) external view returns (bytes32);
   function verifySignature(uint8 v, bytes32 r, bytes32 s, ActionData calldata data) external view;
   function isCawonceUsed(uint32 senderId, uint256 cawonce) external view returns (bool);
 }
@@ -414,5 +415,110 @@ contract CawActionsReplicator is OApp {
         emit ReplicationFailed(dest.eid, clientId, "Unknown error");
       }
     }
+  }
+
+  // ============================================
+  // PARTIAL CHECKPOINT MIGRATION
+  // ============================================
+
+  /// @notice Event emitted when partial checkpoint is migrated
+  event PartialCheckpointMigrated(uint32 indexed clientId, uint32 indexed destEid, uint256 count);
+
+  /**
+   * @notice Migrate actions from the last complete checkpoint to the current state.
+   * @dev This allows migrating the "partial checkpoint" - actions that haven't yet
+   *      reached a 256-action boundary. Verifies the r-values chain from the last
+   *      checkpoint hash to the current hash stored in CawActions.
+   *
+   *      Example: If clientActionCount is 300, there's 1 complete checkpoint (256 actions)
+   *      and 44 actions in the partial checkpoint. This function migrates those 44.
+   *
+   * @param clientId The client ID these actions belong to
+   * @param destEid The destination chain endpoint ID
+   * @param actions The actions to migrate (must be all actions after last checkpoint)
+   * @param v Signature v values
+   * @param r Signature r values (must chain from last checkpoint hash to current hash)
+   * @param s Signature s values
+   */
+  function migratePartialCheckpoint(
+    uint32 clientId,
+    uint32 destEid,
+    ICawActionsForReplicator.ActionData[] calldata actions,
+    uint8[] calldata v,
+    bytes32[] calldata r,
+    bytes32[] calldata s
+  ) external payable {
+    require(actions.length > 0, "No actions");
+    require(actions.length == v.length && actions.length == r.length && actions.length == s.length, "Array mismatch");
+    require(actions.length <= 256, "Too many actions");
+    require(clientReplicationEnabled[clientId], "Replication not enabled");
+
+    // Verify destination is valid for this client
+    bytes32 peerBytes = clientPeers[clientId][destEid];
+    require(peerBytes != bytes32(0), "Invalid destination for client");
+
+    ICawActionsForReplicator cawActionsContract = ICawActionsForReplicator(cawActions);
+
+    // Get current state from CawActions
+    uint256 actionCount = cawActionsContract.clientActionCount(clientId);
+    uint256 lastCheckpoint = actionCount / 256;
+    uint256 partialCount = actionCount % 256;
+
+    require(actions.length == partialCount, "Action count mismatch with on-chain state");
+
+    // Get the starting hash (from last checkpoint, or zero if no checkpoints)
+    bytes32 startHash = lastCheckpoint == 0
+      ? bytes32(0)
+      : cawActionsContract.clientHashAtCheckpoint(clientId, lastCheckpoint);
+
+    // Verify r-values chain to current hash
+    bytes32 computedHash = startHash;
+    for (uint i = 0; i < actions.length; i++) {
+      require(actions[i].clientId == clientId, "Action clientId mismatch");
+
+      // Verify signature
+      cawActionsContract.verifySignature(v[i], r[i], s[i], actions[i]);
+
+      // Verify action was processed
+      require(cawActionsContract.isCawonceUsed(actions[i].senderId, actions[i].cawonce), "Action not processed");
+
+      // Chain the hash
+      computedHash = keccak256(abi.encodePacked(computedHash, r[i]));
+    }
+
+    // Verify computed hash matches current hash
+    require(computedHash == cawActionsContract.clientCurrentHash(clientId), "Hash chain verification failed");
+
+    // Replicate to the destination
+    bytes memory payload = abi.encode(actions, v, r, s);
+    _replicateToDestination(clientId, destEid, peerBytes, payload, 0);
+
+    emit PartialCheckpointMigrated(clientId, destEid, actions.length);
+  }
+
+  /**
+   * @notice Get a quote for migrating actions to a specific destination
+   * @param destEid The destination chain endpoint ID
+   * @param actionCount Number of actions to migrate (for gas estimation)
+   * @param avgTextLength Average text length per action (for payload size estimation)
+   * @param payInLzToken Whether to pay in LZ token
+   * @return fee The messaging fee
+   */
+  function quoteMigration(
+    uint32 destEid,
+    uint256 actionCount,
+    uint256 avgTextLength,
+    bool payInLzToken
+  ) external view returns (MessagingFee memory fee) {
+    // Estimate payload size:
+    // - Each ActionData: ~200 bytes base + text length + arrays
+    // - v, r, s: 1 + 32 + 32 = 65 bytes per action
+    // - Encoding overhead: ~100 bytes
+    uint256 estimatedSize = 100 + (actionCount * (265 + avgTextLength));
+
+    bytes memory dummyPayload = new bytes(estimatedSize);
+    bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(RECEIVE_GAS_LIMIT, 0);
+
+    return _quote(destEid, dummyPayload, options, payInLzToken);
   }
 }
