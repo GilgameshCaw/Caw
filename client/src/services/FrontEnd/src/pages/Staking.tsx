@@ -60,7 +60,20 @@ const Staking = () => {
   const [loadingWithdrawals, setLoadingWithdrawals] = useState(false)
   const [isSwitchingNetwork, setIsSwitchingNetwork] = useState(false)
   const [isWithdrawPending, setIsWithdrawPending] = useState(false)
-  const [recentStakeTime, setRecentStakeTime] = useState<number | null>(null)
+  const [recentStakeTime, setRecentStakeTime] = useState<number | null>(() => {
+    // Check localStorage on mount for persisted stake time
+    const stored = localStorage.getItem('lastStakeTime')
+    if (stored) {
+      const time = parseInt(stored, 10)
+      const fiveMinutesAgo = Date.now() - (5 * 60 * 1000)
+      if (time > fiveMinutesAgo) {
+        return time
+      }
+      // Clean up old value
+      localStorage.removeItem('lastStakeTime')
+    }
+    return null
+  })
   const [isStakePending, setIsStakePending] = useState(false)
   const [isApprovePending, setIsApprovePending] = useState(false)
   const [lastStakedAt, setLastStakedAt] = useState<Date | null>(null)
@@ -300,10 +313,13 @@ const Staking = () => {
     onSuccess: async (hash) => {
       console.log('[Staking] Stake successful:', hash)
       setAmount("")
-      setRecentStakeTime(Date.now())
+      const now = Date.now()
+      setRecentStakeTime(now)
+      // Persist to localStorage so it survives page refresh
+      localStorage.setItem('lastStakeTime', now.toString())
       setIsStakePending(false)
 
-      // Record stake timestamp in database for persistent LayerZero status check
+      // Also record stake timestamp in database for persistent LayerZero status check
       if (activeToken?.username) {
         try {
           await fetch(`/api/users/${activeToken.username}`, {
@@ -436,11 +452,13 @@ const Staking = () => {
 
     try {
       console.log('[Staking] Submitting withdraw action to L2')
+      // Note: amounts in action struct are uint64, so we use whole CAW units (not wei)
+      // The contract will handle the conversion to wei internally
       await signAndSubmit({
         senderId: activeToken.tokenId,
         actionType: 'withdraw',
         recipients: [activeToken.tokenId],
-        amounts: [BigInt(amount) * 10n**18n],
+        amounts: [BigInt(Math.floor(parseFloat(amount)))],
       })
       setAmount("")
 
@@ -467,12 +485,12 @@ const Staking = () => {
         </p>
       </div>
 
-      {/* LayerZero Status Link - Show if stake was recent (within last 30 minutes) */}
+      {/* LayerZero Status Link - Show if stake was recent (within last 5 minutes) */}
       {(() => {
         const now = Date.now()
-        const thirtyMinutesAgo = now - (30 * 60 * 1000)
-        const hasRecentStake = (recentStakeTime && recentStakeTime > thirtyMinutesAgo) ||
-                               (lastStakedAt && lastStakedAt.getTime() > thirtyMinutesAgo)
+        const fiveMinutesAgo = now - (5 * 60 * 1000)
+        const hasRecentStake = (recentStakeTime && recentStakeTime > fiveMinutesAgo) ||
+                               (lastStakedAt && lastStakedAt.getTime() > fiveMinutesAgo)
         return hasRecentStake && address && (
           <div className={`p-3 rounded-lg border transition-all duration-300 ${
             isDark ? 'bg-blue-500/10 border-blue-500/30' : 'bg-blue-50 border-blue-200'
@@ -714,7 +732,7 @@ const Staking = () => {
                         ? isDark ? 'text-green-200' : 'text-green-800'
                         : isDark ? 'text-yellow-200' : 'text-yellow-800'
                     }`}>
-                      <span className="font-semibold">{formatUnits(BigInt(withdrawal.amount), 18)} CAW</span>
+                      <span className="font-semibold">{Number(withdrawal.amount).toLocaleString()} CAW</span>
                     </span>
                   </div>
                   <span className={`text-xs px-2 py-1 rounded-full font-semibold ${
