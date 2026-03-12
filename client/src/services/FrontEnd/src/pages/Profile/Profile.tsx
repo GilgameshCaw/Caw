@@ -413,10 +413,9 @@ export const Profile: React.FC = () => {
       actionText = `p:${JSON.stringify(profileUpdateData)}`
 
       // Calculate total cost: data-dependent cost + validator tip
-      // updateCost is in CAW (whole units), need to convert to wei (10^18)
+      // Both are in whole CAW tokens (contract multiplies by 10^18)
       const { VALIDATOR_TIP } = await import('~/api/actions')
-      const updateCostInWei = BigInt(updateCost) * BigInt(10 ** 18)
-      const totalCost = updateCostInWei + VALIDATOR_TIP
+      const totalCost = BigInt(updateCost) + VALIDATOR_TIP
 
       // Submit as other action with total cost (includes validator tip + data cost)
       await submitActionWithStakeCheck({

@@ -95,7 +95,8 @@ export const PendingPage: React.FC = () => {
               break
             case 6: // WITHDRAW
               {
-                const amount = formatUnitsCompact(BigInt(a.amounts![0]), 18)
+                // Amounts in action struct are whole CAW units (not wei) due to uint64 limitation
+                const amount = Number(a.amounts![0]).toLocaleString()
                 description = `@${who} sent request to withdraw ${amount} CAW`
               }
               break

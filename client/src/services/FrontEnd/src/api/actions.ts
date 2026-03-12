@@ -28,19 +28,17 @@ export type ActionTypeKey = keyof typeof ActionTypeMap
 export const CLIENT_ID = Number(import.meta.env.VITE_CLIENT_ID) || 1
 
 /**
- * Validator tip constants (in CAW wei - 18 decimals)
+ * Validator tip constants (in whole CAW tokens - contract multiplies by 10^18)
  *
  * Base tip: Default tip for validator to cover L2 gas costs
  * Per-chain tip: Additional tip per replication chain to cover LZ fees
  *
- * 1,000 CAW tokens = 1000 * 10^18 wei
  * At ~500k CAW = $0.01, 1k CAW ≈ $0.00002 per action
  */
-const CAW_DECIMALS = BigInt(10 ** 18)
-const BASE_VALIDATOR_TIP = BigInt(import.meta.env.VITE_VALIDATOR_TIP || "1000") * CAW_DECIMALS // 1k CAW base
+const BASE_VALIDATOR_TIP = BigInt(import.meta.env.VITE_VALIDATOR_TIP || "1000") // 1k CAW base
 
 /** Additional tip per replication chain (to cover share of LZ fees) */
-const TIP_PER_REPLICATION_CHAIN = BigInt(import.meta.env.VITE_TIP_PER_CHAIN || "500") * CAW_DECIMALS // 500 CAW per chain
+const TIP_PER_REPLICATION_CHAIN = BigInt(import.meta.env.VITE_TIP_PER_CHAIN || "500") // 500 CAW per chain
 
 /**
  * Calculate the validator tip based on replication chain count
@@ -81,7 +79,7 @@ export const TYPES: Record<string, TypedDataField[]> = {
     { name: 'clientId',        type: 'uint32'   },
     { name: 'cawonce',         type: 'uint32'   },
     { name: 'recipients',      type: 'uint32[]' },
-    { name: 'amounts',         type: 'uint128[]'},
+    { name: 'amounts',         type: 'uint64[]' },
     { name: 'text',            type: 'string'   }
   ]
 }
