@@ -26,9 +26,12 @@ export function extractHashtags(content: string): string[] {
  * and updates usage counts
  */
 export async function processHashtagsForCaw(cawId: number, content: string): Promise<void> {
+  console.log(`[processHashtagsForCaw] Called with cawId=${cawId}, content="${content}"`)
   const hashtags = extractHashtags(content)
+  console.log(`[processHashtagsForCaw] Extracted hashtags:`, hashtags)
 
   if (hashtags.length === 0) {
+    console.log(`[processHashtagsForCaw] No hashtags found, returning early`)
     return
   }
 
