@@ -12,7 +12,7 @@ import { useModalStore } from '~/store/modalStore'
 import { Link } from 'react-router-dom'
 import { User, CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
-import { usePendingCawPolling, usePendingLikePolling } from '~/hooks/usePendingPolling'
+import { usePendingCawPolling, usePendingLikePolling, usePendingReplyPolling } from '~/hooks/usePendingPolling'
 import SwitchChainModal from './modals/SwitchChainModal'
 import { chains } from '~/config/chains'
 
@@ -38,10 +38,12 @@ function formatTimeAgo(timestamp: string): string {
   }
 }
 
-const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, likePending: boolean) => void }> = ({ item, onLikeStateChange }) => {
+const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, likePending: boolean) => void; onReplyStateChange?: (cawId: string, replyPending: boolean) => void }> = ({ item, onLikeStateChange, onReplyStateChange }) => {
   // Enable polling for pending items
   usePendingCawPolling(parseInt(item.id), item.status === 'PENDING')
   usePendingLikePolling(parseInt(item.id), item.likePending || false)
+  const [replyPending, setReplyPending] = useState(item.replyPending || false)
+  usePendingReplyPolling(parseInt(item.id), replyPending)
 
   const activeTokenId     = useTokenDataStore(s => s.activeTokenId)
   const activeToken = useTokenDataStore(s => {
@@ -66,6 +68,11 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
   useEffect(() => {
     setLikePending(item.likePending || false)
   }, [item.likePending])
+
+  // Sync local replyPending state with item.replyPending from polling
+  useEffect(() => {
+    setReplyPending(item.replyPending || false)
+  }, [item.replyPending])
 
   // Clear wrong wallet error when address changes
   useEffect(() => {
@@ -162,7 +169,12 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
   const handleReply = (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation() // Prevent navigation to caw page
-    openModal('comment', item)
+    openModal('comment', item, () => {
+      setReplyPending(true)
+      if (onReplyStateChange) {
+        onReplyStateChange(item.id, true)
+      }
+    })
   }
 
   return (
@@ -222,16 +234,30 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
             
             {/* Interaction icons - aligned with user info and content */}
             <div className="flex items-center space-x-6" onClick={(e) => e.stopPropagation()}>
-              {/* Comments */}
-              <button 
+              {/* Comments/Replies */}
+              <button
                 className={`flex items-center space-x-2 transition-colors duration-300 hover:text-blue-500 cursor-pointer ${
-                  isDark ? 'text-gray-400' : 'text-gray-600'
+                  (item.hasReplied || replyPending)
+                    ? 'text-blue-500'
+                    : isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
                 onClick={handleReply}
-                title="Reply"
+                title={replyPending ? "Processing reply..." : "Reply"}
               >
-                <HiOutlineChat className="w-5 h-5" />
-                <span className="text-sm">{item.commentCount}</span>
+                {replyPending ? (
+                  <div className="relative w-5 h-5 group">
+                    <div className="w-5 h-5 border-2 border-gray-400 border-t-blue-500 rounded-full animate-spin"></div>
+                    <HiOutlineCheck className="absolute inset-0 w-3 h-3 m-auto text-blue-500" />
+                    <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 text-xs bg-black text-white rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap">
+                      Submitted, pending validation
+                    </div>
+                  </div>
+                ) : (
+                  <HiOutlineChat className="w-5 h-5" />
+                )}
+                <span className={`text-sm ${(item.hasReplied || replyPending) ? 'text-blue-500' : ''}`}>
+                  {item.commentCount}
+                </span>
               </button>
 
               {/* Retweets */}

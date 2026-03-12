@@ -10,7 +10,7 @@ import FollowListModal from '~/components/modals/FollowListModal'
 const KEEP_MODALS: Modal[] = ["network", "comment", "quote", "message", "followingList", "followersList"];
 
 export const Modals: React.FC = () => {
-  const { modal, modalData, closeModal } = useModalStore();
+  const { modal, modalData, closeModal, onSuccess } = useModalStore();
 
   // Close modal on Escape key
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -32,7 +32,7 @@ export const Modals: React.FC = () => {
 
 
   if (modal === "comment")
-    return <CommentModal caw={modalData} onClose={closeModal} />
+    return <CommentModal caw={modalData} onClose={closeModal} onReplySubmitted={onSuccess} />
   else if (modal === "quote")
     return <QuoteModal caw={modalData} onClose={closeModal} />
   else if (modal === "message")

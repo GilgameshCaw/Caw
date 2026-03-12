@@ -9,6 +9,7 @@ export interface CawRaw {
   _count?: { likes: number; recaws: number }
   likes?: Array<{ userId: number; pending?: boolean }>
   recaws?: Array<{ id: number; status?: 'SUCCESS' | 'PENDING' | 'FAILED' }>
+  repliesOnThis?: Array<{ userId: number; pending?: boolean }>
   commentCount: number
   recawCount: number
   likeCount: number
@@ -30,9 +31,11 @@ export interface ShapedCaw {
   viewCount: number
   hasLiked: boolean
   hasRecawed: boolean
+  hasReplied: boolean
   isBookmarked?: boolean
   likePending?: boolean
   recawPending?: boolean
+  replyPending?: boolean
   commentCount: number
   recawCount: number
   cawonce: number
@@ -47,6 +50,16 @@ export interface ShapedCaw {
 export function shapeCaw(raw: CawRaw): ShapedCaw {
   const userLike = raw.likes && raw.likes[0]
   const userRecaw = raw.recaws && raw.recaws[0]
+  const userReply = raw.repliesOnThis && raw.repliesOnThis[0]
+
+  const hasRecawed = Boolean(userRecaw && userRecaw.status !== 'PENDING' && userRecaw.status !== 'FAILED')
+  const recawPending = userRecaw?.status === 'PENDING'
+
+  const hasReplied = Boolean(userReply && !userReply.pending)
+  const replyPending = userReply?.pending
+
+  console.log(`[shapeCaw ${raw.id}] userRecaw:`, userRecaw, 'hasRecawed:', hasRecawed, 'recawPending:', recawPending, 'recawCount:', raw.recawCount)
+
   return {
     id: raw.id.toString(),
     content: raw.content,
@@ -56,8 +69,10 @@ export function shapeCaw(raw: CawRaw): ShapedCaw {
     viewCount: raw.viewCount || 0,
     hasLiked: Boolean(userLike && !userLike.pending), // Only true if liked AND not pending
     likePending: userLike?.pending,
-    hasRecawed: Boolean(userRecaw && userRecaw.status !== 'PENDING' && userRecaw.status !== 'FAILED'), // Only true if recawed AND confirmed
-    recawPending: userRecaw?.status === 'PENDING',
+    hasRecawed, // Only true if recawed AND confirmed
+    recawPending,
+    hasReplied, // Only true if replied AND confirmed
+    replyPending,
     // isBookmarked is now handled client-side (localStorage)
     commentCount: raw.commentCount,
     recawCount: raw.recawCount,
@@ -100,6 +115,9 @@ export function getCawIncludeConfig(options: CawQueryOptions = {}) {
       : false,
     recaws: currentUserId
       ? { where: { userId: currentUserId, action: 'RECAW' }, select: { id: true, status: true } }
+      : false,
+    repliesOnThis: currentUserId
+      ? { where: { userId: currentUserId }, select: { userId: true, pending: true } }
       : false,
     // bookmarks are now handled client-side (localStorage)
     ...(includeHashtags && {

@@ -126,3 +126,32 @@ export function usePendingRecawPolling(cawId: number | undefined, hasPendingReca
     return () => clearInterval(interval);
   }, [cawId, hasPendingRecaw, queryClient]);
 }
+
+/**
+ * Hook that polls for pending replies on a specific caw
+ */
+export function usePendingReplyPolling(cawId: number | undefined, hasPendingReply: boolean) {
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (!cawId || !hasPendingReply) return;
+
+    const interval = setInterval(() => {
+      // Invalidate queries related to this caw
+      queryClient.invalidateQueries({
+        queryKey: ['caw', cawId],
+        refetchType: 'active'
+      });
+
+      // Also invalidate feed queries to update reply state
+      queryClient.invalidateQueries({
+        queryKey: ['feed'],
+        refetchType: 'active'
+      });
+
+      console.log(`[Polling] Checking pending reply for caw ${cawId}...`);
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [cawId, hasPendingReply, queryClient]);
+}

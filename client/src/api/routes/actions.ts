@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
-import { processHashtagsForCaw } from '../../tools/hashtags'
+import { findOrCreateUser } from '../../services/UserService'
 
 const router = Router()
 
@@ -51,20 +51,12 @@ router.post('/', async (req, res) => {
       try {
         console.log('Creating optimistic pending caw for user:', data.senderId, 'cawonce:', data.cawonce)
 
-        // Ensure user exists first
-        const user = await prisma.user.findUnique({
-          where: { tokenId: data.senderId }
-        })
-
-        if (!user) {
-          // Create user if doesn't exist (id = tokenId)
-          await prisma.user.create({
-            data: {
-              id: data.senderId,
-              tokenId: data.senderId,
-              username: `user_${data.senderId}`
-            }
-          })
+        // Ensure user exists first - fetch from chain if needed
+        try {
+          await findOrCreateUser(data.senderId)
+        } catch (userErr) {
+          console.error('Failed to find/create user from chain:', userErr)
+          // Continue anyway - the caw will be created with userId reference
         }
 
         // Extract image URLs if present
@@ -86,7 +78,7 @@ router.post('/', async (req, res) => {
 
         // For replies, find the parent caw ID
         let originalCawId: number | undefined
-        if (data.receiverId && data.receiverCawonce) {
+        if (data.receiverId && data.receiverCawonce !== undefined && data.receiverCawonce !== null) {
           const parentCaw = await prisma.caw.findFirst({
             where: {
               userId: data.receiverId,
@@ -129,16 +121,34 @@ router.post('/', async (req, res) => {
         })
 
         console.log(`Created/Updated pending caw: ID=${caw.id}, userId=${caw.userId}, cawonce=${caw.cawonce}, status=${caw.status}`)
+        // Note: Hashtags are processed later when the caw is confirmed (in ActionProcessor)
+        // This prevents pending/failed caws from affecting trending hashtags
 
-        // Process hashtags for the new caw
-        try {
-          await processHashtagsForCaw(caw.id, textContent)
-          console.log(`Processed hashtags for caw ${caw.id}`)
-        } catch (err) {
-          console.error(`Failed to process hashtags for caw ${caw.id}:`, err)
-          // Don't fail the request if hashtag processing fails
+        // Create pending Reply record if this is a reply
+        if (originalCawId && caw) {
+          try {
+            await prisma.reply.upsert({
+              where: {
+                userId_cawId_replyCawId: {
+                  userId: data.senderId,
+                  cawId: originalCawId,
+                  replyCawId: caw.id
+                }
+              },
+              update: { pending: true },
+              create: {
+                userId: data.senderId,
+                cawId: originalCawId,
+                replyCawId: caw.id,
+                pending: true
+              }
+            })
+            console.log(`Created pending Reply record: userId=${data.senderId}, cawId=${originalCawId}, replyCawId=${caw.id}`)
+          } catch (replyErr) {
+            console.error('Failed to create pending Reply record:', replyErr)
+            // Continue even if Reply record creation fails
+          }
         }
-        console.log('Successfully created optimistic pending caw with ID:', caw.id)
       } catch (cawErr) {
         console.error('Failed to create optimistic pending caw:', cawErr)
         // Continue even if optimistic caw creation fails

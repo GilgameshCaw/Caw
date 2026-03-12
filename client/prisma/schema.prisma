@@ -48,6 +48,7 @@ model User {
   followers             Follow[]       @relation("Follower")
   follows               Follow[]       @relation("Following")
   likes                 Like[]
+  replies               Reply[]
   notificationsSent     Notification[] @relation("NotificationActor")
   notificationsReceived Notification[] @relation("NotificationRecipient")
   scheduledCaws         ScheduledCaw[]
@@ -78,6 +79,8 @@ model Caw {
   user          User           @relation(fields: [userId], references: [tokenId])
   hashtags      CawHashtag[]
   likes         Like[]
+  repliesOnThis Reply[]        @relation("RepliesOnCaw")
+  isReplyTo     Reply[]        @relation("ReplyCaw")
   notifications Notification[]
 
   @@unique([userId, cawonce])
@@ -99,6 +102,24 @@ model Like {
 
   @@unique([userId, cawId])
   @@index([cawId])
+}
+
+model Reply {
+  id         Int      @id @default(autoincrement())
+  userId     Int      // replier's tokenId
+  cawId      Int      // the post being replied to
+  replyCawId Int      // the caw that IS the reply (links to Caw.id)
+  pending    Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  caw        Caw      @relation("RepliesOnCaw", fields: [cawId], references: [id])
+  replyCaw   Caw      @relation("ReplyCaw", fields: [replyCawId], references: [id])
+  user       User     @relation(fields: [userId], references: [tokenId])
+
+  @@unique([userId, cawId, replyCawId])
+  @@index([cawId])
+  @@index([userId])
 }
 
 model Follow {

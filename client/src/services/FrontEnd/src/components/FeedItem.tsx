@@ -31,7 +31,7 @@ import { useBookmarksStore } from '~/store/bookmarksStore'
 import { Link, useNavigate } from 'react-router-dom'
 import { User, CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
-import { usePendingPolling, usePendingCawPolling, usePendingLikePolling, usePendingRecawPolling } from '~/hooks/usePendingPolling'
+import { usePendingPolling, usePendingCawPolling, usePendingLikePolling, usePendingRecawPolling, usePendingReplyPolling } from '~/hooks/usePendingPolling'
 import ContentWithHashtags from './ContentWithHashtags'
 import { formatEngagementCount } from '~/utils/numberFormat'
 import { apiFetch } from '~/api/client'
@@ -65,15 +65,17 @@ function formatTimeAgo(timestamp: string): string {
   }
 }
 
-const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void; onLikeStateChange?: (cawId: string, likePending: boolean) => void; onRecawStateChange?: (cawId: string, recawPending: boolean) => void }> = ({ item, isMainPost = false, isReply = false, onBookmarkUpdate, onLikeStateChange, onRecawStateChange }) => {
+const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void; onLikeStateChange?: (cawId: string, likePending: boolean) => void; onRecawStateChange?: (cawId: string, recawPending: boolean) => void; onReplyStateChange?: (cawId: string, replyPending: boolean) => void }> = ({ item, isMainPost = false, isReply = false, onBookmarkUpdate, onLikeStateChange, onRecawStateChange, onReplyStateChange }) => {
   // Local pending states (declared early so polling can use them)
   const [likePending, setLikePending] = useState(item.likePending || false)
   const [recawPending, setRecawPending] = useState(item.recawPending || false)
+  const [replyPending, setReplyPending] = useState(item.replyPending || false)
 
   // Enable polling for pending items - use local state so it works with auto-trigger
   usePendingCawPolling(parseInt(item.id), item.status === 'PENDING')
   usePendingLikePolling(parseInt(item.id), likePending)
   usePendingRecawPolling(parseInt(item.id), recawPending)
+  usePendingReplyPolling(parseInt(item.id), replyPending)
 
   const activeTokenId     = useTokenDataStore(s => s.activeTokenId)
   const activeToken = useTokenDataStore(s => {
@@ -202,6 +204,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   useEffect(() => {
     setRecawPending(item.recawPending || false)
   }, [item.recawPending])
+
+  // Sync local replyPending state with item.replyPending from polling
+  useEffect(() => {
+    setReplyPending(item.replyPending || false)
+  }, [item.replyPending])
 
   // Clear wrong wallet error when address changes
   useEffect(() => {
@@ -426,7 +433,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       return
     }
 
-    openModal('comment', item)
+    // Open modal with onSuccess callback to set pending state
+    openModal('comment', item, () => {
+      setReplyPending(true)
+      if (onReplyStateChange) {
+        onReplyStateChange(useItem.id, true)
+      }
+    })
   }
 
   const handleBookmark = (e: React.MouseEvent) => {
@@ -879,21 +892,40 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           {/* Post Actions */}
           <div className="flex items-center justify-between" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center space-x-6">
-              {/* Comments */}
+              {/* Comments/Replies */}
               <button
                 className={`flex items-center space-x-2 transition-colors duration-300 ${
                   (item.status === 'PENDING' || item.status === 'FAILED')
                     ? 'cursor-not-allowed opacity-50'
                     : 'hover:text-blue-500 cursor-pointer'
                 } ${
-                  isDark ? 'text-gray-400' : 'text-gray-600'
+                  (useItem.hasReplied || replyPending)
+                    ? 'text-blue-500'
+                    : isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
                 onClick={handleReply}
                 disabled={item.status === 'PENDING' || item.status === 'FAILED'}
-                title={item.status === 'PENDING' ? "Cannot reply to pending caw" : item.status === 'FAILED' ? "Cannot reply to failed caw" : "Reply"}
+                title={
+                  replyPending ? "Processing reply..." :
+                  item.status === 'PENDING' ? "Cannot reply to pending caw" :
+                  item.status === 'FAILED' ? "Cannot reply to failed caw" :
+                  "Reply"
+                }
               >
-                <HiOutlineChat className="w-5 h-5" />
-                <span className="text-sm">{formatEngagementCount(useItem.commentCount)}</span>
+                {replyPending ? (
+                  <div className="relative w-5 h-5 group">
+                    <div className="w-5 h-5 border-2 border-gray-400 border-t-blue-500 rounded-full animate-spin"></div>
+                    <HiOutlineCheck className="absolute inset-0 w-3 h-3 m-auto text-blue-500" />
+                    <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 text-xs bg-black text-white rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap">
+                      Submitted, pending validation
+                    </div>
+                  </div>
+                ) : (
+                  <HiOutlineChat className="w-5 h-5" />
+                )}
+                <span className={`text-sm ${(useItem.hasReplied || replyPending) ? 'text-blue-500' : ''}`}>
+                  {formatEngagementCount(useItem.commentCount)}
+                </span>
               </button>
 
               {/* Retweets */}

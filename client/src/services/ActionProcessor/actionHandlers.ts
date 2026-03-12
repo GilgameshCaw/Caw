@@ -182,7 +182,9 @@ export async function handleCawAction(
 
   // Process hashtags for the new caw
   try {
+    console.log(`[handleCawAction] Processing hashtags for caw ${newCaw.id}, textContent: "${textContent}"`)
     await processHashtagsForCaw(newCaw.id, textContent)
+    console.log(`[handleCawAction] Finished processing hashtags for caw ${newCaw.id}`)
   } catch (err) {
     console.error(`Failed to process hashtags for caw ${newCaw.id}:`, err)
     // Don't fail the entire transaction if hashtag processing fails
@@ -210,6 +212,23 @@ export async function handleCawAction(
       where: { id: rawAction.originalCawId },
       data: { commentCount: { increment: 1 } }
     })
+  }
+
+  // Confirm any pending Reply record for this reply
+  if (parentCawId && newCaw) {
+    try {
+      await tx.reply.updateMany({
+        where: {
+          replyCawId: newCaw.id,
+          pending: true
+        },
+        data: { pending: false }
+      })
+      console.log(`[handleCawAction] Confirmed Reply record for replyCawId=${newCaw.id}`)
+    } catch (replyErr) {
+      console.error('Failed to confirm Reply record:', replyErr)
+      // Continue even if Reply confirmation fails
+    }
   }
 
   // Increment user's caw count
@@ -249,6 +268,16 @@ export async function handleRecawAction(
     throw new Error(`Cannot create recaw: original caw not found (receiverCawonce: ${rawAction.receiverCawonce}, receiverId: ${rawAction.receiverId})`)
   }
 
+  // Check if recaw already exists to avoid double-counting
+  const existingRecaw = await tx.caw.findUnique({
+    where: {
+      userId_cawonce: {
+        userId: userId,
+        cawonce: action.cawonce
+      }
+    }
+  })
+
   // Use upsert to prevent duplicate RECAWs
   await tx.caw.upsert({
     where: {
@@ -270,17 +299,19 @@ export async function handleRecawAction(
     }
   })
 
-  // Update recaw count on the original post
-  await tx.caw.update({
-    where: { id: originalCawId },
-    data: { recawCount: { increment: 1 } }
-  })
+  // Only increment recaw count and send notification if this is a new recaw (not an update)
+  if (!existingRecaw) {
+    await tx.caw.update({
+      where: { id: originalCawId },
+      data: { recawCount: { increment: 1 } }
+    })
 
-  // Create repost notification
-  try {
-    await NotificationService.createRepostNotification(originalCawId, userId)
-  } catch (err) {
-    console.error(`Failed to create repost notification:`, err)
+    // Create repost notification
+    try {
+      await NotificationService.createRepostNotification(originalCawId, userId)
+    } catch (err) {
+      console.error(`Failed to create repost notification:`, err)
+    }
   }
 }
 
@@ -862,7 +893,7 @@ export async function handleWithdrawAction(
     amounts: rawAction.amounts
   })
 
-  // The first amount is the withdrawal amount in wei
+  // The first amount is the withdrawal amount in whole CAW units (not wei, due to uint64 limitation in action struct)
   const withdrawalAmount = rawAction.amounts?.[0]?.toString() || '0'
 
   // Create or update withdrawal request

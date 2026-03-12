@@ -44,8 +44,10 @@ export type CawItem = {
   viewCount: number
   hasLiked: boolean
   hasRecawed: boolean
+  hasReplied?: boolean // True when current user has replied (confirmed)
   likePending?: boolean // True when like is pending on-chain confirmation
   recawPending?: boolean // True when recaw is pending on-chain confirmation
+  replyPending?: boolean // True when reply is pending on-chain confirmation
   status?: 'SUCCESS' | 'PENDING' | 'FAILED' // Transaction status of the caw
   isBookmarked?: boolean // True when post is bookmarked by current user
   commentCount: number
