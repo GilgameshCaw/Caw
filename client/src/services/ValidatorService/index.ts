@@ -127,12 +127,10 @@ async function getReplicationCount(clientId: number): Promise<number> {
 }
 
 // Tip constants - must match frontend actions.ts
-// These are in CAW wei (18 decimals) - amounts are passed directly to addToBalance
-// 10,000 CAW tokens = 10000 * 10^18 wei
-// At ~500k CAW = $0.01, 10k CAW ≈ $0.0002 per action
-const CAW_DECIMALS = BigInt(10 ** 18)
-const BASE_VALIDATOR_TIP = BigInt(process.env.VALIDATOR_BASE_TIP || "10000") * CAW_DECIMALS // 10k CAW base tip
-const TIP_PER_REPLICATION_CHAIN = BigInt(process.env.VALIDATOR_TIP_PER_CHAIN || "5000") * CAW_DECIMALS // 5k CAW per replication chain
+// These are in whole CAW tokens (contract multiplies by 10^18 on-chain)
+// At ~500k CAW = $0.01, 1k CAW ≈ $0.00002 per action
+const BASE_VALIDATOR_TIP = BigInt(process.env.VALIDATOR_BASE_TIP || "1000") // 1k CAW base tip
+const TIP_PER_REPLICATION_CHAIN = BigInt(process.env.VALIDATOR_TIP_PER_CHAIN || "500") // 500 CAW per replication chain
 
 /**
  * Calculate the minimum required tip for an action based on replication chain count
@@ -393,16 +391,29 @@ export const validatorService: Service = {
       console.log('[Validator] Error during initial connection, will retry:', e.message)
     })
 
+    // On startup, reset ALL 'processing' entries back to 'pending'
+    // These are definitely stale since we just started
+    prisma.txQueue.updateMany({
+      where: { status: 'processing' },
+      data: { status: 'pending' }
+    }).then(result => {
+      if (result.count > 0) {
+        console.log(`[Validator] Startup: Reset ${result.count} 'processing' entries back to 'pending'`)
+      }
+    }).catch(err => {
+      console.error('[Validator] Startup: Failed to reset processing entries:', err.message)
+    })
+
     let timer: NodeJS.Timeout
 
     /** natstat: load all pending queue entries */
     async function fetchPendingQueue() {
-      // First, reset any 'processing' entries older than 2 minutes (likely stale from crash)
-      const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000)
+      // Reset any 'processing' entries older than 30 seconds (likely stale from timeout/crash)
+      const thirtySecondsAgo = new Date(Date.now() - 30 * 1000)
       const resetCount = await prisma.txQueue.updateMany({
         where: {
           status: 'processing',
-          updatedAt: { lt: twoMinutesAgo }
+          updatedAt: { lt: thirtySecondsAgo }
         },
         data: { status: 'pending' }
       })
@@ -478,27 +489,38 @@ export const validatorService: Service = {
         })));
 
         // Get withdrawal quote if there are any withdrawals
+        console.log("[Validator] Step 1: Checking for withdrawals...")
         const withdraws = multiData.actions.filter((action: any) => getActionType(action.actionType).toString() === 'WITHDRAW')
         let withdrawQuote = { nativeFee: BigInt(0), lzTokenFee: BigInt(0) }
+        console.log(`[Validator] Found ${withdraws.length} withdrawal actions`)
         if (withdraws.length > 0) {
           const tokenIds = withdraws.map((action: any) => action.senderId)
-          const amounts = withdraws.map((action: any) => action.amounts[0])
-          console.log("[Validator] Getting withdraw quote for tokenIds:", tokenIds, "amounts:", amounts)
+          // Convert amounts from whole CAW units to wei (action struct uses uint64, so amounts are not in wei)
+          const amounts = withdraws.map((action: any) => BigInt(action.amounts[0]) * 10n**18n)
+          console.log("[Validator] Getting withdraw quote for tokenIds:", tokenIds, "amounts (in wei):", amounts)
           try {
-            withdrawQuote = await cawActions.withdrawQuote(tokenIds, amounts, false) as any
+            // Add timeout to withdrawQuote call
+            const quotePromise = cawActions.withdrawQuote(tokenIds, amounts, false)
+            const timeoutPromise = new Promise((_, reject) => {
+              setTimeout(() => reject(new Error('withdrawQuote timeout after 10s')), 10000)
+            })
+            withdrawQuote = await Promise.race([quotePromise, timeoutPromise]) as any
             console.log('[Validator] Withdraw quote:', withdrawQuote)
-          } catch (err) {
-            console.error("[Validator] Failed to get withdraw quote:", err)
+          } catch (err: any) {
+            console.error("[Validator] Failed to get withdraw quote:", err.message || err)
           }
         }
 
         // Get replication quote for each unique client
         // For simulation, we need to estimate the total replication cost across all clients
+        console.log("[Validator] Step 2: Getting replication quotes...")
         const uniqueClientIds = getUniqueClientIds(multiData.actions)
+        console.log(`[Validator] Unique client IDs: ${uniqueClientIds.join(', ')}`)
         let totalReplicationFee = BigInt(0)
         let totalReplicationLzToken = BigInt(0)
 
         for (const clientId of uniqueClientIds) {
+          console.log(`[Validator] Getting replication quote for client ${clientId}...`)
           try {
             // Get actions for this client to build payload for quote
             const clientActions = multiData.actions.filter((a: any) => (a.clientId ?? 1) === clientId)
@@ -509,8 +531,15 @@ export const validatorService: Service = {
               r: clientIndices.map(i => multiData.r[i]),
               s: clientIndices.map(i => multiData.s[i])
             }
+            console.log(`[Validator] Calling cawActions.replicationQuote(${clientId}, ...)`)
 
-            const replicationQuote = await cawActions.replicationQuote(clientId, clientData, false) as any
+            // Add timeout to replicationQuote call
+            const quotePromise = cawActions.replicationQuote(clientId, clientData, false)
+            const timeoutPromise = new Promise((_, reject) => {
+              setTimeout(() => reject(new Error('replicationQuote timeout after 10s')), 10000)
+            })
+            const replicationQuote = await Promise.race([quotePromise, timeoutPromise]) as any
+            console.log(`[Validator] Got replication quote response:`, replicationQuote)
             if (replicationQuote && replicationQuote.quote) {
               totalReplicationFee += BigInt(replicationQuote.quote.nativeFee || 0)
               totalReplicationLzToken += BigInt(replicationQuote.quote.lzTokenFee || 0)
@@ -518,11 +547,21 @@ export const validatorService: Service = {
             }
           } catch (err: any) {
             // Replication might not be configured for this client - that's OK
+            // Also catch timeouts gracefully
+            console.log(`[Validator] Replication quote error for client ${clientId}:`, err.message)
+
+            // If timeout, reinitialize connection for next attempt
+            if (err.message?.includes('timeout')) {
+              console.log('[Validator] Replication quote timeout - reinitializing connection')
+              initializeConnection()
+            }
+
             if (!err.message?.includes('Replicator not set')) {
               console.log(`[Validator] Failed to get replication quote for client ${clientId}:`, err.message)
             }
           }
         }
+        console.log("[Validator] Step 2 complete: replication quotes retrieved")
 
         // Total native fee = withdraw fee + replication fee
         const totalNativeFee = BigInt(withdrawQuote.nativeFee || 0) + totalReplicationFee
@@ -536,6 +575,7 @@ export const validatorService: Service = {
           replicationLzTokenAmount: totalReplicationLzToken
         }
 
+        console.log("[Validator] Step 3: Building quote object...")
         console.log("[Validator] Total fees:", {
           withdrawFee: quote.withdrawFee.toString(),
           replicationFee: quote.replicationFee.toString(),
@@ -543,13 +583,21 @@ export const validatorService: Service = {
         })
 
         // ABI‐encode with the new 5-argument signature
-        const calldata = iface.encodeFunctionData('safeProcessActions', [
-          validatorId,
-          { actions: multiData.actions, v: multiData.v, r: multiData.r, s: multiData.s },
-          quote.withdrawFee,
-          quote.withdrawLzTokenAmount,
-          quote.replicationLzTokenAmount
-        ])
+        console.log("[Validator] Step 4: Encoding calldata...")
+        let calldata: string
+        try {
+          calldata = iface.encodeFunctionData('safeProcessActions', [
+            validatorId,
+            { actions: multiData.actions, v: multiData.v, r: multiData.r, s: multiData.s },
+            quote.withdrawFee,
+            quote.withdrawLzTokenAmount,
+            quote.replicationLzTokenAmount
+          ])
+          console.log(`[Validator] Calldata encoded successfully (${calldata.length} chars)`)
+        } catch (encodeErr: any) {
+          console.error(`[Validator] FAILED to encode calldata:`, encodeErr.message)
+          throw encodeErr
+        }
         console.log(`Call data prepared, simulating transaction...`)
         console.log(`  - Contract: ${CAW_ACTIONS_ADDRESS}`)
         console.log(`  - Value: ${quote?.nativeFee?.toString() || '0'}`)
@@ -561,9 +609,11 @@ export const validatorService: Service = {
           cawonce: a.cawonce
         })))
 
+        console.log("[Validator] Step 5: Making RPC call...")
         const startTime = Date.now();
 
         // Add timeout wrapper to prevent hanging
+        console.log(`[Validator] Calling provider.call() to ${CAW_ACTIONS_ADDRESS} with value ${quote?.nativeFee?.toString() || '0'}`)
         const callPromise = provider.call({
           to: CAW_ACTIONS_ADDRESS,
           data: calldata,
@@ -576,9 +626,12 @@ export const validatorService: Service = {
 
         let returnData: string
         try {
+          console.log("[Validator] Awaiting RPC response (15s timeout)...")
           returnData = await Promise.race([callPromise, timeoutPromise]) as string
+          console.log(`[Validator] RPC call returned data (${returnData?.length || 0} chars)`)
         } catch (timeoutErr: any) {
           console.error('[Validator] RPC call timeout or error:', timeoutErr.message)
+          console.error('[Validator] Full timeout error:', timeoutErr)
 
           // If timeout, reinitialize the WebSocket connection
           if (timeoutErr.message?.includes('timeout')) {
@@ -591,6 +644,7 @@ export const validatorService: Service = {
 
         const elapsed = Date.now() - startTime;
 
+        console.log(`[Validator] Step 6: Decoding response...`)
         console.log(`Simulation completed in ${elapsed}ms`)
         const decoded = iface.decodeFunctionResult(
           'safeProcessActions',
@@ -913,6 +967,7 @@ console.log("succeededKeys", succeededKeys)
           }
         } else if (newStatus === 'done' && (data.actionType === 0 || data.actionType === 'caw')) {
           // If succeeded, mark as SUCCESS
+          // Note: Hashtags are processed by ActionProcessor when it receives the on-chain event
           try {
             await prisma.caw.update({
               where: {
@@ -956,7 +1011,8 @@ console.log("succeededKeys", succeededKeys)
       let withdrawQuote = { nativeFee: BigInt(0), lzTokenFee: BigInt(0) }
       if (withdraws.length > 0) {
         const tokenIds = withdraws.map((action: any) => action.senderId)
-        const amounts = withdraws.map((action: any) => action.amounts[0])
+        // Convert amounts from whole CAW units to wei (action struct uses uint64, so amounts are not in wei)
+        const amounts = withdraws.map((action: any) => BigInt(action.amounts[0]) * 10n**18n)
         try {
           withdrawQuote = await cawActions.withdrawQuote(tokenIds, amounts, false) as any
         } catch (err) {
@@ -1660,7 +1716,9 @@ console.log("succeededKeys", succeededKeys)
         // Check if this is a CAW action
         if (data.actionType === 0 || data.actionType === 'caw') {
           if (succeeded) {
+            // Mark caw as SUCCESS and process hashtags
             // Mark caw as SUCCESS
+            // Note: Hashtags are processed by ActionProcessor when it receives the on-chain event
             try {
               await prisma.caw.update({
                 where: {
