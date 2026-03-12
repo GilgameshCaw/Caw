@@ -43,14 +43,24 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
   // Filter items based on mute preferences and blocked users
   const filteredItems = useMemo(() => {
     const blockedUserIds = blockedUsers.map(u => u.tokenId)
+    // Build a set of pending post signatures (content + userId) to dedupe DB pending posts
+    const pendingPostSignatures = new Set(
+      pendingPosts.map(p => `${p.user?.tokenId}:${p.content?.trim()}`)
+    )
+
     return items.filter(item => {
       // Filter out muted content
       if (shouldFilterPost(item, preferences)) return false
       // Filter out blocked users
       if (blockedUserIds.includes(item.user.tokenId)) return false
+      // Filter out DB PENDING posts that match local pending posts (same user + content)
+      if (item.status === 'PENDING') {
+        const signature = `${item.user.tokenId}:${item.content?.trim()}`
+        if (pendingPostSignatures.has(signature)) return false
+      }
       return true
     })
-  }, [items, preferences, blockedUsers])
+  }, [items, preferences, blockedUsers, pendingPosts])
 
   // Expose refresh method via ref
   useImperativeHandle(ref, () => ({
@@ -262,6 +272,61 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
     }
   }, [items])
 
+  // Poll for pending recaws - refetch specific caws that have pending recaws
+  useEffect(() => {
+    const pendingRecawCaws = items.filter(item => item.recawPending)
+    console.log('[Feed Polling] Pending recaw caws:', pendingRecawCaws.length, pendingRecawCaws.map(c => ({ id: c.id, recawPending: c.recawPending })))
+
+    if (pendingRecawCaws.length === 0) return
+
+    console.log('[Feed Polling] Starting recaw poll interval for', pendingRecawCaws.length, 'caws')
+    const interval = setInterval(async () => {
+      console.log('[Feed Polling] Polling for pending recaws...')
+      // Refetch each caw with a pending recaw
+      for (const caw of pendingRecawCaws) {
+        try {
+          console.log(`[Feed Polling] Fetching caw ${caw.id} for recaw status...`)
+          const updated = await apiFetch<{ caw: CawItem }>(`/api/caws/${caw.id}`)
+          console.log(`[Feed Polling] Got response for caw ${caw.id}:`, {
+            recawPending: updated.caw.recawPending,
+            hasRecawed: updated.caw.hasRecawed,
+            recawCount: updated.caw.recawCount
+          })
+
+          // Update the specific item in the list
+          // Keep recawPending true until hasRecawed is confirmed (to handle race condition)
+          setItems(current =>
+            current.map(item => {
+              if (item.id === caw.id) {
+                const isConfirmed = updated.caw.hasRecawed === true
+                console.log(`[Feed Polling] Updating item ${caw.id}:`, {
+                  oldHasRecawed: item.hasRecawed,
+                  newHasRecawed: updated.caw.hasRecawed,
+                  oldRecawCount: item.recawCount,
+                  newRecawCount: updated.caw.recawCount,
+                  isConfirmed
+                })
+                // If not yet confirmed, keep recawPending true to continue polling
+                return {
+                  ...updated.caw,
+                  recawPending: isConfirmed ? false : true
+                }
+              }
+              return item
+            })
+          )
+        } catch (err) {
+          console.error(`Failed to refresh caw ${caw.id}:`, err)
+        }
+      }
+    }, 3000) // Poll every 3 seconds
+
+    return () => {
+      console.log('[Feed Polling] Clearing recaw interval')
+      clearInterval(interval)
+    }
+  }, [items])
+
   // render
   if (error)   return <div className="text-red-400">Error loading feed: {error}</div>
   if (items.length === 0 && loading) return (
@@ -306,6 +371,20 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
                 item.id === cawId ? { ...item, likePending } : item
               )
             )
+          }}
+          onRecawStateChange={(cawId, recawPending) => {
+            console.log('[Feed] Recaw state changed for caw', cawId, 'pending:', recawPending, 'type:', typeof cawId)
+            setItems(current => {
+              const updated = current.map(item => {
+                const match = item.id === cawId
+                if (match) {
+                  console.log('[Feed] Found matching item:', item.id, '- setting recawPending to', recawPending)
+                }
+                return match ? { ...item, recawPending } : item
+              })
+              console.log('[Feed] Items with recawPending after update:', updated.filter(i => i.recawPending).map(i => i.id))
+              return updated
+            })
           }}
         />
       ))}

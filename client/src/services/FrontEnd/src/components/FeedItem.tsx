@@ -2,7 +2,7 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { useSignAndSubmitAction } from '~/api/actions'
-import { useAccount } from 'wagmi'
+import { useAccount, useChainId } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import {
   HiOutlineHeart,
@@ -40,6 +40,8 @@ import MuteWordsModal from './modals/MuteWordsModal'
 import MuteConfirmModal, { shouldShowMuteConfirmModal } from './modals/MuteConfirmModal'
 import ReportPostModal, { ReportReason } from './modals/ReportPostModal'
 import { hasMinimumStake, getRequiredStake } from '~/constants/stakingRequirements'
+import SwitchChainModal from './modals/SwitchChainModal'
+import { chains } from '~/config/chains'
 
 // Helper function to format relative time
 function formatTimeAgo(timestamp: string): string {
@@ -63,7 +65,7 @@ function formatTimeAgo(timestamp: string): string {
   }
 }
 
-const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void; onLikeStateChange?: (cawId: string, likePending: boolean) => void }> = ({ item, isMainPost = false, isReply = false, onBookmarkUpdate, onLikeStateChange }) => {
+const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void; onLikeStateChange?: (cawId: string, likePending: boolean) => void; onRecawStateChange?: (cawId: string, recawPending: boolean) => void }> = ({ item, isMainPost = false, isReply = false, onBookmarkUpdate, onLikeStateChange, onRecawStateChange }) => {
   // Local pending states (declared early so polling can use them)
   const [likePending, setLikePending] = useState(item.likePending || false)
   const [recawPending, setRecawPending] = useState(item.recawPending || false)
@@ -80,8 +82,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   })
   const openModal        = useModalStore(s => s.openModal)
   const { isConnected, address } = useAccount()
+  const chainId = useChainId()
   const { openConnectModal } = useConnectModal()
   const { isDark } = useTheme()
+  const [showSwitchChainModal, setShowSwitchChainModal] = useState(false)
   const navigate = useNavigate()
   const [busyLike, setBusyLike]     = useState(false)
   const [busyRecaw, setBusyRecaw]   = useState(false)
@@ -113,6 +117,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   let useItem = item;
   let headline;
   let isRecaw = false;
+  let isRecawByCurrentUser = false;
   if (item.content === "" && item.parent) {
     // Check if the recaw is by the current user
     const userId = (item.user as any).tokenId || item.user.id;
@@ -124,6 +129,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       : 'Recawed by ' + (item.user.displayName || item.user.username);
     useItem = item.parent;
     isRecaw = true;
+    isRecawByCurrentUser = !!isCurrentUser;
   }
 
   // Auto-trigger like after wallet connection
@@ -248,6 +254,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       return;
     }
 
+    // Check if connected to wrong chain (need L2 for actions)
+    if (chainId !== chains.l2.chainId) {
+      setShowSwitchChainModal(true)
+      return
+    }
+
     // Check if connected to wrong wallet
     if (activeToken && address && activeToken.address.toLowerCase() !== address.toLowerCase()) {
       setWrongWalletError(true)
@@ -355,6 +367,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       return
     }
 
+    // Check if connected to wrong chain (need L2 for actions)
+    if (chainId !== chains.l2.chainId) {
+      setShowSwitchChainModal(true)
+      return
+    }
+
     // Check if connected to wrong wallet
     if (activeToken && address && activeToken.address.toLowerCase() !== address.toLowerCase()) {
       setWrongWalletError(true)
@@ -386,6 +404,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
       // Set pending state - will be cleared when the recaw caw is confirmed
       setRecawPending(true)
+
+      // Notify parent component about recaw state change
+      if (onRecawStateChange) {
+        onRecawStateChange(useItem.id, true)
+      }
     } catch (err) {
       console.error('Recaw failed', err)
       setRecawPending(false)
@@ -559,7 +582,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     if (item.status === 'PENDING' || item.status === 'FAILED') {
       return
     }
-    navigate(`/caws/${useItem.id}`)
+    const url = `/caws/${useItem.id}`
+    // Open in new tab if command+click (Mac) or ctrl+click (Windows/Linux)
+    if (e.metaKey || e.ctrlKey) {
+      window.open(url, '_blank')
+    } else {
+      navigate(url)
+    }
   }
 
   return (
@@ -875,7 +904,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       ? 'cursor-not-allowed opacity-50'
                       : 'hover:text-green-500 cursor-pointer'
                   } ${
-                    useItem.hasRecawed
+                    (useItem.hasRecawed || isRecawByCurrentUser)
                       ? 'text-green-500'
                       : isDark ? 'text-gray-400' : 'text-gray-600'
                   }`}
@@ -904,11 +933,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     </div>
                   ) : (
                     <Recaw className={`w-5 h-5 transition-all duration-300 ${
-                      useItem.hasRecawed ? 'text-green-500' : ''
+                      (useItem.hasRecawed || isRecawByCurrentUser) ? 'text-green-500' : ''
                     }`} />
                   )}
                   <span className={`text-sm transition-colors duration-300 ${
-                    useItem.hasRecawed ? 'text-green-500' : ''
+                    (useItem.hasRecawed || isRecawByCurrentUser) ? 'text-green-500' : ''
                   }`}>{formatEngagementCount(useItem.recawCount)}</span>
                 </button>
 
@@ -1248,6 +1277,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           insufficientStakeAction === 'repost' ? 'MIN_STAKE_REPOST' :
           'MIN_STAKE_POST'
         )}
+      />
+
+      {/* Switch Chain Modal */}
+      <SwitchChainModal
+        isOpen={showSwitchChainModal}
+        onClose={() => setShowSwitchChainModal(false)}
       />
 
       {/* Mute Words Modal */}

@@ -1,7 +1,7 @@
 // src/components/ReplyItem.tsx - Specific component for replies in individual posts
 import React, { useState, useRef, useEffect } from 'react'
 import { useSignAndSubmitAction } from '~/api/actions'
-import { useAccount } from 'wagmi'
+import { useAccount, useChainId } from 'wagmi'
 import { HiOutlineHeart, HiOutlineEye, HiOutlineChat, HiOutlineCheck } from 'react-icons/hi'
 import Recaw from '~/assets/images/recaw.svg?react';
 import Pencil from '~/assets/images/pencil.svg?react';
@@ -13,6 +13,8 @@ import { Link } from 'react-router-dom'
 import { User, CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
 import { usePendingCawPolling, usePendingLikePolling } from '~/hooks/usePendingPolling'
+import SwitchChainModal from './modals/SwitchChainModal'
+import { chains } from '~/config/chains'
 
 // Helper function to format relative time
 function formatTimeAgo(timestamp: string): string {
@@ -49,7 +51,9 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
   const openModal        = useModalStore(s => s.openModal)
   const { isDark } = useTheme()
   const { address } = useAccount()
+  const chainId = useChainId()
   const [busyLike, setBusyLike]     = useState(false)
+  const [showSwitchChainModal, setShowSwitchChainModal] = useState(false)
   const [busyRecaw, setBusyRecaw]   = useState(false)
   const [isRecawed, setIsRecawed]   = useState(false)
   const [likePending, setLikePending] = useState(item.likePending || false)
@@ -96,6 +100,12 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
 
     // Don't allow interactions with pending or failed caws
     if (item.status === 'PENDING' || item.status === 'FAILED') {
+      return
+    }
+
+    // Check if connected to wrong chain (need L2 for actions)
+    if (chainId !== chains.l2.chainId) {
+      setShowSwitchChainModal(true)
       return
     }
 
@@ -331,6 +341,12 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
           </div>
         )}
       </div>
+
+      {/* Switch Chain Modal */}
+      <SwitchChainModal
+        isOpen={showSwitchChainModal}
+        onClose={() => setShowSwitchChainModal(false)}
+      />
     </Link>
   )
 }

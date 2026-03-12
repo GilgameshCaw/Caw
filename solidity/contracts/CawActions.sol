@@ -23,7 +23,7 @@ contract CawActions is Context {
     uint32 clientId;
     uint32 cawonce;
     uint32[] recipients;
-    uint128[] amounts;
+    uint64[] amounts;
     string text;
   }
 
@@ -60,7 +60,7 @@ contract CawActions is Context {
     "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
   );
   bytes32 private constant ACTIONDATA_TYPEHASH = keccak256(
-    "ActionData(uint8 actionType,uint32 senderId,uint32 receiverId,uint32 receiverCawonce,uint32 clientId,uint32 cawonce,uint32[] recipients,uint128[] amounts,string text)"
+    "ActionData(uint8 actionType,uint32 senderId,uint32 receiverId,uint32 receiverCawonce,uint32 clientId,uint32 cawonce,uint32[] recipients,uint64[] amounts,string text)"
   );
 
   constructor(address _cawNames) {
@@ -99,7 +99,7 @@ contract CawActions is Context {
       require(action.senderId != action.receiverId, "Cannot follow yourself");
       cawName.spendDistributeAndAddTokensToBalance(action.senderId, 30000, 6000, action.receiverId, 24000);
     } else if (action.actionType == ActionType.WITHDRAW)
-      cawName.withdraw(action.senderId, action.amounts[0]);
+      cawName.withdraw(action.senderId, uint256(action.amounts[0]) * 10**18);
     else if ( action.actionType != ActionType.UNLIKE &&
         action.actionType != ActionType.UNFOLLOW &&
         action.actionType != ActionType.OTHER)
@@ -130,16 +130,18 @@ contract CawActions is Context {
     bool isWithdrawal = action.actionType == ActionType.WITHDRAW;
     uint256 startIndex = isWithdrawal ? 1 : 0;
 
-    uint256 amountTotal = action.amounts[numAmounts - 1];
+    // Convert from whole CAW tokens to wei (multiply by 10^18)
+    uint256 amountTotal = uint256(action.amounts[numAmounts - 1]) * 10**18;
 
     for (uint256 i = startIndex; i < numRecipients; ) {
-      cawName.addToBalance(action.recipients[i], action.amounts[i]);
-      amountTotal += action.amounts[i];
+      uint256 amountWei = uint256(action.amounts[i]) * 10**18;
+      cawName.addToBalance(action.recipients[i], amountWei);
+      amountTotal += amountWei;
       unchecked { ++i; }
     }
 
     cawName.spendAndDistribute(action.senderId, amountTotal, 0);
-    cawName.addToBalance(validatorId, action.amounts[numAmounts - 1]);
+    cawName.addToBalance(validatorId, uint256(action.amounts[numAmounts - 1]) * 10**18);
   }
 
   function verifySignature(
@@ -500,7 +502,8 @@ contract CawActions is Context {
       for (uint16 i = 0; i < actions.length; ) {
         if ((withdrawBitmap & (1 << i)) != 0) {
           withdrawIds[index] = actions[i].senderId;
-          withdrawAmounts[index] = actions[i].amounts[0];
+          // Convert from whole CAW tokens to wei (multiply by 10^18)
+          withdrawAmounts[index] = uint256(actions[i].amounts[0]) * 10**18;
           unchecked { ++index; }
         }
         unchecked { ++i; }

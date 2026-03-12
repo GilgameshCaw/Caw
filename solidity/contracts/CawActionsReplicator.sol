@@ -17,7 +17,7 @@ interface ICawActionsForReplicator {
     uint32 clientId;
     uint32 cawonce;
     uint32[] recipients;
-    uint128[] amounts;
+    uint64[] amounts;  // Whole CAW tokens (not wei)
     string text;
   }
 
