@@ -558,6 +558,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               i === mediaIndex ? { ...m, uploadStatus: 'success', uploadedRef: imageRef } : m
             )
           })
+          // Increment library counts so the on-chain image icon becomes visible
+          setLibraryTotalCount(prev => prev + 1)
+          setLibraryUnpostedCount(prev => prev + 1)
           return
         } else if (response.status === 'FAILED') {
           // Update media to show failure
@@ -1284,7 +1287,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                   className={`p-1 rounded-full transition-all duration-200 cursor-pointer hover:bg-yellow-400/10`}
                   title="Previously uploaded on-chain images"
                 >
-                  <img src="/icons/on-chain-images.svg" alt="On-chain images" className="w-[27px] h-[27px] min-w-[27px] opacity-70 hover:opacity-100 transition-opacity translate-y-[3px]" />
+                  <img src="/icons/on-chain-images.svg" alt="On-chain images" className="w-[27px] h-[27px] min-w-[27px] opacity-85 hover:opacity-100 transition-opacity translate-y-[3px]" />
                 </button>
                 {/* Unposted badge */}
                 {libraryUnpostedCount > 0 && (
@@ -1579,7 +1582,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                   className={`p-2 rounded-full transition-all duration-200 cursor-pointer hover:bg-yellow-400/10`}
                   title="Previously uploaded on-chain images"
                 >
-                  <img src="/icons/on-chain-images.svg" alt="On-chain images" className="w-[27px] h-[27px] min-w-[27px] opacity-70 hover:opacity-100 transition-opacity translate-y-[3px]" />
+                  <img src="/icons/on-chain-images.svg" alt="On-chain images" className="w-[27px] h-[27px] min-w-[27px] opacity-85 hover:opacity-100 transition-opacity translate-y-[3px]" />
                 </button>
                 {/* Unposted badge */}
                 {libraryUnpostedCount > 0 && (
