@@ -211,13 +211,13 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
     }
   }, [filter])
 
-  // when filter changes, reset everything & load first page
+  // when filter or username changes, reset everything & load first page
   useEffect(() => {
     setItems([])
     setNextCursor(undefined)
     setHasMore(true)
     loadPage(true)
-  }, [filter, activeTokenId, apiEndpoint])
+  }, [filter, activeTokenId, apiEndpoint, username])
 
   // infinite‐scroll: when near bottom, load more
   useEffect(() => {
@@ -327,6 +327,60 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
     }
   }, [items])
 
+  // Poll for pending replies - refetch specific caws that have pending replies
+  useEffect(() => {
+    const pendingReplyCaws = items.filter(item => item.replyPending)
+    console.log('[Feed Polling] Pending reply caws:', pendingReplyCaws.length, pendingReplyCaws.map(c => ({ id: c.id, replyPending: c.replyPending })))
+
+    if (pendingReplyCaws.length === 0) return
+
+    console.log('[Feed Polling] Starting reply poll interval for', pendingReplyCaws.length, 'caws')
+    const interval = setInterval(async () => {
+      console.log('[Feed Polling] Polling for pending replies...')
+      // Refetch each caw with a pending reply
+      for (const caw of pendingReplyCaws) {
+        try {
+          console.log(`[Feed Polling] Fetching caw ${caw.id} for reply status...`)
+          const updated = await apiFetch<{ caw: CawItem }>(`/api/caws/${caw.id}`)
+          console.log(`[Feed Polling] Got response for caw ${caw.id}:`, {
+            replyPending: updated.caw.replyPending,
+            hasReplied: updated.caw.hasReplied,
+            commentCount: updated.caw.commentCount
+          })
+
+          // Update the specific item in the list
+          setItems(current =>
+            current.map(item => {
+              if (item.id === caw.id) {
+                const isConfirmed = updated.caw.hasReplied === true
+                console.log(`[Feed Polling] Updating reply item ${caw.id}:`, {
+                  oldHasReplied: item.hasReplied,
+                  newHasReplied: updated.caw.hasReplied,
+                  oldCommentCount: item.commentCount,
+                  newCommentCount: updated.caw.commentCount,
+                  isConfirmed
+                })
+                // If not yet confirmed, keep replyPending true to continue polling
+                return {
+                  ...updated.caw,
+                  replyPending: isConfirmed ? false : true
+                }
+              }
+              return item
+            })
+          )
+        } catch (err) {
+          console.error(`Failed to refresh caw ${caw.id} for reply:`, err)
+        }
+      }
+    }, 3000) // Poll every 3 seconds
+
+    return () => {
+      console.log('[Feed Polling] Clearing reply interval')
+      clearInterval(interval)
+    }
+  }, [items])
+
   // render
   if (error)   return <div className="text-red-400">Error loading feed: {error}</div>
   if (items.length === 0 && loading) return (
@@ -385,6 +439,14 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
               console.log('[Feed] Items with recawPending after update:', updated.filter(i => i.recawPending).map(i => i.id))
               return updated
             })
+          }}
+          onReplyStateChange={(cawId, replyPending) => {
+            console.log('[Feed] Reply state changed for caw', cawId, 'pending:', replyPending)
+            setItems(current =>
+              current.map(item =>
+                item.id === cawId ? { ...item, replyPending } : item
+              )
+            )
           }}
         />
       ))}

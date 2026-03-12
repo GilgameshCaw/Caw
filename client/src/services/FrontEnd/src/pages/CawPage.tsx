@@ -54,6 +54,42 @@ export const CawPage: React.FC = () => {
     return () => clearInterval(interval)
   }, [caw?.status, id])
 
+  // Poll for pending replies on the main caw (user just submitted a reply)
+  useEffect(() => {
+    if (!caw || !caw.replyPending) return
+
+    console.log('[CawPage] Starting reply poll for main caw:', caw.id)
+    const interval = setInterval(async () => {
+      try {
+        console.log(`[CawPage] Polling for pending reply on caw ${caw.id}...`)
+        const { caw: fetched, comments: fetchedComments } =
+          await apiFetch<{ caw: CawItem; comments: CawItem[] }>(`/api/caws/${id}`)
+
+        console.log(`[CawPage] Got response:`, {
+          replyPending: fetched.replyPending,
+          hasReplied: fetched.hasReplied,
+          commentCount: fetched.commentCount
+        })
+
+        setCaw(fetched)
+        setComments(fetchedComments)
+
+        // Stop polling if no longer pending
+        if (!fetched.replyPending) {
+          console.log('[CawPage] Reply confirmed, stopping poll')
+          clearInterval(interval)
+        }
+      } catch (error) {
+        console.error('Error polling for reply updates:', error)
+      }
+    }, 3000) // Poll every 3 seconds
+
+    return () => {
+      console.log('[CawPage] Clearing reply poll interval')
+      clearInterval(interval)
+    }
+  }, [caw?.replyPending, id])
+
   // Reset initial load state when navigating to a different caw
   useEffect(() => {
     setInitialLoadDone(false)
@@ -126,27 +162,14 @@ export const CawPage: React.FC = () => {
 
           <div className="relative z-10">
             <FeedItem
-              item={{
-                id:            caw.id,
-                user:          caw.user,
-                content:       caw.content,
-                timestamp:     caw.timestamp,
-                likeCount:     caw.likeCount,
-                viewCount:     caw.viewCount || 0,  // Include viewCount
-                hasLiked:      caw.hasLiked,
-                hasRecawed:    caw.hasRecawed,
-                commentCount:  caw.commentCount,
-                recawCount:    caw.recawCount,
-                cawonce:       caw.cawonce,
-                userId:        caw.user.tokenId,
-                originalCaw:   caw.originalCaw,
-                status:        caw.status,  // Include status field
-                imageData:     caw.imageData,  // Include imageData
-                hasImage:      caw.hasImage,  // Include hasImage
-                videoData:     caw.videoData,  // Include videoData
-                hasVideo:      caw.hasVideo,  // Include hasVideo
-              }}
+              item={caw}
               isMainPost={true}
+              onReplyStateChange={(cawId, replyPending) => {
+                console.log('[CawPage] Reply state changed for main caw', cawId, 'pending:', replyPending)
+                if (caw && caw.id === cawId) {
+                  setCaw({ ...caw, replyPending })
+                }
+              }}
             />
           </div>
         </div>
@@ -155,7 +178,12 @@ export const CawPage: React.FC = () => {
         <div className="border-b border-white/20 mb-2">
           <PostForm
             replyTo={caw}
-            onSuccess={refreshComments}
+            onSuccess={() => {
+              // Set pending state on the main caw
+              setCaw(prev => prev ? { ...prev, replyPending: true } : prev)
+              // Also refresh comments
+              refreshComments()
+            }}
           />
         </div>
 
