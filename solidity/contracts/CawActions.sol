@@ -23,7 +23,7 @@ contract CawActions is Context {
     uint32 clientId;
     uint32 cawonce;
     uint32[] recipients;
-    uint64[] amounts;
+    uint64[] amounts;  // Whole CAW tokens (not wei) - multiplied by 10^18 on-chain
     string text;
   }
 

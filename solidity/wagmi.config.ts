@@ -16,6 +16,7 @@ export default defineConfig({
         "contracts/CawName.sol/**",
         "contracts/CawNameL2.sol/**",
         "contracts/CawNameMinter.sol/**",
+        "contracts/CawNameQuoter.sol/**",
         "contracts/CawNameURI.sol/**",
         "contracts/MintableCaw.sol/**",
       ],
