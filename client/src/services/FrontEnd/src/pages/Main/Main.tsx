@@ -3,17 +3,46 @@ import MainLayout from "~/layouts/MainLayout";
 import PostForm from "~/components/PostForm";
 import Feed, { type FeedRef } from "~/components/Feed";
 import MobilePostModal from "~/components/MobilePostModal";
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { useAccount } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { HiOutlinePlus } from "react-icons/hi";
 import { BsWallet } from 'react-icons/bs';
 import { useTheme } from '~/hooks/useTheme';
+import { useSearchParams } from 'react-router-dom';
 
-type MainTab = 'Following' | 'For you'
+type MainTab = 'following' | 'foryou'
+
+const TAB_LABELS: Record<MainTab, string> = {
+  'following': 'Following',
+  'foryou': 'For You'
+}
+
+const TAB_TO_FILTER: Record<MainTab, 'Following' | 'For you'> = {
+  'following': 'Following',
+  'foryou': 'For you'
+}
 
 export const Main: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<MainTab>('Following')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tabParam = searchParams.get('tab') as MainTab | null
+  const [activeTab, setActiveTab] = useState<MainTab>(
+    tabParam && (tabParam === 'following' || tabParam === 'foryou') ? tabParam : 'following'
+  )
+
+  // Sync URL when tab changes
+  useEffect(() => {
+    const currentTab = searchParams.get('tab')
+    if (currentTab !== activeTab) {
+      if (activeTab === 'following') {
+        // Remove tab param for default tab
+        searchParams.delete('tab')
+      } else {
+        searchParams.set('tab', activeTab)
+      }
+      setSearchParams(searchParams, { replace: true })
+    }
+  }, [activeTab])
   const [isMobilePostModalOpen, setIsMobilePostModalOpen] = useState(false)
   const { isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
@@ -21,8 +50,8 @@ export const Main: React.FC = () => {
   const feedRef = useRef<FeedRef>(null)
 
   const mainTabs: TabItem<MainTab>[] = [
-    { id: 'Following', label: 'Following' },
-    { id: 'For you', label: 'For You' },
+    { id: 'following', label: TAB_LABELS['following'] },
+    { id: 'foryou', label: TAB_LABELS['foryou'] },
   ]
 
   return (
@@ -40,7 +69,7 @@ export const Main: React.FC = () => {
         <div className="w-full">
           <Feed
             ref={feedRef}
-            filter={activeTab}
+            filter={TAB_TO_FILTER[activeTab]}
           />
         </div>
       </div>

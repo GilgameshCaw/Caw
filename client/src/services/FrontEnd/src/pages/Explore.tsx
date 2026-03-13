@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import MainLayout from '~/layouts/MainLayout'
 import { Tabs, TabItem } from '~/components/Tabs'
 import { useTheme } from '~/hooks/useTheme'
@@ -12,11 +12,38 @@ import { useAccount } from "wagmi"
 import { useConnectModal } from "@rainbow-me/rainbowkit"
 import { HiOutlinePlus } from "react-icons/hi"
 import { BsWallet } from 'react-icons/bs'
+import { useSearchParams } from 'react-router-dom'
 
-type ExploreTab = 'For you' | 'Discover' | 'Updates' | 'Community'
+type ExploreTab = 'foryou' | 'discover' | 'updates' | 'community'
+
+const TAB_LABELS: Record<ExploreTab, string> = {
+  'foryou': 'For you',
+  'discover': 'Discover',
+  'updates': 'Updates',
+  'community': 'Community'
+}
+
+const VALID_TABS: ExploreTab[] = ['foryou', 'discover', 'updates', 'community']
 
 const ExplorePage: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<ExploreTab>('For you')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tabParam = searchParams.get('tab') as ExploreTab | null
+  const [activeTab, setActiveTab] = useState<ExploreTab>(
+    tabParam && VALID_TABS.includes(tabParam) ? tabParam : 'foryou'
+  )
+
+  // Sync URL when tab changes
+  useEffect(() => {
+    const currentTab = searchParams.get('tab')
+    if (currentTab !== activeTab) {
+      if (activeTab === 'foryou') {
+        searchParams.delete('tab')
+      } else {
+        searchParams.set('tab', activeTab)
+      }
+      setSearchParams(searchParams, { replace: true })
+    }
+  }, [activeTab])
   const [isMobilePostModalOpen, setIsMobilePostModalOpen] = useState(false)
   const { isDark } = useTheme()
   const { isConnected } = useAccount()
@@ -24,16 +51,16 @@ const ExplorePage: React.FC = () => {
 
   // Mobile tabs - only For You and Community
   const mobileTabs: TabItem<ExploreTab>[] = [
-    { id: 'For you', label: 'For you' },
-    { id: 'Community', label: 'Community' },
+    { id: 'foryou', label: TAB_LABELS['foryou'] },
+    { id: 'community', label: TAB_LABELS['community'] },
   ]
 
   // Desktop tabs - all 4 tabs
   const desktopTabs: TabItem<ExploreTab>[] = [
-    { id: 'For you', label: 'For you' },
-    { id: 'Discover', label: 'Discover' },
-    { id: 'Updates', label: 'Updates' },
-    { id: 'Community', label: 'Community' },
+    { id: 'foryou', label: TAB_LABELS['foryou'] },
+    { id: 'discover', label: TAB_LABELS['discover'] },
+    { id: 'updates', label: TAB_LABELS['updates'] },
+    { id: 'community', label: TAB_LABELS['community'] },
   ]
 
   return (
@@ -76,7 +103,7 @@ const ExplorePage: React.FC = () => {
 
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto custom-scrollbar-alt">
-          {activeTab === 'For you' && (
+          {activeTab === 'foryou' && (
             <div className="space-y-4">
               <h2 className={`text-lg font-semibold transition-colors duration-300 ${
                 isDark ? 'text-white' : 'text-black'
@@ -87,7 +114,7 @@ const ExplorePage: React.FC = () => {
             </div>
           )}
 
-          {activeTab === 'Discover' && (
+          {activeTab === 'discover' && (
             <div className="space-y-6">
               <div className="space-y-4">
                 <h2 className={`text-lg font-semibold transition-colors duration-300 ${
@@ -113,7 +140,7 @@ const ExplorePage: React.FC = () => {
             </div>
           )}
 
-          {activeTab === 'Updates' && (
+          {activeTab === 'updates' && (
             <div className="space-y-6">
               <div className="space-y-4">
                 <h2 className={`text-lg font-semibold transition-colors duration-300 ${
@@ -126,7 +153,7 @@ const ExplorePage: React.FC = () => {
             </div>
           )}
 
-          {activeTab === 'Community' && (
+          {activeTab === 'community' && (
             <div className="space-y-6">
               {/* Community Stats */}
               <div className="space-y-4">
