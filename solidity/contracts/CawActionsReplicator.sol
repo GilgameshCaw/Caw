@@ -395,6 +395,7 @@ contract CawActionsReplicator is OApp {
     bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(RECEIVE_GAS_LIMIT, 0);
     uint256 feePerChain = msg.value / destinations.length;
     uint256 lzTokenPerChain = lzTokenAmount / destinations.length;
+    uint256 feeUsed = 0;
 
     for (uint i = 0; i < destinations.length; i++) {
       ReplicationDestination memory dest = destinations[i];
@@ -407,7 +408,11 @@ contract CawActionsReplicator is OApp {
 
       peers[dest.eid] = peerBytes;
 
-      try this.doLzSend(dest.eid, payload, options, feePerChain, lzTokenPerChain) {
+      // Give remainder to the last destination to avoid dust ETH being trapped
+      uint256 chainFee = (i == destinations.length - 1) ? msg.value - feeUsed : feePerChain;
+      feeUsed += chainFee;
+
+      try this.doLzSend(dest.eid, payload, options, chainFee, lzTokenPerChain) {
         emit Replicated(dest.eid, bytes32(0), payload.length, clientId);
       } catch Error(string memory reason) {
         emit ReplicationFailed(dest.eid, clientId, reason);

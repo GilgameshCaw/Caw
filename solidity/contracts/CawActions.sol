@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts/utils/Context.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 
 import "./CawNameL2.sol";
@@ -10,7 +10,7 @@ import { CawActionsReplicator, ReplicationDestination } from "./CawActionsReplic
 
 import { MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
-contract CawActions is Context {
+contract CawActions is Ownable {
   /// @notice Replicator for archiving actions to other chains (can only be set once)
   CawActionsReplicator public replicator;
   enum ActionType { CAW, LIKE, UNLIKE, RECAW, FOLLOW, UNFOLLOW, WITHDRAW, OTHER }
@@ -51,6 +51,7 @@ contract CawActions is Context {
 
   event ActionsProcessed(ActionData[] actions);
   event ActionRejected(uint32 senderId, uint32 cawonce, string reason);
+  event ReplicatorSet(address replicator);
 
   CawNameL2 public immutable cawName;
   CawActions public immutable externalSelf;
@@ -69,12 +70,14 @@ contract CawActions is Context {
     cawName = CawNameL2(_cawNames);
   }
 
-  /// @notice Set the replicator address (can only be called once)
+  /// @notice Set the replicator address (can only be called once by owner, then ownership is renounced)
   /// @param _replicator The address of the CawActionsReplicator contract
-  function setReplicator(address _replicator) external {
+  function setReplicator(address _replicator) external onlyOwner {
     require(address(replicator) == address(0), "Replicator already set");
     require(_replicator != address(0), "Invalid replicator address");
     replicator = CawActionsReplicator(_replicator);
+    emit ReplicatorSet(_replicator);
+    renounceOwnership();
   }
 
   function processAction(uint32 validatorId, ActionData calldata action, uint8 v, bytes32 r, bytes32 s) external {
@@ -166,6 +169,7 @@ contract CawActions is Context {
     );
 
     address signer = getSigner(structHash, v, r, s);
+    require(signer != address(0), "Invalid signature");
     require(signer == cawName.ownerOf(data.senderId), "Invalid signer");
   }
 
@@ -395,12 +399,28 @@ contract CawActions is Context {
       }
     }
 
-    // Send each client's actions
+    // Send each client's actions, giving remainder to the last client
     uint256 feePerAction = totalReplicationFee / data.actions.length;
     uint256 lzTokenPerAction = replicationLzTokenAmount / data.actions.length;
+    uint256 feeUsed = 0;
+    uint256 lzTokenUsed = 0;
 
     for (uint8 c = 0; c < uniqueClients; c++) {
-      _replicateClientActions(data, clientIds[c], clientBitmaps[c], feePerAction, lzTokenPerAction);
+      if (c == uniqueClients - 1) {
+        _replicateClientActions(data, clientIds[c], clientBitmaps[c], totalReplicationFee - feeUsed, lzTokenPerAction);
+      } else {
+        uint256 count = _bitmapPopcount(clientBitmaps[c], data.actions.length);
+        uint256 clientFee = feePerAction * count;
+        feeUsed += clientFee;
+        lzTokenUsed += lzTokenPerAction * count;
+        _replicateClientActions(data, clientIds[c], clientBitmaps[c], clientFee, lzTokenPerAction);
+      }
+    }
+  }
+
+  function _bitmapPopcount(uint256 bitmap, uint256 length) internal pure returns (uint256 count) {
+    for (uint256 i = 0; i < length; i++) {
+      if ((bitmap & (1 << i)) != 0) count++;
     }
   }
 
@@ -451,12 +471,20 @@ contract CawActions is Context {
       }
     }
 
-    // Send each client's successful actions
+    // Send each client's successful actions, giving remainder to the last client
     uint256 feePerAction = totalReplicationFee / successCount;
     uint256 lzTokenPerAction = replicationLzTokenAmount / successCount;
+    uint256 feeUsed = 0;
 
     for (uint8 c = 0; c < uniqueClients; c++) {
-      _replicateClientActions(data, clientIds[c], clientBitmaps[c], feePerAction, lzTokenPerAction);
+      if (c == uniqueClients - 1) {
+        _replicateClientActions(data, clientIds[c], clientBitmaps[c], totalReplicationFee - feeUsed, lzTokenPerAction);
+      } else {
+        uint256 count = _bitmapPopcount(clientBitmaps[c], data.actions.length);
+        uint256 clientFee = feePerAction * count;
+        feeUsed += clientFee;
+        _replicateClientActions(data, clientIds[c], clientBitmaps[c], clientFee, lzTokenPerAction);
+      }
     }
   }
 

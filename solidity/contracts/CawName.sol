@@ -73,6 +73,8 @@ contract CawName is
     address owner;
   }
 
+  event MinterSet(address minter);
+
   CawClientManager public clientManager;
   address buyAndBurnCaw;
 
@@ -96,6 +98,7 @@ contract CawName is
 
   function setMinter(address _minter) external onlyOwner {
     minter = _minter;
+    emit MinterSet(_minter);
   }
 
   function setUriGenerator(address _gui) external onlyOwner {
@@ -238,13 +241,13 @@ contract CawName is
 
   function withdraw(uint32 cawClientId, uint32 tokenId, uint256 lzTokenAmount) public payable {
     require(ownerOf(tokenId) == msg.sender, "can not withdraw from a CawName that you do not own");
-    require(withdrawable[tokenId] >= 0, "nothing to withdraw, you may need to withdraw from the L2 first");
+    require(withdrawable[tokenId] > 0, "nothing to withdraw, you may need to withdraw from the L2 first");
 
     uint256 amount = withdrawable[tokenId];
     totalCaw -= withdrawable[tokenId];
     withdrawable[tokenId] = 0;
 
-    (uint256 fee, address feeAddress) = clientManager.getDepositFeeAndAddress(cawClientId);
+    (uint256 fee, address feeAddress) = clientManager.getWithdrawFeeAndAddress(cawClientId);
     uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
 
     CAW.transfer(msg.sender, amount);
@@ -365,7 +368,7 @@ contract CawName is
   }
 
   function extractPendingTransferUpdates(uint32 lzDestId) internal returns (uint32[] memory, address[] memory) {
-    extractPendingTransferUpdates(lzDestId, address(0), 0);
+    return extractPendingTransferUpdates(lzDestId, address(0), 0);
   }
 
   function extractPendingTransferUpdates(uint32 lzDestId, address newOwner, uint32 tokenId) internal returns (uint32[] memory, address[] memory) {
@@ -496,6 +499,13 @@ contract CawName is
     else if (selector == setReplicationPeerSelector)
       return 100000;
     else revert("unexpected selector");
+  }
+
+  /// @notice Sweep accumulated ETH (e.g. LZ refunds) to the buy-and-burn address
+  function sweepETH() external {
+    uint256 balance = address(this).balance;
+    require(balance > 0, "No ETH to sweep");
+    payable(buyAndBurnCaw).transfer(balance);
   }
 
   receive() external payable {}

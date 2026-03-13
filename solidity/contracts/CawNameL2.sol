@@ -47,7 +47,7 @@ contract CawNameL2 is
   mapping(uint32 => uint256) public cawOwnership;
 
   uint256 public rewardMultiplier = 10**18;
-  uint256 public precision = 30425026352721 ** 2;// ** 3;
+  uint256 public precision = 30425026352721 ** 2;
 
   uint32 public immutable layer1EndpointId;
 
@@ -59,6 +59,8 @@ contract CawNameL2 is
   event OwnerSet(uint32 tokenId, address newOwner);
   event UsernameMinted(uint32 tokenId, address owner);
   event Authenticated(uint32 cawClientId, uint32 tokenId);
+  event CawActionsSet(address cawActions);
+  event CawActionsReplicatorSet(address replicator);
 
   bytes4 public setWithdrawableSelector = bytes4(keccak256("setWithdrawable(uint32[],uint256[])"));
 
@@ -100,10 +102,12 @@ contract CawNameL2 is
 
   function setCawActions(address _cawActions) external onlyOwner {
     cawActions = ICawActions(_cawActions);
+    emit CawActionsSet(_cawActions);
   }
 
   function setCawActionsReplicator(address _replicator) external onlyOwner {
     cawActionsReplicator = _replicator;
+    emit CawActionsReplicatorSet(_replicator);
   }
 
   function cawBalanceOf(uint32 tokenId) public view returns (uint256){
