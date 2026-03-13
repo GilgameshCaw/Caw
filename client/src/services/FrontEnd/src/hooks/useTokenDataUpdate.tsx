@@ -1,6 +1,6 @@
 // client/src/services/FrontEnd/src/hooks/useTokenDataUpdate.tsx
 
-import { useEffect, useState } from "react"
+import { useEffect, useCallback } from "react"
 import { useAccount, useReadContract } from "wagmi"
 import { Address } from "viem"
 import { baseSepolia, sepolia } from "wagmi/chains"
@@ -32,7 +32,7 @@ export default function useTokenDataUpdate() {
 
   const viewedAddress = ((address ?? lastAddress)?.toLowerCase()) as Address | undefined
 
-  const { data: rawTokens, isError, error, isLoading, isLoadingError } = useReadContract({
+  const { data: rawTokens, isError, error, isLoading, isLoadingError, refetch: refetchL1 } = useReadContract({
     address: CAW_NAMES_ADDRESS,
     chainId: sepolia.id,
     abi: cawNameAbi,
@@ -41,8 +41,6 @@ export default function useTokenDataUpdate() {
 
     query: {
       enabled: !!viewedAddress,
-      refetchInterval: 5000, // Refetch every 5 seconds to keep data fresh
-      staleTime: 2000, // Consider data stale after 2 seconds
     }
   })
 
@@ -62,15 +60,13 @@ export default function useTokenDataUpdate() {
   }
 
 
-  const { data: l2TokenData, isLoading: balancesLoading  } = useReadContract({
+  const { data: l2TokenData, isLoading: balancesLoading, refetch: refetchL2 } = useReadContract({
     address: CAW_NAMES_L2_ADDRESS,
     chainId:      baseSepolia.id,
     abi:          cawNameL2Abi,
     functionName: "getTokens",
     query: {
       enabled: !!rawTokens && rawTokens.length > 0,
-      refetchInterval: 5000, // Refetch every 5 seconds to keep data fresh
-      staleTime: 2000, // Consider data stale after 2 seconds
     },
     args: [(rawTokens ?? []).map((token) => Number(token.tokenId))],
   })
@@ -163,6 +159,16 @@ export default function useTokenDataUpdate() {
     fetchMinCawonce();
   }, [activeTokenId, l2TokenData, setCawonce])
 
+  // Register refetch function in the store so other components can trigger it
+  const setRefetchTokenData = useTokenDataStore(s => s.setRefetchTokenData)
+  const refetch = useCallback(() => {
+    refetchL1()
+    refetchL2()
+  }, [refetchL1, refetchL2])
+
+  useEffect(() => {
+    setRefetchTokenData(refetch)
+  }, [refetch, setRefetchTokenData])
 }
 
 

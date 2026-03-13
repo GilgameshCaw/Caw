@@ -25,6 +25,8 @@ interface TokenDataStore {
   setActiveTokenIdForAddress: (addr: Address, tokenId: number) => void;
 
   setCawonce:   (tokenId: number, cawonce: number) => void;
+  refetchTokenData: (() => void) | null;
+  setRefetchTokenData: (fn: () => void) => void;
 }
 
 export const useActiveToken = () =>
@@ -70,6 +72,8 @@ export const useTokenDataStore = create<TokenDataStore>()(
       lastAddress: undefined,
       activeTokenId: undefined,
       activeTokenIdByAddress: {},
+      refetchTokenData: null,
+      setRefetchTokenData: (fn) => set({ refetchTokenData: fn }),
       allTokens: () => {
         const { tokensByAddress } = get()
         return Object.values(tokensByAddress).flat()

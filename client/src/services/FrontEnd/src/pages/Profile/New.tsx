@@ -108,7 +108,8 @@ console.log("BALANCE:", balance)
     }
   }, [wrongChain, isSwitchingChain]);
 
-  const { allowance } = useAllowance(CAW_ADDRESS, CAW_NAMES_MINTER_ADDRESS, useAddress);
+  const { allowance, refetch: refetchAllowance } = useAllowance(CAW_ADDRESS, CAW_NAMES_MINTER_ADDRESS, useAddress);
+  const refetchTokenData = useTokenDataStore(s => s.refetchTokenData)
   const needsApproval = !allowance || allowance == 0n || BigInt(cost) > allowance;
 
   const { call: approve, status: approveStatus } = useContractCall({
@@ -122,6 +123,7 @@ console.log("BALANCE:", balance)
     },
     onSuccess: () => {
       setIsApprovePending(false)
+      refetchAllowance()
     },
     onError: () => {
       setIsApprovePending(false)
@@ -145,25 +147,26 @@ console.log("BALANCE:", balance)
     onSuccess:    async (hash) => {
       console.log('minted!', hash)
 
-      // Wait for the blockchain data to update (useTokenDataUpdate refetches every 5 seconds)
-      // Check the store periodically for the new token
+      // Refetch token data from chain, then check for the new token
+      await refetchTokenData?.()
+
       const checkForNewToken = () => {
         const allTokens = useTokenDataStore.getState().allTokens()
         const newToken = allTokens.find((t: any) => t.username.toLowerCase() === username.toLowerCase())
 
         if (newToken) {
           setMintedTokenId(newToken.tokenId)
-          // Switch to the newly minted token
           setActiveTokenId(newToken.tokenId)
           setMintSuccess(true)
         } else {
-          // Check again in 2 seconds
-          setTimeout(checkForNewToken, 2000)
+          // Token data may not be processed yet, refetch and check again
+          refetchTokenData?.()
+          setTimeout(checkForNewToken, 3000)
         }
       }
 
-      // Start checking after 3 seconds to give blockchain time to index
-      setTimeout(checkForNewToken, 3000)
+      // Give a moment for the refetch to process
+      setTimeout(checkForNewToken, 1000)
     },
     onError:      err  => console.error(err),
   })

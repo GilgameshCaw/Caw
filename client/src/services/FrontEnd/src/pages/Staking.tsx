@@ -101,10 +101,11 @@ const Staking = () => {
   })
 
   // Get allowance for staking
-  const { allowance } = useAllowance(CAW_ADDRESS, CAW_NAMES_ADDRESS)
+  const { allowance, refetch: refetchAllowance } = useAllowance(CAW_ADDRESS, CAW_NAMES_ADDRESS)
+  const refetchTokenData = useTokenDataStore(s => s.refetchTokenData)
 
   // Get wallet balance
-  const { data: balance } = useReadContract({
+  const { data: balance, refetch: refetchBalance } = useReadContract({
     address: CAW_ADDRESS,
     abi: erc20Abi,
     chainId: chains.l1.chainId,
@@ -291,6 +292,7 @@ const Staking = () => {
     onSuccess: async () => {
       console.log('[Staking] Approval successful, automatically triggering stake')
       setIsApprovePending(false)
+      refetchAllowance()
       // Wait a brief moment for the approval to be confirmed
       await new Promise(resolve => setTimeout(resolve, 500))
       // Automatically call stake after approval
@@ -318,6 +320,9 @@ const Staking = () => {
       // Persist to localStorage so it survives page refresh
       localStorage.setItem('lastStakeTime', now.toString())
       setIsStakePending(false)
+      // Refetch on-chain data to reflect updated balances
+      refetchTokenData?.()
+      refetchBalance()
 
       // Also record stake timestamp in database for persistent LayerZero status check
       if (activeToken?.username) {
@@ -351,12 +356,10 @@ const Staking = () => {
     },
     onSuccess: (hash) => {
       console.log('[Staking] Withdraw successful:', hash)
-      // Keep pending state and force hard reload to bypass all caches
-      setTimeout(() => {
-        setIsWithdrawPending(false)
-        // Force hard reload to bypass wagmi and localStorage caches
-        window.location.href = window.location.href.split('?')[0] + '?t=' + Date.now()
-      }, 5000)
+      setIsWithdrawPending(false)
+      // Refetch on-chain data to reflect updated balances
+      refetchTokenData?.()
+      refetchBalance()
     },
     onError: (err) => {
       setIsWithdrawPending(false)
