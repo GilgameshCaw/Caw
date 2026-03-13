@@ -46,9 +46,6 @@ let cachedL2Provider: JsonRpcProvider | null = null
 const replicationCountCache: Map<number, { count: number; timestamp: number }> = new Map()
 const REPLICATION_CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 
-// All actions in a batch must belong to the same client (enforced by CawActions.sol)
-const MAX_CLIENTS_PER_BATCH = 1
-
 /**
  * Get or create Uniswap V2 Router instance
  */
@@ -1231,39 +1228,25 @@ console.log("succeededKeys", succeededKeys)
           return
         }
 
-        // Check if we need to split the batch due to too many unique clients
-        // The contract limits batches to MAX_CLIENTS_PER_BATCH (4) unique clients
+        // All actions in a batch must belong to the same client (enforced by CawActions.sol).
+        // If we have multiple clients, split into per-client batches and process each separately.
         const allActions = validatedEntries.map(e => (e.payload as any).data)
         const uniqueClientIds = getUniqueClientIds(allActions)
-        if (uniqueClientIds.length > MAX_CLIENTS_PER_BATCH) {
-          console.log(`[Validator] ⚠️  Batch has ${uniqueClientIds.length} unique clients (max ${MAX_CLIENTS_PER_BATCH})`)
-          console.log(`[Validator] Client IDs: ${uniqueClientIds.join(', ')}`)
+        if (uniqueClientIds.length > 1) {
+          console.log(`[Validator] Batch has ${uniqueClientIds.length} unique clients, splitting into per-client batches`)
 
-          // Split entries by client and process in groups of MAX_CLIENTS_PER_BATCH
           const clientGroups = groupActionsByClient(allActions)
-          const clientIdList = Array.from(clientGroups.keys())
 
-          // Process in chunks of MAX_CLIENTS_PER_BATCH clients
-          for (let i = 0; i < clientIdList.length; i += MAX_CLIENTS_PER_BATCH) {
-            const chunkClientIds = clientIdList.slice(i, i + MAX_CLIENTS_PER_BATCH)
-            const chunkIndices: number[] = []
-            for (const clientId of chunkClientIds) {
-              chunkIndices.push(...clientGroups.get(clientId)!)
-            }
+          for (const [clientId, indices] of clientGroups.entries()) {
+            const subBatchEntries = indices.map(idx => validatedEntries[idx])
+            console.log(`[Validator] Processing client ${clientId}: ${subBatchEntries.length} entries`)
 
-            // Build sub-batch entries
-            const subBatchEntries = chunkIndices.map(idx => validatedEntries[idx])
-            console.log(`[Validator] Processing client group ${Math.floor(i / MAX_CLIENTS_PER_BATCH) + 1}: clients [${chunkClientIds.join(', ')}] with ${subBatchEntries.length} entries`)
-
-            // Mark these as processing (they already are, but be explicit)
             const subBatch = buildMultiActionData(subBatchEntries)
 
             try {
-              // Simulate this sub-batch
               const simResult = await simulateActions(validatorId, subBatch)
               if (!simResult || !simResult.successfulActions?.length) {
-                console.log(`[Validator] Sub-batch simulation failed or no successful actions`)
-                // Mark entries as failed
+                console.log(`[Validator] Client ${clientId} simulation failed or no successful actions`)
                 await Promise.all(subBatchEntries.map((entry, idx) => {
                   return prisma.txQueue.update({
                     where: { id: entry.id },
@@ -1276,7 +1259,6 @@ console.log("succeededKeys", succeededKeys)
                 continue
               }
 
-              // Get succeeded entries
               const succeededKeys = new Set(
                 simResult.successfulActions.map((a: any) => `${a.senderId}-${a.cawonce}`)
               )
@@ -1285,20 +1267,15 @@ console.log("succeededKeys", succeededKeys)
                 return succeededKeys.has(`${data.senderId}-${data.cawonce}`)
               })
 
-              if (succeededSubEntries.length === 0) {
-                console.log(`[Validator] No successful actions in sub-batch`)
-                continue
-              }
+              if (succeededSubEntries.length === 0) continue
 
-              // Build and submit succeeded actions
               const succeededData = buildMultiActionData(succeededSubEntries)
               const subQuote = await recalculateQuoteForActions(succeededData)
               const gasLimit = await estimateGasLimit(validatorId, succeededData, subQuote)
 
               const finalized = await submitProcessActions(validatorId, succeededData, subQuote, gasLimit)
-              console.log(`[Validator] Sub-batch submitted: ${finalized.length} actions finalized`)
+              console.log(`[Validator] Client ${clientId}: ${finalized.length} actions finalized`)
 
-              // Update statuses
               const finalizedKeys = new Set(finalized.map((f: any) => `${f.senderId}-${f.cawonce}`))
               await Promise.all(subBatchEntries.map(async (entry, idx) => {
                 const data = (entry.payload as any).data
@@ -1313,8 +1290,7 @@ console.log("succeededKeys", succeededKeys)
                 })
               }))
             } catch (err: any) {
-              console.error(`[Validator] Sub-batch processing failed:`, err.message)
-              // Mark sub-batch entries as failed
+              console.error(`[Validator] Client ${clientId} batch failed:`, err.message)
               await Promise.all(subBatchEntries.map(entry => {
                 return prisma.txQueue.update({
                   where: { id: entry.id },
@@ -1324,7 +1300,7 @@ console.log("succeededKeys", succeededKeys)
             }
           }
 
-          return // All sub-batches processed
+          return
         }
 
         console.log(`[Validator] ${validatedEntries.length} valid entries to simulate`)
