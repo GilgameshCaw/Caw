@@ -451,12 +451,6 @@ console.log("BALANCE:", balance)
                 {submitText}
             </SubmitButton>
 
-            {gasCostEth != null && (
-                <div className="text-sm text-gray-500 text-center">
-                    est. gas: {gasCostEth.toFixed(4)} ETH
-                </div>
-            )}
-
             <div className="text-center">
               <a
                 href="https://app.uniswap.org/#/swap?inputCurrency=ETH&outputCurrency=0xf3b9569F82B18aEf890De263B84189bd33EBe452"
@@ -467,6 +461,12 @@ console.log("BALANCE:", balance)
                 Need more CAW? Click here.
               </a>
             </div>
+
+            {gasCostEth != null && (
+                <div className="text-sm text-gray-500 text-center">
+                    est. gas: {gasCostEth.toFixed(4)} ETH
+                </div>
+            )}
         </div>
       </div>
     </MainLayout>

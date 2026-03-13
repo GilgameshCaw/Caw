@@ -1,13 +1,13 @@
 // src/pages/ProfilePage.tsx
 import React, { useState, useEffect } from 'react'
-import { useParams }    from 'react-router-dom'
+import { useParams, useSearchParams }    from 'react-router-dom'
 import MainLayout       from '~/layouts/MainLayout'
 import { Tabs, TabItem } from '~/components/Tabs'
 import Feed             from '~/components/Feed'
 import { useTheme } from '~/hooks/useTheme'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useModalStore } from '~/store/modalStore'
-import { HiPencil, HiX, HiCamera, HiGlobe, HiLocationMarker, HiOutlineMail, HiDotsHorizontal } from 'react-icons/hi'
+import { HiPencil, HiX, HiCamera, HiGlobe, HiLink, HiLocationMarker, HiOutlineMail, HiDotsHorizontal } from 'react-icons/hi'
 import { apiFetch } from '~/api/client'
 import { useAccount, useSwitchChain, useChainId } from 'wagmi'
 import { chains } from '~/config/chains'
@@ -22,7 +22,16 @@ import { hasMinimumStake, getRequiredStake } from '~/constants/stakingRequiremen
 import { useFollowButton } from '~/hooks/useFollowButton'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 
-type ProfileTab = 'profile' | 'profile-likes' | 'profile-replies' | 'profile-media'
+type ProfileTab = 'posts' | 'likes' | 'replies' | 'media'
+
+const TAB_TO_FILTER: Record<ProfileTab, 'profile' | 'profile-likes' | 'profile-replies' | 'profile-media'> = {
+  'posts': 'profile',
+  'likes': 'profile-likes',
+  'replies': 'profile-replies',
+  'media': 'profile-media'
+}
+
+const VALID_TABS: ProfileTab[] = ['posts', 'likes', 'replies', 'media']
 
 type ProfileData = {
   id: number
@@ -49,7 +58,24 @@ type ProfileData = {
 
 export const Profile: React.FC = () => {
   const { username } = useParams<{ username: string }>()
-  const [activeTab, setActiveTab] = useState<ProfileTab>('profile')
+  const [searchParams, setSearchParams] = useSearchParams()
+  const tabParam = searchParams.get('tab') as ProfileTab | null
+  const [activeTab, setActiveTab] = useState<ProfileTab>(
+    tabParam && VALID_TABS.includes(tabParam) ? tabParam : 'posts'
+  )
+
+  // Sync URL when tab changes
+  useEffect(() => {
+    const currentTab = searchParams.get('tab')
+    if (currentTab !== activeTab) {
+      if (activeTab === 'posts') {
+        searchParams.delete('tab')
+      } else {
+        searchParams.set('tab', activeTab)
+      }
+      setSearchParams(searchParams, { replace: true })
+    }
+  }, [activeTab])
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [profileData, setProfileData] = useState<ProfileData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -94,6 +120,7 @@ export const Profile: React.FC = () => {
   const [isMuted, setIsMuted] = useState(false)
   const [showBlockConfirmModal, setShowBlockConfirmModal] = useState(false)
   const [showCostExplanation, setShowCostExplanation] = useState(false)
+  const [showInsufficientStake, setShowInsufficientStake] = useState(false)
   const [profileError, setProfileError] = useState<string | null>(null)
   const [localProfileUpdatePending, setLocalProfileUpdatePending] = useState(false)
 
@@ -128,6 +155,25 @@ export const Profile: React.FC = () => {
 
     fetchProfile()
   }, [displayUsername, activeToken?.tokenId])
+
+  // Poll for profile update completion when localProfileUpdatePending is true
+  useEffect(() => {
+    if (!localProfileUpdatePending || !displayUsername || displayUsername === 'user') return
+
+    const interval = setInterval(async () => {
+      try {
+        const data = await apiFetch<ProfileData>(`/api/users/${displayUsername}`)
+        setProfileData(data)
+        if (!data.profileUpdatePending) {
+          setLocalProfileUpdatePending(false)
+        }
+      } catch {
+        // Ignore fetch errors during polling
+      }
+    }, 5000)
+
+    return () => clearInterval(interval)
+  }, [localProfileUpdatePending, displayUsername])
 
   // Form state - Initialize with current profile data
   const [formData, setFormData] = useState({
@@ -417,6 +463,14 @@ export const Profile: React.FC = () => {
       const { VALIDATOR_TIP } = await import('~/api/actions')
       const totalCost = BigInt(updateCost) + VALIDATOR_TIP
 
+      // Check if user has enough CAW staked to cover the cost
+      const totalCostWei = totalCost * 10n**18n
+      if (!activeToken.stakedAmount || activeToken.stakedAmount < totalCostWei) {
+        setShowInsufficientStake(true)
+        setIsSaving(false)
+        return
+      }
+
       // Submit as other action with total cost (includes validator tip + data cost)
       await submitActionWithStakeCheck({
         actionType: 'other',
@@ -497,10 +551,10 @@ export const Profile: React.FC = () => {
 
   // define our four tabs
   const profileTabs: TabItem<ProfileTab>[] = [
-    { id: 'profile',       label: 'Posts'  },
-    { id: 'profile-replies', label: 'Replies'  },
-    { id: 'profile-media', label: 'Media'  },
-    { id: 'profile-likes', label: 'Likes'  },
+    { id: 'posts',   label: 'Posts'   },
+    { id: 'replies', label: 'Replies' },
+    { id: 'media',   label: 'Media'   },
+    { id: 'likes',   label: 'Likes'   },
   ]
 
   // If this user is blocked, show blocked state (even if they're selected as active account)
@@ -855,7 +909,7 @@ export const Profile: React.FC = () => {
         {/* Posts Feed - Same format as other pages */}
         <div className="w-full">
           <Feed
-            filter={activeTab}
+            filter={TAB_TO_FILTER[activeTab]}
             username={profileData?.username || displayUsername}
           />
         </div>
@@ -1182,7 +1236,7 @@ export const Profile: React.FC = () => {
                   Website
                 </label>
                 <div className="relative">
-                  <HiGlobe className={`absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 transition-colors duration-300 ${
+                  <HiLink className={`absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 transition-colors duration-300 ${
                     isDark ? 'text-gray-400' : 'text-gray-500'
                   }`} />
                   <input
@@ -1242,14 +1296,16 @@ export const Profile: React.FC = () => {
                     </button>
                   </div>
                   {updateCost > 0 && (
-                    <button
-                      onClick={() => setShowCostExplanation(true)}
-                      className={`mt-2 text-xs cursor-pointer ${
-                        isDark ? 'text-yellow-500/70 hover:text-yellow-500' : 'text-yellow-700/70 hover:text-yellow-700'
-                      }`}
-                    >
-                      Why does this cost CAW?
-                    </button>
+                    <div className="mt-2 self-end mr-4">
+                      <button
+                        onClick={() => setShowCostExplanation(true)}
+                        className={`text-xs cursor-pointer ${
+                          isDark ? 'text-yellow-500/70 hover:text-yellow-500' : 'text-yellow-700/70 hover:text-yellow-700'
+                        }`}
+                      >
+                        Why does this cost CAW?
+                      </button>
+                    </div>
                   )}
                 </div>
               </div>
@@ -1284,7 +1340,7 @@ export const Profile: React.FC = () => {
                 Your profile changes are stored permanently on the blockchain, making them censorship-resistant and truly owned by you.
               </p>
               <p className={`p-3 rounded-lg ${isDark ? 'bg-yellow-500/10 text-yellow-400' : 'bg-yellow-50 text-yellow-700'}`}>
-                The CAW cost covers the on-chain storage and is distributed to stakers who help secure the network.
+                The CAW cost is used to cover the gas fees for permanent storage on the blockchain.
               </p>
             </div>
             <div className="flex space-x-3">
@@ -1306,6 +1362,15 @@ export const Profile: React.FC = () => {
         currentAmount={stakeError.currentAmount}
         requiredAmount={stakeError.requiredAmount}
         actionType={stakeError.actionType}
+      />
+
+      {/* Insufficient Stake Modal for Profile Updates */}
+      <InsufficientStakeModal
+        isOpen={showInsufficientStake}
+        onClose={() => setShowInsufficientStake(false)}
+        currentAmount={activeToken?.stakedAmount}
+        requiredAmount={BigInt(updateCost) * 10n**18n}
+        actionType="profile"
       />
 
       {/* Block Confirmation Modal */}

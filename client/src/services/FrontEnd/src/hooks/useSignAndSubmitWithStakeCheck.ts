@@ -9,7 +9,7 @@ export function useSignAndSubmitWithStakeCheck() {
     isOpen: boolean
     currentAmount?: bigint
     requiredAmount?: bigint
-    actionType?: 'post' | 'like' | 'repost'
+    actionType?: 'post' | 'like' | 'repost' | 'profile'
   }>({
     isOpen: false
   })

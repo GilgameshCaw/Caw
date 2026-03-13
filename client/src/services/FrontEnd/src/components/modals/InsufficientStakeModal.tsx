@@ -8,7 +8,7 @@ interface InsufficientStakeModalProps {
   onClose: () => void
   requiredAmount?: bigint
   currentAmount?: bigint
-  actionType?: 'post' | 'like' | 'repost'
+  actionType?: 'post' | 'like' | 'repost' | 'profile'
 }
 
 const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
@@ -54,6 +54,8 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
         return 'like posts'
       case 'repost':
         return 'repost content'
+      case 'profile':
+        return 'update your profile'
       case 'post':
       default:
         return 'create posts'
