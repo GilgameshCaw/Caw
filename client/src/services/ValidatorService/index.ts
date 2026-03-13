@@ -46,8 +46,8 @@ let cachedL2Provider: JsonRpcProvider | null = null
 const replicationCountCache: Map<number, { count: number; timestamp: number }> = new Map()
 const REPLICATION_CACHE_TTL = 5 * 60 * 1000 // 5 minutes
 
-// Maximum unique clients per batch (matches CawActions.sol limit)
-const MAX_CLIENTS_PER_BATCH = 4
+// All actions in a batch must belong to the same client (enforced by CawActions.sol)
+const MAX_CLIENTS_PER_BATCH = 1
 
 /**
  * Get or create Uniswap V2 Router instance
@@ -1055,53 +1055,6 @@ console.log("succeededKeys", succeededKeys)
         replicationFee: totalReplicationFee,
         replicationLzTokenAmount: totalReplicationLzToken
       }
-    }
-
-    /**
-     * Check if a batch has too many unique clients and needs to be split
-     * Returns true if batch has more than MAX_CLIENTS_PER_BATCH unique clients
-     */
-    function needsClientSplitting(actions: any[]): boolean {
-      const uniqueClients = getUniqueClientIds(actions)
-      return uniqueClients.length > MAX_CLIENTS_PER_BATCH
-    }
-
-    /**
-     * Split entries into batches with at most MAX_CLIENTS_PER_BATCH unique clients each
-     * This ensures we don't hit the contract's 4-client limit
-     */
-    function splitEntriesByClientLimit(
-      entries: Array<{ id: number; payload: any; signedTx: string }>
-    ): Array<Array<{ id: number; payload: any; signedTx: string }>> {
-      const clientGroups = groupActionsByClient(entries.map(e => (e.payload as any).data))
-
-      // If 4 or fewer clients, no splitting needed
-      if (clientGroups.size <= MAX_CLIENTS_PER_BATCH) {
-        return [entries]
-      }
-
-      console.log(`[Validator] Batch has ${clientGroups.size} unique clients, splitting into sub-batches (max ${MAX_CLIENTS_PER_BATCH} per batch)`)
-
-      const batches: Array<Array<{ id: number; payload: any; signedTx: string }>> = []
-      const clientIds = Array.from(clientGroups.keys())
-
-      // Create batches of MAX_CLIENTS_PER_BATCH clients each
-      for (let i = 0; i < clientIds.length; i += MAX_CLIENTS_PER_BATCH) {
-        const batchClientIds = clientIds.slice(i, i + MAX_CLIENTS_PER_BATCH)
-        const batchEntries: typeof entries = []
-
-        for (const clientId of batchClientIds) {
-          const indices = clientGroups.get(clientId)!
-          for (const idx of indices) {
-            batchEntries.push(entries[idx])
-          }
-        }
-
-        batches.push(batchEntries)
-        console.log(`[Validator]   Sub-batch ${batches.length}: ${batchEntries.length} entries for clients [${batchClientIds.join(', ')}]`)
-      }
-
-      return batches
     }
 
     /** natstat: check if OTHER actions have sufficient CAW payment for their content */

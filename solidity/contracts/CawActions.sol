@@ -245,6 +245,8 @@ contract CawActions is Ownable {
   ) external payable returns (ActionData[] memory successfulActions, string[] memory rejections){
     uint256 actionsLength = data.actions.length;
     require(actionsLength <= 256, "Cannot process more than 256 actions");
+    require(actionsLength > 0, "No actions");
+    _requireSingleClient(data);
 
     uint16 successCount;
     uint16 withdrawCount;
@@ -287,9 +289,9 @@ contract CawActions is Ownable {
     // Handle withdrawals
     setWithdrawable(withdrawBitmap, withdrawCount, data.actions, withdrawLzTokenAmount, withdrawFee);
 
-    // Replicate only successful actions, grouped by clientId
+    // Replicate only successful actions
     if (successCount > 0) {
-      replicateByClientFiltered(data, successBitmap, successCount, msg.value - withdrawFee, replicationLzTokenAmount);
+      replicateFiltered(data, successBitmap, successCount, msg.value - withdrawFee, replicationLzTokenAmount);
     }
 
     return (successfulActions, rejections);
@@ -308,6 +310,8 @@ contract CawActions is Ownable {
   ) external payable {
     uint256 actionsLength = data.actions.length;
     require(actionsLength <= 256, "Cannot process more than 256 actions");
+    require(actionsLength > 0, "No actions");
+    _requireSingleClient(data);
 
     uint16 withdrawCount;
     uint256 withdrawBitmap = 0;
@@ -325,36 +329,22 @@ contract CawActions is Ownable {
     // Handle withdrawals
     setWithdrawable(withdrawBitmap, withdrawCount, data.actions, withdrawLzTokenAmount, withdrawFee);
 
-    // Replicate actions grouped by clientId
-    replicateByClient(data, msg.value - withdrawFee, replicationLzTokenAmount);
+    // Replicate actions
+    replicate(data, msg.value - withdrawFee, replicationLzTokenAmount);
+  }
+
+  /// @dev Enforces that all actions in a batch belong to the same client.
+  function _requireSingleClient(MultiActionData calldata data) internal pure {
+    uint32 clientId = data.actions[0].clientId;
+    for (uint256 i = 1; i < data.actions.length; i++)
+      require(data.actions[i].clientId == clientId, "All actions must belong to the same client");
   }
 
   /**
-   * @notice Replicates actions to archive chains, grouped by clientId
-   * @dev For optimal gas efficiency, validators should batch actions for a single client
-   *      at a time. The single-client case is optimized as a fast path (no grouping logic).
-   *
-   *      When a batch contains multiple clients, actions are grouped using bitmaps and
-   *      sent separately to each client's configured replication destinations. This incurs
-   *      additional gas for grouping and separate LZ sends.
-   *
-   *      IMPORTANT: Maximum 4 unique clientIds per batch. This is a reasonable limit since:
-   *      - Most validators will only serve 1-2 clients
-   *      - Batches are typically from a single client's action queue
-   *      - Exceeding 4 clients will revert the transaction
-   *
-   *      Gas optimization notes:
-   *      - Single client: O(n) scan + single replicator call
-   *      - Multiple clients: O(n*c) where c is unique clients (max 4), plus c replicator calls
-   *
-   *      Note: This function replicates ALL actions in the batch. For safeProcessActions,
-   *      use replicateByClientFiltered() to replicate only successful actions.
-   *
-   * @param data The action data containing actions and signatures
-   * @param totalReplicationFee Total ETH to distribute across replication calls
-   * @param replicationLzTokenAmount Total LZ tokens to distribute across replication calls
+   * @notice Replicates all actions in the batch to archive chains.
+   * @dev Single-client enforced at processActions/safeProcessActions entry point.
    */
-  function replicateByClient(
+  function replicate(
     MultiActionData calldata data,
     uint256 totalReplicationFee,
     uint256 replicationLzTokenAmount
@@ -362,83 +352,15 @@ contract CawActions is Ownable {
     if (address(replicator) == address(0)) return;
     if (data.actions.length == 0) return;
 
-    // Quick check: if all actions have the same clientId, just send everything
-    uint32 firstClientId = data.actions[0].clientId;
-    bool singleClient = true;
-    for (uint256 i = 1; i < data.actions.length; i++) {
-      if (data.actions[i].clientId != firstClientId) {
-        singleClient = false;
-        break;
-      }
-    }
-
-    if (singleClient) {
-      // Common case: all actions belong to one client
-      bytes memory payload = abi.encode(data.actions, data.v, data.r, data.s);
-      replicator.replicate{ value: totalReplicationFee }(firstClientId, payload, replicationLzTokenAmount);
-      return;
-    }
-
-    // Multiple clients: group and send separately
-    // Use a simple approach with max 4 unique clients (reasonable limit)
-    uint32[4] memory clientIds;
-    uint256[4] memory clientBitmaps;
-    uint8 uniqueClients = 0;
-
-    for (uint256 i = 0; i < data.actions.length; i++) {
-      uint32 clientId = data.actions[i].clientId;
-      bool found = false;
-      for (uint8 j = 0; j < uniqueClients; j++) {
-        if (clientIds[j] == clientId) {
-          clientBitmaps[j] |= (1 << i);
-          found = true;
-          break;
-        }
-      }
-      if (!found) {
-        require(uniqueClients < 4, "Too many unique clients in batch");
-        clientIds[uniqueClients] = clientId;
-        clientBitmaps[uniqueClients] = (1 << i);
-        uniqueClients++;
-      }
-    }
-
-    // Send each client's actions, giving remainder to the last client
-    uint256 feePerAction = totalReplicationFee / data.actions.length;
-    uint256 lzTokenPerAction = replicationLzTokenAmount / data.actions.length;
-    uint256 feeUsed = 0;
-
-    for (uint8 c = 0; c < uniqueClients; c++) {
-      uint256 count = _bitmapPopcount(clientBitmaps[c], data.actions.length);
-      uint256 clientFee = feePerAction * count;
-
-      // Give remainder to the last client to avoid dust ETH being trapped
-      if (c == uniqueClients - 1)
-        clientFee = totalReplicationFee - feeUsed;
-      feeUsed += clientFee;
-
-      _replicateClientActions(data, clientIds[c], clientBitmaps[c], clientFee, lzTokenPerAction);
-    }
-  }
-
-  function _bitmapPopcount(uint256 bitmap, uint256 length) internal pure returns (uint256 count) {
-    for (uint256 i = 0; i < length; i++) {
-      if ((bitmap & (1 << i)) != 0) count++;
-    }
+    bytes memory payload = abi.encode(data.actions, data.v, data.r, data.s);
+    replicator.replicate{ value: totalReplicationFee }(data.actions[0].clientId, payload, replicationLzTokenAmount);
   }
 
   /**
-   * @notice Replicates only successful actions (filtered by bitmap) to archive chains
-   * @dev Used by safeProcessActions to ensure failed actions are not replicated.
-   *      Only actions with their bit set in successBitmap will be replicated.
-   *
-   * @param data The full action data containing all actions and signatures
-   * @param successBitmap Bitmap where bit i is set if action i succeeded
-   * @param successCount Number of successful actions (popcount of successBitmap)
-   * @param totalReplicationFee Total ETH to distribute across replication calls
-   * @param replicationLzTokenAmount Total LZ tokens to distribute across replication calls
+   * @notice Replicates only successful actions (filtered by bitmap) to archive chains.
+   * @dev Used by safeProcessActions. All actions must belong to the same client.
    */
-  function replicateByClientFiltered(
+  function replicateFiltered(
     MultiActionData calldata data,
     uint256 successBitmap,
     uint256 successCount,
@@ -448,77 +370,28 @@ contract CawActions is Ownable {
     if (address(replicator) == address(0)) return;
     if (successCount == 0) return;
 
-    // Group successful actions by clientId using bitmaps
-    uint32[4] memory clientIds;
-    uint256[4] memory clientBitmaps;
-    uint8 uniqueClients = 0;
+    // All actions share the same clientId (enforced by caller's validation loop)
+    uint32 clientId = data.actions[0].clientId;
 
-    for (uint256 i = 0; i < data.actions.length; i++) {
-      // Skip failed actions
-      if ((successBitmap & (1 << i)) == 0) continue;
-
-      uint32 clientId = data.actions[i].clientId;
-      bool found = false;
-      for (uint8 j = 0; j < uniqueClients; j++) {
-        if (clientIds[j] == clientId) {
-          clientBitmaps[j] |= (1 << i);
-          found = true;
-          break;
-        }
-      }
-      if (!found) {
-        require(uniqueClients < 4, "Too many unique clients in batch");
-        clientIds[uniqueClients] = clientId;
-        clientBitmaps[uniqueClients] = (1 << i);
-        uniqueClients++;
-      }
-    }
-
-    // Send each client's successful actions
-    uint256 feePerAction = totalReplicationFee / successCount;
-    uint256 lzTokenPerAction = replicationLzTokenAmount / successCount;
-    uint256 feeUsed = 0;
-
-    for (uint8 c = 0; c < uniqueClients; c++) {
-      uint256 count = _bitmapPopcount(clientBitmaps[c], data.actions.length);
-      uint256 clientFee = feePerAction * count;
-
-      if (c == uniqueClients - 1)
-        clientFee = totalReplicationFee - feeUsed;
-      feeUsed += clientFee;
-
-      _replicateClientActions(data, clientIds[c], clientBitmaps[c], clientFee, lzTokenPerAction);
-    }
-  }
-
-  function _replicateClientActions(
-    MultiActionData calldata data,
-    uint32 clientId,
-    uint256 bitmap,
-    uint256 feePerAction,
-    uint256 lzTokenPerAction
-  ) internal {
-    uint256 count = _bitmapPopcount(bitmap, data.actions.length);
-
-    // Build arrays
-    ActionData[] memory clientActions = new ActionData[](count);
-    uint8[] memory clientV = new uint8[](count);
-    bytes32[] memory clientR = new bytes32[](count);
-    bytes32[] memory clientS = new bytes32[](count);
+    // Build filtered arrays of only successful actions
+    ActionData[] memory filteredActions = new ActionData[](successCount);
+    uint8[] memory filteredV = new uint8[](successCount);
+    bytes32[] memory filteredR = new bytes32[](successCount);
+    bytes32[] memory filteredS = new bytes32[](successCount);
 
     uint256 idx = 0;
     for (uint256 i = 0; i < data.actions.length; i++) {
-      if ((bitmap & (1 << i)) != 0) {
-        clientActions[idx] = data.actions[i];
-        clientV[idx] = data.v[i];
-        clientR[idx] = data.r[i];
-        clientS[idx] = data.s[i];
+      if ((successBitmap & (1 << i)) != 0) {
+        filteredActions[idx] = data.actions[i];
+        filteredV[idx] = data.v[i];
+        filteredR[idx] = data.r[i];
+        filteredS[idx] = data.s[i];
         idx++;
       }
     }
 
-    bytes memory payload = abi.encode(clientActions, clientV, clientR, clientS);
-    replicator.replicate{ value: feePerAction * count }(clientId, payload, lzTokenPerAction * count);
+    bytes memory payload = abi.encode(filteredActions, filteredV, filteredR, filteredS);
+    replicator.replicate{ value: totalReplicationFee }(clientId, payload, replicationLzTokenAmount);
   }
 
   function setWithdrawable(uint256 withdrawBitmap, uint256 withdrawCount, ActionData[] memory actions, uint256 lzTokenAmountForWithdraws, uint256 withdrawFee) internal {
