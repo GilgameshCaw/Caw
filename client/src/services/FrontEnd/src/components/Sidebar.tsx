@@ -63,7 +63,16 @@ const Sidebar: React.FC = () => {
               alt="CAW Logo"
               className="w-10 h-10 object-contain"
             />
-            <span className={`ml-2 text-xl font-bold ${isDark ? 'text-white' : 'text-black'}`}>
+            <span
+              className="text-4xl"
+              style={{
+                fontFamily: 'Fraunces',
+                color: '#ebc046',
+                letterSpacing: '5px',
+                marginLeft: '10px',
+                textShadow: '0 1px 2px rgba(0, 0, 0, 0.6), 0 0 4px rgba(0, 0, 0, 0.3)',
+              }}
+            >
               CAW
             </span>
           </NavLink>
