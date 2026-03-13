@@ -295,6 +295,10 @@ contract CawActions is Ownable {
     return (successfulActions, rejections);
   }
 
+  // Note: processActions and safeProcessActions are intentionally permissionless.
+  // Any address can submit valid signed actions and specify their own validatorId
+  // to collect validator fees. This is by design — the protocol allows anyone to
+  // run a validator and earn fees for processing actions.
   function processActions(
     uint32 validatorId,
     MultiActionData calldata data,
@@ -403,18 +407,17 @@ contract CawActions is Ownable {
     uint256 feePerAction = totalReplicationFee / data.actions.length;
     uint256 lzTokenPerAction = replicationLzTokenAmount / data.actions.length;
     uint256 feeUsed = 0;
-    uint256 lzTokenUsed = 0;
 
     for (uint8 c = 0; c < uniqueClients; c++) {
-      if (c == uniqueClients - 1) {
-        _replicateClientActions(data, clientIds[c], clientBitmaps[c], totalReplicationFee - feeUsed, lzTokenPerAction);
-      } else {
-        uint256 count = _bitmapPopcount(clientBitmaps[c], data.actions.length);
-        uint256 clientFee = feePerAction * count;
-        feeUsed += clientFee;
-        lzTokenUsed += lzTokenPerAction * count;
-        _replicateClientActions(data, clientIds[c], clientBitmaps[c], clientFee, lzTokenPerAction);
-      }
+      uint256 count = _bitmapPopcount(clientBitmaps[c], data.actions.length);
+      uint256 clientFee = feePerAction * count;
+
+      // Give remainder to the last client to avoid dust ETH being trapped
+      if (c == uniqueClients - 1)
+        clientFee = totalReplicationFee - feeUsed;
+      feeUsed += clientFee;
+
+      _replicateClientActions(data, clientIds[c], clientBitmaps[c], clientFee, lzTokenPerAction);
     }
   }
 
@@ -471,20 +474,20 @@ contract CawActions is Ownable {
       }
     }
 
-    // Send each client's successful actions, giving remainder to the last client
+    // Send each client's successful actions
     uint256 feePerAction = totalReplicationFee / successCount;
     uint256 lzTokenPerAction = replicationLzTokenAmount / successCount;
     uint256 feeUsed = 0;
 
     for (uint8 c = 0; c < uniqueClients; c++) {
-      if (c == uniqueClients - 1) {
-        _replicateClientActions(data, clientIds[c], clientBitmaps[c], totalReplicationFee - feeUsed, lzTokenPerAction);
-      } else {
-        uint256 count = _bitmapPopcount(clientBitmaps[c], data.actions.length);
-        uint256 clientFee = feePerAction * count;
-        feeUsed += clientFee;
-        _replicateClientActions(data, clientIds[c], clientBitmaps[c], clientFee, lzTokenPerAction);
-      }
+      uint256 count = _bitmapPopcount(clientBitmaps[c], data.actions.length);
+      uint256 clientFee = feePerAction * count;
+
+      if (c == uniqueClients - 1)
+        clientFee = totalReplicationFee - feeUsed;
+      feeUsed += clientFee;
+
+      _replicateClientActions(data, clientIds[c], clientBitmaps[c], clientFee, lzTokenPerAction);
     }
   }
 
@@ -495,11 +498,7 @@ contract CawActions is Ownable {
     uint256 feePerAction,
     uint256 lzTokenPerAction
   ) internal {
-    // Count actions for this client
-    uint256 count = 0;
-    for (uint256 i = 0; i < data.actions.length; i++) {
-      if ((bitmap & (1 << i)) != 0) count++;
-    }
+    uint256 count = _bitmapPopcount(bitmap, data.actions.length);
 
     // Build arrays
     ActionData[] memory clientActions = new ActionData[](count);

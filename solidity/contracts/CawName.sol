@@ -120,12 +120,29 @@ contract CawName is
     _updateNewOwners(peerWithMaxPendingTransfers(), lzEthAmount, lzTokenAmount);
   }
 
+  /// @notice Accrued fees available for withdrawal (pull pattern to prevent DOS)
+  mapping(address => uint256) public accruedFees;
+
+  event FeesAccrued(address indexed recipient, uint256 amount);
+  event FeesWithdrawn(address indexed recipient, uint256 amount);
+
   function payFee(uint256 fee, address feeAddress) internal returns (uint256) {
     if (fee > 0) {
-      payable(feeAddress).transfer(fee);
-      payable(buyAndBurnCaw).transfer(fee);
+      accruedFees[feeAddress] += fee;
+      accruedFees[buyAndBurnCaw] += fee;
+      emit FeesAccrued(feeAddress, fee);
+      emit FeesAccrued(buyAndBurnCaw, fee);
     }
     return fee * 2;
+  }
+
+  /// @notice Withdraw accrued fees (callable by anyone owed fees)
+  function withdrawFees() external {
+    uint256 amount = accruedFees[msg.sender];
+    require(amount > 0, "No fees to withdraw");
+    accruedFees[msg.sender] = 0;
+    payable(msg.sender).transfer(amount);
+    emit FeesWithdrawn(msg.sender, amount);
   }
 
   function nextId() public view returns (uint32) {
@@ -392,7 +409,7 @@ contract CawName is
     return (tokenIds, owners);
   }
 
-  function _updateNewOwners(uint32 lzDestId, uint256 lzEthAmount, uint256 lzTokenAmount) public payable {
+  function _updateNewOwners(uint32 lzDestId, uint256 lzEthAmount, uint256 lzTokenAmount) internal {
     uint32[] memory tokenIds;
     address[] memory owners;
 
@@ -450,9 +467,10 @@ contract CawName is
     }
   }
 
-  // Helper function to verify if the function selector is authorized
+  // Whitelist of selectors allowed via delegatecall from LayerZero messages.
+  // Security: verified that no authorized selector collides with any inherited
+  // function from OApp, ERC721, ERC721Enumerable, or Ownable.
   function isAuthorizedFunction(bytes4 selector) private pure returns (bool) {
-    // Add all authorized function selectors here
     return selector == bytes4(keccak256("setWithdrawable(uint32[],uint256[])"));
   }
 
@@ -499,13 +517,6 @@ contract CawName is
     else if (selector == setReplicationPeerSelector)
       return 100000;
     else revert("unexpected selector");
-  }
-
-  /// @notice Sweep accumulated ETH (e.g. LZ refunds) to the buy-and-burn address
-  function sweepETH() external {
-    uint256 balance = address(this).balance;
-    require(balance > 0, "No ETH to sweep");
-    payable(buyAndBurnCaw).transfer(balance);
   }
 
   receive() external payable {}

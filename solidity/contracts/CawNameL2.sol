@@ -272,9 +272,10 @@ contract CawNameL2 is
 
   mapping(bytes4 => string) public functionSigs;
 
-  // Helper function to verify if the function selector is authorized
+  // Whitelist of selectors allowed via delegatecall from LayerZero messages.
+  // Security: verified that no authorized selector collides with any inherited
+  // function from OApp, Ownable, or Context.
   function isAuthorizedFunction(bytes4 selector) private pure returns (bool) {
-    // Add all authorized function selectors here
     return selector == bytes4(keccak256("depositAndUpdateOwners(uint32,uint32,uint256,uint32[],address[])")) ||
       selector == bytes4(keccak256("authenticateAndUpdateOwners(uint32,uint32,uint32[],address[])")) ||
       selector == bytes4(keccak256("mintAndUpdateOwners(uint32,address,string,uint32[],address[])")) ||

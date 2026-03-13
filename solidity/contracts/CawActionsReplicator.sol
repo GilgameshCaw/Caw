@@ -197,6 +197,28 @@ contract CawActionsReplicator is OApp {
   }
 
   /**
+   * @notice Quote per-chain fees for replication (used internally for proportional allocation)
+   * @param clientId The client ID
+   * @param payload The payload to replicate
+   * @return nativeFees Per-chain native fee amounts
+   * @return destinations The replication destinations
+   */
+  function quotePerChain(uint32 clientId, bytes memory payload)
+    public view returns (uint256[] memory nativeFees, ReplicationDestination[] memory destinations)
+  {
+    destinations = getReplicationDestinations(clientId);
+    nativeFees = new uint256[](destinations.length);
+
+    if (destinations.length == 0) return (nativeFees, destinations);
+
+    bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(RECEIVE_GAS_LIMIT, 0);
+    for (uint i = 0; i < destinations.length; i++) {
+      MessagingFee memory fee = _quote(destinations[i].eid, payload, options, false);
+      nativeFees[i] = fee.nativeFee;
+    }
+  }
+
+  /**
    * @notice This contract only sends, it doesn't receive LZ messages
    * @dev Config updates come from CawNameL2 via updatePeer()
    */
@@ -384,7 +406,9 @@ contract CawActionsReplicator is OApp {
   }
 
   /**
-   * @dev Internal function to replicate to all destinations (used by regular replicate)
+   * @dev Internal function to replicate to all destinations (used by regular replicate).
+   *      Allocates fees proportionally based on per-chain LZ quotes to avoid underfunding
+   *      expensive chains while overfunding cheap ones.
    */
   function _replicateToDestinations(
     uint32 clientId,
@@ -393,8 +417,17 @@ contract CawActionsReplicator is OApp {
     uint256 lzTokenAmount
   ) internal {
     bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(RECEIVE_GAS_LIMIT, 0);
-    uint256 feePerChain = msg.value / destinations.length;
     uint256 lzTokenPerChain = lzTokenAmount / destinations.length;
+
+    // Quote each chain to determine proportional fee allocation
+    uint256 totalQuoted = 0;
+    uint256[] memory quotedFees = new uint256[](destinations.length);
+    for (uint i = 0; i < destinations.length; i++) {
+      MessagingFee memory fee = _quote(destinations[i].eid, payload, options, false);
+      quotedFees[i] = fee.nativeFee;
+      totalQuoted += fee.nativeFee;
+    }
+
     uint256 feeUsed = 0;
 
     for (uint i = 0; i < destinations.length; i++) {
@@ -408,8 +441,14 @@ contract CawActionsReplicator is OApp {
 
       peers[dest.eid] = peerBytes;
 
-      // Give remainder to the last destination to avoid dust ETH being trapped
-      uint256 chainFee = (i == destinations.length - 1) ? msg.value - feeUsed : feePerChain;
+      // Allocate proportionally; give remainder to the last chain
+      uint256 chainFee;
+      if (i == destinations.length - 1)
+        chainFee = msg.value - feeUsed;
+      else if (totalQuoted > 0)
+        chainFee = msg.value * quotedFees[i] / totalQuoted;
+      else
+        chainFee = msg.value / destinations.length;
       feeUsed += chainFee;
 
       try this.doLzSend(dest.eid, payload, options, chainFee, lzTokenPerChain) {
