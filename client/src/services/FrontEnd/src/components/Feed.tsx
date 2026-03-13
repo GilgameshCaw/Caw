@@ -30,6 +30,10 @@ export interface FeedRef {
 
 const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref) => {
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
+  const activeToken = useTokenDataStore(s => {
+    const tokens = Object.values(s.tokensByAddress).flat()
+    return tokens.find(t => t.tokenId === s.activeTokenId) || tokens[0]
+  })
   const pendingPosts = usePendingPostsStore(s => s.pendingPosts)
   const { isDark } = useTheme()
   const { preferences } = useMutePreferences()
@@ -39,6 +43,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
   const [hasMore,    setHasMore]    = useState(true)
   const [loading,    setLoading]    = useState(false)
   const [error,      setError]      = useState<string>()
+  const [followingCount, setFollowingCount] = useState<number | null>(null)
 
   // Filter items based on mute preferences and blocked users
   const filteredItems = useMemo(() => {
@@ -219,6 +224,28 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
     loadPage(true)
   }, [filter, activeTokenId, apiEndpoint, username])
 
+  // Fetch following count for current user when on Following tab
+  useEffect(() => {
+    if (filter !== 'Following' || !activeToken?.username) {
+      setFollowingCount(null)
+      return
+    }
+
+    const fetchFollowingCount = async () => {
+      try {
+        const response = await apiFetch<{ followingCount: number }>(
+          `/api/users/${activeToken.username}`
+        )
+        setFollowingCount(response.followingCount)
+      } catch (err) {
+        console.error('Failed to fetch following count:', err)
+        setFollowingCount(null)
+      }
+    }
+
+    fetchFollowingCount()
+  }, [filter, activeToken?.username])
+
   // infinite‐scroll: when near bottom, load more
   useEffect(() => {
     function onScroll() {
@@ -390,6 +417,20 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
       ))}
     </div>
   )
+  // Show suggested users if following < 10 people
+  const showSuggestedUsers = filter === 'Following' && followingCount !== null && followingCount < 10
+
+  // Helper to refresh following count after a follow action
+  const handleFollowChange = () => {
+    loadPage(true)
+    // Refetch following count after follow change
+    if (activeToken?.username) {
+      apiFetch<{ followingCount: number }>(`/api/users/${activeToken.username}`)
+        .then(response => setFollowingCount(response.followingCount))
+        .catch(err => console.error('Failed to refetch following count:', err))
+    }
+  }
+
   if (items.length === 0) {
     // Show suggested users when Following feed is empty
     if (filter === 'Following') {
@@ -398,7 +439,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
           <p className={`text-center mb-4 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
             You're not following anyone yet.<br />Here are some popular users to get started:
           </p>
-          <SuggestedUsers onFollowChange={() => loadPage(true)} />
+          <SuggestedUsers onFollowChange={handleFollowChange} />
         </div>
       )
     }
@@ -408,6 +449,13 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
 
   return (
     <div>
+      {/* Show suggested users at top when following < 10 people */}
+      {showSuggestedUsers && (
+        <div className={`border-b ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+          <SuggestedUsers onFollowChange={handleFollowChange} />
+        </div>
+      )}
+
       {/* Show pending posts at the top (on main feeds, not profiles) */}
       {(filter === 'For you' || filter === 'Following') && pendingPosts.map(post => (
         <FeedItem key={post.tempId} item={post as CawItem} />
