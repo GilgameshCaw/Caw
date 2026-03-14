@@ -38,7 +38,7 @@ export type CawItem = {
   id: string
   content: string
   timestamp: string
-  user: { id: number; username: string; displayName?: string; image?: string; avatarUrl?: string }
+  user: { id: number; tokenId: number; username: string; displayName?: string; image?: string; avatarUrl?: string }
   parent: CawItem
   likeCount: number
   viewCount: number

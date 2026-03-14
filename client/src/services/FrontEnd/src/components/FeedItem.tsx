@@ -122,7 +122,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   let isRecawByCurrentUser = false;
   if (item.content === "" && item.parent) {
     // Check if the recaw is by the current user
-    const userId = item.user.id;
+    const userId = item.user.tokenId;
     const currentUserId = activeTokenId || activeToken?.tokenId;
     const isCurrentUser = currentUserId && (userId == currentUserId);
 
@@ -251,7 +251,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       // Reset submitting ref for new action
       isSubmittingLikeRef.current = false;
       setPendingLikeAction({
-        receiverId: useItem.user.id,
+        receiverId: useItem.user.tokenId,
         receiverCawonce: useItem.cawonce ?? 0,
         actionType: useItem.hasLiked ? 'unlike' : 'like'
       });
@@ -298,7 +298,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       const response = await signAndSubmit({
         actionType:      useItem.hasLiked ? 'unlike' : 'like',
         senderId:        effectiveTokenId,
-        receiverId:      useItem.user.id,
+        receiverId:      useItem.user.tokenId,
         receiverCawonce: useItem.cawonce ?? 0,
       })
 
@@ -401,7 +401,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       const result = await signAndSubmit({
         actionType:      'recaw',
         senderId:        effectiveTokenId,
-        receiverId:      Number(useItem.user.id ?? 0),
+        receiverId:      Number(useItem.user.tokenId ?? 0),
         receiverCawonce: useItem.cawonce ?? 0,
       })
 
@@ -550,12 +550,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           setShowMuteConfirmModal(true)
         } else {
           const mutedAccounts = JSON.parse(localStorage.getItem('mutedAccounts') || '[]')
-          mutedAccounts.push(useItem.user.id)
+          mutedAccounts.push(useItem.user.tokenId)
           localStorage.setItem('mutedAccounts', JSON.stringify([...new Set(mutedAccounts)]))
           window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
           // Sync to server for notification filtering
           if (effectiveTokenId) {
-            apiFetch(`/api/notifications/mute-account/${useItem.user.id}`, {
+            apiFetch(`/api/notifications/mute-account/${useItem.user.tokenId}`, {
               method: 'POST',
               headers: { 'x-user-id': effectiveTokenId.toString() }
             }).catch(err => console.error('Failed to sync mute to server:', err))
@@ -570,7 +570,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         } else {
           // Blocking is browser-only (localStorage)
           const blockedAccounts = JSON.parse(localStorage.getItem('blockedAccounts') || '[]')
-          blockedAccounts.push(useItem.user.id)
+          blockedAccounts.push(useItem.user.tokenId)
           localStorage.setItem('blockedAccounts', JSON.stringify([...new Set(blockedAccounts)]))
           window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
         }
@@ -1071,7 +1071,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               </button>
 
               {/* Tip */}
-              {activeTokenId && activeTokenId !== useItem.user.id && item.status !== 'PENDING' && item.status !== 'FAILED' && (
+              {activeTokenId && activeTokenId !== useItem.user.tokenId && item.status !== 'PENDING' && item.status !== 'FAILED' && (
                 <button
                   onClick={(e) => {
                     e.preventDefault()
@@ -1331,9 +1331,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       {/* Tip Modal */}
       {showTipModal && (
         <TipModal
-          recipientTokenId={useItem.user.id}
+          recipientTokenId={useItem.user.tokenId}
           recipientUsername={useItem.user.username}
-          cawUserId={useItem.user.id}
+          cawUserId={useItem.user.tokenId}
           cawCawonce={useItem.cawonce}
           onClose={() => setShowTipModal(false)}
           onTipSubmitted={() => {
@@ -1397,13 +1397,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
             }
             case 'mute-account': {
               const mutedAccounts = JSON.parse(localStorage.getItem('mutedAccounts') || '[]')
-              mutedAccounts.push(useItem.user.id)
+              mutedAccounts.push(useItem.user.tokenId)
               localStorage.setItem('mutedAccounts', JSON.stringify([...new Set(mutedAccounts)]))
               window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
               // Sync to server for notification filtering
               const muteTokenId = activeTokenId || activeToken?.tokenId
               if (muteTokenId) {
-                apiFetch(`/api/notifications/mute-account/${useItem.user.id}`, {
+                apiFetch(`/api/notifications/mute-account/${useItem.user.tokenId}`, {
                   method: 'POST',
                   headers: { 'x-user-id': muteTokenId.toString() }
                 }).catch(err => console.error('Failed to sync mute to server:', err))
@@ -1413,7 +1413,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
             case 'block-account': {
               // Blocking is browser-only (localStorage)
               const blockedAccounts = JSON.parse(localStorage.getItem('blockedAccounts') || '[]')
-              blockedAccounts.push(useItem.user.id)
+              blockedAccounts.push(useItem.user.tokenId)
               localStorage.setItem('blockedAccounts', JSON.stringify([...new Set(blockedAccounts)]))
               window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
               break
@@ -1427,7 +1427,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         isOpen={showReportModal}
         onClose={() => setShowReportModal(false)}
         postId={parseInt(useItem.id)}
-        postAuthorId={useItem.user.id}
+        postAuthorId={useItem.user.tokenId}
         postAuthorUsername={useItem.user.username}
         onSubmit={async (reason: ReportReason, details: string) => {
           const reporterId = activeTokenId || activeToken?.tokenId
@@ -1439,7 +1439,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
             body: JSON.stringify({
               reporterId,
               postId: parseInt(useItem.id),
-              postAuthorId: useItem.user.id,
+              postAuthorId: useItem.user.tokenId,
               reason,
               details: details || undefined
             })
@@ -1449,7 +1449,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           const reportedPosts = JSON.parse(localStorage.getItem('reportedPosts') || '[]')
           reportedPosts.push({
             postId: useItem.id,
-            userId: useItem.user.id,
+            userId: useItem.user.tokenId,
             reason,
             timestamp: new Date().toISOString()
           })
