@@ -15,8 +15,6 @@ import { calculateOnChainCost } from '~/utils/imageUtils'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import { apiFetch } from '~/api/client'
 import { HiCalendar, HiClock, HiX, HiPhotograph } from 'react-icons/hi'
-import InsufficientStakeModal from './modals/InsufficientStakeModal'
-import { hasMinimumStake, getRequiredStake } from '~/constants/stakingRequirements'
 import MentionAutocomplete from './MentionAutocomplete'
 import GifPicker from './GifPicker'
 import HighlightedTextarea from './HighlightedTextarea'
@@ -95,7 +93,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   const [isProcessingOnChain, setIsProcessingOnChain] = useState(false)
   const [showMediaUpload, setShowMediaUpload] = useState(false)
   const [showMediaOverlay, setShowMediaOverlay] = useState(false)
-  const [showInsufficientStakeModal, setShowInsufficientStakeModal] = useState(false)
   const [showScheduledSuccessModal, setShowScheduledSuccessModal] = useState(false)
   const [scheduledSuccessTime, setScheduledSuccessTime] = useState<Date | null>(null)
   const [showImageLibrary, setShowImageLibrary] = useState(false)
@@ -837,13 +834,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     const effectiveTokenId = activeTokenId || activeToken?.tokenId
     if (!effectiveTokenId) {
       console.error('No active token ID - user may not be connected or data not loaded')
-      return
-    }
-
-    // Check for minimum stake first
-    const requiredStakeType = replyTo ? 'MIN_STAKE_COMMENT' : quote ? 'MIN_STAKE_QUOTE' : 'MIN_STAKE_POST'
-    if (!hasMinimumStake(activeToken?.stakedAmount, requiredStakeType)) {
-      setShowInsufficientStakeModal(true)
       return
     }
 
@@ -1792,17 +1782,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         </>,
         document.body
       )}
-
-      {/* Insufficient Stake Modal */}
-      <InsufficientStakeModal
-        isOpen={showInsufficientStakeModal}
-        onClose={() => setShowInsufficientStakeModal(false)}
-        actionType={replyTo ? 'post' : quote ? 'post' : 'post'}
-        currentAmount={activeToken?.stakedAmount}
-        requiredAmount={getRequiredStake(
-          replyTo ? 'MIN_STAKE_COMMENT' : quote ? 'MIN_STAKE_QUOTE' : 'MIN_STAKE_POST'
-        )}
-      />
 
       {/* Scheduled Post Success Modal */}
       {showScheduledSuccessModal && (

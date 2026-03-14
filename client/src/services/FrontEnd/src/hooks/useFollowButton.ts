@@ -3,14 +3,12 @@ import { useSignAndSubmitAction } from '~/api/actions'
 import { useActiveToken, useTokenDataStore } from '~/store/tokenDataStore'
 import { useAccount } from 'wagmi'
 import { apiFetch } from '~/api/client'
-import { hasMinimumStake } from '~/constants/stakingRequirements'
 
 export interface UseFollowButtonParams {
   targetUserId: number
   initialIsFollowing: boolean
   initialIsPending?: boolean
   onFollowStateChange?: (isFollowing: boolean) => void
-  onInsufficientStake?: () => void
 }
 
 export interface UseFollowButtonReturn {
@@ -20,7 +18,6 @@ export interface UseFollowButtonReturn {
   handleFollowClick: () => Promise<void>
   buttonText: string
   hoverText: string
-  hasInsufficientStake: boolean
 }
 
 /**
@@ -31,8 +28,7 @@ export function useFollowButton({
   targetUserId,
   initialIsFollowing,
   initialIsPending = false,
-  onFollowStateChange,
-  onInsufficientStake
+  onFollowStateChange
 }: UseFollowButtonParams): UseFollowButtonReturn {
   const signAndSubmit = useSignAndSubmitAction()
   const activeToken = useActiveToken()
@@ -52,9 +48,6 @@ export function useFollowButton({
   const wrongWallet = activeToken && address
     ? activeToken.address.toLowerCase() !== address.toLowerCase()
     : false
-
-  // Check if user has sufficient stake for following
-  const hasInsufficientStake = !hasMinimumStake(activeToken?.stakedAmount, 'MIN_STAKE_FOLLOW')
 
   // Sync with prop changes - but don't override user actions
   useEffect(() => {
@@ -230,13 +223,6 @@ export function useFollowButton({
       return
     }
 
-    // Check staking requirement before proceeding (only for new follows, not unfollows)
-    if (!isFollowing && hasInsufficientStake) {
-      console.log('[useFollowButton] Insufficient stake to follow')
-      onInsufficientStake?.()
-      return
-    }
-
     const effectiveTokenId = activeTokenId || activeToken?.tokenId
 
     // If no token OR wallet not connected, trigger wallet connection and track pending action
@@ -288,6 +274,17 @@ export function useFollowButton({
         senderId: effectiveTokenId,
         receiverId: targetUserId
       })
+
+      // signAndSubmit returns null if insufficient stake (modal shown automatically)
+      if (!result) {
+        // Revert optimistic update
+        setIsFollowing(isFollowing)
+        setPending(false)
+        setHasUserAction(false)
+        onFollowStateChange?.(isFollowing)
+        return
+      }
+
       console.log('[useFollowButton] Follow action submitted successfully, result:', result)
 
       // Now that transaction is submitted, start polling for status updates
@@ -334,7 +331,6 @@ export function useFollowButton({
     wrongWallet,
     handleFollowClick,
     buttonText,
-    hoverText,
-    hasInsufficientStake
+    hoverText
   }
 }

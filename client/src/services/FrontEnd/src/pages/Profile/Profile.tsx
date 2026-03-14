@@ -7,20 +7,18 @@ import Feed             from '~/components/Feed'
 import { useTheme } from '~/hooks/useTheme'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useModalStore } from '~/store/modalStore'
-import { HiPencil, HiX, HiCamera, HiGlobe, HiLink, HiLocationMarker, HiOutlineMail, HiDotsHorizontal } from 'react-icons/hi'
+import { HiPencil, HiX, HiCamera, HiGlobe, HiLink, HiLocationMarker, HiOutlineMail, HiDotsHorizontal, HiOutlineCurrencyDollar } from 'react-icons/hi'
 import { apiFetch } from '~/api/client'
 import { useAccount, useSwitchChain, useChainId } from 'wagmi'
 import { chains } from '~/config/chains'
 import { useSignAndSubmitAction } from '~/api/actions'
-import { useSignAndSubmitWithStakeCheck } from '~/hooks/useSignAndSubmitWithStakeCheck'
-import { InsufficientStakeError } from '~/errors/InsufficientStakeError'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useNavigate } from 'react-router-dom'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
-import { hasMinimumStake, getRequiredStake } from '~/constants/stakingRequirements'
 import { useFollowButton } from '~/hooks/useFollowButton'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
+import TipModal from '~/components/modals/TipModal'
 
 type ProfileTab = 'posts' | 'likes' | 'replies' | 'media'
 
@@ -92,7 +90,6 @@ export const Profile: React.FC = () => {
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const [isSaving, setIsSaving] = useState(false)
   const [updateCost, setUpdateCost] = useState(0)
-  const { signAndSubmit: submitActionWithStakeCheck, stakeError, closeStakeModal } = useSignAndSubmitWithStakeCheck()
 
   const isOnCorrectChain = currentChainId === chains.l2.chainId
 
@@ -123,6 +120,7 @@ export const Profile: React.FC = () => {
   const [showInsufficientStake, setShowInsufficientStake] = useState(false)
   const [profileError, setProfileError] = useState<string | null>(null)
   const [localProfileUpdatePending, setLocalProfileUpdatePending] = useState(false)
+  const [showTipModal, setShowTipModal] = useState(false)
 
   // Browser-level blocking from localStorage
   const { blockUser, unblockUser, isBlocked: checkIsBlocked } = useBlockedUsersStore()
@@ -472,7 +470,7 @@ export const Profile: React.FC = () => {
       }
 
       // Submit as other action with total cost (includes validator tip + data cost)
-      await submitActionWithStakeCheck({
+      await signAndSubmit({
         actionType: 'other',
         senderId: activeToken.tokenId,
         text: actionText,
@@ -501,22 +499,19 @@ export const Profile: React.FC = () => {
         activeToken,
         updateCost
       })
-      // Don't show error for insufficient stake errors - the modal handles that
-      if (!(err instanceof InsufficientStakeError)) {
-        // Extract a clean error message
-        let errorMessage = 'Failed to update profile'
-        if (err?.message) {
-          if (err.message.includes('User rejected') || err.message.includes('user rejected')) {
-            errorMessage = 'Transaction rejected'
-          } else if (err.message.includes('chainId should be same')) {
-            errorMessage = 'Please switch to the correct network'
-          } else {
-            // Take first line and trim
-            errorMessage = err.message.split('\n')[0].slice(0, 100)
-          }
+      // Extract a clean error message
+      let errorMessage = 'Failed to update profile'
+      if (err?.message) {
+        if (err.message.includes('User rejected') || err.message.includes('user rejected')) {
+          errorMessage = 'Transaction rejected'
+        } else if (err.message.includes('chainId should be same')) {
+          errorMessage = 'Please switch to the correct network'
+        } else {
+          // Take first line and trim
+          errorMessage = err.message.split('\n')[0].slice(0, 100)
         }
-        setProfileError(errorMessage)
       }
+      setProfileError(errorMessage)
     } finally {
       setIsSaving(false)
     }
@@ -825,6 +820,17 @@ export const Profile: React.FC = () => {
                     </div>
                     
                     <div className="flex justify-center space-x-2">
+                      <button
+                        onClick={() => setShowTipModal(true)}
+                        className={`p-2 rounded-full border transition-all duration-200 cursor-pointer hover:bg-yellow-500/10 ${
+                          isDark
+                            ? 'border-white/60 text-white hover:text-yellow-500'
+                            : 'border-black/60 text-black hover:text-yellow-500'
+                        }`}
+                        title="Tip"
+                      >
+                        <HiOutlineCurrencyDollar className="w-5 h-5" />
+                      </button>
                       <button
                         onClick={() => {
                           // Navigate to messages page with the user's conversation
@@ -1355,15 +1361,6 @@ export const Profile: React.FC = () => {
         </div>
       )}
 
-      {/* Insufficient Stake Modal */}
-      <InsufficientStakeModal
-        isOpen={stakeError.isOpen}
-        onClose={closeStakeModal}
-        currentAmount={stakeError.currentAmount}
-        requiredAmount={stakeError.requiredAmount}
-        actionType={stakeError.actionType}
-      />
-
       {/* Insufficient Stake Modal for Profile Updates */}
       <InsufficientStakeModal
         isOpen={showInsufficientStake}
@@ -1414,6 +1411,15 @@ export const Profile: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Tip Modal */}
+      {showTipModal && profileData && (
+        <TipModal
+          recipientTokenId={profileData.tokenId}
+          recipientUsername={profileData.username}
+          onClose={() => setShowTipModal(false)}
+        />
       )}
     </MainLayout>
   )

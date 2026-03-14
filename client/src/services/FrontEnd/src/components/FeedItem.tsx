@@ -35,12 +35,12 @@ import { usePendingPolling, usePendingCawPolling, usePendingLikePolling, usePend
 import ContentWithHashtags from './ContentWithHashtags'
 import { formatEngagementCount } from '~/utils/numberFormat'
 import { apiFetch } from '~/api/client'
-import InsufficientStakeModal from './modals/InsufficientStakeModal'
 import MuteWordsModal from './modals/MuteWordsModal'
 import MuteConfirmModal, { shouldShowMuteConfirmModal } from './modals/MuteConfirmModal'
 import ReportPostModal, { ReportReason } from './modals/ReportPostModal'
-import { hasMinimumStake, getRequiredStake } from '~/constants/stakingRequirements'
 import SwitchChainModal from './modals/SwitchChainModal'
+import TipModal from './modals/TipModal'
+import { HiOutlineCurrencyDollar } from 'react-icons/hi'
 import { chains } from '~/config/chains'
 
 // Helper function to format relative time
@@ -98,6 +98,8 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const [showRecawMenu, setShowRecawMenu]   = useState(false)
   const [showOptionsMenu, setShowOptionsMenu] = useState(false)
   const [showShareModal, setShowShareModal] = useState(false)
+  const [showTipModal, setShowTipModal] = useState(false)
+  const [tipPending, setTipPending] = useState(false)
   const [textCopied, setTextCopied] = useState(false)
   // Bookmarks are browser-only (localStorage)
   const bookmarksStore = useBookmarksStore()
@@ -105,8 +107,6 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const [translatedText, setTranslatedText] = useState<string | null>(null)
   const [isTranslating, setIsTranslating] = useState(false)
   const [isRetrying, setIsRetrying] = useState(false)
-  const [showInsufficientStakeModal, setShowInsufficientStakeModal] = useState(false)
-  const [insufficientStakeAction, setInsufficientStakeAction] = useState<'post' | 'like' | 'repost'>('post')
   const [showMuteWordsModal, setShowMuteWordsModal] = useState(false)
   const [showMuteConfirmModal, setShowMuteConfirmModal] = useState(false)
   const [muteConfirmAction, setMuteConfirmAction] = useState<'hide-post' | 'mute-thread' | 'mute-account' | 'block-account' | 'mute-words'>('hide-post')
@@ -122,7 +122,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   let isRecawByCurrentUser = false;
   if (item.content === "" && item.parent) {
     // Check if the recaw is by the current user
-    const userId = (item.user as any).tokenId || item.user.id;
+    const userId = item.user.id;
     const currentUserId = activeTokenId || activeToken?.tokenId;
     const isCurrentUser = currentUserId && (userId == currentUserId);
 
@@ -251,7 +251,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       // Reset submitting ref for new action
       isSubmittingLikeRef.current = false;
       setPendingLikeAction({
-        receiverId: useItem.user.tokenId,
+        receiverId: useItem.user.id,
         receiverCawonce: useItem.cawonce ?? 0,
         actionType: useItem.hasLiked ? 'unlike' : 'like'
       });
@@ -280,12 +280,6 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       return
     }
 
-    // Check for minimum stake
-    if (!hasMinimumStake(activeToken?.stakedAmount, 'MIN_STAKE_LIKE')) {
-      setInsufficientStakeAction('like')
-      setShowInsufficientStakeModal(true)
-      return
-    }
     setBusyLike(true)
     setTxSubmitted(false) // Reset txSubmitted at start of new like action
 
@@ -304,9 +298,18 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       const response = await signAndSubmit({
         actionType:      useItem.hasLiked ? 'unlike' : 'like',
         senderId:        effectiveTokenId,
-        receiverId:      useItem.user.tokenId,
+        receiverId:      useItem.user.id,
         receiverCawonce: useItem.cawonce ?? 0,
       })
+
+      // signAndSubmit returns null if insufficient stake (modal shown automatically)
+      if (!response) {
+        // Remove optimistic like if we added one
+        if (tempLikeId) {
+          useOptimisticLikesStore.getState().removeOptimisticLike(tempLikeId)
+        }
+        return
+      }
 
       // Update optimistic like with txQueue ID if we have both
       if (tempLikeId && response?.txQueueId) {
@@ -393,21 +396,17 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       return
     }
 
-    // Check for minimum stake
-    if (!hasMinimumStake(activeToken?.stakedAmount, 'MIN_STAKE_REPOST')) {
-      setInsufficientStakeAction('repost')
-      setShowInsufficientStakeModal(true)
-      return
-    }
-
     setBusyRecaw(true)
     try {
-      await signAndSubmit({
+      const result = await signAndSubmit({
         actionType:      'recaw',
         senderId:        effectiveTokenId,
-        receiverId:      Number(useItem.user.tokenId ?? 0),
+        receiverId:      Number(useItem.user.id ?? 0),
         receiverCawonce: useItem.cawonce ?? 0,
       })
+
+      // signAndSubmit returns null if insufficient stake (modal shown automatically)
+      if (!result) return
 
       // Set pending state - will be cleared when the recaw caw is confirmed
       setRecawPending(true)
@@ -506,7 +505,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         }
         break
       case 'copy':
-        navigator.clipboard.writeText(useItem.text || '')
+        navigator.clipboard.writeText(useItem.content || '')
         setTextCopied(true)
         setTimeout(() => setTextCopied(false), 2000)
         break
@@ -551,12 +550,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           setShowMuteConfirmModal(true)
         } else {
           const mutedAccounts = JSON.parse(localStorage.getItem('mutedAccounts') || '[]')
-          mutedAccounts.push(useItem.user.tokenId)
+          mutedAccounts.push(useItem.user.id)
           localStorage.setItem('mutedAccounts', JSON.stringify([...new Set(mutedAccounts)]))
           window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
           // Sync to server for notification filtering
           if (effectiveTokenId) {
-            apiFetch(`/api/notifications/mute-account/${useItem.user.tokenId}`, {
+            apiFetch(`/api/notifications/mute-account/${useItem.user.id}`, {
               method: 'POST',
               headers: { 'x-user-id': effectiveTokenId.toString() }
             }).catch(err => console.error('Failed to sync mute to server:', err))
@@ -571,7 +570,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         } else {
           // Blocking is browser-only (localStorage)
           const blockedAccounts = JSON.parse(localStorage.getItem('blockedAccounts') || '[]')
-          blockedAccounts.push(useItem.user.tokenId)
+          blockedAccounts.push(useItem.user.id)
           localStorage.setItem('blockedAccounts', JSON.stringify([...new Set(blockedAccounts)]))
           window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
         }
@@ -1071,6 +1070,37 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 }`} />
               </button>
 
+              {/* Tip */}
+              {activeTokenId && activeTokenId !== useItem.user.id && item.status !== 'PENDING' && item.status !== 'FAILED' && (
+                <button
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setShowTipModal(true)
+                  }}
+                  className={`transition-colors duration-300 hover:text-yellow-500 cursor-pointer ${
+                    (tipPending || useItem.hasTipped)
+                      ? 'text-yellow-500'
+                      : isDark ? 'text-gray-400' : 'text-gray-600'
+                  }`}
+                  title="Tip"
+                >
+                  {tipPending ? (
+                    <div className="relative w-5 h-5 group">
+                      <div className="w-5 h-5 border-2 border-gray-400 border-t-yellow-500 rounded-full animate-spin"></div>
+                      <svg className="absolute inset-0 w-3 h-3 m-auto text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 text-xs bg-black text-white rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap">
+                        Submitted, pending validation
+                      </div>
+                    </div>
+                  ) : (
+                    <HiOutlineCurrencyDollar className={`w-5 h-5 ${useItem.hasTipped ? 'fill-current' : ''}`} />
+                  )}
+                </button>
+              )}
+
               {/* Share */}
               <button
                 onClick={(e) => {
@@ -1295,21 +1325,23 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         onClose={() => setShowShareModal(false)}
         url={`/caws/${useItem.id}`}
         title={`${useItem.user?.displayName || '@' + useItem.user?.username}'s caw`}
-        text={useItem.text}
+        text={useItem.content}
       />
 
-      {/* Insufficient Stake Modal */}
-      <InsufficientStakeModal
-        isOpen={showInsufficientStakeModal}
-        onClose={() => setShowInsufficientStakeModal(false)}
-        actionType={insufficientStakeAction}
-        currentAmount={activeToken?.stakedAmount}
-        requiredAmount={getRequiredStake(
-          insufficientStakeAction === 'like' ? 'MIN_STAKE_LIKE' :
-          insufficientStakeAction === 'repost' ? 'MIN_STAKE_REPOST' :
-          'MIN_STAKE_POST'
-        )}
-      />
+      {/* Tip Modal */}
+      {showTipModal && (
+        <TipModal
+          recipientTokenId={useItem.user.id}
+          recipientUsername={useItem.user.username}
+          cawUserId={useItem.user.id}
+          cawCawonce={useItem.cawonce}
+          onClose={() => setShowTipModal(false)}
+          onTipSubmitted={() => {
+            setTipPending(true)
+            setTimeout(() => setTipPending(false), 15000)
+          }}
+        />
+      )}
 
       {/* Switch Chain Modal */}
       <SwitchChainModal
@@ -1365,13 +1397,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
             }
             case 'mute-account': {
               const mutedAccounts = JSON.parse(localStorage.getItem('mutedAccounts') || '[]')
-              mutedAccounts.push(useItem.user.tokenId)
+              mutedAccounts.push(useItem.user.id)
               localStorage.setItem('mutedAccounts', JSON.stringify([...new Set(mutedAccounts)]))
               window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
               // Sync to server for notification filtering
               const muteTokenId = activeTokenId || activeToken?.tokenId
               if (muteTokenId) {
-                apiFetch(`/api/notifications/mute-account/${useItem.user.tokenId}`, {
+                apiFetch(`/api/notifications/mute-account/${useItem.user.id}`, {
                   method: 'POST',
                   headers: { 'x-user-id': muteTokenId.toString() }
                 }).catch(err => console.error('Failed to sync mute to server:', err))
@@ -1381,7 +1413,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
             case 'block-account': {
               // Blocking is browser-only (localStorage)
               const blockedAccounts = JSON.parse(localStorage.getItem('blockedAccounts') || '[]')
-              blockedAccounts.push(useItem.user.tokenId)
+              blockedAccounts.push(useItem.user.id)
               localStorage.setItem('blockedAccounts', JSON.stringify([...new Set(blockedAccounts)]))
               window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
               break
@@ -1395,7 +1427,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         isOpen={showReportModal}
         onClose={() => setShowReportModal(false)}
         postId={parseInt(useItem.id)}
-        postAuthorId={useItem.user.tokenId}
+        postAuthorId={useItem.user.id}
         postAuthorUsername={useItem.user.username}
         onSubmit={async (reason: ReportReason, details: string) => {
           const reporterId = activeTokenId || activeToken?.tokenId
@@ -1407,7 +1439,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
             body: JSON.stringify({
               reporterId,
               postId: parseInt(useItem.id),
-              postAuthorId: useItem.user.tokenId,
+              postAuthorId: useItem.user.id,
               reason,
               details: details || undefined
             })
@@ -1417,7 +1449,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           const reportedPosts = JSON.parse(localStorage.getItem('reportedPosts') || '[]')
           reportedPosts.push({
             postId: useItem.id,
-            userId: useItem.user.tokenId,
+            userId: useItem.user.id,
             reason,
             timestamp: new Date().toISOString()
           })

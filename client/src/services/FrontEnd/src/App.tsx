@@ -5,11 +5,15 @@ import { useClientConfig } from '~/store/clientConfigStore'
 import { CLIENT_ID } from '~/api/actions'
 import { useAccount } from "wagmi"
 import routes from "./routes";
+import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
+import { useInsufficientStakeStore } from '~/store/insufficientStakeStore'
 
 function App() {
   useCawonceSync();
   useTxQueueMonitor();
   useClientConfig(CLIENT_ID); // Fetch client config on init for dynamic tip calculation
+
+  const stakeModal = useInsufficientStakeStore()
 
   return (
     <BrowserRouter>
@@ -18,6 +22,14 @@ function App() {
           <Route key={route.path} path={route.path} element={route.component} />
         ))}
       </Routes>
+
+      <InsufficientStakeModal
+        isOpen={stakeModal.isOpen}
+        onClose={stakeModal.close}
+        currentAmount={stakeModal.currentAmount}
+        requiredAmount={stakeModal.requiredAmount}
+        actionType={stakeModal.actionType}
+      />
     </BrowserRouter>
   );
 }

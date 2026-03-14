@@ -3,12 +3,18 @@ import { apiFetch }              from './client'
 import { baseSepolia }           from 'wagmi/chains'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useSignTypedData, useAccount } from 'wagmi'
+import { readContract } from '@wagmi/core'
 import type { TypedDataDomain, TypedDataField } from '@ethersproject/abstract-signer'
 import { useActiveToken, useTokenDataStore } from "~/store/tokenDataStore";
 import { useClientConfigStore } from "~/store/clientConfigStore";
 import { CAW_ACTIONS_ADDRESS } from '~/../../../abi/addresses'
+import { cawActionsAbi } from '~/../../../abi/generated'
+import { wagmiConfig } from '~/config/Web3Provider'
 import { hasMinimumStake, getRequiredStake, STAKING_REQUIREMENTS } from '~/constants/stakingRequirements'
-import { InsufficientStakeError, getActionTypeForModal } from '~/errors/InsufficientStakeError'
+import { getActionTypeForModal } from '~/errors/InsufficientStakeError'
+import { useInsufficientStakeStore } from '~/store/insufficientStakeStore'
+
+const CAWONCE_STALE_MS = 10 * 60 * 1000 // 10 minutes
 
 /** map human-friendly names to on-chain enum values */
 const ActionTypeMap = {
@@ -168,7 +174,8 @@ export function useSignAndSubmitAction() {
     if (stakingKey && !hasMinimumStake(activeToken?.stakedAmount, stakingKey)) {
       const requiredAmount = getRequiredStake(stakingKey)
       const actionTypeForModal = getActionTypeForModal(params.actionType)
-      throw new InsufficientStakeError(activeToken?.stakedAmount, requiredAmount, actionTypeForModal)
+      useInsufficientStakeStore.getState().show(activeToken?.stakedAmount, requiredAmount, actionTypeForModal)
+      return null
     }
 
     // Wait for token data to be loaded (max 10 seconds)
@@ -214,6 +221,32 @@ export function useSignAndSubmitAction() {
         currentToken
       });
       throw new Error('Token data not loaded. Please refresh and try again.')
+    }
+
+    // If cawonce hasn't been synced from chain in 10+ minutes, refresh it now
+    const lastSync = useTokenDataStore.getState().lastCawonceSyncAt
+    if (Date.now() - lastSync > CAWONCE_STALE_MS) {
+      console.log('[Actions] Cawonce stale, refreshing from chain...')
+      try {
+        const onChainCawonce = await readContract(wagmiConfig, {
+          address: CAW_ACTIONS_ADDRESS,
+          abi: cawActionsAbi,
+          functionName: 'nextCawonce',
+          args: [activeTokenId!],
+          chainId: baseSepolia.id,
+        })
+        const fresh = Number(typeof onChainCawonce === 'bigint' ? onChainCawonce : BigInt(onChainCawonce as any))
+        console.log(`[Actions] On-chain cawonce: ${fresh}, local: ${currentCawonce}`)
+        if (fresh > currentCawonce) {
+          useTokenDataStore.getState().setCawonce(activeTokenId!, fresh)
+          currentCawonce = fresh
+        } else {
+          // Update sync timestamp even if value didn't change
+          useTokenDataStore.setState({ lastCawonceSyncAt: Date.now() })
+        }
+      } catch (err) {
+        console.warn('[Actions] Failed to refresh cawonce from chain, using cached value:', err)
+      }
     }
 
     // Bump cawonce BEFORE submission to avoid conflicts with concurrent submissions

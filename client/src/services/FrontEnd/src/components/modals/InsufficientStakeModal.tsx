@@ -1,4 +1,5 @@
 import React from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { useBalance } from 'wagmi'
 import { useAccount } from 'wagmi'
@@ -62,11 +63,11 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
     }
   }
 
-  return (
+  return createPortal(
     <>
       {/* Backdrop */}
       <div
-        className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center"
+        className="fixed inset-0 bg-black/50 z-[80] flex items-center justify-center"
         onClick={onClose}
       >
         {/* Modal */}
@@ -186,7 +187,8 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
           </div>
         </div>
       </div>
-    </>
+    </>,
+    document.body
   )
 }
 
