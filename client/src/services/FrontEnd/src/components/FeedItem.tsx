@@ -1070,8 +1070,8 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 }`} />
               </button>
 
-              {/* Tip */}
-              {activeTokenId && activeTokenId !== useItem.user.tokenId && item.status !== 'PENDING' && item.status !== 'FAILED' && (
+              {/* Tip - hidden on own posts and pending/failed caws */}
+              {item.status !== 'PENDING' && item.status !== 'FAILED' && (
                 <button
                   onClick={(e) => {
                     e.preventDefault()
