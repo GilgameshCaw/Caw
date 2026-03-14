@@ -1096,7 +1096,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       </div>
                     </div>
                   ) : (
-                    <HiOutlineCurrencyDollar className={`w-5 h-5 ${useItem.hasTipped ? 'fill-current' : ''}`} />
+                    <HiOutlineCurrencyDollar className="w-5 h-5" />
                   )}
                 </button>
               )}
@@ -1329,19 +1329,18 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       />
 
       {/* Tip Modal */}
-      {showTipModal && (
-        <TipModal
-          recipientTokenId={useItem.user.tokenId}
-          recipientUsername={useItem.user.username}
-          cawUserId={useItem.user.tokenId}
-          cawCawonce={useItem.cawonce}
-          onClose={() => setShowTipModal(false)}
-          onTipSubmitted={() => {
-            setTipPending(true)
-            setTimeout(() => setTipPending(false), 15000)
-          }}
-        />
-      )}
+      <TipModal
+        isOpen={showTipModal}
+        recipientTokenId={useItem.user.tokenId}
+        recipientUsername={useItem.user.username}
+        cawUserId={useItem.user.tokenId}
+        cawCawonce={useItem.cawonce}
+        onClose={() => setShowTipModal(false)}
+        onTipSubmitted={() => {
+          setTipPending(true)
+          setTimeout(() => setTipPending(false), 15000)
+        }}
+      />
 
       {/* Switch Chain Modal */}
       <SwitchChainModal
