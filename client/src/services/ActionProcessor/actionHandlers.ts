@@ -571,6 +571,12 @@ export async function handleOtherAction(
   authorId: number,
   parentCawId?: number
 ): Promise<void> {
+  // Check if this is a tip action
+  if (rawAction.text?.startsWith('tip:')) {
+    await handleTipAction(tx, action, rawAction, authorId)
+    return
+  }
+
   // Check if this is a profile update (both old and new formats)
   if (rawAction.text?.startsWith('profile-update:') || rawAction.text?.startsWith('p:')) {
     console.log('Processing profile update for user:', authorId)
@@ -921,5 +927,74 @@ export async function handleWithdrawAction(
   } catch (err) {
     console.error('[handleWithdrawAction] Error creating withdrawal request:', err)
     throw err
+  }
+}
+
+/**
+ * Handle TIP action - record a tip and create notification
+ * Text format: "tip:userId:cawonce" (post tip) or "tip:" (profile tip)
+ */
+async function handleTipAction(
+  tx: PrismaTransactionClient,
+  action: any,
+  rawAction: any,
+  senderId: number
+): Promise<void> {
+  console.log('[handleTipAction] Processing tip action:', {
+    senderId,
+    text: rawAction.text,
+    recipients: rawAction.recipients,
+    amounts: rawAction.amounts
+  })
+
+  const recipientTokenId = rawAction.recipients?.[0]
+  const tipAmount = rawAction.amounts?.[0]
+
+  if (!recipientTokenId || !tipAmount) {
+    console.error('[handleTipAction] Missing recipient or amount')
+    return
+  }
+
+  const recipientId = await findOrCreateUser(recipientTokenId)
+
+  // Parse target caw from text: "tip:userId:cawonce"
+  let cawId: number | null = null
+  const parts = rawAction.text.replace('tip:', '').split(':')
+  if (parts.length >= 2 && parts[0] && parts[1]) {
+    const targetUserId = parseInt(parts[0])
+    const targetCawonce = parseInt(parts[1])
+    if (!isNaN(targetUserId) && !isNaN(targetCawonce)) {
+      try {
+        cawId = await findCawId(targetCawonce, targetUserId)
+      } catch (err) {
+        console.warn('[handleTipAction] Could not find target caw:', err)
+      }
+    }
+  }
+
+  // Create Tip record
+  await tx.tip.create({
+    data: {
+      senderId,
+      recipientId,
+      amount: Number(tipAmount),
+      cawId,
+      cawonce: action.cawonce,
+      pending: false
+    }
+  })
+
+  console.log('[handleTipAction] Created tip record:', {
+    senderId,
+    recipientId,
+    amount: Number(tipAmount),
+    cawId
+  })
+
+  // Create notification
+  try {
+    await NotificationService.createTipNotification(recipientId, senderId, cawId || undefined, Number(tipAmount))
+  } catch (err) {
+    console.error('[handleTipAction] Failed to create tip notification:', err)
   }
 }

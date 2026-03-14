@@ -295,6 +295,29 @@ export class NotificationService {
   }
 
   /**
+   * Create notification for a tip
+   */
+  static async createTipNotification(recipientId: number, tipperId: number, cawId?: number, amount?: number) {
+    // Don't notify for self-tips
+    if (recipientId === tipperId) return
+
+    // Check if the recipient has muted or blocked the actor
+    if (await this.isUserMutedOrBlocked(recipientId, tipperId)) {
+      return
+    }
+
+    await prisma.notification.create({
+      data: {
+        userId: recipientId,
+        actorId: tipperId,
+        type: NotificationType.TIP,
+        cawId: cawId || undefined,
+        groupKey: cawId ? `tip_caw_${cawId}` : undefined
+      }
+    })
+  }
+
+  /**
    * Mark notifications as read
    */
   static async markAsRead(userId: number, notificationIds?: number[]) {

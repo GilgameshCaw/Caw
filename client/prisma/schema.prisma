@@ -54,6 +54,8 @@ model User {
   scheduledCaws         ScheduledCaw[]
   xmtpIdentity          XmtpIdentity?
   onChainImages         OnChainImage[]
+  tipsSent              Tip[]          @relation("TipsSent")
+  tipsReceived          Tip[]          @relation("TipsReceived")
 }
 
 model Caw {
@@ -82,6 +84,7 @@ model Caw {
   repliesOnThis Reply[]        @relation("RepliesOnCaw")
   isReplyTo     Reply[]        @relation("ReplyCaw")
   notifications Notification[]
+  tips          Tip[]
 
   @@unique([userId, cawonce])
   @@index([userId, action, createdAt])
@@ -384,6 +387,25 @@ model OnChainImage {
   @@index([createdAt])
 }
 
+model Tip {
+  id          Int      @id @default(autoincrement())
+  senderId    Int
+  recipientId Int
+  amount      Int
+  cawId       Int?
+  cawonce     Int
+  pending     Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  sender      User     @relation("TipsSent", fields: [senderId], references: [tokenId])
+  recipient   User     @relation("TipsReceived", fields: [recipientId], references: [tokenId])
+  caw         Caw?     @relation(fields: [cawId], references: [id])
+
+  @@index([senderId])
+  @@index([recipientId])
+  @@index([cawId])
+}
+
 enum ActionType {
   CAW
   LIKE
@@ -408,6 +430,7 @@ enum NotificationType {
   REPOST
   QUOTE
   MENTION
+  TIP
 }
 
 enum MessageStatus {
