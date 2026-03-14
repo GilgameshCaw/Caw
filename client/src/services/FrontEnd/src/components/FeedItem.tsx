@@ -31,7 +31,7 @@ import { useBookmarksStore } from '~/store/bookmarksStore'
 import { Link, useNavigate } from 'react-router-dom'
 import { User, CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
-import { usePendingPolling, usePendingCawPolling, usePendingLikePolling, usePendingRecawPolling, usePendingReplyPolling } from '~/hooks/usePendingPolling'
+import { usePendingPolling, usePendingCawPolling, usePendingLikePolling, usePendingRecawPolling, usePendingReplyPolling, usePendingTipPolling } from '~/hooks/usePendingPolling'
 import ContentWithHashtags from './ContentWithHashtags'
 import { formatEngagementCount } from '~/utils/numberFormat'
 import { apiFetch } from '~/api/client'
@@ -70,12 +70,14 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const [likePending, setLikePending] = useState(item.likePending || false)
   const [recawPending, setRecawPending] = useState(item.recawPending || false)
   const [replyPending, setReplyPending] = useState(item.replyPending || false)
+  const [tipPending, setTipPending] = useState(item.tipPending || false)
 
   // Enable polling for pending items - use local state so it works with auto-trigger
   usePendingCawPolling(parseInt(item.id), item.status === 'PENDING')
   usePendingLikePolling(parseInt(item.id), likePending)
   usePendingRecawPolling(parseInt(item.id), recawPending)
   usePendingReplyPolling(parseInt(item.id), replyPending)
+  usePendingTipPolling(parseInt(item.id), tipPending)
 
   const activeTokenId     = useTokenDataStore(s => s.activeTokenId)
   const activeToken = useTokenDataStore(s => {
@@ -99,7 +101,6 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const [showOptionsMenu, setShowOptionsMenu] = useState(false)
   const [showShareModal, setShowShareModal] = useState(false)
   const [showTipModal, setShowTipModal] = useState(false)
-  const [tipPending, setTipPending] = useState(false)
   const [textCopied, setTextCopied] = useState(false)
   // Bookmarks are browser-only (localStorage)
   const bookmarksStore = useBookmarksStore()
@@ -209,6 +210,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   useEffect(() => {
     setReplyPending(item.replyPending || false)
   }, [item.replyPending])
+
+  // Sync local tipPending state with item.tipPending from polling
+  useEffect(() => {
+    setTipPending(item.tipPending || false)
+  }, [item.tipPending])
 
   // Clear wrong wallet error when address changes
   useEffect(() => {
@@ -1338,7 +1344,6 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         onClose={() => setShowTipModal(false)}
         onTipSubmitted={() => {
           setTipPending(true)
-          setTimeout(() => setTipPending(false), 15000)
         }}
       />
 

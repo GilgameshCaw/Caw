@@ -45,7 +45,8 @@ export type CawItem = {
   hasLiked: boolean
   hasRecawed: boolean
   hasReplied?: boolean // True when current user has replied (confirmed)
-  hasTipped?: boolean // True when current user has tipped this post
+  hasTipped?: boolean // True when current user has tipped this post (confirmed)
+  tipPending?: boolean // True when tip is pending on-chain confirmation
   likePending?: boolean // True when like is pending on-chain confirmation
   recawPending?: boolean // True when recaw is pending on-chain confirmation
   replyPending?: boolean // True when reply is pending on-chain confirmation

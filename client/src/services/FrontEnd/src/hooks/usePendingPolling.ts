@@ -155,3 +155,30 @@ export function usePendingReplyPolling(cawId: number | undefined, hasPendingRepl
     return () => clearInterval(interval);
   }, [cawId, hasPendingReply, queryClient]);
 }
+
+/**
+ * Hook that polls for pending tips on a specific caw
+ */
+export function usePendingTipPolling(cawId: number | undefined, hasPendingTip: boolean) {
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (!cawId || !hasPendingTip) return;
+
+    const interval = setInterval(() => {
+      queryClient.invalidateQueries({
+        queryKey: ['caw', cawId],
+        refetchType: 'active'
+      });
+
+      queryClient.invalidateQueries({
+        queryKey: ['feed'],
+        refetchType: 'active'
+      });
+
+      console.log(`[Polling] Checking pending tip for caw ${cawId}...`);
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [cawId, hasPendingTip, queryClient]);
+}
