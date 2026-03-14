@@ -33,9 +33,7 @@ const TipModal: React.FC<TipModalProps> = ({
   onTipSubmitted
 }) => {
   const { isDark } = useTheme()
-  const [selectedAmount, setSelectedAmount] = useState(PRESET_AMOUNTS[0])
-  const [customAmount, setCustomAmount] = useState('')
-  const [useCustom, setUseCustom] = useState(false)
+  const [amount, setAmount] = useState(PRESET_AMOUNTS[0].toString())
   const [tipState, setTipState] = useState<TipState>('idle')
   const [error, setError] = useState<string | null>(null)
 
@@ -46,7 +44,7 @@ const TipModal: React.FC<TipModalProps> = ({
   const { openConnectModal } = useConnectModal()
   const [showInsufficientStake, setShowInsufficientStake] = useState(false)
 
-  const tipAmount = useCustom ? parseInt(customAmount) || 0 : selectedAmount
+  const tipAmount = parseInt(amount) || 0
   const validatorTip = getValidatorTip()
   const totalCost = BigInt(tipAmount + Number(validatorTip)) * 10n**18n
   const isValid = tipAmount >= MIN_TIP_AMOUNT
@@ -154,19 +152,19 @@ const TipModal: React.FC<TipModalProps> = ({
                   Select amount (CAW)
                 </label>
                 <div className="grid grid-cols-2 gap-2 mt-2">
-                  {PRESET_AMOUNTS.map(amount => (
+                  {PRESET_AMOUNTS.map(preset => (
                     <button
-                      key={amount}
-                      onClick={() => { setSelectedAmount(amount); setUseCustom(false); setError(null) }}
+                      key={preset}
+                      onClick={() => { setAmount(preset.toString()); setError(null) }}
                       className={`px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer ${
-                        !useCustom && selectedAmount === amount
+                        tipAmount === preset
                           ? 'bg-yellow-500 text-black'
                           : isDark
                             ? 'bg-white/10 text-white hover:bg-white/20'
                             : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
                       }`}
                     >
-                      {amount.toLocaleString()}
+                      {preset.toLocaleString()}
                     </button>
                   ))}
                 </div>
@@ -177,18 +175,16 @@ const TipModal: React.FC<TipModalProps> = ({
                 <label className={`text-sm font-medium ${
                   isDark ? 'text-gray-300' : 'text-gray-700'
                 }`}>
-                  Custom amount
+                  Amount
                 </label>
                 <input
                   type="number"
                   min={1}
-                  value={customAmount}
+                  value={amount}
                   onChange={e => {
-                    setCustomAmount(e.target.value)
-                    setUseCustom(true)
+                    setAmount(e.target.value)
                     setError(null)
                   }}
-                  onFocus={() => setUseCustom(true)}
                   placeholder="Enter amount (CAW)"
                   className={`w-full mt-1 px-3 py-2 rounded-lg text-sm outline-none transition-colors ${
                     isDark
