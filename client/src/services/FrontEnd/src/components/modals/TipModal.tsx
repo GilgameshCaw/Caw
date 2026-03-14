@@ -8,7 +8,7 @@ import { useConnectModal } from '@rainbow-me/rainbowkit'
 import InsufficientStakeModal from './InsufficientStakeModal'
 
 const PRESET_AMOUNTS = [5000, 10000, 25000, 50000]
-const MIN_TIP_AMOUNT = 5000
+const MIN_TIP_AMOUNT = 1
 
 interface TipModalProps {
   recipientTokenId: number
@@ -193,7 +193,7 @@ const TipModal: React.FC<TipModalProps> = ({
                   </label>
                   <input
                     type="number"
-                    min={MIN_TIP_AMOUNT}
+                    min={1}
                     value={customAmount}
                     onChange={e => {
                       setCustomAmount(e.target.value)
@@ -201,7 +201,7 @@ const TipModal: React.FC<TipModalProps> = ({
                       setError(null)
                     }}
                     onFocus={() => setUseCustom(true)}
-                    placeholder={`Min ${MIN_TIP_AMOUNT.toLocaleString()} CAW`}
+                    placeholder="Enter amount (CAW)"
                     className={`w-full mt-1 px-3 py-2 rounded-lg text-sm outline-none transition-colors ${
                       isDark
                         ? 'bg-white/10 text-white border border-white/20 focus:border-yellow-500/50 placeholder-gray-500'
