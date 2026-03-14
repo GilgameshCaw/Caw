@@ -1378,6 +1378,25 @@ console.log("succeededKeys", succeededKeys)
           await Promise.all(validatedEntries.map(async (entry, index) => {
             const data = (entry.payload as any).data
 
+            // Mark Caw as FAILED if this is a caw action
+            if (data.actionType === 0 || data.actionType === 'caw') {
+              try {
+                console.log(`[Validator] Marking Caw as FAILED for user ${data.senderId} cawonce ${data.cawonce}: ${rejectionMessages[index] || 'Simulation rejected'}`)
+                await prisma.caw.updateMany({
+                  where: {
+                    userId: data.senderId,
+                    cawonce: data.cawonce,
+                    status: 'PENDING'
+                  },
+                  data: {
+                    status: 'FAILED'
+                  }
+                })
+              } catch (cawErr) {
+                console.error('[Validator] Failed to mark caw as FAILED:', cawErr)
+              }
+            }
+
             // Mark Follow as FAILED if this is a follow action
             if (data.actionType === 4 || data.actionType === 'follow' || data.actionType === 5 || data.actionType === 'unfollow') {
               try {

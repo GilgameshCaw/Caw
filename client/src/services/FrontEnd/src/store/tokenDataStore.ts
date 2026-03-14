@@ -12,6 +12,7 @@ interface TokenDataStore {
   hasHydrated: boolean;
   activeTokenId?: number; // Deprecated - keeping for backwards compatibility
   activeTokenIdByAddress: Record<Address, number>;
+  lastCawonceSyncAt: number; // timestamp (ms) of last on-chain cawonce fetch
   setHasHydrated: () => void;
   removeActiveToken: () => void;
   bumpCawonce:  (tokenId: number) => void;
@@ -72,6 +73,7 @@ export const useTokenDataStore = create<TokenDataStore>()(
       lastAddress: undefined,
       activeTokenId: undefined,
       activeTokenIdByAddress: {},
+      lastCawonceSyncAt: 0,
       refetchTokenData: null,
       setRefetchTokenData: (fn) => set({ refetchTokenData: fn }),
       allTokens: () => {
@@ -143,6 +145,7 @@ export const useTokenDataStore = create<TokenDataStore>()(
 
       setCawonce: (tokenId, cawonce) =>
         set(state => ({
+          lastCawonceSyncAt: Date.now(),
           tokensByAddress: Object.fromEntries(
             Object.entries(state.tokensByAddress).map(([addr, list]) => [
               addr,
