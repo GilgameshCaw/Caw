@@ -972,24 +972,40 @@ async function handleTipAction(
     }
   }
 
-  // Create Tip record
-  await tx.tip.create({
-    data: {
+  // Confirm pending tip or create new one (for actions from other validators)
+  const existingTip = await tx.tip.findFirst({
+    where: {
       senderId,
       recipientId,
-      amount: Number(tipAmount),
-      cawId,
       cawonce: action.cawonce,
-      pending: false
+      pending: true
     }
   })
 
-  console.log('[handleTipAction] Created tip record:', {
-    senderId,
-    recipientId,
-    amount: Number(tipAmount),
-    cawId
-  })
+  if (existingTip) {
+    await tx.tip.update({
+      where: { id: existingTip.id },
+      data: { pending: false, cawId }
+    })
+    console.log('[handleTipAction] Confirmed pending tip:', existingTip.id)
+  } else {
+    await tx.tip.create({
+      data: {
+        senderId,
+        recipientId,
+        amount: Number(tipAmount),
+        cawId,
+        cawonce: action.cawonce,
+        pending: false
+      }
+    })
+    console.log('[handleTipAction] Created tip record:', {
+      senderId,
+      recipientId,
+      amount: Number(tipAmount),
+      cawId
+    })
+  }
 
   // Create notification
   try {

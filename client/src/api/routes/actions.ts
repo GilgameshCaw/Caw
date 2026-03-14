@@ -288,6 +288,61 @@ router.post('/', async (req, res) => {
       }
     }
 
+    // Create pending tip if this is a tip action (OTHER with tip: prefix)
+    if ((data.actionType === 7 || data.actionType === 'other') && data.text?.startsWith('tip:')) {
+      console.log('Processing TIP action - creating pending tip record')
+
+      try {
+        const recipientTokenId = data.recipients?.[0]
+        const tipAmount = data.amounts?.[0]
+
+        if (recipientTokenId && tipAmount) {
+          // Ensure both users exist
+          await Promise.all([
+            prisma.user.upsert({
+              where: { tokenId: data.senderId },
+              update: {},
+              create: { id: data.senderId, tokenId: data.senderId, username: `user_${data.senderId}` }
+            }),
+            prisma.user.upsert({
+              where: { tokenId: Number(recipientTokenId) },
+              update: {},
+              create: { id: Number(recipientTokenId), tokenId: Number(recipientTokenId), username: `user_${recipientTokenId}` }
+            })
+          ])
+
+          // Parse target caw from text: "tip:userId:cawonce"
+          let cawId: number | null = null
+          const parts = data.text.replace('tip:', '').split(':')
+          if (parts.length >= 2 && parts[0] && parts[1]) {
+            const targetUserId = parseInt(parts[0])
+            const targetCawonce = parseInt(parts[1])
+            if (!isNaN(targetUserId) && !isNaN(targetCawonce)) {
+              const targetCaw = await prisma.caw.findUnique({
+                where: { userId_cawonce: { userId: targetUserId, cawonce: targetCawonce } }
+              })
+              cawId = targetCaw?.id ?? null
+            }
+          }
+
+          const pendingTip = await prisma.tip.create({
+            data: {
+              senderId: data.senderId,
+              recipientId: Number(recipientTokenId),
+              amount: Number(tipAmount),
+              cawId,
+              cawonce: data.cawonce,
+              pending: true
+            }
+          })
+          console.log('Successfully created pending tip:', pendingTip.id)
+        }
+      } catch (tipErr) {
+        console.error('Failed to create pending tip:', tipErr)
+        // Continue even if pending tip creation fails
+      }
+    }
+
     // Create withdrawal request if this is a withdraw action
     if (data.actionType === 6 || data.actionType === '6') {  // 6 is the enum value for 'withdraw'
       console.log('Processing WITHDRAW action - creating withdrawal request')
