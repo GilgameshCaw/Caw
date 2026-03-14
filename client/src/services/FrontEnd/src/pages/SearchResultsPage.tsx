@@ -156,39 +156,7 @@ const SearchResultsPage: React.FC<SearchResultsPageProps> = ({ defaultTab = 'all
         <div className="text-red-500 text-center py-8">{error}</div>
       ) : results ? (
         <div className="space-y-6">
-          {/* Caws Results */}
-          {(activeTab === 'all' || activeTab === 'caws') && (
-            <div>
-              {activeTab === 'all' && (
-                <div className="flex items-center justify-between mb-3">
-                  <h2 className={`text-lg font-semibold ${
-                    isDark ? 'text-white' : 'text-gray-900'
-                  }`}>Caws</h2>
-                  {results?.hasMoreCaws && (
-                    <button
-                      onClick={() => {
-                        setActiveTab('caws')
-                        navigate(`/search/caws?q=${encodeURIComponent(query)}`)
-                      }}
-                      className={`text-sm transition ${
-                        isDark
-                          ? 'text-blue-400 hover:text-blue-300'
-                          : 'text-blue-600 hover:text-blue-500'
-                      }`}
-                    >
-                      View more →
-                    </button>
-                  )}
-                </div>
-              )}
-              <Feed
-                filter="search"
-                apiEndpoint={`/api/search?q=${encodeURIComponent(query)}&type=caws`}
-              />
-            </div>
-          )}
-
-          {/* Users Results */}
+          {/* Users Results - Show first on All tab */}
           {(activeTab === 'all' || activeTab === 'users') && filteredUsers.length > 0 && (
             <div>
               {activeTab === 'all' && (
@@ -316,6 +284,38 @@ const SearchResultsPage: React.FC<SearchResultsPageProps> = ({ defaultTab = 'all
                   </a>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Caws Results */}
+          {(activeTab === 'all' || activeTab === 'caws') && (
+            <div>
+              {activeTab === 'all' && (
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className={`text-lg font-semibold ${
+                    isDark ? 'text-white' : 'text-gray-900'
+                  }`}>Caws</h2>
+                  {results?.hasMoreCaws && (
+                    <button
+                      onClick={() => {
+                        setActiveTab('caws')
+                        navigate(`/search/caws?q=${encodeURIComponent(query)}`)
+                      }}
+                      className={`text-sm transition ${
+                        isDark
+                          ? 'text-blue-400 hover:text-blue-300'
+                          : 'text-blue-600 hover:text-blue-500'
+                      }`}
+                    >
+                      View more →
+                    </button>
+                  )}
+                </div>
+              )}
+              <Feed
+                filter="search"
+                apiEndpoint={`/api/search?q=${encodeURIComponent(query)}&type=caws`}
+              />
             </div>
           )}
 
