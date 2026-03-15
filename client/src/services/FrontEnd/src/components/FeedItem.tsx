@@ -17,7 +17,8 @@ import {
   HiOutlineUserRemove,
   HiOutlineExclamation,
   HiOutlineCheck,
-  HiOutlineRefresh
+  HiOutlineRefresh,
+  HiOutlineX
 } from 'react-icons/hi'
 import Recaw from '~/assets/images/recaw.svg?react';
 import Pencil from '~/assets/images/pencil.svg?react';
@@ -65,7 +66,7 @@ function formatTimeAgo(timestamp: string): string {
   }
 }
 
-const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void; onLikeStateChange?: (cawId: string, likePending: boolean) => void; onRecawStateChange?: (cawId: string, recawPending: boolean) => void; onReplyStateChange?: (cawId: string, replyPending: boolean) => void }> = ({ item, isMainPost = false, isReply = false, onBookmarkUpdate, onLikeStateChange, onRecawStateChange, onReplyStateChange }) => {
+const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void; onLikeStateChange?: (cawId: string, likePending: boolean) => void; onRecawStateChange?: (cawId: string, recawPending: boolean) => void; onReplyStateChange?: (cawId: string, replyPending: boolean) => void; onTipStateChange?: (cawId: string, tipPending: boolean) => void }> = ({ item, isMainPost = false, isReply = false, onBookmarkUpdate, onLikeStateChange, onRecawStateChange, onReplyStateChange, onTipStateChange }) => {
   // Local pending states (declared early so polling can use them)
   const [likePending, setLikePending] = useState(item.likePending || false)
   const [recawPending, setRecawPending] = useState(item.recawPending || false)
@@ -101,6 +102,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const [showOptionsMenu, setShowOptionsMenu] = useState(false)
   const [showShareModal, setShowShareModal] = useState(false)
   const [showTipModal, setShowTipModal] = useState(false)
+  const [imageCollapsed, setImageCollapsed] = useState(false)
   const [textCopied, setTextCopied] = useState(false)
   // Bookmarks are browser-only (localStorage)
   const bookmarksStore = useBookmarksStore()
@@ -340,6 +342,8 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     }
   }
 
+  const [retrySucceeded, setRetrySucceeded] = useState(false)
+
   const handleRetry = async (event: React.MouseEvent) => {
     event.preventDefault()
     event.stopPropagation()
@@ -354,11 +358,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         actionType: 'caw',
         senderId: activeTokenId,
         text: useItem.content,
-        amounts: [] // You might need to calculate proper amounts for images
+        amounts: []
       })
 
-      // Optionally update local state to show pending status
-      // This would require updating the item's status in the parent component
+      // Hide this failed caw — the retry created a new pending caw
+      // The old FAILED caw is also deleted server-side
+      setRetrySucceeded(true)
     } catch (error) {
       console.error('Retry failed:', error)
     } finally {
@@ -609,6 +614,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     }
   }
 
+  // Hide the failed caw after a successful retry
+  if (retrySucceeded) return null
+
   return (
     <>
       <div onClick={handleCardClick} className="block">
@@ -690,10 +698,22 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       <button
                         onClick={handleRetry}
                         disabled={isRetrying}
-                        className="ml-2 px-2 py-0.5 text-xs bg-blue-500/20 text-blue-600 dark:text-blue-400 rounded-full hover:bg-blue-500/30 transition-colors flex items-center gap-1"
+                        className="ml-2 px-2 py-0.5 text-xs bg-blue-500/20 text-blue-600 dark:text-blue-400 rounded-full hover:bg-blue-500/30 transition-colors flex items-center gap-1 cursor-pointer"
                       >
                         <HiOutlineRefresh className={`w-3 h-3 ${isRetrying ? 'animate-spin' : ''}`} />
                         {isRetrying ? 'Retrying...' : 'Retry'}
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          setRetrySucceeded(true)
+                          apiFetch(`/api/caws/${item.id}/dismiss`, { method: 'POST' }).catch(() => {})
+                        }}
+                        className="ml-1 px-2 py-0.5 text-xs bg-gray-500/20 text-gray-500 dark:text-gray-400 rounded-full hover:bg-gray-500/30 transition-colors flex items-center gap-1 cursor-pointer"
+                      >
+                        <HiOutlineX className="w-3 h-3" />
+                        Hide
                       </button>
                     </>
                   )}
@@ -811,60 +831,96 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           {/* Image Display */}
           {useItem.hasImage && (
             <div className="mb-4 pl-2 md:pl-0">
-              {(() => {
+              {imageCollapsed ? (
+                <button
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setImageCollapsed(false)
+                  }}
+                  className={`flex items-center gap-1 text-xs cursor-pointer ${isDark ? 'text-gray-500 hover:text-gray-400' : 'text-gray-400 hover:text-gray-500'} transition-colors`}
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                  Show media
+                </button>
+              ) : (() => {
                 // Check if imageData contains URLs or base64 data
+                const collapseBtn = (
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setImageCollapsed(true)
+                    }}
+                    className="absolute top-2 left-2 z-10 p-1 rounded-full bg-black/60 hover:bg-black/80 text-white/70 hover:text-white transition-all cursor-pointer"
+                    title="Hide media"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                    </svg>
+                  </button>
+                )
+
                 if (useItem.imageData) {
                   if (useItem.imageData.startsWith('urls:')) {
                     // Off-chain images stored as URLs
                     const urls = useItem.imageData.replace('urls:', '').split('|||')
                     return (
-                      <div className={`${urls.length > 1 ? 'grid grid-cols-2 gap-2 max-w-2xl' : 'inline-block'}`}>
-                        {urls.map((url, index) => (
-                          <div key={index} className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 inline-block">
-                            <img
-                              src={url}
-                              alt={`Caw image ${index + 1}`}
-                              className="max-w-full max-h-96 h-auto cursor-pointer hover:opacity-90 transition-opacity"
-                              onClick={(e) => {
-                                e.preventDefault()
-                                e.stopPropagation()
-                                // TODO: Open image in modal
-                              }}
-                              onError={(e) => {
-                                console.error('Failed to load image from URL:', url)
-                                e.currentTarget.style.display = 'none'
-                              }}
-                            />
-                          </div>
-                        ))}
+                      <div className="relative">
+                        {collapseBtn}
+                        <div className={`${urls.length > 1 ? 'grid grid-cols-2 gap-2 max-w-2xl' : 'inline-block'}`}>
+                          {urls.map((url, index) => (
+                            <div key={index} className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 inline-block">
+                              <img
+                                src={url}
+                                alt={`Caw image ${index + 1}`}
+                                className="max-w-full max-h-96 h-auto cursor-pointer hover:opacity-90 transition-opacity"
+                                onClick={(e) => {
+                                  e.preventDefault()
+                                  e.stopPropagation()
+                                  // TODO: Open image in modal
+                                }}
+                                onError={(e) => {
+                                  console.error('Failed to load image from URL:', url)
+                                  e.currentTarget.style.display = 'none'
+                                }}
+                              />
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )
                   } else {
                     // On-chain images stored as base64
                     const images = useItem.imageData.split('|||')
                     return (
-                      <div className={`${images.length > 1 ? 'grid grid-cols-2 gap-2 max-w-2xl' : 'inline-block'}`}>
-                        {images.map((imageBase64, index) => (
-                          <div key={index} className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 inline-block">
-                            <img
-                              src={`data:image/jpeg;base64,${imageBase64}`}
-                              alt={`Caw image ${index + 1}`}
-                              className="max-w-full max-h-96 h-auto cursor-pointer hover:opacity-90 transition-opacity"
-                              onClick={(e) => {
-                                e.preventDefault()
-                                e.stopPropagation()
-                                // TODO: Open image in modal
-                              }}
-                              onError={(e) => {
-                                console.error('Failed to load on-chain image')
-                                e.currentTarget.style.display = 'none'
-                              }}
-                            />
-                            <div className="absolute top-2 right-2 px-2 py-1 bg-black/70 text-white text-xs rounded-full">
-                              On-chain
+                      <div className="relative">
+                        {collapseBtn}
+                        <div className={`${images.length > 1 ? 'grid grid-cols-2 gap-2 max-w-2xl' : 'inline-block'}`}>
+                          {images.map((imageBase64, index) => (
+                            <div key={index} className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 inline-block">
+                              <img
+                                src={`data:image/jpeg;base64,${imageBase64}`}
+                                alt={`Caw image ${index + 1}`}
+                                className="max-w-full max-h-96 h-auto cursor-pointer hover:opacity-90 transition-opacity"
+                                onClick={(e) => {
+                                  e.preventDefault()
+                                  e.stopPropagation()
+                                  // TODO: Open image in modal
+                                }}
+                                onError={(e) => {
+                                  console.error('Failed to load on-chain image')
+                                  e.currentTarget.style.display = 'none'
+                                }}
+                              />
+                              <div className="absolute top-2 right-2 px-2 py-1 bg-black/70 text-white text-xs rounded-full">
+                                On-chain
+                              </div>
                             </div>
-                          </div>
-                        ))}
+                          ))}
+                        </div>
                       </div>
                     )
                   }
@@ -872,6 +928,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   // Legacy single image URL
                   return (
                     <div className="relative inline-block rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
+                      {collapseBtn}
                       <img
                         src={useItem.imageUrl}
                         alt="Caw image"
@@ -1344,6 +1401,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         onClose={() => setShowTipModal(false)}
         onTipSubmitted={() => {
           setTipPending(true)
+          onTipStateChange?.(item.id, true)
         }}
       />
 

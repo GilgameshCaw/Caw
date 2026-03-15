@@ -408,6 +408,37 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
     }
   }, [items])
 
+  // Poll for pending tips - refetch specific caws that have pending tips
+  useEffect(() => {
+    const pendingTipCaws = items.filter(item => item.tipPending)
+
+    if (pendingTipCaws.length === 0) return
+
+    const interval = setInterval(async () => {
+      for (const caw of pendingTipCaws) {
+        try {
+          const updated = await apiFetch<{ caw: CawItem }>(`/api/caws/${caw.id}`)
+
+          setItems(current =>
+            current.map(item => {
+              if (item.id === caw.id) {
+                return {
+                  ...updated.caw,
+                  tipPending: updated.caw.tipPending ?? false
+                }
+              }
+              return item
+            })
+          )
+        } catch (err) {
+          console.error(`Failed to refresh caw ${caw.id} for tip:`, err)
+        }
+      }
+    }, 3000)
+
+    return () => clearInterval(interval)
+  }, [items])
+
   // render
   if (error)   return <div className="text-red-400">Error loading feed: {error}</div>
   if (items.length === 0 && loading) return (
@@ -437,7 +468,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
       return (
         <div className="py-4">
           <p className={`text-center mb-4 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-            You're not following anyone yet.<br />Here are some popular users to get started:
+            You're not following anyone yet.<br />Here are some users to get started:
           </p>
           <SuggestedUsers onFollowChange={handleFollowChange} />
         </div>
@@ -493,6 +524,13 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
             setItems(current =>
               current.map(item =>
                 item.id === cawId ? { ...item, replyPending } : item
+              )
+            )
+          }}
+          onTipStateChange={(cawId, tipPending) => {
+            setItems(current =>
+              current.map(item =>
+                item.id === cawId ? { ...item, tipPending } : item
               )
             )
           }}
