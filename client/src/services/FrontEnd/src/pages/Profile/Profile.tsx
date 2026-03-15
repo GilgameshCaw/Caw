@@ -50,6 +50,8 @@ type ProfileData = {
   likeCount: number
   isFollowing?: boolean
   followPending?: boolean
+  hasTipped?: boolean
+  tipPending?: boolean
   createdAt: string
   updatedAt: string
 }
@@ -121,6 +123,8 @@ export const Profile: React.FC = () => {
   const [profileError, setProfileError] = useState<string | null>(null)
   const [localProfileUpdatePending, setLocalProfileUpdatePending] = useState(false)
   const [showTipModal, setShowTipModal] = useState(false)
+  const [tipPending, setTipPending] = useState(false)
+  const [hasTipped, setHasTipped] = useState(false)
 
   // Browser-level blocking from localStorage
   const { blockUser, unblockUser, isBlocked: checkIsBlocked } = useBlockedUsersStore()
@@ -143,6 +147,8 @@ export const Profile: React.FC = () => {
       try {
         const data = await apiFetch<ProfileData>(`/api/users/${displayUsername}`)
         setProfileData(data)
+        setHasTipped(data.hasTipped || false)
+        setTipPending(data.tipPending || false)
       } catch (err) {
         console.error('Failed to fetch profile:', err)
         setError('Failed to load profile')
@@ -153,6 +159,24 @@ export const Profile: React.FC = () => {
 
     fetchProfile()
   }, [displayUsername, activeToken?.tokenId])
+
+  // Poll for tip confirmation
+  useEffect(() => {
+    if (!tipPending || !displayUsername || displayUsername === 'user') return
+
+    const interval = setInterval(async () => {
+      try {
+        const data = await apiFetch<ProfileData>(`/api/users/${displayUsername}`)
+        setProfileData(data)
+        setHasTipped(data.hasTipped || false)
+        setTipPending(data.tipPending || false)
+      } catch {
+        // Ignore fetch errors during polling
+      }
+    }, 3000)
+
+    return () => clearInterval(interval)
+  }, [tipPending, displayUsername])
 
   // Poll for profile update completion when localProfileUpdatePending is true
   useEffect(() => {
@@ -823,13 +847,24 @@ export const Profile: React.FC = () => {
                       <button
                         onClick={() => setShowTipModal(true)}
                         className={`p-2 rounded-full border transition-all duration-200 cursor-pointer hover:bg-yellow-500/10 ${
-                          isDark
-                            ? 'border-white/60 text-white hover:text-yellow-500'
-                            : 'border-black/60 text-black hover:text-yellow-500'
+                          tipPending || hasTipped
+                            ? 'border-yellow-500/60 text-yellow-500'
+                            : isDark
+                              ? 'border-white/60 text-white hover:text-yellow-500'
+                              : 'border-black/60 text-black hover:text-yellow-500'
                         }`}
                         title="Tip"
                       >
-                        <HiOutlineCurrencyDollar className="w-5 h-5" />
+                        {tipPending ? (
+                          <div className="relative w-5 h-5">
+                            <div className="w-5 h-5 border-2 border-gray-400 border-t-yellow-500 rounded-full animate-spin"></div>
+                            <svg className="absolute inset-0 w-3 h-3 m-auto text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                          </div>
+                        ) : (
+                          <HiOutlineCurrencyDollar className="w-5 h-5" />
+                        )}
                       </button>
                       <button
                         onClick={() => {
@@ -1414,11 +1449,15 @@ export const Profile: React.FC = () => {
       )}
 
       {/* Tip Modal */}
-      {showTipModal && profileData && (
+      {profileData && (
         <TipModal
+          isOpen={showTipModal}
           recipientTokenId={profileData.tokenId}
           recipientUsername={profileData.username}
           onClose={() => setShowTipModal(false)}
+          onTipSubmitted={() => {
+            setTipPending(true)
+          }}
         />
       )}
     </MainLayout>
