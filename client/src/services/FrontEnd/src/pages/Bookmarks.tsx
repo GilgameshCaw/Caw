@@ -4,24 +4,15 @@ import { useTheme } from '~/hooks/useTheme'
 import { HiOutlineSearch, HiOutlineInformationCircle } from 'react-icons/hi'
 import FeedItem from '~/components/FeedItem'
 import type { CawItem } from '~/types'
-import MobilePostModal from '~/components/MobilePostModal'
-import { useAccount } from "wagmi"
-import { useConnectModal } from "@rainbow-me/rainbowkit"
-import { HiOutlinePlus } from "react-icons/hi"
-import { BsWallet } from 'react-icons/bs'
 import { apiFetch } from '~/api/client'
 import { useBookmarksStore } from '~/store/bookmarksStore'
 
 const BookmarksPage: React.FC = () => {
   const { isDark } = useTheme()
   const [searchQuery, setSearchQuery] = useState('')
-  const [isMobilePostModalOpen, setIsMobilePostModalOpen] = useState(false)
-  const { isConnected } = useAccount()
-  const { openConnectModal } = useConnectModal()
 
   // Bookmarks are stored in localStorage (browser-only)
   const bookmarkedIds = useBookmarksStore(state => state.bookmarkedCawIds)
-  const removeBookmark = useBookmarksStore(state => state.removeBookmark)
 
   const [bookmarkedPosts, setBookmarkedPosts] = useState<CawItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -108,8 +99,8 @@ const BookmarksPage: React.FC = () => {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className={`w-full pl-10 pr-4 py-3 rounded-full border transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-gray-500/30 ${
-                isDark 
-                  ? 'bg-black border-gray-600 text-white placeholder-gray-400 focus:bg-transparent' 
+                isDark
+                  ? 'bg-black border-gray-600 text-white placeholder-gray-400 focus:bg-transparent'
                   : 'bg-white border-gray-300 text-black placeholder-gray-500 focus:bg-transparent'
               }`}
             />
@@ -164,26 +155,6 @@ const BookmarksPage: React.FC = () => {
           </div>
         )}
       </div>
-
-      {/* Floating Action Button - Mobile only */}
-      <div className="md:hidden fixed bottom-20 right-12 z-30 transform-none">
-        <button
-          onClick={isConnected ? () => setIsMobilePostModalOpen(true) : openConnectModal}
-          className="w-14 h-14 bg-yellow-500 hover:bg-yellow-400 text-black rounded-full shadow-lg hover:shadow-xl transition-all duration-200 flex items-center justify-center"
-        >
-          {isConnected ? (
-            <HiOutlinePlus className="w-6 h-6" />
-          ) : (
-            <BsWallet className="w-6 h-6" />
-          )}
-        </button>
-      </div>
-
-      {/* Mobile Post Modal */}
-      <MobilePostModal 
-        isOpen={isMobilePostModalOpen}
-        onClose={() => setIsMobilePostModalOpen(false)}
-      />
     </MainLayout>
   )
 }

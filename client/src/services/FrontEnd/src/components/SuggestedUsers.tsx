@@ -53,11 +53,11 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
   if (loading) {
     return (
       <div className="py-8">
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-          {[...Array(10)].map((_, i) => (
+        <div className="flex gap-3 overflow-x-auto pb-2">
+          {[...Array(5)].map((_, i) => (
             <div
               key={i}
-              className={`animate-pulse rounded-xl p-4 ${
+              className={`animate-pulse rounded-xl p-4 shrink-0 w-[31%] ${
                 isDark ? 'bg-white/5' : 'bg-gray-100'
               }`}
             >
@@ -80,11 +80,11 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
       <h2 className={`text-lg font-semibold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
         Suggested users to follow
       </h2>
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+      <div className={`flex gap-3 overflow-x-auto pb-2 ${users.length <= 3 ? 'justify-center' : ''}`}>
         {users.map(user => (
           <div
             key={user.tokenId}
-            className={`rounded-xl p-4 transition-colors ${
+            className={`rounded-xl p-4 transition-colors shrink-0 w-[31%] ${
               isDark
                 ? 'bg-white/5 hover:bg-white/10'
                 : 'bg-gray-50 hover:bg-gray-100'

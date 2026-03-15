@@ -2,12 +2,7 @@ import { Tabs, TabItem } from '~/components/Tabs'
 import MainLayout from "~/layouts/MainLayout";
 import PostForm from "~/components/PostForm";
 import Feed, { type FeedRef } from "~/components/Feed";
-import MobilePostModal from "~/components/MobilePostModal";
 import React, { useState, useRef, useEffect } from "react";
-import { useAccount } from "wagmi";
-import { useConnectModal } from "@rainbow-me/rainbowkit";
-import { HiOutlinePlus } from "react-icons/hi";
-import { BsWallet } from 'react-icons/bs';
 import { useTheme } from '~/hooks/useTheme';
 import { useSearchParams } from 'react-router-dom';
 
@@ -43,9 +38,6 @@ export const Main: React.FC = () => {
       setSearchParams(searchParams, { replace: true })
     }
   }, [activeTab])
-  const [isMobilePostModalOpen, setIsMobilePostModalOpen] = useState(false)
-  const { isConnected } = useAccount()
-  const { openConnectModal } = useConnectModal()
   const { isDark } = useTheme()
   const feedRef = useRef<FeedRef>(null)
 
@@ -74,29 +66,6 @@ export const Main: React.FC = () => {
         </div>
       </div>
 
-      {/* Floating Action Button - Mobile only */}
-      <div className="md:hidden fixed bottom-20 right-12 z-30 transform-none">
-        <button
-          onClick={isConnected ? () => setIsMobilePostModalOpen(true) : openConnectModal}
-          className="w-14 h-14 bg-yellow-500 hover:bg-yellow-400 text-black rounded-full shadow-lg hover:shadow-xl transition-all duration-200 flex items-center justify-center"
-        >
-          {isConnected ? (
-            <HiOutlinePlus className="w-6 h-6" />
-          ) : (
-            <BsWallet className="w-6 h-6" />
-          )}
-        </button>
-      </div>
-
-      {/* Mobile Post Modal */}
-      <MobilePostModal
-        isOpen={isMobilePostModalOpen}
-        onClose={() => setIsMobilePostModalOpen(false)}
-        onSuccess={() => {
-          setIsMobilePostModalOpen(false)
-          feedRef.current?.refresh()
-        }}
-      />
     </MainLayout>
   );
 };

@@ -3,9 +3,7 @@ import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { useAccount } from "wagmi"
 import { useConnectModal } from "@rainbow-me/rainbowkit"
-import { HiOutlinePlus, HiOutlineClock, HiOutlineTrash, HiOutlineCheck, HiOutlineXCircle } from "react-icons/hi"
-import { BsWallet } from 'react-icons/bs'
-import MobilePostModal from '~/components/MobilePostModal'
+import { HiOutlineClock, HiOutlineTrash, HiOutlineCheck, HiOutlineXCircle } from "react-icons/hi"
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '~/api/client'
@@ -30,7 +28,6 @@ interface ScheduledCaw {
 
 const ScheduledPage: React.FC = () => {
   const { isDark } = useTheme()
-  const [isMobilePostModalOpen, setIsMobilePostModalOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<'pending' | 'published' | 'failed'>('pending')
   const { isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
@@ -237,26 +234,6 @@ const ScheduledPage: React.FC = () => {
           </div>
         )}
       </div>
-
-      {/* Floating Action Button - Mobile only */}
-      <div className="md:hidden fixed bottom-20 right-12 z-30 transform-none">
-        <button
-          onClick={isConnected ? () => setIsMobilePostModalOpen(true) : openConnectModal}
-          className="w-14 h-14 bg-yellow-500 hover:bg-yellow-400 text-black rounded-full shadow-lg hover:shadow-xl transition-all duration-200 flex items-center justify-center"
-        >
-          {isConnected ? (
-            <HiOutlinePlus className="w-6 h-6" />
-          ) : (
-            <BsWallet className="w-6 h-6" />
-          )}
-        </button>
-      </div>
-
-      {/* Mobile Post Modal */}
-      <MobilePostModal
-        isOpen={isMobilePostModalOpen}
-        onClose={() => setIsMobilePostModalOpen(false)}
-      />
     </MainLayout>
   )
 }

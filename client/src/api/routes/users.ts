@@ -15,11 +15,8 @@ router.get('/top-followed', async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit as string) || 10, 20)
     const currentUserId = Number(req.header('x-user-id')) || undefined
 
-    // Get users ordered by follower count
+    // Get users ordered by follower count, falling back to caw count
     const users = await prisma.user.findMany({
-      where: {
-        followerCount: { gt: 0 }
-      },
       select: {
         tokenId: true,
         username: true,
@@ -28,9 +25,10 @@ router.get('/top-followed', async (req, res) => {
         image: true,
         followerCount: true,
       },
-      orderBy: {
-        followerCount: 'desc'
-      },
+      orderBy: [
+        { followerCount: 'desc' },
+        { cawCount: 'desc' },
+      ],
       take: limit
     })
 
