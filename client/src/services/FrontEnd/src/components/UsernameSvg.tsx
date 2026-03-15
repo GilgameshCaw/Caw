@@ -4,6 +4,9 @@ interface UsernameSvgProps {
   username: string;
 }
 
+const DESCENDER_CHARS = new Set(['j', 'f', 'y', 'g', 'p', 'q']);
+const TALL_ENDING_CHARS = new Set(['d', 'f', 'l']);
+
 const UsernameSvg: React.FC<UsernameSvgProps> = ({ username }) => {
   const length = username.length;
   let fontSize = 22;
@@ -24,9 +27,32 @@ const UsernameSvg: React.FC<UsernameSvgProps> = ({ username }) => {
   else if (length === 2) fontSize = 133;
   else if (length === 1) fontSize = 176;
 
+  // Narrow characters (i,j,f,l,t) get +3px fontSize each (skip if >10 narrow chars)
+  const NARROW_CHARS = new Set(['i', 'j', 'f', 'l', 't']);
+  const narrowCount = [...username].filter(c => NARROW_CHARS.has(c)).length;
+  if (narrowCount <= 10) fontSize += narrowCount * 3;
+
+  // Y position: adjust for descender characters at short lengths
+  const hasDescender = [...username].some(c => DESCENDER_CHARS.has(c));
+  let yPosition = 231;
+  if (hasDescender) {
+    if (length === 1) yPosition = 180;
+    else if (length === 2) yPosition = 200;
+    else if (length === 3) yPosition = 210;
+    else if (length <= 5) yPosition = 220;
+  }
+
+  // X position: adjust for trailing tall characters at short lengths
+  const endsWithTall = TALL_ENDING_CHARS.has(username[username.length - 1]);
   let xPosition = 90;
-  if (length <= 2) xPosition = 88;
-  else if (length <= 4) xPosition = 89;
+  if (endsWithTall) {
+    if (length === 1) xPosition = 75;
+    else if (length === 2) xPosition = 80;
+    else if (length <= 4) xPosition = 89;
+  } else {
+    if (length <= 2) xPosition = 88;
+    else if (length <= 4) xPosition = 89;
+  }
 
   return (
     <svg
@@ -46,20 +72,11 @@ const UsernameSvg: React.FC<UsernameSvgProps> = ({ username }) => {
         >
           <feDropShadow dx="0" dy="1" stdDeviation="2" floodOpacity="0.225" />
         </filter>
-        <linearGradient id="paint0_linear" x1="110.5" y1="140" x2="-30" y2="37.5" gradientUnits="userSpaceOnUse">
+        <linearGradient id="paint0_linear" x1="110.5" y1="140" x2="8" y2="37.5" gradientUnits="userSpaceOnUse">
           <stop stopColor="#000000" />
-          <stop offset="0.25" stopColor="#ECC052" />
+          <stop offset="0.35" stopColor="#ECC052" />
           <stop offset="1" stopColor="#ECC052" />
         </linearGradient>
-        <style>
-          {`
-            text {
-              font-family: Plus Jakarta Sans, DejaVu Sans, sans-serif;
-              font-weight: bold;
-              line-height: 34px;
-            }
-          `}
-        </style>
       </defs>
       <rect width="270" height="270" rx="24" ry="24" fill="url(#paint0_linear)" filter="url(#dropShadow)" />
 
@@ -69,9 +86,11 @@ const UsernameSvg: React.FC<UsernameSvgProps> = ({ username }) => {
 
       <text
         x={`${xPosition}%`}
-        y="231"
+        y={yPosition}
         fontSize={`${fontSize}px`}
-        fill="white"
+        fill="rgb(235, 192, 70)"
+        fontFamily="cursive"
+        fontWeight="bold"
         filter="url(#dropShadow)"
         textAnchor="end"
       >
@@ -82,4 +101,3 @@ const UsernameSvg: React.FC<UsernameSvgProps> = ({ username }) => {
 };
 
 export default UsernameSvg;
-
