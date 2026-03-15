@@ -3,9 +3,14 @@ import { Modals } from "~/components/modals/Modals";
 import Sidebar from "~/components/Sidebar";
 import Trending from "~/components/Trending";
 import SearchBar from "~/components/SearchBar";
+import BugReportModal from "~/components/modals/BugReportModal";
+import MobilePostModal from "~/components/MobilePostModal";
 import { useTheme } from "~/hooks/useTheme";
 import { useState } from "react";
-import { HiOutlineMenu, HiOutlineX } from "react-icons/hi";
+import { useAccount } from "wagmi";
+import { useConnectModal } from "@rainbow-me/rainbowkit";
+import { HiOutlineMenu, HiOutlineX, HiOutlinePlus } from "react-icons/hi";
+import { BsWallet } from "react-icons/bs";
 import cawLogo from '~/assets/images/caw-logo.png';
 
 interface MainLayoutProps {
@@ -15,6 +20,10 @@ interface MainLayoutProps {
 const MainLayout = ({ children }: MainLayoutProps) => {
   const { isDark } = useTheme()
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
+  const [showBugReport, setShowBugReport] = useState(false)
+  const [isMobilePostModalOpen, setIsMobilePostModalOpen] = useState(false)
+  const { isConnected } = useAccount()
+  const { openConnectModal } = useConnectModal()
   
   return (
     <div className={`max-h-screen min-h-screen w-full max-w-[1050px] flex m-auto transition-all duration-300 ${
@@ -97,6 +106,51 @@ const MainLayout = ({ children }: MainLayoutProps) => {
         </div>
       </div>
       <Modals />
+
+      {/* Floating Action Button - Mobile only */}
+      <div className="md:hidden fixed bottom-5 right-5 z-30 transform-none">
+        <button
+          onClick={isConnected ? () => setIsMobilePostModalOpen(true) : openConnectModal}
+          className="w-14 h-14 bg-yellow-500 hover:bg-yellow-400 text-black rounded-full shadow-lg hover:shadow-xl transition-all duration-200 flex items-center justify-center"
+        >
+          {isConnected ? (
+            <HiOutlinePlus className="w-6 h-6" />
+          ) : (
+            <BsWallet className="w-6 h-6" />
+          )}
+        </button>
+      </div>
+      <MobilePostModal
+        isOpen={isMobilePostModalOpen}
+        onClose={() => setIsMobilePostModalOpen(false)}
+      />
+
+      {/* Floating bug report button */}
+      <button
+        onClick={() => setShowBugReport(true)}
+        className={`fixed bottom-5 left-5 md:right-5 md:left-auto z-40 w-9 h-9 rounded-full flex items-center justify-center shadow-lg transition-all cursor-pointer opacity-60 hover:opacity-100 ${
+          isDark
+            ? 'bg-zinc-800 hover:bg-zinc-700 text-white/70'
+            : 'bg-gray-200 hover:bg-gray-300 text-gray-500'
+        }`}
+        title="Report a bug"
+      >
+        <svg className="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
+          {/* Body */}
+          <ellipse cx="12" cy="15" rx="5" ry="6" />
+          {/* Head */}
+          <circle cx="12" cy="7" r="3" />
+          {/* Antennae */}
+          <path d="M10 5L8 2" />
+          <path d="M14 5L16 2" />
+          {/* Legs */}
+          <path d="M7 13H3" />
+          <path d="M7 17H4" />
+          <path d="M17 13H21" />
+          <path d="M17 17H20" />
+        </svg>
+      </button>
+      <BugReportModal isOpen={showBugReport} onClose={() => setShowBugReport(false)} />
     </div>
   );
 };

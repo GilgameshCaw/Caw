@@ -519,3 +519,22 @@ enum ReportStatus {
   ACTIONED
   DISMISSED
 }
+
+model BugReport {
+  id          Int       @id @default(autoincrement())
+  userId      Int?      // Reporter's tokenId (null if not signed in)
+  username    String?
+  stakedAmount String?  // Staked CAW amount as string
+  description String
+  imageUrls   String?   // Pipe-separated image URLs
+  page        String?   // URL/route where the bug was encountered
+  userAgent   String?
+  status      ReportStatus @default(PENDING)
+  resolution  String?
+  reviewedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+}

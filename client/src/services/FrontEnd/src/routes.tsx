@@ -18,6 +18,7 @@ import ScheduledPage from "./pages/Scheduled";
 import HashtagPage from "./pages/HashtagPage";
 import SearchResultsPage from "./pages/SearchResultsPage";
 import FaucetPage from "./pages/FaucetPage";
+import BugReportsAdmin from "./pages/BugReportsAdmin";
 import { Navigate } from "react-router-dom";
 
 
@@ -154,5 +155,9 @@ export default [
   {
     path: "/faucet",
     component: <FaucetPage />,
+  },
+  {
+    path: "/admin/bugs",
+    component: <BugReportsAdmin />,
   },
 ];
