@@ -1,12 +1,13 @@
 // src/components/QuoteModal.tsx
 import React from 'react'
-import { createPortal } from 'react-dom'
 import PostForm from '~/components/PostForm'
 import ContentWithHashtags from '~/components/ContentWithHashtags'
 import { HiX } from 'react-icons/hi'
 import type { CawItem } from '~/types'
+import ModalWrapper from './ModalWrapper'
 
 interface QuoteModalProps {
+  isOpen: boolean
   caw: CawItem
   onClose: () => void
 }
@@ -64,92 +65,89 @@ function renderImages(imageData: string | null | undefined) {
   }
 }
 
-export const QuoteModal: React.FC<QuoteModalProps> = ({ caw, onClose }) => {
-  return createPortal(
-    <>
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 bg-black/70 z-[60]"
-        onClick={onClose}
-      />
+export const QuoteModal: React.FC<QuoteModalProps> = ({ isOpen, caw, onClose }) => {
+  return (
+    <ModalWrapper
+      isOpen={isOpen}
+      onClose={onClose}
+      maxWidth="max-w-lg"
+      zIndex={60}
+      usePortal
+      className="max-h-[90vh] overflow-y-auto shadow-2xl"
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-yellow-500/20 sticky top-0 bg-black z-10">
+        <h3 className="text-lg font-semibold text-white">
+          Quote Post
+        </h3>
+        <button
+          onClick={onClose}
+          className="p-1.5 rounded-full transition-colors text-white/60 hover:text-white hover:bg-white/10"
+        >
+          <HiX className="w-5 h-5" />
+        </button>
+      </div>
 
-      {/* Modal */}
-      <div className="fixed z-[70] top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-xl shadow-2xl border bg-black border-yellow-500/30">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-yellow-500/20 sticky top-0 bg-black z-10">
-          <h3 className="text-lg font-semibold text-white">
-            Quote Post
-          </h3>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-full transition-colors text-white/60 hover:text-white hover:bg-white/10"
-          >
-            <HiX className="w-5 h-5" />
-          </button>
+      {/* Content */}
+      <div className="p-4">
+        {/* Post Form */}
+        <div className="mb-4">
+          <PostForm
+            quote={caw}
+            onSuccess={onClose}
+          />
         </div>
 
-        {/* Content */}
-        <div className="p-4">
-          {/* Post Form */}
-          <div className="mb-4">
-            <PostForm
-              quote={caw}
-              onSuccess={onClose}
+        {/* Quoted Caw Preview */}
+        <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+          {/* User info row */}
+          <div className="flex items-center gap-3 mb-3">
+            {/* Avatar */}
+            <img
+              src={caw.user.avatarUrl || caw.user.image || "/images/logo.jpeg"}
+              alt={`${caw.user.username} avatar`}
+              className="w-10 h-10 rounded-full object-cover"
             />
+
+            {/* Name and username */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-white truncate">
+                  {caw.user.displayName || caw.user.username}
+                </span>
+                <span className="text-white/50 text-sm truncate">
+                  @{caw.user.username}
+                </span>
+                <span className="text-white/30 text-sm">
+                  · {formatTimeAgo(caw.timestamp)}
+                </span>
+              </div>
+            </div>
           </div>
 
-          {/* Quoted Caw Preview */}
-          <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-            {/* User info row */}
-            <div className="flex items-center gap-3 mb-3">
-              {/* Avatar */}
-              <img
-                src={caw.user.avatarUrl || caw.user.image || "/images/logo.jpeg"}
-                alt={`${caw.user.username} avatar`}
-                className="w-10 h-10 rounded-full object-cover"
+          {/* Content */}
+          <div className="text-white/90 text-sm leading-relaxed">
+            <ContentWithHashtags content={caw.content} />
+          </div>
+
+          {/* Images if present */}
+          {caw.hasImage && renderImages(caw.imageData)}
+
+          {/* Video if present */}
+          {caw.hasVideo && caw.videoData && (
+            <div className="mt-3 rounded-lg overflow-hidden">
+              <video
+                src={caw.videoData.split('|||')[0]}
+                className="w-full max-h-48 object-cover"
+                controls={false}
+                muted
+                playsInline
               />
-
-              {/* Name and username */}
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="font-semibold text-white truncate">
-                    {caw.user.displayName || caw.user.username}
-                  </span>
-                  <span className="text-white/50 text-sm truncate">
-                    @{caw.user.username}
-                  </span>
-                  <span className="text-white/30 text-sm">
-                    · {formatTimeAgo(caw.timestamp)}
-                  </span>
-                </div>
-              </div>
             </div>
-
-            {/* Content */}
-            <div className="text-white/90 text-sm leading-relaxed">
-              <ContentWithHashtags content={caw.content} />
-            </div>
-
-            {/* Images if present */}
-            {caw.hasImage && renderImages(caw.imageData)}
-
-            {/* Video if present */}
-            {caw.hasVideo && caw.videoData && (
-              <div className="mt-3 rounded-lg overflow-hidden">
-                <video
-                  src={caw.videoData.split('|||')[0]}
-                  className="w-full max-h-48 object-cover"
-                  controls={false}
-                  muted
-                  playsInline
-                />
-              </div>
-            )}
-          </div>
+          )}
         </div>
       </div>
-    </>,
-    document.body
+    </ModalWrapper>
   )
 }
 

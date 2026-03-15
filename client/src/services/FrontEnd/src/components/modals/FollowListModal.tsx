@@ -7,6 +7,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { apiFetch } from '~/api/client'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { FollowButton } from '~/components/FollowButton'
+import ModalWrapper from './ModalWrapper'
 
 type UserItem = {
   id: number
@@ -113,124 +114,122 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
     navigate(`/users/${username}`)
   }
 
-  if (!isOpen) return null
-
   return (
-    <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50" onClick={closeModal}>
-      <div
-        className={`w-full max-w-lg mx-4 rounded-2xl max-h-[80vh] overflow-hidden transition-all duration-300 ${
-          isDark ? 'bg-black border border-yellow-500/30' : 'bg-white border border-gray-200'
-        }`}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-white/10">
-          <h2 className={`text-lg font-bold transition-colors duration-300 ${
+    <ModalWrapper
+      isOpen={isOpen}
+      onClose={closeModal}
+      maxWidth="max-w-lg"
+      className="max-h-[80vh] overflow-hidden"
+    >
+      {/* Header */}
+      <div className={`flex items-center justify-between p-4 border-b ${
+        isDark ? 'border-white/10' : 'border-gray-200'
+      }`}>
+        <h2 className={`text-lg font-bold transition-colors duration-300 ${
+          isDark ? 'text-white' : 'text-black'
+        }`}>
+          {type === 'following' ? 'Following' : 'Followers'}
+        </h2>
+        <button
+          onClick={closeModal}
+          className={`p-2 rounded-full transition-all duration-300 hover:bg-gray-500/10 ${
             isDark ? 'text-white' : 'text-black'
-          }`}>
-            {type === 'following' ? 'Following' : 'Followers'}
-          </h2>
-          <button
-            onClick={closeModal}
-            className={`p-2 rounded-full transition-all duration-300 hover:bg-gray-500/10 ${
-              isDark ? 'text-white' : 'text-black'
-            }`}
-          >
-            <HiX className="w-5 h-5" />
-          </button>
-        </div>
+          }`}
+        >
+          <HiX className="w-5 h-5" />
+        </button>
+      </div>
 
-        {/* Content */}
-        <div className="overflow-y-auto max-h-[calc(80vh-4rem)]">
-          {loading && users.length === 0 ? (
-            <div className="p-8 text-center">
-              <div className="animate-spin text-2xl">⌛</div>
-            </div>
-          ) : error ? (
-            <div className="p-8 text-center text-red-500">
-              {error}
-            </div>
-          ) : users.length === 0 ? (
-            <div className="p-8 text-center text-gray-500">
-              No {type === 'following' ? 'following' : 'followers'} yet
-            </div>
-          ) : (
-            <div className="divide-y divide-white/10">
-              {users.map((user) => (
-                <div key={user.tokenId} className="p-4 flex items-center justify-between">
-                  <div
-                    className="flex items-center space-x-3 cursor-pointer flex-1"
-                    onClick={() => handleUserClick(user.username)}
-                  >
-                    {/* Avatar */}
-                    <div className={`w-10 h-10 rounded-full overflow-hidden ${
-                      isDark ? 'bg-gray-700' : 'bg-gray-200'
-                    }`}>
-                      <img
-                        src={user.avatarUrl || user.image || "/images/logo.jpeg"}
-                        alt={user.username}
-                        className="w-full h-full rounded-full object-cover"
-                      />
-                    </div>
-
-                    {/* User info */}
-                    <div>
-                      <div className={`font-medium ${
-                        isDark ? 'text-white' : 'text-black'
-                      }`}>
-                        {user.displayName || user.username}
-                      </div>
-                      <div className={`text-sm ${
-                        isDark ? 'text-gray-400' : 'text-gray-600'
-                      }`}>
-                        @{user.username}
-                      </div>
-                      {user.bio && (
-                        <div className={`text-sm mt-1 line-clamp-2 ${
-                          isDark ? 'text-gray-300' : 'text-gray-700'
-                        }`}>
-                          {user.bio}
-                        </div>
-                      )}
-                    </div>
+      {/* Content */}
+      <div className="overflow-y-auto max-h-[calc(80vh-4rem)]">
+        {loading && users.length === 0 ? (
+          <div className="p-8 text-center">
+            <div className="animate-spin text-2xl">⌛</div>
+          </div>
+        ) : error ? (
+          <div className="p-8 text-center text-red-500">
+            {error}
+          </div>
+        ) : users.length === 0 ? (
+          <div className="p-8 text-center text-gray-500">
+            No {type === 'following' ? 'following' : 'followers'} yet
+          </div>
+        ) : (
+          <div className={`divide-y ${isDark ? 'divide-white/10' : 'divide-gray-200'}`}>
+            {users.map((user) => (
+              <div key={user.tokenId} className="p-4 flex items-center justify-between">
+                <div
+                  className="flex items-center space-x-3 cursor-pointer flex-1"
+                  onClick={() => handleUserClick(user.username)}
+                >
+                  {/* Avatar */}
+                  <div className={`w-10 h-10 rounded-full overflow-hidden ${
+                    isDark ? 'bg-gray-700' : 'bg-gray-200'
+                  }`}>
+                    <img
+                      src={user.avatarUrl || user.image || "/images/logo.jpeg"}
+                      alt={user.username}
+                      className="w-full h-full rounded-full object-cover"
+                    />
                   </div>
 
-                  {/* Follow button */}
-                  {activeToken && user.tokenId !== activeToken.tokenId && (
-                    <FollowButton
-                      targetUserId={user.tokenId}
-                      initialIsFollowing={followingStates[user.tokenId] || false}
-                      initialIsPending={user.followPending || false}
-                      onFollowStateChange={(newState) => {
-                        setFollowingStates(prev => ({
-                          ...prev,
-                          [user.tokenId]: newState
-                        }))
-                      }}
-                      size="small"
-                    />
-                  )}
-                </div>
-              ))}
-
-              {/* Load more */}
-              {hasMore && (
-                <div className="p-4 text-center">
-                  <button
-                    onClick={loadMore}
-                    className={`text-sm hover:underline ${
+                  {/* User info */}
+                  <div>
+                    <div className={`font-medium ${
+                      isDark ? 'text-white' : 'text-black'
+                    }`}>
+                      {user.displayName || user.username}
+                    </div>
+                    <div className={`text-sm ${
                       isDark ? 'text-gray-400' : 'text-gray-600'
-                    }`}
-                  >
-                    Load more
-                  </button>
+                    }`}>
+                      @{user.username}
+                    </div>
+                    {user.bio && (
+                      <div className={`text-sm mt-1 line-clamp-2 ${
+                        isDark ? 'text-gray-300' : 'text-gray-700'
+                      }`}>
+                        {user.bio}
+                      </div>
+                    )}
+                  </div>
                 </div>
-              )}
-            </div>
-          )}
-        </div>
+
+                {/* Follow button */}
+                {activeToken && user.tokenId !== activeToken.tokenId && (
+                  <FollowButton
+                    targetUserId={user.tokenId}
+                    initialIsFollowing={followingStates[user.tokenId] || false}
+                    initialIsPending={user.followPending || false}
+                    onFollowStateChange={(newState) => {
+                      setFollowingStates(prev => ({
+                        ...prev,
+                        [user.tokenId]: newState
+                      }))
+                    }}
+                    size="small"
+                  />
+                )}
+              </div>
+            ))}
+
+            {/* Load more */}
+            {hasMore && (
+              <div className="p-4 text-center">
+                <button
+                  onClick={loadMore}
+                  className={`text-sm hover:underline ${
+                    isDark ? 'text-gray-400' : 'text-gray-600'
+                  }`}
+                >
+                  Load more
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
-    </div>
+    </ModalWrapper>
   )
 }
 
