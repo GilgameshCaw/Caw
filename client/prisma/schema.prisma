@@ -22,6 +22,7 @@ model RawEvent {
   Action          Action[]
 
   @@unique([blockNumber, logIndex, transactionHash])
+  @@index([chainId, blockNumber, logIndex])
 }
 
 model User {
@@ -56,6 +57,8 @@ model User {
   onChainImages         OnChainImage[]
   tipsSent              Tip[]          @relation("TipsSent")
   tipsReceived          Tip[]          @relation("TipsReceived")
+
+  @@index([address])
 }
 
 model Caw {
@@ -89,6 +92,7 @@ model Caw {
   @@unique([userId, cawonce])
   @@index([userId, action, createdAt])
   @@index([originalCawId])
+  @@index([originalCawId, action])
   @@index([status, userId])
 }
 
@@ -105,6 +109,7 @@ model Like {
 
   @@unique([userId, cawId])
   @@index([cawId])
+  @@index([cawId, action])
 }
 
 model Reply {
@@ -122,6 +127,7 @@ model Reply {
 
   @@unique([userId, cawId, replyCawId])
   @@index([cawId])
+  @@index([cawId, pending])
   @@index([userId])
 }
 
@@ -213,6 +219,7 @@ model ScheduledCaw {
   @@index([userId])
   @@index([scheduledAt])
   @@index([status])
+  @@index([status, scheduledAt])
   @@index([userId, status, cawonce])
 }
 
@@ -232,6 +239,7 @@ model Notification {
 
   @@index([userId, isRead, createdAt])
   @@index([userId, type])
+  @@index([userId, actorId, type])
   @@index([groupKey])
   @@index([createdAt])
 }
@@ -383,6 +391,7 @@ model OnChainImage {
 
   @@unique([userId, cawonce])
   @@index([userId, status])
+  @@index([userId, postedAt, ignored])
   @@index([status])
   @@index([createdAt])
 }
@@ -402,8 +411,11 @@ model Tip {
   caw         Caw?     @relation(fields: [cawId], references: [id])
 
   @@index([senderId])
+  @@index([senderId, recipientId, cawId])
+  @@index([senderId, pending])
   @@index([recipientId])
   @@index([cawId])
+  @@index([pending])
 }
 
 enum ActionType {
@@ -488,6 +500,7 @@ model Report {
   @@index([status])
   @@index([postId])
   @@index([reporterId])
+  @@index([reporterId, postId])
   @@index([postAuthorId])
   @@index([createdAt])
 }
