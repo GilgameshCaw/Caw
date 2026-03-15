@@ -343,5 +343,32 @@ router.get('/:id', async (req, res) => {
 })
 
 
+/**
+ * POST /api/caws/:id/dismiss
+ * Delete a FAILED caw so it no longer appears in the feed.
+ */
+router.post('/:id/dismiss', async (req, res) => {
+  const cawId = parseInt(req.params.id)
+  if (isNaN(cawId)) return res.status(400).json({ error: 'Invalid caw ID' })
+
+  try {
+    const deleted = await prisma.caw.deleteMany({
+      where: {
+        id: cawId,
+        status: 'FAILED'
+      }
+    })
+
+    if (deleted.count === 0) {
+      return res.status(404).json({ error: 'No failed caw found with that ID' })
+    }
+
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('[API] Failed to dismiss caw:', err)
+    res.status(500).json({ error: 'Failed to dismiss caw' })
+  }
+})
+
 export default router
 

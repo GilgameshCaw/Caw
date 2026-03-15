@@ -124,6 +124,21 @@ router.post('/', async (req, res) => {
         // Note: Hashtags are processed later when the caw is confirmed (in ActionProcessor)
         // This prevents pending/failed caws from affecting trending hashtags
 
+        // Clean up old FAILED caws with the same content (retries)
+        if (textContent) {
+          const deleted = await prisma.caw.deleteMany({
+            where: {
+              userId: data.senderId,
+              content: textContent,
+              status: 'FAILED',
+              id: { not: caw.id }
+            }
+          })
+          if (deleted.count > 0) {
+            console.log(`Cleaned up ${deleted.count} old failed caw(s) replaced by retry`)
+          }
+        }
+
         // Create pending Reply record if this is a reply
         if (originalCawId && caw) {
           try {
