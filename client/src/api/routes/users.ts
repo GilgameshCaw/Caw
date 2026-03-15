@@ -312,6 +312,26 @@ router.get('/:username', async (req, res) => {
       }
     }
 
+    // Check if current user has tipped this profile (profile tips have no cawId)
+    let hasTipped = false
+    let tipPending = false
+    if (currentUserId && currentUserId !== user.tokenId) {
+      const profileTip = await prisma.tip.findFirst({
+        where: {
+          senderId: currentUserId,
+          recipientId: user.tokenId,
+          cawId: null
+        },
+        orderBy: { createdAt: 'desc' },
+        select: { pending: true }
+      })
+
+      if (profileTip) {
+        hasTipped = !profileTip.pending
+        tipPending = profileTip.pending
+      }
+    }
+
     // Format response - use cached counts from User model
     // Ensure counts are never negative
     const response = {
@@ -322,6 +342,8 @@ router.get('/:username', async (req, res) => {
       likeCount,
       isFollowing,
       followPending,
+      hasTipped,
+      tipPending,
     }
 
     console.log(`[users API] ${username}: followerCount=${user.followerCount}, followingCount=${user.followingCount}`)
