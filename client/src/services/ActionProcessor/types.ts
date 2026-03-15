@@ -10,6 +10,8 @@ export interface RawAction {
   receiverCawonce?: number
   cawonce: number
   text: string
+  recipients?: number[]
+  amounts?: (string | bigint)[]
   originalCawId?: number
 }
 

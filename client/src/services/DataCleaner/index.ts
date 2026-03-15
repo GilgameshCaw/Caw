@@ -136,6 +136,176 @@ async function cleanupPendingLikes() {
 }
 
 /**
+ * Clean up stale pending tips
+ * - If a tip has been pending for 5+ minutes, check if the action exists on-chain
+ * - If action exists, mark as not pending
+ * - If action doesn't exist and it's been > 30 minutes, delete the tip
+ */
+async function cleanupPendingTips() {
+  logger.log('Cleaning up stale pending tips...')
+
+  try {
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
+    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000)
+
+    const stalePendingTips = await prisma.tip.findMany({
+      where: {
+        pending: true,
+        createdAt: {
+          lt: fiveMinutesAgo
+        }
+      }
+    })
+
+    logger.log(`Found ${stalePendingTips.length} stale pending tips`)
+
+    for (const pendingTip of stalePendingTips) {
+      try {
+        // Check if an OTHER action exists for this tip (match by senderId and cawonce)
+        const action = await prisma.action.findFirst({
+          where: {
+            senderId: pendingTip.senderId,
+            actionType: 'OTHER',
+            cawonce: pendingTip.cawonce
+          },
+          orderBy: {
+            createdAt: 'desc'
+          }
+        })
+
+        if (action) {
+          // Action exists on-chain, mark tip as confirmed
+          logger.log(` Confirming tip from user ${pendingTip.senderId} to ${pendingTip.recipientId} (cawonce: ${pendingTip.cawonce})`)
+
+          await prisma.tip.update({
+            where: { id: pendingTip.id },
+            data: { pending: false }
+          })
+        } else if (pendingTip.createdAt < thirtyMinutesAgo) {
+          // No action found after 30 minutes, delete the optimistic tip
+          logger.log(` Removing failed tip from user ${pendingTip.senderId} to ${pendingTip.recipientId}`)
+
+          await prisma.tip.delete({
+            where: { id: pendingTip.id }
+          })
+        } else {
+          logger.log(` Tip still pending (${Math.floor((Date.now() - pendingTip.createdAt.getTime()) / 60000)} minutes): user ${pendingTip.senderId} to ${pendingTip.recipientId}`)
+        }
+      } catch (err) {
+        logger.error(` Error processing pending tip ${pendingTip.id}:`, err)
+      }
+    }
+
+    logger.log('Pending tips cleanup completed')
+  } catch (err) {
+    logger.error('Fatal error during tip cleanup:', err)
+  }
+}
+
+/**
+ * Clean up stale pending replies
+ * - If a reply has been pending for 5+ minutes, check if the reply caw was confirmed
+ * - If the reply caw is SUCCESS, mark reply as not pending
+ * - If the reply caw is FAILED or missing after 30 minutes, delete the reply
+ */
+async function cleanupPendingReplies() {
+  logger.log('Cleaning up stale pending replies...')
+
+  try {
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
+    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000)
+
+    const stalePendingReplies = await prisma.reply.findMany({
+      where: {
+        pending: true,
+        createdAt: {
+          lt: fiveMinutesAgo
+        }
+      },
+      include: {
+        replyCaw: true
+      }
+    })
+
+    logger.log(`Found ${stalePendingReplies.length} stale pending replies`)
+
+    for (const pendingReply of stalePendingReplies) {
+      try {
+        if (pendingReply.replyCaw.status === 'SUCCESS') {
+          // The reply caw was confirmed on-chain, mark reply as not pending
+          logger.log(` Confirming reply ${pendingReply.id} (replyCaw ${pendingReply.replyCawId} is SUCCESS)`)
+
+          await prisma.reply.update({
+            where: { id: pendingReply.id },
+            data: { pending: false }
+          })
+        } else if (pendingReply.replyCaw.status === 'FAILED') {
+          // The reply caw failed, delete the reply record
+          logger.log(` Removing failed reply ${pendingReply.id} (replyCaw ${pendingReply.replyCawId} is FAILED)`)
+
+          await prisma.reply.delete({
+            where: { id: pendingReply.id }
+          })
+
+          // Recalculate comment count on the parent caw
+          const actualReplyCount = await prisma.reply.count({
+            where: {
+              cawId: pendingReply.cawId,
+              pending: false
+            }
+          })
+
+          await prisma.caw.update({
+            where: { id: pendingReply.cawId },
+            data: { commentCount: actualReplyCount }
+          })
+
+          logger.log(` Updated caw ${pendingReply.cawId} comment count to ${actualReplyCount}`)
+        } else if (pendingReply.createdAt < thirtyMinutesAgo) {
+          // Reply caw is still PENDING after 30 minutes — something is stuck
+          logger.log(` Removing stale reply ${pendingReply.id} (pending > 30 min, replyCaw status: ${pendingReply.replyCaw.status})`)
+
+          // Mark the reply caw as FAILED too
+          await prisma.caw.updateMany({
+            where: {
+              id: pendingReply.replyCawId,
+              status: 'PENDING'
+            },
+            data: { status: 'FAILED' }
+          })
+
+          await prisma.reply.delete({
+            where: { id: pendingReply.id }
+          })
+
+          const actualReplyCount = await prisma.reply.count({
+            where: {
+              cawId: pendingReply.cawId,
+              pending: false
+            }
+          })
+
+          await prisma.caw.update({
+            where: { id: pendingReply.cawId },
+            data: { commentCount: actualReplyCount }
+          })
+
+          logger.log(` Updated caw ${pendingReply.cawId} comment count to ${actualReplyCount}`)
+        } else {
+          logger.log(` Reply still pending (${Math.floor((Date.now() - pendingReply.createdAt.getTime()) / 60000)} minutes): reply ${pendingReply.id} on caw ${pendingReply.cawId}`)
+        }
+      } catch (err) {
+        logger.error(` Error processing pending reply ${pendingReply.id}:`, err)
+      }
+    }
+
+    logger.log('Pending replies cleanup completed')
+  } catch (err) {
+    logger.error('Fatal error during reply cleanup:', err)
+  }
+}
+
+/**
  * Clean up failed txqueue records and update associated caws
  * - Find txqueue records that have been failed for 5+ minutes
  * - For CAW actions, mark the associated caw as FAILED
@@ -223,7 +393,18 @@ async function cleanupFailedTxQueue() {
 
             logger.log(` Updated caw ${targetCaw.id} like count to ${actualLikeCount}`)
           }
-        } else if (data.actionType === 'other' && data.text && data.text.startsWith('profile-update:')) {
+        } else if ((data.actionType === 7 || data.actionType === 'other') && data.text?.startsWith('tip:')) {
+          // Remove the pending tip
+          logger.log(` Removing failed pending tip for user ${data.senderId}`)
+
+          await prisma.tip.deleteMany({
+            where: {
+              senderId: data.senderId,
+              cawonce: data.cawonce,
+              pending: true
+            }
+          })
+        } else if (data.actionType === 'other' && data.text && (data.text.startsWith('profile-update:') || data.text.startsWith('p:'))) {
           // Clear the pending profile update flag
           logger.log(` Clearing pending profile update for user ${data.senderId}`)
 
@@ -265,6 +446,12 @@ async function runDataCleanup() {
 
   // Clean up pending likes
   await cleanupPendingLikes()
+
+  // Clean up pending tips
+  await cleanupPendingTips()
+
+  // Clean up pending replies
+  await cleanupPendingReplies()
 
   // Clean up failed txqueue records and update associated caws
   await cleanupFailedTxQueue()

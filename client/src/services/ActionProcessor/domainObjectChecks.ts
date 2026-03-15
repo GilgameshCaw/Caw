@@ -24,6 +24,9 @@ export async function checkDomainObjectExists(
     case 'FOLLOW':
       return await checkFollowExists(tx, action, rawAction)
 
+    case 'OTHER':
+      return await checkOtherExists(tx, action, rawAction)
+
     default:
       // For unknown action types, assume domain object doesn't exist
       return false
@@ -99,4 +102,30 @@ async function checkFollowExists(
     }
   })
   return !!existingFollow
+}
+
+/**
+ * Check if an OTHER action's domain objects already exist
+ * For tips: check if a confirmed tip exists for this sender+cawonce
+ */
+async function checkOtherExists(
+  tx: PrismaTransactionClient,
+  action: ProcessedAction,
+  rawAction: RawAction
+): Promise<boolean> {
+  // Only check for tip actions
+  if (!rawAction.text?.startsWith('tip:')) {
+    // For non-tip OTHER actions (profile updates etc), always reprocess
+    return false
+  }
+
+  const senderId = await findOrCreateUser(action.senderId)
+  const existingTip = await tx.tip.findFirst({
+    where: {
+      senderId,
+      cawonce: action.cawonce
+    }
+  })
+  // Only skip if tip exists AND is confirmed (not pending)
+  return existingTip ? !existingTip.pending : false
 }

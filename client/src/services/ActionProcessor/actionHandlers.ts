@@ -947,8 +947,8 @@ async function handleTipAction(
     amounts: rawAction.amounts
   })
 
-  const recipientTokenId = rawAction.recipients?.[0]
-  const tipAmount = rawAction.amounts?.[0]
+  const recipientTokenId = Number(rawAction.recipients?.[0])
+  const tipAmount = Number(rawAction.amounts?.[0])
 
   if (!recipientTokenId || !tipAmount) {
     console.error('[handleTipAction] Missing recipient or amount')
