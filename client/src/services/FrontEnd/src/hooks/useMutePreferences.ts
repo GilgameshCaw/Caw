@@ -1,5 +1,6 @@
 // Hook to manage mute preferences from localStorage
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 
 export interface MutePreferences {
   mutedThreads: string[]       // Post IDs
@@ -160,24 +161,35 @@ function saveToStorage<T>(key: string, value: T): void {
 }
 
 export function useMutePreferences() {
+  // Blocked accounts come from the Zustand store (shared with Profile block button)
+  const blockedUsers = useBlockedUsersStore(s => s.blockedUsers)
+  const blockUser = useBlockedUsersStore(s => s.blockUser)
+  const unblockUser = useBlockedUsersStore(s => s.unblockUser)
+  const blockedUserIds = useMemo(() => blockedUsers.map(u => u.tokenId), [blockedUsers])
+
   const [preferences, setPreferences] = useState<MutePreferences>(() => ({
     mutedThreads: loadFromStorage(STORAGE_KEYS.mutedThreads, []),
     mutedWords: loadFromStorage(STORAGE_KEYS.mutedWords, []),
     hiddenPosts: loadFromStorage(STORAGE_KEYS.hiddenPosts, []),
     mutedAccounts: loadFromStorage(STORAGE_KEYS.mutedAccounts, []),
-    blockedAccounts: loadFromStorage(STORAGE_KEYS.blockedAccounts, []),
+    blockedAccounts: blockedUserIds,
   }))
+
+  // Sync blockedAccounts from Zustand store
+  useEffect(() => {
+    setPreferences(prev => ({ ...prev, blockedAccounts: blockedUserIds }))
+  }, [blockedUserIds])
 
   // Listen for storage events (from other tabs) and custom events (from same tab)
   useEffect(() => {
     const reloadPreferences = () => {
-      setPreferences({
+      setPreferences(prev => ({
         mutedThreads: loadFromStorage(STORAGE_KEYS.mutedThreads, []),
         mutedWords: loadFromStorage(STORAGE_KEYS.mutedWords, []),
         hiddenPosts: loadFromStorage(STORAGE_KEYS.hiddenPosts, []),
         mutedAccounts: loadFromStorage(STORAGE_KEYS.mutedAccounts, []),
-        blockedAccounts: loadFromStorage(STORAGE_KEYS.blockedAccounts, []),
-      })
+        blockedAccounts: prev.blockedAccounts, // Keep from Zustand store
+      }))
     }
 
     const handleStorageChange = (e: StorageEvent) => {
@@ -201,13 +213,13 @@ export function useMutePreferences() {
   }, [])
 
   const refresh = useCallback(() => {
-    setPreferences({
+    setPreferences(prev => ({
       mutedThreads: loadFromStorage(STORAGE_KEYS.mutedThreads, []),
       mutedWords: loadFromStorage(STORAGE_KEYS.mutedWords, []),
       hiddenPosts: loadFromStorage(STORAGE_KEYS.hiddenPosts, []),
       mutedAccounts: loadFromStorage(STORAGE_KEYS.mutedAccounts, []),
-      blockedAccounts: loadFromStorage(STORAGE_KEYS.blockedAccounts, []),
-    })
+      blockedAccounts: prev.blockedAccounts, // Keep from Zustand store
+    }))
   }, [])
 
   const addMutedWord = useCallback((word: string) => {
@@ -277,32 +289,28 @@ export function useMutePreferences() {
     })
   }, [])
 
-  // Blocking is browser-only (localStorage) - no server sync needed
+  // Blocking uses the shared Zustand store (useBlockedUsersStore)
   const addBlockedAccount = useCallback((blockedTokenId: number, _currentUserTokenId?: number) => {
-    setPreferences(prev => {
-      const updated = [...new Set([...prev.blockedAccounts, blockedTokenId])]
-      saveToStorage(STORAGE_KEYS.blockedAccounts, updated)
-      return { ...prev, blockedAccounts: updated }
-    })
-  }, [])
+    blockUser(blockedTokenId, `user_${blockedTokenId}`)
+  }, [blockUser])
 
   const removeBlockedAccount = useCallback((blockedTokenId: number, _currentUserTokenId?: number) => {
-    setPreferences(prev => {
-      const updated = prev.blockedAccounts.filter(id => id !== blockedTokenId)
-      saveToStorage(STORAGE_KEYS.blockedAccounts, updated)
-      return { ...prev, blockedAccounts: updated }
-    })
-  }, [])
+    unblockUser(blockedTokenId)
+  }, [unblockUser])
 
   const clearAllMutes = useCallback(() => {
-    Object.values(STORAGE_KEYS).forEach(key => localStorage.removeItem(key))
-    setPreferences({
+    // Clear localStorage-based preferences (not blockedAccounts — that's in Zustand)
+    localStorage.removeItem(STORAGE_KEYS.mutedThreads)
+    localStorage.removeItem(STORAGE_KEYS.mutedWords)
+    localStorage.removeItem(STORAGE_KEYS.hiddenPosts)
+    localStorage.removeItem(STORAGE_KEYS.mutedAccounts)
+    setPreferences(prev => ({
       mutedThreads: [],
       mutedWords: [],
       hiddenPosts: [],
       mutedAccounts: [],
-      blockedAccounts: [],
-    })
+      blockedAccounts: prev.blockedAccounts,
+    }))
   }, [])
 
   return {

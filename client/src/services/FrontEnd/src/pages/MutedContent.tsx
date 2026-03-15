@@ -208,7 +208,7 @@ const MutedContentPage: React.FC = () => {
 
   const totalMutes =
     preferences.mutedWords.length +
-    mutedThreads.length +
+    preferences.mutedThreads.length +
     preferences.hiddenPosts.length +
     preferences.mutedAccounts.length +
     preferences.blockedAccounts.length
@@ -614,7 +614,7 @@ const MutedContentPage: React.FC = () => {
           </div>
           {preferences.blockedAccounts.length === 0 ? (
             <p className={`text-sm py-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-              No blocked accounts. Blocked accounts can't see your profile or interact with you.
+              No blocked accounts. Posts and profiles from blocked accounts will be hidden from your view.
             </p>
           ) : (
             <div className="space-y-2">
