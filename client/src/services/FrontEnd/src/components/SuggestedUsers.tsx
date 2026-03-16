@@ -4,6 +4,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { apiFetch } from '~/api/client'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import { FollowButton } from './FollowButton'
+import cawLogo from '~/assets/images/caw-logo.png'
 
 interface SuggestedUser {
   tokenId: number
@@ -71,7 +72,8 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
     )
   }
 
-  if (users.length === 0) {
+  // Only show if at least 3 suggested users are available
+  if (users.length < 3) {
     return null
   }
 
@@ -92,7 +94,7 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
           >
             <Link to={`/users/${user.username}`} className="block text-center">
               {/* Avatar */}
-              <div className="w-16 h-16 rounded-full mx-auto mb-3 overflow-hidden bg-gray-700">
+              <div className="w-16 h-16 rounded-full mx-auto mb-3 overflow-hidden">
                 {(user.avatarUrl || user.image) ? (
                   <img
                     src={user.avatarUrl || user.image || ''}
@@ -100,11 +102,11 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
                     className="w-full h-full object-cover"
                   />
                 ) : (
-                  <div className={`w-full h-full flex items-center justify-center text-2xl font-bold ${
-                    isDark ? 'bg-yellow-500/20 text-yellow-500' : 'bg-yellow-100 text-yellow-700'
-                  }`}>
-                    {user.username.charAt(0).toUpperCase()}
-                  </div>
+                  <img
+                    src={cawLogo}
+                    alt={user.username}
+                    className="w-full h-full object-contain p-2"
+                  />
                 )}
               </div>
 

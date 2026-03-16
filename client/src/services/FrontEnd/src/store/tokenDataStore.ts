@@ -26,6 +26,8 @@ interface TokenDataStore {
   setActiveTokenIdForAddress: (addr: Address, tokenId: number) => void;
 
   setCawonce:   (tokenId: number, cawonce: number) => void;
+  avatarsByTokenId: Record<number, string>; // tokenId -> avatarUrl
+  setAvatar: (tokenId: number, avatarUrl: string | null) => void;
   refetchTokenData: (() => void) | null;
   setRefetchTokenData: (fn: () => void) => void;
 }
@@ -74,6 +76,7 @@ export const useTokenDataStore = create<TokenDataStore>()(
       activeTokenId: undefined,
       activeTokenIdByAddress: {},
       lastCawonceSyncAt: 0,
+      avatarsByTokenId: {},
       refetchTokenData: null,
       setRefetchTokenData: (fn) => set({ refetchTokenData: fn }),
       allTokens: () => {
@@ -156,6 +159,14 @@ export const useTokenDataStore = create<TokenDataStore>()(
               )
             ])
           )
+        })),
+
+      setAvatar: (tokenId, avatarUrl) =>
+        set(state => ({
+          avatarsByTokenId: {
+            ...state.avatarsByTokenId,
+            [tokenId]: avatarUrl || ''  // empty string = fetched but no avatar
+          }
         })),
 
       bumpCawonce: tokenId =>
@@ -244,7 +255,8 @@ export const useTokenDataStore = create<TokenDataStore>()(
         activeTokenId:   state.activeTokenId,
         activeTokenIdByAddress: state.activeTokenIdByAddress,
         lastAddress:     state.lastAddress,
-        hasHydrated:     state.hasHydrated
+        hasHydrated:     state.hasHydrated,
+        avatarsByTokenId: state.avatarsByTokenId
       }) as TokenDataStore
     }
   )

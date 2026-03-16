@@ -9,6 +9,8 @@ import { TokenData } from "~/types";
 import { useAccount } from "wagmi";
 import { Address } from "viem";
 import { useTheme } from "~/hooks/useTheme";
+import { apiFetch } from "~/api/client";
+import cawLogo from '~/assets/images/caw-logo.png';
 
 const ProfileChooser: React.FC = () => {
   const { isConnected, address } = useAccount();
@@ -18,6 +20,20 @@ const ProfileChooser: React.FC = () => {
   const tokensByAddress = useTokenDataStore(s => s.tokensByAddress);
   const removeAddress = useTokenDataStore(s => s.removeAddress);
   const { isDark } = useTheme()
+  const avatars = useTokenDataStore(s => s.avatarsByTokenId)
+  const setAvatar = useTokenDataStore(s => s.setAvatar)
+
+  // Fetch avatar for the active token on mount and when it changes
+  useEffect(() => {
+    if (!activeToken) return
+    const fetchAvatar = async () => {
+      try {
+        const data = await apiFetch(`/api/users/${activeToken.username}`)
+        setAvatar(activeToken.tokenId, data.avatarUrl || null)
+      } catch {}
+    }
+    fetchAvatar()
+  }, [activeToken?.tokenId])
 
   const setLastAddress = useTokenDataStore(s => s.setLastAddress)
   const setActiveTokenId = useTokenDataStore(state => state.setActiveTokenId);;
@@ -74,7 +90,19 @@ const ProfileChooser: React.FC = () => {
   }
 
   // --- handlers ---
-  const toggleDropdown = () => setDropdownOpen(open => !open);
+  const toggleDropdown = () => {
+    const willOpen = !isDropdownOpen
+    setDropdownOpen(willOpen)
+    // Fetch avatars for all tokens when opening dropdown
+    if (willOpen) {
+      const allTokens = Object.values(tokensByAddress).flat()
+      for (const token of allTokens) {
+        apiFetch(`/api/users/${token.username}`)
+          .then(data => setAvatar(token.tokenId, data.avatarUrl || null))
+          .catch(() => {})
+      }
+    }
+  };
 
   const handleRemoveAddress = (address: Address) => {
     removeAddress(address);
@@ -83,6 +111,7 @@ const ProfileChooser: React.FC = () => {
   const handleSelectProfile = (token: TokenData) => {
     setActiveTokenId(token.tokenId)
     setDropdownOpen(false);
+    // useEffect will fetch avatar when activeToken.tokenId changes
   };
 
   const notCurrentAddress = address?.toLowerCase() != activeToken?.address?.toLowerCase();
@@ -115,7 +144,7 @@ const ProfileChooser: React.FC = () => {
         className="flex items-center p-1 cursor-pointer"
       >
         <div className="rounded-full overflow-hidden w-[50px] m-3">
-          <img src="/images/logo.jpeg" />
+          <img src={avatars[selectedToken.tokenId] || cawLogo} className="w-full h-full object-cover" />
         </div>
         <div className="text-left">
           <div className="m-5">
@@ -140,7 +169,7 @@ const ProfileChooser: React.FC = () => {
 
       {isDropdownOpen && (
         <ul
-          className={`absolute bottom-0 mt-2 shadow-lg rounded-md overflow-hidden z-50 transition-all duration-300 ${
+          className={`absolute bottom-0 mt-2 shadow-lg rounded-md overflow-hidden z-[100] transition-all duration-300 ${
             isDark ? 'bg-black border border-white/20' : 'bg-white border border-gray-200'
           }`}
           style={{
@@ -185,7 +214,7 @@ const ProfileChooser: React.FC = () => {
                       }`}
                     >
                       <div className="rounded-full overflow-hidden w-8 h-8 mr-3">
-                        <img src="/images/logo.jpeg" alt={token.username} />
+                        <img src={avatars[token.tokenId] || cawLogo} alt={token.username} className="w-full h-full object-cover" />
                       </div>
                       <div>
                         <div className="font-bold">{token.username}</div>
