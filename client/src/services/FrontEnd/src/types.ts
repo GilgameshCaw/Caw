@@ -51,6 +51,7 @@ export type CawItem = {
   recawPending?: boolean // True when recaw is pending on-chain confirmation
   replyPending?: boolean // True when reply is pending on-chain confirmation
   status?: 'SUCCESS' | 'PENDING' | 'FAILED' // Transaction status of the caw
+  reason?: string | null // Failure reason if status is FAILED
   isBookmarked?: boolean // True when post is bookmarked by current user
   commentCount: number
   recawCount: number

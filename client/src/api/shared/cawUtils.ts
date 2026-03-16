@@ -21,6 +21,7 @@ export interface CawRaw {
   imageData?: string
   hasImage?: boolean
   status?: 'SUCCESS' | 'PENDING' | 'FAILED'
+  reason?: string | null
 }
 
 export interface ShapedCaw {
@@ -48,6 +49,7 @@ export interface ShapedCaw {
   imageData?: string
   hasImage?: boolean
   status?: 'SUCCESS' | 'PENDING' | 'FAILED'
+  reason?: string | null
 }
 
 export function shapeCaw(raw: CawRaw): ShapedCaw {
@@ -91,6 +93,7 @@ export function shapeCaw(raw: CawRaw): ShapedCaw {
     imageData: raw.imageData,
     hasImage: raw.hasImage,
     status: raw.status || 'SUCCESS',
+    reason: raw.reason,
   }
 }
 
