@@ -60,7 +60,7 @@ export const FollowButton: React.FC<FollowButtonProps> = ({
   }
 
   return (
-    <div className="flex flex-col">
+    <span className="relative group inline-block">
       <button
         onClick={handleFollowClick}
         disabled={isPending || wrongWallet}
@@ -79,8 +79,11 @@ export const FollowButton: React.FC<FollowButtonProps> = ({
         {displayText}
       </button>
       {wrongWallet && (
-        <p className="mt-1 text-xs text-yellow-500">Please switch to the correct wallet</p>
+        <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 z-50 bg-white text-black">
+          Please switch to the correct wallet
+          <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-white"></span>
+        </span>
       )}
-    </div>
+    </span>
   )
 }

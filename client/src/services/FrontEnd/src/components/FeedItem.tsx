@@ -692,8 +692,14 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     )}
                     {item.status === 'FAILED' && (
                       <>
-                        <span className="px-2 py-0.5 text-xs bg-red-500/20 text-red-600 dark:text-red-400 rounded-full">
-                          Failed
+                        <span className="relative group">
+                          <span className="px-2 py-0.5 text-xs bg-red-500/20 text-red-600 dark:text-red-400 rounded-full cursor-help">
+                            Failed
+                          </span>
+                          <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 z-50 bg-white text-black dark:bg-white dark:text-black">
+                            {item.reason || 'Transaction failed'}
+                            <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-white"></span>
+                          </span>
                         </span>
                       <button
                         onClick={handleRetry}
