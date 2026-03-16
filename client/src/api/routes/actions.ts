@@ -1,6 +1,9 @@
 import { Router } from 'express'
+import { ethers } from 'ethers'
 import { prisma } from '../../prismaClient'
+import { CawStatus } from '@prisma/client'
 import { findOrCreateUser } from '../../services/UserService'
+import { getSession, addAuthorization, createSession } from '../sessionStore'
 
 const router = Router()
 
@@ -31,6 +34,59 @@ router.post('/', async (req, res) => {
       })
     } else {
       data.amounts = []
+    }
+
+    // --- Passive auth accumulation ---
+    // Creates or updates a session when we can verify the signer
+    let authResult: { sessionToken: string; authorizedTokenIds: number[]; authorizedAddresses: string[]; expiresAt: number } | null = null
+    let sessionToken = req.headers['x-session-token'] as string | undefined
+    if (signature && data.senderId !== undefined) {
+      try {
+        const sender = await prisma.user.findUnique({ where: { tokenId: data.senderId } })
+        if (sender?.address) {
+          // Check if address is already authorized in existing session
+          let session = sessionToken ? await getSession(sessionToken) : null
+          const alreadyAuthorized = session?.authorizedAddresses.includes(sender.address.toLowerCase())
+
+          if (!alreadyAuthorized) {
+            // Verify EIP-712 signature to recover signer
+            const recoveredAddress = ethers.verifyTypedData(
+              domain,
+              { ActionData: types.ActionData },
+              data,
+              signature
+            ).toLowerCase()
+
+            if (recoveredAddress === sender.address.toLowerCase()) {
+              // Signer matches — authorize all tokenIds for this address
+              const userTokens = await prisma.user.findMany({
+                where: { address: recoveredAddress },
+                select: { tokenId: true }
+              })
+              const tokenIds = userTokens.map(u => u.tokenId)
+
+              if (!session) {
+                // No session exists — create one
+                const created = await createSession()
+                sessionToken = created.token
+                session = created.session
+              }
+
+              const updated = await addAuthorization(sessionToken!, recoveredAddress, tokenIds)
+              if (updated) {
+                authResult = {
+                  sessionToken: sessionToken!,
+                  authorizedTokenIds: updated.authorizedTokenIds,
+                  authorizedAddresses: updated.authorizedAddresses,
+                  expiresAt: updated.expiresAt
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[Actions] Passive auth failed (non-fatal):', err)
+      }
     }
 
     // Create optimistic pending state for profile updates
@@ -139,8 +195,8 @@ router.post('/', async (req, res) => {
           }
         }
 
-        // Create pending Reply record if this is a reply
-        if (originalCawId && caw) {
+        // Create pending Reply record if this is a reply (not a quote)
+        if (originalCawId && caw && !data.isQuote) {
           try {
             await prisma.reply.upsert({
               where: {
@@ -394,6 +450,34 @@ router.post('/', async (req, res) => {
     })
     console.log(`Created TxQueue entry ${txQueueEntry.id} for action type ${data.actionType}, senderId ${data.senderId}, cawonce ${data.cawonce}`)
 
+    // Create pending OnChainImage if this is an image upload action
+    if ((data.actionType === 7 || data.actionType === 'other') && data.text?.startsWith('image64:')) {
+      try {
+        const base64Data = data.text.replace('image64:', '')
+        const imageRef = `img:${data.senderId}:${data.cawonce}`
+        const cawCost = data.amounts?.[0] ? Number(data.amounts[0]) : 0
+
+        await prisma.onChainImage.upsert({
+          where: { imageRef },
+          update: {
+            txQueueId: txQueueEntry.id
+          },
+          create: {
+            userId: data.senderId,
+            txQueueId: txQueueEntry.id,
+            imageRef,
+            cawonce: data.cawonce,
+            base64Data,
+            cawCost,
+            status: CawStatus.PENDING
+          }
+        })
+        console.log(`Created pending OnChainImage: imageRef=${imageRef}, txQueueId=${txQueueEntry.id}, cawCost=${cawCost}`)
+      } catch (imgErr) {
+        console.error('Failed to create pending OnChainImage:', imgErr)
+      }
+    }
+
     // Verify pending caw was created if this is a CAW action
     if (data.actionType === 0 || data.actionType === 'caw') {
       const pendingCaw = await prisma.caw.findUnique({
@@ -412,7 +496,11 @@ router.post('/', async (req, res) => {
       }
     }
 
-    res.status(201).json({ status: 'queued', txQueueId: txQueueEntry.id })
+    res.status(201).json({
+      status: 'queued',
+      txQueueId: txQueueEntry.id,
+      ...(authResult ? { auth: authResult } : {})
+    })
   } catch (err: any) {
     console.error('POST /api/actions error', err)
     res.status(500).json({ error: 'Internal error' })

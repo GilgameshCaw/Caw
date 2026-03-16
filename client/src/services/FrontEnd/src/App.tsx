@@ -7,6 +7,7 @@ import { useAccount } from "wagmi"
 import routes from "./routes";
 import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
 import { useInsufficientStakeStore } from '~/store/insufficientStakeStore'
+import VerifyWalletModal from '~/components/modals/VerifyWalletModal'
 
 function App() {
   useCawonceSync();
@@ -30,6 +31,7 @@ function App() {
         requiredAmount={stakeModal.requiredAmount}
         actionType={stakeModal.actionType}
       />
+      <VerifyWalletModal />
     </BrowserRouter>
   );
 }

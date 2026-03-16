@@ -81,8 +81,10 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
         images.forEach(img => formData.append('media', img))
         formData.append('tokenId', String(activeToken?.tokenId || 0))
 
+        const { getAuthHeaders } = await import('~/api/client')
         const uploadRes = await fetch('/api/upload', {
           method: 'POST',
+          headers: getAuthHeaders(),
           body: formData
         })
         if (!uploadRes.ok) throw new Error('Image upload failed')

@@ -1,36 +1,8 @@
-import { Router, Request, Response, NextFunction } from 'express'
-import { randomBytes } from 'crypto'
+import { Router } from 'express'
 import { prisma } from '../../prismaClient'
+import { requireAdmin, loginAdmin } from '../middleware/auth'
 
 const router = Router()
-
-const ADMIN_PASSWORD = process.env.BUG_REPORT_ADMIN_PASSWORD || 'caw-admin-2026'
-
-// In-memory token store (cleared on server restart, which is fine for admin sessions)
-const validTokens = new Map<string, number>() // token -> expiry timestamp
-const TOKEN_TTL = 24 * 60 * 60 * 1000 // 24 hours
-
-function generateToken(): string {
-  return randomBytes(32).toString('hex')
-}
-
-function requireAdmin(req: Request, res: Response, next: NextFunction): void {
-  const authHeader = req.headers.authorization
-  if (!authHeader?.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'Unauthorized' })
-    return
-  }
-
-  const token = authHeader.slice(7)
-  const expiry = validTokens.get(token)
-  if (!expiry || Date.now() > expiry) {
-    validTokens.delete(token)
-    res.status(401).json({ error: 'Unauthorized' })
-    return
-  }
-
-  next()
-}
 
 /**
  * POST /api/bug-reports/login
@@ -38,13 +10,11 @@ function requireAdmin(req: Request, res: Response, next: NextFunction): void {
  */
 router.post('/login', (req, res): void => {
   const { password } = req.body
-  if (password !== ADMIN_PASSWORD) {
+  const token = loginAdmin(password)
+  if (!token) {
     res.status(401).json({ error: 'Invalid password' })
     return
   }
-
-  const token = generateToken()
-  validTokens.set(token, Date.now() + TOKEN_TTL)
 
   res.json({ token })
 })

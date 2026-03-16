@@ -45,6 +45,14 @@ export class NotificationService {
   }
 
   /**
+   * Check if a specific account is muted by the user (stub - always returns false)
+   * Muting is handled client-side via localStorage for privacy reasons.
+   */
+  static async isAccountMuted(_userId: number, _targetUserId: number): Promise<boolean> {
+    return false
+  }
+
+  /**
    * Extract @mentions from a caw content
    */
   static extractMentions(content: string): string[] {
@@ -219,14 +227,26 @@ export class NotificationService {
       return // Thread is muted, don't send notification
     }
 
-    await prisma.notification.create({
-      data: {
+    // Check if notification already exists to avoid duplicates
+    const existing = await prisma.notification.findFirst({
+      where: {
         userId: parentCaw.userId,
         actorId: replierId,
         type: NotificationType.REPLY,
         cawId: replyCawId
       }
     })
+
+    if (!existing) {
+      await prisma.notification.create({
+        data: {
+          userId: parentCaw.userId,
+          actorId: replierId,
+          type: NotificationType.REPLY,
+          cawId: replyCawId
+        }
+      })
+    }
   }
 
   /**
@@ -251,15 +271,27 @@ export class NotificationService {
       return // Thread is muted, don't send notification
     }
 
-    await prisma.notification.create({
-      data: {
+    // Check if notification already exists to avoid duplicates
+    const existing = await prisma.notification.findFirst({
+      where: {
         userId: originalCaw.userId,
         actorId: reposterId,
         type: NotificationType.REPOST,
-        cawId: originalCawId,
-        groupKey: `repost_caw_${originalCawId}`
+        cawId: originalCawId
       }
     })
+
+    if (!existing) {
+      await prisma.notification.create({
+        data: {
+          userId: originalCaw.userId,
+          actorId: reposterId,
+          type: NotificationType.REPOST,
+          cawId: originalCawId,
+          groupKey: `repost_caw_${originalCawId}`
+        }
+      })
+    }
   }
 
   /**
@@ -284,14 +316,26 @@ export class NotificationService {
       return // Thread is muted, don't send notification
     }
 
-    await prisma.notification.create({
-      data: {
+    // Check if notification already exists to avoid duplicates
+    const existing = await prisma.notification.findFirst({
+      where: {
         userId: originalCaw.userId,
         actorId: quoterId,
         type: NotificationType.QUOTE,
         cawId: quoteCawId
       }
     })
+
+    if (!existing) {
+      await prisma.notification.create({
+        data: {
+          userId: originalCaw.userId,
+          actorId: quoterId,
+          type: NotificationType.QUOTE,
+          cawId: quoteCawId
+        }
+      })
+    }
   }
 
   /**
@@ -306,15 +350,27 @@ export class NotificationService {
       return
     }
 
-    await prisma.notification.create({
-      data: {
+    // Check if notification already exists to avoid duplicates
+    const existing = await prisma.notification.findFirst({
+      where: {
         userId: recipientId,
         actorId: tipperId,
         type: NotificationType.TIP,
-        cawId: cawId || undefined,
-        groupKey: cawId ? `tip_caw_${cawId}` : undefined
+        cawId: cawId || undefined
       }
     })
+
+    if (!existing) {
+      await prisma.notification.create({
+        data: {
+          userId: recipientId,
+          actorId: tipperId,
+          type: NotificationType.TIP,
+          cawId: cawId || undefined,
+          groupKey: cawId ? `tip_caw_${cawId}` : undefined
+        }
+      })
+    }
   }
 
   /**
@@ -346,7 +402,8 @@ export class NotificationService {
     return await prisma.notification.count({
       where: {
         userId,
-        isRead: false
+        isRead: false,
+        hidden: false
       }
     })
   }

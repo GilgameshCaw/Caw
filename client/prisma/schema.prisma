@@ -231,6 +231,7 @@ model Notification {
   cawId     Int?
   groupKey  String?
   isRead    Boolean          @default(false)
+  hidden    Boolean          @default(false)
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt
   actor     User             @relation("NotificationActor", fields: [actorId], references: [tokenId], onDelete: Cascade)
@@ -238,6 +239,7 @@ model Notification {
   user      User             @relation("NotificationRecipient", fields: [userId], references: [tokenId], onDelete: Cascade)
 
   @@index([userId, isRead, createdAt])
+  @@index([userId, hidden, createdAt])
   @@index([userId, type])
   @@index([userId, actorId, type])
   @@index([groupKey])

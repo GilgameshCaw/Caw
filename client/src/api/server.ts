@@ -1,5 +1,6 @@
 import express from 'express'
 import cors, { CorsOptions } from 'cors'
+import rateLimit from 'express-rate-limit'
 import http from 'http'
 import path from 'path'
 import XmtpWebSocketService from '../services/XmtpService/websocket'
@@ -28,6 +29,8 @@ import clientsRouter from './routes/clients'
 import reportsRouter from './routes/reports'
 import tipsRouter from './routes/tips'
 import bugReportsRouter from './routes/bugReports'
+import authRouter from './routes/auth'
+import { getSession } from './sessionStore'
 import { prisma } from '../prismaClient'
 
 /**
@@ -51,7 +54,7 @@ function createApp() {
           return cb(null, true)
         cb(new Error(`Origin ${origin} not allowed by CORS`))
       },
-    methods: ['GET','POST','PUT','DELETE'],
+    methods: ['GET','POST','PUT','PATCH','DELETE'],
     credentials: true
   }
 
@@ -87,7 +90,55 @@ function createApp() {
     }
   })
 
+  // Rate limiters — tiered by auth status
+  // Unauthenticated: strict daily limit. Authenticated: generous 15-min window.
+  const hasValidSession = async (req: express.Request) => {
+    const token = req.headers['x-session-token'] as string | undefined
+    if (!token) return false
+    const session = await getSession(token)
+    return session !== null && session.authorizedTokenIds.length > 0
+  }
+
+  // Upload: 10/day unauthenticated
+  app.use('/api/upload', rateLimit({
+    windowMs: 24 * 60 * 60 * 1000,
+    max: 10,
+    skip: hasValidSession,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many uploads. Verify your wallet to increase your limit.' }
+  }))
+  // Upload: 30/15min authenticated
+  app.use('/api/upload', rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+    skip: async (req) => !(await hasValidSession(req)),
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many uploads, try again later' }
+  }))
+
+  // Short URL: 10/day unauthenticated
+  app.use('/api/shorturl', rateLimit({
+    windowMs: 24 * 60 * 60 * 1000,
+    max: 10,
+    skip: hasValidSession,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many short URL requests. Verify your wallet to increase your limit.' }
+  }))
+  // Short URL: 60/15min authenticated
+  app.use('/api/shorturl', rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 60,
+    skip: async (req) => !(await hasValidSession(req)),
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many short URL requests, try again later' }
+  }))
+
   // API routes
+  app.use('/api/auth', authRouter)
   app.use('/api/actions', actionsRouter)
   app.use('/api/caws', cawRouter)
   app.use('/api/txs',  txRouter)

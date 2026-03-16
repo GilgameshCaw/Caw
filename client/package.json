@@ -52,6 +52,7 @@
     "cors": "^2.8.5",
     "ethers": "^6.15.0",
     "express": "^5.1.0",
+    "express-rate-limit": "^8.3.1",
     "ioredis": "^5.6.1",
     "jsonwebtoken": "^9.0.2",
     "keccak": "^3.0.4",

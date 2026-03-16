@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { NotificationService } from '../../services/NotificationService'
 import { NotificationType } from '@prisma/client'
+import { requireAuth } from '../middleware/auth'
 
 const router = Router()
 
@@ -22,7 +23,7 @@ router.get('/', async (req, res) => {
     const notificationOffset = Number(offset)
 
     // Build where clause
-    const where: any = { userId: userTokenId }
+    const where: any = { userId: userTokenId, hidden: false }
 
     if (type && type !== 'all') {
       if (type === 'mentions') {
@@ -66,8 +67,8 @@ router.get('/', async (req, res) => {
     const groupMap = new Map<string, any>()
 
     for (const notification of notifications) {
-      // Only group LIKE and REPOST notifications
-      if ((notification.type === 'LIKE' || notification.type === 'REPOST') && notification.groupKey) {
+      // Group LIKE, REPOST, and TIP notifications
+      if ((notification.type === 'LIKE' || notification.type === 'REPOST' || notification.type === 'TIP') && notification.groupKey) {
         const existing = groupMap.get(notification.groupKey)
         if (existing) {
           // Add to existing group
@@ -163,7 +164,7 @@ router.get('/unread-count', async (req, res) => {
  * POST /api/notifications/read
  * Mark notifications as read
  */
-router.post('/read', async (req, res) => {
+router.post('/read', requireAuth({ field: 'userId' }), async (req, res) => {
   try {
     const { userId, notificationIds } = req.body
 
@@ -186,20 +187,20 @@ router.post('/read', async (req, res) => {
 })
 
 /**
- * DELETE /api/notifications/:id
- * Delete a notification
+ * PATCH /api/notifications/:id/hide
+ * Hide a notification (soft delete)
  */
-router.delete('/:id', async (req, res) => {
+router.patch('/:id/hide', requireAuth({ field: 'userId' }), async (req, res) => {
   try {
     const { id } = req.params
-    const { userId } = req.query
+    const { userId } = req.body
 
     if (!userId) {
       return res.status(400).json({ error: 'userId is required' })
     }
 
     const notificationId = parseInt(id)
-    const userTokenId = parseInt(userId as string)
+    const userTokenId = parseInt(userId)
 
     // Verify the notification belongs to the user
     const notification = await prisma.notification.findFirst({
@@ -213,16 +214,17 @@ router.delete('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Notification not found' })
     }
 
-    // Delete the notification
-    await prisma.notification.delete({
-      where: { id: notificationId }
+    // Hide the notification
+    await prisma.notification.update({
+      where: { id: notificationId },
+      data: { hidden: true }
     })
 
     return res.json({ success: true })
 
   } catch (error) {
-    console.error('DELETE /api/notifications/:id error:', error)
-    return res.status(500).json({ error: 'Failed to delete notification' })
+    console.error('PATCH /api/notifications/:id/hide error:', error)
+    return res.status(500).json({ error: 'Failed to hide notification' })
   }
 })
 

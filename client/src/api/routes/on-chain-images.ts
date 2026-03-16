@@ -1,51 +1,9 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { CawStatus } from '@prisma/client'
+import { requireAuth } from '../middleware/auth'
 
 const router = Router()
-
-/**
- * POST /api/on-chain-images
- * Create or update an on-chain image record
- * Uses upsert to handle race conditions with ActionProcessor
- */
-router.post('/', async (req, res) => {
-  try {
-    const { userId, txQueueId, imageRef, cawonce, base64Data, cawCost } = req.body
-
-    console.log('[OnChainImages] POST received:', { userId, txQueueId, imageRef, cawonce, cawCost, hasBase64: !!base64Data })
-
-    if (!userId || !imageRef || cawonce === undefined || !base64Data || !cawCost) {
-      return res.status(400).json({
-        error: 'Missing required fields: userId, imageRef, cawonce, base64Data, cawCost'
-      })
-    }
-
-    // Use upsert to handle race condition where ActionProcessor may have created the record first
-    const image = await prisma.onChainImage.upsert({
-      where: { imageRef },
-      update: {
-        // If record exists (created by ActionProcessor), add the txQueueId for polling
-        // Use null check instead of || to handle txQueueId of 0
-        txQueueId: txQueueId != null ? txQueueId : undefined
-      },
-      create: {
-        userId,
-        txQueueId,
-        imageRef,
-        cawonce,
-        base64Data,
-        cawCost,
-        status: CawStatus.PENDING
-      }
-    })
-
-    return res.status(201).json(image)
-  } catch (err: any) {
-    console.error('POST /api/on-chain-images error', err)
-    return res.status(500).json({ error: 'Internal server error' })
-  }
-})
 
 /**
  * GET /api/on-chain-images
@@ -235,7 +193,9 @@ router.get('/ref/:ref', async (req, res) => {
 
 /**
  * PATCH /api/on-chain-images/:id/status
- * Update the status of an on-chain image (used by ValidatorService)
+ * Update the status of an on-chain image.
+ * Note: ValidatorService updates status directly via Prisma, not through this endpoint.
+ * Kept for admin debugging purposes only.
  */
 router.patch('/:id/status', async (req, res) => {
   try {
@@ -272,7 +232,12 @@ router.patch('/:id/status', async (req, res) => {
  * PATCH /api/on-chain-images/:id/ignore
  * Mark an image as ignored (dismiss the "not posted" badge)
  */
-router.patch('/:id/ignore', async (req, res) => {
+router.patch('/:id/ignore', requireAuth({
+  lookup: async (req) => {
+    const image = await prisma.onChainImage.findUnique({ where: { id: Number(req.params.id) } })
+    return image?.userId
+  }
+}), async (req, res) => {
   try {
     const id = Number(req.params.id)
     const { ignored } = req.body
@@ -300,7 +265,7 @@ router.patch('/:id/ignore', async (req, res) => {
  * PATCH /api/on-chain-images/mark-posted
  * Mark images as posted when used in a caw
  */
-router.patch('/mark-posted', async (req, res) => {
+router.patch('/mark-posted', requireAuth({ field: 'userId' }), async (req, res) => {
   try {
     const { imageRefs } = req.body
 

@@ -13,6 +13,7 @@ import { wagmiConfig } from '~/config/Web3Provider'
 import { hasMinimumStake, getRequiredStake, STAKING_REQUIREMENTS } from '~/constants/stakingRequirements'
 import { getActionTypeForModal } from '~/errors/InsufficientStakeError'
 import { useInsufficientStakeStore } from '~/store/insufficientStakeStore'
+import { useAuthStore } from '~/store/authStore'
 
 const CAWONCE_STALE_MS = 10 * 60 * 1000 // 10 minutes
 
@@ -266,6 +267,19 @@ export function useSignAndSubmitAction() {
         method: 'POST',
         body: JSON.stringify({ data: message, domain, types, signature })
       })
+
+      // If the server returned auth data (passive auth), store it immediately
+      if (response.auth) {
+        const { sessionToken: newToken, authorizedTokenIds, authorizedAddresses, expiresAt } = response.auth
+        const authState = useAuthStore.getState()
+        if (authState.sessionToken && authState.sessionToken === newToken) {
+          // Same session — just add the new authorizations
+          authState.addAuthorization(authorizedTokenIds, authorizedAddresses)
+        } else {
+          // New session created by server
+          authState.setSession(newToken, authorizedTokenIds, authorizedAddresses, expiresAt)
+        }
+      }
 
       return response // Return the response which includes txQueueId
     } catch (error) {

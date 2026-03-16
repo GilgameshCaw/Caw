@@ -326,8 +326,10 @@ export const Profile: React.FC = () => {
       uploadFormData.append('media', file)
       uploadFormData.append('tokenId', String(activeToken?.tokenId || 0))
 
+      const { getAuthHeaders } = await import('~/api/client')
       const response = await fetch('/api/upload', {
         method: 'POST',
+        headers: getAuthHeaders(),
         body: uploadFormData
       })
 

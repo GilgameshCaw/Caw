@@ -10,7 +10,8 @@ import {
   HiRefresh,
   HiAtSymbol,
   HiBell,
-  HiCheck
+  HiCheck,
+  HiCurrencyDollar
 } from 'react-icons/hi'
 
 interface Actor {
@@ -22,7 +23,7 @@ interface Actor {
 
 interface Notification {
   id: number
-  type: 'FOLLOW' | 'LIKE' | 'REPLY' | 'REPOST' | 'QUOTE' | 'MENTION'
+  type: 'FOLLOW' | 'LIKE' | 'REPLY' | 'REPOST' | 'QUOTE' | 'MENTION' | 'TIP'
   actor: Actor
   additionalActors?: Actor[]
   caw?: {
@@ -187,18 +188,19 @@ const Notifications: React.FC = () => {
     }
   }
 
-  const deleteNotification = async (notificationId: number) => {
+  const hideNotification = async (notificationId: number) => {
     if (!activeToken) return
 
     try {
-      await apiFetch(`/api/notifications/${notificationId}?userId=${activeToken.tokenId}`, {
-        method: 'DELETE'
+      await apiFetch(`/api/notifications/${notificationId}/hide`, {
+        method: 'PATCH',
+        body: JSON.stringify({ userId: activeToken.tokenId })
       })
 
       // Remove from UI
       setNotifications(prev => prev.filter(n => n.id !== notificationId))
     } catch (err) {
-      console.error('Failed to delete notification:', err)
+      console.error('Failed to hide notification:', err)
     }
   }
 
@@ -216,6 +218,8 @@ const Notifications: React.FC = () => {
         return <HiReply className="w-5 h-5 text-indigo-500" />
       case 'MENTION':
         return <HiAtSymbol className="w-5 h-5 text-orange-500" />
+      case 'TIP':
+        return <HiCurrencyDollar className="w-5 h-5 text-yellow-500" />
       default:
         return <HiBell className="w-5 h-5 text-gray-500" />
     }
@@ -248,6 +252,8 @@ const Notifications: React.FC = () => {
         return `${text} quoted your caw`
       case 'MENTION':
         return `${text} mentioned you`
+      case 'TIP':
+        return notification.caw ? `${text} tipped your caw` : `${text} tipped you`
       default:
         return text
     }
@@ -255,6 +261,9 @@ const Notifications: React.FC = () => {
 
   const handleNotificationClick = (notification: Notification) => {
     if (notification.type === 'FOLLOW') {
+      navigate(`/users/${notification.actor.username}`)
+    } else if (notification.type === 'TIP' && !notification.caw) {
+      // Direct tip - navigate to tipper's profile
       navigate(`/users/${notification.actor.username}`)
     } else if (notification.caw) {
       navigate(`/caws/${notification.caw.id}`)
@@ -426,7 +435,7 @@ const Notifications: React.FC = () => {
                 <button
                   onClick={(e) => {
                     e.stopPropagation()
-                    deleteNotification(notification.id)
+                    hideNotification(notification.id)
                   }}
                   className={`p-1 rounded transition ${
                     isDark

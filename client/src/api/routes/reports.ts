@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { ReportReason, ReportStatus } from '@prisma/client'
+import { requireAdmin } from '../middleware/auth'
 
 const router = Router()
 
@@ -63,9 +64,9 @@ router.post('/', async (req, res) => {
 
 /**
  * GET /api/reports
- * Get reports (admin only - should add auth middleware)
+ * Get reports (admin only)
  */
-router.get('/', async (req, res) => {
+router.get('/', requireAdmin, async (req, res) => {
   try {
     const { status, limit = 50, offset = 0 } = req.query
 
@@ -92,9 +93,9 @@ router.get('/', async (req, res) => {
 
 /**
  * PATCH /api/reports/:id
- * Update report status (admin only - should add auth middleware)
+ * Update report status (admin only)
  */
-router.patch('/:id', async (req, res) => {
+router.patch('/:id', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params
     const { status, resolution, reviewedBy } = req.body

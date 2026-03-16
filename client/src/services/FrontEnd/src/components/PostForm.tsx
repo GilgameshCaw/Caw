@@ -313,8 +313,10 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     formData.append('type', type)
     formData.append('tokenId', tokenId.toString())
 
+    const { getAuthHeaders } = await import('~/api/client')
     const response = await fetch('/api/upload', {
       method: 'POST',
+      headers: getAuthHeaders(),
       body: formData
     })
 
@@ -753,26 +755,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         // Note: signAndSubmit already bumps cawonce internally, so the next loop iteration
         // will read the updated cawonce from the store
 
-        // Create OnChainImage record in database
+        // OnChainImage record is now created server-side by POST /api/actions
         if (response.txQueueId) {
-          try {
-            await apiFetch('/api/on-chain-images', {
-              method: 'POST',
-              body: JSON.stringify({
-                userId: effectiveTokenId,
-                txQueueId: response.txQueueId,
-                imageRef,
-                cawonce: cawonceForThisImage,
-                base64Data: imageData,
-                cawCost
-              })
-            })
-            console.log('[OnChain] Created OnChainImage record:', imageRef, 'txQueueId:', response.txQueueId)
-          } catch (error) {
-            console.error('[OnChain] Failed to create OnChainImage record:', error)
-            // Continue anyway - the ValidatorService will still process it
-          }
-
           // Start polling for image status
           pollImageStatus(response.txQueueId, index, imageRef)
         }
@@ -1058,6 +1042,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       ...(parentCaw && {
         receiverId: parentCaw.user.tokenId,
         receiverCawonce: parentCaw.cawonce,
+        ...(quote && { isQuote: true }),
       }),
       ...(totalCawCost > 0 && {
         amounts: [totalCawCost]

@@ -3,6 +3,7 @@ import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { shapeCaw, getCawIncludeConfig, handlePagination } from '../shared/cawUtils'
 import { mockCawItems, userMockItems } from '../shared/mockData'
+import { requireAuth } from '../middleware/auth'
 
 const router = Router()
 
@@ -347,7 +348,12 @@ router.get('/:id', async (req, res) => {
  * POST /api/caws/:id/dismiss
  * Delete a FAILED caw so it no longer appears in the feed.
  */
-router.post('/:id/dismiss', async (req, res) => {
+router.post('/:id/dismiss', requireAuth({
+  lookup: async (req) => {
+    const caw = await prisma.caw.findUnique({ where: { id: parseInt(req.params.id) } })
+    return caw?.userId
+  }
+}), async (req, res) => {
   const cawId = parseInt(req.params.id)
   if (isNaN(cawId)) return res.status(400).json({ error: 'Invalid caw ID' })
 

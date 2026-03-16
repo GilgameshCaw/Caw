@@ -3,6 +3,7 @@ import { randomBytes } from 'crypto'
 import { writeFile, mkdir } from 'fs/promises'
 import path from 'path'
 import multer from 'multer'
+import { requireAuth } from '../middleware/auth'
 
 const router = Router()
 
@@ -57,7 +58,7 @@ const upload = multer({
  * Upload media files (images or videos)
  * Accepts multipart/form-data with files
  */
-router.post('/', upload.array('media', 10), async (req, res) => {
+router.post('/', upload.array('media', 10), requireAuth({ field: 'tokenId' }), async (req, res) => {
   try {
     const { tokenId } = req.body
     const files = req.files as Express.Multer.File[]
