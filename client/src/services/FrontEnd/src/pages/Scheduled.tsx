@@ -7,6 +7,8 @@ import { HiOutlineClock, HiOutlineTrash, HiOutlineCheck, HiOutlineXCircle } from
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '~/api/client'
+import { useAuthStore } from '~/store/authStore'
+import { useVerifyWallet } from '~/hooks/useVerifyWallet'
 import { formatDistanceToNow, format, isPast } from 'date-fns'
 
 interface ScheduledCaw {
@@ -33,6 +35,9 @@ const ScheduledPage: React.FC = () => {
   const { openConnectModal } = useConnectModal()
   const activeToken = useActiveToken()
   const queryClient = useQueryClient()
+  const authorizedTokenIds = useAuthStore(s => s.authorizedTokenIds)
+  const { verify, isVerifying, error: verifyError } = useVerifyWallet()
+  const isAuthorized = activeToken?.tokenId !== undefined && authorizedTokenIds.includes(activeToken.tokenId)
 
   const { data: scheduledData, isLoading } = useQuery({
     queryKey: ['scheduled', activeToken?.tokenId, activeTab],
@@ -113,6 +118,34 @@ const ScheduledPage: React.FC = () => {
               className="px-6 py-2 bg-yellow-500 hover:bg-yellow-400 text-black font-medium rounded-full transition-colors"
             >
               Connect Wallet
+            </button>
+          </div>
+        </div>
+      </MainLayout>
+    )
+  }
+
+  if (!isAuthorized) {
+    return (
+      <MainLayout>
+        <div className="max-w-2xl mx-auto px-6 py-4">
+          <div className={`text-center py-16 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+            <HiOutlineClock className="w-16 h-16 mx-auto mb-4 opacity-50" />
+            <h2 className={`text-xl font-semibold mb-2 ${isDark ? 'text-white' : 'text-black'}`}>
+              Verify your address
+            </h2>
+            <p className="mb-4">You must verify your address to view scheduled posts.</p>
+            {verifyError && (
+              <p className="mb-4 text-red-500 text-sm">{verifyError}</p>
+            )}
+            <button
+              onClick={verify}
+              disabled={isVerifying}
+              className={`px-6 py-2 bg-yellow-500 hover:bg-yellow-400 text-black font-medium rounded-full transition-colors cursor-pointer ${
+                isVerifying ? 'opacity-50 cursor-not-allowed' : ''
+              }`}
+            >
+              {isVerifying ? 'Signing...' : 'Verify Address'}
             </button>
           </div>
         </div>

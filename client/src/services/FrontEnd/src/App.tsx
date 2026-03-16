@@ -8,6 +8,8 @@ import routes from "./routes";
 import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
 import { useInsufficientStakeStore } from '~/store/insufficientStakeStore'
 import VerifyWalletModal from '~/components/modals/VerifyWalletModal'
+import TransferNFTModal from '~/components/modals/TransferNFTModal'
+import SyncTransferModal from '~/components/modals/SyncTransferModal'
 
 function App() {
   useCawonceSync();
@@ -32,6 +34,8 @@ function App() {
         actionType={stakeModal.actionType}
       />
       <VerifyWalletModal />
+      <TransferNFTModal />
+      <SyncTransferModal />
     </BrowserRouter>
   );
 }

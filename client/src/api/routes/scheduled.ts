@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
+import { requireAuth } from '../middleware/auth'
 
 const router = Router()
 
@@ -7,7 +8,7 @@ const router = Router()
  * GET /api/scheduled
  * Get scheduled caws for the authenticated user
  */
-router.get('/', async (req, res) => {
+router.get('/', requireAuth({ lookup: (req) => Promise.resolve(Number(req.header('x-user-id')) || undefined) }), async (req, res) => {
   try {
     const userId = req.header('x-user-id') ? parseInt(req.header('x-user-id')!) : null
 
@@ -46,7 +47,7 @@ router.get('/', async (req, res) => {
  * POST /api/scheduled
  * Create a new scheduled caw with signed action data
  */
-router.post('/', async (req, res) => {
+router.post('/', requireAuth({ lookup: (req) => Promise.resolve(Number(req.header('x-user-id')) || undefined) }), async (req, res) => {
   try {
     const userId = req.header('x-user-id') ? parseInt(req.header('x-user-id')!) : null
 
@@ -103,7 +104,7 @@ router.post('/', async (req, res) => {
  * PUT /api/scheduled/:id
  * Update a scheduled caw
  */
-router.put('/:id', async (req, res) => {
+router.put('/:id', requireAuth({ lookup: (req) => Promise.resolve(Number(req.header('x-user-id')) || undefined) }), async (req, res) => {
   try {
     const userId = req.header('x-user-id') ? parseInt(req.header('x-user-id')!) : null
     const id = parseInt(req.params.id)
@@ -163,7 +164,7 @@ router.put('/:id', async (req, res) => {
  * DELETE /api/scheduled/:id
  * Cancel a scheduled caw
  */
-router.delete('/:id', async (req, res) => {
+router.delete('/:id', requireAuth({ lookup: (req) => Promise.resolve(Number(req.header('x-user-id')) || undefined) }), async (req, res) => {
   try {
     const userId = req.header('x-user-id') ? parseInt(req.header('x-user-id')!) : null
     const id = parseInt(req.params.id)
