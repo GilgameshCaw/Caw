@@ -169,7 +169,7 @@ const ProfileChooser: React.FC = () => {
 
       {isDropdownOpen && (
         <ul
-          className={`absolute bottom-0 mt-2 shadow-lg rounded-md overflow-hidden z-[100] transition-all duration-300 ${
+          className={`absolute bottom-0 mt-2 shadow-lg rounded-md overflow-hidden z-[9999] transition-all duration-300 ${
             isDark ? 'bg-black border border-white/20' : 'bg-white border border-gray-200'
           }`}
           style={{

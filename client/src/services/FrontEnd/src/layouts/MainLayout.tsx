@@ -11,6 +11,7 @@ import { useAccount } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { HiOutlineMenu, HiOutlineX, HiOutlinePlus } from "react-icons/hi";
 import { BsWallet } from "react-icons/bs";
+import { Link } from "react-router-dom";
 import cawLogo from '~/assets/images/caw-logo.png';
 
 interface MainLayoutProps {
@@ -42,13 +43,13 @@ const MainLayout = ({ children }: MainLayoutProps) => {
           {isMobileMenuOpen ? <HiOutlineX className="w-6 h-6" /> : <HiOutlineMenu className="w-6 h-6" />}
         </button>
         
-        <div className="flex items-center justify-center w-full">
-          <img 
-            src={cawLogo} 
-            alt="CAW Logo" 
+        <Link to="/home" className="flex items-center justify-center w-full">
+          <img
+            src={cawLogo}
+            alt="CAW Logo"
             className="w-10 h-10 object-contain"
           />
-        </div>
+        </Link>
       </div>
 
       {/* Mobile Sidebar Overlay */}

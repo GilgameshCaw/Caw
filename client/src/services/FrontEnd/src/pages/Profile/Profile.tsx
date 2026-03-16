@@ -19,6 +19,7 @@ import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
 import { useFollowButton } from '~/hooks/useFollowButton'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import TipModal from '~/components/modals/TipModal'
+import { useTransferModalStore } from '~/store/transferModalStore'
 
 type ProfileTab = 'posts' | 'likes' | 'replies' | 'media'
 
@@ -1294,6 +1295,28 @@ export const Profile: React.FC = () => {
                     }`}
                   />
                 </div>
+              </div>
+
+              {/* Transfer Profile Button */}
+              <div className={`pt-4 border-t ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+                <button
+                  onClick={() => {
+                    setIsEditModalOpen(false)
+                    if (profileData?.tokenId !== undefined && profileData?.username) {
+                      useTransferModalStore.getState().show(profileData.tokenId, profileData.username)
+                    }
+                  }}
+                  className={`w-full px-4 py-2.5 rounded-full text-sm border transition-all duration-200 cursor-pointer ${
+                    isDark
+                      ? 'border-white/20 text-white/60 hover:border-red-500/60 hover:text-red-400 hover:bg-red-500/10'
+                      : 'border-black/20 text-black/60 hover:border-red-500/60 hover:text-red-500 hover:bg-red-50'
+                  }`}
+                >
+                  Transfer Profile
+                </button>
+                <p className={`mt-2 text-xs text-center ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                  Transfer ownership of this profile to another wallet
+                </p>
               </div>
             </div>
 

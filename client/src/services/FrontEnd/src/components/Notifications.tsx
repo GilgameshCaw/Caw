@@ -116,17 +116,6 @@ const Notifications: React.FC = () => {
         `/api/notifications?userId=${activeToken.tokenId}&type=${type}&limit=50&offset=${currentOffset}`
       )
 
-      // Debug: log notification timestamps
-      if (data.notifications.length > 0) {
-        console.log('Notification timestamps:', data.notifications.map(n => ({
-          id: n.id,
-          type: n.type,
-          createdAt: n.createdAt,
-          parsed: new Date(n.createdAt).toISOString(),
-          relative: formatRelativeTime(n.createdAt)
-        })))
-      }
-
       if (reset) {
         setNotifications(data.notifications)
       } else {

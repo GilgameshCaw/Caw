@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
@@ -8,6 +8,7 @@ import { chains } from '~/config/chains'
 import { sepolia, baseSepolia } from 'wagmi/chains'
 
 type TabType = 'faq' | 'history' | 'manifesto' | 'howto' | 'developers' | 'resources'
+type MobileDropdown = 'faq' | 'history' | null
 
 interface FAQItem {
   question: string
@@ -23,8 +24,23 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
   const location = useLocation()
   const navigate = useNavigate()
   const [expandedFAQ, setExpandedFAQ] = useState<number | null>(null)
+  const [mobileDropdown, setMobileDropdown] = useState<MobileDropdown>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
 
   const chainId = useChainId()
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setMobileDropdown(null)
+      }
+    }
+    if (mobileDropdown) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [mobileDropdown])
 
   // Check if we're on a testnet
   const isTestnet = chainId === sepolia.id || chainId === baseSepolia.id ||
@@ -236,14 +252,135 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
           </div>
         </div>
 
-        {/* Tab Navigation */}
-        <div className={`flex border-b mb-6 overflow-x-auto ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+        {/* Tab Navigation - Desktop */}
+        <div className={`hidden md:flex border-b mb-6 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
           <TabButton tab="faq" label="FAQ" />
           <TabButton tab="history" label="History" />
           <TabButton tab="manifesto" label="Manifesto" />
           <TabButton tab="howto" label="How It Works" />
           <TabButton tab="developers" label="Developers" />
           <TabButton tab="resources" label="Resources" />
+        </div>
+
+        {/* Tab Navigation - Mobile with dropdowns */}
+        <div className={`md:hidden flex border-b mb-6 ${isDark ? 'border-white/10' : 'border-gray-200'}`} ref={dropdownRef}>
+          {/* FAQ Dropdown */}
+          <div className="relative flex-1">
+            <button
+              onClick={() => setMobileDropdown(mobileDropdown === 'faq' ? null : 'faq')}
+              className={`w-full px-2 py-3 text-sm font-medium transition-colors relative cursor-pointer flex items-center justify-center gap-1 ${
+                (activeSection === 'faq' || activeSection === 'howto')
+                  ? isDark ? 'text-yellow-500' : 'text-yellow-600'
+                  : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
+              }`}
+            >
+              {activeSection === 'howto' ? 'How It Works' : 'FAQ'}
+              <HiChevronDown className={`w-4 h-4 transition-transform ${mobileDropdown === 'faq' ? 'rotate-180' : ''}`} />
+              {(activeSection === 'faq' || activeSection === 'howto') && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
+              )}
+            </button>
+            {mobileDropdown === 'faq' && (
+              <div className={`absolute top-full left-0 right-0 z-50 rounded-b-lg shadow-lg ${
+                isDark ? 'bg-gray-900 border border-white/10' : 'bg-white border border-gray-200'
+              }`}>
+                <button
+                  onClick={() => { handleTabClick('faq'); setMobileDropdown(null) }}
+                  className={`w-full px-4 py-3 text-sm text-left ${
+                    activeSection === 'faq'
+                      ? isDark ? 'text-yellow-500 bg-yellow-500/10' : 'text-yellow-600 bg-yellow-50'
+                      : isDark ? 'text-white hover:bg-white/5' : 'text-gray-900 hover:bg-gray-50'
+                  }`}
+                >
+                  FAQ
+                </button>
+                <button
+                  onClick={() => { handleTabClick('howto'); setMobileDropdown(null) }}
+                  className={`w-full px-4 py-3 text-sm text-left ${
+                    activeSection === 'howto'
+                      ? isDark ? 'text-yellow-500 bg-yellow-500/10' : 'text-yellow-600 bg-yellow-50'
+                      : isDark ? 'text-white hover:bg-white/5' : 'text-gray-900 hover:bg-gray-50'
+                  }`}
+                >
+                  How It Works
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* History Dropdown */}
+          <div className="relative flex-1">
+            <button
+              onClick={() => setMobileDropdown(mobileDropdown === 'history' ? null : 'history')}
+              className={`w-full px-2 py-3 text-sm font-medium transition-colors relative cursor-pointer flex items-center justify-center gap-1 ${
+                (activeSection === 'history' || activeSection === 'manifesto')
+                  ? isDark ? 'text-yellow-500' : 'text-yellow-600'
+                  : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
+              }`}
+            >
+              {activeSection === 'manifesto' ? 'Manifesto' : 'History'}
+              <HiChevronDown className={`w-4 h-4 transition-transform ${mobileDropdown === 'history' ? 'rotate-180' : ''}`} />
+              {(activeSection === 'history' || activeSection === 'manifesto') && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
+              )}
+            </button>
+            {mobileDropdown === 'history' && (
+              <div className={`absolute top-full left-0 right-0 z-50 rounded-b-lg shadow-lg ${
+                isDark ? 'bg-gray-900 border border-white/10' : 'bg-white border border-gray-200'
+              }`}>
+                <button
+                  onClick={() => { handleTabClick('history'); setMobileDropdown(null) }}
+                  className={`w-full px-4 py-3 text-sm text-left ${
+                    activeSection === 'history'
+                      ? isDark ? 'text-yellow-500 bg-yellow-500/10' : 'text-yellow-600 bg-yellow-50'
+                      : isDark ? 'text-white hover:bg-white/5' : 'text-gray-900 hover:bg-gray-50'
+                  }`}
+                >
+                  History
+                </button>
+                <button
+                  onClick={() => { handleTabClick('manifesto'); setMobileDropdown(null) }}
+                  className={`w-full px-4 py-3 text-sm text-left ${
+                    activeSection === 'manifesto'
+                      ? isDark ? 'text-yellow-500 bg-yellow-500/10' : 'text-yellow-600 bg-yellow-50'
+                      : isDark ? 'text-white hover:bg-white/5' : 'text-gray-900 hover:bg-gray-50'
+                  }`}
+                >
+                  Manifesto
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Developers - standalone */}
+          <button
+            onClick={() => handleTabClick('developers')}
+            className={`flex-1 px-2 py-3 text-sm font-medium transition-colors relative cursor-pointer ${
+              activeSection === 'developers'
+                ? isDark ? 'text-yellow-500' : 'text-yellow-600'
+                : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
+            }`}
+          >
+            Devs
+            {activeSection === 'developers' && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
+            )}
+          </button>
+
+          {/* Resources - standalone */}
+          <button
+            onClick={() => handleTabClick('resources')}
+            className={`flex-1 px-2 py-3 text-sm font-medium transition-colors relative cursor-pointer ${
+              activeSection === 'resources'
+                ? isDark ? 'text-yellow-500' : 'text-yellow-600'
+                : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
+            }`}
+          >
+            Resources
+            {activeSection === 'resources' && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
+            )}
+          </button>
         </div>
 
         {/* FAQ Section */}

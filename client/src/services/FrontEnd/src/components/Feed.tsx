@@ -198,7 +198,6 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
   useEffect(() => {
     if (filter === 'For you' || filter === 'Following') {
       const refreshCallback = () => {
-        console.log('[Feed] Refresh triggered by txQueue monitor')
         setItems([])
         setNextCursor(undefined)
         setHasMore(true)
@@ -238,7 +237,6 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
         )
         setFollowingCount(response.followingCount)
       } catch (err) {
-        console.error('Failed to fetch following count:', err)
         setFollowingCount(null)
       }
     }
@@ -267,19 +265,14 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
   // Poll for pending likes - refetch specific caws that have pending likes
   useEffect(() => {
     const pendingLikeCaws = items.filter(item => item.likePending)
-    console.log('[Feed Polling] Pending like caws:', pendingLikeCaws.length, pendingLikeCaws.map(c => ({ id: c.id, likePending: c.likePending })))
 
     if (pendingLikeCaws.length === 0) return
 
-    console.log('[Feed Polling] Starting poll interval for', pendingLikeCaws.length, 'caws')
     const interval = setInterval(async () => {
-      console.log('[Feed Polling] Polling for pending likes...')
       // Refetch each caw with a pending like
       for (const caw of pendingLikeCaws) {
         try {
-          console.log(`[Feed Polling] Fetching caw ${caw.id}...`)
           const updated = await apiFetch<{ caw: CawItem }>(`/api/caws/${caw.id}`)
-          console.log(`[Feed Polling] Got response for caw ${caw.id}:`, { likePending: updated.caw.likePending, hasLiked: updated.caw.hasLiked })
 
           // Update the specific item in the list
           setItems(current =>
@@ -288,37 +281,25 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
             )
           )
         } catch (err) {
-          console.error(`Failed to refresh caw ${caw.id}:`, err)
+          // Ignore errors
         }
       }
     }, 3000) // Poll every 3 seconds
 
-    return () => {
-      console.log('[Feed Polling] Clearing interval')
-      clearInterval(interval)
-    }
+    return () => clearInterval(interval)
   }, [items])
 
   // Poll for pending recaws - refetch specific caws that have pending recaws
   useEffect(() => {
     const pendingRecawCaws = items.filter(item => item.recawPending)
-    console.log('[Feed Polling] Pending recaw caws:', pendingRecawCaws.length, pendingRecawCaws.map(c => ({ id: c.id, recawPending: c.recawPending })))
 
     if (pendingRecawCaws.length === 0) return
 
-    console.log('[Feed Polling] Starting recaw poll interval for', pendingRecawCaws.length, 'caws')
     const interval = setInterval(async () => {
-      console.log('[Feed Polling] Polling for pending recaws...')
       // Refetch each caw with a pending recaw
       for (const caw of pendingRecawCaws) {
         try {
-          console.log(`[Feed Polling] Fetching caw ${caw.id} for recaw status...`)
           const updated = await apiFetch<{ caw: CawItem }>(`/api/caws/${caw.id}`)
-          console.log(`[Feed Polling] Got response for caw ${caw.id}:`, {
-            recawPending: updated.caw.recawPending,
-            hasRecawed: updated.caw.hasRecawed,
-            recawCount: updated.caw.recawCount
-          })
 
           // Update the specific item in the list
           // Keep recawPending true until hasRecawed is confirmed (to handle race condition)
@@ -326,13 +307,6 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
             current.map(item => {
               if (item.id === caw.id) {
                 const isConfirmed = updated.caw.hasRecawed === true
-                console.log(`[Feed Polling] Updating item ${caw.id}:`, {
-                  oldHasRecawed: item.hasRecawed,
-                  newHasRecawed: updated.caw.hasRecawed,
-                  oldRecawCount: item.recawCount,
-                  newRecawCount: updated.caw.recawCount,
-                  isConfirmed
-                })
                 // If not yet confirmed, keep recawPending true to continue polling
                 return {
                   ...updated.caw,
@@ -343,50 +317,31 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
             })
           )
         } catch (err) {
-          console.error(`Failed to refresh caw ${caw.id}:`, err)
+          // Ignore errors
         }
       }
     }, 3000) // Poll every 3 seconds
 
-    return () => {
-      console.log('[Feed Polling] Clearing recaw interval')
-      clearInterval(interval)
-    }
+    return () => clearInterval(interval)
   }, [items])
 
   // Poll for pending replies - refetch specific caws that have pending replies
   useEffect(() => {
     const pendingReplyCaws = items.filter(item => item.replyPending)
-    console.log('[Feed Polling] Pending reply caws:', pendingReplyCaws.length, pendingReplyCaws.map(c => ({ id: c.id, replyPending: c.replyPending })))
 
     if (pendingReplyCaws.length === 0) return
 
-    console.log('[Feed Polling] Starting reply poll interval for', pendingReplyCaws.length, 'caws')
     const interval = setInterval(async () => {
-      console.log('[Feed Polling] Polling for pending replies...')
       // Refetch each caw with a pending reply
       for (const caw of pendingReplyCaws) {
         try {
-          console.log(`[Feed Polling] Fetching caw ${caw.id} for reply status...`)
           const updated = await apiFetch<{ caw: CawItem }>(`/api/caws/${caw.id}`)
-          console.log(`[Feed Polling] Got response for caw ${caw.id}:`, {
-            replyPending: updated.caw.replyPending,
-            hasReplied: updated.caw.hasReplied,
-            commentCount: updated.caw.commentCount
-          })
 
           // Update the specific item in the list
           setItems(current =>
             current.map(item => {
               if (item.id === caw.id) {
                 const isConfirmed = updated.caw.hasReplied === true
-                console.log(`[Feed Polling] Updating reply item ${caw.id}:`, {
-                  oldHasReplied: item.hasReplied,
-                  newHasReplied: updated.caw.hasReplied,
-                  oldCommentCount: item.commentCount,
-                  newCommentCount: updated.caw.commentCount,
-                  isConfirmed
-                })
                 // If not yet confirmed, keep replyPending true to continue polling
                 return {
                   ...updated.caw,
@@ -397,15 +352,12 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
             })
           )
         } catch (err) {
-          console.error(`Failed to refresh caw ${caw.id} for reply:`, err)
+          // Ignore errors
         }
       }
     }, 3000) // Poll every 3 seconds
 
-    return () => {
-      console.log('[Feed Polling] Clearing reply interval')
-      clearInterval(interval)
-    }
+    return () => clearInterval(interval)
   }, [items])
 
   // Poll for pending tips - refetch specific caws that have pending tips
@@ -431,7 +383,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
             })
           )
         } catch (err) {
-          console.error(`Failed to refresh caw ${caw.id} for tip:`, err)
+          // Ignore errors
         }
       }
     }, 3000)
@@ -448,8 +400,8 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
       ))}
     </div>
   )
-  // Show suggested users if following < 10 people
-  const showSuggestedUsers = filter === 'Following' && followingCount !== null && followingCount < 10
+  // Always show suggested users on Following tab
+  const showSuggestedUsers = filter === 'Following'
 
   // Helper to refresh following count after a follow action
   const handleFollowChange = () => {
@@ -467,9 +419,6 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
     if (filter === 'Following') {
       return (
         <div className="py-4">
-          <p className={`text-center mb-4 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-            You're not following anyone yet.<br />Here are some users to get started:
-          </p>
           <SuggestedUsers onFollowChange={handleFollowChange} />
         </div>
       )

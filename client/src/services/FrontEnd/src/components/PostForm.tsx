@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
+import { Link } from 'react-router-dom'
 import { useSignAndSubmitAction, buildTypedData, TYPES, DOMAIN } from '../api/actions'
 import { useTokenDataStore, useActiveToken } from "~/store/tokenDataStore";
 import { useAccount, useChains, useSwitchChain, useConnections, useSignTypedData } from "wagmi";
@@ -25,32 +26,25 @@ const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`[\]]+/gi
 // Helper function to shorten URLs in text
 async function shortenUrlsInText(text: string): Promise<string> {
   const urls = text.match(URL_REGEX)
-  console.log('[URL Shortener] Input text:', text)
-  console.log('[URL Shortener] Found URLs:', urls)
   if (!urls || urls.length === 0) return text
 
   // Deduplicate URLs
   const uniqueUrls = [...new Set(urls)]
-  console.log('[URL Shortener] Unique URLs to shorten:', uniqueUrls)
 
   try {
     const response = await apiFetch('/api/shorturl/bulk', {
       method: 'POST',
       body: JSON.stringify({ urls: uniqueUrls })
     }) as { results: Record<string, { shortUrl: string }> }
-    console.log('[URL Shortener] API response:', response)
 
     let shortenedText = text
     for (const [originalUrl, data] of Object.entries(response.results)) {
       // Replace all occurrences of this URL with the short URL
-      console.log('[URL Shortener] Replacing:', originalUrl, '->', data.shortUrl)
       shortenedText = shortenedText.split(originalUrl).join(data.shortUrl)
     }
 
-    console.log('[URL Shortener] Final text:', shortenedText)
     return shortenedText
   } catch (error) {
-    console.error('[URL Shortener] Failed to shorten URLs:', error)
     // Return original text if shortening fails
     return text
   }
@@ -118,7 +112,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   const { address } = useAccount();
   const handleSwitchChain = () => switchChain({ chainId: baseSepolia.id });
   const wrongChain = connections[0]?.chainId != baseSepolia.id;
-  console.log("CHAIN:", connections[0]?.chainId);
 
   // Check if the user owns the selected token
   const isTokenOwner = activeToken && address && activeToken.owner?.toLowerCase() === address.toLowerCase();
@@ -158,7 +151,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           })
 
           if (existingImage) {
-            console.log('[OnChain] Image already exists in library:', existingImage.imageRef)
             return {
               ...item,
               uploadedRef: existingImage.imageRef,
@@ -170,7 +162,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             }
           }
         } catch (error) {
-          console.error('[OnChain] Error checking for duplicate:', error)
+          // Ignore duplicate check errors
         }
       }
 
@@ -197,7 +189,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     // Check image limit (GIFs count towards the 4 image limit)
     const currentImageCount = selectedMedia.filter(m => m.type === 'image' || m.type === 'gif').length
     if (currentImageCount >= 4) {
-      console.log('[GIF] Cannot add GIF - image limit reached (4)')
       setShowGifPicker(false)
       return
     }
@@ -210,9 +201,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         body: JSON.stringify({ url: gif.url })
       }) as { shortUrl: string; code: string }
       shortUrl = response.shortUrl
-      console.log('[GIF] Shortened URL:', gif.url, '->', shortUrl)
     } catch (error) {
-      console.error('[GIF] Failed to shorten URL:', error)
       // Continue with original URL if shortening fails
     }
 
@@ -393,18 +382,16 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   // Fetch library counts (for showing icon and badge)
   const fetchLibraryCounts = async () => {
     const effectiveTokenId = activeTokenId || activeToken?.tokenId
-    console.log('[Library] fetchLibraryCounts called, effectiveTokenId:', effectiveTokenId)
     if (!effectiveTokenId) return
 
     try {
       const response = await apiFetch<{ unpostedCount: number; totalCount: number }>(
         `/api/on-chain-images/unposted-count/${effectiveTokenId}`
       )
-      console.log('[Library] API response:', response)
       setLibraryUnpostedCount(response.unpostedCount || 0)
       setLibraryTotalCount(response.totalCount || 0)
     } catch (error) {
-      console.error('Failed to fetch library counts:', error)
+      // Ignore library count fetch errors
     }
   }
 
@@ -450,7 +437,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         fetchLibraryCounts()
       }
     } catch (error) {
-      console.error('Failed to fetch image library:', error)
       if (!isLoadingMore) {
         setLibraryImages([])
       }
@@ -487,7 +473,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       // Update counts
       setLibraryUnpostedCount(prev => Math.max(0, prev - 1))
     } catch (error) {
-      console.error('Failed to ignore image:', error)
+      // Ignore errors
     }
   }
 
@@ -502,7 +488,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       // Refresh counts after posting
       fetchLibraryCounts()
     } catch (error) {
-      console.error('Failed to mark images as posted:', error)
+      // Ignore errors
     }
   }
 
@@ -542,21 +528,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           `/api/on-chain-images/status?txId=${txQueueId}`
         )
 
-        console.log(`[OnChain Poll] txQueueId=${txQueueId} mediaIndex=${mediaIndex} imageRef=${imageRef} status=${response.status} responseImageRef=${response.imageRef}`)
-
         if (response.status === 'SUCCESS') {
-          // Verify the response imageRef matches what we expect
-          if (response.imageRef !== imageRef) {
-            console.warn(`[OnChain Poll] imageRef mismatch! Expected ${imageRef}, got ${response.imageRef}`)
-          }
           // Update media to show success
-          console.log(`[OnChain Poll] Setting media ${mediaIndex} to SUCCESS`)
-          setSelectedMedia(prev => {
-            console.log(`[OnChain Poll] State update for SUCCESS: current statuses =`, prev.map((m, i) => `${i}:${m.uploadStatus}`).join(', '))
-            return prev.map((m, i) =>
-              i === mediaIndex ? { ...m, uploadStatus: 'success', uploadedRef: imageRef } : m
-            )
-          })
+          setSelectedMedia(prev => prev.map((m, i) =>
+            i === mediaIndex ? { ...m, uploadStatus: 'success', uploadedRef: imageRef } : m
+          ))
           // Increment library counts so the on-chain image icon becomes visible
           setLibraryTotalCount(prev => prev + 1)
           setLibraryUnpostedCount(prev => prev + 1)
@@ -573,9 +549,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         attempts++
         if (attempts < maxAttempts) {
           setTimeout(poll, 3000) // Poll every 3 seconds
-        } else {
-          // Timeout - keep as pending but log warning
-          console.warn('[OnChain] Polling timeout for image:', imageRef)
         }
       } catch (error: any) {
         // If 404, the record might not exist yet, keep polling
@@ -586,7 +559,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           }
           return
         }
-        console.error('[OnChain] Error polling image status:', error)
         // On error, keep polling
         attempts++
         if (attempts < maxAttempts) {
@@ -605,10 +577,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     if (onChainImages.length === 0) return
 
     const effectiveTokenId = activeTokenId || activeToken?.tokenId
-    if (!effectiveTokenId) {
-      console.error('No active token ID for on-chain upload')
-      return
-    }
+    if (!effectiveTokenId) return
 
     // Fetch latest library images to check for duplicates
     let currentLibraryImages = libraryImages
@@ -620,7 +589,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         currentLibraryImages = response.items || []
         setLibraryImages(currentLibraryImages)
       } catch (error) {
-        console.error('Failed to fetch library for duplicate check:', error)
+        // Ignore errors
       }
     }
 
@@ -629,16 +598,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     try {
       // Process images sequentially (not in parallel) to ensure each gets a unique cawonce
       // When using Promise.all, all images would read the same stale cawonce value
-
-      // Debug: log all media items
-      console.log('[OnChain] All selectedMedia:', selectedMedia.map((m, i) => ({
-        index: i,
-        type: m.type,
-        storageType: m.storageType,
-        uploadedRef: m.uploadedRef,
-        uploadStatus: m.uploadStatus,
-        hasFile: !!m.file
-      })))
 
       // Get indices of images that need to be uploaded
       const indicesToProcess = selectedMedia
@@ -651,13 +610,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         )
         .map(({ index }) => index)
 
-      console.log('[OnChain] Images to process:', indicesToProcess.length, 'indices:', indicesToProcess)
-
       for (const index of indicesToProcess) {
         // Read current state fresh each iteration
         const currentMedia = selectedMedia[index]
-
-        console.log('[OnChain] Processing image at index:', index, 'type:', currentMedia.type, 'storageType:', currentMedia.storageType)
 
         // Read file as base64
         const base64 = await new Promise<string>((resolve) => {
@@ -677,7 +632,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         })
 
         if (existingImage) {
-          console.log('[OnChain] Image already exists in library:', existingImage.imageRef)
           // Update the media with the existing reference - no need to upload again
           setSelectedMedia(prev => prev.map((m, i) =>
             i === index ? {
@@ -697,19 +651,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         const estimatedOriginalSize = Math.ceil((imageData.length * 3) / 4)
         const cawCost = calculateOnChainCost(estimatedOriginalSize)
 
-        console.log('[OnChain] Uploading image:', {
-          index,
-          base64Length: imageData.length,
-          estimatedOriginalSize,
-          cawCost,
-          cawCostType: typeof cawCost
-        })
-
-        // Verify the cost is reasonable (should be at least 500 CAW minimum)
-        if (cawCost < 500) {
-          console.error('[OnChain] WARNING: cawCost is suspiciously low:', cawCost, 'for size:', estimatedOriginalSize)
-        }
-
         // Capture the cawonce BEFORE signing - read fresh from store each time
         // activeToken is a stale hook value, so we must read from getState() directly
         // The store uses tokensByAddress: Record<Address, TokenData[]>, not tokens
@@ -718,14 +659,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         const preSignToken = allTokens.find(t => t.tokenId === effectiveTokenId)
         const cawonceForThisImage = preSignToken?.cawonce ?? 0
         const imageRef = `img:${effectiveTokenId}:${cawonceForThisImage}`
-
-        console.log('[OnChain] Pre-sign state:', {
-          effectiveTokenId,
-          cawonceForThisImage,
-          imageRef,
-          allTokensCount: allTokens.length,
-          foundToken: !!preSignToken
-        })
 
         // Sign and submit the image as an OTHER action
         let response
@@ -738,19 +671,10 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           })
         } catch (signError: any) {
           // User rejected signature or other error - skip this image but continue with others
-          console.error('[OnChain] Signature failed for image', index, signError)
-          if (signError?.message?.includes('User rejected') || signError?.code === 4001) {
-            console.log('[OnChain] User cancelled signature for image', index)
-          }
           continue
         }
 
-        if (!response) {
-          console.error('[OnChain] No response from signAndSubmit for image', index)
-          continue
-        }
-
-        console.log('[OnChain] Image signed, txQueueId:', response.txQueueId, 'imageRef:', imageRef, 'cawonce:', cawonceForThisImage)
+        if (!response) continue
 
         // Note: signAndSubmit already bumps cawonce internally, so the next loop iteration
         // will read the updated cawonce from the store
@@ -762,23 +686,19 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         }
 
         // Update state immediately after each image is processed
-        console.log(`[OnChain] Setting media ${index} to pending, txQueueId=${response.txQueueId}, imageRef=${imageRef}`)
-        setSelectedMedia(prev => {
-          console.log(`[OnChain] State update for index ${index}: current statuses =`, prev.map((m, i) => `${i}:${m.uploadStatus}`).join(', '))
-          return prev.map((m, i) =>
-            i === index ? {
-              ...m,
-              processedBase64: imageData,
-              processedCost: cawCost,
-              uploadStatus: 'pending' as const,
-              txQueueId: response.txQueueId,
-              pendingImageRef: imageRef // Store ref for when tx succeeds
-            } : m
-          )
-        })
+        setSelectedMedia(prev => prev.map((m, i) =>
+          i === index ? {
+            ...m,
+            processedBase64: imageData,
+            processedCost: cawCost,
+            uploadStatus: 'pending' as const,
+            txQueueId: response.txQueueId,
+            pendingImageRef: imageRef // Store ref for when tx succeeds
+          } : m
+        ))
       }
     } catch (error) {
-      console.error('Error uploading on-chain images:', error)
+      // Ignore errors
     } finally {
       setIsProcessingOnChain(false)
     }
@@ -907,12 +827,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         setShowScheduledSuccessModal(true)
         if (onSuccess) onSuccess()
       } catch (error: any) {
-        // Don't show error if user rejected signature
-        if (error?.message?.includes('User rejected') || error?.code === 4001) {
-          console.log('User cancelled signature')
-        } else {
-          console.error('Failed to schedule post:', error)
-        }
+        // Ignore errors (user may have rejected signature)
       } finally {
         setIsScheduling(false)
       }
@@ -952,11 +867,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             uploadedUrls.set(index, uploadResult.urls![i])
           })
         } else {
-          console.error('Failed to upload images:', uploadResult.error)
           return
         }
       } catch (error) {
-        console.error('Error uploading images:', error)
         return
       }
     }
@@ -973,25 +886,15 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             uploadedUrls.set(index, uploadResult.urls![i])
           })
         } else {
-          console.error('Failed to upload videos:', uploadResult.error)
           return
         }
       } catch (error) {
-        console.error('Error uploading videos:', error)
         return
       }
     }
 
     // Now build the media URLs list in order
     const mediaUrls: string[] = []
-    console.log('[PostForm] Building media URLs in order. selectedMedia:', selectedMedia.map((m, i) => ({
-      index: i,
-      type: m.type,
-      storageType: (m as any).storageType,
-      uploadedRef: (m as any).uploadedRef,
-      hasUrl: !!(m as any).url,
-      hasShortUrl: !!(m as any).shortUrl
-    })))
 
     selectedMedia.forEach((media, index) => {
       let url: string | undefined
@@ -1014,12 +917,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       }
 
       if (url) {
-        console.log(`[PostForm] Media ${index}: type=${media.type}, url=${url.substring(0, 50)}...`)
         mediaUrls.push(url)
       }
     })
-
-    console.log('[PostForm] Final mediaUrls order:', mediaUrls)
 
     // Append all media URLs to text (in order)
     if (mediaUrls.length > 0) {
@@ -1084,12 +984,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     setShowMediaOverlay(false)
     onSuccess?.()
     } catch (error: any) {
-      // Don't show error if user rejected signature
-      if (error?.message?.includes('User rejected') || error?.code === 4001) {
-        console.log('User cancelled signature')
-      } else {
-        console.error('Failed to submit post:', error)
-      }
+      // Ignore errors (user may have rejected signature)
     } finally {
       setIsSubmitting(false)
     }
@@ -1193,102 +1088,113 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               )}
             </div>
 
-            {/* Reply Button */}
+          </div>
+
+          {/* Mobile Icons Row */}
+          <div className="flex items-center justify-between">
+            {/* Left side - media icons */}
+            <div className="flex items-center space-x-4">
+              {/* Media Upload */}
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className={`p-1 rounded-full transition-all duration-200 cursor-pointer ${
+                  selectedMedia.length > 0
+                    ? 'text-yellow-500 bg-yellow-400/10'
+                    : text.trim()
+                      ? (isDark
+                          ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
+                          : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
+                      : (isDark
+                          ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
+                          : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
+                }`}>
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+              </button>
+
+              {/* GIF */}
+              <button
+                onClick={() => setShowGifPicker(!showGifPicker)}
+                className={`px-3 py-1 rounded-full text-base font-medium transition-all duration-200 cursor-pointer ${
+                text.trim()
+                  ? (isDark
+                      ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
+                      : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
+                  : (isDark
+                      ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
+                      : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
+              }`}>
+                GIF
+              </button>
+
+              {/* Image Library (On-Chain) - only show if user has uploaded images */}
+              {libraryTotalCount > 0 && (
+                <div className="relative">
+                  <button
+                    onClick={handleOpenImageLibrary}
+                    className={`p-1 rounded-full transition-all duration-200 cursor-pointer hover:bg-yellow-400/10`}
+                    title="Previously uploaded on-chain images"
+                  >
+                    <img src="/icons/on-chain-images.svg" alt="On-chain images" className="w-[27px] h-[27px] min-w-[27px] opacity-85 hover:opacity-100 transition-opacity translate-y-[3px]" />
+                  </button>
+                  {/* Unposted badge */}
+                  {libraryUnpostedCount > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] px-0.5 flex items-center justify-center bg-red-500 text-white text-[9px] font-bold rounded-full">
+                      {libraryUnpostedCount}
+                    </span>
+                  )}
+                </div>
+              )}
+
+              {/* Emoji Picker */}
+              <button
+                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                className={`p-1 rounded-full transition-all duration-200 cursor-pointer ${
+                text.trim()
+                  ? (isDark
+                      ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
+                      : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
+                  : (isDark
+                      ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
+                      : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
+              }`}>
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Right side - Action buttons (Connect/Switch/Post/etc.) */}
             { !isConnected ? (
-              <button 
-                className="px-4 py-2 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer flex items-center justify-center gap-1" 
+              <button
+                className="px-3 py-1.5 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer flex items-center justify-center gap-1"
                 onClick={openConnectModal}
               >
                 <BsWallet className="w-3 h-3" />
                 Connect
               </button>
             ) : wrongChain ? (
-              <button className="px-4 py-2 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer" onClick={handleSwitchChain}>
+              <button className="px-3 py-1.5 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer" onClick={handleSwitchChain}>
                 Switch
               </button>
+            ) : hasNoToken ? (
+              <Link
+                to="/mint"
+                className="px-3 py-1.5 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer"
+              >
+                Create profile
+              </Link>
             ) : (
               <button
-                className="px-4 py-2 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer"
+                className="px-3 py-1.5 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer"
                 disabled={(!text && selectedMedia.length === 0) || isOverLimit || !canPost || isProcessingOnChain || hasPendingUploads || isSubmitting}
                 onClick={hasFailedUploads ? handleRetryFailedUploads : hasUnuploadedOnChainImages ? handleUploadOnChain : handleSubmit}
-                title={!isTokenOwner && activeTokenId ? 'You do not own this token' : hasNoToken ? 'Please select a token' : hasPendingUploads ? 'Waiting for upload to confirm...' : isSubmitting ? 'Waiting for signature...' : ''}
+                title={!isTokenOwner && activeTokenId ? 'You do not own this token' : hasPendingUploads ? 'Waiting for upload to confirm...' : isSubmitting ? 'Waiting for signature...' : ''}
               >
-                {!isTokenOwner && activeTokenId ? 'Wrong Address' : hasNoToken ? 'No Token' : isSubmitting ? 'Signing...' : isProcessingOnChain ? 'Uploading...' : hasPendingUploads ? 'Pending...' : hasFailedUploads ? 'Retry' : hasUnuploadedOnChainImages ? 'Upload' : replyTo ? 'Reply' : 'Post'}
+                {!isTokenOwner && activeTokenId ? 'Wrong Address' : isSubmitting ? 'Signing...' : isProcessingOnChain ? 'Uploading...' : hasPendingUploads ? 'Pending...' : hasFailedUploads ? 'Retry' : hasUnuploadedOnChainImages ? 'Upload' : replyTo ? 'Reply' : 'Post'}
               </button>
-            ) }
-          </div>
-
-          {/* Mobile Icons Row */}
-          <div className="flex items-center space-x-4">
-            {/* Media Upload */}
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className={`p-1 rounded-full transition-all duration-200 cursor-pointer ${
-                selectedMedia.length > 0
-                  ? 'text-yellow-500 bg-yellow-400/10'
-                  : text.trim()
-                    ? (isDark
-                        ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
-                        : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
-                    : (isDark
-                        ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
-                        : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
-              }`}>
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-            </button>
-
-            {/* GIF */}
-            <button
-              onClick={() => setShowGifPicker(!showGifPicker)}
-              className={`px-3 py-1 rounded-full text-base font-medium transition-all duration-200 cursor-pointer ${
-              text.trim()
-                ? (isDark
-                    ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
-                    : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
-                : (isDark
-                    ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
-                    : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
-            }`}>
-              GIF
-            </button>
-
-            {/* Image Library (On-Chain) - only show if user has uploaded images */}
-            {libraryTotalCount > 0 && (
-              <div className="relative">
-                <button
-                  onClick={handleOpenImageLibrary}
-                  className={`p-1 rounded-full transition-all duration-200 cursor-pointer hover:bg-yellow-400/10`}
-                  title="Previously uploaded on-chain images"
-                >
-                  <img src="/icons/on-chain-images.svg" alt="On-chain images" className="w-[27px] h-[27px] min-w-[27px] opacity-85 hover:opacity-100 transition-opacity translate-y-[3px]" />
-                </button>
-                {/* Unposted badge */}
-                {libraryUnpostedCount > 0 && (
-                  <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] px-0.5 flex items-center justify-center bg-red-500 text-white text-[9px] font-bold rounded-full">
-                    {libraryUnpostedCount}
-                  </span>
-                )}
-              </div>
             )}
-
-            {/* Emoji Picker */}
-            <button
-              onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-              className={`p-1 rounded-full transition-all duration-200 cursor-pointer ${
-              text.trim()
-                ? (isDark
-                    ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
-                    : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
-                : (isDark
-                    ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
-                    : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
-            }`}>
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </button>
           </div>
 
         {/* Mobile Selected Media Display */}

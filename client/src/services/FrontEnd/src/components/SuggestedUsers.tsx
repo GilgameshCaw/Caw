@@ -94,7 +94,7 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
           >
             <Link to={`/users/${user.username}`} className="block text-center">
               {/* Avatar */}
-              <div className="w-16 h-16 rounded-full mx-auto mb-3 overflow-hidden">
+              <div className="w-16 h-16 rounded-full mx-auto mb-1 overflow-hidden">
                 {(user.avatarUrl || user.image) ? (
                   <img
                     src={user.avatarUrl || user.image || ''}
@@ -129,7 +129,7 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
             </Link>
 
             {/* Follow Button */}
-            <div className="mt-3">
+            <div className="mt-3 flex justify-center">
               <FollowButton
                 targetUserId={user.tokenId}
                 initialIsFollowing={user.isFollowing}

@@ -73,7 +73,6 @@ export function useFollowButton({
 
     // Check if the connected wallet owns this token
     if (activeToken.address?.toLowerCase() !== address?.toLowerCase()) {
-      console.log('[useFollowButton] Wallet connected but wrong address')
       return
     }
 
@@ -82,8 +81,6 @@ export function useFollowButton({
 
     const actionType = pendingActionRef.current
     const effectiveTokenId = activeToken.tokenId
-
-    console.log('[useFollowButton] Wallet connected, submitting action:', actionType)
 
     // Clear awaiting state immediately to prevent re-runs
     setAwaitingConnection(false)
@@ -100,13 +97,11 @@ export function useFollowButton({
       actionType,
       senderId: effectiveTokenId,
       receiverId: targetUserId
-    }).then((result) => {
-      console.log('[useFollowButton] Follow action submitted after wallet connect, result:', result)
+    }).then(() => {
       isSubmittingRef.current = false
       // Start polling for status updates
       setIsPolling(true)
     }).catch((error: any) => {
-      console.error('[useFollowButton] Follow action failed after wallet connect:', error)
       isSubmittingRef.current = false
 
       // Check if user rejected the signature
@@ -116,7 +111,6 @@ export function useFollowButton({
                              error?.message?.toLowerCase().includes('user denied')
 
       if (isUserRejection) {
-        console.log('[useFollowButton] User rejected signature, reverting state')
         setIsFollowing(!newFollowingState)
         setPending(false)
         setHasUserAction(false)
@@ -142,18 +136,12 @@ export function useFollowButton({
       pollStartTimeRef.current = Date.now()
     }
 
-    console.log('[useFollowButton] Starting poll for follow status', {
-      followerId: effectiveTokenId,
-      followingId: targetUserId
-    })
-
     const POLL_TIMEOUT = 2 * 60 * 1000 // 2 minutes
 
     const checkStatus = async () => {
       try {
         // Check if we've been polling for too long
         if (pollStartTimeRef.current && Date.now() - pollStartTimeRef.current > POLL_TIMEOUT) {
-          console.log('[useFollowButton] Poll timeout after 2 minutes, giving up')
           setPending(false)
           setHasUserAction(false) // Allow prop sync again
           pendingActionRef.current = null
@@ -175,16 +163,8 @@ export function useFollowButton({
           `/api/users/follow-status?followerId=${effectiveTokenId}&followingId=${targetUserId}`
         )
 
-        console.log('[useFollowButton] Poll result:', {
-          status,
-          currentIsFollowing: isFollowing,
-          currentIsPending: isPending,
-          willUpdate: !status.isPending
-        })
-
         if (!status.isPending) {
           // Status is no longer pending
-          console.log('[useFollowButton] Updating state - isPending: false, isFollowing:', status.isFollowing)
           setPending(false)
           setIsFollowing(status.isFollowing)
           setHasUserAction(false) // Allow prop sync again
@@ -200,7 +180,7 @@ export function useFollowButton({
           setIsPolling(false)
         }
       } catch (error) {
-        console.error('[useFollowButton] Failed to check follow status:', error)
+        // Ignore polling errors
       }
     }
 
@@ -228,18 +208,11 @@ export function useFollowButton({
     // If no token OR wallet not connected, trigger wallet connection and track pending action
     if (!effectiveTokenId || !activeToken || !isConnected) {
       const actionType = isFollowing ? 'unfollow' : 'follow'
-      console.log('[useFollowButton] No active token or wallet not connected, triggering wallet connection', {
-        effectiveTokenId,
-        hasActiveToken: !!activeToken,
-        isConnected,
-        actionType
-      })
       // Reset submitting ref for new action
       isSubmittingRef.current = false
       // Track that we're waiting for wallet connection
       pendingActionRef.current = actionType
       setAwaitingConnection(true)
-      console.log('[useFollowButton] Set awaitingConnection=true, pendingAction=', actionType)
 
       // Call signAndSubmit to trigger wallet connection modal (don't await - actual action happens in useEffect)
       signAndSubmit({
@@ -252,12 +225,6 @@ export function useFollowButton({
       })
       return
     }
-
-    console.log('[useFollowButton] Toggling follow state', {
-      actionType: isFollowing ? 'unfollow' : 'follow',
-      senderId: effectiveTokenId,
-      receiverId: targetUserId
-    })
 
     // Mark that user has taken action (prevents prop sync from overriding)
     setHasUserAction(true)
@@ -285,20 +252,10 @@ export function useFollowButton({
         return
       }
 
-      console.log('[useFollowButton] Follow action submitted successfully, result:', result)
-
       // Now that transaction is submitted, start polling for status updates
       setIsPolling(true)
 
     } catch (error: any) {
-      console.error('[useFollowButton] Follow action failed:', error)
-      console.error('[useFollowButton] Error details:', {
-        message: error?.message,
-        name: error?.name,
-        stack: error?.stack,
-        code: error?.code
-      })
-
       // Only revert optimistic update if user rejected/cancelled the signature
       // For other errors (like network issues), keep the pending state
       const isUserRejection = error?.code === 'ACTION_REJECTED' ||
@@ -307,7 +264,6 @@ export function useFollowButton({
                              error?.message?.toLowerCase().includes('user denied')
 
       if (isUserRejection) {
-        console.log('[useFollowButton] User rejected signature, reverting optimistic update')
         setIsFollowing(isFollowing)
         setPending(false)
         setHasUserAction(false) // Allow prop sync again
@@ -315,7 +271,6 @@ export function useFollowButton({
         pendingActionRef.current = null
         onFollowStateChange?.(isFollowing)
       } else {
-        console.log('[useFollowButton] Non-user-rejection error, keeping pending state and starting polling')
         // For non-user-rejection errors, also start polling in case the record was created
         setIsPolling(true)
       }

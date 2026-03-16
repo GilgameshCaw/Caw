@@ -17,7 +17,6 @@ export default function StateProvider({ children }: StateProviderProps) {
   useTokenDataUpdate();
 
   useEffect(() => {
-    console.log("Changed addresss. From:", address, "To:", prevAddress)
     if (address && prevAddress.current && prevAddress.current !== address)
       useTokenDataStore.getState().removeActiveToken()
     prevAddress.current = address
