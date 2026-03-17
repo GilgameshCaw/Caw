@@ -386,49 +386,24 @@ console.log("BALANCE:", balance)
                         
                         {/* Modal de precios */}
                         {showPricingModal && (
-                            <div className="absolute bottom-full right-0 mb-6 w-96 bg-black border border-white/20 rounded-lg p-6 shadow-xl z-50">
-                                <div className="text-sm font-medium text-center text-white mb-4">Username Pricing</div>
-                                <div className="space-y-3">
-                                    <div className="flex justify-between text-xs items-center">
-                                        <div className="flex items-center space-x-2">
-                                            <img src={BadgedIcon} alt="Verified" className="w-4 h-4" />
-                                            <span className="text-gray-300">1 Character (rare!)</span>
-                                        </div>
-                                        <div className="text-right">
-                                            <div className="font-mono text-white">BURN 1T CAW</div>
-                                            <div className="text-gray-400">($89,985)</div>
-                                        </div>
-                                    </div>
-                                    <div className="flex justify-between text-xs items-center">
-                                        <div className="flex items-center space-x-2">
-                                            <img src={BadgedIcon} alt="Verified" className="w-4 h-4" />
-                                            <span className="text-gray-300">2-3 Characters</span>
-                                        </div>
-                                        <div className="text-right">
-                                            <div className="font-mono text-white">BURN 240B-60B CAW</div>
-                                            <div className="text-gray-400">($21,600 - $5,400)</div>
-                                        </div>
-                                    </div>
-                                    <div className="flex justify-between text-xs items-center">
-                                        <div className="flex items-center space-x-2">
-                                            <img src={BadgedIcon} alt="Verified" className="w-4 h-4" />
-                                            <span className="text-gray-300">4-7 Characters</span>
-                                        </div>
-                                        <div className="text-right">
-                                            <div className="font-mono text-white">BURN 6B-10M CAW</div>
-                                            <div className="text-gray-400">($540 - $0.10)</div>
-                                        </div>
-                                    </div>
-                                    <div className="flex justify-between text-xs items-center">
-                                        <div className="flex items-center space-x-2">
-                                            <img src={BadgedIcon} alt="Verified" className="w-4 h-4" />
-                                            <span className="text-gray-300">8+ Characters</span>
-                                        </div>
-                                        <div className="text-right">
-                                            <div className="font-mono text-white">BURN 1M CAW</div>
-                                            <div className="text-gray-400">($0.01)</div>
-                                        </div>
-                                    </div>
+                            <div className="absolute bottom-full right-0 mb-6 w-72 bg-black border border-white/20 rounded-lg p-5 shadow-xl z-50">
+                                <div className="text-sm font-medium text-center text-white mb-3">Username Pricing</div>
+                                <div className="space-y-2">
+                                    {[
+                                      { label: '1 Character', cost: '1T' },
+                                      { label: '2 Characters', cost: '240B' },
+                                      { label: '3 Characters', cost: '60B' },
+                                      { label: '4 Characters', cost: '6B' },
+                                      { label: '5 Characters', cost: '200M' },
+                                      { label: '6 Characters', cost: '20M' },
+                                      { label: '7 Characters', cost: '10M' },
+                                      { label: '8+ Characters', cost: '1M' },
+                                    ].map(({ label, cost }) => (
+                                      <div key={label} className="flex justify-between text-xs items-center">
+                                        <span className="text-gray-300">{label}</span>
+                                        <span className="font-mono text-white">BURN {cost} CAW</span>
+                                      </div>
+                                    ))}
                                 </div>
                             </div>
                         )}
