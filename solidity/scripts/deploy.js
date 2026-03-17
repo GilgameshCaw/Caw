@@ -5,7 +5,7 @@
  * This script replaces the old Truffle migrations (migrations/1_initial_migration.js).
  *
  * FEATURES:
- * - Multi-chain deployment (L1, L2, Archive chains)
+ * - Multi-chain deployment (L1, L2a, L2b with cross-replication)
  * - Automatic retry with exponential backoff on failures
  * - State persistence (.deploy-state.json) - resume from where you left off
  * - Dependency graph - redeploy a contract and all its dependents
@@ -28,18 +28,24 @@
  *   RPC_ARBITRUM        - Arbitrum mainnet RPC URL
  *
  * DEPLOYMENT PHASES:
- *   Phase 1: L2 - Deploy CawNameL2 (needed for cross-chain setup)
+ *   Phase 1: L2a + L2b - Deploy CawNameL2 on both L2 chains
  *   Phase 2: L1 - Deploy all L1 contracts (CawName, CawClientManager, etc.)
- *   Phase 3: L2 - Deploy remaining L2 contracts (CawActions, Replicator)
- *   Phase 4: Archive - Deploy CawActionsArchive
- *   Phase 5: Cross-chain - Set LZ peers + addReplication (syncs config to L2)
+ *   Phase 3: L2a + L2b - Deploy remaining L2 contracts (CawActions, Replicator)
+ *   Phase 4: L2a + L2b - Deploy CawActionsArchive on each chain (for cross-replication)
+ *   Phase 5: Cross-chain - Register archive chains, set LZ peers, addReplication
+ *
+ * ARCHITECTURE (testnet):
+ *   L1 (Sepolia): CawName, CawClientManager, CawNameMinter, CawNameQuoter
+ *   L2 (Base Sepolia): CawNameL2, CawActions, CawActionsReplicator, CawActionsArchive
+ *   L2b (Arbitrum Sepolia): CawNameL2, CawActions, CawActionsReplicator, CawActionsArchive
+ *   Each L2's Replicator archives to the other L2's CawActionsArchive.
  *
  * STATE FILE:
  *   Deployment state is saved to .deploy-state.json in the solidity directory.
  *   This allows resuming failed deployments. Delete this file to start fresh.
  *
  * PREREQUISITES:
- *   1. Run `npx truffle compile` first to generate contract artifacts
+ *   1. Run `npx hardhat compile` first to generate contract artifacts
  *   2. Ensure you have ETH on all target chains for gas
  *   3. Set PRIVATE_KEYS env var or use default test keys (for testnet only!)
  */
@@ -62,6 +68,7 @@ const STATE_FILE = path.join(__dirname, '../.deploy-state.json');
 const EXPECTED_DEPLOYER = '0xF71338f3eAa483aA66125598B09BA1988e694a95';
 
 // Chain configurations
+// L2 = Base Sepolia, L2b = Arbitrum Sepolia (both are full L2s that cross-replicate)
 const CHAINS = {
   testnetL1: {
     name: 'Sepolia',
@@ -79,7 +86,7 @@ const CHAINS = {
     lzEid: 40245,
     dvn: '0xe1a12515f9ab2764b887bf60b923ca494ebbb2d6',
   },
-  testnetArchive: {
+  testnetL2b: {
     name: 'Arbitrum Sepolia',
     rpc: process.env.RPC_ARBITRUM_SEPOLIA || 'https://sepolia-rollup.arbitrum.io/rpc',
     chainId: 421614,
@@ -103,9 +110,9 @@ const CHAINS = {
     lzEid: 40161,
     dvn: '0x0000000000000000000000000000000000000000',
   },
-  devArchive: {
-    name: 'Local Archive',
-    rpc: process.env.RPC_DEV_ARCHIVE || 'http://localhost:8547',
+  devL2b: {
+    name: 'Local L2b',
+    rpc: process.env.RPC_DEV_L2B || 'http://localhost:8547',
     chainId: 31337,
     lzEndpoint: '0x1a44076050125825900e736c501f859c50fe728c',
     lzEid: 40231,
@@ -128,7 +135,7 @@ const CHAINS = {
     lzEid: 30184,
     dvn: '0x9e059a54699a285714207b43b055483e78faac25',
   },
-  mainnetArchive: {
+  mainnetL2b: {
     name: 'Arbitrum Mainnet',
     rpc: process.env.RPC_ARBITRUM || 'https://arb1.arbitrum.io/rpc',
     chainId: 42161,
@@ -153,7 +160,7 @@ const EXISTING_CONTRACTS = {
 
 // Contract definitions with dependencies
 const CONTRACTS = {
-  // Phase 1: L2 - Deploy CawNameL2 first (needed by L1 CawName for cross-chain setup)
+  // Phase 1: Deploy CawNameL2 on both L2 chains (needed by L1 CawName for cross-chain setup)
   CawNameL2_L2: {
     artifact: 'CawNameL2',
     chain: 'L2',
@@ -161,6 +168,16 @@ const CONTRACTS = {
     dependencies: [],
     constructorArgs: (state, chain) => [
       CHAINS[chain.replace('L2', 'L1')].lzEid, // peer network eid (L1)
+      CHAINS[chain].lzEndpoint,
+    ],
+  },
+  CawNameL2_L2b: {
+    artifact: 'CawNameL2',
+    chain: 'L2b',
+    phase: 1,
+    dependencies: [],
+    constructorArgs: (state, chain) => [
+      CHAINS[chain.replace('L2b', 'L1')].lzEid, // peer network eid (L1)
       CHAINS[chain].lzEndpoint,
     ],
   },
@@ -181,7 +198,7 @@ const CONTRACTS = {
   CawName: {
     chain: 'L1',
     phase: 2,
-    dependencies: ['CawNameL2_L2', 'CawNameURI', 'CawClientManager'],
+    dependencies: ['CawNameL2_L2', 'CawNameL2_L2b', 'CawNameURI', 'CawClientManager'],
     constructorArgs: (state, chain) => [
       state.addresses.MintableCaw,
       state.addresses.CawNameURI,
@@ -236,7 +253,7 @@ const CONTRACTS = {
     ],
   },
 
-  // Phase 3: L2 - Deploy remaining L2 contracts
+  // Phase 3: Deploy remaining L2 contracts on both chains
   CawActions_L2: {
     artifact: 'CawActions',
     chain: 'L2',
@@ -255,10 +272,36 @@ const CONTRACTS = {
       state.addresses.CawNameL2_L2,
     ],
   },
+  CawActions_L2b: {
+    artifact: 'CawActions',
+    chain: 'L2b',
+    phase: 3,
+    dependencies: ['CawNameL2_L2b'],
+    constructorArgs: (state) => [state.addresses.CawNameL2_L2b],
+  },
+  CawActionsReplicator_L2b: {
+    artifact: 'CawActionsReplicator',
+    chain: 'L2b',
+    phase: 3,
+    dependencies: ['CawActions_L2b', 'CawNameL2_L2b'],
+    constructorArgs: (state, chain) => [
+      CHAINS[chain].lzEndpoint,
+      state.addresses.CawActions_L2b,
+      state.addresses.CawNameL2_L2b,
+    ],
+  },
 
-  // Phase 4: Archive chain
-  CawActionsArchive: {
-    chain: 'Archive',
+  // Phase 4: Deploy CawActionsArchive on each L2 (receives replications from the other)
+  CawActionsArchive_L2: {
+    artifact: 'CawActionsArchive',
+    chain: 'L2',
+    phase: 4,
+    dependencies: [],
+    constructorArgs: (state, chain) => [CHAINS[chain].lzEndpoint],
+  },
+  CawActionsArchive_L2b: {
+    artifact: 'CawActionsArchive',
+    chain: 'L2b',
     phase: 4,
     dependencies: [],
     constructorArgs: (state, chain) => [CHAINS[chain].lzEndpoint],
@@ -317,7 +360,7 @@ const LINKING_STEPS = [
     condition: (state) => state.addresses.CawName && state.addresses.CawNameL2_L1,
   },
   {
-    name: 'Set L2 peer on CawName (to actual L2 CawNameL2)',
+    name: 'Set L2 peer on CawName (to L2 CawNameL2)',
     chain: 'L1',
     phase: 2,
     contract: 'CawName',
@@ -327,6 +370,18 @@ const LINKING_STEPS = [
       state.addresses.CawNameL2_L2,
     ],
     condition: (state) => state.addresses.CawName && state.addresses.CawNameL2_L2,
+  },
+  {
+    name: 'Set L2b peer on CawName (to L2b CawNameL2)',
+    chain: 'L1',
+    phase: 2,
+    contract: 'CawName',
+    method: 'setL2Peer',
+    args: (state, chainConfig) => [
+      CHAINS[chainConfig.env + 'L2b'].lzEid,
+      state.addresses.CawNameL2_L2b,
+    ],
+    condition: (state) => state.addresses.CawName && state.addresses.CawNameL2_L2b,
   },
   {
     name: 'Set minter on CawName',
@@ -393,7 +448,7 @@ const LINKING_STEPS = [
     },
   },
 
-  // Phase 3 linking (L2)
+  // Phase 3 linking (L2 - Base Sepolia)
   {
     name: 'Set L1 peer on CawNameL2_L2',
     chain: 'L2',
@@ -443,61 +498,155 @@ const LINKING_STEPS = [
     condition: (state) => state.addresses.CawNameL2_L2 && state.addresses.CawActionsReplicator_L2,
   },
 
-  // Phase 5 linking (Archive + cross-chain replication setup)
+  // Phase 3 linking (L2b - Arbitrum Sepolia)
   {
-    name: 'Set LZ peer on CawActionsArchive for L2 Replicator',
-    chain: 'Archive',
+    name: 'Set L1 peer on CawNameL2_L2b',
+    chain: 'L2b',
+    phase: 3,
+    contract: 'CawNameL2_L2b',
+    method: 'setL1Peer',
+    args: (state, chainConfig) => [
+      CHAINS[chainConfig.env + 'L1'].lzEid,
+      state.addresses.CawName,
+      false,
+    ],
+    condition: (state) => state.addresses.CawNameL2_L2b && state.addresses.CawName,
+  },
+  {
+    name: 'Link CawNameL2_L2b to CawActions_L2b',
+    chain: 'L2b',
+    phase: 3,
+    contract: 'CawNameL2_L2b',
+    method: 'setCawActions',
+    args: (state) => [state.addresses.CawActions_L2b],
+    condition: (state) => state.addresses.CawNameL2_L2b && state.addresses.CawActions_L2b,
+  },
+  {
+    name: 'Set replicator on CawActions_L2b',
+    chain: 'L2b',
+    phase: 3,
+    contract: 'CawActions_L2b',
+    method: 'setReplicator',
+    args: (state) => [state.addresses.CawActionsReplicator_L2b],
+    condition: (state) => state.addresses.CawActions_L2b && state.addresses.CawActionsReplicator_L2b,
+    skipIf: async (state, deployer) => {
+      const contract = deployer.getContract('CawActions_L2b');
+      if (!contract) return false;
+      try {
+        const current = await contract.replicator();
+        return current !== '0x0000000000000000000000000000000000000000';
+      } catch { return false; }
+    },
+  },
+  {
+    name: 'Link CawNameL2_L2b to replicator',
+    chain: 'L2b',
+    phase: 3,
+    contract: 'CawNameL2_L2b',
+    method: 'setCawActionsReplicator',
+    args: (state) => [state.addresses.CawActionsReplicator_L2b],
+    condition: (state) => state.addresses.CawNameL2_L2b && state.addresses.CawActionsReplicator_L2b,
+  },
+
+  // Phase 5: Cross-chain replication setup
+  // L2's archive (on L2b) receives from L2's replicator
+  {
+    name: 'Set LZ peer on CawActionsArchive_L2b (accepts from L2 Replicator)',
+    chain: 'L2b',
     phase: 5,
-    contract: 'CawActionsArchive',
+    contract: 'CawActionsArchive_L2b',
     method: 'setPeer',
     args: (state, chainConfig) => [
       CHAINS[chainConfig.env + 'L2'].lzEid,
       ethers.zeroPadValue(state.addresses.CawActionsReplicator_L2, 32),
     ],
-    condition: (state) => state.addresses.CawActionsArchive && state.addresses.CawActionsReplicator_L2,
+    condition: (state) => state.addresses.CawActionsArchive_L2b && state.addresses.CawActionsReplicator_L2,
     skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawActionsArchive');
+      const contract = deployer.getContract('CawActionsArchive_L2b');
       if (!contract) return false;
-      const chainKey = deployer.getChainKey('L2');
-      const l2Eid = CHAINS[chainKey].lzEid;
+      const l2Eid = CHAINS[deployer.getChainKey('L2')].lzEid;
       try {
         const peer = await contract.peers(l2Eid);
         return peer !== ethers.ZeroHash;
       } catch { return false; }
     },
   },
+  // L2b's archive (on L2) receives from L2b's replicator
   {
-    name: 'Register archive chain on CawActionsReplicator_L2',
+    name: 'Set LZ peer on CawActionsArchive_L2 (accepts from L2b Replicator)',
+    chain: 'L2',
+    phase: 5,
+    contract: 'CawActionsArchive_L2',
+    method: 'setPeer',
+    args: (state, chainConfig) => [
+      CHAINS[chainConfig.env + 'L2b'].lzEid,
+      ethers.zeroPadValue(state.addresses.CawActionsReplicator_L2b, 32),
+    ],
+    condition: (state) => state.addresses.CawActionsArchive_L2 && state.addresses.CawActionsReplicator_L2b,
+    skipIf: async (state, deployer) => {
+      const contract = deployer.getContract('CawActionsArchive_L2');
+      if (!contract) return false;
+      const l2bEid = CHAINS[deployer.getChainKey('L2b')].lzEid;
+      try {
+        const peer = await contract.peers(l2bEid);
+        return peer !== ethers.ZeroHash;
+      } catch { return false; }
+    },
+  },
+  // Register L2b as archive chain on L2's replicator (L2 replicates TO L2b)
+  {
+    name: 'Register L2b archive chain on CawActionsReplicator_L2',
     chain: 'L2',
     phase: 5,
     contract: 'CawActionsReplicator_L2',
     method: 'addArchiveChain',
     args: (state, chainConfig) => [
-      CHAINS[chainConfig.env + 'Archive'].lzEid,
-      state.addresses.CawActionsArchive,
+      CHAINS[chainConfig.env + 'L2b'].lzEid,
+      state.addresses.CawActionsArchive_L2b,
     ],
-    condition: (state) => state.addresses.CawActionsReplicator_L2 && state.addresses.CawActionsArchive,
+    condition: (state) => state.addresses.CawActionsReplicator_L2 && state.addresses.CawActionsArchive_L2b,
     skipIf: async (state, deployer) => {
       const contract = deployer.getContract('CawActionsReplicator_L2');
       if (!contract) return false;
-      const chainKey = deployer.getChainKey('Archive');
-      const archiveEid = CHAINS[chainKey].lzEid;
+      const l2bEid = CHAINS[deployer.getChainKey('L2b')].lzEid;
       try {
-        return await contract.isAvailableChain(archiveEid);
+        return await contract.isAvailableChain(l2bEid);
       } catch { return false; }
     },
   },
+  // Register L2 as archive chain on L2b's replicator (L2b replicates TO L2)
   {
-    name: 'Add replication destination on CawClientManager (syncs to L2 via LZ)',
+    name: 'Register L2 archive chain on CawActionsReplicator_L2b',
+    chain: 'L2b',
+    phase: 5,
+    contract: 'CawActionsReplicator_L2b',
+    method: 'addArchiveChain',
+    args: (state, chainConfig) => [
+      CHAINS[chainConfig.env + 'L2'].lzEid,
+      state.addresses.CawActionsArchive_L2,
+    ],
+    condition: (state) => state.addresses.CawActionsReplicator_L2b && state.addresses.CawActionsArchive_L2,
+    skipIf: async (state, deployer) => {
+      const contract = deployer.getContract('CawActionsReplicator_L2b');
+      if (!contract) return false;
+      const l2Eid = CHAINS[deployer.getChainKey('L2')].lzEid;
+      try {
+        return await contract.isAvailableChain(l2Eid);
+      } catch { return false; }
+    },
+  },
+  // Add replication for client 1 on L2 (syncs to L2 via LZ — client replicates to L2b's archive)
+  {
+    name: 'Add replication for client 1 on L2 (archive to L2b)',
     chain: 'L1',
     phase: 5,
     contract: 'CawClientManager',
     method: 'addReplication',
     args: (state, chainConfig) => [
       1, // clientId
-      CHAINS[chainConfig.env + 'Archive'].lzEid,
+      CHAINS[chainConfig.env + 'L2b'].lzEid,
     ],
-    condition: (state) => state.addresses.CawClientManager && state.addresses.CawActionsArchive && state.addresses.CawName,
+    condition: (state) => state.addresses.CawClientManager && state.addresses.CawActionsArchive_L2b && state.addresses.CawName,
     skipIf: async (state, deployer) => {
       const contract = deployer.getContract('CawClientManager');
       if (!contract) return false;
@@ -507,25 +656,27 @@ const LINKING_STEPS = [
       } catch { return false; }
     },
     overrides: async (state, deployer, chainConfig) => {
-      // Quote the LZ fee for syncing replication config to L2
       const quoter = deployer.getContract('CawNameQuoter');
       if (!quoter) {
-        console.log('   ⚠️  CawNameQuoter not available, using 0.0002 ETH as fallback');
+        console.log('   CawNameQuoter not available, using 0.0002 ETH as fallback');
         return { value: ethers.parseEther('0.0002') };
       }
       try {
-        const archiveEid = CHAINS[chainConfig.env + 'Archive'].lzEid;
+        const l2bEid = CHAINS[chainConfig.env + 'L2b'].lzEid;
         const l2Eid = CHAINS[chainConfig.env + 'L2'].lzEid;
-        const quote = await quoter.syncReplicationQuote(1, [archiveEid], l2Eid, false);
-        const feeWithBuffer = (quote.nativeFee * 120n) / 100n; // 20% buffer
+        const quote = await quoter.syncReplicationQuote(1, [l2bEid], l2Eid, false);
+        const feeWithBuffer = (quote.nativeFee * 120n) / 100n;
         console.log(`   LZ fee quoted: ${ethers.formatEther(quote.nativeFee)} ETH (sending ${ethers.formatEther(feeWithBuffer)} with buffer)`);
         return { value: feeWithBuffer };
       } catch (e) {
-        console.log(`   ⚠️  Fee quote failed: ${e.message}, using 0.0002 ETH as fallback`);
+        console.log(`   Fee quote failed: ${e.message}, using 0.0002 ETH as fallback`);
         return { value: ethers.parseEther('0.0002') };
       }
     },
   },
+  // Note: L2b replication sync needs to be done manually via cawName.syncReplication()
+  // because CawClientManager.defaultL2Eid only auto-syncs to L2. For testnet this is fine —
+  // run add-replication.ts targeting L2b after deployment, or call syncReplication manually.
 ];
 
 // ============================================
@@ -546,18 +697,18 @@ class MultiChainDeployer {
     try {
       if (fs.existsSync(STATE_FILE)) {
         const data = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'));
-        console.log('📂 Loaded existing deployment state');
+        console.log('Loaded existing deployment state');
         return data;
       }
     } catch (e) {
-      console.warn('⚠️  Could not load state file:', e.message);
+      console.warn('Could not load state file:', e.message);
     }
     return { addresses: {}, linking: {}, deployerAddress: null };
   }
 
   saveState() {
     fs.writeFileSync(STATE_FILE, JSON.stringify(this.state, null, 2));
-    console.log('💾 State saved');
+    console.log('State saved');
   }
 
   resetState() {
@@ -565,7 +716,7 @@ class MultiChainDeployer {
     if (fs.existsSync(STATE_FILE)) {
       fs.unlinkSync(STATE_FILE);
     }
-    console.log('🗑️  State reset');
+    console.log('State reset');
   }
 
   getChainKey(logicalChain) {
@@ -580,13 +731,13 @@ class MultiChainDeployer {
       throw new Error(`Unknown chain: ${chainKey}`);
     }
 
-    console.log(`\n🔗 Connecting to ${config.name} (${chainKey})...`);
+    console.log(`\nConnecting to ${config.name} (${chainKey})...`);
 
     const provider = new ethers.JsonRpcProvider(config.rpc);
 
     await this.retry(async () => {
       const network = await provider.getNetwork();
-      console.log(`   ✓ Connected to chain ID ${network.chainId}`);
+      console.log(`   Connected to chain ID ${network.chainId}`);
     });
 
     const privateKeys = process.env.PRIVATE_KEYS?.split(',') || [];
@@ -596,7 +747,7 @@ class MultiChainDeployer {
 
     const wallet = new ethers.Wallet(privateKeys[0], provider);
     const balance = await provider.getBalance(wallet.address);
-    console.log(`   ✓ Wallet: ${wallet.address} (${ethers.formatEther(balance)} ETH)`);
+    console.log(`   Wallet: ${wallet.address} (${ethers.formatEther(balance)} ETH)`);
 
     // Verify deployer address
     if (wallet.address.toLowerCase() !== EXPECTED_DEPLOYER.toLowerCase()) {
@@ -612,7 +763,7 @@ class MultiChainDeployer {
     for (const [name, addr] of Object.entries(existing)) {
       if (!this.state.addresses[name]) {
         this.state.addresses[name] = addr;
-        console.log(`   ✓ Using existing ${name}: ${addr}`);
+        console.log(`   Using existing ${name}: ${addr}`);
       }
     }
   }
@@ -646,9 +797,9 @@ class MultiChainDeployer {
       } catch (e) {
         lastError = e;
         const delay = RETRY_DELAY_MS * Math.pow(2, i);
-        console.warn(`   ⚠️  Attempt ${i + 1}/${attempts} failed: ${e.message}`);
+        console.warn(`   Attempt ${i + 1}/${attempts} failed: ${e.message}`);
         if (i < attempts - 1) {
-          console.log(`   ⏳ Retrying in ${delay / 1000}s...`);
+          console.log(`   Retrying in ${delay / 1000}s...`);
           await new Promise(r => setTimeout(r, delay));
         }
       }
@@ -663,7 +814,7 @@ class MultiChainDeployer {
     }
 
     if (this.state.addresses[contractKey] && !force) {
-      console.log(`⏭️  ${contractKey} already deployed at ${this.state.addresses[contractKey]}`);
+      console.log(`  ${contractKey} already deployed at ${this.state.addresses[contractKey]}`);
       return this.state.addresses[contractKey];
     }
 
@@ -675,7 +826,7 @@ class MultiChainDeployer {
     const wallet = this.wallets[chainKey];
 
     const args = config.constructorArgs(this.state, chainKey);
-    console.log(`\n📦 Deploying ${contractKey} to ${chainKey}...`);
+    console.log(`\nDeploying ${contractKey} to ${chainKey}...`);
     console.log(`   Constructor args:`, args);
 
     const factory = new ethers.ContractFactory(artifact.abi, artifact.bytecode, wallet);
@@ -687,14 +838,14 @@ class MultiChainDeployer {
         overrides.gasLimit = 12000000n;
       }
       const deployed = await factory.deploy(...args, overrides);
-      console.log(`   ⏳ Tx hash: ${deployed.deploymentTransaction().hash}`);
-      console.log(`   ⏳ Waiting for confirmation...`);
+      console.log(`   Tx hash: ${deployed.deploymentTransaction().hash}`);
+      console.log(`   Waiting for confirmation...`);
       await deployed.waitForDeployment();
       return deployed;
     });
 
     const address = await contract.getAddress();
-    console.log(`   ✅ Deployed at: ${address}`);
+    console.log(`   Deployed at: ${address}`);
 
     this.state.addresses[contractKey] = address;
     this.contracts[contractKey] = contract;
@@ -730,7 +881,7 @@ class MultiChainDeployer {
     await this.initChain(chainKey);
 
     if (step.condition && !step.condition(this.state)) {
-      console.log(`⏭️  Skipping "${step.name}" - condition not met`);
+      console.log(`  Skipping "${step.name}" - condition not met`);
       return;
     }
 
@@ -738,17 +889,17 @@ class MultiChainDeployer {
       try {
         const shouldSkip = await step.skipIf(this.state, this);
         if (shouldSkip) {
-          console.log(`⏭️  Skipping "${step.name}" - already done`);
+          console.log(`  Skipping "${step.name}" - already done`);
           return;
         }
       } catch (e) {
-        console.log(`   ⚠️  Skip check failed: ${e.message}, proceeding...`);
+        console.log(`   Skip check failed: ${e.message}, proceeding...`);
       }
     }
 
     const contract = this.getContract(step.contract);
     if (!contract) {
-      console.warn(`⚠️  Contract ${step.contract} not available, skipping "${step.name}"`);
+      console.warn(`  Contract ${step.contract} not available, skipping "${step.name}"`);
       return;
     }
 
@@ -759,20 +910,20 @@ class MultiChainDeployer {
     let overrides = {};
     if (step.overrides) {
       overrides = await step.overrides(this.state, this, chainConfig);
-      console.log(`\n🔗 ${step.name}...`);
+      console.log(`\n${step.name}...`);
       console.log(`   Calling ${step.contract}.${step.method}(${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(', ')}) with value=${overrides.value ? ethers.formatEther(overrides.value) + ' ETH' : '0'}`);
     } else {
-      console.log(`\n🔗 ${step.name}...`);
+      console.log(`\n${step.name}...`);
       console.log(`   Calling ${step.contract}.${step.method}(${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(', ')})`);
     }
 
     await this.retry(async () => {
       const tx = await contract[step.method](...args, overrides);
-      console.log(`   ⏳ Tx hash: ${tx.hash}`);
+      console.log(`   Tx hash: ${tx.hash}`);
       await tx.wait();
     });
 
-    console.log(`   ✅ Done`);
+    console.log(`   Done`);
 
     if (step.onSuccess) {
       step.onSuccess(this.state);
@@ -782,7 +933,7 @@ class MultiChainDeployer {
 
   async deployPhase(phase) {
     console.log(`\n${'='.repeat(50)}`);
-    console.log(`📍 PHASE ${phase}`);
+    console.log(`PHASE ${phase}`);
     console.log(`${'='.repeat(50)}`);
 
     // Get contracts for this phase, sorted by dependencies
@@ -809,7 +960,7 @@ class MultiChainDeployer {
             toDeploy.splice(i, 1);
             progress = true;
           } catch (e) {
-            console.error(`❌ Failed to deploy ${key}: ${e.message}`);
+            console.error(`Failed to deploy ${key}: ${e.message}`);
             throw e;
           }
         }
@@ -817,7 +968,7 @@ class MultiChainDeployer {
     }
 
     if (toDeploy.length > 0) {
-      console.warn(`⚠️  Could not deploy (missing dependencies): ${toDeploy.join(', ')}`);
+      console.warn(`Could not deploy (missing dependencies): ${toDeploy.join(', ')}`);
     }
 
     // Run linking steps for this phase
@@ -826,14 +977,14 @@ class MultiChainDeployer {
       try {
         await this.executeLink(step);
       } catch (e) {
-        console.error(`❌ Failed: ${step.name} - ${e.message}`);
+        console.error(`Failed: ${step.name} - ${e.message}`);
         // Continue with other steps
       }
     }
   }
 
   async deployAll() {
-    console.log('\n🚀 Starting full deployment...');
+    console.log('\nStarting full deployment...');
     console.log(`   Environment: ${this.env}`);
     console.log(`   Expected deployer: ${EXPECTED_DEPLOYER}`);
 
@@ -844,7 +995,7 @@ class MultiChainDeployer {
   }
 
   async redeploy(contractKey) {
-    console.log(`\n🔄 Redeploying ${contractKey} and dependents...\n`);
+    console.log(`\nRedeploying ${contractKey} and dependents...\n`);
 
     // Find all contracts that depend on this one
     const toRedeploy = new Set([contractKey]);
@@ -880,12 +1031,18 @@ class MultiChainDeployer {
   }
 
   printState() {
-    console.log('\n📋 Current Deployment State:\n');
+    console.log('\nCurrent Deployment State:\n');
     console.log(`Environment: ${this.env}`);
     console.log(`Deployer: ${this.state.deployerAddress || 'Not connected'}\n`);
 
     console.log('Addresses:');
-    const phases = { 1: 'L2 (Phase 1)', 2: 'L1 (Phase 2)', 3: 'L2 (Phase 3)', 4: 'Archive (Phase 4)', 5: 'Cross-chain Linking (Phase 5)' };
+    const phases = {
+      1: 'L2 + L2b CawNameL2 (Phase 1)',
+      2: 'L1 (Phase 2)',
+      3: 'L2 + L2b Contracts (Phase 3)',
+      4: 'Archives (Phase 4)',
+      5: 'Cross-chain Linking (Phase 5)',
+    };
     for (const phase of [1, 2, 3, 4, 5]) {
       const phaseContracts = Object.entries(CONTRACTS).filter(([_, c]) => c.phase === phase);
       if (phaseContracts.length > 0) {
@@ -958,11 +1115,16 @@ Options:
   --help              Show this help
 
 Deployment Phases:
-  Phase 1: Deploy CawNameL2 on L2 (needed by L1 contracts)
+  Phase 1: Deploy CawNameL2 on L2 + L2b (needed by L1 contracts)
   Phase 2: Deploy all L1 contracts and link them
-  Phase 3: Deploy remaining L2 contracts and link them
-  Phase 4: Deploy Archive chain contracts
-  Phase 5: Set LZ peers between Replicator/Archive + addReplication (syncs config to L2)
+  Phase 3: Deploy remaining L2 + L2b contracts and link them
+  Phase 4: Deploy CawActionsArchive on each L2 chain
+  Phase 5: Cross-chain replication setup (archive peers, addArchiveChain, addReplication)
+
+Architecture:
+  L1 (Sepolia): CawName, CawClientManager, CawNameMinter, CawNameQuoter
+  L2 (Base Sepolia): Full L2 stack + CawActionsArchive (receives from L2b)
+  L2b (Arbitrum Sepolia): Full L2 stack + CawActionsArchive (receives from L2)
 
 After deployment, ABIs are automatically regenerated for the frontend.
         `);
@@ -982,7 +1144,7 @@ After deployment, ABIs are automatically regenerated for the frontend.
   }
 
   if (dryRun) {
-    console.log('\n🔍 Dry run mode - showing what would be deployed:\n');
+    console.log('\nDry run mode - showing what would be deployed:\n');
     deployer.printState();
 
     console.log('\nContracts to deploy:');
@@ -1003,27 +1165,27 @@ After deployment, ABIs are automatically regenerated for the frontend.
   }
 
   deployer.printState();
-  console.log('\n✅ Deployment complete!');
+  console.log('\nDeployment complete!');
 
   // Regenerate ABIs for frontend
   if (!skipAbi) {
-    console.log('\n🔄 Regenerating ABIs for frontend...');
+    console.log('\nRegenerating ABIs for frontend...');
     try {
       execSync('npx wagmi generate', {
         cwd: path.join(__dirname, '..'),
         stdio: 'inherit'
       });
-      console.log('✅ ABIs regenerated successfully');
+      console.log('ABIs regenerated successfully');
     } catch (e) {
-      console.warn('⚠️  Failed to regenerate ABIs:', e.message);
+      console.warn('Failed to regenerate ABIs:', e.message);
       console.warn('   You can manually run: cd solidity && npx wagmi generate');
     }
   } else {
-    console.log('\n⏭️  Skipping ABI regeneration (--skip-abi flag)');
+    console.log('\nSkipping ABI regeneration (--skip-abi flag)');
   }
 }
 
 main().catch(e => {
-  console.error('\n❌ Deployment failed:', e);
+  console.error('\nDeployment failed:', e);
   process.exit(1);
 });
