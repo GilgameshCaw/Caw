@@ -8,11 +8,7 @@ module.exports = {
       viaIR: true,
       optimizer: {
         enabled: true,
-        details: {
-          yulDetails: {
-            optimizerSteps: "u",
-          },
-        },
+        runs: 1,
       },
     },
   },

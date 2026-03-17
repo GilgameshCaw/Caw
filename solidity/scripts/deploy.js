@@ -32,6 +32,7 @@
  *   Phase 2: L1 - Deploy all L1 contracts (CawName, CawClientManager, etc.)
  *   Phase 3: L2 - Deploy remaining L2 contracts (CawActions, Replicator)
  *   Phase 4: Archive - Deploy CawActionsArchive
+ *   Phase 5: Cross-chain - Set LZ peers + addReplication (syncs config to L2)
  *
  * STATE FILE:
  *   Deployment state is saved to .deploy-state.json in the solidity directory.
@@ -441,6 +442,72 @@ const LINKING_STEPS = [
     args: (state) => [state.addresses.CawActionsReplicator_L2],
     condition: (state) => state.addresses.CawNameL2_L2 && state.addresses.CawActionsReplicator_L2,
   },
+
+  // Phase 5 linking (Archive + cross-chain replication setup)
+  // Note: CawActionsReplicator_L2's OApp peer is set automatically when syncReplication
+  // config arrives via LZ (in _updatePeer), so no explicit setPeer step is needed.
+  {
+    name: 'Set LZ peer on CawActionsArchive for L2 Replicator',
+    chain: 'Archive',
+    phase: 5,
+    contract: 'CawActionsArchive',
+    method: 'setPeer',
+    args: (state, chainConfig) => [
+      CHAINS[chainConfig.env + 'L2'].lzEid,
+      ethers.zeroPadValue(state.addresses.CawActionsReplicator_L2, 32),
+    ],
+    condition: (state) => state.addresses.CawActionsArchive && state.addresses.CawActionsReplicator_L2,
+    skipIf: async (state, deployer) => {
+      const contract = deployer.getContract('CawActionsArchive');
+      if (!contract) return false;
+      const chainKey = deployer.getChainKey('L2');
+      const l2Eid = CHAINS[chainKey].lzEid;
+      try {
+        const peer = await contract.peers(l2Eid);
+        return peer !== ethers.ZeroHash;
+      } catch { return false; }
+    },
+  },
+  {
+    name: 'Add replication destination on CawClientManager (syncs to L2 via LZ)',
+    chain: 'L1',
+    phase: 5,
+    contract: 'CawClientManager',
+    method: 'addReplication',
+    args: (state, chainConfig) => [
+      1, // clientId
+      CHAINS[chainConfig.env + 'Archive'].lzEid,
+      state.addresses.CawActionsArchive,
+    ],
+    condition: (state) => state.addresses.CawClientManager && state.addresses.CawActionsArchive && state.addresses.CawName,
+    skipIf: async (state, deployer) => {
+      const contract = deployer.getContract('CawClientManager');
+      if (!contract) return false;
+      try {
+        const enabled = await contract.clientReplicationEnabled(1);
+        return enabled;
+      } catch { return false; }
+    },
+    overrides: async (state, deployer, chainConfig) => {
+      // Quote the LZ fee for syncing replication config to L2
+      const quoter = deployer.getContract('CawNameQuoter');
+      if (!quoter) {
+        console.log('   ⚠️  CawNameQuoter not available, using 0.0002 ETH as fallback');
+        return { value: ethers.parseEther('0.0002') };
+      }
+      try {
+        const archiveEid = CHAINS[chainConfig.env + 'Archive'].lzEid;
+        const l2Eid = CHAINS[chainConfig.env + 'L2'].lzEid;
+        const quote = await quoter.syncReplicationQuote(1, archiveEid, state.addresses.CawActionsArchive, l2Eid, false);
+        const feeWithBuffer = (quote.nativeFee * 120n) / 100n; // 20% buffer
+        console.log(`   LZ fee quoted: ${ethers.formatEther(quote.nativeFee)} ETH (sending ${ethers.formatEther(feeWithBuffer)} with buffer)`);
+        return { value: feeWithBuffer };
+      } catch (e) {
+        console.log(`   ⚠️  Fee quote failed: ${e.message}, using 0.0002 ETH as fallback`);
+        return { value: ethers.parseEther('0.0002') };
+      }
+    },
+  },
 ];
 
 // ============================================
@@ -599,7 +666,7 @@ class MultiChainDeployer {
       // Use higher gas limit for large contracts like CawName
       const overrides = {};
       if (contractKey === 'CawName') {
-        overrides.gasLimit = 8000000n;
+        overrides.gasLimit = 12000000n;
       }
       const deployed = await factory.deploy(...args, overrides);
       console.log(`   ⏳ Tx hash: ${deployed.deploymentTransaction().hash}`);
@@ -670,11 +737,19 @@ class MultiChainDeployer {
     const chainConfig = { env: this.env, ...CHAINS[chainKey] };
     const args = step.args(this.state, chainConfig);
 
-    console.log(`\n🔗 ${step.name}...`);
-    console.log(`   Calling ${step.contract}.${step.method}(${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(', ')})`);
+    // Support async overrides (e.g. for payable calls that need fee quoting)
+    let overrides = {};
+    if (step.overrides) {
+      overrides = await step.overrides(this.state, this, chainConfig);
+      console.log(`\n🔗 ${step.name}...`);
+      console.log(`   Calling ${step.contract}.${step.method}(${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(', ')}) with value=${overrides.value ? ethers.formatEther(overrides.value) + ' ETH' : '0'}`);
+    } else {
+      console.log(`\n🔗 ${step.name}...`);
+      console.log(`   Calling ${step.contract}.${step.method}(${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(', ')})`);
+    }
 
     await this.retry(async () => {
-      const tx = await contract[step.method](...args);
+      const tx = await contract[step.method](...args, overrides);
       console.log(`   ⏳ Tx hash: ${tx.hash}`);
       await tx.wait();
     });
@@ -745,7 +820,7 @@ class MultiChainDeployer {
     console.log(`   Expected deployer: ${EXPECTED_DEPLOYER}`);
 
     // Deploy in phases
-    for (const phase of [1, 2, 3, 4]) {
+    for (const phase of [1, 2, 3, 4, 5]) {
       await this.deployPhase(phase);
     }
   }
@@ -792,8 +867,8 @@ class MultiChainDeployer {
     console.log(`Deployer: ${this.state.deployerAddress || 'Not connected'}\n`);
 
     console.log('Addresses:');
-    const phases = { 1: 'L2 (Phase 1)', 2: 'L1 (Phase 2)', 3: 'L2 (Phase 3)', 4: 'Archive (Phase 4)' };
-    for (const phase of [1, 2, 3, 4]) {
+    const phases = { 1: 'L2 (Phase 1)', 2: 'L1 (Phase 2)', 3: 'L2 (Phase 3)', 4: 'Archive (Phase 4)', 5: 'Cross-chain Linking (Phase 5)' };
+    for (const phase of [1, 2, 3, 4, 5]) {
       const phaseContracts = Object.entries(CONTRACTS).filter(([_, c]) => c.phase === phase);
       if (phaseContracts.length > 0) {
         console.log(`\n  ${phases[phase]}:`);
@@ -869,6 +944,7 @@ Deployment Phases:
   Phase 2: Deploy all L1 contracts and link them
   Phase 3: Deploy remaining L2 contracts and link them
   Phase 4: Deploy Archive chain contracts
+  Phase 5: Set LZ peers between Replicator/Archive + addReplication (syncs config to L2)
 
 After deployment, ABIs are automatically regenerated for the frontend.
         `);
@@ -892,7 +968,7 @@ After deployment, ABIs are automatically regenerated for the frontend.
     deployer.printState();
 
     console.log('\nContracts to deploy:');
-    for (const phase of [1, 2, 3, 4]) {
+    for (const phase of [1, 2, 3, 4, 5]) {
       const phaseContracts = Object.entries(CONTRACTS)
         .filter(([key, c]) => c.phase === phase && !deployer.state.addresses[key]);
       if (phaseContracts.length > 0) {

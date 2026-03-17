@@ -74,6 +74,7 @@ contract CawName is
   }
 
   event MinterSet(address minter);
+  event TransferPendingSync(uint32 indexed tokenId, address indexed from, address indexed to);
 
   CawClientManager public clientManager;
   address buyAndBurnCaw;
@@ -271,6 +272,32 @@ contract CawName is
     _updateNewOwners(peerWithMaxPendingTransfers(), lzEthAmount, lzTokenAmount);
   }
 
+  /**
+   * @notice Transfer a token and immediately sync ownership to L2 via LayerZero.
+   * @dev Requires msg.value to cover the LZ fee. Use syncTransferQuote() on CawNameQuoter to estimate.
+   *      Also flushes any other pending ownership transfers for the target chain.
+   * @param to The recipient address
+   * @param tokenId The token to transfer
+   * @param lzTokenAmount LZ token amount for fees (usually 0)
+   */
+  function transferAndSync(address to, uint256 tokenId, uint256 lzTokenAmount) external payable {
+    require(ownerOf(tokenId) == msg.sender, "caller is not the token owner");
+    _transfer(msg.sender, to, tokenId);
+    // _afterTokenTransfer queued this token — now flush the queue via LZ
+    _updateNewOwners(peerWithMaxPendingTransfers(), msg.value, lzTokenAmount);
+  }
+
+  /**
+   * @notice Manually sync pending ownership transfers to L2.
+   * @dev Anyone can call this (typically the new owner after a marketplace transfer).
+   *      Flushes all pending transfers for the chain with the most pending updates.
+   * @param lzTokenAmount LZ token amount for fees (usually 0)
+   */
+  function syncTransfer(uint32 lzDestId, uint256 lzTokenAmount) external payable {
+    require(updatesNeededForPeer(lzDestId) > 0, "no pending transfers to sync");
+    _updateNewOwners(lzDestId, msg.value, lzTokenAmount);
+  }
+
   // ============================================
   // REPLICATION CONFIG SYNC
   // ============================================
@@ -350,10 +377,18 @@ contract CawName is
   function _afterTokenTransfer(address from, address to, uint256 tokenId, uint256 batchSize) internal virtual override {
     uint32 token = uint32(tokenId);
     EnumerableSet.UintSet storage chainIds = chosenChainIds[token];
+    bool hasPendingSync = false;
     for (uint256 i = 0; i < chainIds.length(); i++) {
       uint32 chainId = uint32(chainIds.at(i));
       if (chainId == mainnetLzId) cawNameL2.setOwnerOf(token, to);
-      else pendingTransfers[chainId][pendingTransferEnd[chainId]++] = token;
+      else {
+        pendingTransfers[chainId][pendingTransferEnd[chainId]++] = token;
+        hasPendingSync = true;
+      }
+    }
+    // Emit event so backend can freeze economic actions until L2 syncs
+    if (hasPendingSync && from != address(0)) {
+      emit TransferPendingSync(token, from, to);
     }
   }
 
@@ -515,7 +550,7 @@ contract CawName is
     else if (selector == authSelector)
       return 300000;
     else if (selector == setReplicationPeerSelector)
-      return 100000;
+      return 200000;
     else revert("unexpected selector");
   }
 

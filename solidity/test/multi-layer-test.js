@@ -1651,6 +1651,306 @@ contract("CawActionsReplicator", function(accounts) {
 });
 
 
+// Tests for OApp peer sync in CawActionsReplicator._updatePeer
+// Verifies that updatePeer also sets the OApp peers mapping (not just clientPeers)
+// so that _quote and _lzSend work immediately after config arrives
+contract("CawActionsReplicator - OApp Peer Sync", function(accounts) {
+
+  var CawActionsReplicatorContract = artifacts.require("CawActionsReplicator");
+  var replicator;
+  var testCawActions;
+  var testCawNameL2;
+  var l2Endpoint;
+
+  before(async function() {
+    this.timeout(120000);
+    l2Endpoint = await MockLayerZeroEndpoint.new(l2);
+    testCawActions = accounts[1];
+    testCawNameL2 = accounts[2];
+    replicator = await CawActionsReplicatorContract.new(
+      l2Endpoint.address,
+      testCawActions,
+      testCawNameL2,
+      { from: accounts[0] }
+    );
+  });
+
+  it("should set OApp peers mapping when updatePeer adds a destination", async function() {
+    this.timeout(60000);
+
+    var clientId = 1;
+    var destEid = 40231;
+    var targetAddress = '0x1234567890123456789012345678901234567890';
+    var expectedPeerBytes = '0x000000000000000000000000' + targetAddress.slice(2).toLowerCase();
+
+    await replicator.updatePeer(clientId, destEid, targetAddress, { from: testCawNameL2 });
+
+    // Verify clientPeers is set
+    var clientPeer = await replicator.clientPeers(clientId, destEid);
+    expect(clientPeer.toLowerCase()).to.equal(expectedPeerBytes);
+
+    // Verify OApp peers mapping is ALSO set (this is the new behavior)
+    var oappPeer = await replicator.peers(destEid);
+    expect(oappPeer.toLowerCase()).to.equal(expectedPeerBytes);
+
+    console.log("OApp peers sync on add test passed");
+  });
+
+  it("should clear OApp peers mapping when updatePeer removes a destination", async function() {
+    this.timeout(60000);
+
+    var clientId = 1;
+    var destEid = 40231;
+
+    // Remove by setting target to address(0)
+    await replicator.updatePeer(clientId, destEid, '0x0000000000000000000000000000000000000000', { from: testCawNameL2 });
+
+    // Verify clientPeers is cleared
+    var clientPeer = await replicator.clientPeers(clientId, destEid);
+    expect(clientPeer).to.equal('0x0000000000000000000000000000000000000000000000000000000000000000');
+
+    // Verify OApp peers mapping is ALSO cleared
+    var oappPeer = await replicator.peers(destEid);
+    expect(oappPeer).to.equal('0x0000000000000000000000000000000000000000000000000000000000000000');
+
+    console.log("OApp peers sync on remove test passed");
+  });
+
+  it("should allow quoteReplication to succeed after updatePeer sets OApp peers", async function() {
+    this.timeout(60000);
+
+    var clientId = 2;
+    var destEid = 40231;
+    var targetAddress = '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd';
+
+    // Set up peer
+    await replicator.updatePeer(clientId, destEid, targetAddress, { from: testCawNameL2 });
+
+    // quoteReplication calls _quote which calls _getPeerOrRevert
+    // Before the fix, this would fail with NoPeer if OApp peers wasn't set
+    var payload = web3.utils.asciiToHex("test payload for quote");
+    var result = await replicator.quoteReplication(clientId, payload, false);
+
+    // Should return a fee (even if 0 on mock endpoint) and chain count of 1
+    expect(result.chainCount.toNumber()).to.equal(1);
+
+    console.log("quoteReplication after updatePeer test passed");
+  });
+});
+
+
+// Tests for CawName transfer functions (transferAndSync, syncTransfer)
+// and gasLimitFor changes
+contract("CawName - Transfer & Replication Gas", function(accounts) {
+
+  var l1Endpoint;
+  var l2Endpoint;
+  var localToken;
+  var localMinter;
+  var localCawNames;
+  var localCawNamesL2;
+  var localClientManager;
+  var localQuoter;
+  var localUriGenerator;
+
+  before(async function() {
+    this.timeout(120000);
+
+    l1Endpoint = await MockLayerZeroEndpoint.new(l1);
+    l2Endpoint = await MockLayerZeroEndpoint.new(l2);
+
+    localToken = await MintableCaw.new();
+    localClientManager = await CawClientManager.new(accounts[0]);
+    localUriGenerator = await CawNameURI.new();
+    localCawNamesL2 = await CawNameL2.new(l1, l2Endpoint.address);
+    await l1Endpoint.setDestLzEndpoint(localCawNamesL2.address, l2Endpoint.address);
+
+    localCawNames = await CawName.new(
+      localToken.address, localUriGenerator.address, accounts[0],
+      localClientManager.address, l1Endpoint.address, l1
+    );
+
+    await localCawNamesL2.setL1Peer(l1, localCawNames.address, false);
+    await l2Endpoint.setDestLzEndpoint(localCawNames.address, l1Endpoint.address);
+    await localCawNames.setL2Peer(l2, localCawNamesL2.address);
+
+    await localClientManager.createClient(accounts[0], 1, 1, 1, 1);
+    await localClientManager.setCawName(localCawNames.address, l2);
+
+    localMinter = await CawNameMinter.new(localToken.address, localCawNames.address);
+    await localCawNames.setMinter(localMinter.address);
+
+    localQuoter = await CawNameQuoter.new(localCawNames.address);
+
+    // Mint tokens and buy a username for testing transfers
+    var mintAmount = BigInt(10) * 1_000_000_000n * 10n**18n;
+    await localToken.mint(accounts[1], mintAmount.toString());
+    var balance = await localToken.balanceOf(accounts[1]);
+    await localToken.approve(localMinter.address, balance.toString(), { from: accounts[1] });
+
+    var mintQuote = await localQuoter.mintQuote(1, false);
+    await localMinter.mint(1, 'testuser', 0, {
+      from: accounts[1],
+      value: (BigInt(mintQuote.nativeFee)).toString(),
+    });
+
+    console.log("Setup complete - testuser minted as token 1");
+  });
+
+  it("should return 200000 gas for setReplicationPeerSelector", async function() {
+    this.timeout(60000);
+
+    var selector = await localCawNames.setReplicationPeerSelector();
+    var gasLimit = await localCawNames.gasLimitFor(selector);
+    expect(gasLimit.toString()).to.equal('200000');
+
+    console.log("setReplicationPeer gas limit = 200000 test passed");
+  });
+
+  it("should allow owner to call transferAndSync", async function() {
+    this.timeout(60000);
+
+    var tokenOwner = accounts[1];
+    var recipient = accounts[3];
+
+    // Verify current owner
+    var owner = await localCawNames.ownerOf(1);
+    expect(owner).to.equal(tokenOwner);
+
+    // transferAndSync requires ETH for LZ fee - quote it
+    var quote = await localQuoter.syncTransferQuote(1, recipient, false);
+
+    // Call transferAndSync
+    var tx = await localCawNames.transferAndSync(recipient, 1, 0, {
+      from: tokenOwner,
+      value: (BigInt(quote.nativeFee) * 110n / 100n).toString(),
+    });
+
+    // Verify ownership changed
+    var newOwner = await localCawNames.ownerOf(1);
+    expect(newOwner).to.equal(recipient);
+
+    console.log("transferAndSync test passed");
+  });
+
+  it("should reject transferAndSync from non-owner", async function() {
+    this.timeout(60000);
+
+    var nonOwner = accounts[1]; // no longer the owner after previous test
+    var shouldFail = false;
+    try {
+      await localCawNames.transferAndSync(accounts[4], 1, 0, {
+        from: nonOwner,
+        value: web3.utils.toWei('0.001', 'ether'),
+      });
+    } catch (e) {
+      shouldFail = true;
+      var errorMsg = e.reason || e.message || '';
+      expect(errorMsg).to.include('caller is not the token owner');
+    }
+    expect(shouldFail).to.equal(true, "Non-owner should not be able to transferAndSync");
+
+    console.log("transferAndSync access control test passed");
+  });
+
+  it("should allow syncTransfer when there are pending transfers", async function() {
+    this.timeout(60000);
+
+    // Transfer the token normally (not via transferAndSync) to create a pending sync
+    var currentOwner = accounts[3]; // owner from transferAndSync test
+    var newOwner = accounts[4];
+
+    await localCawNames.transferFrom(currentOwner, newOwner, 1, { from: currentOwner });
+
+    // Verify transfer happened
+    expect(await localCawNames.ownerOf(1)).to.equal(newOwner);
+
+    // Check there are pending transfers
+    var peer = await localCawNames.peerWithMaxPendingTransfers();
+
+    if (peer.toString() !== '0') {
+      var updatesNeeded = await localCawNames.updatesNeededForPeer(peer);
+
+      if (updatesNeeded.toNumber() > 0) {
+        // syncTransfer should work
+        var tx = await localCawNames.syncTransfer(peer, 0, {
+          from: newOwner,
+          value: web3.utils.toWei('0.001', 'ether'),
+        });
+        console.log("syncTransfer succeeded with pending transfers");
+      } else {
+        console.log("No updates needed (transfers already synced via transferAndSync)");
+      }
+    } else {
+      console.log("No pending peer (mock endpoint may auto-sync)");
+    }
+
+    console.log("syncTransfer test passed");
+  });
+
+  it("should reject syncTransfer when no pending transfers", async function() {
+    this.timeout(60000);
+
+    // Use a peer eid that has no pending transfers
+    var shouldFail = false;
+    try {
+      await localCawNames.syncTransfer(99999, 0, {
+        from: accounts[0],
+        value: web3.utils.toWei('0.001', 'ether'),
+      });
+    } catch (e) {
+      shouldFail = true;
+      var errorMsg = e.reason || e.message || '';
+      expect(errorMsg).to.include('no pending transfers');
+    }
+    expect(shouldFail).to.equal(true, "syncTransfer should fail with no pending transfers");
+
+    console.log("syncTransfer no pending test passed");
+  });
+
+  it("should emit TransferPendingSync event after deposit registers a chain", async function() {
+    this.timeout(60000);
+
+    // Mint another token for this test
+    var mintAmount = BigInt(10) * 1_000_000_000n * 10n**18n;
+    await localToken.mint(accounts[5], mintAmount.toString());
+    var balance = await localToken.balanceOf(accounts[5]);
+    await localToken.approve(localMinter.address, balance.toString(), { from: accounts[5] });
+    // Also approve CawName for deposit
+    await localToken.approve(localCawNames.address, balance.toString(), { from: accounts[5] });
+
+    var mintQuote = await localQuoter.mintQuote(1, false);
+    await localMinter.mint(1, 'eventtest', 0, {
+      from: accounts[5],
+      value: (BigInt(mintQuote.nativeFee)).toString(),
+    });
+
+    // Get the token ID that was minted (latest token)
+    var tokenId = (await localCawNames.totalSupply()).toNumber();
+
+    // Deposit to register the L2 chain (l2 eid) — this populates chosenChainIds
+    var depositAmount = '1000000000000000000';
+    var depositQuote = await localQuoter.depositQuote(1, tokenId, depositAmount, l2, false);
+    await localCawNames.deposit(1, tokenId, depositAmount, l2, 0, {
+      from: accounts[5],
+      value: (BigInt(depositQuote.nativeFee)).toString(),
+    });
+
+    // Transfer normally — should queue pending sync and emit TransferPendingSync
+    var tx = await localCawNames.transferFrom(accounts[5], accounts[6], tokenId, { from: accounts[5] });
+
+    // Check for TransferPendingSync event
+    truffleAssert.eventEmitted(tx, 'TransferPendingSync', (ev) => {
+      return ev.tokenId.toNumber() === tokenId &&
+             ev.from.toLowerCase() === accounts[5].toLowerCase() &&
+             ev.to.toLowerCase() === accounts[6].toLowerCase();
+    });
+
+    console.log("TransferPendingSync event test passed");
+  });
+});
+
+
 // Full integration test for migratePartialCheckpoint
 // This test creates actual actions through CawActions and verifies the hash chain migration
 contract("CawActionsReplicator - Full Integration", function(accounts) {

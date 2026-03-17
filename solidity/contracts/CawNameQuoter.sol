@@ -88,6 +88,28 @@ contract CawNameQuoter {
     return cawName.lzQuote(cawName.updateOwnersSelector(), payload, lzDestId, payInLzToken);
   }
 
+  /**
+   * @notice Quote the LZ fee for transferAndSync or syncTransfer.
+   * @dev Includes the given tokenId + new owner in the payload alongside any other pending transfers.
+   *      Call with tokenId=0 and newOwner=address(0) to quote just flushing existing pending transfers.
+   */
+  function syncTransferQuote(uint32 tokenId, address newOwner, bool payInLzToken) public view returns (MessagingFee memory quote) {
+    uint32 lzDestId = cawName.peerWithMaxPendingTransfers();
+    uint32[] memory tokenIds; address[] memory owners;
+
+    if (tokenId > 0 && newOwner != address(0)) {
+      (tokenIds, owners) = cawName.pendingTransferUpdates(lzDestId, newOwner, tokenId);
+    } else {
+      (tokenIds, owners) = cawName.pendingTransferUpdates(lzDestId);
+    }
+
+    if (tokenIds.length == 0) return MessagingFee(0, 0);
+    bytes memory payload = abi.encodeWithSelector(
+      cawName.updateOwnersSelector(), tokenIds, owners
+    );
+    return cawName.lzQuote(cawName.updateOwnersSelector(), payload, lzDestId, payInLzToken);
+  }
+
   function syncReplicationQuote(uint32 clientId, uint32 archiveEid, address target, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
     bytes memory payload = abi.encodeWithSelector(cawName.setReplicationPeerSelector(), clientId, archiveEid, target);
     return cawName.lzQuote(cawName.setReplicationPeerSelector(), payload, lzDestId, payInLzToken);

@@ -239,10 +239,13 @@ contract CawActionsReplicator is OApp {
     if (target == address(0)) {
       // Remove replication destination
       clientPeers[clientId][destEid] = bytes32(0);
+      peers[destEid] = bytes32(0);
       _removeReplicationDestination(clientId, destEid);
     } else {
       // Add/update replication destination
-      clientPeers[clientId][destEid] = bytes32(uint256(uint160(target)));
+      bytes32 peerBytes = bytes32(uint256(uint160(target)));
+      clientPeers[clientId][destEid] = peerBytes;
+      peers[destEid] = peerBytes; // Sync OApp peer so _quote/_lzSend work immediately
       _addReplicationDestination(clientId, destEid, target);
       clientReplicationEnabled[clientId] = true;
     }
@@ -419,10 +422,19 @@ contract CawActionsReplicator is OApp {
     bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(RECEIVE_GAS_LIMIT, 0);
     uint256 lzTokenPerChain = lzTokenAmount / destinations.length;
 
+    // Sync OApp peers from clientPeers before quoting (peers must be set for _quote to work)
+    for (uint i = 0; i < destinations.length; i++) {
+      bytes32 peerBytes = clientPeers[clientId][destinations[i].eid];
+      if (peerBytes != bytes32(0)) {
+        peers[destinations[i].eid] = peerBytes;
+      }
+    }
+
     // Quote each chain to determine proportional fee allocation
     uint256 totalQuoted = 0;
     uint256[] memory quotedFees = new uint256[](destinations.length);
     for (uint i = 0; i < destinations.length; i++) {
+      if (peers[destinations[i].eid] == bytes32(0)) continue;
       MessagingFee memory fee = _quote(destinations[i].eid, payload, options, false);
       quotedFees[i] = fee.nativeFee;
       totalQuoted += fee.nativeFee;
@@ -432,14 +444,11 @@ contract CawActionsReplicator is OApp {
 
     for (uint i = 0; i < destinations.length; i++) {
       ReplicationDestination memory dest = destinations[i];
-      bytes32 peerBytes = clientPeers[clientId][dest.eid];
 
-      if (peerBytes == bytes32(0)) {
+      if (peers[dest.eid] == bytes32(0)) {
         emit ReplicationFailed(dest.eid, clientId, "Peer not set");
         continue;
       }
-
-      peers[dest.eid] = peerBytes;
 
       // Allocate proportionally; give remainder to the last chain
       uint256 chainFee;
