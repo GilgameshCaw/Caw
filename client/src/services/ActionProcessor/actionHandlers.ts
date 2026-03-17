@@ -197,37 +197,40 @@ export async function handleCawAction(
     console.error(`Failed to create mention notifications for caw ${newCaw.id}:`, err)
   }
 
-  // Create notification if this is a reply
-  if (parentCawId) {
-    try {
-      await NotificationService.createReplyNotification(parentCawId, newCaw.id, authorId)
-    } catch (err) {
-      console.error(`Failed to create reply notification for caw ${newCaw.id}:`, err)
-    }
-  }
-
-  // Update comment count for original caw if this is a comment
-  if (rawAction.originalCawId) {
-    await tx.caw.update({
-      where: { id: rawAction.originalCawId },
-      data: { commentCount: { increment: 1 } }
-    })
-  }
-
-  // Confirm any pending Reply record for this reply
+  // Create notification and confirm Reply record if this references a parent caw
   if (parentCawId && newCaw) {
-    try {
-      await tx.reply.updateMany({
-        where: {
-          replyCawId: newCaw.id,
-          pending: true
-        },
-        data: { pending: false }
-      })
-      console.log(`[handleCawAction] Confirmed Reply record for replyCawId=${newCaw.id}`)
-    } catch (replyErr) {
-      console.error('Failed to confirm Reply record:', replyErr)
-      // Continue even if Reply confirmation fails
+    // Check if a Reply record exists — if so, it's a reply; otherwise it's a quote
+    const replyRecord = await tx.reply.findFirst({
+      where: { replyCawId: newCaw.id }
+    })
+
+    if (replyRecord) {
+      // It's a reply — confirm pending Reply record and send REPLY notification
+      try {
+        await tx.reply.updateMany({
+          where: {
+            replyCawId: newCaw.id,
+            pending: true
+          },
+          data: { pending: false }
+        })
+        console.log(`[handleCawAction] Confirmed Reply record for replyCawId=${newCaw.id}`)
+      } catch (replyErr) {
+        console.error('Failed to confirm Reply record:', replyErr)
+      }
+
+      try {
+        await NotificationService.createReplyNotification(parentCawId, newCaw.id, authorId)
+      } catch (err) {
+        console.error(`Failed to create reply notification for caw ${newCaw.id}:`, err)
+      }
+    } else {
+      // It's a quote — send QUOTE notification
+      try {
+        await NotificationService.createQuoteNotification(parentCawId, newCaw.id, authorId)
+      } catch (err) {
+        console.error(`Failed to create quote notification for caw ${newCaw.id}:`, err)
+      }
     }
   }
 
@@ -237,7 +240,7 @@ export async function handleCawAction(
     data: { cawCount: { increment: 1 } }
   })
 
-  // If this was a comment, bump the parent's comment count
+  // If this was a comment/reply, bump the parent's comment count (once)
   if (parentCawId) {
     await tx.caw.update({
       where: { id: parentCawId },
@@ -866,18 +869,12 @@ export async function handleOtherAction(
   }
 
   // Update counts same as regular caw
-  if (rawAction.originalCawId) {
-    await tx.caw.update({
-      where: { id: rawAction.originalCawId },
-      data: { commentCount: { increment: 1 } }
-    })
-  }
-
   await tx.user.update({
-    where: { id: rawAction.senderId },
+    where: { tokenId: rawAction.senderId },
     data: { cawCount: { increment: 1 } }
   })
 
+  // If this was a comment/reply, bump the parent's comment count (once)
   if (parentCawId) {
     await tx.caw.update({
       where: { id: parentCawId },

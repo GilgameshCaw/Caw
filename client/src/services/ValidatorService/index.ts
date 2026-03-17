@@ -954,10 +954,11 @@ console.log("succeededKeys", succeededKeys)
                 }
               },
               data: {
-                status: 'FAILED'
+                status: 'FAILED',
+                reason: reason || 'Transaction failed'
               }
             })
-            console.log(`Marked caw as FAILED for user ${data.senderId} cawonce ${data.cawonce}`)
+            console.log(`Marked caw as FAILED for user ${data.senderId} cawonce ${data.cawonce}: ${reason}`)
           } catch (cawUpdateErr) {
             console.error('Failed to update caw status to FAILED:', cawUpdateErr)
             // Continue even if caw update fails (might not exist)
@@ -1389,7 +1390,8 @@ console.log("succeededKeys", succeededKeys)
                     status: 'PENDING'
                   },
                   data: {
-                    status: 'FAILED'
+                    status: 'FAILED',
+                    reason: rejectionMessages[index] || 'Simulation rejected'
                   }
                 })
               } catch (cawErr) {
@@ -1707,7 +1709,8 @@ console.log("succeededKeys", succeededKeys)
                     }
                   },
                   data: {
-                    status: 'FAILED'
+                    status: 'FAILED',
+                    reason: reason || 'Transaction failed'
                   }
                 })
                 console.log(`Marked caw as FAILED for user ${data.senderId} cawonce ${data.cawonce}: ${reason}`)
