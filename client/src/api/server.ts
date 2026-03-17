@@ -3,7 +3,7 @@ import cors, { CorsOptions } from 'cors'
 import rateLimit from 'express-rate-limit'
 import http from 'http'
 import path from 'path'
-import XmtpWebSocketService from '../services/XmtpService/websocket'
+import DmWebSocketService from '../services/DmService/websocket'
 import actionsRouter from './routes/actions'
 import cawRouter from './routes/caws'
 import txRouter  from './routes/txs'
@@ -16,11 +16,7 @@ import searchRouter from './routes/search'
 import scheduledRouter from './routes/scheduled'
 import notificationsRouter from './routes/notifications'
 import withdrawalsRouter from './routes/withdrawals'
-import xmtpRouter from './routes/xmtp'
-import xmtpSecureRouter from './routes/xmtp-secure'
-import xmtpProxyRouter from './routes/xmtpProxy'
-import xmtpIdentityRouter from './routes/xmtp-identity'
-import conversationsRouter from './routes/conversations'
+import dmRouter from './routes/dm'
 import giphyRouter from './routes/giphy'
 import statsRouter from './routes/stats'
 import shorturlRouter from './routes/shorturl'
@@ -151,11 +147,7 @@ function createApp() {
   app.use('/api/scheduled', scheduledRouter)
   app.use('/api/notifications', notificationsRouter)
   app.use('/api/withdrawals', withdrawalsRouter)
-  // Old insecure XMTP routes commented out - using secure routes instead
-  // app.use('/api/xmtp', xmtpRouter)
-  app.use('/api/xmtp', xmtpSecureRouter)
-  app.use('/api/xmtp-identity', xmtpIdentityRouter)
-  app.use('/api/conversations', conversationsRouter)
+  app.use('/api/dm', dmRouter)
   app.use('/api/giphy', giphyRouter)
   app.use('/api/stats', statsRouter)
   app.use('/api/shorturl', shorturlRouter)
@@ -164,8 +156,6 @@ function createApp() {
   app.use('/api/reports', reportsRouter)
   app.use('/api/tips', tipsRouter)
   app.use('/api/bug-reports', bugReportsRouter)
-  // Temporarily disabled xmtpProxy router due to path-to-regexp issue
-  // app.use('/api/xmtp-proxy', xmtpProxyRouter)
 
   return app
 }
@@ -177,8 +167,8 @@ export function startApi(port = Number(process.env.API_PORT) || 4000) {
   const app    = createApp()
   const server = http.createServer(app)
 
-  // Initialize WebSocket server for XMTP
-  XmtpWebSocketService.initialize(server)
+  // Initialize WebSocket server for DMs
+  DmWebSocketService.initialize(server)
 
   server.listen(port, () =>
     console.log(`API listening on http://localhost:${port}`)

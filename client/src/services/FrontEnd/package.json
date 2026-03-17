@@ -19,7 +19,6 @@
     "@tanstack/react-query": "^5.81.5",
     "@types/multer": "^2.0.0",
     "@types/uuid": "^10.0.0",
-    "@xmtp/browser-sdk": "^5.0.1",
     "axios": "^1.7.9",
     "buffer": "^6.0.3",
     "date-fns": "^4.1.0",

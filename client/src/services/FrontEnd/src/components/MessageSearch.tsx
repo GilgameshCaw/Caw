@@ -39,7 +39,7 @@ const MessageSearch: React.FC<MessageSearchProps> = ({ userId, onSearchComplete 
     try {
       // Fetch messages within date range from server
       const response = await fetch(
-        `/api/xmtp/messages/search?userId=${userId}&from=${dateRange.start}&to=${dateRange.end}`,
+        `/api/dm/conversations?userId=${userId}`,
         {
           headers: {
             'Content-Type': 'application/json',

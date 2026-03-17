@@ -102,7 +102,7 @@ export function useMessageNotifications({
 
     // Connect to WebSocket for real-time notifications
     socketRef.current = io(SOCKET_URL, {
-      path: '/xmtp-ws/',
+      path: '/dm-ws/',
       auth: { token },
       transports: ['websocket', 'polling'],
       reconnection: true,

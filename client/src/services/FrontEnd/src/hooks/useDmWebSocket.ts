@@ -5,27 +5,26 @@ import { generateToken } from '~/api/auth'
 
 const SOCKET_URL = import.meta.env.VITE_API_HOST || 'http://localhost:4000'
 
-interface UseXmtpWebSocketParams {
+interface UseDmWebSocketParams {
   userId?: number
   username?: string
   enabled?: boolean
+  onNewMessage?: (message: any) => void
 }
 
-export function useXmtpWebSocket({ userId, username, enabled = true }: UseXmtpWebSocketParams) {
+export function useDmWebSocket({ userId, username, enabled = true, onNewMessage }: UseDmWebSocketParams) {
   const socketRef = useRef<Socket | null>(null)
   const queryClient = useQueryClient()
+  const onNewMessageRef = useRef(onNewMessage)
+  onNewMessageRef.current = onNewMessage
 
   const connect = useCallback(() => {
     if (!userId || !username || !enabled) return
 
-    // Generate auth token for WebSocket
     const token = generateToken({ userId, username })
 
-    console.log('[XMTP-WS Client] Connecting to:', SOCKET_URL, 'with path: /xmtp-ws/')
-    console.log('[XMTP-WS Client] Token:', token)
-
     socketRef.current = io(SOCKET_URL, {
-      path: '/xmtp-ws/',
+      path: '/dm-ws/',
       auth: { token },
       transports: ['websocket', 'polling'],
       reconnection: true,
@@ -33,56 +32,34 @@ export function useXmtpWebSocket({ userId, username, enabled = true }: UseXmtpWe
       reconnectionDelay: 1000
     })
 
-    console.log('[XMTP-WS Client] Socket.IO instance created')
-
     const socket = socketRef.current
 
-    // Connection events
     socket.on('connect', () => {
-      console.log('[XMTP-WS] Connected to WebSocket server')
+      console.log('[DM-WS] Connected')
     })
 
     socket.on('disconnect', () => {
-      console.log('[XMTP-WS] Disconnected from WebSocket server')
+      console.log('[DM-WS] Disconnected')
     })
 
     socket.on('connect_error', (error) => {
-      console.error('[XMTP-WS] Connection error:', error.message)
+      console.error('[DM-WS] Connection error:', error.message)
     })
 
-    // Message events
     socket.on('new-message', (message) => {
-      console.log('[XMTP-WS] New message received:', message)
-
-      // Update messages query cache
-      queryClient.setQueryData(
-        ['messages', message.conversationId, userId],
-        (oldData: any) => {
-          if (!oldData) return [message]
-          return [...oldData, message]
-        }
-      )
-
-      // Update conversations list
+      onNewMessageRef.current?.(message)
       queryClient.invalidateQueries({ queryKey: ['conversations', userId] })
     })
 
-    // Conversation events
-    socket.on('conversation-update', (update) => {
-      console.log('[XMTP-WS] Conversation updated:', update)
+    socket.on('conversation-update', () => {
       queryClient.invalidateQueries({ queryKey: ['conversations', userId] })
     })
 
-    socket.on('new-conversation', (conversation) => {
-      console.log('[XMTP-WS] New conversation created:', conversation)
+    socket.on('new-conversation', () => {
       queryClient.invalidateQueries({ queryKey: ['conversations', userId] })
     })
 
-    // Read receipt events
     socket.on('message-read', (data) => {
-      console.log('[XMTP-WS] Message read:', data)
-
-      // Update message status in cache
       queryClient.setQueryData(
         ['messages', data.conversationId, userId],
         (oldData: any) => {
@@ -96,12 +73,11 @@ export function useXmtpWebSocket({ userId, username, enabled = true }: UseXmtpWe
       )
     })
 
-    // Typing indicator events
     socket.on('user-typing', (data) => {
-      console.log('[XMTP-WS] User typing:', data)
-
-      // Could store typing state in a separate store or context
-      // For now, just log it
+      queryClient.setQueryData(
+        ['typing', data.conversationId],
+        data.isTyping ? data.userId : null
+      )
     })
 
     return socket
@@ -115,35 +91,24 @@ export function useXmtpWebSocket({ userId, username, enabled = true }: UseXmtpWe
   }, [])
 
   const joinConversation = useCallback((conversationId: string) => {
-    if (socketRef.current) {
-      socketRef.current.emit('join-conversation', conversationId)
-    }
+    socketRef.current?.emit('join-conversation', conversationId)
   }, [])
 
   const leaveConversation = useCallback((conversationId: string) => {
-    if (socketRef.current) {
-      socketRef.current.emit('leave-conversation', conversationId)
-    }
+    socketRef.current?.emit('leave-conversation', conversationId)
   }, [])
 
   const sendTyping = useCallback((conversationId: string, isTyping: boolean) => {
-    if (socketRef.current) {
-      socketRef.current.emit('typing', { conversationId, isTyping })
-    }
+    socketRef.current?.emit('typing', { conversationId, isTyping })
   }, [])
 
   const markMessagesRead = useCallback((messageIds: string[]) => {
-    if (socketRef.current) {
-      socketRef.current.emit('mark-read', { messageIds })
-    }
+    socketRef.current?.emit('mark-read', { messageIds })
   }, [])
 
   useEffect(() => {
-    const socket = connect()
-
-    return () => {
-      disconnect()
-    }
+    connect()
+    return () => { disconnect() }
   }, [connect, disconnect])
 
   return {

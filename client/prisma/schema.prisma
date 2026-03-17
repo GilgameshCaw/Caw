@@ -53,7 +53,7 @@ model User {
   notificationsSent     Notification[] @relation("NotificationActor")
   notificationsReceived Notification[] @relation("NotificationRecipient")
   scheduledCaws         ScheduledCaw[]
-  xmtpIdentity          XmtpIdentity?
+  dmIdentity            DmIdentity?
   onChainImages         OnChainImage[]
   tipsSent              Tip[]          @relation("TipsSent")
   tipsReceived          Tip[]          @relation("TipsReceived")
@@ -247,35 +247,24 @@ model Notification {
   @@index([createdAt])
 }
 
-model XmtpIdentity {
-  id             Int                       @id @default(autoincrement())
-  userId         Int                       @unique
-  walletAddress  String
-  installationId String
-  identityKey    String
-  preKeys        Json
-  signedPreKey   Json
-  registrationId Int
-  encryptionKey  String?
-  createdAt      DateTime                  @default(now())
-  updatedAt      DateTime                  @updatedAt
-  conversations  ConversationParticipant[]
-  sentMessages   Message[]                 @relation("MessageSender")
-  user           User                      @relation(fields: [userId], references: [tokenId])
+model DmIdentity {
+  id            Int                       @id @default(autoincrement())
+  userId        Int                       @unique
+  walletAddress String
+  publicKey     String                    // hex-encoded secp256k1 public key
+  createdAt     DateTime                  @default(now())
+  updatedAt     DateTime                  @updatedAt
+  conversations ConversationParticipant[]
+  sentMessages  Message[]                 @relation("MessageSender")
+  user          User                      @relation(fields: [userId], references: [tokenId])
 
   @@index([walletAddress])
-  @@index([installationId])
 }
 
 model Conversation {
   id            String                    @id @default(uuid())
-  type          ConversationType
-  topic         String
-  name          String?
-  description   String?
-  avatarUrl     String?
+  type          ConversationType          @default(DM)
   creatorId     Int
-  metadata      Json?
   lastMessageAt DateTime?
   lastMessageId String?
   createdAt     DateTime                  @default(now())
@@ -283,7 +272,6 @@ model Conversation {
   participants  ConversationParticipant[]
   messages      Message[]
 
-  @@index([topic])
   @@index([lastMessageAt])
   @@index([creatorId])
 }
@@ -293,13 +281,10 @@ model ConversationParticipant {
   conversationId String
   userId         Int
   joinedAt       DateTime     @default(now())
-  leftAt         DateTime?
-  isAdmin        Boolean      @default(false)
-  isMuted        Boolean      @default(false)
   lastReadAt     DateTime?
   unreadCount    Int          @default(0)
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  identity       XmtpIdentity @relation(fields: [userId], references: [userId])
+  identity       DmIdentity   @relation(fields: [userId], references: [userId])
 
   @@unique([conversationId, userId])
   @@index([userId])
@@ -310,26 +295,17 @@ model Message {
   id               String           @id @default(uuid())
   conversationId   String
   senderId         Int
-  senderWallet     String?
   encryptedPayload String
-  messageTopic     String?
   contentType      String           @default("text")
-  metadata         Json?
   status           MessageStatus    @default(SENT)
-  editedAt         DateTime?
-  deletedAt        DateTime?
-  parentMessageId  String?
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
   conversation     Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  parent           Message?         @relation("MessageReplies", fields: [parentMessageId], references: [id])
-  replies          Message[]        @relation("MessageReplies")
-  sender           XmtpIdentity     @relation("MessageSender", fields: [senderId], references: [userId])
+  sender           DmIdentity       @relation("MessageSender", fields: [senderId], references: [userId])
   receipts         MessageReceipt[]
 
   @@index([conversationId, createdAt])
   @@index([senderId])
-  @@index([parentMessageId])
 }
 
 model MessageReceipt {
@@ -457,7 +433,6 @@ enum MessageStatus {
 
 enum ConversationType {
   DM
-  GROUP
 }
 
 model Client {

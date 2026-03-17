@@ -36,8 +36,6 @@ export default defineConfig({
     global: 'globalThis',
   },
   optimizeDeps: {
-    exclude: ['@xmtp/browser-sdk'],
-    include: ['long', 'protobufjs/minimal'],
     esbuildOptions: {
       target: 'esnext'
     }
@@ -46,13 +44,6 @@ export default defineConfig({
     target: 'esnext',
     commonjsOptions: {
       transformMixedEsModules: true
-    },
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          xmtp: ['@xmtp/browser-sdk']
-        }
-      }
     }
   },
   worker: {

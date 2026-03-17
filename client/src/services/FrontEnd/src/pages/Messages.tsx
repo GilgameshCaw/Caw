@@ -17,21 +17,19 @@ import {
   HiOutlineShieldCheck,
   HiOutlineLockClosed,
   HiOutlineCheckCircle,
-  HiOutlineUserGroup,
   HiOutlinePaperClip,
   HiOutlinePlus
 } from 'react-icons/hi'
-import { useTokenDataStore, useActiveToken } from '~/store/tokenDataStore'
+import { useActiveToken } from '~/store/tokenDataStore'
 import {
-  useXmtpClient,
-  useMessages
-} from '~/hooks/useXmtp'
-import { useXmtpWebSocket } from '~/hooks/useXmtpWebSocket'
+  useDmClient,
+  useDmMessages
+} from '~/hooks/useDm'
+import { useDmWebSocket } from '~/hooks/useDmWebSocket'
 import { useMessageNotifications, useTypingStatus } from '~/hooks/useMessageNotifications'
 import { formatDistanceToNow } from 'date-fns'
 import MessageSearch from '~/components/MessageSearch'
 import MessageFileUpload from '~/components/MessageFileUpload'
-import GroupChatModal from '~/components/GroupChatModal'
 
 const MessagesPage: React.FC = () => {
   const { isDark } = useTheme()
@@ -54,7 +52,6 @@ const MessagesPage: React.FC = () => {
   const [showChatOptionsMenu, setShowChatOptionsMenu] = useState(false)
   const [showSearchModal, setShowSearchModal] = useState(false)
   const [showFileUpload, setShowFileUpload] = useState(false)
-  const [showGroupModal, setShowGroupModal] = useState(false)
   const [isTyping, setIsTyping] = useState(false)
   const typingTimeoutRef = useRef<NodeJS.Timeout>()
   const chatMenuRef = useRef<HTMLDivElement>(null)
@@ -67,17 +64,17 @@ const MessagesPage: React.FC = () => {
   // Get URL parameters
   const [searchParams, setSearchParams] = useSearchParams()
 
-  // XMTP hooks - using the main useXmtpClient hook directly
+  // DM hooks
   const {
     isInitialized: identity,
     isLoading: identityLoading,
     initializeClient,
     conversations,
-    messages: allMessages,
-    error: xmtpError,
-    startConversation
-  } = useXmtpClient(currentUser?.id)
-  const { messages, sendMessage, isSending, markAsRead } = useMessages(selectedConversationId || '', currentUser?.id)
+    error: dmError,
+    startConversation: dmStartConversation,
+    refreshConversations
+  } = useDmClient(currentUser?.id)
+  const { messages, sendMessage: dmSendMessage, isSending, markAsRead, addIncomingMessage } = useDmMessages(selectedConversationId || '', currentUser?.id)
 
   // Debug: Log conversations when they change
   useEffect(() => {
@@ -92,10 +89,11 @@ const MessagesPage: React.FC = () => {
     leaveConversation,
     sendTyping,
     markMessagesRead
-  } = useXmtpWebSocket({
+  } = useDmWebSocket({
     userId: currentUser?.id,
     username: currentUser?.username,
-    enabled: !!currentUser && !!identity
+    enabled: !!currentUser && !!identity,
+    onNewMessage: addIncomingMessage
   })
 
   // Notifications
@@ -169,38 +167,20 @@ const MessagesPage: React.FC = () => {
       // Open existing conversation
       handleConversationSelect(existingConv.id)
       // Send the message
-      sendMessage({
-        content: messageText.trim(),
-        contentType: 'text'
-      })
+      dmSendMessage(messageText.trim())
     } else {
       // Start new conversation
       try {
-        // Fetch user details to get wallet address
-        console.log('[Messages] Fetching user details for:', targetUser.username)
-        const userDetails = await apiFetch<{ address: string }>(`/api/users/${targetUser.username}`)
-        console.log('[Messages] User details received:', userDetails)
-        console.log('[Messages] Calling startConversation with:', {
-          address: userDetails.address,
-          username: targetUser.username,
-          userId: targetUser.tokenId
-        })
-        if (userDetails.address) {
-          const newConv = await startConversation(userDetails.address, targetUser.username, targetUser.tokenId)
-          console.log('New conversation created:', newConv)
-          // Select the new conversation
-          handleConversationSelect(newConv.id)
-          // Send the message
-          sendMessage({
-            content: messageText.trim(),
-            contentType: 'text'
-          })
-        }
+        const newConv = await dmStartConversation(targetUser.tokenId)
+        console.log('New conversation created:', newConv)
+        // Select the new conversation
+        handleConversationSelect(newConv.id)
+        // Send the message
+        dmSendMessage(messageText.trim())
       } catch (err: any) {
         console.error('Failed to start conversation:', err)
-        // Show user-friendly error message
-        if (err.message?.includes('cannot receive XMTP')) {
-          alert(`@${targetUser.username} hasn't enabled XMTP messaging yet. They need to initialize XMTP before you can message them.`)
+        if (err.message?.includes('not enabled DMs')) {
+          alert(`@${targetUser.username} hasn't enabled DMs yet. They need to enable DMs before you can message them.`)
         } else {
           alert(`Failed to start conversation: ${err.message || 'Unknown error'}`)
         }
@@ -255,10 +235,7 @@ const MessagesPage: React.FC = () => {
   const handleSendMessage = () => {
     if (!newMessageContent.trim() || !selectedConversationId) return
 
-    sendMessage({
-      content: newMessageContent.trim(),
-      contentType: 'text'
-    })
+    dmSendMessage(newMessageContent.trim())
 
     setNewMessageContent('')
 
@@ -284,18 +261,9 @@ const MessagesPage: React.FC = () => {
     })
 
     try {
-      const response = await fetch('/api/xmtp/messages/with-attachments', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-        },
-        body: formData
-      })
-
-      if (!response.ok) throw new Error('Failed to send files')
-
-      const result = await response.json()
-      console.log('Files sent successfully:', result)
+      // File attachments not yet supported in E2E encrypted DMs
+      console.log('File upload not yet implemented for E2E encrypted DMs')
+      alert('File attachments are not yet supported in encrypted DMs')
 
       setShowFileUpload(false)
       setNewMessageContent('')
@@ -365,32 +333,26 @@ const MessagesPage: React.FC = () => {
               // Create new conversation
               console.log('Creating conversation with user:', userData)
               if (!identity) {
-                console.log('XMTP not initialized - user needs to initialize first')
+                console.log('DMs not initialized - user needs to enable DMs first')
                 setCurrentView('setup')
               } else {
-                // XMTP already initialized, create conversation directly
-                if (userData.address) {
-                  startConversation(userData.address, userData.username, userData.tokenId)
-                    .then((newConversation) => {
-                      console.log('Conversation created:', newConversation)
-                      handleConversationSelect(newConversation.id)
-                      // Clear URL param on success
-                      setSearchParams(params => {
-                        params.delete('user')
-                        return params
-                      })
+                // DMs already initialized, create conversation directly
+                dmStartConversation(userData.tokenId)
+                  .then((newConversation: any) => {
+                    console.log('Conversation created:', newConversation)
+                    handleConversationSelect(newConversation.id)
+                    setSearchParams(params => {
+                      params.delete('user')
+                      return params
                     })
-                    .catch((error) => {
-                      console.error('Failed to create conversation:', error)
-                      // Clear URL param on failure too to stop retries
-                      setSearchParams(params => {
-                        params.delete('user')
-                        return params
-                      })
+                  })
+                  .catch((error: any) => {
+                    console.error('Failed to create conversation:', error)
+                    setSearchParams(params => {
+                      params.delete('user')
+                      return params
                     })
-                } else {
-                  console.error('User does not have a wallet address')
-                }
+                  })
               }
             }
           } else {
@@ -411,13 +373,13 @@ const MessagesPage: React.FC = () => {
           })
         })
     }
-  }, [searchParams, currentUser, identity, identityLoading, attemptedConversations, startConversation, handleConversationSelect, conversations, setSearchParams])
+  }, [searchParams, currentUser, identity, identityLoading, attemptedConversations, dmStartConversation, handleConversationSelect, conversations, setSearchParams])
 
-  // Check if user needs to setup XMTP
+  // Check if user needs to enable DMs
   useEffect(() => {
     // Only show setup view if:
     // 1. User is logged in
-    // 2. XMTP not initialized
+    // 2. DMs not initialized
     // 3. Correct wallet is connected (address matches activeToken)
     const hasCorrectWallet = activeToken && address && address.toLowerCase() === activeToken.address.toLowerCase()
 
@@ -478,71 +440,30 @@ const MessagesPage: React.FC = () => {
     return () => clearTimeout(timer)
   }, [newMessageSearch, isNewMessageModalOpen])
 
-  // Handle XMTP registration
-  const handleRegisterXmtp = async () => {
-    console.log('handleRegisterXmtp called', { currentUser, address })
-    if (!currentUser) {
-      console.log('No current user')
-      return
-    }
-    if (!address) {
-      console.log('No wallet address connected')
-      return
-    }
+  // Handle DM registration
+  const handleRegisterDm = async () => {
+    if (!currentUser || !address) return
 
     try {
-      console.log('Initializing XMTP client for user:', currentUser.id)
       await initializeClient()
-      console.log('XMTP initialization successful')
-
-      // Register XMTP identity in our database
-      try {
-        await apiFetch('/api/xmtp-identity/register', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            userId: currentUser.id,
-            walletAddress: address,
-            installationId: `install-${currentUser.id}-${Date.now()}`,
-            identityKey: 'registered'
-          })
-        })
-        console.log('XMTP identity registered in database')
-      } catch (dbError) {
-        console.error('Failed to register XMTP identity in database:', dbError)
-        // Don't fail the whole flow if DB registration fails
-      }
-
       setCurrentView('inbox')
 
-      // If we have a target user from URL params, try to create conversation after a short delay
-      // to ensure state has updated
+      // If we have a target user from URL params, create conversation
       const userParam = searchParams.get('user')
       if (userParam && targetUser) {
         setTimeout(() => {
-          console.log('Creating conversation with target user after initialization:', targetUser)
-          // Re-fetch user to get address
-          fetch(`/api/users/${userParam}`)
-            .then(res => res.json())
-            .then(userData => {
-              if (userData && userData.address) {
-                startConversation(userData.address)
-                  .then((newConversation) => {
-                    console.log('Conversation created after init:', newConversation)
-                    handleConversationSelect(newConversation.id)
-                  })
-                  .catch((error) => {
-                    console.error('Failed to create conversation after init:', error)
-                  })
-              }
+          dmStartConversation(targetUser.tokenId)
+            .then((newConversation: any) => {
+              handleConversationSelect(newConversation.id)
             })
-            .catch(err => console.error('Error fetching user after init:', err))
-        }, 500) // Small delay to ensure state updates
+            .catch((error: any) => {
+              console.error('Failed to create conversation after init:', error)
+            })
+        }, 500)
       }
     } catch (error) {
-      console.error('Failed to initialize XMTP:', error)
-      // Show error to user
-      alert(`Failed to setup XMTP: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      console.error('Failed to enable DMs:', error)
+      alert(`Failed to enable DMs: ${error instanceof Error ? error.message : 'Unknown error'}`)
     }
   }
 
@@ -620,7 +541,7 @@ const MessagesPage: React.FC = () => {
               <h1 className={`text-2xl font-bold transition-colors duration-300 ${
                 isDark ? 'text-white' : 'text-black'
               }`}>
-                {currentView === 'inbox' ? 'Messages' : currentView === 'setup' ? 'Setup XMTP' : otherParticipant?.identity.user.displayName || otherParticipant?.identity.user.username || selectedConversation?.name || 'Chat'}
+                {currentView === 'inbox' ? 'Messages' : currentView === 'setup' ? 'Enable DMs' : otherParticipant?.identity.user.displayName || otherParticipant?.identity.user.username || 'Chat'}
               </h1>
             </div>
             {currentView === 'chat' && (
@@ -742,11 +663,10 @@ const MessagesPage: React.FC = () => {
           </div>
         )}
 
-        {/* Setup View - Show when XMTP is not initialized */}
+        {/* Setup View - Show when DMs are not enabled */}
         {currentView === 'setup' && (
           <div className="flex-1 flex flex-col items-center justify-center px-4">
             {identityLoading ? (
-              // Show loading spinner while checking/initializing
               <div className="text-center max-w-md">
                 <div className="mb-6 flex justify-center">
                   <div className="animate-spin rounded-full h-16 w-16 border-b-4 border-yellow-500"></div>
@@ -754,10 +674,10 @@ const MessagesPage: React.FC = () => {
                 <h2 className={`text-xl font-bold mb-3 ${
                   isDark ? 'text-white' : 'text-black'
                 }`}>
-                  Loading Secure Messaging...
+                  Enabling Secure Messaging...
                 </h2>
                 <p className={`${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                  Checking for existing XMTP identity
+                  Setting up your encryption keys
                 </p>
               </div>
             ) : (
@@ -771,12 +691,12 @@ const MessagesPage: React.FC = () => {
                 <p className={`mb-6 ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}>
-                  XMTP provides secure, encrypted messaging between wallets. {!address ? 'Please connect your wallet first.' : 'Initialize your XMTP identity to start sending private messages.'}
+                  {!address ? 'Please connect your wallet first.' : 'Sign a message to derive your encryption keys. This is a free, one-time setup.'}
                 </p>
-                {xmtpError && (
+                {dmError && (
                   <div className="mb-4 p-3 rounded-lg bg-red-500/20 border border-red-500">
                     <p className="text-red-500 text-sm">
-                      {xmtpError.message || 'Failed to initialize XMTP. Please try again.'}
+                      {dmError.message || 'Failed to enable DMs. Please try again.'}
                     </p>
                   </div>
                 )}
@@ -788,7 +708,7 @@ const MessagesPage: React.FC = () => {
                       disabled
                       className="px-6 py-3 rounded-full font-semibold bg-yellow-500/50 text-black transition-all duration-300 opacity-50 cursor-not-allowed"
                     >
-                      Initialize XMTP
+                      Enable DMs
                     </button>
                     <p className="mt-3 text-sm text-yellow-500">
                       Please switch to the correct wallet address
@@ -796,11 +716,11 @@ const MessagesPage: React.FC = () => {
                   </div>
                 ) : (
                   <button
-                    onClick={handleRegisterXmtp}
+                    onClick={handleRegisterDm}
                     disabled={identityLoading}
                     className="px-6 py-3 rounded-full font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    {identityLoading ? 'Initializing...' : 'Initialize XMTP'}
+                    {identityLoading ? 'Enabling...' : 'Enable DMs'}
                   </button>
                 )}
               </div>
@@ -852,7 +772,7 @@ const MessagesPage: React.FC = () => {
                           ) : (
                             <div className="w-10 h-10 rounded-full bg-gray-600 flex items-center justify-center">
                               <span className="text-white font-semibold">
-                                {(otherUser?.identity.user.username || conversation.name || 'U')[0].toUpperCase()}
+                                {(otherUser?.identity.user.username || 'U')[0].toUpperCase()}
                               </span>
                             </div>
                           )}
@@ -863,7 +783,7 @@ const MessagesPage: React.FC = () => {
                             <h3 className={`font-semibold text-base transition-colors duration-300 ${
                               isDark ? 'text-white' : 'text-black'
                             }`}>
-                              {otherUser?.identity.user.displayName || otherUser?.identity.user.username || conversation.name || 'Unknown'}
+                              {otherUser?.identity.user.displayName || otherUser?.identity.user.username || 'Unknown'}
                             </h3>
                             {conversation.unreadCount > 0 && (
                               <span className="px-2 py-0.5 text-xs font-medium bg-yellow-500 text-black rounded-full">
@@ -874,7 +794,7 @@ const MessagesPage: React.FC = () => {
                           <p className={`text-sm transition-colors duration-300 line-clamp-1 ${
                             isDark ? 'text-gray-300' : 'text-gray-700'
                           }`}>
-                            {conversation.type === 'GROUP' ? `${conversation.participants.length} members` : 'Start a conversation'}
+                            Start a conversation
                           </p>
                         </div>
                       </div>
@@ -908,7 +828,7 @@ const MessagesPage: React.FC = () => {
                 <span className={`text-xs font-medium ${
                   isDark ? 'text-green-400' : 'text-green-700'
                 }`}>
-                  Messages are end-to-end encrypted with XMTP protocol
+                  Messages are end-to-end encrypted
                 </span>
               </div>
             </div>
@@ -1339,7 +1259,7 @@ const MessagesPage: React.FC = () => {
 
             {/* Message Search Component */}
             <MessageSearch
-              userId={currentUser?.tokenId}
+              userId={currentUser?.id}
               onSearchComplete={(results) => {
                 console.log('Search results:', results)
               }}

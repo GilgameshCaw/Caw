@@ -1,0 +1,243 @@
+import { prisma } from '../../prismaClient'
+
+export class DmService {
+  /**
+   * Register or update a user's DM public key
+   */
+  async registerIdentity(userId: number, walletAddress: string, publicKey: string) {
+    return prisma.dmIdentity.upsert({
+      where: { userId },
+      create: { userId, walletAddress, publicKey },
+      update: { walletAddress, publicKey }
+    })
+  }
+
+  /**
+   * Get a user's DM public key
+   */
+  async getPublicKey(userId: number): Promise<string | null> {
+    const identity = await prisma.dmIdentity.findUnique({
+      where: { userId },
+      select: { publicKey: true }
+    })
+    return identity?.publicKey ?? null
+  }
+
+  /**
+   * Check if a user has a DM identity
+   */
+  async hasIdentity(userId: number): Promise<boolean> {
+    const count = await prisma.dmIdentity.count({ where: { userId } })
+    return count > 0
+  }
+
+  /**
+   * Get or create a DM conversation between two users.
+   * Returns existing conversation if one already exists.
+   */
+  async getOrCreateConversation(userIdA: number, userIdB: number) {
+    // Look for existing conversation with both participants
+    const existing = await prisma.conversation.findFirst({
+      where: {
+        type: 'DM',
+        AND: [
+          { participants: { some: { userId: userIdA } } },
+          { participants: { some: { userId: userIdB } } }
+        ]
+      },
+      include: {
+        participants: {
+          include: {
+            identity: {
+              include: {
+                user: {
+                  select: { username: true, displayName: true, avatarUrl: true, address: true, tokenId: true }
+                }
+              }
+            }
+          }
+        }
+      }
+    })
+
+    if (existing) return existing
+
+    // Create new conversation with both participants
+    return prisma.conversation.create({
+      data: {
+        type: 'DM',
+        creatorId: userIdA,
+        participants: {
+          create: [
+            { userId: userIdA },
+            { userId: userIdB }
+          ]
+        }
+      },
+      include: {
+        participants: {
+          include: {
+            identity: {
+              include: {
+                user: {
+                  select: { username: true, displayName: true, avatarUrl: true, address: true, tokenId: true }
+                }
+              }
+            }
+          }
+        }
+      }
+    })
+  }
+
+  /**
+   * Store an encrypted message
+   */
+  async sendMessage(params: {
+    conversationId: string
+    senderId: number
+    encryptedPayload: string
+    contentType?: string
+  }) {
+    const { conversationId, senderId, encryptedPayload, contentType = 'text' } = params
+
+    // Verify sender is a participant
+    const participant = await prisma.conversationParticipant.findUnique({
+      where: { conversationId_userId: { conversationId, userId: senderId } }
+    })
+    if (!participant) throw new Error('Not a participant in this conversation')
+
+    const message = await prisma.message.create({
+      data: {
+        conversationId,
+        senderId,
+        encryptedPayload,
+        contentType
+      },
+      include: {
+        sender: {
+          include: {
+            user: { select: { username: true, displayName: true, avatarUrl: true, tokenId: true } }
+          }
+        }
+      }
+    })
+
+    // Update conversation's lastMessageAt and lastMessageId
+    await prisma.conversation.update({
+      where: { id: conversationId },
+      data: { lastMessageAt: message.createdAt, lastMessageId: message.id }
+    })
+
+    // Increment unread count for other participants
+    await prisma.conversationParticipant.updateMany({
+      where: {
+        conversationId,
+        userId: { not: senderId }
+      },
+      data: { unreadCount: { increment: 1 } }
+    })
+
+    return message
+  }
+
+  /**
+   * Get messages for a conversation (encrypted — client decrypts)
+   */
+  async getMessages(conversationId: string, userId: number, limit = 50, before?: string) {
+    // Verify user is a participant
+    const participant = await prisma.conversationParticipant.findUnique({
+      where: { conversationId_userId: { conversationId, userId } }
+    })
+    if (!participant) throw new Error('Not a participant in this conversation')
+
+    const where: any = { conversationId }
+    if (before) {
+      const beforeMsg = await prisma.message.findUnique({ where: { id: before }, select: { createdAt: true } })
+      if (beforeMsg) {
+        where.createdAt = { lt: beforeMsg.createdAt }
+      }
+    }
+
+    return prisma.message.findMany({
+      where,
+      orderBy: { createdAt: 'asc' },
+      take: limit,
+      include: {
+        sender: {
+          include: {
+            user: { select: { username: true, displayName: true, avatarUrl: true, tokenId: true } }
+          }
+        }
+      }
+    })
+  }
+
+  /**
+   * Get conversations for a user with unread counts
+   */
+  async getConversations(userId: number) {
+    const participations = await prisma.conversationParticipant.findMany({
+      where: { userId },
+      include: {
+        conversation: {
+          include: {
+            participants: {
+              include: {
+                identity: {
+                  include: {
+                    user: {
+                      select: { username: true, displayName: true, avatarUrl: true, address: true, tokenId: true }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      orderBy: { conversation: { lastMessageAt: 'desc' } }
+    })
+
+    return participations.map(p => ({
+      ...p.conversation,
+      unreadCount: p.unreadCount
+    }))
+  }
+
+  /**
+   * Mark messages as read and reset unread count
+   */
+  async markRead(messageIds: string[], userId: number) {
+    if (messageIds.length === 0) return
+
+    // Get conversation IDs from the messages
+    const messages = await prisma.message.findMany({
+      where: { id: { in: messageIds } },
+      select: { conversationId: true }
+    })
+    const conversationIds = [...new Set(messages.map(m => m.conversationId))]
+
+    // Create read receipts
+    await prisma.messageReceipt.createMany({
+      data: messageIds.map(messageId => ({
+        messageId,
+        userId,
+        readAt: new Date()
+      })),
+      skipDuplicates: true
+    })
+
+    // Reset unread count for the user in those conversations
+    for (const conversationId of conversationIds) {
+      await prisma.conversationParticipant.updateMany({
+        where: { conversationId, userId },
+        data: { unreadCount: 0, lastReadAt: new Date() }
+      })
+    }
+
+    return { conversationIds }
+  }
+}
+
+export default new DmService()
