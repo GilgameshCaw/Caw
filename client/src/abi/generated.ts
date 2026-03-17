@@ -62,6 +62,38 @@ export const cawActionsAbi = [
     name: 'ActionsProcessed',
   },
   {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'previousOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'newOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipTransferred',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'replicator',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'ReplicatorSet',
+  },
+  {
     type: 'function',
     inputs: [],
     name: 'cawName',
@@ -167,6 +199,13 @@ export const cawActionsAbi = [
   },
   {
     type: 'function',
+    inputs: [],
+    name: 'owner',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     inputs: [
       { name: 'validatorId', internalType: 'uint32', type: 'uint32' },
       {
@@ -254,6 +293,13 @@ export const cawActionsAbi = [
     name: 'processActions',
     outputs: [],
     stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'renounceOwnership',
+    outputs: [],
+    stateMutability: 'nonpayable',
   },
   {
     type: 'function',
@@ -411,6 +457,13 @@ export const cawActionsAbi = [
     type: 'function',
     inputs: [{ name: '_replicator', internalType: 'address', type: 'address' }],
     name: 'setReplicator',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
+    name: 'transferOwnership',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -1208,6 +1261,27 @@ export const cawActionsReplicatorAbi = [
     inputs: [
       { name: 'clientId', internalType: 'uint32', type: 'uint32' },
       { name: 'payload', internalType: 'bytes', type: 'bytes' },
+    ],
+    name: 'quotePerChain',
+    outputs: [
+      { name: 'nativeFees', internalType: 'uint256[]', type: 'uint256[]' },
+      {
+        name: 'destinations',
+        internalType: 'struct ReplicationDestination[]',
+        type: 'tuple[]',
+        components: [
+          { name: 'target', internalType: 'address', type: 'address' },
+          { name: 'eid', internalType: 'uint32', type: 'uint32' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'payload', internalType: 'bytes', type: 'bytes' },
       { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
     ],
     name: 'quoteReplication',
@@ -1798,6 +1872,57 @@ export const cawNameAbi = [
     anonymous: false,
     inputs: [
       {
+        name: 'recipient',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'amount',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'FeesAccrued',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'recipient',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'amount',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'FeesWithdrawn',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'minter',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'MinterSet',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
         name: 'previousOwner',
         internalType: 'address',
         type: 'address',
@@ -1841,6 +1966,21 @@ export const cawNameAbi = [
     ],
     name: 'Transfer',
   },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'tokenId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      { name: 'from', internalType: 'address', type: 'address', indexed: true },
+      { name: 'to', internalType: 'address', type: 'address', indexed: true },
+    ],
+    name: 'TransferPendingSync',
+  },
   { type: 'fallback', stateMutability: 'payable' },
   {
     type: 'function',
@@ -1851,14 +1991,10 @@ export const cawNameAbi = [
   },
   {
     type: 'function',
-    inputs: [
-      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
-      { name: 'lzEthAmount', internalType: 'uint256', type: 'uint256' },
-      { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: '_updateNewOwners',
-    outputs: [],
-    stateMutability: 'payable',
+    inputs: [{ name: '', internalType: 'address', type: 'address' }],
+    name: 'accruedFees',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
   },
   {
     type: 'function',
@@ -2374,6 +2510,16 @@ export const cawNameAbi = [
   },
   {
     type: 'function',
+    inputs: [
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+      { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'syncTransfer',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
     inputs: [{ name: 'tokenId', internalType: 'uint32', type: 'uint32' }],
     name: 'token',
     outputs: [
@@ -2453,6 +2599,17 @@ export const cawNameAbi = [
   {
     type: 'function',
     inputs: [
+      { name: 'to', internalType: 'address', type: 'address' },
+      { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
+      { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'transferAndSync',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
       { name: 'from', internalType: 'address', type: 'address' },
       { name: 'to', internalType: 'address', type: 'address' },
       { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
@@ -2515,6 +2672,13 @@ export const cawNameAbi = [
     name: 'withdraw',
     outputs: [],
     stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'withdrawFees',
+    outputs: [],
+    stateMutability: 'nonpayable',
   },
   {
     type: 'function',
@@ -2588,6 +2752,32 @@ export const cawNameL2Abi = [
       },
     ],
     name: 'Authenticated',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'replicator',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'CawActionsReplicatorSet',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'cawActions',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'CawActionsSet',
   },
   {
     type: 'event',
@@ -3347,6 +3537,27 @@ export const cawNameQuoterAbi = [
       { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
     ],
     name: 'syncReplicationQuote',
+    outputs: [
+      {
+        name: 'quote',
+        internalType: 'struct MessagingFee',
+        type: 'tuple',
+        components: [
+          { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
+          { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+      { name: 'newOwner', internalType: 'address', type: 'address' },
+      { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
+    ],
+    name: 'syncTransferQuote',
     outputs: [
       {
         name: 'quote',
