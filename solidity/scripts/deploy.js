@@ -317,7 +317,7 @@ const LINKING_STEPS = [
     phase: 2,
     contract: 'CawClientManager',
     method: 'createClient',
-    args: (state) => [state.deployerAddress, 1, 1, 1, 1],
+    args: (state, chainConfig) => ['CAW Protocol', state.deployerAddress, CHAINS[chainConfig.env + 'L2'].lzEid, 1, 1, 1, 1],
     condition: (state) => state.addresses.CawClientManager,
     skipIf: async (state, deployer) => {
       return state.linking?.clientCreated === true;
@@ -433,9 +433,8 @@ const LINKING_STEPS = [
     phase: 2,
     contract: 'CawClientManager',
     method: 'setCawName',
-    args: (state, chainConfig) => [
+    args: (state) => [
       state.addresses.CawName,
-      CHAINS[chainConfig.env + 'L2'].lzEid,
     ],
     condition: (state) => state.addresses.CawClientManager && state.addresses.CawName,
     skipIf: async (state, deployer) => {
@@ -674,9 +673,8 @@ const LINKING_STEPS = [
       }
     },
   },
-  // Note: L2b replication sync needs to be done manually via cawName.syncReplication()
-  // because CawClientManager.defaultL2Eid only auto-syncs to L2. For testnet this is fine —
-  // run add-replication.ts targeting L2b after deployment, or call syncReplication manually.
+  // Note: Client 1's storage chain is L2 (Base Sepolia). Replication config auto-syncs there.
+  // To add a second client on L2b, call createClient with L2b's EID.
 ];
 
 // ============================================

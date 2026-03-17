@@ -3,6 +3,8 @@ pragma solidity ^0.8.20;
 
 struct CawClient {
   uint32 id;
+  uint32 storageChainEid; // The L2 chain where this client's actions are processed
+  string name;
   address feeAddress;
   address ownerAddress;
   uint256 withdrawFee;
@@ -42,9 +44,6 @@ contract CawClientManager {
   /// @notice The CawName contract used for L1->L2 sync
   ICawName public cawName;
 
-  /// @notice The default L2 endpoint ID for syncing replication config
-  uint32 public defaultL2Eid;
-
   uint32 public nextClientId = 1;
   mapping(uint32 => CawClient) public clients;
 
@@ -75,12 +74,10 @@ contract CawClientManager {
   /**
    * @notice Set the CawName contract address. Can only be called once.
    * @param _cawName The CawName contract address
-   * @param _defaultL2Eid The default L2 endpoint ID for syncing
    */
-  function setCawName(address _cawName, uint32 _defaultL2Eid) external onlyOwner {
+  function setCawName(address _cawName) external onlyOwner {
     require(address(cawName) == address(0), "CawName already set");
     cawName = ICawName(_cawName);
-    defaultL2Eid = _defaultL2Eid;
   }
 
   /**
@@ -146,10 +143,15 @@ contract CawClientManager {
   /**
    * @dev Creates a new CawClient with the caller as the owner.
    * @param feeAddress The address to receive fees.
+   * @param storageChainEid The L2 chain where this client's actions are processed.
    */
-  function createClient(address feeAddress, uint256 withdrawFee, uint256 depositFee, uint256 authFee, uint256 mintFee) public {
+  function createClient(string calldata name, address feeAddress, uint32 storageChainEid, uint256 withdrawFee, uint256 depositFee, uint256 authFee, uint256 mintFee) public {
+    require(storageChainEid > 0, "Storage chain required");
+    require(bytes(name).length > 0, "Name required");
     clients[nextClientId] = CawClient({
       id: nextClientId,
+      storageChainEid: storageChainEid,
+      name: name,
       feeAddress: feeAddress,
       ownerAddress: msg.sender,
       withdrawFee: withdrawFee,
@@ -236,9 +238,10 @@ contract CawClientManager {
 
     emit ClientReplicationAdded(clientId, eid, address(0));
 
-    // Auto-sync full chain list to L2
+    // Auto-sync full chain list to client's storage chain
     if (address(cawName) != address(0)) {
-      cawName.syncReplicationInternal{value: msg.value}(clientId, getClientChainEids(clientId), defaultL2Eid);
+      uint32 storageEid = clients[clientId].storageChainEid;
+      cawName.syncReplicationInternal{value: msg.value}(clientId, getClientChainEids(clientId), storageEid);
     }
   }
 
@@ -257,9 +260,10 @@ contract CawClientManager {
 
         emit ClientReplicationRemoved(clientId, eid);
 
-        // Auto-sync updated chain list to L2
+        // Auto-sync updated chain list to client's storage chain
         if (address(cawName) != address(0)) {
-          cawName.syncReplicationInternal{value: msg.value}(clientId, getClientChainEids(clientId), defaultL2Eid);
+          uint32 storageEid = clients[clientId].storageChainEid;
+          cawName.syncReplicationInternal{value: msg.value}(clientId, getClientChainEids(clientId), storageEid);
         }
         return;
       }
@@ -313,6 +317,11 @@ contract CawClientManager {
    */
   function replicationSyncQuote(uint32 clientId) public view returns (MessagingFee memory) {
     require(address(cawName) != address(0), "CawName not set");
-    return cawName.syncReplicationQuote(clientId, getClientChainEids(clientId), defaultL2Eid, false);
+    uint32 storageEid = clients[clientId].storageChainEid;
+    return cawName.syncReplicationQuote(clientId, getClientChainEids(clientId), storageEid, false);
+  }
+
+  function getStorageChainEid(uint32 clientId) public view returns (uint32) {
+    return clients[clientId].storageChainEid;
   }
 }

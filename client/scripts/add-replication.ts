@@ -216,9 +216,9 @@ async function main() {
     console.log('')
     console.log('Step 1: Adding replication destination on L1...')
 
-    // Get quote for LayerZero fee
-    const defaultL2Eid = await clientManager.defaultL2Eid()
-    console.log(`  Default L2 EID: ${defaultL2Eid}`)
+    // Get quote for LayerZero fee using client's storage chain
+    const storageChainEid = await clientManager.getStorageChainEid(clientId)
+    console.log(`  Client Storage Chain EID: ${storageChainEid}`)
 
     let quote: { nativeFee: bigint; lzTokenFee: bigint }
     try {
@@ -226,7 +226,7 @@ async function main() {
       quote = await quoter.syncReplicationQuote(
         clientId,
         [archiveEid],
-        defaultL2Eid,
+        storageChainEid,
         false
       )
       console.log(`  LayerZero Fee: ${formatEther(quote.nativeFee)} ETH`)

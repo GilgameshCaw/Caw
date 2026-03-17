@@ -538,7 +538,7 @@ contract('CawNames', function(accounts, x) {
     await l2Endpoint.setDestLzEndpoint(cawNames.address, l1Endpoint.address);
     await cawNames.setL2Peer(l2, cawNamesL2.address);
 
-    await clientManager.createClient(gilg, 1,1,1,1);
+    await clientManager.createClient("Test Client", gilg, l2, 1,1,1,1);
 
 
     cawNamesL2Mainnet = cawNamesL2Mainnet || await CawNameL2.new(l1, l1Endpoint.address);
@@ -1033,7 +1033,7 @@ contract('CawNames', function(accounts, x) {
 
 
 
-    await clientManager.createClient(gilg, 1,1,1,1);
+    await clientManager.createClient("Test Client", gilg, l2, 1,1,1,1);
 
 
 
@@ -1074,7 +1074,7 @@ contract('CawNames', function(accounts, x) {
 
 
     // Another unauthed caw that becomes authed by depositing:
-    await clientManager.createClient(gilg, 1,1,1,1);
+    await clientManager.createClient("Test Client", gilg, l2, 1,1,1,1);
 
     var unauthedCaw = {
       actionType: 'caw',
@@ -1161,7 +1161,7 @@ contract('CawNames', function(accounts, x) {
     console.log("Testing replication destination management");
 
     // Create a new test client owned by accounts[0] for replication testing
-    var testClientTx = await clientManager.createClient(accounts[0], 1, 1, 1, 1);
+    var testClientTx = await clientManager.createClient("Replication Test", accounts[0], l2, 1, 1, 1, 1);
     var testClientId = testClientTx.logs[0].args.clientId.toNumber();
     console.log("Created test client ID:", testClientId);
 
@@ -1756,8 +1756,8 @@ contract("CawName - Transfer & Replication Gas", function(accounts) {
     await l2Endpoint.setDestLzEndpoint(localCawNames.address, l1Endpoint.address);
     await localCawNames.setL2Peer(l2, localCawNamesL2.address);
 
-    await localClientManager.createClient(accounts[0], 1, 1, 1, 1);
-    await localClientManager.setCawName(localCawNames.address, l2);
+    await localClientManager.createClient("Local Test", accounts[0], l2, 1, 1, 1, 1);
+    await localClientManager.setCawName(localCawNames.address);
 
     localMinter = await CawNameMinter.new(localToken.address, localCawNames.address);
     await localCawNames.setMinter(localMinter.address);
@@ -1983,7 +1983,7 @@ contract("CawActionsReplicator - Full Integration", function(accounts) {
     await l2Endpoint.setDestLzEndpoint(cawNames.address, l1Endpoint.address);
     await cawNames.setL2Peer(l2, cawNamesL2.address);
 
-    await clientManager.createClient(gilg, 1, 1, 1, 1);
+    await clientManager.createClient("Replicator Test", gilg, l2, 1, 1, 1, 1);
 
     minter = await CawNameMinter.new(token.address, cawNames.address);
     await cawNames.setMinter(minter.address);

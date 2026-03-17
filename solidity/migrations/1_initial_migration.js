@@ -199,7 +199,7 @@ module.exports = async function (deployer, network, accounts) {
       clientManagerAddress = clientManager.address;
       console.log("client manager address", clientManagerAddress);
 
-      await clientManager.createClient(accounts[0], 1,1,1,1);
+      await clientManager.createClient("CAW Protocol", accounts[0], peerNetworkId, 1,1,1,1);
       console.log("first client created");
     }
 
@@ -350,10 +350,10 @@ module.exports = async function (deployer, network, accounts) {
   if (network.match(/L1/) && cawNamesAddress && clientManagerAddress) {
     var clientManager = await CawClientManager.at(clientManagerAddress);
 
-    // Set CawName and default L2 eid on ClientManager so it can route replication sync calls
+    // Set CawName on ClientManager so it can route replication sync calls
     if ((await clientManager.cawName()) === '0x0000000000000000000000000000000000000000') {
-      await clientManager.setCawName(cawNamesAddress, peerNetworkId);
-      console.log("CawName and default L2 eid set on ClientManager");
+      await clientManager.setCawName(cawNamesAddress);
+      console.log("CawName set on ClientManager");
     }
   }
 
