@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { ReportReason, ReportStatus } from '@prisma/client'
-import { requireAdmin } from '../middleware/auth'
+import { requireAdmin, requireAuth } from '../middleware/auth'
 
 const router = Router()
 
@@ -9,7 +9,7 @@ const router = Router()
  * POST /api/reports
  * Submit a new report for a post
  */
-router.post('/', async (req, res) => {
+router.post('/', requireAuth({ field: 'reporterId' }), async (req, res) => {
   try {
     const { reporterId, postId, postAuthorId, reason, details } = req.body
 
