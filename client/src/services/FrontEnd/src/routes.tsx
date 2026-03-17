@@ -9,6 +9,7 @@ import { SettingsPage } from "./pages/Settings";
 import MutedContentPage from "./pages/MutedContent";
 import NotificationSettings from "./pages/NotificationSettings";
 import AccountSettings from "./pages/AccountSettings";
+import SessionKeySettings from "./pages/SessionKeySettings";
 import HelpPage from "./pages/HelpPage";
 import MessagesPage from "./pages/Messages";
 import BookmarksPage from "./pages/Bookmarks";
@@ -19,6 +20,7 @@ import HashtagPage from "./pages/HashtagPage";
 import SearchResultsPage from "./pages/SearchResultsPage";
 import FaucetPage from "./pages/FaucetPage";
 import BugReportsAdmin from "./pages/BugReportsAdmin";
+import ReportsAdmin from "./pages/ReportsAdmin";
 import { Navigate } from "react-router-dom";
 
 
@@ -97,6 +99,10 @@ export default [
     component: <AccountSettings />,
   },
   {
+    path: "/settings/session-keys",
+    component: <SessionKeySettings />,
+  },
+  {
     path: "/help",
     component: <HelpPage />,
   },
@@ -159,5 +165,9 @@ export default [
   {
     path: "/admin/bugs",
     component: <BugReportsAdmin />,
+  },
+  {
+    path: "/admin/reports",
+    component: <ReportsAdmin />,
   },
 ];

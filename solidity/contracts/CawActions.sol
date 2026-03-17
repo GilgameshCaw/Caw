@@ -170,7 +170,16 @@ contract CawActions is Ownable {
 
     address signer = getSigner(structHash, v, r, s);
     require(signer != address(0), "Invalid signature");
-    require(signer == cawName.ownerOf(data.senderId), "Invalid signer");
+
+    // Direct owner signature — pass immediately
+    address owner = cawName.ownerOf(data.senderId);
+    if (signer != owner) {
+      // Session key fallback
+      (uint64 expiry, uint8 scopeBitmap, uint32 storedNonce) = cawName.sessions(data.senderId, signer);
+      require(expiry > block.timestamp, "Session expired or not found");
+      require(storedNonce == cawName.transferNonce(data.senderId), "Session invalidated by transfer");
+      require((scopeBitmap & (1 << uint8(data.actionType))) != 0, "Action not in session scope");
+    }
   }
 
   function useCawonce(uint32 senderId, uint256 cawonce) internal {

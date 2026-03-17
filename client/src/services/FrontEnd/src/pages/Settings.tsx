@@ -2,7 +2,7 @@ import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { HiUser, HiBell, HiVolumeOff } from 'react-icons/hi'
+import { HiUser, HiBell, HiVolumeOff, HiLightningBolt } from 'react-icons/hi'
 
 // Settings page component with clean, modern design
 export const SettingsPage: React.FC = () => {
@@ -27,6 +27,14 @@ export const SettingsPage: React.FC = () => {
       icon: <HiBell className="w-5 h-5" />,
       hasArrow: true,
       onClick: () => navigate('/settings/notifications')
+    },
+    {
+      id: 'quick-sign',
+      title: 'Quick Sign',
+      description: 'Sign once, then post without wallet popups',
+      icon: <HiLightningBolt className="w-5 h-5" />,
+      hasArrow: true,
+      onClick: () => navigate('/settings/session-keys')
     },
     {
       id: 'muted-content',

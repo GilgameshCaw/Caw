@@ -14,6 +14,8 @@ import { hasMinimumStake, getRequiredStake, STAKING_REQUIREMENTS } from '~/const
 import { getActionTypeForModal } from '~/errors/InsufficientStakeError'
 import { useInsufficientStakeStore } from '~/store/insufficientStakeStore'
 import { useAuthStore } from '~/store/authStore'
+import { privateKeyToAccount } from 'viem/accounts'
+import { useSessionKeyStore } from '~/store/sessionKeyStore'
 
 const CAWONCE_STALE_MS = 10 * 60 * 1000 // 10 minutes
 
@@ -256,12 +258,33 @@ export function useSignAndSubmitAction() {
     const { domain, types, primaryType, message } = buildTypedData({...params, cawonce: currentCawonce})
 
     try {
-      const signature = await signTypedDataAsync({
-        domain,
-        types:       { ActionData: TYPES.ActionData },
-        primaryType,               // 'ActionData'
-        message
-      })
+      let signature: `0x${string}`
+
+      // Check for an active session key that covers this action type
+      const actionCode = ActionTypeMap[params.actionType]
+      const activeSession = useSessionKeyStore.getState().getActiveSession(activeTokenId!)
+      const canUseSession = activeSession &&
+        actionCode <= 5 &&
+        (activeSession.scopeBitmap & (1 << actionCode)) !== 0
+
+      if (canUseSession) {
+        // Sign with session key — no wallet popup
+        const sessionAccount = privateKeyToAccount(activeSession.privateKey)
+        signature = await sessionAccount.signTypedData({
+          domain,
+          types:       { ActionData: TYPES.ActionData },
+          primaryType,
+          message,
+        })
+      } else {
+        // Fall back to wallet signature (MetaMask popup)
+        signature = await signTypedDataAsync({
+          domain,
+          types:       { ActionData: TYPES.ActionData },
+          primaryType,
+          message,
+        })
+      }
 
       const response = await apiFetch('/api/actions', {
         method: 'POST',

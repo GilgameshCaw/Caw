@@ -56,11 +56,39 @@ contract CawNameL2 is
   bool public bypassLZ;
   CawName public cawName;
 
+  // ============================================
+  // SESSION KEY DELEGATION
+  // ============================================
+
+  /// @notice Increments on every ownership change, invalidating all prior session delegations
+  mapping(uint32 => uint32) public transferNonce;
+
+  struct StoredSession {
+    uint64 expiry;
+    uint8  scopeBitmap;
+    uint32 transferNonce;
+  }
+
+  /// @notice tokenId => sessionKey => stored session data
+  mapping(uint32 => mapping(address => StoredSession)) public sessions;
+
+  bytes32 public immutable eip712DomainHash;
+
+  bytes32 private constant EIP712_DOMAIN_TYPEHASH = keccak256(
+    "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
+  );
+
+  bytes32 private constant DELEGATION_TYPEHASH = keccak256(
+    "SessionDelegation(uint32 tokenId,address sessionKey,uint64 expiry,uint8 scopeBitmap,uint32 transferNonce)"
+  );
+
   event OwnerSet(uint32 tokenId, address newOwner);
   event UsernameMinted(uint32 tokenId, address owner);
   event Authenticated(uint32 cawClientId, uint32 tokenId);
   event CawActionsSet(address cawActions);
   event CawActionsReplicatorSet(address replicator);
+  event SessionCreated(uint32 indexed tokenId, address indexed sessionKey, uint64 expiry, uint8 scopeBitmap);
+  event SessionRevoked(uint32 indexed tokenId, address indexed sessionKey);
 
   bytes4 public setWithdrawableSelector = bytes4(keccak256("setWithdrawable(uint32[],uint256[])"));
 
@@ -76,6 +104,19 @@ contract CawNameL2 is
     OApp(_endpoint, msg.sender)
   {
     layer1EndpointId = _endpointId;
+    eip712DomainHash = generateDomainHash();
+  }
+
+  function generateDomainHash() public view returns (bytes32) {
+    return keccak256(
+      abi.encode(
+        EIP712_DOMAIN_TYPEHASH,
+        keccak256(bytes("CawNameL2")),
+        keccak256(bytes("1")),
+        block.chainid,
+        address(this)
+      )
+    );
   }
 
   function getTokens(uint32[] memory tokenIds) external view returns (Token[] memory) {
@@ -224,6 +265,54 @@ contract CawNameL2 is
   function _setOwnerOf(uint32 tokenId, address newOwner) internal {
     emit OwnerSet(tokenId, newOwner);
     ownerOf[tokenId] = newOwner;
+    transferNonce[tokenId]++;
+  }
+
+  // ============================================
+  // SESSION KEY REGISTRATION & REVOCATION
+  // ============================================
+
+  /// @notice Register a session key. Owner signs an EIP-712 delegation, then anyone can submit it on-chain.
+  /// @param tokenId The CawName token ID to delegate for
+  /// @param sessionKey The ephemeral address that will sign actions
+  /// @param expiry Unix timestamp after which the session is invalid
+  /// @param scopeBitmap Bitfield of allowed ActionTypes (bits 0-5 only; WITHDRAW and OTHER forbidden)
+  function registerSession(
+    uint32 tokenId,
+    address sessionKey,
+    uint64 expiry,
+    uint8 scopeBitmap,
+    uint8 v, bytes32 r, bytes32 s
+  ) external {
+    require(sessionKey != address(0), "Zero session key");
+    require(expiry > block.timestamp, "Already expired");
+    require((scopeBitmap & 0xC0) == 0, "Cannot delegate WITHDRAW or OTHER");
+
+    uint32 currentNonce = transferNonce[tokenId];
+
+    bytes32 structHash = keccak256(abi.encode(
+      DELEGATION_TYPEHASH,
+      tokenId,
+      sessionKey,
+      expiry,
+      scopeBitmap,
+      currentNonce
+    ));
+    bytes32 digest = keccak256(abi.encodePacked("\x19\x01", eip712DomainHash, structHash));
+    address signer = ecrecover(digest, v, r, s);
+
+    require(signer != address(0), "Invalid signature");
+    require(signer == ownerOf[tokenId], "Signer is not token owner");
+
+    sessions[tokenId][sessionKey] = StoredSession(expiry, scopeBitmap, currentNonce);
+    emit SessionCreated(tokenId, sessionKey, expiry, scopeBitmap);
+  }
+
+  /// @notice Revoke a session key. Only callable by the token owner.
+  function revokeSession(uint32 tokenId, address sessionKey) external {
+    require(msg.sender == ownerOf[tokenId], "Not the token owner");
+    delete sessions[tokenId][sessionKey];
+    emit SessionRevoked(tokenId, sessionKey);
   }
 
   function _lzReceive(

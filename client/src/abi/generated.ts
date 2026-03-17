@@ -3394,6 +3394,79 @@ export const cawNameL2Abi = [
     ],
     stateMutability: 'view',
   },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
+    name: 'transferNonce',
+    outputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '', internalType: 'uint32', type: 'uint32' },
+      { name: '', internalType: 'address', type: 'address' },
+    ],
+    name: 'sessions',
+    outputs: [
+      { name: 'expiry', internalType: 'uint64', type: 'uint64' },
+      { name: 'scopeBitmap', internalType: 'uint8', type: 'uint8' },
+      { name: 'transferNonce', internalType: 'uint32', type: 'uint32' },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+      { name: 'sessionKey', internalType: 'address', type: 'address' },
+      { name: 'expiry', internalType: 'uint64', type: 'uint64' },
+      { name: 'scopeBitmap', internalType: 'uint8', type: 'uint8' },
+      { name: 'v', internalType: 'uint8', type: 'uint8' },
+      { name: 'r', internalType: 'bytes32', type: 'bytes32' },
+      { name: 's', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'registerSession',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+      { name: 'sessionKey', internalType: 'address', type: 'address' },
+    ],
+    name: 'revokeSession',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'eip712DomainHash',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32', indexed: true },
+      { name: 'sessionKey', internalType: 'address', type: 'address', indexed: true },
+      { name: 'expiry', internalType: 'uint64', type: 'uint64', indexed: false },
+      { name: 'scopeBitmap', internalType: 'uint8', type: 'uint8', indexed: false },
+    ],
+    name: 'SessionCreated',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32', indexed: true },
+      { name: 'sessionKey', internalType: 'address', type: 'address', indexed: true },
+    ],
+    name: 'SessionRevoked',
+  },
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
