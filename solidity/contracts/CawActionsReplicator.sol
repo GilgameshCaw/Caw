@@ -30,9 +30,10 @@ interface ICawActionsForReplicator {
 
 /**
  * @title CawActionsReplicator
- * @notice Replicates action data to other chains via LayerZero.
- * @dev Deployed on L2. Receives replication config from L1 CawClientManager via LayerZero.
- *      When CawActions processes actions, it calls replicate() to send data to archive chains.
+ * @notice Replicates action data to archive chains via LayerZero.
+ * @dev Deployed on L2. Owner registers archive chains globally via addArchiveChain/removeArchiveChain.
+ *      Clients select which available chains they replicate to via setClientChains (called by CawNameL2).
+ *      When CawActions processes actions, it calls replicate() to send data to the client's selected chains.
  */
 contract CawActionsReplicator is OApp {
   using OptionsBuilder for bytes;
@@ -40,7 +41,7 @@ contract CawActionsReplicator is OApp {
   /// @notice The CawActions contract authorized to replicate (immutable, set at deployment)
   address public immutable cawActions;
 
-  /// @notice The CawNameL2 contract authorized to update peers (immutable, set at deployment)
+  /// @notice The CawNameL2 contract authorized to set client chains (immutable, set at deployment)
   address public immutable cawNameL2;
 
   /// @notice Gas limit for receive on destination (just event emission, very cheap)
@@ -51,11 +52,25 @@ contract CawActionsReplicator is OApp {
   ///      increase the LayerZero fee on the source chain instead.
   uint128 public constant RECEIVE_GAS_LIMIT = 50000;
 
-  /// @notice Peer addresses per client per chain: clientId => eid => target
-  mapping(uint32 => mapping(uint32 => bytes32)) public clientPeers;
+  // ============================================
+  // GLOBAL ARCHIVE CHAIN REGISTRY (owner-managed)
+  // ============================================
 
-  /// @notice Replication destinations per client: clientId => destinations
-  mapping(uint32 => ReplicationDestination[]) public clientReplications;
+  /// @notice List of all available archive chain EIDs
+  uint32[] public availableChains;
+
+  /// @notice Whether a chain EID is in the available set
+  mapping(uint32 => bool) public isAvailableChain;
+
+  // ============================================
+  // CLIENT CHAIN SELECTION (set via CawNameL2)
+  // ============================================
+
+  /// @notice Which chains each client replicates to: clientId => destEid[]
+  mapping(uint32 => uint32[]) public clientChains;
+
+  /// @notice Fast lookup: clientId => destEid => enabled
+  mapping(uint32 => mapping(uint32 => bool)) public clientChainEnabled;
 
   /// @notice Whether replication is enabled for a client
   mapping(uint32 => bool) public clientReplicationEnabled;
@@ -66,7 +81,8 @@ contract CawActionsReplicator is OApp {
 
   event Replicated(uint32 indexed destEid, bytes32 guid, uint256 payloadSize, uint32 indexed clientId);
   event ReplicationFailed(uint32 indexed destEid, uint32 indexed clientId, string reason);
-  event PeerUpdated(uint32 indexed clientId, uint32 indexed eid, address target);
+  event ArchiveChainAdded(uint32 indexed eid, address target);
+  event ClientChainsUpdated(uint32 indexed clientId, uint32[] destEids);
   event MigrationBatchProcessed(uint256 indexed checkpointId, uint256 offset, uint256 count);
 
   /**
@@ -83,35 +99,89 @@ contract CawActionsReplicator is OApp {
     require(_cawNameL2 != address(0), "Invalid CawNameL2 address");
     cawActions = _cawActions;
     cawNameL2 = _cawNameL2;
-
-    // Renounce ownership - contract is now fully trustless
-    _transferOwnership(address(0));
   }
 
   // ============================================
-  // PEER MANAGEMENT (called by CawNameL2)
+  // ARCHIVE CHAIN MANAGEMENT (owner only)
   // ============================================
 
   /**
-   * @notice Update a replication peer for a client. Called by CawNameL2.
-   * @param clientId The client ID
-   * @param destEid The destination chain endpoint ID
-   * @param target The target contract address (address(0) to remove)
+   * @notice Register an archive chain globally. Sets OApp peer via standard setPeer.
+   * @param destEid The LayerZero endpoint ID of the archive chain
+   * @param target The CawActionsArchive contract address on that chain
    */
-  function updatePeer(uint32 clientId, uint32 destEid, address target) external {
-    require(msg.sender == cawNameL2, "Only CawNameL2 can update peers");
-    _updatePeer(clientId, destEid, target);
+  function addArchiveChain(uint32 destEid, address target) external onlyOwner {
+    require(target != address(0), "Invalid target");
+    require(!isAvailableChain[destEid], "Chain already registered");
+
+    setPeer(destEid, bytes32(uint256(uint160(target))));
+    availableChains.push(destEid);
+    isAvailableChain[destEid] = true;
+
+    emit ArchiveChainAdded(destEid, target);
+  }
+
+  /**
+   * @notice Get all available archive chains
+   * @return chains Array of available chain EIDs
+   */
+  function getAvailableChains() external view returns (uint32[] memory) {
+    return availableChains;
+  }
+
+  // ============================================
+  // CLIENT CHAIN SELECTION (called by CawNameL2)
+  // ============================================
+
+  /**
+   * @notice Set the full list of chains a client replicates to. Called by CawNameL2.
+   * @param clientId The client ID
+   * @param destEids Array of destination chain EIDs (must all be available chains)
+   */
+  function setClientChains(uint32 clientId, uint32[] calldata destEids) external {
+    require(msg.sender == cawNameL2, "Only CawNameL2");
+
+    // Clear old chain selections
+    uint32[] storage oldChains = clientChains[clientId];
+    for (uint i = 0; i < oldChains.length; i++) {
+      clientChainEnabled[clientId][oldChains[i]] = false;
+    }
+    delete clientChains[clientId];
+
+    // Set new chain selections
+    for (uint i = 0; i < destEids.length; i++) {
+      require(isAvailableChain[destEids[i]], "Chain not available");
+      require(!clientChainEnabled[clientId][destEids[i]], "Duplicate chain");
+      clientChains[clientId].push(destEids[i]);
+      clientChainEnabled[clientId][destEids[i]] = true;
+    }
+
+    clientReplicationEnabled[clientId] = destEids.length > 0;
+
+    emit ClientChainsUpdated(clientId, destEids);
   }
 
   /**
    * @notice Get all replication destinations for a client
+   * @dev Builds ReplicationDestination[] from clientChains + peers mapping for CawActions compatibility
    * @param clientId The client ID
    * @return destinations Array of replication destinations
    */
   function getReplicationDestinations(uint32 clientId) public view returns (ReplicationDestination[] memory) {
     if (!clientReplicationEnabled[clientId])
       return new ReplicationDestination[](0);
-    return clientReplications[clientId];
+
+    uint32[] storage chains = clientChains[clientId];
+    ReplicationDestination[] memory destinations = new ReplicationDestination[](chains.length);
+
+    for (uint i = 0; i < chains.length; i++) {
+      destinations[i] = ReplicationDestination({
+        target: address(uint160(uint256(peers[chains[i]]))),
+        eid: chains[i]
+      });
+    }
+
+    return destinations;
   }
 
   /**
@@ -121,7 +191,7 @@ contract CawActionsReplicator is OApp {
    */
   function getReplicationCount(uint32 clientId) public view returns (uint256) {
     if (!clientReplicationEnabled[clientId]) return 0;
-    return clientReplications[clientId].length;
+    return clientChains[clientId].length;
   }
 
   /**
@@ -137,7 +207,6 @@ contract CawActionsReplicator is OApp {
     if (destinations.length == 0) {
       // No replication configured, refund and return
       if (msg.value > 0) payable(tx.origin).transfer(msg.value);
-
       return;
     }
 
@@ -220,7 +289,6 @@ contract CawActionsReplicator is OApp {
 
   /**
    * @notice This contract only sends, it doesn't receive LZ messages
-   * @dev Config updates come from CawNameL2 via updatePeer()
    */
   function _lzReceive(
     Origin calldata,
@@ -233,52 +301,76 @@ contract CawActionsReplicator is OApp {
   }
 
   /**
-   * @dev Update peer and replication destinations for a client
+   * @dev Internal function to replicate to a single destination (used by migration)
    */
-  function _updatePeer(uint32 clientId, uint32 destEid, address target) internal {
-    if (target == address(0)) {
-      // Remove replication destination
-      clientPeers[clientId][destEid] = bytes32(0);
-      peers[destEid] = bytes32(0);
-      _removeReplicationDestination(clientId, destEid);
-    } else {
-      // Add/update replication destination
-      bytes32 peerBytes = bytes32(uint256(uint160(target)));
-      clientPeers[clientId][destEid] = peerBytes;
-      peers[destEid] = peerBytes; // Sync OApp peer so _quote/_lzSend work immediately
-      _addReplicationDestination(clientId, destEid, target);
-      clientReplicationEnabled[clientId] = true;
-    }
+  function _replicateToDestination(
+    uint32 clientId,
+    uint32 destEid,
+    bytes memory payload,
+    uint256 lzTokenAmount
+  ) internal {
+    bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(RECEIVE_GAS_LIMIT, 0);
 
-    emit PeerUpdated(clientId, destEid, target);
+    try this.doLzSend(destEid, payload, options, msg.value, lzTokenAmount) {
+      emit Replicated(destEid, bytes32(0), payload.length, clientId);
+    } catch Error(string memory reason) {
+      emit ReplicationFailed(destEid, clientId, reason);
+    } catch {
+      emit ReplicationFailed(destEid, clientId, "Unknown error");
+    }
   }
 
-  function _addReplicationDestination(uint32 clientId, uint32 eid, address target) internal {
-    ReplicationDestination[] storage replications = clientReplications[clientId];
+  /**
+   * @dev Internal function to replicate to all destinations (used by regular replicate).
+   *      Allocates fees proportionally based on per-chain LZ quotes to avoid underfunding
+   *      expensive chains while overfunding cheap ones.
+   */
+  function _replicateToDestinations(
+    uint32 clientId,
+    bytes memory payload,
+    ReplicationDestination[] memory destinations,
+    uint256 lzTokenAmount
+  ) internal {
+    bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(RECEIVE_GAS_LIMIT, 0);
+    uint256 lzTokenPerChain = lzTokenAmount / destinations.length;
 
-    // Check if already exists, update if so
-    for (uint i = 0; i < replications.length; i++) {
-      if (replications[i].eid == eid) {
-        replications[i].target = target;
-        return;
+    // Quote each chain to determine proportional fee allocation
+    // peers[destEid] is already set by addArchiveChain, no sync needed
+    uint256 totalQuoted = 0;
+    uint256[] memory quotedFees = new uint256[](destinations.length);
+    for (uint i = 0; i < destinations.length; i++) {
+      if (peers[destinations[i].eid] == bytes32(0)) continue;
+      MessagingFee memory fee = _quote(destinations[i].eid, payload, options, false);
+      quotedFees[i] = fee.nativeFee;
+      totalQuoted += fee.nativeFee;
+    }
+
+    uint256 feeUsed = 0;
+
+    for (uint i = 0; i < destinations.length; i++) {
+      ReplicationDestination memory dest = destinations[i];
+
+      if (peers[dest.eid] == bytes32(0)) {
+        emit ReplicationFailed(dest.eid, clientId, "Peer not set");
+        continue;
       }
-    }
 
-    // Add new
-    replications.push(ReplicationDestination({
-      target: target,
-      eid: eid
-    }));
-  }
+      // Allocate proportionally; give remainder to the last chain
+      uint256 chainFee;
+      if (i == destinations.length - 1)
+        chainFee = msg.value - feeUsed;
+      else if (totalQuoted > 0)
+        chainFee = msg.value * quotedFees[i] / totalQuoted;
+      else
+        chainFee = msg.value / destinations.length;
+      feeUsed += chainFee;
 
-  function _removeReplicationDestination(uint32 clientId, uint32 eid) internal {
-    ReplicationDestination[] storage replications = clientReplications[clientId];
-
-    for (uint i = 0; i < replications.length; i++) {
-      if (replications[i].eid == eid) {
-        replications[i] = replications[replications.length - 1];
-        replications.pop();
-        return;
+      try this.doLzSend(dest.eid, payload, options, chainFee, lzTokenPerChain) {
+        emit Replicated(dest.eid, bytes32(0), payload.length, clientId);
+      } catch Error(string memory reason) {
+        emit ReplicationFailed(dest.eid, clientId, reason);
+      } catch {
+        emit ReplicationFailed(dest.eid, clientId, "Unknown error");
       }
     }
   }
@@ -329,9 +421,9 @@ contract CawActionsReplicator is OApp {
     require(actions.length == v.length && actions.length == r.length && actions.length == s.length, "Array mismatch");
     require(params.offset + actions.length <= 256, "Offset out of bounds");
 
-    // Verify destination is valid for this client
-    bytes32 peerBytes = clientPeers[params.clientId][params.destEid];
-    require(peerBytes != bytes32(0), "Invalid destination for client");
+    // Verify destination is valid: must be an available chain and client must have it enabled
+    require(isAvailableChain[params.destEid], "Chain not available");
+    require(clientChainEnabled[params.clientId][params.destEid], "Client chain not enabled");
 
     // Verify allR chains correctly
     _verifyCheckpointHash(params.clientId, params.checkpointId, allR);
@@ -341,7 +433,7 @@ contract CawActionsReplicator is OApp {
 
     // Replicate the verified actions to the single destination
     bytes memory payload = abi.encode(actions, v, r, s);
-    _replicateToDestination(params.clientId, params.destEid, peerBytes, payload, params.lzTokenAmount);
+    _replicateToDestination(params.clientId, params.destEid, payload, params.lzTokenAmount);
 
     emit MigrationBatchProcessed(params.checkpointId, params.offset, actions.length);
   }
@@ -386,90 +478,6 @@ contract CawActionsReplicator is OApp {
     }
   }
 
-  /**
-   * @dev Internal function to replicate to a single destination (used by migration)
-   */
-  function _replicateToDestination(
-    uint32 clientId,
-    uint32 destEid,
-    bytes32 peerBytes,
-    bytes memory payload,
-    uint256 lzTokenAmount
-  ) internal {
-    bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(RECEIVE_GAS_LIMIT, 0);
-    peers[destEid] = peerBytes;
-
-    try this.doLzSend(destEid, payload, options, msg.value, lzTokenAmount) {
-      emit Replicated(destEid, bytes32(0), payload.length, clientId);
-    } catch Error(string memory reason) {
-      emit ReplicationFailed(destEid, clientId, reason);
-    } catch {
-      emit ReplicationFailed(destEid, clientId, "Unknown error");
-    }
-  }
-
-  /**
-   * @dev Internal function to replicate to all destinations (used by regular replicate).
-   *      Allocates fees proportionally based on per-chain LZ quotes to avoid underfunding
-   *      expensive chains while overfunding cheap ones.
-   */
-  function _replicateToDestinations(
-    uint32 clientId,
-    bytes memory payload,
-    ReplicationDestination[] memory destinations,
-    uint256 lzTokenAmount
-  ) internal {
-    bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(RECEIVE_GAS_LIMIT, 0);
-    uint256 lzTokenPerChain = lzTokenAmount / destinations.length;
-
-    // Sync OApp peers from clientPeers before quoting (peers must be set for _quote to work)
-    for (uint i = 0; i < destinations.length; i++) {
-      bytes32 peerBytes = clientPeers[clientId][destinations[i].eid];
-      if (peerBytes != bytes32(0)) {
-        peers[destinations[i].eid] = peerBytes;
-      }
-    }
-
-    // Quote each chain to determine proportional fee allocation
-    uint256 totalQuoted = 0;
-    uint256[] memory quotedFees = new uint256[](destinations.length);
-    for (uint i = 0; i < destinations.length; i++) {
-      if (peers[destinations[i].eid] == bytes32(0)) continue;
-      MessagingFee memory fee = _quote(destinations[i].eid, payload, options, false);
-      quotedFees[i] = fee.nativeFee;
-      totalQuoted += fee.nativeFee;
-    }
-
-    uint256 feeUsed = 0;
-
-    for (uint i = 0; i < destinations.length; i++) {
-      ReplicationDestination memory dest = destinations[i];
-
-      if (peers[dest.eid] == bytes32(0)) {
-        emit ReplicationFailed(dest.eid, clientId, "Peer not set");
-        continue;
-      }
-
-      // Allocate proportionally; give remainder to the last chain
-      uint256 chainFee;
-      if (i == destinations.length - 1)
-        chainFee = msg.value - feeUsed;
-      else if (totalQuoted > 0)
-        chainFee = msg.value * quotedFees[i] / totalQuoted;
-      else
-        chainFee = msg.value / destinations.length;
-      feeUsed += chainFee;
-
-      try this.doLzSend(dest.eid, payload, options, chainFee, lzTokenPerChain) {
-        emit Replicated(dest.eid, bytes32(0), payload.length, clientId);
-      } catch Error(string memory reason) {
-        emit ReplicationFailed(dest.eid, clientId, reason);
-      } catch {
-        emit ReplicationFailed(dest.eid, clientId, "Unknown error");
-      }
-    }
-  }
-
   // ============================================
   // PARTIAL CHECKPOINT MIGRATION
   // ============================================
@@ -506,9 +514,9 @@ contract CawActionsReplicator is OApp {
     require(actions.length <= 256, "Too many actions");
     require(clientReplicationEnabled[clientId], "Replication not enabled");
 
-    // Verify destination is valid for this client
-    bytes32 peerBytes = clientPeers[clientId][destEid];
-    require(peerBytes != bytes32(0), "Invalid destination for client");
+    // Verify destination is valid
+    require(isAvailableChain[destEid], "Chain not available");
+    require(clientChainEnabled[clientId][destEid], "Client chain not enabled");
 
     ICawActionsForReplicator cawActionsContract = ICawActionsForReplicator(cawActions);
 
@@ -544,7 +552,7 @@ contract CawActionsReplicator is OApp {
 
     // Replicate to the destination
     bytes memory payload = abi.encode(actions, v, r, s);
-    _replicateToDestination(clientId, destEid, peerBytes, payload, 0);
+    _replicateToDestination(clientId, destEid, payload, 0);
 
     emit PartialCheckpointMigrated(clientId, destEid, actions.length);
   }

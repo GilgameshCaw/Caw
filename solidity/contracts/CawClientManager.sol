@@ -25,8 +25,8 @@ struct MessagingFee {
 
 /// @notice Interface for CawName's replication sync functions
 interface ICawName {
-  function syncReplicationInternal(uint32 clientId, uint32 archiveEid, address target, uint32 lzDestId) external payable;
-  function syncReplicationQuote(uint32 clientId, uint32 archiveEid, address target, uint32 lzDestId, bool payInLzToken) external view returns (MessagingFee memory);
+  function syncReplicationInternal(uint32 clientId, uint32[] calldata destEids, uint32 lzDestId) external payable;
+  function syncReplicationQuote(uint32 clientId, uint32[] calldata destEids, uint32 lzDestId, bool payInLzToken) external view returns (MessagingFee memory);
 }
 
 /**
@@ -215,12 +215,11 @@ contract CawClientManager {
   /**
    * @notice Add a replication destination for a client.
    * @dev Automatically syncs to L2 via CawName. Requires msg.value for LayerZero fees.
+   *      Target address is managed by the replicator owner via addArchiveChain, not by the client.
    * @param clientId The ID of the client.
    * @param eid The LayerZero endpoint ID of the destination chain.
-   * @param target The contract address on that chain (e.g., CawActionsArchive).
    */
-  function addReplication(uint32 clientId, uint32 eid, address target) public payable onlyClientOwner(clientId) {
-    require(target != address(0), "Invalid target address");
+  function addReplication(uint32 clientId, uint32 eid) public payable onlyClientOwner(clientId) {
     ReplicationDestination[] storage replications = clientReplications[clientId];
     require(replications.length < 4, "Maximum 4 replication destinations");
 
@@ -229,23 +228,23 @@ contract CawClientManager {
       require(replications[i].eid != eid, "Replication chain already added");
 
     replications.push(ReplicationDestination({
-      target: target,
+      target: address(0), // Target managed by replicator owner
       eid: eid
     }));
 
     clientReplicationEnabled[clientId] = true;
 
-    emit ClientReplicationAdded(clientId, eid, target);
+    emit ClientReplicationAdded(clientId, eid, address(0));
 
-    // Auto-sync to L2
+    // Auto-sync full chain list to L2
     if (address(cawName) != address(0)) {
-      cawName.syncReplicationInternal{value: msg.value}(clientId, eid, target, defaultL2Eid);
+      cawName.syncReplicationInternal{value: msg.value}(clientId, getClientChainEids(clientId), defaultL2Eid);
     }
   }
 
   /**
    * @notice Remove a replication destination from a client.
-   * @dev Automatically syncs removal to L2 via CawName. Requires msg.value for LayerZero fees.
+   * @dev Automatically syncs updated chain list to L2 via CawName. Requires msg.value for LayerZero fees.
    * @param clientId The ID of the client.
    * @param eid The LayerZero endpoint ID to remove.
    */
@@ -258,9 +257,9 @@ contract CawClientManager {
 
         emit ClientReplicationRemoved(clientId, eid);
 
-        // Auto-sync removal to L2
+        // Auto-sync updated chain list to L2
         if (address(cawName) != address(0)) {
-          cawName.syncReplicationInternal{value: msg.value}(clientId, eid, address(0), defaultL2Eid);
+          cawName.syncReplicationInternal{value: msg.value}(clientId, getClientChainEids(clientId), defaultL2Eid);
         }
         return;
       }
@@ -294,13 +293,26 @@ contract CawClientManager {
   }
 
   /**
-   * @notice Get a quote for the LayerZero fee to add/remove a replication destination.
-   * @param archiveEid The archive chain endpoint ID
-   * @param target The target address (use address(0) for removal quote)
+   * @notice Get all chain EIDs for a client's replication destinations.
+   * @param clientId The client ID
+   * @return eids Array of destination endpoint IDs
+   */
+  function getClientChainEids(uint32 clientId) public view returns (uint32[] memory) {
+    ReplicationDestination[] storage replications = clientReplications[clientId];
+    uint32[] memory eids = new uint32[](replications.length);
+    for (uint i = 0; i < replications.length; i++) {
+      eids[i] = replications[i].eid;
+    }
+    return eids;
+  }
+
+  /**
+   * @notice Get a quote for the LayerZero fee to sync replication config.
+   * @param clientId The client ID
    * @return quote The MessagingFee with nativeFee and lzTokenFee
    */
-  function replicationSyncQuote(uint32 archiveEid, address target) public view returns (MessagingFee memory) {
+  function replicationSyncQuote(uint32 clientId) public view returns (MessagingFee memory) {
     require(address(cawName) != address(0), "CawName not set");
-    return cawName.syncReplicationQuote(0, archiveEid, target, defaultL2Eid, false);
+    return cawName.syncReplicationQuote(clientId, getClientChainEids(clientId), defaultL2Eid, false);
   }
 }

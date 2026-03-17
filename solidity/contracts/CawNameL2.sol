@@ -11,7 +11,7 @@ import "./CawNameURI.sol";
 import "./CawName.sol";
 
 interface ICawActionsReplicator {
-  function updatePeer(uint32 clientId, uint32 destEid, address target) external;
+  function setClientChains(uint32 clientId, uint32[] calldata destEids) external;
 }
 
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
@@ -187,23 +187,22 @@ contract CawNameL2 is
   // REPLICATION CONFIG
   // ============================================
 
-  event ReplicationPeerSet(uint32 indexed clientId, uint32 indexed archiveEid, address target);
+  event ClientChainsSet(uint32 indexed clientId, uint32[] destEids);
 
   /**
-   * @notice Set a replication peer for a client. Called from L1 via LayerZero.
+   * @notice Set the chain list for a client. Called from L1 via LayerZero.
    * @dev Forwards the config to CawActionsReplicator.
    * @param clientId The client ID
-   * @param archiveEid The archive chain endpoint ID
-   * @param target The archive contract address (address(0) to remove)
+   * @param destEids Array of destination chain EIDs the client replicates to
    */
-  function setReplicationPeer(uint32 clientId, uint32 archiveEid, address target) public {
+  function setClientChains(uint32 clientId, uint32[] calldata destEids) public {
     require(fromLZ || (bypassLZ && msg.sender == address(cawName)), "only callable from L1");
     require(cawActionsReplicator != address(0), "Replicator not set");
 
     // Forward to replicator
-    ICawActionsReplicator(cawActionsReplicator).updatePeer(clientId, archiveEid, target);
+    ICawActionsReplicator(cawActionsReplicator).setClientChains(clientId, destEids);
 
-    emit ReplicationPeerSet(clientId, archiveEid, target);
+    emit ClientChainsSet(clientId, destEids);
   }
 
   function deposit(uint32 cawClientId, uint32 tokenId, uint256 amount) external onlyOnMainnet {
@@ -280,7 +279,7 @@ contract CawNameL2 is
       selector == bytes4(keccak256("authenticateAndUpdateOwners(uint32,uint32,uint32[],address[])")) ||
       selector == bytes4(keccak256("mintAndUpdateOwners(uint32,address,string,uint32[],address[])")) ||
       selector == bytes4(keccak256("updateOwners(uint32[],address[])")) ||
-      selector == bytes4(keccak256("setReplicationPeer(uint32,uint32,address)"));
+      selector == bytes4(keccak256("setClientChains(uint32,uint32[])"));
   }
 
   function withdraw(uint32 tokenId, uint256 amount) external {

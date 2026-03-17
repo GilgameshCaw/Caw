@@ -16,7 +16,7 @@ interface ICawNameForQuoter {
   function mintSelector() external view returns (bytes4);
   function updateOwnersSelector() external view returns (bytes4);
   function authSelector() external view returns (bytes4);
-  function setReplicationPeerSelector() external view returns (bytes4);
+  function setClientChainsSelector() external view returns (bytes4);
   function lzQuote(bytes4 selector, bytes memory payload, uint32 lzDestId, bool _payInLzToken) external view returns (MessagingFee memory quote);
 }
 
@@ -110,9 +110,9 @@ contract CawNameQuoter {
     return cawName.lzQuote(cawName.updateOwnersSelector(), payload, lzDestId, payInLzToken);
   }
 
-  function syncReplicationQuote(uint32 clientId, uint32 archiveEid, address target, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
-    bytes memory payload = abi.encodeWithSelector(cawName.setReplicationPeerSelector(), clientId, archiveEid, target);
-    return cawName.lzQuote(cawName.setReplicationPeerSelector(), payload, lzDestId, payInLzToken);
+  function syncReplicationQuote(uint32 clientId, uint32[] calldata destEids, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+    bytes memory payload = abi.encodeWithSelector(cawName.setClientChainsSelector(), clientId, destEids);
+    return cawName.lzQuote(cawName.setClientChainsSelector(), payload, lzDestId, payInLzToken);
   }
 
 }

@@ -225,8 +225,7 @@ async function main() {
       const quoter = new Contract(CAW_NAME_QUOTER_ADDRESS, cawNameQuoterAbi, l1Provider)
       quote = await quoter.syncReplicationQuote(
         clientId,
-        archiveEid,
-        archiveAddress,
+        [archiveEid],
         defaultL2Eid,
         false
       )
@@ -264,7 +263,7 @@ async function main() {
     console.log('Sending addReplication transaction...')
 
     try {
-      const tx = await clientManager.addReplication(clientId, archiveEid, archiveAddress, {
+      const tx = await clientManager.addReplication(clientId, archiveEid, {
         value: feeWithBuffer
       })
 

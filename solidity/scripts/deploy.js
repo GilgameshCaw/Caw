@@ -444,8 +444,6 @@ const LINKING_STEPS = [
   },
 
   // Phase 5 linking (Archive + cross-chain replication setup)
-  // Note: CawActionsReplicator_L2's OApp peer is set automatically when syncReplication
-  // config arrives via LZ (in _updatePeer), so no explicit setPeer step is needed.
   {
     name: 'Set LZ peer on CawActionsArchive for L2 Replicator',
     chain: 'Archive',
@@ -469,6 +467,27 @@ const LINKING_STEPS = [
     },
   },
   {
+    name: 'Register archive chain on CawActionsReplicator_L2',
+    chain: 'L2',
+    phase: 5,
+    contract: 'CawActionsReplicator_L2',
+    method: 'addArchiveChain',
+    args: (state, chainConfig) => [
+      CHAINS[chainConfig.env + 'Archive'].lzEid,
+      state.addresses.CawActionsArchive,
+    ],
+    condition: (state) => state.addresses.CawActionsReplicator_L2 && state.addresses.CawActionsArchive,
+    skipIf: async (state, deployer) => {
+      const contract = deployer.getContract('CawActionsReplicator_L2');
+      if (!contract) return false;
+      const chainKey = deployer.getChainKey('Archive');
+      const archiveEid = CHAINS[chainKey].lzEid;
+      try {
+        return await contract.isAvailableChain(archiveEid);
+      } catch { return false; }
+    },
+  },
+  {
     name: 'Add replication destination on CawClientManager (syncs to L2 via LZ)',
     chain: 'L1',
     phase: 5,
@@ -477,7 +496,6 @@ const LINKING_STEPS = [
     args: (state, chainConfig) => [
       1, // clientId
       CHAINS[chainConfig.env + 'Archive'].lzEid,
-      state.addresses.CawActionsArchive,
     ],
     condition: (state) => state.addresses.CawClientManager && state.addresses.CawActionsArchive && state.addresses.CawName,
     skipIf: async (state, deployer) => {
@@ -498,7 +516,7 @@ const LINKING_STEPS = [
       try {
         const archiveEid = CHAINS[chainConfig.env + 'Archive'].lzEid;
         const l2Eid = CHAINS[chainConfig.env + 'L2'].lzEid;
-        const quote = await quoter.syncReplicationQuote(1, archiveEid, state.addresses.CawActionsArchive, l2Eid, false);
+        const quote = await quoter.syncReplicationQuote(1, [archiveEid], l2Eid, false);
         const feeWithBuffer = (quote.nativeFee * 120n) / 100n; // 20% buffer
         console.log(`   LZ fee quoted: ${ethers.formatEther(quote.nativeFee)} ETH (sending ${ethers.formatEther(feeWithBuffer)} with buffer)`);
         return { value: feeWithBuffer };

@@ -1173,19 +1173,17 @@ contract('CawNames', function(accounts, x) {
     // Add a replication destination to the test client
     var mockArchiveEid = 40231; // Arbitrum Sepolia
     var mockArchiveAddress = '0x1234567890123456789012345678901234567890';
-    await clientManager.addReplication(testClientId, mockArchiveEid, mockArchiveAddress, { from: accounts[0] });
+    await clientManager.addReplication(testClientId, mockArchiveEid, { from: accounts[0] });
 
     // Verify replication was added
     var replications = await clientManager.getReplications(testClientId);
     console.log("Test client replications:", replications);
     expect(replications.length).to.equal(1);
     expect(Number(replications[0].eid)).to.equal(mockArchiveEid);
-    expect(replications[0].target.toLowerCase()).to.equal(mockArchiveAddress.toLowerCase());
 
     // Add a second replication destination
     var secondArchiveEid = 30110; // Arbitrum mainnet
-    var secondArchiveAddress = '0xabcdef1234567890abcdef1234567890abcdef12';
-    await clientManager.addReplication(testClientId, secondArchiveEid, secondArchiveAddress, { from: accounts[0] });
+    await clientManager.addReplication(testClientId, secondArchiveEid, { from: accounts[0] });
 
     var updatedReplications = await clientManager.getReplications(testClientId);
     console.log("Test client replications after adding second:", updatedReplications);
@@ -1201,7 +1199,7 @@ contract('CawNames', function(accounts, x) {
     // Test that non-owner cannot add replication
     var shouldFail = false;
     try {
-      await clientManager.addReplication(testClientId, 12345, '0x1111111111111111111111111111111111111111', { from: accounts[1] });
+      await clientManager.addReplication(testClientId, 12345, { from: accounts[1] });
     } catch (e) {
       shouldFail = true;
       var errorMsg = e.reason || e.message || '';
@@ -1256,14 +1254,14 @@ contract('CawNames', function(accounts, x) {
     var duplicateAddr = '0x5555555555555555555555555555555555555555';
 
     // Add replication
-    await clientManager.addReplication(testClientId, duplicateEid, duplicateAddr, { from: accounts[0] });
+    await clientManager.addReplication(testClientId, duplicateEid, { from: accounts[0] });
     var replicationsBefore = await clientManager.getReplications(testClientId);
     var countBefore = replicationsBefore.length;
 
     // Try to add the same eid again (should fail with "Replication chain already added")
     shouldFail = false;
     try {
-      await clientManager.addReplication(testClientId, duplicateEid, '0x6666666666666666666666666666666666666666', { from: accounts[0] });
+      await clientManager.addReplication(testClientId, duplicateEid, { from: accounts[0] });
     } catch (e) {
       shouldFail = true;
       var errorMsg = e.reason || e.message || '';
@@ -1315,36 +1313,34 @@ contract("CawActionsReplicator", function(accounts) {
     expect(await replicator.cawActions()).to.equal(testCawActions);
     expect(await replicator.cawNameL2()).to.equal(testCawNameL2);
 
-    // Verify ownership is renounced (set to address(0))
-    expect(await replicator.owner()).to.equal('0x0000000000000000000000000000000000000000');
-    console.log("Ownership correctly renounced");
+    // Verify ownership is retained (owner manages archive chains)
+    expect(await replicator.owner()).to.equal(accounts[0]);
+    console.log("Ownership correctly retained");
   });
 
-  it("should only allow CawNameL2 to update peers", async function() {
+  it("should only allow CawNameL2 to set client chains", async function() {
     this.timeout(60000);
 
     var clientId = 1;
     var destEid = 40231; // Arbitrum Sepolia
     var targetAddress = '0x1234567890123456789012345678901234567890';
 
-    // Non-CawNameL2 should fail
+    // Owner registers archive chain first
+    await replicator.addArchiveChain(destEid, targetAddress, { from: accounts[0] });
+
+    // Non-CawNameL2 should fail to set client chains
     var shouldFail = false;
     try {
-      await replicator.updatePeer(clientId, destEid, targetAddress, { from: accounts[0] });
+      await replicator.setClientChains(clientId, [destEid], { from: accounts[0] });
     } catch (e) {
       shouldFail = true;
       var errorMsg = e.reason || e.message || '';
-      expect(errorMsg).to.include('Only CawNameL2 can update peers');
+      expect(errorMsg).to.include('Only CawNameL2');
     }
-    expect(shouldFail).to.equal(true, "Non-CawNameL2 should not be able to update peers");
+    expect(shouldFail).to.equal(true, "Non-CawNameL2 should not be able to set client chains");
 
     // CawNameL2 (accounts[2]) should succeed
-    await replicator.updatePeer(clientId, destEid, targetAddress, { from: testCawNameL2 });
-
-    // Verify peer was set
-    var peerBytes = await replicator.clientPeers(clientId, destEid);
-    var expectedPeerBytes = '0x000000000000000000000000' + targetAddress.slice(2).toLowerCase();
-    expect(peerBytes.toLowerCase()).to.equal(expectedPeerBytes);
+    await replicator.setClientChains(clientId, [destEid], { from: testCawNameL2 });
 
     // Verify replication is enabled
     expect(await replicator.clientReplicationEnabled(clientId)).to.equal(true);
@@ -1352,18 +1348,22 @@ contract("CawActionsReplicator", function(accounts) {
     // Verify replication destination count
     expect((await replicator.getReplicationCount(clientId)).toNumber()).to.equal(1);
 
-    console.log("Peer update test passed");
+    console.log("Client chains update test passed");
   });
 
   it("should handle multiple replication destinations", async function() {
     this.timeout(60000);
 
     var clientId = 1;
+    var destEid = 40231;
     var dest2Eid = 30110; // Arbitrum mainnet
     var dest2Address = '0xabcdef1234567890abcdef1234567890abcdef12';
 
-    // Add second destination
-    await replicator.updatePeer(clientId, dest2Eid, dest2Address, { from: testCawNameL2 });
+    // Owner registers second archive chain
+    await replicator.addArchiveChain(dest2Eid, dest2Address, { from: accounts[0] });
+
+    // Set client to use both chains
+    await replicator.setClientChains(clientId, [destEid, dest2Eid], { from: testCawNameL2 });
 
     // Should now have 2 destinations
     expect((await replicator.getReplicationCount(clientId)).toNumber()).to.equal(2);
@@ -1374,21 +1374,17 @@ contract("CawActionsReplicator", function(accounts) {
     console.log("Multiple destinations test passed");
   });
 
-  it("should remove replication destination when target is address(0)", async function() {
+  it("should remove replication destination when chain removed from client list", async function() {
     this.timeout(60000);
 
     var clientId = 1;
-    var dest2Eid = 30110; // Arbitrum mainnet
+    var destEid = 40231;
 
-    // Remove destination by setting target to address(0)
-    await replicator.updatePeer(clientId, dest2Eid, '0x0000000000000000000000000000000000000000', { from: testCawNameL2 });
+    // Set client to only use one chain (removing dest2)
+    await replicator.setClientChains(clientId, [destEid], { from: testCawNameL2 });
 
     // Should now have 1 destination
     expect((await replicator.getReplicationCount(clientId)).toNumber()).to.equal(1);
-
-    // Peer should be cleared
-    var peerBytes = await replicator.clientPeers(clientId, dest2Eid);
-    expect(peerBytes).to.equal('0x0000000000000000000000000000000000000000000000000000000000000000');
 
     console.log("Remove destination test passed");
   });
@@ -1629,32 +1625,31 @@ contract("CawActionsReplicator", function(accounts) {
     console.log("LZ receive rejection verified (implicit via contract design)");
   });
 
-  it("should emit PeerUpdated event", async function() {
+  it("should emit ClientChainsUpdated event", async function() {
     this.timeout(60000);
 
     var clientId = 3;
     var destEid = 12345;
     var targetAddress = '0x9999999999999999999999999999999999999999';
 
-    var tx = await replicator.updatePeer(clientId, destEid, targetAddress, { from: testCawNameL2 });
+    // Owner registers archive chain first
+    await replicator.addArchiveChain(destEid, targetAddress, { from: accounts[0] });
 
-    // Check for PeerUpdated event
-    truffleAssert.eventEmitted(tx, 'PeerUpdated', (ev) => {
-      return ev.clientId.toNumber() === clientId &&
-             ev.eid.toNumber() === destEid &&
-             ev.target.toLowerCase() === targetAddress.toLowerCase();
+    var tx = await replicator.setClientChains(clientId, [destEid], { from: testCawNameL2 });
+
+    // Check for ClientChainsUpdated event
+    truffleAssert.eventEmitted(tx, 'ClientChainsUpdated', (ev) => {
+      return ev.clientId.toNumber() === clientId;
     });
 
-    console.log("PeerUpdated event test passed");
+    console.log("ClientChainsUpdated event test passed");
   });
 
 });
 
 
-// Tests for OApp peer sync in CawActionsReplicator._updatePeer
-// Verifies that updatePeer also sets the OApp peers mapping (not just clientPeers)
-// so that _quote and _lzSend work immediately after config arrives
-contract("CawActionsReplicator - OApp Peer Sync", function(accounts) {
+// Tests for global archive chain registry and client chain selection
+contract("CawActionsReplicator - Archive Chain Registry", function(accounts) {
 
   var CawActionsReplicatorContract = artifacts.require("CawActionsReplicator");
   var replicator;
@@ -1675,66 +1670,53 @@ contract("CawActionsReplicator - OApp Peer Sync", function(accounts) {
     );
   });
 
-  it("should set OApp peers mapping when updatePeer adds a destination", async function() {
+  it("should set OApp peers when addArchiveChain is called", async function() {
     this.timeout(60000);
 
-    var clientId = 1;
     var destEid = 40231;
     var targetAddress = '0x1234567890123456789012345678901234567890';
     var expectedPeerBytes = '0x000000000000000000000000' + targetAddress.slice(2).toLowerCase();
 
-    await replicator.updatePeer(clientId, destEid, targetAddress, { from: testCawNameL2 });
+    await replicator.addArchiveChain(destEid, targetAddress, { from: accounts[0] });
 
-    // Verify clientPeers is set
-    var clientPeer = await replicator.clientPeers(clientId, destEid);
-    expect(clientPeer.toLowerCase()).to.equal(expectedPeerBytes);
-
-    // Verify OApp peers mapping is ALSO set (this is the new behavior)
+    // Verify OApp peers mapping is set
     var oappPeer = await replicator.peers(destEid);
     expect(oappPeer.toLowerCase()).to.equal(expectedPeerBytes);
 
-    console.log("OApp peers sync on add test passed");
+    // Verify available chains
+    expect(await replicator.isAvailableChain(destEid)).to.equal(true);
+    var chains = await replicator.getAvailableChains();
+    expect(chains.length).to.equal(1);
+
+    console.log("addArchiveChain test passed");
   });
 
-  it("should clear OApp peers mapping when updatePeer removes a destination", async function() {
+  it("should not expose removeArchiveChain (archive chains are permanent)", async function() {
     this.timeout(60000);
 
-    var clientId = 1;
-    var destEid = 40231;
+    // removeArchiveChain does not exist — archive chains are additive-only
+    expect(replicator.removeArchiveChain).to.equal(undefined);
 
-    // Remove by setting target to address(0)
-    await replicator.updatePeer(clientId, destEid, '0x0000000000000000000000000000000000000000', { from: testCawNameL2 });
-
-    // Verify clientPeers is cleared
-    var clientPeer = await replicator.clientPeers(clientId, destEid);
-    expect(clientPeer).to.equal('0x0000000000000000000000000000000000000000000000000000000000000000');
-
-    // Verify OApp peers mapping is ALSO cleared
-    var oappPeer = await replicator.peers(destEid);
-    expect(oappPeer).to.equal('0x0000000000000000000000000000000000000000000000000000000000000000');
-
-    console.log("OApp peers sync on remove test passed");
+    console.log("No removeArchiveChain test passed");
   });
 
-  it("should allow quoteReplication to succeed after updatePeer sets OApp peers", async function() {
+  it("should allow quoteReplication after addArchiveChain + setClientChains", async function() {
     this.timeout(60000);
 
     var clientId = 2;
-    var destEid = 40231;
-    var targetAddress = '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd';
+    var destEid = 40231; // Already registered in first test
 
-    // Set up peer
-    await replicator.updatePeer(clientId, destEid, targetAddress, { from: testCawNameL2 });
+    // CawNameL2 sets client chains
+    await replicator.setClientChains(clientId, [destEid], { from: testCawNameL2 });
 
     // quoteReplication calls _quote which calls _getPeerOrRevert
-    // Before the fix, this would fail with NoPeer if OApp peers wasn't set
     var payload = web3.utils.asciiToHex("test payload for quote");
     var result = await replicator.quoteReplication(clientId, payload, false);
 
     // Should return a fee (even if 0 on mock endpoint) and chain count of 1
     expect(result.chainCount.toNumber()).to.equal(1);
 
-    console.log("quoteReplication after updatePeer test passed");
+    console.log("quoteReplication after addArchiveChain + setClientChains test passed");
   });
 });
 
@@ -1797,14 +1779,14 @@ contract("CawName - Transfer & Replication Gas", function(accounts) {
     console.log("Setup complete - testuser minted as token 1");
   });
 
-  it("should return 200000 gas for setReplicationPeerSelector", async function() {
+  it("should return 300000 gas for setClientChainsSelector", async function() {
     this.timeout(60000);
 
-    var selector = await localCawNames.setReplicationPeerSelector();
+    var selector = await localCawNames.setClientChainsSelector();
     var gasLimit = await localCawNames.gasLimitFor(selector);
-    expect(gasLimit.toString()).to.equal('200000');
+    expect(gasLimit.toString()).to.equal('300000');
 
-    console.log("setReplicationPeer gas limit = 200000 test passed");
+    console.log("setClientChains gas limit = 300000 test passed");
   });
 
   it("should allow owner to call transferAndSync", async function() {
