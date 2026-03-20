@@ -1,13 +1,14 @@
 // src/components/modals/FollowListModal.tsx
 import React, { useState, useEffect } from 'react'
-import { HiX } from 'react-icons/hi'
 import { useNavigate } from 'react-router-dom'
 import { useModalStore } from '~/store/modalStore'
 import { useTheme } from '~/hooks/useTheme'
 import { apiFetch } from '~/api/client'
+import { themeText, themeTextMuted, themeTextSecondary, themeDivide } from '~/utils/theme'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { FollowButton } from '~/components/FollowButton'
 import ModalWrapper from './ModalWrapper'
+import ModalHeader from './ModalHeader'
 
 type UserItem = {
   id: number
@@ -121,24 +122,10 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
       maxWidth="max-w-lg"
       className="max-h-[80vh] overflow-hidden"
     >
-      {/* Header */}
-      <div className={`flex items-center justify-between p-4 border-b ${
-        isDark ? 'border-white/10' : 'border-gray-200'
-      }`}>
-        <h2 className={`text-lg font-bold transition-colors duration-300 ${
-          isDark ? 'text-white' : 'text-black'
-        }`}>
-          {type === 'following' ? 'Following' : 'Followers'}
-        </h2>
-        <button
-          onClick={closeModal}
-          className={`p-2 rounded-full transition-all duration-300 hover:bg-gray-500/10 ${
-            isDark ? 'text-white' : 'text-black'
-          }`}
-        >
-          <HiX className="w-5 h-5" />
-        </button>
-      </div>
+      <ModalHeader
+        title={type === 'following' ? 'Following' : 'Followers'}
+        onClose={closeModal}
+      />
 
       {/* Content */}
       <div className="overflow-y-auto max-h-[calc(80vh-4rem)]">
@@ -155,40 +142,29 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
             No {type === 'following' ? 'following' : 'followers'} yet
           </div>
         ) : (
-          <div className={`divide-y ${isDark ? 'divide-white/10' : 'divide-gray-200'}`}>
+          <div className={`divide-y ${themeDivide(isDark)}`}>
             {users.map((user) => (
               <div key={user.tokenId} className="p-4 flex items-center justify-between">
                 <div
                   className="flex items-center space-x-3 cursor-pointer flex-1"
                   onClick={() => handleUserClick(user.username)}
                 >
-                  {/* Avatar */}
-                  <div className={`w-10 h-10 rounded-full overflow-hidden ${
-                    isDark ? 'bg-gray-700' : 'bg-gray-200'
-                  }`}>
+                  <div className={`w-10 h-10 rounded-full overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}>
                     <img
                       src={user.avatarUrl || user.image || "/images/logo.jpeg"}
                       alt={user.username}
                       className="w-full h-full rounded-full object-cover"
                     />
                   </div>
-
-                  {/* User info */}
                   <div>
-                    <div className={`font-medium ${
-                      isDark ? 'text-white' : 'text-black'
-                    }`}>
+                    <div className={`font-medium ${themeText(isDark)}`}>
                       {user.displayName || user.username}
                     </div>
-                    <div className={`text-sm ${
-                      isDark ? 'text-gray-400' : 'text-gray-600'
-                    }`}>
+                    <div className={`text-sm ${themeTextMuted(isDark)}`}>
                       @{user.username}
                     </div>
                     {user.bio && (
-                      <div className={`text-sm mt-1 line-clamp-2 ${
-                        isDark ? 'text-gray-300' : 'text-gray-700'
-                      }`}>
+                      <div className={`text-sm mt-1 line-clamp-2 ${themeTextSecondary(isDark)}`}>
                         {user.bio}
                       </div>
                     )}
@@ -218,9 +194,7 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
               <div className="p-4 text-center">
                 <button
                   onClick={loadMore}
-                  className={`text-sm hover:underline ${
-                    isDark ? 'text-gray-400' : 'text-gray-600'
-                  }`}
+                  className={`text-sm hover:underline ${themeTextMuted(isDark)}`}
                 >
                   Load more
                 </button>

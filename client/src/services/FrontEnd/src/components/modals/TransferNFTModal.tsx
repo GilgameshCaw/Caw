@@ -4,7 +4,9 @@ import { readContract } from '@wagmi/core'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { isAddress, formatEther } from 'viem'
 import ModalWrapper from './ModalWrapper'
+import ModalHeader from './ModalHeader'
 import { useTheme } from '~/hooks/useTheme'
+import { themeTextSecondary, themeTextMuted, themeBgSubtle, themeSecondaryButton } from '~/utils/theme'
 import { useTransferModalStore } from '~/store/transferModalStore'
 import { chains } from '~/config/chains'
 import { CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
@@ -129,21 +131,9 @@ const TransferNFTModal: React.FC = () => {
   return (
     <ModalWrapper isOpen={isOpen} onClose={handleClose} maxWidth="max-w-md" usePortal zIndex={9999}>
       <div className="p-6">
-        <div className="flex justify-between items-center mb-4">
-          <h2 className={`text-lg font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-            Transfer NFT
-          </h2>
-          <button
-            onClick={handleClose}
-            className={`transition-colors cursor-pointer ${isDark ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-gray-900'}`}
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-        </div>
+        <ModalHeader title="Transfer NFT" onClose={handleClose} border={false} size="lg" className="mb-4 px-0" />
 
-        <p className={`text-sm mb-1 ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>
+        <p className={`text-sm mb-1 ${themeTextSecondary(isDark)}`}>
           Transfer <span className="font-semibold">@{username}</span> (Token #{tokenId}) to another wallet.
         </p>
         <p className={`text-xs mb-5 ${isDark ? 'text-yellow-500/80' : 'text-yellow-600'}`}>
@@ -152,7 +142,7 @@ const TransferNFTModal: React.FC = () => {
 
         {!isSuccess && (
           <div className="mb-5">
-            <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+            <label className={`block text-sm font-medium mb-2 ${themeTextSecondary(isDark)}`}>
               Recipient Address
             </label>
             <input
@@ -178,9 +168,9 @@ const TransferNFTModal: React.FC = () => {
 
         {/* Show LZ fee estimate */}
         {!isSuccess && lzFee !== null && lzFee > 0n && (
-          <div className={`mb-4 p-3 rounded-lg text-xs ${isDark ? 'bg-white/5 text-gray-400' : 'bg-gray-50 text-gray-500'}`}>
+          <div className={`mb-4 p-3 rounded-lg text-xs ${themeBgSubtle(isDark)} ${themeTextMuted(isDark)}`}>
             L2 sync fee: ~{formatEther(lzFee)} ETH
-            <span className={`block mt-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+            <span className={`block mt-1 ${themeTextMuted(isDark)}`}>
               This covers the cross-chain message to update ownership on L2.
             </span>
           </div>
@@ -205,11 +195,7 @@ const TransferNFTModal: React.FC = () => {
         <div className="flex gap-3 justify-end">
           <button
             onClick={handleClose}
-            className={`px-4 py-2 rounded-lg text-sm transition cursor-pointer ${
-              isDark
-                ? 'bg-white/10 hover:bg-white/20 text-white'
-                : 'bg-gray-100 hover:bg-gray-200 text-gray-900'
-            }`}
+            className={`px-4 py-2 rounded-lg text-sm transition cursor-pointer ${themeSecondaryButton(isDark)}`}
           >
             {isSuccess ? 'Close' : 'Cancel'}
           </button>

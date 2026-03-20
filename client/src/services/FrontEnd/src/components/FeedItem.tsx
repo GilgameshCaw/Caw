@@ -37,6 +37,7 @@ import ContentWithHashtags from './ContentWithHashtags'
 import { formatEngagementCount } from '~/utils/numberFormat'
 import { apiFetch } from '~/api/client'
 import MuteWordsModal from './modals/MuteWordsModal'
+import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import MuteConfirmModal, { shouldShowMuteConfirmModal } from './modals/MuteConfirmModal'
 import ReportPostModal, { ReportReason } from './modals/ReportPostModal'
 import SwitchChainModal from './modals/SwitchChainModal'
@@ -44,27 +45,7 @@ import TipModal from './modals/TipModal'
 import { HiOutlineCurrencyDollar } from 'react-icons/hi'
 import { chains } from '~/config/chains'
 
-// Helper function to format relative time
-function formatTimeAgo(timestamp: string): string {
-  const now = new Date()
-  const time = new Date(timestamp)
-  const diffInMs = now.getTime() - time.getTime()
-  const diffInMinutes = Math.floor(diffInMs / (1000 * 60))
-  const diffInHours = Math.floor(diffInMs / (1000 * 60 * 60))
-  const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24))
-
-  if (diffInMinutes < 1) {
-    return 'now'
-  } else if (diffInMinutes < 60) {
-    return `${diffInMinutes}m`
-  } else if (diffInHours < 24) {
-    return `${diffInHours}h`
-  } else if (diffInDays < 7) {
-    return `${diffInDays}d`
-  } else {
-    return time.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  }
-}
+import { formatTimeAgo } from '~/utils/formatTimeAgo'
 
 const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void; onLikeStateChange?: (cawId: string, likePending: boolean) => void; onRecawStateChange?: (cawId: string, recawPending: boolean) => void; onReplyStateChange?: (cawId: string, replyPending: boolean) => void; onTipStateChange?: (cawId: string, tipPending: boolean) => void }> = ({ item, isMainPost = false, isReply = false, onBookmarkUpdate, onLikeStateChange, onRecawStateChange, onReplyStateChange, onTipStateChange }) => {
   // Local pending states (declared early so polling can use them)
@@ -89,6 +70,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const { isConnected, address } = useAccount()
   const chainId = useChainId()
   const { openConnectModal } = useConnectModal()
+  const hasActiveSession = useHasActiveSession()
   const { isDark } = useTheme()
   const [showSwitchChainModal, setShowSwitchChainModal] = useState(false)
   const navigate = useNavigate()
@@ -254,8 +236,8 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       return
     }
 
-    // If wallet not connected, open connect modal and set pending action
-    if (!isConnected) {
+    // If wallet not connected and no session key, open connect modal
+    if (!isConnected && !hasActiveSession) {
       // Reset submitting ref for new action
       isSubmittingLikeRef.current = false;
       setPendingLikeAction({
@@ -269,17 +251,19 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       return;
     }
 
-    // Check if connected to wrong chain (need L2 for actions)
-    if (chainId !== chains.l2.chainId) {
-      setShowSwitchChainModal(true)
-      return
-    }
+    if (!hasActiveSession) {
+      // Check if connected to wrong chain (need L2 for actions)
+      if (chainId !== chains.l2.chainId) {
+        setShowSwitchChainModal(true)
+        return
+      }
 
-    // Check if connected to wrong wallet
-    if (activeToken && address && activeToken.address.toLowerCase() !== address.toLowerCase()) {
-      setWrongWalletError(true)
-      setTimeout(() => setWrongWalletError(false), 5000) // Clear error after 5 seconds
-      return
+      // Check if connected to wrong wallet
+      if (activeToken && address && activeToken.address.toLowerCase() !== address.toLowerCase()) {
+        setWrongWalletError(true)
+        setTimeout(() => setWrongWalletError(false), 5000) // Clear error after 5 seconds
+        return
+      }
     }
 
     // If no active token selected, return
@@ -380,25 +364,27 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       return
     }
 
-    // If wallet not connected, open connect modal
-    if (!isConnected) {
+    // If wallet not connected and no session key, open connect modal
+    if (!isConnected && !hasActiveSession) {
       if (openConnectModal) {
         openConnectModal()
       }
       return
     }
 
-    // Check if connected to wrong chain (need L2 for actions)
-    if (chainId !== chains.l2.chainId) {
-      setShowSwitchChainModal(true)
-      return
-    }
+    if (!hasActiveSession) {
+      // Check if connected to wrong chain (need L2 for actions)
+      if (chainId !== chains.l2.chainId) {
+        setShowSwitchChainModal(true)
+        return
+      }
 
-    // Check if connected to wrong wallet
-    if (activeToken && address && activeToken.address.toLowerCase() !== address.toLowerCase()) {
-      setWrongWalletError(true)
-      setTimeout(() => setWrongWalletError(false), 5000) // Clear error after 5 seconds
-      return
+      // Check if connected to wrong wallet
+      if (activeToken && address && activeToken.address.toLowerCase() !== address.toLowerCase()) {
+        setWrongWalletError(true)
+        setTimeout(() => setWrongWalletError(false), 5000) // Clear error after 5 seconds
+        return
+      }
     }
 
     // If no active token selected, return

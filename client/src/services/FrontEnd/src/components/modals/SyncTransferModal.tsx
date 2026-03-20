@@ -4,7 +4,9 @@ import { readContract } from '@wagmi/core'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { formatEther } from 'viem'
 import ModalWrapper from './ModalWrapper'
+import ModalHeader from './ModalHeader'
 import { useTheme } from '~/hooks/useTheme'
+import { themeTextSecondary, themeTextMuted, themeBgSubtle, themeSecondaryButton } from '~/utils/theme'
 import { useSyncTransferStore } from '~/store/syncTransferStore'
 import { chains } from '~/config/chains'
 import { CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
@@ -103,39 +105,31 @@ const SyncTransferModal: React.FC = () => {
   return (
     <ModalWrapper isOpen={isOpen} onClose={handleClose} maxWidth="max-w-md" usePortal zIndex={9999}>
       <div className="p-6">
-        <div className="flex justify-between items-center mb-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-yellow-500/20 flex items-center justify-center flex-shrink-0">
-              <svg className="w-5 h-5 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-              </svg>
-            </div>
-            <h2 className={`text-lg font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-              Sync Ownership
-            </h2>
-          </div>
-          <button
-            onClick={handleClose}
-            className={`transition-colors cursor-pointer ${isDark ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-gray-900'}`}
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+        <ModalHeader
+          title="Sync Ownership"
+          onClose={handleClose}
+          icon={
+            <svg className="w-5 h-5 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
             </svg>
-          </button>
-        </div>
+          }
+          border={false}
+          size="lg"
+          className="mb-4 px-0"
+        />
 
-        <p className={`text-sm mb-4 ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>
+        <p className={`text-sm mb-4 ${themeTextSecondary(isDark)}`}>
           <span className="font-semibold">@{username}</span> (Token #{tokenId}) was transferred to your wallet,
           but the L2 network hasn't been updated yet. To use this account, you need to sync ownership.
         </p>
 
-        <p className={`text-xs mb-5 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+        <p className={`text-xs mb-5 ${themeTextMuted(isDark)}`}>
           This sends a cross-chain message to update your ownership on L2. It requires a small ETH transaction on Sepolia.
         </p>
 
         {/* Show LZ fee estimate */}
         {lzFee !== null && lzFee > 0n && (
-          <div className={`mb-4 p-3 rounded-lg text-xs ${isDark ? 'bg-white/5 text-gray-400' : 'bg-gray-50 text-gray-500'}`}>
+          <div className={`mb-4 p-3 rounded-lg text-xs ${themeBgSubtle(isDark)} ${themeTextMuted(isDark)}`}>
             Sync fee: ~{formatEther(lzFee)} ETH
           </div>
         )}
@@ -159,11 +153,7 @@ const SyncTransferModal: React.FC = () => {
         <div className="flex gap-3 justify-end">
           <button
             onClick={handleClose}
-            className={`px-4 py-2 rounded-lg text-sm transition cursor-pointer ${
-              isDark
-                ? 'bg-white/10 hover:bg-white/20 text-white'
-                : 'bg-gray-100 hover:bg-gray-200 text-gray-900'
-            }`}
+            className={`px-4 py-2 rounded-lg text-sm transition cursor-pointer ${themeSecondaryButton(isDark)}`}
           >
             {isSuccess ? 'Close' : 'Later'}
           </button>

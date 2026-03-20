@@ -1,8 +1,8 @@
 import React, { useState, useMemo, useEffect } from 'react'
 import { HiX, HiCheck } from 'react-icons/hi'
-import { useTheme } from '~/hooks/useTheme'
 import { extractMuteableWords } from '~/hooks/useMutePreferences'
 import ModalWrapper from './ModalWrapper'
+import ModalHeader from './ModalHeader'
 
 interface MuteWordsModalProps {
   isOpen: boolean
@@ -19,7 +19,6 @@ const MuteWordsModal: React.FC<MuteWordsModalProps> = ({
   postContent,
   existingMutedWords = []
 }) => {
-  const { isDark } = useTheme()
   const [customWord, setCustomWord] = useState('')
 
   const [selectedWords, setSelectedWords] = useState<Set<string>>(new Set())
@@ -83,18 +82,12 @@ const MuteWordsModal: React.FC<MuteWordsModalProps> = ({
       backdropClass="bg-black/60"
       className="shadow-2xl"
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-yellow-500/20">
-        <h3 className="text-lg font-semibold text-white">
-          Mute Words & Tags
-        </h3>
-        <button
-          onClick={onClose}
-          className="p-1 rounded-full transition-colors text-white/60 hover:text-white hover:bg-white/10"
-        >
-          <HiX className="w-5 h-5" />
-        </button>
-      </div>
+      <ModalHeader
+        title="Mute Words & Tags"
+        onClose={onClose}
+        borderClass="border-b border-yellow-500/20"
+        forceDark
+      />
 
       {/* Content */}
       <div className="p-4 max-h-[60vh] overflow-y-auto">

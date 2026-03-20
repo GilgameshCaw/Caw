@@ -1,12 +1,13 @@
 import React, { useState } from 'react'
-import { HiX } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
+import { themeTextSecondary, themeTextMuted, themeBorder } from '~/utils/theme'
 import { useSignAndSubmitAction, getValidatorTip } from '~/api/actions'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useAccount } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import InsufficientStakeModal from './InsufficientStakeModal'
 import ModalWrapper from './ModalWrapper'
+import ModalHeader from './ModalHeader'
 
 const PRESET_AMOUNTS = [5000, 10000, 25000, 50000]
 const MIN_TIP_AMOUNT = 1
@@ -109,24 +110,7 @@ const TipModal: React.FC<TipModalProps> = ({
   return (
     <>
       <ModalWrapper isOpen={isOpen} onClose={onClose} maxWidth="max-w-sm">
-        {/* Header */}
-        <div className={`flex items-center justify-between px-4 py-3 border-b ${
-          isDark ? 'border-white/20' : 'border-gray-200'
-        }`}>
-          <h2 className={`text-lg font-semibold ${
-            isDark ? 'text-white' : 'text-gray-900'
-          }`}>
-            Tip @{recipientUsername}
-          </h2>
-          <button
-            onClick={onClose}
-            className={`p-1 rounded-full transition-colors cursor-pointer ${
-              isDark ? 'hover:bg-white/10 text-gray-400' : 'hover:bg-gray-100 text-gray-600'
-            }`}
-          >
-            <HiX className="w-5 h-5" />
-          </button>
-        </div>
+        <ModalHeader title={`Tip @${recipientUsername}`} onClose={onClose} />
 
         {/* Content */}
         <div className="p-4 space-y-4">
@@ -138,7 +122,7 @@ const TipModal: React.FC<TipModalProps> = ({
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                 </svg>
               </div>
-              <p className={`text-sm ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>
+              <p className={`text-sm ${themeTextSecondary(isDark)}`}>
                 Tip of {tipAmount.toLocaleString()} CAW submitted!
               </p>
             </div>
@@ -146,9 +130,7 @@ const TipModal: React.FC<TipModalProps> = ({
             <>
               {/* Preset amounts */}
               <div>
-                <label className={`text-sm font-medium ${
-                  isDark ? 'text-gray-300' : 'text-gray-700'
-                }`}>
+                <label className={`text-sm font-medium ${themeTextSecondary(isDark)}`}>
                   Select amount (CAW)
                 </label>
                 <div className="grid grid-cols-2 gap-2 mt-2">
@@ -172,9 +154,7 @@ const TipModal: React.FC<TipModalProps> = ({
 
               {/* Custom amount */}
               <div>
-                <label className={`text-sm font-medium ${
-                  isDark ? 'text-gray-300' : 'text-gray-700'
-                }`}>
+                <label className={`text-sm font-medium ${themeTextSecondary(isDark)}`}>
                   Amount
                 </label>
                 <input
@@ -195,7 +175,7 @@ const TipModal: React.FC<TipModalProps> = ({
               </div>
 
               {/* Cost summary */}
-              <div className={`text-xs space-y-1 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+              <div className={`text-xs space-y-1 ${themeTextMuted(isDark)}`}>
                 <div className="flex justify-between">
                   <span>Tip amount</span>
                   <span>{isValid ? tipAmount.toLocaleString() : '—'} CAW</span>
@@ -204,9 +184,7 @@ const TipModal: React.FC<TipModalProps> = ({
                   <span>Validator fee</span>
                   <span>{validatorTip.toString()} CAW</span>
                 </div>
-                <div className={`flex justify-between font-medium pt-1 border-t ${
-                  isDark ? 'border-white/10 text-gray-200' : 'border-gray-200 text-gray-700'
-                }`}>
+                <div className={`flex justify-between font-medium pt-1 border-t ${themeBorder(isDark)} ${themeTextSecondary(isDark)}`}>
                   <span>Total</span>
                   <span>{isValid ? (tipAmount + Number(validatorTip)).toLocaleString() : '—'} CAW</span>
                 </div>

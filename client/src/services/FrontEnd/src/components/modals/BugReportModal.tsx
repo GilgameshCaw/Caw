@@ -1,9 +1,12 @@
 import React, { useState, useRef } from 'react'
 import ModalWrapper from './ModalWrapper'
+import ModalHeader from './ModalHeader'
 import { useTheme } from '~/hooks/useTheme'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { apiFetch } from '~/api/client'
+import { useFormSubmit } from '~/hooks/useFormSubmit'
 import { HiOutlineX } from 'react-icons/hi'
+import { themeBgSubtle, themeInput } from '~/utils/theme'
 
 interface BugReportModalProps {
   isOpen: boolean
@@ -16,9 +19,7 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
   const [description, setDescription] = useState('')
   const [images, setImages] = useState<File[]>([])
   const [previews, setPreviews] = useState<string[]>([])
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [submitted, setSubmitted] = useState(false)
-  const [error, setError] = useState('')
+  const { isSubmitting, submitted, error, setError, handleSubmit: formSubmit, reset: resetForm } = useFormSubmit()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isDragging, setIsDragging] = useState(false)
 
@@ -64,17 +65,13 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
     setPreviews(prev => prev.filter((_, i) => i !== index))
   }
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => {
     if (!description.trim()) {
       setError('Please describe the bug')
       return
     }
 
-    setIsSubmitting(true)
-    setError('')
-
-    try {
-      // Upload images first if any
+    formSubmit(async () => {
       let imageUrls: string[] = []
       if (images.length > 0) {
         const formData = new FormData()
@@ -104,24 +101,15 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
           userAgent: navigator.userAgent
         })
       })
-
-      setSubmitted(true)
-    } catch (err) {
-      console.error('Bug report submission failed:', err)
-      setError('Failed to submit. Please try again.')
-    } finally {
-      setIsSubmitting(false)
-    }
+    })
   }
 
   const handleClose = () => {
-    // Clean up previews
     previews.forEach(p => URL.revokeObjectURL(p))
     setDescription('')
     setImages([])
     setPreviews([])
-    setError('')
-    setSubmitted(false)
+    resetForm()
     onClose()
   }
 
@@ -143,20 +131,7 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
             </div>
           </div>
         )}
-        {/* Header */}
-        <div className="flex items-center justify-between mb-4">
-          <h2 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-            Report a Bug
-          </h2>
-          <button
-            onClick={handleClose}
-            className={`p-1 rounded-full transition-colors cursor-pointer ${
-              isDark ? 'hover:bg-white/10 text-white/60' : 'hover:bg-gray-100 text-gray-400'
-            }`}
-          >
-            <HiOutlineX className="w-5 h-5" />
-          </button>
-        </div>
+        <ModalHeader title="Report a Bug" onClose={handleClose} border={false} className="mb-4 px-0" />
 
         {submitted ? (
           <div className="text-center py-8">
@@ -175,9 +150,7 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
           <>
             {/* User info */}
             {activeToken && (
-              <div className={`text-xs mb-3 px-3 py-2 rounded-lg ${
-                isDark ? 'bg-white/5 text-white/40' : 'bg-gray-50 text-gray-400'
-              }`}>
+              <div className={`text-xs mb-3 px-3 py-2 rounded-lg ${themeBgSubtle(isDark)} text-white/40`}>
                 Reporting as @{activeToken.username} (staked: {activeToken.stakedAmount?.toString() || '0'} CAW)
               </div>
             )}
@@ -188,11 +161,7 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
               onChange={e => setDescription(e.target.value)}
               placeholder="Describe the bug... What happened? What did you expect?"
               rows={4}
-              className={`w-full px-3 py-2 rounded-lg border text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500/50 ${
-                isDark
-                  ? 'bg-white/5 border-white/10 text-white placeholder-white/30'
-                  : 'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400'
-              }`}
+              className={`w-full px-3 py-2 rounded-lg border text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500/50 ${themeInput(isDark)}`}
             />
 
             {/* Image previews */}

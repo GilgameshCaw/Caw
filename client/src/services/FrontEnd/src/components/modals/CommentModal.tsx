@@ -1,11 +1,11 @@
 // src/components/CommentModal.tsx
 import React from 'react'
-import { HiX } from 'react-icons/hi'
 import type { CawItem } from '~/types'
 import PostForm from '~/components/PostForm'
 import ContentWithHashtags from '~/components/ContentWithHashtags'
 import { useTheme } from '~/hooks/useTheme'
 import ModalWrapper from './ModalWrapper'
+import ModalHeader from './ModalHeader'
 
 
 interface CommentModalProps {
@@ -30,22 +30,7 @@ export const CommentModal: React.FC<CommentModalProps> = ({ isOpen, caw, onClose
 
   return (
     <ModalWrapper isOpen={isOpen} onClose={onClose} maxWidth="max-w-2xl">
-      {/* Header */}
-      <div className={`flex items-center justify-between p-4 border-b ${
-        isDark ? 'border-white/10' : 'border-gray-200'
-      }`}>
-        <h2 className={`text-lg font-bold ${isDark ? 'text-white' : 'text-black'}`}>
-          Reply
-        </h2>
-        <button
-          onClick={onClose}
-          className={`p-2 rounded-full transition-all duration-200 hover:bg-gray-500/20 ${
-            isDark ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-black'
-          }`}
-        >
-          <HiX className="w-5 h-5" />
-        </button>
-      </div>
+      <ModalHeader title="Reply" onClose={onClose} />
 
       {/* Original Caw */}
       <div className={`px-4 pt-4 ${isDark ? 'text-white' : 'text-black'}`}>

@@ -3,6 +3,7 @@ import { useSignMessage, useAccount } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import ModalWrapper from './ModalWrapper'
 import { useTheme } from '~/hooks/useTheme'
+import { themeText, themeTextSecondary, themeSecondaryButton } from '~/utils/theme'
 import { useVerifyWalletStore } from '~/store/verifyWalletStore'
 import { useAuthStore } from '~/store/authStore'
 import { API_HOST } from '~/api/client'
@@ -75,10 +76,10 @@ const VerifyWalletModal: React.FC = () => {
   return (
     <ModalWrapper isOpen={isOpen} onClose={close} usePortal zIndex={9999}>
       <div className="p-6">
-        <h2 className={`text-lg font-bold mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+        <h2 className={`text-lg font-bold mb-3 ${themeText(isDark)}`}>
           Verify Wallet Ownership
         </h2>
-        <p className={`text-sm mb-6 ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>
+        <p className={`text-sm mb-6 ${themeTextSecondary(isDark)}`}>
           To perform this action, please verify you own this wallet by signing a message.
           This is free and does not create a transaction.
         </p>
@@ -92,11 +93,7 @@ const VerifyWalletModal: React.FC = () => {
         <div className="flex gap-3 justify-end">
           <button
             onClick={close}
-            className={`px-4 py-2 rounded-lg text-sm transition ${
-              isDark
-                ? 'bg-white/10 hover:bg-white/20 text-white'
-                : 'bg-gray-100 hover:bg-gray-200 text-gray-900'
-            }`}
+            className={`px-4 py-2 rounded-lg text-sm transition ${themeSecondaryButton(isDark)}`}
           >
             Cancel
           </button>

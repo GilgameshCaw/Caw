@@ -1,8 +1,8 @@
 import React, { useState } from 'react'
-import { HiX, HiEyeOff, HiVolumeOff, HiUserRemove } from 'react-icons/hi'
-import { useTheme } from '~/hooks/useTheme'
+import { HiEyeOff, HiVolumeOff, HiUserRemove } from 'react-icons/hi'
 import { Link } from 'react-router-dom'
 import ModalWrapper from './ModalWrapper'
+import ModalHeader from './ModalHeader'
 
 type ActionType = 'hide-post' | 'mute-thread' | 'mute-account' | 'block-account' | 'mute-words'
 
@@ -96,23 +96,13 @@ const MuteConfirmModal: React.FC<MuteConfirmModalProps> = ({
       backdropClass="bg-black/60"
       className="shadow-2xl"
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-full bg-yellow-500/20">
-            <Icon className="w-5 h-5 text-yellow-500" />
-          </div>
-          <h3 className="text-lg font-semibold text-white">
-            {config.title}
-          </h3>
-        </div>
-        <button
-          onClick={onClose}
-          className="p-1 rounded-full transition-colors text-white/60 hover:text-white hover:bg-white/10"
-        >
-          <HiX className="w-5 h-5" />
-        </button>
-      </div>
+      <ModalHeader
+        title={config.title}
+        onClose={onClose}
+        icon={<Icon className="w-5 h-5 text-yellow-500" />}
+        border={false}
+        forceDark
+      />
 
       {/* Content */}
       <div className="px-4 pb-4">
@@ -124,7 +114,8 @@ const MuteConfirmModal: React.FC<MuteConfirmModalProps> = ({
         </p>
 
         <p className="text-sm mb-4 text-white/50">
-          You can undo this anytime in{' '}
+          You can undo this anytime in
+          <br />
           <Link
             to="/settings/muted"
             className="underline text-yellow-500 hover:text-yellow-400"
@@ -141,20 +132,31 @@ const MuteConfirmModal: React.FC<MuteConfirmModalProps> = ({
         )}
 
         {/* Don't show again checkbox */}
-        <label className="flex items-center gap-2 mb-4 cursor-pointer text-sm text-white/60">
-          <input
-            type="checkbox"
-            checked={dontShowAgain}
-            onChange={(e) => setDontShowAgain(e.target.checked)}
-            className="w-4 h-4 rounded border-yellow-500/50 bg-black text-yellow-500 focus:ring-yellow-500"
-          />
+        <label className="flex items-center justify-center gap-2 mb-4 cursor-pointer text-sm text-white/60">
+          <button
+            type="button"
+            role="checkbox"
+            aria-checked={dontShowAgain}
+            onClick={() => setDontShowAgain(!dontShowAgain)}
+            className={`w-4 h-4 rounded flex-shrink-0 flex items-center justify-center transition-colors duration-150 ${
+              dontShowAgain
+                ? 'bg-yellow-500'
+                : 'bg-black border border-white/30'
+            }`}
+          >
+            {dontShowAgain && (
+              <svg className="w-3 h-3 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            )}
+          </button>
           Don't show this message again
         </label>
 
         {/* Button */}
         <button
           onClick={handleConfirm}
-          className="w-full py-2.5 px-4 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition-colors"
+          className="w-full py-2.5 px-4 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition-colors cursor-pointer"
         >
           {config.buttonText}
         </button>

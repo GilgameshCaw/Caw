@@ -1,9 +1,10 @@
 import React, { useState } from 'react'
-import { HiX, HiSwitchHorizontal } from 'react-icons/hi'
+import { HiSwitchHorizontal } from 'react-icons/hi'
 import { useSwitchChain } from 'wagmi'
 import { chains } from '~/config/chains'
 import { baseSepolia } from 'wagmi/chains'
 import ModalWrapper from './ModalWrapper'
+import ModalHeader from './ModalHeader'
 
 // Get chain name from wagmi chain definition
 const l2ChainName = baseSepolia.name
@@ -45,23 +46,13 @@ const SwitchChainModal: React.FC<SwitchChainModalProps> = ({
       backdropClass="bg-black/60"
       className="shadow-2xl"
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-full bg-yellow-500/20">
-            <HiSwitchHorizontal className="w-5 h-5 text-yellow-500" />
-          </div>
-          <h3 className="text-lg font-semibold text-white">
-            Wrong Network
-          </h3>
-        </div>
-        <button
-          onClick={onClose}
-          className="p-1 rounded-full transition-colors text-white/60 hover:text-white hover:bg-white/10"
-        >
-          <HiX className="w-5 h-5" />
-        </button>
-      </div>
+      <ModalHeader
+        title="Wrong Network"
+        onClose={onClose}
+        icon={<HiSwitchHorizontal className="w-5 h-5 text-yellow-500" />}
+        border={false}
+        forceDark
+      />
 
       {/* Content */}
       <div className="px-4 pb-4">

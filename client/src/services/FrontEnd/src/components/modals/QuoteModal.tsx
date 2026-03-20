@@ -2,9 +2,9 @@
 import React from 'react'
 import PostForm from '~/components/PostForm'
 import ContentWithHashtags from '~/components/ContentWithHashtags'
-import { HiX } from 'react-icons/hi'
 import type { CawItem } from '~/types'
 import ModalWrapper from './ModalWrapper'
+import ModalHeader from './ModalHeader'
 
 interface QuoteModalProps {
   isOpen: boolean
@@ -12,21 +12,7 @@ interface QuoteModalProps {
   onClose: () => void
 }
 
-// Helper to format relative time
-function formatTimeAgo(timestamp: string): string {
-  const now = new Date()
-  const time = new Date(timestamp)
-  const diffInMs = now.getTime() - time.getTime()
-  const diffInMinutes = Math.floor(diffInMs / (1000 * 60))
-  const diffInHours = Math.floor(diffInMs / (1000 * 60 * 60))
-  const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24))
-
-  if (diffInMinutes < 1) return 'now'
-  if (diffInMinutes < 60) return `${diffInMinutes}m`
-  if (diffInHours < 24) return `${diffInHours}h`
-  if (diffInDays < 7) return `${diffInDays}d`
-  return time.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-}
+import { formatTimeAgo } from '~/utils/formatTimeAgo'
 
 // Helper to render images from imageData
 function renderImages(imageData: string | null | undefined) {
@@ -75,18 +61,13 @@ export const QuoteModal: React.FC<QuoteModalProps> = ({ isOpen, caw, onClose }) 
       usePortal
       className="max-h-[90vh] overflow-y-auto shadow-2xl"
     >
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-yellow-500/20 sticky top-0 bg-black z-10">
-        <h3 className="text-lg font-semibold text-white">
-          Quote Post
-        </h3>
-        <button
-          onClick={onClose}
-          className="p-1.5 rounded-full transition-colors text-white/60 hover:text-white hover:bg-white/10"
-        >
-          <HiX className="w-5 h-5" />
-        </button>
-      </div>
+      <ModalHeader
+        title="Quote Post"
+        onClose={onClose}
+        borderClass="border-b border-yellow-500/20"
+        forceDark
+        className="sticky top-0 bg-black z-10"
+      />
 
       {/* Content */}
       <div className="p-4">

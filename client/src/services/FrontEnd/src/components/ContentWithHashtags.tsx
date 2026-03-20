@@ -1,59 +1,36 @@
 // src/components/ContentWithHashtags.tsx
-import React, { useState, useEffect } from 'react'
+import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import LinkPreview from './LinkPreview'
-import { apiFetch } from '~/api/client'
+import { useCachedFetch } from '~/hooks/useCachedFetch'
 
-// Cache for short URL original URLs
+// Caches
 const shortUrlCache = new Map<string, string | null>()
-
-// Cache for on-chain image data
 const onChainImageCache = new Map<string, string | null>()
 
-// Component to render on-chain images (fetches base64 data from API)
+// Shared loading skeleton
+const MediaSkeleton = () => (
+  <div className="my-2 max-w-full h-48 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse" />
+)
+
+// Component to render on-chain images
 const OnChainImage: React.FC<{
   imageRef: string
   onError: (ref: string) => void
   imageErrors: Set<string>
 }> = ({ imageRef, onError, imageErrors }) => {
-  const [imageData, setImageData] = useState<string | null>(onChainImageCache.get(imageRef) || null)
-  const [loading, setLoading] = useState(!onChainImageCache.has(imageRef))
-
-  useEffect(() => {
-    if (onChainImageCache.has(imageRef)) {
-      setImageData(onChainImageCache.get(imageRef) || null)
-      setLoading(false)
-      return
+  const { url: imageData, loading } = useCachedFetch(
+    imageRef,
+    onChainImageCache,
+    `/api/on-chain-images/ref/${imageRef}`,
+    (data: { base64Data: string }) => {
+      const base64 = data.base64Data
+      return base64.startsWith('data:') ? base64 : `data:image/jpeg;base64,${base64}`
     }
+  )
 
-    const fetchImage = async () => {
-      try {
-        const data = await apiFetch(`/api/on-chain-images/ref/${imageRef}`) as { base64Data: string }
-        const base64Url = data.base64Data.startsWith('data:')
-          ? data.base64Data
-          : `data:image/jpeg;base64,${data.base64Data}`
-        onChainImageCache.set(imageRef, base64Url)
-        setImageData(base64Url)
-      } catch (err) {
-        console.error('Failed to fetch on-chain image:', err)
-        onChainImageCache.set(imageRef, null)
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchImage()
-  }, [imageRef])
-
-  if (loading) {
-    return (
-      <div className="my-2 max-w-full h-48 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse" />
-    )
-  }
-
-  if (!imageData || imageErrors.has(imageRef)) {
-    return null
-  }
+  if (loading) return <MediaSkeleton />
+  if (!imageData || imageErrors.has(imageRef)) return null
 
   return (
     <div className="my-2 max-w-full">
@@ -69,47 +46,21 @@ const OnChainImage: React.FC<{
   )
 }
 
-// Component to render short URL images (fetches original URL)
+// Component to render short URL images
 const ShortUrlImage: React.FC<{
   code: string
   onError: (url: string) => void
   imageErrors: Set<string>
 }> = ({ code, onError, imageErrors }) => {
-  const [originalUrl, setOriginalUrl] = useState<string | null>(shortUrlCache.get(code) || null)
-  const [loading, setLoading] = useState(!shortUrlCache.has(code))
+  const { url: originalUrl, loading } = useCachedFetch(
+    code,
+    shortUrlCache,
+    `/api/shorturl/${code}`,
+    (data: { originalUrl: string }) => data.originalUrl
+  )
 
-  useEffect(() => {
-    if (shortUrlCache.has(code)) {
-      setOriginalUrl(shortUrlCache.get(code) || null)
-      setLoading(false)
-      return
-    }
-
-    const fetchOriginalUrl = async () => {
-      try {
-        const data = await apiFetch(`/api/shorturl/${code}`) as { originalUrl: string }
-        shortUrlCache.set(code, data.originalUrl)
-        setOriginalUrl(data.originalUrl)
-      } catch (err) {
-        console.error('Failed to fetch short URL:', err)
-        shortUrlCache.set(code, null)
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchOriginalUrl()
-  }, [code])
-
-  if (loading) {
-    return (
-      <div className="my-2 max-w-full h-48 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse" />
-    )
-  }
-
-  if (!originalUrl || imageErrors.has(originalUrl)) {
-    return null
-  }
+  if (loading) return <MediaSkeleton />
+  if (!originalUrl || imageErrors.has(originalUrl)) return null
 
   return (
     <div className="my-2 max-w-full">
@@ -125,47 +76,21 @@ const ShortUrlImage: React.FC<{
   )
 }
 
-// Component to render short URL videos (fetches original URL)
+// Component to render short URL videos
 const ShortUrlVideo: React.FC<{
   code: string
   onError: (url: string) => void
   videoErrors: Set<string>
 }> = ({ code, onError, videoErrors }) => {
-  const [originalUrl, setOriginalUrl] = useState<string | null>(shortUrlCache.get(code) || null)
-  const [loading, setLoading] = useState(!shortUrlCache.has(code))
+  const { url: originalUrl, loading } = useCachedFetch(
+    code,
+    shortUrlCache,
+    `/api/shorturl/${code}`,
+    (data: { originalUrl: string }) => data.originalUrl
+  )
 
-  useEffect(() => {
-    if (shortUrlCache.has(code)) {
-      setOriginalUrl(shortUrlCache.get(code) || null)
-      setLoading(false)
-      return
-    }
-
-    const fetchOriginalUrl = async () => {
-      try {
-        const data = await apiFetch(`/api/shorturl/${code}`) as { originalUrl: string }
-        shortUrlCache.set(code, data.originalUrl)
-        setOriginalUrl(data.originalUrl)
-      } catch (err) {
-        console.error('Failed to fetch short URL:', err)
-        shortUrlCache.set(code, null)
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchOriginalUrl()
-  }, [code])
-
-  if (loading) {
-    return (
-      <div className="my-2 max-w-full h-48 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse" />
-    )
-  }
-
-  if (!originalUrl || videoErrors.has(originalUrl)) {
-    return null
-  }
+  if (loading) return <MediaSkeleton />
+  if (!originalUrl || videoErrors.has(originalUrl)) return null
 
   return (
     <div className="my-2 max-w-full">

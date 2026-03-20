@@ -1,10 +1,9 @@
 // src/components/modals/MessageModal.tsx
 import React, { useState } from 'react'
 import { useSignAndSubmitAction } from '~/api/actions'
-import CloseIcon from '~/assets/images/close.svg?react'
+import ModalHeader from './ModalHeader'
 import { useTokenDataStore } from "~/store/tokenDataStore"
 import { useAccount } from "wagmi"
-import { useTheme } from '~/hooks/useTheme'
 import ModalWrapper from './ModalWrapper'
 
 interface MessageModalProps {
@@ -60,18 +59,7 @@ export const MessageModal: React.FC<MessageModalProps> = ({ isOpen, recipient, o
       backdropClass="bg-black/50"
       className="p-6"
     >
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <h3 className="text-lg font-bold text-white">
-          Send message
-        </h3>
-        <button
-          className="text-white hover:text-gray-300 transition-colors duration-200"
-          onClick={onClose}
-        >
-          <CloseIcon className="w-6 h-6" />
-        </button>
-      </div>
+      <ModalHeader title="Send message" onClose={onClose} border={false} size="lg" forceDark className="mb-6 px-0" />
 
       {/* Recipient Info */}
       <div className="flex items-center space-x-3 mb-6">

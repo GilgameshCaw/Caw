@@ -1,7 +1,10 @@
 import React, { useState } from 'react'
-import { HiX, HiFlag } from 'react-icons/hi'
+import { HiFlag } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
+import { useFormSubmit } from '~/hooks/useFormSubmit'
+import { themeText, themeTextMuted, themeTextSecondary } from '~/utils/theme'
 import ModalWrapper from './ModalWrapper'
+import ModalHeader from './ModalHeader'
 
 export type ReportReason = 'SPAM' | 'HARASSMENT' | 'INAPPROPRIATE' | 'MISINFORMATION' | 'OTHER'
 
@@ -33,29 +36,20 @@ const ReportPostModal: React.FC<ReportPostModalProps> = ({
   const { isDark } = useTheme()
   const [selectedReason, setSelectedReason] = useState<ReportReason | null>(null)
   const [details, setDetails] = useState('')
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const { isSubmitting, error, handleSubmit: formSubmit, reset: resetForm } = useFormSubmit()
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => {
     if (!selectedReason) return
-
-    setIsSubmitting(true)
-    setError(null)
-
-    try {
+    formSubmit(async () => {
       await onSubmit(selectedReason, details)
       onClose()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to submit report')
-    } finally {
-      setIsSubmitting(false)
-    }
+    })
   }
 
   const handleClose = () => {
     setSelectedReason(null)
     setDetails('')
-    setError(null)
+    resetForm()
     onClose()
   }
 
@@ -67,28 +61,18 @@ const ReportPostModal: React.FC<ReportPostModalProps> = ({
       usePortal
       className="p-6"
     >
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          <div className={`p-2 rounded-full ${isDark ? 'bg-red-500/20' : 'bg-red-50'}`}>
-            <HiFlag className="w-5 h-5 text-red-500" />
-          </div>
-          <h3 className={`text-xl font-bold ${isDark ? 'text-white' : 'text-black'}`}>
-            Report Post
-          </h3>
-        </div>
-        <button
-          onClick={handleClose}
-          className={`p-1 rounded-full transition-colors ${
-            isDark ? 'text-white/60 hover:text-white hover:bg-white/10' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
-          }`}
-        >
-          <HiX className="w-5 h-5" />
-        </button>
-      </div>
+      <ModalHeader
+        title="Report Post"
+        onClose={handleClose}
+        icon={<HiFlag className="w-5 h-5 text-red-500" />}
+        iconBg={isDark ? 'bg-red-500/20' : 'bg-red-50'}
+        border={false}
+        size="lg"
+        className="mb-4 px-0"
+      />
 
       {/* Description */}
-      <p className={`text-sm mb-4 ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>
+      <p className={`text-sm mb-4 ${themeTextSecondary(isDark)}`}>
         {postAuthorUsername
           ? `Why are you reporting this post by @${postAuthorUsername}?`
           : 'Why are you reporting this post?'}
@@ -110,10 +94,10 @@ const ReportPostModal: React.FC<ReportPostModalProps> = ({
                   : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
             }`}
           >
-            <div className={`font-medium ${isDark ? 'text-white' : 'text-black'}`}>
+            <div className={`font-medium ${themeText(isDark)}`}>
               {reason.label}
             </div>
-            <div className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+            <div className={`text-sm ${themeTextMuted(isDark)}`}>
               {reason.description}
             </div>
           </button>
@@ -122,7 +106,7 @@ const ReportPostModal: React.FC<ReportPostModalProps> = ({
 
       {/* Additional Details */}
       <div className="mb-4">
-        <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+        <label className={`block text-sm font-medium mb-2 ${themeTextSecondary(isDark)}`}>
           Additional details (optional)
         </label>
         <textarea
@@ -146,7 +130,7 @@ const ReportPostModal: React.FC<ReportPostModalProps> = ({
       )}
 
       {/* Info Note */}
-      <p className={`text-xs mb-4 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+      <p className={`text-xs mb-4 ${themeTextMuted(isDark)}`}>
         Reports are reviewed by our team. False reports may result in action against your account.
         This post will also be hidden from your feed.
       </p>

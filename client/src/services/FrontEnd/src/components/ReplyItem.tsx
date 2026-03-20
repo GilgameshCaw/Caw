@@ -15,28 +15,9 @@ import { useTheme } from '~/hooks/useTheme'
 import { usePendingCawPolling, usePendingLikePolling, usePendingReplyPolling } from '~/hooks/usePendingPolling'
 import SwitchChainModal from './modals/SwitchChainModal'
 import { chains } from '~/config/chains'
+import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 
-// Helper function to format relative time
-function formatTimeAgo(timestamp: string): string {
-  const now = new Date()
-  const time = new Date(timestamp)
-  const diffInMs = now.getTime() - time.getTime()
-  const diffInMinutes = Math.floor(diffInMs / (1000 * 60))
-  const diffInHours = Math.floor(diffInMs / (1000 * 60 * 60))
-  const diffInDays = Math.floor(diffInMs / (1000 * 60 * 60 * 24))
-
-  if (diffInMinutes < 1) {
-    return 'now'
-  } else if (diffInMinutes < 60) {
-    return `${diffInMinutes}m`
-  } else if (diffInHours < 24) {
-    return `${diffInHours}h`
-  } else if (diffInDays < 7) {
-    return `${diffInDays}d`
-  } else {
-    return time.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  }
-}
+import { formatTimeAgo } from '~/utils/formatTimeAgo'
 
 const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, likePending: boolean) => void; onReplyStateChange?: (cawId: string, replyPending: boolean) => void }> = ({ item, onLikeStateChange, onReplyStateChange }) => {
   // Enable polling for pending items
@@ -54,6 +35,7 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
   const { isDark } = useTheme()
   const { address } = useAccount()
   const chainId = useChainId()
+  const hasActiveSession = useHasActiveSession()
   const [busyLike, setBusyLike]     = useState(false)
   const [showSwitchChainModal, setShowSwitchChainModal] = useState(false)
   const [busyRecaw, setBusyRecaw]   = useState(false)
@@ -116,8 +98,8 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
       return
     }
 
-    // Check if connected to wrong wallet
-    if (activeToken && address && activeToken.address.toLowerCase() !== address.toLowerCase()) {
+    // Check if connected to wrong wallet (skip if session key active)
+    if (!hasActiveSession && activeToken && address && activeToken.address.toLowerCase() !== address.toLowerCase()) {
       setWrongWalletError(true)
       setTimeout(() => setWrongWalletError(false), 5000) // Clear error after 5 seconds
       return
