@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { apiFetch, API_HOST } from '~/api/client'
+import { API_HOST } from '~/api/client'
 
 interface ClientConfig {
   id: number
@@ -51,26 +51,38 @@ export const useClientConfigStore = create<ClientConfigState>((set, get) => ({
 
     set({ isLoading: true, error: null })
 
-    try {
-      const response = await fetch(`${API_HOST}/api/clients/${clientId}`)
+    const MAX_RETRIES = 4
+    const BASE_DELAY = 2000 // 2s, 4s, 8s, 16s
 
-      if (!response.ok) {
-        throw new Error(`Failed to fetch client config: ${response.status}`)
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      try {
+        const response = await fetch(`${API_HOST}/api/clients/${clientId}`)
+
+        if (!response.ok) {
+          throw new Error(`Failed to fetch client config: ${response.status}`)
+        }
+
+        const config = await response.json()
+
+        set({
+          clientConfig: config,
+          isLoading: false,
+          lastFetchedAt: Date.now()
+        })
+        return
+      } catch (err: any) {
+        if (attempt < MAX_RETRIES) {
+          const delay = BASE_DELAY * Math.pow(2, attempt)
+          console.warn(`[ClientConfig] Fetch failed (attempt ${attempt + 1}/${MAX_RETRIES + 1}), retrying in ${delay / 1000}s...`)
+          await new Promise(r => setTimeout(r, delay))
+        } else {
+          console.error('[ClientConfig] Error fetching client config after retries:', err)
+          set({
+            error: err.message,
+            isLoading: false
+          })
+        }
       }
-
-      const config = await response.json()
-
-      set({
-        clientConfig: config,
-        isLoading: false,
-        lastFetchedAt: Date.now()
-      })
-    } catch (err: any) {
-      console.error('[ClientConfig] Error fetching client config:', err)
-      set({
-        error: err.message,
-        isLoading: false
-      })
     }
   },
 

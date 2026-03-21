@@ -16,6 +16,8 @@ import { useInsufficientStakeStore } from '~/store/insufficientStakeStore'
 import { useAuthStore } from '~/store/authStore'
 import { privateKeyToAccount } from 'viem/accounts'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
+import { useHasActiveSession } from '~/hooks/useHasActiveSession'
+import { useQuickSignRenewStore } from '~/components/modals/QuickSignRenewModal'
 
 const CAWONCE_STALE_MS = 10 * 60 * 1000 // 10 minutes
 
@@ -147,7 +149,7 @@ export function buildTypedData(params: ActionParams) {
 export function useSignAndSubmitAction() {
   const { isConnected, address }      = useAccount()
   const { openConnectModal } = useConnectModal()
-
+  const hasActiveSession = useHasActiveSession()
 
   const { signTypedDataAsync } = useSignTypedData()
   const activeToken = useActiveToken();
@@ -172,6 +174,7 @@ export function useSignAndSubmitAction() {
                       params.actionType === 'follow' ? 'MIN_STAKE_FOLLOW' :
                       params.actionType === 'caw' && params.receiverId ? 'MIN_STAKE_COMMENT' :
                       params.actionType === 'caw' ? 'MIN_STAKE_POST' :
+                      params.actionType === 'other' ? 'MIN_STAKE_POST' :
                       null
 
     if (stakingKey && !hasMinimumStake(activeToken?.stakedAmount, stakingKey)) {
@@ -189,24 +192,19 @@ export function useSignAndSubmitAction() {
     while (attempts < 100) { // 100 attempts * 100ms = 10 seconds max
       const state = useTokenDataStore.getState();
 
-      // Try to find tokens for the address (case-insensitive)
-      let tokensByAddress;
-      if (address) {
-        // Check all variations of address case
-        tokensByAddress = state.tokensByAddress[address.toLowerCase()] ||
-                         state.tokensByAddress[address] ||
-                         Object.entries(state.tokensByAddress).find(([key]) =>
-                           key.toLowerCase() === address.toLowerCase()
-                         )?.[1];
+      // Search all addresses for the active token (supports session keys where
+      // the connected wallet may differ from the token owner)
+      for (const tokens of Object.values(state.tokensByAddress)) {
+        const found = tokens.find(t => t.tokenId === activeTokenId);
+        if (found) {
+          currentToken = found;
+          currentCawonce = found.cawonce;
+          break;
+        }
       }
 
-      if (tokensByAddress && tokensByAddress.length > 0) {
-        currentToken = tokensByAddress.find(t => t.tokenId === activeTokenId);
-        currentCawonce = currentToken?.cawonce;
-
-        if (currentCawonce !== undefined && currentCawonce !== null) {
-          break; // Token data is loaded
-        }
+      if (currentCawonce !== undefined && currentCawonce !== null) {
+        break; // Token data is loaded
       }
 
       // Wait 100ms before trying again
@@ -257,15 +255,46 @@ export function useSignAndSubmitAction() {
 
     const { domain, types, primaryType, message } = buildTypedData({...params, cawonce: currentCawonce})
 
+    // Check for an active session key that covers this action type
+    const actionCode = ActionTypeMap[params.actionType]
+    const sessionStore = useSessionKeyStore.getState()
+    const activeSession = sessionStore.getActiveSession()
+
+    // If Quick Sign is enabled but session expired, show renewal modal
+    if (sessionStore.enabled && !activeSession && sessionStore.session) {
+      useQuickSignRenewStore.getState().show('expired', () => requestAndSubmit(params))
+      return null
+    }
+
+    const canUseSession = activeSession &&
+      actionCode <= 5 &&
+      (activeSession.scopeBitmap & (1 << actionCode)) !== 0
+
+    // Fixed protocol costs per action type (whole CAW tokens) — must match CawActions.sol
+    const ACTION_COSTS: Record<string, bigint> = {
+      caw: 5000n, like: 2000n, recaw: 4000n, follow: 30000n,
+      unlike: 0n, unfollow: 0n, other: 0n, withdraw: 0n,
+    }
+
+    // Check spend limit before signing with session key
+    if (canUseSession) {
+      const limit = BigInt(activeSession.spendLimit || '0')
+      if (limit > 0n) {
+        const spent = BigInt(sessionStore.session?.spent || '0')
+        const tip = getValidatorTip()
+        const protocolCost = ACTION_COSTS[params.actionType] || 0n
+        const totalCost = protocolCost + tip
+        const remaining = limit - spent
+        console.log(`[QuickSign] Spend limit: ${limit}, spent: ${spent}, remaining: ${remaining}, actionCost: ${protocolCost}, tip: ${tip}, totalCost: ${totalCost}`)
+        if (spent + totalCost > limit) {
+          useQuickSignRenewStore.getState().show('spend_limit', () => requestAndSubmit(params))
+          return null
+        }
+      }
+    }
+
     try {
       let signature: `0x${string}`
-
-      // Check for an active session key that covers this action type
-      const actionCode = ActionTypeMap[params.actionType]
-      const activeSession = useSessionKeyStore.getState().getActiveSession(activeTokenId!)
-      const canUseSession = activeSession &&
-        actionCode <= 5 &&
-        (activeSession.scopeBitmap & (1 << actionCode)) !== 0
 
       if (canUseSession) {
         // Sign with session key — no wallet popup
@@ -305,10 +334,19 @@ export function useSignAndSubmitAction() {
       }
 
       return response // Return the response which includes txQueueId
-    } catch (error) {
+    } catch (error: any) {
       // If submission fails, we should ideally roll back the cawonce bump
       // but for now we'll leave it incremented to avoid conflicts
       console.error('Failed to submit action:', error)
+
+      // Detect session key spend limit or expiry errors from the contract/validator
+      const errMsg = (error?.message || error?.shortMessage || '').toLowerCase()
+      if (canUseSession && (errMsg.includes('spend limit') || errMsg.includes('session') || errMsg.includes('expired'))) {
+        const reason = errMsg.includes('spend') ? 'spend_limit' : 'expired'
+        useQuickSignRenewStore.getState().show(reason, () => requestAndSubmit(params))
+        return null
+      }
+
       throw error
     }
   }, [activeTokenId, address, signTypedDataAsync, bumpCawonce])
@@ -331,13 +369,17 @@ export function useSignAndSubmitAction() {
   }, [isConnected, pendingParams, cawonce, requestAndSubmit])
 
   return async (params: ActionParams) => {
+    // Session key active — skip wallet checks entirely
+    if (hasActiveSession) {
+      return await requestAndSubmit(params)
+    }
+
     // 1) if wallet not yet connected, pop the connect modal
-    console.log('what',activeToken, address)
     if (!isConnected) {
       setPendingParams(params)
       openConnectModal?.()
       return null
-    } else if (activeToken.address?.toLowerCase() !== address?.toLowerCase()) {
+    } else if (activeToken?.address?.toLowerCase() !== address?.toLowerCase()) {
       console.error("That profile tokenId is not owned by your connected wallet")
       return null
     } else {
