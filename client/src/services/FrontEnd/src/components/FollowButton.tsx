@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { useFollowButton } from '~/hooks/useFollowButton'
 
 interface FollowButtonProps {
@@ -6,8 +6,11 @@ interface FollowButtonProps {
   initialIsFollowing: boolean
   initialIsPending?: boolean
   onFollowStateChange?: (isFollowing: boolean) => void
+  /** Fires when a follow action is fully confirmed (pending → confirmed following) */
+  onFollowConfirmed?: () => void
   className?: string
   size?: 'small' | 'medium' | 'large'
+  disabled?: boolean
 }
 
 export const FollowButton: React.FC<FollowButtonProps> = ({
@@ -15,8 +18,10 @@ export const FollowButton: React.FC<FollowButtonProps> = ({
   initialIsFollowing,
   initialIsPending = false,
   onFollowStateChange,
+  onFollowConfirmed,
   className = '',
-  size = 'medium'
+  size = 'medium',
+  disabled = false
 }) => {
   const [isHovered, setIsHovered] = useState(false)
 
@@ -33,6 +38,15 @@ export const FollowButton: React.FC<FollowButtonProps> = ({
     initialIsPending,
     onFollowStateChange
   })
+
+  // Detect when follow is confirmed: was pending, now not pending and following
+  const wasPendingRef = useRef(isPending)
+  useEffect(() => {
+    if (wasPendingRef.current && !isPending && isFollowing) {
+      onFollowConfirmed?.()
+    }
+    wasPendingRef.current = isPending
+  }, [isPending, isFollowing, onFollowConfirmed])
 
   const sizeClasses = {
     small: 'px-3 py-1 text-sm',
@@ -63,11 +77,11 @@ export const FollowButton: React.FC<FollowButtonProps> = ({
     <span className="relative group inline-block">
       <button
         onClick={handleFollowClick}
-        disabled={isPending || wrongWallet}
+        disabled={isPending || wrongWallet || disabled}
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
         className={`rounded-full font-medium transition-all duration-200 ${
-          isPending || wrongWallet ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+          isPending || wrongWallet || disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
         } ${getButtonStyles()} ${sizeClasses[size]} ${className}`}
       >
         {isPending && (

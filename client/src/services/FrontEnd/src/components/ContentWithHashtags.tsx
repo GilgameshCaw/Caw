@@ -2,6 +2,7 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import LinkPreview from './LinkPreview'
+import Tooltip from '~/components/Tooltip'
 import { useCachedFetch } from '~/hooks/useCachedFetch'
 
 // Caches
@@ -192,36 +193,36 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
       // Check if this is an @mention
       if (part.startsWith('@')) {
         return (
-          <button
-            key={`${keyPrefix}-${index}`}
-            onClick={(e) => handleMentionClick(part, e)}
-            className={`
-              hover:underline cursor-pointer transition-colors duration-200
-              bg-transparent border-none p-0 m-0 font-inherit
-              text-yellow-500 hover:text-yellow-600 dark:text-yellow-400 dark:hover:text-yellow-300
-            `}
-            title={`View ${part}'s profile`}
-          >
-            {part}
-          </button>
+          <Tooltip key={`${keyPrefix}-${index}`} text={`View ${part}'s profile`} className="inline">
+            <button
+              onClick={(e) => handleMentionClick(part, e)}
+              className={`
+                hover:underline cursor-pointer transition-colors duration-200
+                bg-transparent border-none p-0 m-0 font-inherit
+                text-yellow-500 hover:text-yellow-600 dark:text-yellow-400 dark:hover:text-yellow-300
+              `}
+            >
+              {part}
+            </button>
+          </Tooltip>
         )
       }
 
       // Check if this is a hashtag or cashtag
       if (part.startsWith('#') || part.startsWith('$')) {
         return (
-          <button
-            key={`${keyPrefix}-${index}`}
-            onClick={(e) => handleHashtagClick(part, e)}
-            className={`
-              hover:underline cursor-pointer transition-colors duration-200
-              bg-transparent border-none p-0 m-0 font-inherit
-              text-yellow-500 hover:text-yellow-600 dark:text-yellow-400 dark:hover:text-yellow-300
-            `}
-            title={`View posts with ${part}`}
-          >
-            {part}
-          </button>
+          <Tooltip key={`${keyPrefix}-${index}`} text={`View posts with ${part}`} className="inline">
+            <button
+              onClick={(e) => handleHashtagClick(part, e)}
+              className={`
+                hover:underline cursor-pointer transition-colors duration-200
+                bg-transparent border-none p-0 m-0 font-inherit
+                text-yellow-500 hover:text-yellow-600 dark:text-yellow-400 dark:hover:text-yellow-300
+              `}
+            >
+              {part}
+            </button>
+          </Tooltip>
         )
       }
 

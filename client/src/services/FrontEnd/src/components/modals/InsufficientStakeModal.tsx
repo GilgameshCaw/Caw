@@ -10,6 +10,8 @@ interface InsufficientStakeModalProps {
   requiredAmount?: bigint
   currentAmount?: bigint
   actionType?: 'post' | 'like' | 'repost' | 'profile'
+  /** Override default stake navigation (e.g. to jump to onboarding stake step) */
+  onStake?: () => void
 }
 
 const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
@@ -17,7 +19,8 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
   onClose,
   requiredAmount,
   currentAmount,
-  actionType = 'post'
+  actionType = 'post',
+  onStake,
 }) => {
   const navigate = useNavigate()
   const { address } = useAccount()
@@ -43,7 +46,11 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
   }
 
   const handleStakeCAW = () => {
-    navigate('/staking')
+    if (onStake) {
+      onStake()
+    } else {
+      navigate('/staking')
+    }
     onClose()
   }
 
@@ -66,7 +73,7 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
       isOpen={isOpen}
       onClose={onClose}
       maxWidth="max-w-md"
-      zIndex={80}
+      zIndex={110}
       usePortal
       backdropClass="bg-black/50"
       className="p-6"

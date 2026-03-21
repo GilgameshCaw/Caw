@@ -391,6 +391,17 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
     return () => clearInterval(interval)
   }, [items])
 
+  // Helper to refresh following count after a follow action
+  // Don't reload the feed immediately — the follow is still processing on-chain.
+  // Just update the following count; the feed will refresh naturally.
+  const handleFollowChange = useCallback(() => {
+    if (activeToken?.username) {
+      apiFetch<{ followingCount: number }>(`/api/users/${activeToken.username}`)
+        .then(response => setFollowingCount(response.followingCount))
+        .catch(err => console.error('Failed to refetch following count:', err))
+    }
+  }, [activeToken?.username])
+
   // render
   if (error)   return <div className="text-red-400">Error loading feed: {error}</div>
   if (items.length === 0 && loading) return (
@@ -402,17 +413,6 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
   )
   // Always show suggested users on Following tab
   const showSuggestedUsers = filter === 'Following'
-
-  // Helper to refresh following count after a follow action
-  const handleFollowChange = () => {
-    loadPage(true)
-    // Refetch following count after follow change
-    if (activeToken?.username) {
-      apiFetch<{ followingCount: number }>(`/api/users/${activeToken.username}`)
-        .then(response => setFollowingCount(response.followingCount))
-        .catch(err => console.error('Failed to refetch following count:', err))
-    }
-  }
 
   if (items.length === 0) {
     // Show suggested users when Following feed is empty

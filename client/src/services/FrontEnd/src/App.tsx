@@ -10,11 +10,15 @@ import { useInsufficientStakeStore } from '~/store/insufficientStakeStore'
 import VerifyWalletModal from '~/components/modals/VerifyWalletModal'
 import TransferNFTModal from '~/components/modals/TransferNFTModal'
 import SyncTransferModal from '~/components/modals/SyncTransferModal'
+import OnboardingGuard from '~/components/OnboardingGuard'
+import QuickSignRenewModal from '~/components/modals/QuickSignRenewModal'
+import { useSessionSpendSync } from '~/hooks/useSessionSpendSync'
 
 function App() {
   useCawonceSync();
   useTxQueueMonitor();
   useClientConfig(CLIENT_ID); // Fetch client config on init for dynamic tip calculation
+  useSessionSpendSync(); // Sync on-chain session spending on load
 
   const stakeModal = useInsufficientStakeStore()
 
@@ -32,8 +36,11 @@ function App() {
         currentAmount={stakeModal.currentAmount}
         requiredAmount={stakeModal.requiredAmount}
         actionType={stakeModal.actionType}
+        onStake={stakeModal.onStake}
       />
+      <OnboardingGuard />
       <VerifyWalletModal />
+      <QuickSignRenewModal />
       <TransferNFTModal />
       <SyncTransferModal />
     </BrowserRouter>

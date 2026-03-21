@@ -96,6 +96,7 @@ const UsernameSvg: React.FC<UsernameSvgProps> = ({ username }) => {
       >
         {username}
       </text>
+      <rect x="0.5" y="0.5" width="269" height="269" rx="22" ry="22" fill="none" stroke="rgba(240,177,0,0.3)" strokeWidth="1"/>
     </svg>
   );
 };

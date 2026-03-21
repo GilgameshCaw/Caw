@@ -18,11 +18,14 @@ import { cawNameAbi, cawNameL2Abi, cawNameQuoterAbi } from "~/../../../abi/gener
 import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_L2_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from "~/../../../abi/addresses"
 import { maxUint256, parseUnits, formatUnits, erc20Abi } from "viem";
 import MainLayout from '~/layouts/MainLayout'
-import { sepolia, baseSepolia } from 'wagmi/chains'
 import { chains } from '~/config/chains'
-import { Link } from 'react-router-dom'
 import { useTheme } from '~/hooks/useTheme'
 import { HiOutlineTrendingUp, HiOutlineTrendingDown, HiOutlineInformationCircle, HiQuestionMarkCircle } from 'react-icons/hi'
+import Tooltip from '~/components/Tooltip'
+import QuickSignModal from '~/components/modals/QuickSignModal'
+import LayerZeroStatus from '~/components/LayerZeroStatus'
+import StakingRewardsInfo from '~/components/StakingRewardsInfo'
+import { useSessionKeyStore } from '~/store/sessionKeyStore'
 
 type StakingTab = 'stake' | 'unstake' | 'info'
 
@@ -77,6 +80,8 @@ const Staking = () => {
   const [isStakePending, setIsStakePending] = useState(false)
   const [isApprovePending, setIsApprovePending] = useState(false)
   const [lastStakedAt, setLastStakedAt] = useState<Date | null>(null)
+  const [showQuickSignModal, setShowQuickSignModal] = useState(false)
+  const hasSeenPrompt = useSessionKeyStore(s => s.hasSeenPrompt)
   const activeToken = useActiveToken()
   const tokenId = activeToken?.tokenId
   const { address, isConnected } = useAccount()
@@ -235,8 +240,51 @@ const Staking = () => {
     setActiveTab(getActiveTabFromPath())
   }, [location.pathname])
 
+  // Poll for updated balances after a recent stake (cross-chain via LayerZero takes time)
+  useEffect(() => {
+    if (!recentStakeTime) return
+
+    const fiveMinutesMs = 5 * 60 * 1000
+    const elapsed = Date.now() - recentStakeTime
+    if (elapsed >= fiveMinutesMs) return
+
+    const interval = setInterval(() => {
+      const now = Date.now()
+      if (now - recentStakeTime >= fiveMinutesMs) {
+        // Stop polling after 5 minutes
+        setRecentStakeTime(null)
+        localStorage.removeItem('lastStakeTime')
+        clearInterval(interval)
+        return
+      }
+      refetchTokenData?.()
+      refetchBalance()
+    }, 10_000) // Poll every 10 seconds
+
+    return () => clearInterval(interval)
+  }, [recentStakeTime, refetchTokenData, refetchBalance])
+
   const insufficientBalance = !balance || parseUnits(amount || "0", 18) > balance
   const needsApproval = !allowance || parseUnits(amount || "0", 18) > allowance
+
+  // Generate preset amount buttons based on what the user can afford
+  // Returns up to 5 highest affordable values from the series: 10K, 100K, 1M, 10M, 100M, 1B, 10B, 100B, 1T, 10T, 100T
+  const getPresetAmounts = (maxBalance: number): number[] => {
+    const allPresets = [
+      10_000, 100_000, 1_000_000, 10_000_000, 100_000_000,
+      1_000_000_000, 10_000_000_000, 100_000_000_000,
+      1_000_000_000_000, 10_000_000_000_000, 100_000_000_000_000
+    ]
+    return allPresets.filter(v => v <= maxBalance).slice(-5)
+  }
+
+  const formatPresetLabel = (value: number): string => {
+    if (value >= 1_000_000_000_000) return `${value / 1_000_000_000_000}T`
+    if (value >= 1_000_000_000) return `${value / 1_000_000_000}B`
+    if (value >= 1_000_000) return `${value / 1_000_000}M`
+    if (value >= 1_000) return `${value / 1_000}K`
+    return value.toString()
+  }
 
   // Use real data from activeToken if available
   const mockData = useMemo(() => {
@@ -335,6 +383,11 @@ const Staking = () => {
         } catch (err) {
           console.error('[Staking] Failed to record stake timestamp:', err)
         }
+      }
+
+      // Prompt user to enable Quick Sign after staking
+      if (!hasSeenPrompt) {
+        setShowQuickSignModal(true)
       }
     },
     onError: (err) => {
@@ -495,34 +548,7 @@ const Staking = () => {
         const hasRecentStake = (recentStakeTime && recentStakeTime > fiveMinutesAgo) ||
                                (lastStakedAt && lastStakedAt.getTime() > fiveMinutesAgo)
         return hasRecentStake && address && (
-          <div className={`p-3 rounded-lg border transition-all duration-300 ${
-            isDark ? 'bg-blue-500/10 border-blue-500/30' : 'bg-blue-50 border-blue-200'
-          }`}>
-            <div className="flex items-start gap-2">
-              <div className={`mt-0.5 text-sm ${isDark ? 'text-blue-300' : 'text-blue-600'}`}>ℹ️</div>
-              <div className="flex-1">
-                <p className={`text-xs leading-relaxed transition-colors duration-300 ${
-                  isDark ? 'text-blue-200' : 'text-blue-800'
-                }`}>
-                  Waiting for your staked CAW to appear?
-                  <br />
-                  Cross-chain transfers might be processing in the background.
-                  <br />
-                  <br />
-                  <a
-                    href={`https://${chains.l2.chainId === baseSepolia.id ? 'testnet.' : ''}layerzeroscan.com/address/${address}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={`font-semibold hover:underline ${
-                      isDark ? 'text-blue-300' : 'text-blue-600'
-                    }`}
-                  >
-                    Check status here →
-                  </a>
-                </p>
-              </div>
-            </div>
-          </div>
+          <LayerZeroStatus address={address} isDark={isDark} />
         )
       })()}
 
@@ -533,6 +559,25 @@ const Staking = () => {
         }`}>
           Amount to Stake
         </label>
+        {getPresetAmounts(mockData.availableBalance).length > 0 && (
+          <div className="flex flex-wrap gap-2 my-3">
+            {getPresetAmounts(mockData.availableBalance).map(preset => (
+              <button
+                key={preset}
+                onClick={() => setAmount(preset.toString())}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer ${
+                  parseFloat(amount) === preset
+                    ? 'bg-yellow-500 text-black'
+                    : isDark
+                      ? 'bg-white/10 text-white hover:bg-white/20'
+                      : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
+                }`}
+              >
+                {formatPresetLabel(preset)}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="relative">
           <input
             type="number"
@@ -686,31 +731,7 @@ const Staking = () => {
           new Date(w.updatedAt).getTime() > oneHourAgo
         )
         return hasRecentCompletedWithdrawals && address && (
-          <div className={`p-3 rounded-lg border transition-all duration-300 ${
-            isDark ? 'bg-blue-500/10 border-blue-500/30' : 'bg-blue-50 border-blue-200'
-          }`}>
-            <div className="flex items-start gap-2">
-              <div className={`mt-0.5 text-sm ${isDark ? 'text-blue-300' : 'text-blue-600'}`}>ℹ️</div>
-              <div className="flex-1">
-                <p className={`text-xs leading-relaxed transition-colors duration-300 ${
-                  isDark ? 'text-blue-200' : 'text-blue-800'
-                }`}>
-                  Waiting for your unstaked CAW? Cross-chain transfers might be processing in the background.
-                  <br />
-                  <a
-                    href={`https://${chains.l2.chainId === baseSepolia.id ? 'testnet.' : ''}layerzeroscan.com/address/${address}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className={`font-semibold hover:underline ${
-                      isDark ? 'text-blue-300' : 'text-blue-600'
-                    }`}
-                  >
-                    Check status here →
-                  </a>
-                </p>
-              </div>
-            </div>
-          </div>
+          <LayerZeroStatus address={address} message="Waiting for your unstaked CAW?" isDark={isDark} />
         )
       })()}
 
@@ -759,6 +780,25 @@ const Staking = () => {
         }`}>
           Amount to Unstake
         </label>
+        {getPresetAmounts(mockData.stakedAmount).length > 0 && (
+          <div className="flex flex-wrap gap-2 my-3">
+            {getPresetAmounts(mockData.stakedAmount).map(preset => (
+              <button
+                key={preset}
+                onClick={() => setAmount(preset.toString())}
+                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer ${
+                  parseFloat(amount) === preset
+                    ? 'bg-yellow-500 text-black'
+                    : isDark
+                      ? 'bg-white/10 text-white hover:bg-white/20'
+                      : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
+                }`}
+              >
+                {formatPresetLabel(preset)}
+              </button>
+            ))}
+          </div>
+        )}
         <div className="relative">
           <input
             type="number"
@@ -928,35 +968,7 @@ const Staking = () => {
           }`}>
             CAW Staking
           </h1>
-          <div className={`p-4 rounded-lg border transition-all duration-300 ${
-            isDark ? 'bg-yellow-500/10 border-white/20' : 'bg-yellow-50 border-gray-300'
-          }`}>
-            <h3 className={`text-base font-semibold mb-3 transition-colors duration-300 ${
-              isDark ? 'text-white' : 'text-gray-900'
-            }`}>
-              Earn rewards from every action across the protocol:
-            </h3>
-            <ul className={`text-sm space-y-2 transition-colors duration-300 ${
-              isDark ? 'text-gray-300' : 'text-gray-700'
-            }`}>
-              <li className="flex justify-between items-start">
-                <span><span className={`font-semibold ${isDark ? 'text-yellow-300' : 'text-yellow-700'}`}>Post a CAW:</span> 5,000 CAW</span>
-                <span className={`text-xs ml-2 ${isDark ? 'text-yellow-500/70' : 'text-yellow-600'}`}>100% to stakers</span>
-              </li>
-              <li className="flex justify-between items-start">
-                <span><span className={`font-semibold ${isDark ? 'text-yellow-300' : 'text-yellow-700'}`}>Like a CAW:</span> 2,000 CAW</span>
-                <span className={`text-xs ml-2 ${isDark ? 'text-yellow-500/70' : 'text-yellow-600'}`}>80% to poster, 20% to stakers</span>
-              </li>
-              <li className="flex justify-between items-start">
-                <span><span className={`font-semibold ${isDark ? 'text-yellow-300' : 'text-yellow-700'}`}>ReCAW:</span> 4,000 CAW</span>
-                <span className={`text-xs ml-2 ${isDark ? 'text-yellow-500/70' : 'text-yellow-600'}`}>50% to poster, 50% to stakers</span>
-              </li>
-              <li className="flex justify-between items-start">
-                <span><span className={`font-semibold ${isDark ? 'text-yellow-300' : 'text-yellow-700'}`}>Follow:</span> 30,000 CAW</span>
-                <span className={`text-xs ml-2 ${isDark ? 'text-yellow-500/70' : 'text-yellow-600'}`}>80% to followed, 20% to stakers</span>
-              </li>
-            </ul>
-          </div>
+          <StakingRewardsInfo isDark={isDark} />
         </div>
 
         {/* Active Account */}
@@ -1003,17 +1015,9 @@ const Staking = () => {
               isDark ? 'border-white/20' : 'border-gray-300'
             }`} style={{ paddingTop: '10px' }}>
               {/* Question mark icon in top right */}
-              <div className="absolute top-1.5 right-1.5 group">
+              <Tooltip text="You must unstake your CAW to withdraw it" position="top" align="end" className="absolute top-1.5 right-1.5">
                 <HiQuestionMarkCircle className={`w-4 h-4 cursor-help ${isDark ? 'text-gray-400' : 'text-gray-500'}`} />
-                <div className={`absolute bottom-full right-0 mb-2 px-3 py-2 text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 z-50 ${
-                  isDark ? 'bg-white text-black' : 'bg-gray-900 text-white'
-                }`}>
-                  You must unstake your CAW to withdraw it
-                  <div className={`absolute top-full right-2 border-4 border-transparent ${
-                    isDark ? 'border-t-white' : 'border-t-gray-900'
-                  }`}></div>
-                </div>
-              </div>
+              </Tooltip>
               <div className={`text-3xl font-bold transition-colors duration-300 text-center flex-1 flex items-center ${
                 isDark ? 'text-yellow-200' : 'text-yellow-800'
               }`}>
@@ -1110,6 +1114,10 @@ const Staking = () => {
           {activeTab === 'info' && renderInfoPanel()}
         </div>
       </div>
+      <QuickSignModal
+        isOpen={showQuickSignModal}
+        onClose={() => setShowQuickSignModal(false)}
+      />
     </MainLayout>
   )
 }

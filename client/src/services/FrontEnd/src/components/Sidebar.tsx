@@ -1,10 +1,11 @@
 // src/services/FrontEnd/src/components/Sidebar.tsx
 import React, { useEffect, useState } from 'react'
-import { NavLink }              from 'react-router-dom'
+import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import ProfileChooser           from '~/components/ProfileChooser'
 import { fetchTxPage }          from '../api/txs'
 import { useTokenDataStore, useActiveToken } from "~/store/tokenDataStore";
 import { useTheme } from "~/hooks/useTheme";
+import { useDmIdentity } from "~/hooks/useDmIdentity";
 
 
 import { 
@@ -24,13 +25,56 @@ import {
   HiOutlineMoon
 } from 'react-icons/hi'
 import cawLogo from '~/assets/images/caw-logo.png'
+import { useInstanceStore } from '~/store/instanceStore'
+import { API_HOST } from '~/api/client'
 
 const links = ['Home','Explore','Notifications','Messages','Profile'] as const
+
+/**
+ * Shows which API the frontend is connected to, if it's not the current domain.
+ * Only visible when using a fallback or discovered instance.
+ */
+function ApiHostIndicator() {
+  const activeApiHost = useInstanceStore(s => s.activeApiHost)
+  const { isDark } = useTheme()
+
+  if (!activeApiHost) return null
+
+  // Don't show if the active host matches the current origin or VITE_API_HOST
+  const currentOrigin = window.location.origin
+  if (
+    activeApiHost === '' ||
+    activeApiHost === currentOrigin ||
+    activeApiHost === API_HOST
+  ) return null
+
+  // Extract just the hostname for display
+  let displayHost: string
+  try {
+    displayHost = new URL(activeApiHost).host
+  } catch {
+    displayHost = activeApiHost
+  }
+
+  return (
+    <div className={`mt-1 ml-3 flex items-center gap-1.5 text-xs ${
+      isDark ? 'text-yellow-500/70' : 'text-amber-600/70'
+    }`}>
+      <span className="inline-block w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse" />
+      <span className="truncate max-w-[160px]" title={activeApiHost}>
+        via {displayHost}
+      </span>
+    </div>
+  )
+}
 
 const Sidebar: React.FC = () => {
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const activeToken = useActiveToken()
   const { isDark, toggle } = useTheme()
+  const { hasIdentity: dmEnabled } = useDmIdentity(activeToken?.tokenId)
+  const navigate = useNavigate()
+  const location = useLocation()
 
   // Helper function for consistent NavLink styling
   const getNavLinkClasses = (isActive: boolean) => {
@@ -76,6 +120,7 @@ const Sidebar: React.FC = () => {
               CAW
             </span>
           </NavLink>
+          <ApiHostIndicator />
         </div>
 
         {/* Navigation */}
@@ -111,11 +156,23 @@ const Sidebar: React.FC = () => {
 
           <NavLink
             to="/messages"
+            onClick={(e) => {
+              // If already on any /messages route, force navigate to inbox
+              if (location.pathname.startsWith('/messages')) {
+                e.preventDefault()
+                navigate('/messages')
+              }
+            }}
             className={({ isActive }) =>
-              `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+              `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive || location.pathname.startsWith('/messages/'))}`
             }
           >
-            <HiOutlineChat className="w-7 h-7 sm:w-7 sm:h-7" />
+            <div className="relative">
+              <HiOutlineChat className="w-7 h-7 sm:w-7 sm:h-7" />
+              {activeToken && dmEnabled === false && (
+                <span className={`absolute -top-1 -right-1 w-3 h-3 bg-yellow-500 rounded-full border-2 ${isDark ? 'border-black' : 'border-white'}`} />
+              )}
+            </div>
             <span className="font-medium text-lg sm:text-lg">Messages</span>
           </NavLink>
 
@@ -156,7 +213,7 @@ const Sidebar: React.FC = () => {
             }
           >
             <HiOutlineColorSwatch className="w-7 h-7 sm:w-7 sm:h-7" />
-            <span className="font-medium text-lg sm:text-lg">Mint</span>
+            <span className="font-medium text-lg sm:text-lg">Usernames</span>
           </NavLink>
 
           <NavLink

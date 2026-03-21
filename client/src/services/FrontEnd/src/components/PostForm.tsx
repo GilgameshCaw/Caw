@@ -13,6 +13,7 @@ import { BsWallet } from 'react-icons/bs'
 import MediaUpload from './MediaUpload'
 import type { MediaType, StorageType } from './MediaUpload'
 import { calculateOnChainCost } from '~/utils/imageUtils'
+import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import { apiFetch } from '~/api/client'
 import { HiCalendar, HiClock, HiX, HiPhotograph } from 'react-icons/hi'
@@ -62,6 +63,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
 
   const { isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
+  const hasActiveSession = useHasActiveSession();
   const connections = useConnections();
   const { isDark } = useTheme()
 
@@ -116,7 +118,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   // Check if the user owns the selected token
   const isTokenOwner = activeToken && address && activeToken.owner?.toLowerCase() === address.toLowerCase();
   const hasNoToken = !activeToken?.tokenId;
-  const canPost = !hasNoToken && isTokenOwner && !wrongChain && isConnected;
+  const canPost = !hasNoToken && (hasActiveSession || (isTokenOwner && !wrongChain && isConnected));
 
   const handleMediaSelected = async (media: any[]) => {
     // Check if any image was just toggled to on-chain (compare with current state)
@@ -951,9 +953,12 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
 
     const response = await signAndSubmit(params)
 
+    // If signAndSubmit returned null (e.g. insufficient stake modal), don't clear the form
+    if (!response) return
+
     // Only add pending post AFTER signing succeeds (not before)
     // This prevents showing the post before user confirms the signature
-    if (response && !replyTo && activeToken) {
+    if (!replyTo && activeToken) {
       const tempId = addPendingPost({
         content: finalText,
         username: activeToken.username,
@@ -1166,7 +1171,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             </div>
 
             {/* Right side - Action buttons (Connect/Switch/Post/etc.) */}
-            { !isConnected ? (
+            { !isConnected && !hasActiveSession ? (
               <button
                 className="px-3 py-1.5 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer flex items-center justify-center gap-1"
                 onClick={openConnectModal}
@@ -1174,7 +1179,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                 <BsWallet className="w-3 h-3" />
                 Connect
               </button>
-            ) : wrongChain ? (
+            ) : !hasActiveSession && wrongChain ? (
               <button className="px-3 py-1.5 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer" onClick={handleSwitchChain}>
                 Switch
               </button>
@@ -1190,9 +1195,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                 className="px-3 py-1.5 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer"
                 disabled={(!text && selectedMedia.length === 0) || isOverLimit || !canPost || isProcessingOnChain || hasPendingUploads || isSubmitting}
                 onClick={hasFailedUploads ? handleRetryFailedUploads : hasUnuploadedOnChainImages ? handleUploadOnChain : handleSubmit}
-                title={!isTokenOwner && activeTokenId ? 'You do not own this token' : hasPendingUploads ? 'Waiting for upload to confirm...' : isSubmitting ? 'Waiting for signature...' : ''}
+                title={!isTokenOwner && !hasActiveSession && activeTokenId ? 'You do not own this token' : hasPendingUploads ? 'Waiting for upload to confirm...' : isSubmitting ? 'Waiting for signature...' : ''}
               >
-                {!isTokenOwner && activeTokenId ? 'Wrong Address' : isSubmitting ? 'Signing...' : isProcessingOnChain ? 'Uploading...' : hasPendingUploads ? 'Pending...' : hasFailedUploads ? 'Retry' : hasUnuploadedOnChainImages ? 'Upload' : replyTo ? 'Reply' : 'Post'}
+                {!isTokenOwner && !hasActiveSession && activeTokenId ? 'Wrong Address' : isSubmitting ? 'Signing...' : isProcessingOnChain ? 'Uploading...' : hasPendingUploads ? 'Pending...' : hasFailedUploads ? 'Retry' : hasUnuploadedOnChainImages ? 'Upload' : replyTo ? 'Reply' : 'Post'}
               </button>
             )}
           </div>
@@ -1526,15 +1531,15 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               )}
             </div>
 
-            { !isConnected ? (
-            <button 
-              className="px-5 py-2 bg-yellow-500 text-black font-semibold text-base rounded-full hover:bg-yellow-400 transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer flex items-center justify-center gap-2" 
+            { !isConnected && !hasActiveSession ? (
+            <button
+              className="px-5 py-2 bg-yellow-500 text-black font-semibold text-base rounded-full hover:bg-yellow-400 transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer flex items-center justify-center gap-2"
               onClick={openConnectModal}
             >
               <BsWallet className="w-4 h-4" />
               Connect Wallet
             </button>
-          ) : wrongChain ? (
+          ) : !hasActiveSession && wrongChain ? (
             <button className="px-5 py-2 bg-yellow-500 text-black font-semibold text-base rounded-full hover:bg-yellow-400 transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer" onClick={handleSwitchChain}>
               Switch Network
             </button>
@@ -1543,9 +1548,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                 className="px-5 py-2 bg-yellow-500 text-black font-semibold text-base rounded-full hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer"
                 disabled={(!text && selectedMedia.length === 0) || isOverLimit || !canPost || isProcessingOnChain || hasPendingUploads || isSubmitting}
                 onClick={hasFailedUploads ? handleRetryFailedUploads : hasUnuploadedOnChainImages ? handleUploadOnChain : handleSubmit}
-                title={!isTokenOwner && activeTokenId ? 'You do not own this token' : hasNoToken ? 'Please select a token' : hasPendingUploads ? 'Waiting for upload to confirm...' : isSubmitting ? 'Waiting for signature...' : ''}
+                title={!isTokenOwner && !hasActiveSession && activeTokenId ? 'You do not own this token' : hasNoToken ? 'Please select a token' : hasPendingUploads ? 'Waiting for upload to confirm...' : isSubmitting ? 'Waiting for signature...' : ''}
               >
-                {!isTokenOwner && activeTokenId ? 'Wrong Address' : hasNoToken ? 'No Token' : isSubmitting ? 'Signing...' : isProcessingOnChain ? 'Uploading...' : hasPendingUploads ? 'Pending...' : hasFailedUploads ? 'Retry' : hasUnuploadedOnChainImages ? 'Upload' : replyTo ? 'Reply' : 'Post'}
+                {!isTokenOwner && !hasActiveSession && activeTokenId ? 'Wrong Address' : hasNoToken ? 'No Token' : isSubmitting ? 'Signing...' : isProcessingOnChain ? 'Uploading...' : hasPendingUploads ? 'Pending...' : hasFailedUploads ? 'Retry' : hasUnuploadedOnChainImages ? 'Upload' : replyTo ? 'Reply' : 'Post'}
               </button>
             ) }
           </div>

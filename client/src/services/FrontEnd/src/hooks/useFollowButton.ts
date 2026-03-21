@@ -3,6 +3,7 @@ import { useSignAndSubmitAction } from '~/api/actions'
 import { useActiveToken, useTokenDataStore } from '~/store/tokenDataStore'
 import { useAccount } from 'wagmi'
 import { apiFetch } from '~/api/client'
+import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 
 export interface UseFollowButtonParams {
   targetUserId: number
@@ -34,9 +35,10 @@ export function useFollowButton({
   const activeToken = useActiveToken()
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const { address, isConnected } = useAccount()
+  const hasActiveSession = useHasActiveSession()
   const [isFollowing, setIsFollowing] = useState(initialIsFollowing)
   const [isPending, setPending] = useState(initialIsPending)
-  const [isPolling, setIsPolling] = useState(false)
+  const [isPolling, setIsPolling] = useState(initialIsPending) // Start polling immediately if mounting in pending state
   const [hasUserAction, setHasUserAction] = useState(false) // Track if user has taken action
   const [awaitingConnection, setAwaitingConnection] = useState(false) // Track if waiting for wallet connection
   const pendingActionRef = useRef<'follow' | 'unfollow' | null>(null) // Store the pending action type
@@ -44,25 +46,25 @@ export function useFollowButton({
   const pollStartTimeRef = useRef<number | null>(null)
   const isSubmittingRef = useRef(false) // Prevent duplicate submissions
 
-  // Check if connected to wrong wallet
-  const wrongWallet = activeToken && address
+  // Check if connected to wrong wallet (skip if session key active)
+  const wrongWallet = hasActiveSession ? false : (activeToken && address
     ? activeToken.address.toLowerCase() !== address.toLowerCase()
-    : false
+    : false)
 
-  // Sync with prop changes - but don't override user actions
+  // Sync with prop changes - only when the prop itself changes, never when hasUserAction changes
   useEffect(() => {
-    // Only sync from props if user hasn't taken action
     if (!hasUserAction) {
       setIsFollowing(initialIsFollowing)
     }
-  }, [initialIsFollowing, hasUserAction])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialIsFollowing])
 
   useEffect(() => {
-    // Only sync from props if user hasn't taken action
     if (!hasUserAction) {
       setPending(initialIsPending)
     }
-  }, [initialIsPending, hasUserAction])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialIsPending])
 
   // Handle wallet connection while awaiting - submit the action when wallet connects
   useEffect(() => {
@@ -71,8 +73,8 @@ export function useFollowButton({
       return
     }
 
-    // Check if the connected wallet owns this token
-    if (activeToken.address?.toLowerCase() !== address?.toLowerCase()) {
+    // Check if the connected wallet owns this token (skip if session key active)
+    if (!hasActiveSession && activeToken.address?.toLowerCase() !== address?.toLowerCase()) {
       return
     }
 
@@ -136,7 +138,7 @@ export function useFollowButton({
       pollStartTimeRef.current = Date.now()
     }
 
-    const POLL_TIMEOUT = 2 * 60 * 1000 // 2 minutes
+    const POLL_TIMEOUT = 5 * 60 * 1000 // 5 minutes
 
     const checkStatus = async () => {
       try {
@@ -163,33 +165,58 @@ export function useFollowButton({
           `/api/users/follow-status?followerId=${effectiveTokenId}&followingId=${targetUserId}`
         )
 
-        if (!status.isPending) {
-          // Status is no longer pending
+        if (status.isPending) {
+          // Still processing — keep polling
+          return
+        }
+
+        if (status.isFollowing) {
+          // Confirmed as following — success
+          setPending(false)
+          setIsFollowing(true)
+          pendingActionRef.current = null
+          onFollowStateChange?.(true)
+          setHasUserAction(false)
+        } else if (!isFollowing) {
+          // We were trying to unfollow, and server says not following — success
+          setPending(false)
+          setIsFollowing(false)
+          pendingActionRef.current = null
+          onFollowStateChange?.(false)
+          setHasUserAction(false)
+        } else if (pollStartTimeRef.current && Date.now() - pollStartTimeRef.current < 90_000) {
+          // Waiting for a follow — record may not exist yet (on-chain processing can take 20-60s)
+          return
+        } else {
+          // Enough time has passed — accept the server state
           setPending(false)
           setIsFollowing(status.isFollowing)
-          setHasUserAction(false) // Allow prop sync again
           pendingActionRef.current = null
           onFollowStateChange?.(status.isFollowing)
-
-          // Clear the interval and stop polling
-          if (pollIntervalRef.current) {
-            clearInterval(pollIntervalRef.current)
-            pollIntervalRef.current = null
-          }
-          pollStartTimeRef.current = null
-          setIsPolling(false)
+          setHasUserAction(false)
         }
+
+        // Clear the interval and stop polling
+        if (pollIntervalRef.current) {
+          clearInterval(pollIntervalRef.current)
+          pollIntervalRef.current = null
+        }
+        pollStartTimeRef.current = null
+        setIsPolling(false)
       } catch (error) {
         // Ignore polling errors
       }
     }
 
-    // Start polling immediately now that transaction is submitted
-    checkStatus()
-    pollIntervalRef.current = setInterval(checkStatus, 2000)
+    // Delay first poll slightly — give the API time to create the record
+    const initialDelay = setTimeout(() => {
+      checkStatus()
+      pollIntervalRef.current = setInterval(checkStatus, 2000)
+    }, 1500)
 
     // Cleanup on unmount or when dependencies change
     return () => {
+      clearTimeout(initialDelay)
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current)
         pollIntervalRef.current = null
@@ -199,14 +226,12 @@ export function useFollowButton({
 
   const handleFollowClick = async () => {
     // Don't do anything if wrong wallet or pending
-    if (wrongWallet || isPending) {
-      return
-    }
+    if (wrongWallet || isPending) return
 
     const effectiveTokenId = activeTokenId || activeToken?.tokenId
 
-    // If no token OR wallet not connected, trigger wallet connection and track pending action
-    if (!effectiveTokenId || !activeToken || !isConnected) {
+    // If no token OR wallet not connected (and no session key), trigger wallet connection
+    if (!effectiveTokenId || !activeToken || (!isConnected && !hasActiveSession)) {
       const actionType = isFollowing ? 'unfollow' : 'follow'
       // Reset submitting ref for new action
       isSubmittingRef.current = false

@@ -4,13 +4,10 @@ import Sidebar from "~/components/Sidebar";
 import Trending from "~/components/Trending";
 import SearchBar from "~/components/SearchBar";
 import BugReportModal from "~/components/modals/BugReportModal";
-import MobilePostModal from "~/components/MobilePostModal";
 import { useTheme } from "~/hooks/useTheme";
+import Tooltip from "~/components/Tooltip";
 import { useState } from "react";
-import { useAccount } from "wagmi";
-import { useConnectModal } from "@rainbow-me/rainbowkit";
-import { HiOutlineMenu, HiOutlineX, HiOutlinePlus } from "react-icons/hi";
-import { BsWallet } from "react-icons/bs";
+import { HiOutlineMenu, HiOutlineX } from "react-icons/hi";
 import { Link } from "react-router-dom";
 import cawLogo from '~/assets/images/caw-logo.png';
 
@@ -22,9 +19,6 @@ const MainLayout = ({ children }: MainLayoutProps) => {
   const { isDark } = useTheme()
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [showBugReport, setShowBugReport] = useState(false)
-  const [isMobilePostModalOpen, setIsMobilePostModalOpen] = useState(false)
-  const { isConnected } = useAccount()
-  const { openConnectModal } = useConnectModal()
   
   return (
     <div className={`max-h-screen min-h-screen w-full max-w-[1050px] flex m-auto transition-all duration-300 ${
@@ -108,49 +102,42 @@ const MainLayout = ({ children }: MainLayoutProps) => {
       </div>
       <Modals />
 
-      {/* Floating Action Button - Mobile only */}
-      <div className="md:hidden fixed bottom-5 right-5 z-30 transform-none">
-        <button
-          onClick={isConnected ? () => setIsMobilePostModalOpen(true) : openConnectModal}
-          className="w-14 h-14 bg-yellow-500 hover:bg-yellow-400 text-black rounded-full shadow-lg hover:shadow-xl transition-all duration-200 flex items-center justify-center"
-        >
-          {isConnected ? (
-            <HiOutlinePlus className="w-6 h-6" />
-          ) : (
-            <BsWallet className="w-6 h-6" />
-          )}
-        </button>
-      </div>
-      <MobilePostModal
-        isOpen={isMobilePostModalOpen}
-        onClose={() => setIsMobilePostModalOpen(false)}
-      />
-
       {/* Floating bug report button */}
-      <button
-        onClick={() => setShowBugReport(true)}
-        className={`fixed bottom-5 left-5 md:right-5 md:left-auto z-40 w-9 h-9 rounded-full flex items-center justify-center shadow-lg transition-all cursor-pointer opacity-60 hover:opacity-100 ${
-          isDark
-            ? 'bg-zinc-800 hover:bg-zinc-700 text-white/70'
-            : 'bg-gray-200 hover:bg-gray-300 text-gray-500'
-        }`}
-        title="Report a bug"
-      >
+      <Tooltip text="Report a bug" position="top" align="start" className="fixed bottom-5 left-5 md:right-5 md:left-auto z-40">
+        <button
+          onClick={() => setShowBugReport(true)}
+          className={`w-9 h-9 rounded-full flex items-center justify-center shadow-lg transition-all cursor-pointer opacity-60 hover:opacity-100 ${
+            isDark
+              ? 'bg-zinc-800 hover:bg-zinc-700 text-white/70'
+              : 'bg-gray-200 hover:bg-gray-300 text-gray-500'
+          }`}
+        >
         <svg className="w-[18px] h-[18px]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round">
-          {/* Body */}
-          <ellipse cx="12" cy="15" rx="5" ry="6" />
           {/* Head */}
-          <circle cx="12" cy="7" r="3" />
+          <circle cx="12" cy="7.5" r="2.5" fill="currentColor" />
           {/* Antennae */}
-          <path d="M10 5L8 2" />
-          <path d="M14 5L16 2" />
+          <path d="M10.5 5.5L9 2.5" />
+          <path d="M13.5 5.5L15 2.5" />
+          {/* Body */}
+          <ellipse cx="12" cy="15.5" rx="6" ry="6.5" fill="currentColor" opacity="0.15" />
+          <ellipse cx="12" cy="15.5" rx="6" ry="6.5" />
+          {/* Wing split */}
+          <line x1="12" y1="9" x2="12" y2="22" />
+          {/* Spots */}
+          <circle cx="9.5" cy="13" r="1.2" fill="currentColor" />
+          <circle cx="14.5" cy="13" r="1.2" fill="currentColor" />
+          <circle cx="10" cy="17.5" r="1.2" fill="currentColor" />
+          <circle cx="14" cy="17.5" r="1.2" fill="currentColor" />
           {/* Legs */}
-          <path d="M7 13H3" />
-          <path d="M7 17H4" />
-          <path d="M17 13H21" />
-          <path d="M17 17H20" />
+          <path d="M6.5 12.5L4 11" />
+          <path d="M6 15.5L3.5 16" />
+          <path d="M6.5 18.5L4.5 20.5" />
+          <path d="M17.5 12.5L20 11" />
+          <path d="M18 15.5L20.5 16" />
+          <path d="M17.5 18.5L19.5 20.5" />
         </svg>
-      </button>
+        </button>
+      </Tooltip>
       <BugReportModal isOpen={showBugReport} onClose={() => setShowBugReport(false)} />
     </div>
   );

@@ -37,6 +37,7 @@ import ContentWithHashtags from './ContentWithHashtags'
 import { formatEngagementCount } from '~/utils/numberFormat'
 import { apiFetch } from '~/api/client'
 import MuteWordsModal from './modals/MuteWordsModal'
+import Tooltip from '~/components/Tooltip'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import MuteConfirmModal, { shouldShowMuteConfirmModal } from './modals/MuteConfirmModal'
 import ReportPostModal, { ReportReason } from './modals/ReportPostModal'
@@ -730,7 +731,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
             {/* Three dots menu */}
             <div className="relative" ref={optionsMenuRef}>
-              <button
+              <Tooltip text="More options"><button
                 onClick={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
@@ -739,10 +740,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 className={`p-2 rounded-full transition-all duration-200 hover:bg-gray-500/10 cursor-pointer ${
                   isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-black'
                 }`}
-                title="More options"
               >
                 <HiOutlineDotsHorizontal className="w-5 h-5" />
-              </button>
+              </button></Tooltip>
             </div>
           </div>
 
@@ -840,19 +840,18 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               ) : (() => {
                 // Check if imageData contains URLs or base64 data
                 const collapseBtn = (
-                  <button
+                  <Tooltip text="Hide media"><button
                     onClick={(e) => {
                       e.preventDefault()
                       e.stopPropagation()
                       setImageCollapsed(true)
                     }}
                     className="absolute top-2 left-2 z-10 p-1 rounded-full bg-black/60 hover:bg-black/80 text-white/70 hover:text-white transition-all cursor-pointer"
-                    title="Hide media"
                   >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
                     </svg>
-                  </button>
+                  </button></Tooltip>
                 )
 
                 if (useItem.imageData) {
@@ -947,7 +946,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           <div className="flex items-center justify-between" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center space-x-6">
               {/* Comments/Replies */}
-              <button
+              <Tooltip text={
+                  replyPending ? "Processing reply..." :
+                  item.status === 'PENDING' ? "Cannot reply to pending caw" :
+                  item.status === 'FAILED' ? "Cannot reply to failed caw" :
+                  "Reply"
+                }><button
                 className={`flex items-center space-x-2 transition-colors duration-300 ${
                   (item.status === 'PENDING' || item.status === 'FAILED')
                     ? 'cursor-not-allowed opacity-50'
@@ -959,12 +963,6 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 }`}
                 onClick={handleReply}
                 disabled={item.status === 'PENDING' || item.status === 'FAILED'}
-                title={
-                  replyPending ? "Processing reply..." :
-                  item.status === 'PENDING' ? "Cannot reply to pending caw" :
-                  item.status === 'FAILED' ? "Cannot reply to failed caw" :
-                  "Reply"
-                }
               >
                 {replyPending ? (
                   <div className="relative w-5 h-5 group">
@@ -980,11 +978,16 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 <span className={`text-sm ${(useItem.hasReplied || replyPending) ? 'text-blue-500' : ''}`}>
                   {formatEngagementCount(useItem.commentCount)}
                 </span>
-              </button>
+              </button></Tooltip>
 
               {/* Retweets */}
               <div className="relative">
-                <button
+                <Tooltip text={
+                    recawPending ? "Processing repost..." :
+                    item.status === 'PENDING' ? "Cannot recaw pending caw" :
+                    item.status === 'FAILED' ? "Cannot recaw failed caw" :
+                    "ReCaw"
+                  }><button
                   className={`group flex items-center space-x-2 transition-colors duration-300 ${
                     (item.status === 'PENDING' || item.status === 'FAILED' || recawPending)
                       ? 'cursor-not-allowed opacity-50'
@@ -1002,12 +1005,6 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     }
                   }}
                   disabled={item.status === 'PENDING' || item.status === 'FAILED' || recawPending}
-                  title={
-                    recawPending ? "Processing repost..." :
-                    item.status === 'PENDING' ? "Cannot recaw pending caw" :
-                    item.status === 'FAILED' ? "Cannot recaw failed caw" :
-                    "ReCaw"
-                  }
                 >
                   {(busyRecaw || recawPending) ? (
                     <div className="relative w-5 h-5 group">
@@ -1025,7 +1022,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   <span className={`text-sm transition-colors duration-300 ${
                     (useItem.hasRecawed || isRecawByCurrentUser) ? 'text-green-500' : ''
                   }`}>{formatEngagementCount(useItem.recawCount)}</span>
-                </button>
+                </button></Tooltip>
 
                 {showRecawMenu && (
                   <div
@@ -1062,7 +1059,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               </div>
 
               {/* Likes */}
-              <button
+              <Tooltip text={item.status === 'PENDING' ? "Cannot like pending caw" : item.status === 'FAILED' ? "Cannot like failed caw" : likePending ? "Processing like..." : "Like"}><button
                 className={`flex items-center space-x-2 transition-colors duration-300 ${
                   (item.status === 'PENDING' || item.status === 'FAILED')
                     ? 'cursor-not-allowed opacity-50'
@@ -1074,7 +1071,6 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 }`}
                 onClick={handleLike}
                 disabled={busyLike || likePending || item.status === 'PENDING' || item.status === 'FAILED'}
-                title={item.status === 'PENDING' ? "Cannot like pending caw" : item.status === 'FAILED' ? "Cannot like failed caw" : likePending ? "Processing like..." : "Like"}
               >
                 {(busyLike && !txSubmitted) ? (
                   // Just spinner while signing/submitting transaction
@@ -1093,41 +1089,39 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   <HiOutlineHeart className={`w-5 h-5 ${useItem.hasLiked ? 'fill-current' : ''}`} />
                 )}
                 <span className="text-sm">{formatEngagementCount(useItem.likeCount)}</span>
-              </button>
+              </button></Tooltip>
 
               {/* Views */}
-              <button
+              <Tooltip text="Views"><button
                 className={`flex items-center space-x-2 transition-colors duration-300 cursor-pointer ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
-                title="Views"
               >
                 <HiOutlineEye className="w-5 h-5" />
                 <span className="text-sm">{formatEngagementCount(useItem.viewCount || 0)}</span>
-              </button>
+              </button></Tooltip>
             </div>
 
             <div className="flex items-center space-x-4">
               {/* Bookmark (browser-only, stored in localStorage) */}
-              <button
+              <Tooltip text={isBookmarked ? "Remove bookmark" : "Save"}><button
                 onClick={handleBookmark}
                 className={`transition-colors duration-300 hover:text-yellow-500 cursor-pointer ${
                   isBookmarked
                     ? 'text-yellow-500'
                     : isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
-                title={isBookmarked ? "Remove bookmark" : "Save"}
               >
                 <Bookmark className={`w-5 h-5 transition-all duration-300 ${
                   isBookmarked
                     ? 'fill-yellow-500 stroke-yellow-500'
                     : isDark ? 'stroke-white stroke-[1.5]' : 'stroke-gray-600'
                 }`} />
-              </button>
+              </button></Tooltip>
 
               {/* Tip - hidden on own posts and pending/failed caws */}
               {item.status !== 'PENDING' && item.status !== 'FAILED' && (
-                <button
+                <Tooltip text="Tip"><button
                   onClick={(e) => {
                     e.preventDefault()
                     e.stopPropagation()
@@ -1138,7 +1132,6 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       ? 'text-yellow-500'
                       : isDark ? 'text-gray-400' : 'text-gray-600'
                   }`}
-                  title="Tip"
                 >
                   {tipPending ? (
                     <div className="relative w-5 h-5 group">
@@ -1153,11 +1146,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   ) : (
                     <HiOutlineCurrencyDollar className="w-5 h-5" />
                   )}
-                </button>
+                </button></Tooltip>
               )}
 
               {/* Share */}
-              <button
+              <Tooltip text="Share"><button
                 onClick={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
@@ -1166,12 +1159,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 className={`transition-colors duration-300 hover:text-blue-500 cursor-pointer ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
-                title="Share"
               >
                 <Share className={`w-5 h-5 transition-all duration-300 ${
                   isDark ? 'stroke-white stroke-[1.5]' : 'stroke-gray-600'
                 }`} />
-              </button>
+              </button></Tooltip>
             </div>
           </div>
 

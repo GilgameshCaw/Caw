@@ -21,6 +21,7 @@ import SearchResultsPage from "./pages/SearchResultsPage";
 import FaucetPage from "./pages/FaucetPage";
 import BugReportsAdmin from "./pages/BugReportsAdmin";
 import ReportsAdmin from "./pages/ReportsAdmin";
+import WelcomePage from "./pages/WelcomePage";
 import { Navigate } from "react-router-dom";
 
 
@@ -80,6 +81,10 @@ export default [
   },
   {
     path: "/messages",
+    component: <MessagesPage />,
+  },
+  {
+    path: "/messages/:username",
     component: <MessagesPage />,
   },
   {
@@ -169,5 +174,9 @@ export default [
   {
     path: "/admin/reports",
     component: <ReportsAdmin />,
+  },
+  {
+    path: "/welcome/:username",
+    component: <WelcomePage />,
   },
 ];

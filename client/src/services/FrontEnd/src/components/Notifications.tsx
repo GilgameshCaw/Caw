@@ -13,6 +13,7 @@ import {
   HiCheck,
   HiCurrencyDollar
 } from 'react-icons/hi'
+import Tooltip from '~/components/Tooltip'
 
 interface Actor {
   tokenId: number
@@ -412,14 +413,15 @@ const Notifications: React.FC = () => {
                       {notification.caw.content}
                     </p>
                   )}
-                  <p
-                    className={`text-xs mt-1 ${
-                      isDark ? 'text-white/40' : 'text-gray-500'
-                    }`}
-                    title={formatFullDateTime(notification.createdAt)}
-                  >
-                    {formatRelativeTime(notification.createdAt)}
-                  </p>
+                  <Tooltip text={formatFullDateTime(notification.createdAt)}>
+                    <p
+                      className={`text-xs mt-1 ${
+                        isDark ? 'text-white/40' : 'text-gray-500'
+                      }`}
+                    >
+                      {formatRelativeTime(notification.createdAt)}
+                    </p>
+                  </Tooltip>
                 </div>
                 <button
                   onClick={(e) => {

@@ -7,13 +7,17 @@ import UsernameSvg from "./UsernameSvg";
 import { Link } from 'react-router-dom'
 import { TokenData } from "~/types";
 import { useAccount } from "wagmi";
+import { useConnectModal } from '@rainbow-me/rainbowkit';
 import { Address } from "viem";
 import { useTheme } from "~/hooks/useTheme";
 import { apiFetch } from "~/api/client";
+import { useHasActiveSession } from '~/hooks/useHasActiveSession';
 import cawLogo from '~/assets/images/caw-logo.png';
 
 const ProfileChooser: React.FC = () => {
   const { isConnected, address } = useAccount();
+  const { openConnectModal } = useConnectModal();
+  const hasActiveSession = useHasActiveSession();
   const activeToken = useActiveToken()
   const lastAddress = useTokenDataStore(state => state.lastAddress);
   const activeTokenId = useTokenDataStore(state => state.activeTokenId);
@@ -66,7 +70,7 @@ const ProfileChooser: React.FC = () => {
     const hasAnyProfiles = Object.values(tokensByAddress).some(tokens => tokens.length > 0);
 
     // If no wallet connected and no profiles exist, show "Connect Wallet"
-    if (!isConnected && !hasAnyProfiles) {
+    if (!isConnected && !hasActiveSession && !hasAnyProfiles) {
       return (
         <div className="mb-2">
           <ConnectButton />
@@ -114,7 +118,7 @@ const ProfileChooser: React.FC = () => {
     // useEffect will fetch avatar when activeToken.tokenId changes
   };
 
-  const notCurrentAddress = address?.toLowerCase() != activeToken?.address?.toLowerCase();
+  const notCurrentAddress = !hasActiveSession && address?.toLowerCase() != activeToken?.address?.toLowerCase();
 
   // Normalize all addresses to lowercase to prevent duplicates with different cases
   const normalizedTokensByAddress: Record<Address, TokenData[]> = {}
@@ -228,13 +232,20 @@ const ProfileChooser: React.FC = () => {
                   {normalizedAddress == ownerAddress && (
                     <li className="text-xs text-center pt-1 pb-3">
                       <Link to={`/mint`} className="block">
-                        + Mint a username
+                        + Create new profile
                       </Link>
                     </li>
                   )}
               </ul>
             </li>
           ))}
+          {!isConnected && (
+            <li className="text-xs text-center pt-1 pb-3">
+              <button onClick={() => openConnectModal?.()} className="cursor-pointer">
+                + Connect wallet
+              </button>
+            </li>
+          )}
         </ul>
 
       )}

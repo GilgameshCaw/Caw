@@ -16,6 +16,7 @@ import { usePendingCawPolling, usePendingLikePolling, usePendingReplyPolling } f
 import SwitchChainModal from './modals/SwitchChainModal'
 import { chains } from '~/config/chains'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
+import Tooltip from '~/components/Tooltip'
 
 import { formatTimeAgo } from '~/utils/formatTimeAgo'
 
@@ -217,6 +218,7 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
             {/* Interaction icons - aligned with user info and content */}
             <div className="flex items-center space-x-6" onClick={(e) => e.stopPropagation()}>
               {/* Comments/Replies */}
+              <Tooltip text={replyPending ? "Processing reply..." : "Reply"}>
               <button
                 className={`flex items-center space-x-2 transition-colors duration-300 hover:text-blue-500 cursor-pointer ${
                   (item.hasReplied || replyPending)
@@ -224,7 +226,6 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
                     : isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
                 onClick={handleReply}
-                title={replyPending ? "Processing reply..." : "Reply"}
               >
                 {replyPending ? (
                   <div className="relative w-5 h-5 group">
@@ -241,9 +242,11 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
                   {item.commentCount}
                 </span>
               </button>
+              </Tooltip>
 
               {/* Retweets */}
               <div className="relative">
+                <Tooltip text="ReCaw">
                 <button
                   className={`group flex items-center space-x-2 transition-colors duration-300 hover:text-green-500 cursor-pointer ${
                     isRecawed
@@ -251,7 +254,6 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
                       : isDark ? 'text-gray-400' : 'text-gray-600'
                   }`}
                   onClick={e => { e.preventDefault(); e.stopPropagation(); setShowRecawMenu(show => !show) }}
-                  title="ReCaw"
                 >
                   <Recaw className={`w-5 h-5 transition-all duration-300 ${
                     isRecawed ? 'text-green-500' : ''
@@ -260,6 +262,7 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
                     isRecawed ? 'text-green-500' : ''
                   }`}>{item.recawCount}</span>
                 </button>
+                </Tooltip>
 
                 {showRecawMenu && (
                   <div
@@ -296,6 +299,7 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
               </div>
 
               {/* Likes */}
+              <Tooltip text={likePending ? "Processing like..." : "Like"}>
               <button
                 className={`flex items-center space-x-2 transition-colors duration-300 hover:text-red-500 cursor-pointer ${
                   item.hasLiked
@@ -304,7 +308,6 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
                 }`}
                 onClick={handleLike}
                 disabled={busyLike || likePending}
-                title={likePending ? "Processing like..." : "Like"}
               >
                 {(busyLike || likePending) ? (
                   // Spinner with checkmark for pending like
@@ -321,17 +324,19 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
                 )}
                 <span className="text-sm">{item.likeCount}</span>
               </button>
+              </Tooltip>
 
               {/* Views */}
+              <Tooltip text="Views">
               <button
                 className={`flex items-center space-x-2 transition-colors duration-300 cursor-pointer ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
-                title="Views"
               >
                 <HiOutlineEye className="w-5 h-5" />
                 <span className="text-sm">{item.viewCount || 0}</span>
               </button>
+              </Tooltip>
             </div>
           </div>
         </div>

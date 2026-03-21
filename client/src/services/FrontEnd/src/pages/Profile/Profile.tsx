@@ -7,8 +7,10 @@ import Feed             from '~/components/Feed'
 import { useTheme } from '~/hooks/useTheme'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useModalStore } from '~/store/modalStore'
-import { HiPencil, HiX, HiCamera, HiGlobe, HiLink, HiLocationMarker, HiOutlineMail, HiDotsHorizontal, HiOutlineCurrencyDollar } from 'react-icons/hi'
+import { HiPencil, HiX, HiCamera, HiGlobe, HiLink, HiLocationMarker, HiOutlineMail, HiDotsHorizontal, HiOutlineCurrencyDollar, HiOutlineLockClosed } from 'react-icons/hi'
 import { apiFetch } from '~/api/client'
+import { useDmIdentity } from '~/hooks/useDmIdentity'
+import { useDmClient } from '~/hooks/useDm'
 import { useAccount, useSwitchChain, useChainId } from 'wagmi'
 import { chains } from '~/config/chains'
 import { useSignAndSubmitAction } from '~/api/actions'
@@ -20,6 +22,7 @@ import { useFollowButton } from '~/hooks/useFollowButton'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import TipModal from '~/components/modals/TipModal'
 import { useTransferModalStore } from '~/store/transferModalStore'
+import Tooltip from '~/components/Tooltip'
 
 type ProfileTab = 'posts' | 'likes' | 'replies' | 'media'
 
@@ -95,6 +98,23 @@ export const Profile: React.FC = () => {
   const [updateCost, setUpdateCost] = useState(0)
 
   const isOnCorrectChain = currentChainId === chains.l2.chainId
+
+  // DM identity check for prompts
+  const { hasIdentity: ownDmEnabled } = useDmIdentity(activeToken?.tokenId)
+  const { hasIdentity: peerDmEnabled } = useDmIdentity(profileData?.tokenId)
+  const { initializeClient, isLoading: dmEnabling } = useDmClient(activeToken?.tokenId)
+  const [dmEnableError, setDmEnableError] = useState<string | null>(null)
+
+  const handleEnableDms = async () => {
+    setDmEnableError(null)
+    try {
+      await initializeClient()
+      // Identity will be detected by useDmIdentity on next poll; navigate to messages
+      navigate('/messages')
+    } catch (err) {
+      setDmEnableError(err instanceof Error ? err.message : 'Failed to enable DMs')
+    }
+  }
 
   // Follow button logic with hook
   const {
@@ -847,7 +867,7 @@ export const Profile: React.FC = () => {
                     </div>
                     
                     <div className="flex justify-center space-x-2">
-                      <button
+                      <Tooltip text="Tip"><button
                         onClick={() => setShowTipModal(true)}
                         className={`p-2 rounded-full border transition-all duration-200 cursor-pointer hover:bg-yellow-500/10 ${
                           tipPending || hasTipped
@@ -856,7 +876,6 @@ export const Profile: React.FC = () => {
                               ? 'border-white/60 text-white hover:text-yellow-500'
                               : 'border-black/60 text-black hover:text-yellow-500'
                         }`}
-                        title="Tip"
                       >
                         {tipPending ? (
                           <div className="relative w-5 h-5">
@@ -868,35 +887,36 @@ export const Profile: React.FC = () => {
                         ) : (
                           <HiOutlineCurrencyDollar className="w-5 h-5" />
                         )}
-                      </button>
-                      <button
+                      </button></Tooltip>
+                      <Tooltip text={peerDmEnabled === false ? "This user hasn't enabled DMs yet" : "Send Message"}><button
                         onClick={() => {
-                          // Navigate to messages page with the user's conversation
-                          // Create or find conversation with this user
-                          navigate(`/messages?user=${profileData?.username || displayUsername}`)
+                          navigate(`/messages/${profileData?.username || displayUsername}`)
                         }}
-                        className={`p-2 rounded-full border transition-all duration-200 cursor-pointer hover:bg-white/10 ${
+                        disabled={peerDmEnabled === false}
+                        className={`p-2 rounded-full border transition-all duration-200 ${
+                          peerDmEnabled === false
+                            ? 'opacity-40 cursor-not-allowed'
+                            : 'cursor-pointer hover:bg-white/10'
+                        } ${
                           isDark
                             ? 'border-white/60 text-white hover:bg-white/10'
                             : 'border-black/60 text-black hover:bg-black/10'
                         }`}
-                        title="Send Message"
                       >
                         <HiOutlineMail className="w-5 h-5" />
-                      </button>
+                      </button></Tooltip>
                       
                       <div className="relative">
-                        <button
+                        <Tooltip text="More options"><button
                           onClick={() => setShowOptionsMenu(!showOptionsMenu)}
                           className={`p-2 rounded-full border transition-all duration-200 cursor-pointer hover:bg-white/10 ${
                             isDark
                               ? 'border-white/60 text-white hover:bg-white/10'
                               : 'border-black/60 text-black hover:bg-black/10'
                           }`}
-                          title="More options"
                         >
                           <HiDotsHorizontal className="w-5 h-5" />
-                        </button>
+                        </button></Tooltip>
 
                         {/* Dropdown menu */}
                         {showOptionsMenu && (
@@ -940,6 +960,34 @@ export const Profile: React.FC = () => {
             </div>
           </div>
         </div>
+
+        {/* DM enablement banner - own profile */}
+        {isOwnProfile && activeToken && ownDmEnabled === false && (
+          <div className={`mx-6 mb-4 p-4 rounded-xl border transition-all duration-300 ${
+            isDark
+              ? 'bg-yellow-500/10 border-yellow-500/30'
+              : 'bg-yellow-50 border-yellow-200'
+          }`}>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-3">
+                <HiOutlineLockClosed className={`w-5 h-5 ${isDark ? 'text-yellow-400' : 'text-yellow-600'}`} />
+                <div>
+                  <p className={`font-medium ${isDark ? 'text-white' : 'text-black'}`}>Enable Direct Messages</p>
+                  <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                    {dmEnableError || 'Sign once to start receiving encrypted DMs from other users.'}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={handleEnableDms}
+                disabled={dmEnabling}
+                className={`px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-black font-semibold rounded-full transition-all duration-200 text-sm whitespace-nowrap ${dmEnabling ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+              >
+                {dmEnabling ? 'Enabling...' : 'Enable DMs'}
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Tabs */}
         <div className="px-6 mb-6">
