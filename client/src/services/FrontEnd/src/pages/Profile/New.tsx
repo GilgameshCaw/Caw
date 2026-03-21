@@ -1,6 +1,6 @@
 // src/pages/NewProfile.tsx
 import { SubmitButton } from "~/components/buttons/SubmitButton"
-import React, { useState, useCallback, useMemo } from 'react'
+import React, { useState, useCallback, useMemo, useEffect } from 'react'
 import { useReadContract, useAccount, useConnections, useSwitchChain } from 'wagmi'
 import useAllowance from "~/hooks/useAllowance";
 import { maxUint256, parseUnits, erc20Abi } from "viem";
@@ -14,6 +14,7 @@ import UsernameSvg from '~/components/UsernameSvg'
 import { formatNumber, formatNumberCompact, convertToNumber } from "~/utils";
 import { formatUnits } from "viem";
 import BadgedIcon from '~/assets/images/badged.svg'
+import { useNavigate } from 'react-router-dom'
 
 const CLIENT_ID = Number(import.meta.env.VITE_CLIENT_ID)
 
@@ -42,6 +43,7 @@ export const NewProfile: React.FC = () => {
       setIsSwitchingChain(false);
     }
   };
+  const navigate = useNavigate();
   const activeToken = useActiveToken();
   const { isConnected, address }      = useAccount()
   const [username, setUsername] = useState('')
@@ -52,6 +54,7 @@ export const NewProfile: React.FC = () => {
   const [isApprovePending, setIsApprovePending] = useState(false)
   const useAddress = address || activeToken?.owner;
   const setActiveTokenId = useTokenDataStore(state => state.setActiveTokenId);
+
 
   // is valid username?
   const isValid = /^[a-z0-9]{1,}$/i.test(username)
@@ -107,6 +110,13 @@ console.log("BALANCE:", balance)
       setIsSwitchingChain(false);
     }
   }, [wrongChain, isSwitchingChain]);
+
+  // Navigate to onboarding page once mint succeeds
+  useEffect(() => {
+    if (mintSuccess && mintedTokenId && username) {
+      navigate(`/welcome/${username}`, { replace: true })
+    }
+  }, [mintSuccess, mintedTokenId, username])
 
   const { allowance, refetch: refetchAllowance } = useAllowance(CAW_ADDRESS, CAW_NAMES_MINTER_ADDRESS, useAddress);
   const refetchTokenData = useTokenDataStore(s => s.refetchTokenData)
@@ -230,13 +240,14 @@ console.log("BALANCE:", balance)
   if (!hasResetForm && (mintStatus === 'pending' || (mintStatus === 'success' && !mintSuccess))) {
     return (
       <MainLayout>
-        <div className="max-w-md mx-auto p-6 space-y-4 mt-8">
+        <div className="max-w-xl mx-auto p-6 space-y-4 mt-8">
           <div className="text-center space-y-6">
-            <h1 className="text-4xl font-bold text-white">Minting Your Username...</h1>
+            <h1 className="text-4xl font-bold text-white">Creating your new profile...</h1>
+            <p className="text-gray-400 text-sm">Your username will be minted as a tradeable and transferable NFT, and will live forever on the Ethereum Blockchain</p>
 
             {/* Show the username SVG with loader overlay */}
             <div className="flex justify-center items-center my-8">
-              <div className="relative w-64 h-64 border border-yellow-500/30 overflow-hidden" style={{ borderRadius: '22px' }}>
+              <div className="relative w-64 h-64 overflow-hidden" style={{ borderRadius: '22px' }}>
                 <UsernameSvg username={username}/>
                 {/* Loader overlay */}
                 <div className="absolute inset-0 flex items-center justify-center">
@@ -268,76 +279,6 @@ console.log("BALANCE:", balance)
     )
   }
 
-  // Show success screen if mint was successful
-  if (mintSuccess) {
-    return (
-      <MainLayout>
-        <div className="max-w-md mx-auto p-6 space-y-4 mt-8">
-          <div className="text-center space-y-6">
-            {/* Success checkmark animation */}
-            <div className="flex justify-center">
-              <div className="w-32 h-32 rounded-full bg-green-500/20 flex items-center justify-center animate-pulse">
-                <svg className="w-20 h-20 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </div>
-            </div>
-
-            <h1 className="text-4xl font-bold text-white">Congratulations! 🎉</h1>
-
-            <div className="space-y-2">
-              <p className="text-xl text-gray-300">
-                You've successfully minted
-              </p>
-              <p className="text-3xl font-bold text-yellow-500">
-                @{username}
-              </p>
-            </div>
-
-            {/* Show the username SVG */}
-            <div className="flex flex-col items-center my-8 space-y-4">
-              <div className="w-44 h-44">
-                <UsernameSvg username={username}/>
-              </div>
-              <a
-                href="/profile"
-                className="text-gray-400 hover:text-white underline text-sm transition-colors duration-200 flex items-center space-x-1"
-              >
-                <span>go to profile</span>
-                <span>→</span>
-              </a>
-            </div>
-
-            <div className="space-y-4">
-              <p className="text-gray-400">
-                Your CAW username is now active and ready to use!
-              </p>
-
-              <button
-                onClick={() => window.location.href = '/staking'}
-                className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all duration-300 cursor-pointer"
-              >
-                Stake CAW →
-              </button>
-
-              <button
-                onClick={() => {
-                  setMintSuccess(false)
-                  setUsername('')
-                  setMintedTokenId(null)
-                  setHasResetForm(true)
-                }}
-                className="w-full py-3 border border-white/20 hover:border-white/40 text-white font-semibold rounded-full transition-all duration-300 cursor-pointer"
-              >
-                Mint Another Username
-              </button>
-            </div>
-          </div>
-        </div>
-      </MainLayout>
-    )
-  }
-
   return (
     <MainLayout>
       <div className="max-w-md mx-auto p-6 space-y-4 mt-8"> {/* Cambiado de mt-16 a mt-8 para subir todo el contenido */}
@@ -350,7 +291,7 @@ console.log("BALANCE:", balance)
 
         {/* Imagen generada del username - siempre visible */}
         <div className="flex justify-center items-center mb-6 mt-16">
-            <div className="w-64 h-64 border border-yellow-500/30 overflow-hidden" style={{ borderRadius: '22px' }}>
+            <div className="w-64 h-64 overflow-hidden" style={{ borderRadius: '22px' }}>
                 <UsernameSvg username={username}/>
             </div>
         </div>
@@ -423,7 +364,6 @@ console.log("BALANCE:", balance)
             <SubmitButton
                 onClick={handleSubmit}
                 disabled={wrongChain ? false : (usernameTaken || waiting || (!needsApproval && (!cost || cost == 0n || !!insufficientBalance)))}
-                loading={isSwitchingChain || waiting}
                 className="btn btn-submit mt-0 transition-all duration-300"
             >
                 {submitText}
