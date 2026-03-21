@@ -1165,9 +1165,44 @@ After deployment, ABIs are automatically regenerated for the frontend.
   deployer.printState();
   console.log('\nDeployment complete!');
 
-  // Regenerate ABIs for frontend
+  // Update client addresses and regenerate ABIs
   if (!skipAbi) {
-    console.log('\nRegenerating ABIs for frontend...');
+    // Update addresses.ts with new deployment addresses
+    const addressesFile = path.join(__dirname, '../../client/src/abi/addresses.ts');
+    const addressMap = {
+      MintableCaw: 'CAW_ADDRESS',
+      CawName: 'CAW_NAMES_ADDRESS',
+      CawNameQuoter: 'CAW_NAME_QUOTER_ADDRESS',
+      CawNameMinter: 'CAW_NAMES_MINTER_ADDRESS',
+      CawNameURI: 'URI_GENERATOR_ADDRESS',
+      CawClientManager: 'CLIENT_MANAGER_ADDRESS',
+      CawNameL2_L2: 'CAW_NAMES_L2_ADDRESS',
+      CawNameL2_L1: 'CAW_NAMES_L2_MAINNET_ADDRESS',
+      CawActions_L1: 'CAW_ACTIONS_MAINNET_ADDRESS',
+      CawActions_L2: 'CAW_ACTIONS_ADDRESS',
+      CawActionsReplicator_L1: 'CAW_ACTIONS_REPLICATOR_L1_ADDRESS',
+      CawActionsReplicator_L2: 'CAW_ACTIONS_REPLICATOR_L2_ADDRESS',
+      CawActionsArchive_L2: 'CAW_ACTIONS_ARCHIVE_L2_ADDRESS',
+      CawActionsArchive_L2b: 'CAW_ACTIONS_ARCHIVE_L2B_ADDRESS',
+    };
+
+    try {
+      let content = fs.readFileSync(addressesFile, 'utf8');
+      for (const [stateKey, constName] of Object.entries(addressMap)) {
+        const addr = deployer.state.addresses[stateKey];
+        if (addr) {
+          const regex = new RegExp(`(export const ${constName} = ['"])0x[a-fA-F0-9]+(['"])`);
+          content = content.replace(regex, `$1${addr}$2`);
+        }
+      }
+      fs.writeFileSync(addressesFile, content);
+      console.log('\nUpdated client/src/abi/addresses.ts');
+    } catch (e) {
+      console.warn('\nFailed to update addresses.ts:', e.message);
+    }
+
+    // Regenerate ABIs
+    console.log('Regenerating ABIs for frontend...');
     try {
       execSync('npx wagmi generate', {
         cwd: path.join(__dirname, '..'),
@@ -1179,7 +1214,7 @@ After deployment, ABIs are automatically regenerated for the frontend.
       console.warn('   You can manually run: cd solidity && npx wagmi generate');
     }
   } else {
-    console.log('\nSkipping ABI regeneration (--skip-abi flag)');
+    console.log('\nSkipping ABI/address update (--skip-abi flag)');
   }
 }
 

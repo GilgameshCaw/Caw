@@ -57,20 +57,17 @@ contract CawNameL2 is
   CawName public cawName;
 
   // ============================================
-  // SESSION KEY DELEGATION
+  // SESSION KEY DELEGATION (address-based)
   // ============================================
 
-  /// @notice Increments on every ownership change, invalidating all prior session delegations
-  mapping(uint32 => uint32) public transferNonce;
-
   struct StoredSession {
-    uint64 expiry;
-    uint8  scopeBitmap;
-    uint32 transferNonce;
+    uint64  expiry;
+    uint8   scopeBitmap;
+    uint256 spendLimit;     // max total CAW (whole tokens) this session can spend
   }
 
-  /// @notice tokenId => sessionKey => stored session data
-  mapping(uint32 => mapping(address => StoredSession)) public sessions;
+  /// @notice ownerAddress => sessionKey => stored session data
+  mapping(address => mapping(address => StoredSession)) public sessions;
 
   bytes32 public immutable eip712DomainHash;
 
@@ -79,7 +76,7 @@ contract CawNameL2 is
   );
 
   bytes32 private constant DELEGATION_TYPEHASH = keccak256(
-    "SessionDelegation(uint32 tokenId,address sessionKey,uint64 expiry,uint8 scopeBitmap,uint32 transferNonce)"
+    "SessionDelegation(address sessionKey,uint64 expiry,uint8 scopeBitmap,uint256 spendLimit)"
   );
 
   event OwnerSet(uint32 tokenId, address newOwner);
@@ -87,8 +84,8 @@ contract CawNameL2 is
   event Authenticated(uint32 cawClientId, uint32 tokenId);
   event CawActionsSet(address cawActions);
   event CawActionsReplicatorSet(address replicator);
-  event SessionCreated(uint32 indexed tokenId, address indexed sessionKey, uint64 expiry, uint8 scopeBitmap);
-  event SessionRevoked(uint32 indexed tokenId, address indexed sessionKey);
+  event SessionCreated(address indexed owner, address indexed sessionKey, uint64 expiry, uint8 scopeBitmap, uint256 spendLimit);
+  event SessionRevoked(address indexed owner, address indexed sessionKey);
 
   bytes4 public setWithdrawableSelector = bytes4(keccak256("setWithdrawable(uint32[],uint256[])"));
 
@@ -265,54 +262,50 @@ contract CawNameL2 is
   function _setOwnerOf(uint32 tokenId, address newOwner) internal {
     emit OwnerSet(tokenId, newOwner);
     ownerOf[tokenId] = newOwner;
-    transferNonce[tokenId]++;
   }
 
   // ============================================
   // SESSION KEY REGISTRATION & REVOCATION
   // ============================================
 
-  /// @notice Register a session key. Owner signs an EIP-712 delegation, then anyone can submit it on-chain.
-  /// @param tokenId The CawName token ID to delegate for
+  /// @notice Register a session key. The wallet owner signs an EIP-712 delegation,
+  ///         then anyone (e.g. the validator) can submit it on-chain.
+  ///         Address-based: covers all tokens owned by the signer's wallet.
   /// @param sessionKey The ephemeral address that will sign actions
   /// @param expiry Unix timestamp after which the session is invalid
   /// @param scopeBitmap Bitfield of allowed ActionTypes (bits 0-5 only; WITHDRAW and OTHER forbidden)
+  /// @param spendLimit Max whole CAW tokens this session key can spend (0 = unlimited)
   function registerSession(
-    uint32 tokenId,
     address sessionKey,
     uint64 expiry,
     uint8 scopeBitmap,
+    uint256 spendLimit,
     uint8 v, bytes32 r, bytes32 s
   ) external {
     require(sessionKey != address(0), "Zero session key");
     require(expiry > block.timestamp, "Already expired");
     require((scopeBitmap & 0xC0) == 0, "Cannot delegate WITHDRAW or OTHER");
 
-    uint32 currentNonce = transferNonce[tokenId];
-
     bytes32 structHash = keccak256(abi.encode(
       DELEGATION_TYPEHASH,
-      tokenId,
       sessionKey,
       expiry,
       scopeBitmap,
-      currentNonce
+      spendLimit
     ));
     bytes32 digest = keccak256(abi.encodePacked("\x19\x01", eip712DomainHash, structHash));
     address signer = ecrecover(digest, v, r, s);
 
     require(signer != address(0), "Invalid signature");
-    require(signer == ownerOf[tokenId], "Signer is not token owner");
 
-    sessions[tokenId][sessionKey] = StoredSession(expiry, scopeBitmap, currentNonce);
-    emit SessionCreated(tokenId, sessionKey, expiry, scopeBitmap);
+    sessions[signer][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit);
+    emit SessionCreated(signer, sessionKey, expiry, scopeBitmap, spendLimit);
   }
 
-  /// @notice Revoke a session key. Only callable by the token owner.
-  function revokeSession(uint32 tokenId, address sessionKey) external {
-    require(msg.sender == ownerOf[tokenId], "Not the token owner");
-    delete sessions[tokenId][sessionKey];
-    emit SessionRevoked(tokenId, sessionKey);
+  /// @notice Revoke a session key. Only callable by the delegating wallet.
+  function revokeSession(address sessionKey) external {
+    delete sessions[msg.sender][sessionKey];
+    emit SessionRevoked(msg.sender, sessionKey);
   }
 
   function _lzReceive(

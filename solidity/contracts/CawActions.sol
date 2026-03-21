@@ -49,6 +49,9 @@ contract CawActions is Ownable {
   mapping(uint32 => mapping(uint256 => uint256)) public usedCawonce;
   mapping(uint32 => uint256) public currentCawonceMap;
 
+  /// @notice Tracks cumulative spending (whole CAW tokens) per session key (by owner address)
+  mapping(address => mapping(address => uint256)) public sessionSpent;
+
   event ActionsProcessed(ActionData[] actions);
   event ActionRejected(uint32 senderId, uint32 cawonce, string reason);
   event ReplicatorSet(address replicator);
@@ -89,18 +92,24 @@ contract CawActions is Ownable {
     require(!isCawonceUsed(action.senderId, action.cawonce), "Cawonce already used");
     require(cawName.authenticated(action.clientId, action.senderId), "User has not authenticated with this client");
 
-    verifySignature(v, r, s, action);
+    (address signer, bool isSessionKey) = verifySignature(v, r, s, action);
 
+    // Fixed protocol costs per action type (in whole CAW tokens)
+    uint256 actionCost;
     if (action.actionType == ActionType.CAW) {
       require(bytes(action.text).length <= 420, "Text exceeds 420 characters");
       cawName.spendAndDistributeTokens(action.senderId, 5000, 5000);
-    } else if (action.actionType == ActionType.LIKE)
+      actionCost = 5000;
+    } else if (action.actionType == ActionType.LIKE) {
       cawName.spendDistributeAndAddTokensToBalance(action.senderId, 2000, 400, action.receiverId, 1600);
-    else if (action.actionType == ActionType.RECAW) {
+      actionCost = 2000;
+    } else if (action.actionType == ActionType.RECAW) {
       cawName.spendDistributeAndAddTokensToBalance(action.senderId, 4000, 2000, action.receiverId, 2000);
+      actionCost = 4000;
     } else if (action.actionType == ActionType.FOLLOW) {
       require(action.senderId != action.receiverId, "Cannot follow yourself");
       cawName.spendDistributeAndAddTokensToBalance(action.senderId, 30000, 6000, action.receiverId, 24000);
+      actionCost = 30000;
     } else if (action.actionType == ActionType.WITHDRAW)
       cawName.withdraw(action.senderId, uint256(action.amounts[0]) * 10**18);
     else if ( action.actionType != ActionType.UNLIKE &&
@@ -108,7 +117,20 @@ contract CawActions is Ownable {
         action.actionType != ActionType.OTHER)
       revert("Invalid action type");
 
-    distributeAmounts(validatorId, action);
+    // Add distributeAmounts costs (tips, validator fees — all in whole tokens)
+    uint256 distributeCost = distributeAmounts(validatorId, action);
+    actionCost += distributeCost;
+
+    // Enforce session spend limit
+    if (isSessionKey && actionCost > 0) {
+      address owner = cawName.ownerOf(action.senderId);
+      (,, uint256 spendLimit) = cawName.sessions(owner, signer);
+      if (spendLimit > 0) {
+        sessionSpent[owner][signer] += actionCost;
+        require(sessionSpent[owner][signer] <= spendLimit, "Session spend limit exceeded");
+      }
+    }
+
     useCawonce(action.senderId, action.cawonce);
 
     // Per-client hash and checkpointing (for client-specific migration)
@@ -121,25 +143,28 @@ contract CawActions is Ownable {
       clientHashAtCheckpoint[clientId][clientActionCount[clientId] / 256] = clientCurrentHash[clientId];
   }
 
-  function distributeAmounts(uint32 validatorId, ActionData calldata action) internal {
+  /// @return totalWholeTokens Total whole CAW tokens spent via distributeAmounts
+  function distributeAmounts(uint32 validatorId, ActionData calldata action) internal returns (uint256 totalWholeTokens) {
     uint256 numRecipients = action.recipients.length;
     uint256 numAmounts = action.amounts.length;
 
     if (numAmounts != numRecipients)
       require(numAmounts == numRecipients + 1, "Amounts and recipients mismatch");
 
-    if (numRecipients == 0 && numAmounts == 0) return;
+    if (numRecipients == 0 && numAmounts == 0) return 0;
 
     bool isWithdrawal = action.actionType == ActionType.WITHDRAW;
     uint256 startIndex = isWithdrawal ? 1 : 0;
 
     // Convert from whole CAW tokens to wei (multiply by 10^18)
     uint256 amountTotal = uint256(action.amounts[numAmounts - 1]) * 10**18;
+    totalWholeTokens = uint256(action.amounts[numAmounts - 1]);
 
     for (uint256 i = startIndex; i < numRecipients; ) {
       uint256 amountWei = uint256(action.amounts[i]) * 10**18;
       cawName.addToBalance(action.recipients[i], amountWei);
       amountTotal += amountWei;
+      totalWholeTokens += uint256(action.amounts[i]);
       unchecked { ++i; }
     }
 
@@ -147,12 +172,13 @@ contract CawActions is Ownable {
     cawName.addToBalance(validatorId, uint256(action.amounts[numAmounts - 1]) * 10**18);
   }
 
+  /// @notice Verify action signature. Returns the signer and whether it was a session key.
   function verifySignature(
     uint8 v,
     bytes32 r,
     bytes32 s,
     ActionData calldata data
-  ) public view {
+  ) public view returns (address signer, bool isSessionKey) {
     bytes32 structHash = keccak256(
       abi.encode(
         ACTIONDATA_TYPEHASH,
@@ -168,18 +194,18 @@ contract CawActions is Ownable {
       )
     );
 
-    address signer = getSigner(structHash, v, r, s);
+    signer = getSigner(structHash, v, r, s);
     require(signer != address(0), "Invalid signature");
 
     // Direct owner signature — pass immediately
     address owner = cawName.ownerOf(data.senderId);
-    if (signer != owner) {
-      // Session key fallback
-      (uint64 expiry, uint8 scopeBitmap, uint32 storedNonce) = cawName.sessions(data.senderId, signer);
-      require(expiry > block.timestamp, "Session expired or not found");
-      require(storedNonce == cawName.transferNonce(data.senderId), "Session invalidated by transfer");
-      require((scopeBitmap & (1 << uint8(data.actionType))) != 0, "Action not in session scope");
-    }
+    if (signer == owner) return (signer, false);
+
+    // Session key fallback: look up delegation by the token's current owner
+    (uint64 expiry, uint8 scopeBitmap,) = cawName.sessions(owner, signer);
+    require(expiry > block.timestamp, "Session expired or not found");
+    require((scopeBitmap & (1 << uint8(data.actionType))) != 0, "Action not in session scope");
+    return (signer, true);
   }
 
   function useCawonce(uint32 senderId, uint256 cawonce) internal {

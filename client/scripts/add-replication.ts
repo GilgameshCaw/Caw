@@ -25,7 +25,7 @@
 import 'dotenv/config'
 import { JsonRpcProvider, Wallet, Contract, formatEther, Interface } from 'ethers'
 import { cawClientManagerAbi, cawNameQuoterAbi, cawActionsAbi, cawActionsReplicatorAbi } from '../src/abi/generated'
-import { CLIENT_MANAGER_ADDRESS, CAW_ACTIONS_ARCHIVE_ADDRESS, CAW_NAME_QUOTER_ADDRESS, CAW_ACTIONS_ADDRESS, CAW_ACTIONS_REPLICATOR_L2_ADDRESS } from '../src/abi/addresses'
+import { CLIENT_MANAGER_ADDRESS, CAW_ACTIONS_ARCHIVE_L2_ADDRESS, CAW_NAME_QUOTER_ADDRESS, CAW_ACTIONS_ADDRESS, CAW_ACTIONS_REPLICATOR_L2_ADDRESS } from '../src/abi/addresses'
 
 // Known archive addresses (add more as needed)
 const KNOWN_ARCHIVES: Record<number, string> = {
@@ -84,7 +84,7 @@ async function main() {
 
   const clientId = parseInt(filteredArgs[0])
   const archiveEid = parseInt(filteredArgs[1])
-  let archiveAddress = filteredArgs[2] || KNOWN_ARCHIVES[archiveEid] || CAW_ACTIONS_ARCHIVE_ADDRESS
+  let archiveAddress = filteredArgs[2] || KNOWN_ARCHIVES[archiveEid] || CAW_ACTIONS_ARCHIVE_L2_ADDRESS
 
   if (!archiveAddress) {
     console.error('Error: No archive address provided and no known address for eid', archiveEid)

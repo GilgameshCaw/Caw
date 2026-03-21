@@ -977,7 +977,7 @@ contract('CawNames', function(accounts, x) {
     truffleAssert.eventEmitted(result.tx, 'ActionRejected', (args) => {
       return args.cawonce == result.signedActions[0].data.message.cawonce &&
 				args.senderId == result.signedActions[0].data.message.senderId &&
-        args.reason == 'Invalid signer';
+        args.reason == 'Session expired or not found';
     });
 
     console.log("TRANSFER UPDATE end:", BigInt(await cawNames.pendingTransferEnd(l2)));

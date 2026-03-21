@@ -59,6 +59,22 @@ contract CawClientManager {
   event ClientReplicationRemoved(uint32 indexed clientId, uint32 indexed eid);
   event ClientReplicationEnabledChanged(uint32 indexed clientId, bool enabled);
 
+  // ============================================
+  // INSTANCE REGISTRY
+  // ============================================
+  // Permissionless instance registration. Anyone can register an API+validator
+  // instance for any client. Details (apiUrl, validatorAddress) live in events
+  // to minimize L1 gas costs. Minimal storage tracks ownership for updates.
+
+  uint32 public nextInstanceId = 1;
+  mapping(uint32 => address) public instanceOwner;
+  mapping(uint32 => bool) public instanceActive;
+
+  event InstanceRegistered(uint32 indexed instanceId, uint32 indexed clientId, address indexed owner, string apiUrl, address validatorAddress);
+  event InstanceUpdated(uint32 indexed instanceId, string apiUrl, address validatorAddress);
+  event InstanceDeactivated(uint32 indexed instanceId);
+  event InstanceActivated(uint32 indexed instanceId);
+
   address public owner;
 
   modifier onlyOwner() {
@@ -206,6 +222,60 @@ contract CawClientManager {
 
   function setFeeAddress(uint32 clientId, address feeAddress) public onlyClientOwner(clientId) {
     clients[clientId].feeAddress = feeAddress;
+  }
+
+  // ============================================
+  // INSTANCE MANAGEMENT
+  // ============================================
+  // Permissionless: anyone can register an instance for any existing client.
+  // All instance details (apiUrl, validatorAddress) are stored in events only.
+
+  /**
+   * @notice Register a new instance for a client. Permissionless.
+   * @param clientId The client this instance serves (must exist)
+   * @param apiUrl The public API endpoint URL
+   * @param validatorAddress The wallet that submits txns and collects tips
+   */
+  function registerInstance(uint32 clientId, string calldata apiUrl, address validatorAddress) external returns (uint32) {
+    require(clients[clientId].id != 0, "Client does not exist");
+    require(bytes(apiUrl).length > 0, "API URL required");
+    require(validatorAddress != address(0), "Validator address required");
+    uint32 id = nextInstanceId++;
+    instanceOwner[id] = msg.sender;
+    instanceActive[id] = true;
+    emit InstanceRegistered(id, clientId, msg.sender, apiUrl, validatorAddress);
+    return id;
+  }
+
+  /**
+   * @notice Update an instance's details. Only callable by instance owner.
+   * @param instanceId The instance to update
+   * @param apiUrl The new API endpoint URL
+   * @param validatorAddress The new validator wallet address
+   */
+  function updateInstance(uint32 instanceId, string calldata apiUrl, address validatorAddress) external {
+    require(instanceOwner[instanceId] == msg.sender, "Not instance owner");
+    require(bytes(apiUrl).length > 0, "API URL required");
+    require(validatorAddress != address(0), "Validator address required");
+    emit InstanceUpdated(instanceId, apiUrl, validatorAddress);
+  }
+
+  /**
+   * @notice Deactivate an instance. Only callable by instance owner.
+   */
+  function deactivateInstance(uint32 instanceId) external {
+    require(instanceOwner[instanceId] == msg.sender, "Not instance owner");
+    instanceActive[instanceId] = false;
+    emit InstanceDeactivated(instanceId);
+  }
+
+  /**
+   * @notice Reactivate an instance. Only callable by instance owner.
+   */
+  function activateInstance(uint32 instanceId) external {
+    require(instanceOwner[instanceId] == msg.sender, "Not instance owner");
+    instanceActive[instanceId] = true;
+    emit InstanceActivated(instanceId);
   }
 
   // ============================================
