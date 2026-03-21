@@ -2,9 +2,11 @@ import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { useState, useEffect, useRef, useMemo } from 'react'
 import { useAccount } from 'wagmi'
-import { useSearchParams } from 'react-router-dom'
+import { useConnectModal } from '@rainbow-me/rainbowkit'
+import { useSearchParams, useParams, useNavigate } from 'react-router-dom'
 import ConnectButton from '~/components/buttons/ConnectButton'
-import { apiFetch } from '~/api/client'
+import Tooltip from '~/components/Tooltip'
+import { apiFetch, API_HOST } from '~/api/client'
 import {
   HiOutlineCog,
   HiOutlineMail,
@@ -21,6 +23,8 @@ import {
   HiOutlinePlus
 } from 'react-icons/hi'
 import { useActiveToken } from '~/store/tokenDataStore'
+import { useAuthStore } from '~/store/authStore'
+import { useVerifyWallet } from '~/hooks/useVerifyWallet'
 import {
   useDmClient,
   useDmMessages
@@ -35,6 +39,8 @@ const MessagesPage: React.FC = () => {
   const { isDark } = useTheme()
   const activeToken = useActiveToken()
   const currentUser = activeToken ? { id: activeToken.tokenId, username: activeToken.username } : null
+  const { username: urlUsername } = useParams<{ username?: string }>()
+  const navigate = useNavigate()
   const [isNewMessageModalOpen, setIsNewMessageModalOpen] = useState(false)
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -42,13 +48,14 @@ const MessagesPage: React.FC = () => {
   const [selectedUser, setSelectedUser] = useState<{name: string, handle: string, avatar: string} | null>(null)
   const [modalStep, setModalStep] = useState<'select' | 'compose'>('select')
   const [newMessageSearch, setNewMessageSearch] = useState('')
-  const [searchResults, setSearchResults] = useState<Array<{ tokenId: number, username: string, displayName?: string, avatarUrl?: string }>>([])
-  const [recentFollows, setRecentFollows] = useState<Array<{ tokenId: number, username: string, displayName?: string, avatarUrl?: string }>>([])
+  const [searchResults, setSearchResults] = useState<Array<{ tokenId: number, username: string, displayName?: string, avatarUrl?: string, hasDmIdentity?: boolean }>>([])
+  const [recentFollows, setRecentFollows] = useState<Array<{ tokenId: number, username: string, displayName?: string, avatarUrl?: string, hasDmIdentity?: boolean }>>([])
   const [isSearching, setIsSearching] = useState(false)
   const [messageText, setMessageText] = useState('')
-  const [currentView, setCurrentView] = useState<'inbox' | 'chat' | 'setup'>('inbox')
+  const [currentView, setCurrentView] = useState<'inbox' | 'chat' | 'setup' | 'signin'>('inbox')
   const [selectedConversationId, setSelectedConversationId] = useState<string | null>(null)
   const [newMessageContent, setNewMessageContent] = useState('')
+  const pendingMessageRef = useRef<string | null>(null)
   const [showChatOptionsMenu, setShowChatOptionsMenu] = useState(false)
   const [showSearchModal, setShowSearchModal] = useState(false)
   const [showFileUpload, setShowFileUpload] = useState(false)
@@ -58,8 +65,14 @@ const MessagesPage: React.FC = () => {
   const [targetUser, setTargetUser] = useState<{ tokenId: number, username: string } | null>(null)
   const [attemptedConversations, setAttemptedConversations] = useState<Set<string>>(new Set())
 
+  // Auth state
+  const { verify, isVerifying, error: verifyError } = useVerifyWallet()
+  const authorizedAddresses = useAuthStore(s => s.authorizedAddresses)
+  const isWalletAuthorized = !!activeToken?.address && authorizedAddresses.includes(activeToken.address.toLowerCase())
+
   // Get wallet address from wagmi
   const { address } = useAccount()
+  const { openConnectModal } = useConnectModal()
 
   // Get URL parameters
   const [searchParams, setSearchParams] = useSearchParams()
@@ -67,14 +80,26 @@ const MessagesPage: React.FC = () => {
   // DM hooks
   const {
     isInitialized: identity,
+    needsKeyDerivation,
     isLoading: identityLoading,
     initializeClient,
     conversations,
     error: dmError,
     startConversation: dmStartConversation,
-    refreshConversations
+    refreshConversations,
+    clearUnreadCount
   } = useDmClient(currentUser?.id)
-  const { messages, sendMessage: dmSendMessage, isSending, markAsRead, addIncomingMessage } = useDmMessages(selectedConversationId || '', currentUser?.id)
+  const { messages, sendMessage: dmSendMessage, isSending, markAsRead, addIncomingMessage, peerLastReadAt } = useDmMessages(selectedConversationId || '', currentUser?.id)
+
+  // Send pending message after conversation selection takes effect
+  useEffect(() => {
+    if (pendingMessageRef.current && selectedConversationId) {
+      const msg = pendingMessageRef.current
+      pendingMessageRef.current = null
+      // Small delay to ensure the hook is fully bound to the new conversation
+      setTimeout(() => dmSendMessage(msg), 100)
+    }
+  }, [selectedConversationId, dmSendMessage])
 
   // Debug: Log conversations when they change
   useEffect(() => {
@@ -164,19 +189,17 @@ const MessagesPage: React.FC = () => {
     console.log('[Messages] Existing conversation found:', !!existingConv)
 
     if (existingConv) {
-      // Open existing conversation
+      // Open existing conversation and queue the message
+      pendingMessageRef.current = messageText.trim()
       handleConversationSelect(existingConv.id)
-      // Send the message
-      dmSendMessage(messageText.trim())
     } else {
       // Start new conversation
       try {
         const newConv = await dmStartConversation(targetUser.tokenId)
         console.log('New conversation created:', newConv)
-        // Select the new conversation
+        // Select the new conversation and queue the message
+        pendingMessageRef.current = messageText.trim()
         handleConversationSelect(newConv.id)
-        // Send the message
-        dmSendMessage(messageText.trim())
       } catch (err: any) {
         console.error('Failed to start conversation:', err)
         if (err.message?.includes('not enabled DMs')) {
@@ -209,15 +232,29 @@ const MessagesPage: React.FC = () => {
     setSelectedConversationId(conversationId)
     setCurrentView('chat')
 
+    // Zero out unread badge immediately in the UI
+    clearUnreadCount(conversationId)
+
     // Join new conversation room
     joinConversation(conversationId)
 
-    // Mark messages as read
+    // Navigate to /messages/:username for the other participant
     const conversation = conversations.find(c => c.id === conversationId)
-    if (conversation && conversation.unreadCount > 0) {
-      // Mark messages as read will be called automatically by the hook
+    if (conversation?.type === 'DM') {
+      const other = conversation.participants.find(p => p.userId !== currentUser?.id)
+      const otherUsername = other?.identity?.user?.username
+      if (otherUsername) {
+        navigate(`/messages/${otherUsername}`, { replace: true })
+      }
     }
   }
+
+  // Mark messages as read when they load for the selected conversation
+  useEffect(() => {
+    if (selectedConversationId && messages.length > 0) {
+      markAsRead()
+    }
+  }, [selectedConversationId, messages.length])
 
   // Function to go back to inbox
   const goBackToInbox = () => {
@@ -229,6 +266,7 @@ const MessagesPage: React.FC = () => {
     setCurrentView('inbox')
     setSelectedConversationId(null)
     setShowChatOptionsMenu(false)
+    navigate('/messages', { replace: true })
   }
 
   // Handle send message
@@ -296,113 +334,102 @@ const MessagesPage: React.FC = () => {
     }, 2000)
   }
 
-  // Handle URL parameter for direct user messaging
+  // Redirect legacy ?user= param to /messages/:username
   useEffect(() => {
     const userParam = searchParams.get('user')
-    if (userParam && currentUser && identity && !identityLoading) {
-      // Check if we've already attempted this user
-      if (attemptedConversations.has(userParam)) {
-        console.log('Already attempted conversation with:', userParam)
-        return
+    if (userParam) {
+      navigate(`/messages/${userParam}`, { replace: true })
+    }
+  }, [searchParams, navigate])
+
+  // Handle /messages/:username URL param — open conversation with that user
+  useEffect(() => {
+    if (!urlUsername || !currentUser || !identity || identityLoading) return
+    if (attemptedConversations.has(urlUsername)) return
+
+    setAttemptedConversations(prev => new Set(prev).add(urlUsername))
+
+    // Check if we already have this conversation open
+    const existingConv = conversations.find(c =>
+      c.type === 'DM' &&
+      c.participants.some(p => p.identity?.user?.username?.toLowerCase() === urlUsername.toLowerCase())
+    )
+
+    if (existingConv) {
+      if (selectedConversationId !== existingConv.id) {
+        if (selectedConversationId) leaveConversation(selectedConversationId)
+        setSelectedConversationId(existingConv.id)
+        setCurrentView('chat')
+        joinConversation(existingConv.id)
       }
-
-      // Mark as attempted immediately to prevent retries
-      setAttemptedConversations(prev => new Set(prev).add(userParam))
-
-      // Fetch user details
-      fetch(`/api/users/${userParam}`)
+    } else {
+      // Fetch user and create conversation
+      fetch(`/api/users/${urlUsername}`)
         .then(res => res.json())
         .then(userData => {
           if (userData && !userData.error) {
             setTargetUser({ tokenId: userData.tokenId, username: userData.username })
-
-            // Check if conversation already exists
-            const existingConv = conversations.find(c =>
-              c.type === 'DM' &&
-              c.participants.some(p => p.userId === userData.tokenId)
-            )
-
-            if (existingConv) {
-              // Select existing conversation and clear URL param
-              handleConversationSelect(existingConv.id)
-              setSearchParams(params => {
-                params.delete('user')
-                return params
+            dmStartConversation(userData.tokenId)
+              .then((newConv: any) => {
+                setSelectedConversationId(newConv.id)
+                setCurrentView('chat')
+                joinConversation(newConv.id)
               })
-            } else {
-              // Create new conversation
-              console.log('Creating conversation with user:', userData)
-              if (!identity) {
-                console.log('DMs not initialized - user needs to enable DMs first')
-                setCurrentView('setup')
-              } else {
-                // DMs already initialized, create conversation directly
-                dmStartConversation(userData.tokenId)
-                  .then((newConversation: any) => {
-                    console.log('Conversation created:', newConversation)
-                    handleConversationSelect(newConversation.id)
-                    setSearchParams(params => {
-                      params.delete('user')
-                      return params
-                    })
-                  })
-                  .catch((error: any) => {
-                    console.error('Failed to create conversation:', error)
-                    setSearchParams(params => {
-                      params.delete('user')
-                      return params
-                    })
-                  })
-              }
-            }
+              .catch((err: any) => {
+                console.error('Failed to create conversation:', err)
+                navigate('/messages', { replace: true })
+              })
           } else {
-            console.log('User not found:', userParam)
-            // Clear URL param if user not found
-            setSearchParams(params => {
-              params.delete('user')
-              return params
-            })
+            navigate('/messages', { replace: true })
           }
         })
-        .catch(err => {
-          console.error('Error fetching user:', err)
-          // Clear URL param on error
-          setSearchParams(params => {
-            params.delete('user')
-            return params
-          })
-        })
+        .catch(() => navigate('/messages', { replace: true }))
     }
-  }, [searchParams, currentUser, identity, identityLoading, attemptedConversations, dmStartConversation, handleConversationSelect, conversations, setSearchParams])
+  }, [urlUsername, currentUser, identity, identityLoading, conversations, attemptedConversations, dmStartConversation, selectedConversationId])
 
-  // Check if user needs to enable DMs
+  // When URL changes to /messages (no username), reset to inbox
   useEffect(() => {
-    // Only show setup view if:
-    // 1. User is logged in
-    // 2. DMs not initialized
-    // 3. Correct wallet is connected (address matches activeToken)
-    const hasCorrectWallet = activeToken && address && address.toLowerCase() === activeToken.address.toLowerCase()
-
-    if (currentUser && !identityLoading && !identity && hasCorrectWallet) {
-      setCurrentView('setup')
-    } else if (currentUser && identity && currentView === 'setup') {
-      // Only set to inbox if we're currently in setup view
+    if (!urlUsername && currentView === 'chat') {
+      if (selectedConversationId) {
+        leaveConversation(selectedConversationId)
+      }
       setCurrentView('inbox')
-    } else if (currentView === 'setup' && !hasCorrectWallet) {
-      // If in setup view but wrong wallet, go back to inbox
+      setSelectedConversationId(null)
+      setShowChatOptionsMenu(false)
+    }
+  }, [urlUsername])
+
+  // Route user through sign-in → DM setup → inbox
+  useEffect(() => {
+    if (!currentUser) return
+    if (!isWalletAuthorized) {
+      setCurrentView('signin')
+    } else if (!identityLoading && !identity) {
+      setCurrentView('setup')
+    } else if (identity && (currentView === 'signin' || currentView === 'setup')) {
       setCurrentView('inbox')
     }
-  }, [currentUser, identity, identityLoading, currentView, activeToken, address])
+  }, [currentUser, isWalletAuthorized, identity, identityLoading])
 
   // Load recent follows when new message modal opens
   useEffect(() => {
     if (isNewMessageModalOpen && currentUser?.username) {
-      // Fetch recent follows
+      // Fetch recent follows then check DM identity for each
       apiFetch<{ items: Array<{ tokenId: number, username: string, displayName?: string, avatarUrl?: string }> }>(
         `/api/users/${currentUser.username}/following?limit=10`
       )
-        .then(response => {
-          setRecentFollows(response.items || [])
+        .then(async (response) => {
+          const items = (response.items || []).filter(u => u.tokenId !== currentUser?.id)
+          const withDm = await Promise.all(items.map(async (user) => {
+            try {
+              const res = await fetch(`${API_HOST}/api/dm/identity/${user.tokenId}`)
+              const data = await res.json()
+              return { ...user, hasDmIdentity: !!data.hasIdentity }
+            } catch {
+              return { ...user, hasDmIdentity: undefined }
+            }
+          }))
+          setRecentFollows(withDm)
         })
         .catch(err => {
           console.error('Failed to fetch recent follows:', err)
@@ -425,8 +452,18 @@ const MessagesPage: React.FC = () => {
       apiFetch<{ users: Array<{ tokenId: number, username: string, displayName?: string, avatarUrl?: string }> }>(
         `/api/search?type=users&q=${encodeURIComponent(newMessageSearch)}&limit=20`
       )
-        .then(response => {
-          setSearchResults(response.users || [])
+        .then(async response => {
+          const users = (response.users || []).filter(u => u.tokenId !== currentUser?.id)
+          const withDm = await Promise.all(users.map(async (user) => {
+            try {
+              const res = await fetch(`${API_HOST}/api/dm/identity/${user.tokenId}`)
+              const data = await res.json()
+              return { ...user, hasDmIdentity: !!data.hasIdentity }
+            } catch {
+              return { ...user, hasDmIdentity: undefined }
+            }
+          }))
+          setSearchResults(withDm)
         })
         .catch(err => {
           console.error('Failed to search users:', err)
@@ -442,7 +479,11 @@ const MessagesPage: React.FC = () => {
 
   // Handle DM registration
   const handleRegisterDm = async () => {
-    if (!currentUser || !address) return
+    if (!currentUser) return
+    if (!address) {
+      openConnectModal?.()
+      return
+    }
 
     try {
       await initializeClient()
@@ -663,6 +704,39 @@ const MessagesPage: React.FC = () => {
           </div>
         )}
 
+        {/* Sign In View - Show when user is not authenticated */}
+        {currentView === 'signin' && (
+          <div className="flex-1 flex flex-col items-center pt-20 px-4">
+            <div className="text-center max-w-md">
+              <div className="w-16 h-16 rounded-full bg-yellow-500/20 flex items-center justify-center mx-auto mb-4">
+                <div className="w-9 h-9" style={{ backgroundColor: '#eab308', maskImage: 'url(/icons/crow-2.svg)', maskSize: 'contain', maskRepeat: 'no-repeat', maskPosition: 'center', WebkitMaskImage: 'url(/icons/crow-2.svg)', WebkitMaskSize: 'contain', WebkitMaskRepeat: 'no-repeat', WebkitMaskPosition: 'center' }} />
+              </div>
+              <h2 className={`text-xl font-bold mb-3 ${isDark ? 'text-white' : 'text-black'}`}>
+                Log In to Access Messages
+              </h2>
+              <p className={`mb-6 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                {!address ? 'Connect your wallet to get started.' : 'Sign a free message to verify you own this wallet.'}
+              </p>
+              {verifyError && (
+                <div className="mb-4 p-3 rounded-lg bg-red-500/20 border border-red-500">
+                  <p className="text-red-500 text-sm">{verifyError}</p>
+                </div>
+              )}
+              {!address ? (
+                <ConnectButton />
+              ) : (
+                <button
+                  onClick={() => verify()}
+                  disabled={isVerifying}
+                  className={`px-6 py-3 rounded-full font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-all duration-300 cursor-pointer ${isVerifying ? 'opacity-50 cursor-not-allowed' : ''}`}
+                >
+                  {isVerifying ? 'Signing...' : 'Sign to Log In'}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
         {/* Setup View - Show when DMs are not enabled */}
         {currentView === 'setup' && (
           <div className="flex-1 flex flex-col items-center justify-center px-4">
@@ -691,7 +765,7 @@ const MessagesPage: React.FC = () => {
                 <p className={`mb-6 ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}>
-                  {!address ? 'Please connect your wallet first.' : 'Sign a message to derive your encryption keys. This is a free, one-time setup.'}
+                  Sign a message to derive your encryption keys. This is a free, one-time setup.
                 </p>
                 {dmError && (
                   <div className="mb-4 p-3 rounded-lg bg-red-500/20 border border-red-500">
@@ -700,30 +774,60 @@ const MessagesPage: React.FC = () => {
                     </p>
                   </div>
                 )}
-                {!address ? (
-                  <ConnectButton />
-                ) : activeToken && address.toLowerCase() !== activeToken.address.toLowerCase() ? (
-                  <div className="flex flex-col items-center">
+                {(() => {
+                  const wrongWallet = address && activeToken?.address && address.toLowerCase() !== activeToken.address.toLowerCase()
+                  return wrongWallet ? (
+                    <div className="flex flex-col items-center gap-2">
+                      <button
+                        disabled
+                        className="px-6 py-3 rounded-full font-semibold bg-white/10 text-gray-400 cursor-not-allowed"
+                      >
+                        Wrong Wallet
+                      </button>
+                      <p className="text-sm text-red-400">Please switch to the wallet that owns this profile</p>
+                    </div>
+                  ) : !address ? (
+                    <div className="flex flex-col items-center gap-2">
+                      <button
+                        onClick={() => openConnectModal?.()}
+                        className="px-6 py-3 rounded-full font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-all duration-300 cursor-pointer"
+                      >
+                        Connect Wallet
+                      </button>
+                    </div>
+                  ) : (
                     <button
-                      disabled
-                      className="px-6 py-3 rounded-full font-semibold bg-yellow-500/50 text-black transition-all duration-300 opacity-50 cursor-not-allowed"
+                      onClick={handleRegisterDm}
+                      disabled={identityLoading}
+                      className="px-6 py-3 rounded-full font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-all duration-300 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      Enable DMs
+                      {identityLoading ? 'Enabling...' : 'Enable DMs'}
                     </button>
-                    <p className="mt-3 text-sm text-yellow-500">
-                      Please switch to the correct wallet address
-                    </p>
-                  </div>
-                ) : (
-                  <button
-                    onClick={handleRegisterDm}
-                    disabled={identityLoading}
-                    className="px-6 py-3 rounded-full font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {identityLoading ? 'Enabling...' : 'Enable DMs'}
-                  </button>
-                )}
+                  )
+                })()}
               </div>
+            )}
+          </div>
+        )}
+
+        {/* Key derivation banner — DMs enabled but keys not in memory */}
+        {currentView === 'inbox' && needsKeyDerivation && !identityLoading && (
+          <div className={`mb-3 p-3 rounded-lg border flex items-center justify-between ${
+            isDark ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-yellow-50 border-yellow-200'
+          }`}>
+            <p className={`text-sm ${isDark ? 'text-yellow-200' : 'text-yellow-800'}`}>
+              {!address ? 'Connect your wallet to read messages' : 'Sign to unlock your encrypted messages'}
+            </p>
+            {!address ? (
+              <ConnectButton />
+            ) : (
+              <button
+                onClick={handleRegisterDm}
+                disabled={identityLoading}
+                className="px-4 py-1.5 rounded-full text-sm font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-all cursor-pointer disabled:opacity-50"
+              >
+                {identityLoading ? 'Signing...' : 'Unlock'}
+              </button>
             )}
           </div>
         )}
@@ -794,7 +898,9 @@ const MessagesPage: React.FC = () => {
                           <p className={`text-sm transition-colors duration-300 line-clamp-1 ${
                             isDark ? 'text-gray-300' : 'text-gray-700'
                           }`}>
-                            Start a conversation
+                            {conversation.lastMessagePreview
+                              ? (conversation.lastMessageSenderId === currentUser?.id ? 'You: ' : '') + conversation.lastMessagePreview
+                              : conversation.lastMessageAt ? 'Encrypted message' : 'Start a conversation'}
                           </p>
                         </div>
                       </div>
@@ -854,87 +960,122 @@ const MessagesPage: React.FC = () => {
                   </div>
                 </div>
               )}
-              {messages.map((message) => {
-                console.log('Rendering message:', message);
-                console.log('Message properties:', Object.keys(message));
+              {(() => {
+                // Find the last message from current user that the peer has seen
+                const peerReadTime = peerLastReadAt ? new Date(peerLastReadAt).getTime() : null
+                const lastSeenMsgId = peerReadTime
+                  ? [...messages].reverse().find(m =>
+                      m.isFromCurrentUser && new Date(m.createdAt).getTime() <= peerReadTime
+                    )?.id
+                  : null
 
-                // Handle different content types
-                let messageContent = '';
-                let attachments = [];
+                let lastDateLabel = ''
 
-                // Check if content is an object (system message or metadata)
-                if (typeof message.content === 'object' && message.content !== null) {
-                  // This is likely a system/metadata message, skip rendering it
-                  console.log('Skipping system message:', message.content);
-                  return null;
-                }
+                return messages.map((message) => {
+                  // Handle different content types
+                  let messageContent = '';
+                  let attachments: any[] = [];
 
-                // Content is a string - parse it
-                try {
-                  const parsed = JSON.parse(message.content);
-                  if (parsed.text !== undefined) {
-                    messageContent = parsed.text;
-                    attachments = parsed.attachments || [];
-                  } else {
-                    // JSON but not our format, convert to string
-                    messageContent = JSON.stringify(parsed);
+                  // Check if content is an object (system message or metadata)
+                  if (typeof message.content === 'object' && message.content !== null) {
+                    return null;
                   }
-                } catch {
-                  // Content is plain text
-                  messageContent = message.content;
-                }
 
-                return (
-                  <div
-                    key={message.id}
-                    className={`flex flex-col ${message.isFromCurrentUser ? 'items-end' : 'items-start'}`}
-                  >
-                    <div
-                      className={`max-w-md lg:max-w-xl px-6 py-4 rounded-2xl ${
-                        message.isFromCurrentUser
-                          ? 'bg-gray-600 text-white'
-                          : isDark
-                          ? 'bg-gray-700 text-white'
-                          : 'bg-gray-200 text-black'
-                      }`}
-                    >
-                      {/* Message text */}
-                      {messageContent && <p className="text-sm">{messageContent}</p>}
+                  // Content is a string - parse it
+                  try {
+                    const parsed = JSON.parse(message.content);
+                    if (parsed.text !== undefined) {
+                      messageContent = parsed.text;
+                      attachments = parsed.attachments || [];
+                    } else {
+                      messageContent = JSON.stringify(parsed);
+                    }
+                  } catch {
+                    messageContent = message.content;
+                  }
 
-                      {/* Attachments */}
-                      {attachments.length > 0 && (
-                        <div className="mt-2 space-y-2">
-                          {attachments.map((attachment: any, idx: number) => (
-                            <div key={idx} className="flex items-center space-x-2 p-2 rounded bg-black/20">
-                              <HiOutlinePaperClip className="w-4 h-4" />
-                              <span className="text-xs truncate">{attachment.originalName}</span>
-                            </div>
-                          ))}
+                  // Date divider logic
+                  const msgDate = new Date(message.createdAt)
+                  const dateLabel = msgDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                  const showDateDivider = dateLabel !== lastDateLabel
+                  lastDateLabel = dateLabel
+
+                  return (
+                    <div key={message.id}>
+                      {/* Date divider */}
+                      {showDateDivider && (
+                        <div className="flex items-center gap-3 my-4">
+                          <div className={`flex-1 h-px ${isDark ? 'bg-white/10' : 'bg-gray-200'}`} />
+                          <span className={`text-xs font-medium px-2 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+                            {dateLabel}
+                          </span>
+                          <div className={`flex-1 h-px ${isDark ? 'bg-white/10' : 'bg-gray-200'}`} />
                         </div>
                       )}
-                    </div>
 
-                    {/* Message metadata with encryption indicator */}
-                    <div className={`mt-1 px-2 flex items-center space-x-2 ${
-                      message.isFromCurrentUser ? 'flex-row-reverse space-x-reverse' : 'flex-row'
-                    }`}>
-                      <div className="flex items-center space-x-1">
-                        {/* Encryption indicator */}
-                        <HiOutlineLockClosed className="w-3 h-3 text-green-400" title="End-to-end encrypted" />
+                      <div className={`flex flex-col ${message.isFromCurrentUser ? 'items-end' : 'items-start'}`}>
+                        <div
+                          className={`max-w-md lg:max-w-xl px-6 py-4 rounded-2xl ${
+                            message.isFromCurrentUser
+                              ? 'bg-gray-600 text-white'
+                              : isDark
+                              ? 'bg-gray-700 text-white'
+                              : 'bg-gray-200 text-black'
+                          }`}
+                        >
+                          {/* Message text */}
+                          {messageContent && <p className="text-sm">{messageContent}</p>}
 
-                        {/* Read receipt */}
-                        {message.isFromCurrentUser && message.status === 'READ' && (
-                          <HiOutlineCheckCircle className="w-3 h-3 text-blue-400" title="Read" />
+                          {/* Attachments */}
+                          {attachments.length > 0 && (
+                            <div className="mt-2 space-y-2">
+                              {attachments.map((attachment: any, idx: number) => (
+                                <div key={idx} className="flex items-center space-x-2 p-2 rounded bg-black/20">
+                                  <HiOutlinePaperClip className="w-4 h-4" />
+                                  <span className="text-xs truncate">{attachment.originalName}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Message metadata with encryption indicator */}
+                        <div className={`mt-1 px-2 flex items-center space-x-2 ${
+                          message.isFromCurrentUser ? 'flex-row-reverse space-x-reverse' : 'flex-row'
+                        }`}>
+                          <div className="flex items-center space-x-1">
+                            {/* Encryption indicator */}
+                            <Tooltip text="End-to-end encrypted" position="top">
+                              <HiOutlineLockClosed className="w-3 h-3 text-green-400" />
+                            </Tooltip>
+
+                            {/* Read receipt */}
+                            {message.isFromCurrentUser && message.status === 'READ' && (
+                              <Tooltip text="Read" position="top">
+                                <HiOutlineCheckCircle className="w-3 h-3 text-blue-400" />
+                              </Tooltip>
+                            )}
+                          </div>
+
+                          <p className="text-xs text-white/50 font-medium">
+                            {formatMessageTime(message.createdAt)}
+                          </p>
+                        </div>
+
+                        {/* Seen indicator — shown below the last message the peer has read */}
+                        {message.id === lastSeenMsgId && (
+                          <div className="flex items-center justify-end gap-1.5 mt-1 px-2">
+                            <HiOutlineCheckCircle className="w-3 h-3 text-yellow-500" />
+                            <span className="text-xs text-yellow-500/70">
+                              Seen {formatDistanceToNow(new Date(peerLastReadAt!), { addSuffix: true })}
+                            </span>
+                          </div>
                         )}
                       </div>
-
-                      <p className="text-xs text-white/50 font-medium">
-                        {formatMessageTime(message.createdAt)}
-                      </p>
                     </div>
-                  </div>
-                )
-              })}
+                  )
+                })
+              })()}
             </div>
 
             {/* File Upload Component - Show when enabled */}
@@ -1100,8 +1241,13 @@ const MessagesPage: React.FC = () => {
                         {searchResults.map(user => (
                           <button
                             key={user.tokenId}
-                            onClick={() => handleSelectUserToMessage(user)}
-                            className={`w-full px-4 py-3 flex items-center space-x-3 transition-all duration-300 hover:bg-gray-500/10 ${
+                            onClick={() => user.hasDmIdentity !== false && handleSelectUserToMessage(user)}
+                            disabled={user.hasDmIdentity === false}
+                            className={`w-full px-4 py-3 flex items-center space-x-3 transition-all duration-300 ${
+                              user.hasDmIdentity === false
+                                ? 'opacity-50 cursor-not-allowed'
+                                : 'hover:bg-gray-500/10 cursor-pointer'
+                            } ${
                               isDark ? 'text-white' : 'text-black'
                             }`}
                           >
@@ -1114,6 +1260,9 @@ const MessagesPage: React.FC = () => {
                               <div className="font-semibold">{user.displayName || user.username}</div>
                               <div className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                                 @{user.username}
+                                {user.hasDmIdentity === false && (
+                                  <span className="ml-2 text-xs text-yellow-500">DMs not enabled</span>
+                                )}
                               </div>
                             </div>
                           </button>
@@ -1134,8 +1283,13 @@ const MessagesPage: React.FC = () => {
                         {recentFollows.map(user => (
                           <button
                             key={user.tokenId}
-                            onClick={() => handleSelectUserToMessage(user)}
-                            className={`w-full px-4 py-3 flex items-center space-x-3 transition-all duration-300 hover:bg-gray-500/10 ${
+                            onClick={() => user.hasDmIdentity !== false && handleSelectUserToMessage(user)}
+                            disabled={user.hasDmIdentity === false}
+                            className={`w-full px-4 py-3 flex items-center space-x-3 transition-all duration-300 ${
+                              user.hasDmIdentity === false
+                                ? 'opacity-50 cursor-not-allowed'
+                                : 'hover:bg-gray-500/10 cursor-pointer'
+                            } ${
                               isDark ? 'text-white' : 'text-black'
                             }`}
                           >
@@ -1148,6 +1302,9 @@ const MessagesPage: React.FC = () => {
                               <div className="font-semibold">{user.displayName || user.username}</div>
                               <div className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                                 @{user.username}
+                                {user.hasDmIdentity === false && (
+                                  <span className="ml-2 text-xs text-yellow-500">DMs not enabled</span>
+                                )}
                               </div>
                             </div>
                           </button>

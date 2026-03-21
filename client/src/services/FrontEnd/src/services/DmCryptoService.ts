@@ -3,9 +3,46 @@ import { secp256k1 } from '@noble/curves/secp256k1'
 // Key cache: conversationId -> shared secret (CryptoKey)
 const sharedSecretCache = new Map<string, CryptoKey>()
 
-// In-memory private key — never persisted to localStorage
+const DM_KEYS_STORAGE_KEY = 'caw-dm-keys'
+
+// In-memory cache — also persisted to localStorage for cross-refresh survival
 let cachedPrivateKey: Uint8Array | null = null
 let cachedPublicKey: string | null = null
+let cachedTokenId: number | null = null
+
+/** Persist current keys to localStorage */
+function persistKeys() {
+  if (!cachedPrivateKey || !cachedPublicKey || cachedTokenId === null) return
+  try {
+    const data: Record<number, { privateKey: string; publicKey: string }> = loadPersistedKeys()
+    data[cachedTokenId] = {
+      privateKey: bytesToHex(cachedPrivateKey),
+      publicKey: cachedPublicKey,
+    }
+    localStorage.setItem(DM_KEYS_STORAGE_KEY, JSON.stringify(data))
+  } catch {}
+}
+
+/** Load all persisted keys from localStorage */
+function loadPersistedKeys(): Record<number, { privateKey: string; publicKey: string }> {
+  try {
+    const raw = localStorage.getItem(DM_KEYS_STORAGE_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
+  }
+}
+
+/** Restore keys for a specific tokenId from localStorage into memory */
+function restoreFromStorage(tokenId: number): boolean {
+  const all = loadPersistedKeys()
+  const entry = all[tokenId]
+  if (!entry) return false
+  cachedPrivateKey = hexToBytes(entry.privateKey)
+  cachedPublicKey = entry.publicKey
+  cachedTokenId = tokenId
+  return true
+}
 
 /**
  * Derive a deterministic secp256k1 keypair from a wallet signature.
@@ -16,9 +53,22 @@ export async function deriveKeyPair(
   signMessage: (message: string) => Promise<string>,
   tokenId: number
 ): Promise<{ privateKey: Uint8Array; publicKeyHex: string }> {
-  // Return cached if available
-  if (cachedPrivateKey && cachedPublicKey) {
+  // Return cached if available and for the same tokenId
+  if (cachedPrivateKey && cachedPublicKey && cachedTokenId === tokenId) {
     return { privateKey: cachedPrivateKey, publicKeyHex: cachedPublicKey }
+  }
+
+  // Clear stale in-memory cache from a different tokenId
+  if (cachedTokenId !== null && cachedTokenId !== tokenId) {
+    cachedPrivateKey = null
+    cachedPublicKey = null
+    cachedTokenId = null
+    sharedSecretCache.clear()
+  }
+
+  // Try restoring from localStorage before requesting a signature
+  if (restoreFromStorage(tokenId)) {
+    return { privateKey: cachedPrivateKey!, publicKeyHex: cachedPublicKey! }
   }
 
   const message = `CAW Protocol DM Key\nUser: ${tokenId}`
@@ -34,15 +84,24 @@ export async function deriveKeyPair(
 
   cachedPrivateKey = privateKey
   cachedPublicKey = publicKeyHex
+  cachedTokenId = tokenId
+  persistKeys()
 
   return { privateKey, publicKeyHex }
 }
 
 /**
- * Check if we have a cached keypair (user has already signed)
+ * Check if we have a cached keypair — in memory or localStorage
  */
-export function hasCachedKeyPair(): boolean {
-  return cachedPrivateKey !== null && cachedPublicKey !== null
+export function hasCachedKeyPair(tokenId?: number): boolean {
+  if (cachedPrivateKey && cachedPublicKey) {
+    if (tokenId === undefined || cachedTokenId === tokenId) return true
+  }
+  // In-memory keys missing or belong to a different tokenId — try localStorage
+  if (tokenId !== undefined) {
+    return restoreFromStorage(tokenId)
+  }
+  return false
 }
 
 /**
@@ -53,12 +112,28 @@ export function getCachedPublicKeyHex(): string | null {
 }
 
 /**
+ * Get the cached private key if available
+ */
+export function getCachedPrivateKey(): Uint8Array | null {
+  return cachedPrivateKey
+}
+
+/**
  * Clear cached keys (e.g., on disconnect)
  */
-export function clearKeyCache() {
+export function clearKeyCache(tokenId?: number) {
   cachedPrivateKey = null
   cachedPublicKey = null
+  cachedTokenId = null
   sharedSecretCache.clear()
+  // Clear from localStorage
+  if (tokenId !== undefined) {
+    try {
+      const all = loadPersistedKeys()
+      delete all[tokenId]
+      localStorage.setItem(DM_KEYS_STORAGE_KEY, JSON.stringify(all))
+    } catch {}
+  }
 }
 
 /**

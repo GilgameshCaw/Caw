@@ -1,12 +1,15 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useWalletClient } from 'wagmi'
 import { apiFetch, API_HOST } from '~/api/client'
+import { useAuthStore } from '~/store/authStore'
+import { useVerifyWallet } from '~/hooks/useVerifyWallet'
 import {
   deriveKeyPair,
   computeSharedSecret,
   encrypt,
   decrypt,
   hasCachedKeyPair,
+  getCachedPrivateKey,
   clearKeyCache
 } from '~/services/DmCryptoService'
 
@@ -26,6 +29,8 @@ type UiConversation = {
     }
   }>
   lastMessageAt?: string
+  lastMessagePreview?: string // decrypted preview of last message
+  lastMessageSenderId?: number
   unreadCount: number
 }
 
@@ -52,22 +57,55 @@ let privateKeyRef: Uint8Array | null = null
 
 export function useDmClient(tokenId?: number) {
   const { data: walletClient } = useWalletClient()
+  const { verify } = useVerifyWallet()
 
   const [isInitialized, setIsInitialized] = useState(false)
+  const [needsKeyDerivation, setNeedsKeyDerivation] = useState(false) // identity exists but keys not in memory
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const [conversations, setConversations] = useState<UiConversation[]>([])
+  const checkedTokenIdRef = useRef<number | undefined>(undefined) // tracks which tokenId the current state belongs to
 
-  // Check if already initialized on mount
+  // Check if already initialized on mount or when tokenId changes
   useEffect(() => {
-    if (hasCachedKeyPair() && tokenId) {
-      setIsInitialized(true)
-      loadConversations()
+    // Reset state for new account
+    checkedTokenIdRef.current = tokenId
+    setIsInitialized(false)
+    setNeedsKeyDerivation(false)
+    setIsLoading(true)
+    setConversations([])
+
+    if (!tokenId) {
+      setIsLoading(false)
+      return
     }
 
-    return () => {
-      // Don't clear keys on unmount — they persist in memory for the session
-    }
+    // Always verify server has the identity — cached keys alone aren't enough
+    // (user may have derived keys but registration may have failed)
+    let cancelled = false
+    fetch(`${API_HOST}/api/dm/identity/${tokenId}`)
+      .then(r => r.json())
+      .then(data => {
+        if (cancelled) return
+        if (data.hasIdentity) {
+          if (hasCachedKeyPair(tokenId)) {
+            // Keys in cache + server identity = fully ready
+            privateKeyRef = getCachedPrivateKey()
+            setIsInitialized(true)
+            loadConversations()
+          } else {
+            // Server has identity but keys not in memory — need re-derivation
+            setIsInitialized(true)
+            setNeedsKeyDerivation(true)
+            loadConversations()
+          }
+        }
+        // If !hasIdentity, leave isInitialized=false so setup view shows
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setIsLoading(false) })
+
+    return () => { cancelled = true }
   }, [tokenId])
 
   const loadConversations = useCallback(async () => {
@@ -76,30 +114,50 @@ export function useDmClient(tokenId?: number) {
     try {
       const data = await apiFetch<{ conversations: any[] }>(`/api/dm/conversations?userId=${tokenId}`)
 
-      const uiConversations: UiConversation[] = (data.conversations || []).map((conv: any) => {
-        const otherParticipants = conv.participants.filter(
-          (p: any) => p.userId !== tokenId
-        )
+      const uiConversations: UiConversation[] = await Promise.all(
+        (data.conversations || []).map(async (conv: any) => {
+          const otherParticipants = conv.participants.filter(
+            (p: any) => p.userId !== tokenId
+          )
 
-        return {
-          id: conv.id,
-          type: 'DM' as const,
-          participants: otherParticipants.map((p: any) => ({
-            userId: p.userId,
-            identity: {
-              user: {
-                username: p.identity?.user?.username || 'Unknown',
-                displayName: p.identity?.user?.displayName,
-                image: p.identity?.user?.avatarUrl,
-                address: p.identity?.user?.address,
-                tokenId: p.userId
+          // Try to decrypt last message preview
+          let lastMessagePreview: string | undefined
+          let lastMessageSenderId: number | undefined
+          if (conv.lastMessage?.encryptedPayload && privateKeyRef) {
+            lastMessageSenderId = conv.lastMessage.senderId
+            try {
+              const sharedSecret = await getOrComputeSharedSecret(conv.id, tokenId)
+              if (sharedSecret) {
+                const decrypted = await decrypt(conv.lastMessage.encryptedPayload, sharedSecret)
+                lastMessagePreview = decrypted.length > 80 ? decrypted.slice(0, 80) + '…' : decrypted
               }
+            } catch {
+              // Can't decrypt — leave as undefined
             }
-          })),
-          lastMessageAt: conv.lastMessageAt,
-          unreadCount: conv.unreadCount || 0
-        }
-      })
+          }
+
+          return {
+            id: conv.id,
+            type: 'DM' as const,
+            participants: otherParticipants.map((p: any) => ({
+              userId: p.userId,
+              identity: {
+                user: {
+                  username: p.identity?.user?.username || 'Unknown',
+                  displayName: p.identity?.user?.displayName,
+                  image: p.identity?.user?.avatarUrl,
+                  address: p.identity?.user?.address,
+                  tokenId: p.userId
+                }
+              }
+            })),
+            lastMessageAt: conv.lastMessageAt,
+            lastMessagePreview,
+            lastMessageSenderId,
+            unreadCount: conv.unreadCount || 0
+          }
+        })
+      )
 
       setConversations(uiConversations)
     } catch (err) {
@@ -108,13 +166,16 @@ export function useDmClient(tokenId?: number) {
   }, [tokenId])
 
   const initializeClient = useCallback(async () => {
+    console.log('[DM] initializeClient called, walletClient:', !!walletClient, 'tokenId:', tokenId)
     if (!walletClient || !tokenId) {
       const err = new Error('Wallet not connected')
+      console.log('[DM] No wallet client or tokenId, throwing')
       setError(err)
       throw err
     }
 
-    if (hasCachedKeyPair()) {
+    if (hasCachedKeyPair(tokenId)) {
+      console.log('[DM] Keys already cached for this tokenId, skipping setup')
       setIsInitialized(true)
       await loadConversations()
       return
@@ -123,7 +184,9 @@ export function useDmClient(tokenId?: number) {
     setIsLoading(true)
     setError(null)
     try {
+      console.log('[DM] Deriving key pair...')
       const signMessage = async (message: string) => {
+        console.log('[DM] Requesting wallet signature for key derivation...')
         const sig = await walletClient.signMessage({
           account: walletClient.account,
           message
@@ -133,20 +196,53 @@ export function useDmClient(tokenId?: number) {
 
       const { privateKey, publicKeyHex } = await deriveKeyPair(signMessage, tokenId)
       privateKeyRef = privateKey
+      console.log('[DM] Key pair derived, needsKeyDerivation:', needsKeyDerivation)
 
-      // Register public key on backend
-      await apiFetch('/api/dm/identity', {
-        method: 'POST',
-        body: JSON.stringify({
-          userId: tokenId,
-          walletAddress: walletClient.account.address,
-          publicKey: publicKeyHex
+      // If identity already exists on server, just re-derive keys — no need to
+      // re-register or re-verify auth (avoids logging out the other account)
+      if (!needsKeyDerivation) {
+        // Fresh setup — need auth and server registration
+        console.log('[DM] Fresh setup — checking auth, isTokenAuthorized:', useAuthStore.getState().isTokenAuthorized(tokenId))
+        if (!useAuthStore.getState().isTokenAuthorized(tokenId)) {
+          try {
+            console.log('[DM] Trying auth refresh...')
+            const res = await apiFetch<{ authorizedTokenIds: number[], authorizedAddresses: string[] }>(
+              '/api/auth/refresh', { method: 'POST' }
+            )
+            useAuthStore.getState().addAuthorization(res.authorizedTokenIds, res.authorizedAddresses)
+            console.log('[DM] Auth refresh succeeded, isTokenAuthorized:', useAuthStore.getState().isTokenAuthorized(tokenId))
+          } catch (e) {
+            console.log('[DM] Auth refresh failed:', e)
+          }
+
+          if (!useAuthStore.getState().isTokenAuthorized(tokenId)) {
+            console.log('[DM] Still not authorized, calling verify()...')
+            await verify()
+            if (!useAuthStore.getState().isTokenAuthorized(tokenId)) {
+              throw new Error('Wallet verification failed — please try again')
+            }
+          }
+        }
+
+        // Register public key on backend
+        console.log('[DM] Registering public key on backend...')
+        await apiFetch('/api/dm/identity', {
+          method: 'POST',
+          body: JSON.stringify({
+            userId: tokenId,
+            walletAddress: walletClient.account.address,
+            publicKey: publicKeyHex
+          })
         })
-      })
+        console.log('[DM] Public key registered successfully')
+      }
 
       setIsInitialized(true)
+      setNeedsKeyDerivation(false)
       await loadConversations()
+      console.log('[DM] Initialization complete')
     } catch (err) {
+      console.error('[DM] initializeClient error:', err)
       setError(err as Error)
       throw err
     } finally {
@@ -182,22 +278,30 @@ export function useDmClient(tokenId?: number) {
     return conversation
   }, [tokenId, loadConversations])
 
+  const clearUnreadCount = useCallback((conversationId: string) => {
+    setConversations(prev => prev.map(c =>
+      c.id === conversationId ? { ...c, unreadCount: 0 } : c
+    ))
+  }, [])
+
   return {
     isInitialized,
+    needsKeyDerivation: needsKeyDerivation && checkedTokenIdRef.current === tokenId,
     isLoading,
     error,
     initializeClient,
     conversations,
     startConversation,
+    clearUnreadCount,
     refreshConversations: loadConversations
   }
 }
 
 export function useDmMessages(conversationId: string, tokenId?: number) {
-  const { data: walletClient } = useWalletClient()
   const [messages, setMessages] = useState<UiMessage[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isSending, setIsSending] = useState(false)
+  const [peerLastReadAt, setPeerLastReadAt] = useState<string | null>(null)
 
   // Load and decrypt messages
   useEffect(() => {
@@ -208,11 +312,13 @@ export function useDmMessages(conversationId: string, tokenId?: number) {
     const load = async () => {
       setIsLoading(true)
       try {
-        const data = await apiFetch<{ messages: any[] }>(
+        const data = await apiFetch<{ messages: any[], peerLastReadAt: string | null }>(
           `/api/dm/conversations/${conversationId}/messages?userId=${tokenId}`
         )
 
         if (cancelled) return
+
+        setPeerLastReadAt(data.peerLastReadAt || null)
 
         // Get peer's public key for this conversation
         const sharedSecret = await getOrComputeSharedSecret(conversationId, tokenId)
@@ -383,7 +489,7 @@ export function useDmMessages(conversationId: string, tokenId?: number) {
     }
   }, [conversationId, tokenId])
 
-  return { messages, isLoading, isSending, sendMessage, markAsRead, addIncomingMessage }
+  return { messages, isLoading, isSending, sendMessage, markAsRead, addIncomingMessage, peerLastReadAt }
 }
 
 /**
