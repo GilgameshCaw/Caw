@@ -92,10 +92,13 @@ export async function apiFetch<T = any>(
       })
 
       // Auth errors are not failover-able — they mean the user needs to re-auth
-      // Only auto-prompt for non-GET requests; GET 401s are handled by the UI
       if (res.status === 401) {
         let errorData: any = {}
         try { errorData = await res.json() } catch {}
+        if (errorData.error === 'AUTH_REQUIRED') {
+          // Session expired or missing server-side — clear stale client state
+          useAuthStore.getState().clearSession()
+        }
         const method = (init?.method || 'GET').toUpperCase()
         if (method !== 'GET' && (errorData.error === 'AUTH_REQUIRED' || errorData.error === 'TOKEN_NOT_AUTHORIZED')) {
           handleAuthError(res, errorData)

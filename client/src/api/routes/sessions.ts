@@ -4,8 +4,10 @@ import { ethers, Contract, Wallet, JsonRpcProvider, WebSocketProvider } from 'et
 import { cawNameL2Abi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 import { prisma } from '../../prismaClient'
+import Redis from 'ioredis'
 
 const router = Router()
+const redis = new Redis({ port: 6379, host: '127.0.0.1' })
 
 const SESSION_DOMAIN = {
   name:              'CawNameL2',
@@ -22,24 +24,24 @@ const DELEGATION_TYPES = {
   ],
 }
 
-// Rate limiting: 3 registrations per address per day
-const rateLimitMap = new Map<string, number[]>()
+// Rate limiting: 3 registrations per address per day (Redis-backed, survives restarts)
 const RATE_LIMIT_MAX = 3
-const RATE_LIMIT_WINDOW = 24 * 60 * 60 * 1000
+const RATE_LIMIT_WINDOW = 24 * 60 * 60 // seconds
 
-function checkRateLimit(address: string): boolean {
-  const now = Date.now()
-  const timestamps = rateLimitMap.get(address) || []
-  const recent = timestamps.filter(t => now - t < RATE_LIMIT_WINDOW)
-  rateLimitMap.set(address, recent)
-  return recent.length < RATE_LIMIT_MAX
+async function checkRateLimit(address: string): Promise<boolean> {
+  const key = `session_ratelimit:${address}`
+  const count = await redis.llen(key)
+  return count < RATE_LIMIT_MAX
 }
 
-function recordRateLimit(address: string) {
-  const timestamps = rateLimitMap.get(address) || []
-  timestamps.push(Date.now())
-  rateLimitMap.set(address, timestamps)
+async function recordRateLimit(address: string) {
+  const key = `session_ratelimit:${address}`
+  await redis.rpush(key, Date.now().toString())
+  await redis.expire(key, RATE_LIMIT_WINDOW)
 }
+
+// Tracks addresses with an in-flight tx to prevent concurrent submissions
+const inFlight = new Set<string>()
 
 // Max expiry: 30 days
 const MAX_EXPIRY_SECONDS = 30 * 24 * 60 * 60
@@ -75,10 +77,11 @@ function getContract() {
 // requestCounter removed — using crypto.randomUUID()
 
 /**
- * Background: wait for L2 sync, verify ownership, submit tx
+ * Background: submit session registration tx, record rate limit only on success
  */
 async function processSessionRequest(
   requestId: string,
+  recoveredAddress: string,
   delegation: any,
   signature: string
 ) {
@@ -87,8 +90,6 @@ async function processSessionRequest(
   try {
     const cawNameL2 = getContract()
 
-    // Submit tx — address-based, no ownership check needed.
-    // The contract verifies the EIP-712 signature and stores by recovered signer address.
     requests.set(requestId, { status: 'submitting' })
     const sig = ethers.Signature.from(signature)
     const { sessionKey, expiry, scopeBitmap, spendLimit } = delegation
@@ -109,9 +110,14 @@ async function processSessionRequest(
     const receipt = await tx.wait()
     console.log(`[Sessions] Confirmed tx ${tx.hash} in block ${receipt.blockNumber}`)
     requests.set(requestId, { status: 'confirmed', txHash: tx.hash, blockNumber: receipt.blockNumber })
+
+    // Only count against rate limit on successful confirmation
+    await recordRateLimit(recoveredAddress)
   } catch (err: any) {
     console.error(`[Sessions] Error processing ${requestId}:`, err.message)
     requests.set(requestId, { status: 'failed', error: err.message })
+  } finally {
+    inFlight.delete(recoveredAddress)
   }
 
   // Clean up after 10 minutes
@@ -166,14 +172,19 @@ router.post('/', async (req: any, res: any) => {
       signature
     ).toLowerCase()
 
-    // Rate limit by full recovered address (no truncation)
-    if (!checkRateLimit(recoveredAddress)) {
+    // Rate limit by full recovered address (Redis-backed)
+    if (!await checkRateLimit(recoveredAddress)) {
       return res.status(429).json({ error: 'Rate limit exceeded. Max 3 session registrations per day.' })
+    }
+
+    // Block concurrent submissions for the same address
+    if (inFlight.has(recoveredAddress)) {
+      return res.status(409).json({ error: 'A session registration is already in progress for this address' })
     }
 
     // Verify the signer actually owns at least one CAW name (prevents gas drain from random wallets)
     const ownedName = await prisma.user.findFirst({
-      where: { address: recoveredAddress },
+      where: { address: { equals: recoveredAddress, mode: 'insensitive' } },
       select: { id: true },
     })
     if (!ownedName) {
@@ -183,9 +194,9 @@ router.post('/', async (req: any, res: any) => {
     // Create request and process in background
     const requestId = randomUUID()
     requests.set(requestId, { status: 'submitting' })
-    recordRateLimit(recoveredAddress)
+    inFlight.add(recoveredAddress)
 
-    processSessionRequest(requestId, delegation, signature)
+    processSessionRequest(requestId, recoveredAddress, delegation, signature)
 
     return res.json({ requestId, status: 'submitting' })
   } catch (err: any) {

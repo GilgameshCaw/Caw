@@ -12,10 +12,10 @@ export function useVerifyWallet() {
   const [isVerifying, setIsVerifying] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const verify = async () => {
+  const verify = async (): Promise<boolean> => {
     if (!isConnected) {
       openConnectModal?.()
-      return
+      return false
     }
 
     setIsVerifying(true)
@@ -53,12 +53,14 @@ export function useVerifyWallet() {
           data.expiresAt
         )
       }
+      return true
     } catch (err: any) {
       if (err?.name === 'UserRejectedRequestError' || err?.code === 4001) {
         setError('Signature rejected')
       } else {
         setError(err.message || 'Verification failed')
       }
+      return false
     } finally {
       setIsVerifying(false)
     }

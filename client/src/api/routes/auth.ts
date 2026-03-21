@@ -3,6 +3,7 @@ import { ethers } from 'ethers'
 import { prisma } from '../../prismaClient'
 import { createSession, getSession, addAuthorization, deleteSession } from '../sessionStore'
 import { extractSession } from '../middleware/auth'
+import { refreshOwnership } from '../../services/UserService'
 
 const router = Router()
 
@@ -52,12 +53,23 @@ router.post('/verify', async (req, res) => {
       return
     }
 
-    // Look up all tokenIds owned by this address
-    const users = await prisma.user.findMany({
-      where: { address: recoveredAddress },
+    // Look up all tokenIds owned by this address (case-insensitive —
+    // DB may store checksummed addresses while recovery returns lowercase)
+    let users = await prisma.user.findMany({
+      where: { address: { equals: recoveredAddress, mode: 'insensitive' } },
       select: { tokenId: true }
     })
-    const tokenIds = users.map(u => u.tokenId)
+    let tokenIds = users.map(u => u.tokenId)
+
+    // If no tokens found, the NFT may have been transferred — check L2 on-chain
+    if (tokenIds.length === 0) {
+      console.log(`[Auth] No tokens found for ${recoveredAddress}, checking on-chain ownership...`)
+      const refreshed = await refreshOwnership(recoveredAddress)
+      if (refreshed.length > 0) {
+        console.log(`[Auth] Found ${refreshed.length} token(s) after ownership refresh:`, refreshed)
+        tokenIds = refreshed
+      }
+    }
 
     // Get or create session
     let sessionToken = req.headers['x-session-token'] as string | undefined
@@ -124,10 +136,10 @@ router.post('/refresh', async (req, res) => {
 
     const sessionToken = req.headers['x-session-token'] as string
 
-    // For each authorized address, look up all tokenIds
+    // For each authorized address, look up all tokenIds (case-insensitive)
     for (const addr of req.sessionData.authorizedAddresses) {
       const users = await prisma.user.findMany({
-        where: { address: addr },
+        where: { address: { equals: addr, mode: 'insensitive' } },
         select: { tokenId: true }
       })
       const tokenIds = users.map(u => u.tokenId)

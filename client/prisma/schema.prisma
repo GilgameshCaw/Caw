@@ -293,20 +293,33 @@ model ConversationParticipant {
 }
 
 model Message {
-  id               String           @id @default(uuid())
+  id               String             @id @default(uuid())
   conversationId   String
   senderId         Int
-  encryptedPayload String
-  contentType      String           @default("text")
-  status           MessageStatus    @default(SENT)
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-  conversation     Conversation     @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender           DmIdentity       @relation("MessageSender", fields: [senderId], references: [userId])
+  encryptedPayload String?            // null when deleted for everyone (tombstone)
+  contentType      String             @default("text") // "text", "deleted"
+  editHistory      String?            // encrypted JSON array of previous versions
+  status           MessageStatus      @default(SENT)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  conversation     Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender           DmIdentity         @relation("MessageSender", fields: [senderId], references: [userId])
   receipts         MessageReceipt[]
+  deletions        MessageDeletion[]
 
   @@index([conversationId, createdAt])
   @@index([senderId])
+}
+
+model MessageDeletion {
+  id        Int      @id @default(autoincrement())
+  messageId String
+  userId    Int
+  deletedAt DateTime @default(now())
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@index([userId])
 }
 
 model MessageReceipt {

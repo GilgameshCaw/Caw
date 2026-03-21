@@ -67,6 +67,10 @@ const MessagesPage: React.FC = () => {
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [filePreview, setFilePreview] = useState<{ file: File; previewUrl: string; isImage: boolean } | null>(null)
   const [chatSharedSecret, setChatSharedSecret] = useState<CryptoKey | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ messageId: string; x: number; y: number; isOwn: boolean; createdAt: string } | null>(null)
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
+  const [editingContent, setEditingContent] = useState('')
+  const [editHistoryMessageId, setEditHistoryMessageId] = useState<string | null>(null)
   const [isTyping, setIsTyping] = useState(false)
   const typingTimeoutRef = useRef<NodeJS.Timeout>()
   const chatMenuRef = useRef<HTMLDivElement>(null)
@@ -98,7 +102,7 @@ const MessagesPage: React.FC = () => {
     refreshConversations,
     clearUnreadCount
   } = useDmClient(currentUser?.id)
-  const { messages, sendMessage: dmSendMessage, isSending, markAsRead, addIncomingMessage, peerLastReadAt, getSharedSecret } = useDmMessages(selectedConversationId || '', currentUser?.id)
+  const { messages, sendMessage: dmSendMessage, editMessage: dmEditMessage, deleteForMe: dmDeleteForMe, deleteForEveryone: dmDeleteForEveryone, isSending, markAsRead, addIncomingMessage, peerLastReadAt, getSharedSecret } = useDmMessages(selectedConversationId || '', currentUser?.id)
   const { uploadEncryptedFile, isUploading, uploadProgress } = useDmFileUpload()
 
   // Scroll to bottom of messages
@@ -795,7 +799,7 @@ const MessagesPage: React.FC = () => {
           <div className="flex-1 flex flex-col items-center pt-20 px-4">
             <div className="text-center max-w-md">
               <div className="w-16 h-16 rounded-full bg-yellow-500/20 flex items-center justify-center mx-auto mb-4">
-                <div className="w-9 h-9" style={{ backgroundColor: '#eab308', maskImage: 'url(/icons/crow-2.svg)', maskSize: 'contain', maskRepeat: 'no-repeat', maskPosition: 'center', WebkitMaskImage: 'url(/icons/crow-2.svg)', WebkitMaskSize: 'contain', WebkitMaskRepeat: 'no-repeat', WebkitMaskPosition: 'center' }} />
+                <div className="w-11 h-11" style={{ backgroundColor: '#eab308', maskImage: 'url(/icons/crow-2.svg)', maskSize: 'contain', maskRepeat: 'no-repeat', maskPosition: 'center', WebkitMaskImage: 'url(/icons/crow-2.svg)', WebkitMaskSize: 'contain', WebkitMaskRepeat: 'no-repeat', WebkitMaskPosition: 'center' }} />
               </div>
               <h2 className={`text-xl font-bold mb-3 ${isDark ? 'text-white' : 'text-black'}`}>
                 Log In to Access Messages
@@ -825,7 +829,7 @@ const MessagesPage: React.FC = () => {
 
         {/* Setup View - Show when DMs are not enabled */}
         {currentView === 'setup' && (
-          <div className="flex-1 flex flex-col items-center justify-center px-4">
+          <div className="flex-1 flex flex-col items-center px-4 pt-[15vh]">
             {identityLoading ? (
               <div className="text-center max-w-md">
                 <div className="mb-6 flex justify-center">
@@ -851,7 +855,7 @@ const MessagesPage: React.FC = () => {
                 <p className={`mb-6 ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}>
-                  Sign a message to derive your encryption keys. This is a free, one-time setup.
+                  Sign a message to derive your encryption keys. This is a free, one-time setup per profile and per device/browser.
                 </p>
                 {dmError && (
                   <div className="mb-4 p-3 rounded-lg bg-red-500/20 border border-red-500">
@@ -1100,15 +1104,62 @@ const MessagesPage: React.FC = () => {
                       )}
 
                       <div className={`flex flex-col ${message.isFromCurrentUser ? 'items-end' : 'items-start'}`}>
+                        {/* Tombstone for deleted messages */}
+                        {message.contentType === 'deleted' ? (
+                          <div className="px-4 py-2 italic text-white/30 text-sm">
+                            [Message deleted]
+                          </div>
+                        ) : (
                         <div
-                          className={`max-w-md lg:max-w-xl px-6 py-4 rounded-2xl ${
+                          className={`max-w-md lg:max-w-xl px-6 py-4 rounded-2xl relative group ${
                             message.isFromCurrentUser
                               ? 'bg-gray-600 text-white'
                               : isDark
                               ? 'bg-gray-700 text-white'
                               : 'bg-gray-200 text-black'
                           }`}
+                          onContextMenu={(e) => {
+                            e.preventDefault()
+                            setContextMenu({
+                              messageId: message.id,
+                              x: e.clientX,
+                              y: e.clientY,
+                              isOwn: message.isFromCurrentUser,
+                              createdAt: message.createdAt,
+                            })
+                          }}
                         >
+                          {/* Inline editing mode */}
+                          {editingMessageId === message.id ? (
+                            <div className="space-y-2">
+                              <input
+                                type="text"
+                                value={editingContent}
+                                onChange={(e) => setEditingContent(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    dmEditMessage(message.id, editingContent)
+                                    setEditingMessageId(null)
+                                  }
+                                  if (e.key === 'Escape') setEditingMessageId(null)
+                                }}
+                                autoFocus
+                                className="w-full bg-black/30 rounded px-2 py-1 text-sm outline-none border border-white/20 focus:border-yellow-500"
+                              />
+                              <div className="flex gap-2 text-xs">
+                                <button
+                                  onClick={() => { dmEditMessage(message.id, editingContent); setEditingMessageId(null) }}
+                                  className="text-yellow-500 hover:text-yellow-400 cursor-pointer"
+                                >Save</button>
+                                <button
+                                  onClick={() => setEditingMessageId(null)}
+                                  className="text-white/40 hover:text-white/60 cursor-pointer"
+                                >Cancel</button>
+                                <span className="text-white/20">esc to cancel, enter to save</span>
+                              </div>
+                            </div>
+                          ) : (
+                          <>
                           {/* Message content — handle text, images, GIFs, encrypted attachments */}
                           {messageContent && (() => {
                             // Check for encrypted attachment JSON
@@ -1154,6 +1205,29 @@ const MessagesPage: React.FC = () => {
                             return <p className="text-sm">{messageContent}</p>
                           })()}
 
+                          {/* Edited indicator */}
+                          {message.editHistory && message.editHistory.length > 0 && (
+                            <button
+                              onClick={() => setEditHistoryMessageId(editHistoryMessageId === message.id ? null : message.id)}
+                              className="text-xs text-white/30 hover:text-white/50 cursor-pointer mt-1"
+                            >
+                              (edited)
+                            </button>
+                          )}
+
+                          {/* Edit history popover */}
+                          {editHistoryMessageId === message.id && message.editHistory && (
+                            <div className="mt-2 p-2 rounded bg-black/30 border border-white/10 text-xs space-y-1 max-h-40 overflow-y-auto">
+                              <p className="text-white/50 font-medium mb-1">Edit history</p>
+                              {message.editHistory.map((entry, idx) => (
+                                <div key={idx} className="flex justify-between gap-2">
+                                  <span className="text-white/60">{entry.content}</span>
+                                  <span className="text-white/20 whitespace-nowrap">{new Date(entry.editedAt).toLocaleTimeString()}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
                           {/* Attachments */}
                           {attachments.length > 0 && (
                             <div className="mt-2 space-y-2">
@@ -1165,7 +1239,10 @@ const MessagesPage: React.FC = () => {
                               ))}
                             </div>
                           )}
+                          </>
+                          )}
                         </div>
+                        )}
 
                         {/* Message metadata with encryption indicator */}
                         <div className={`mt-1 px-2 flex items-center space-x-2 ${
@@ -1205,6 +1282,64 @@ const MessagesPage: React.FC = () => {
                 })
               })()}
             </div>
+
+            {/* Context menu for message actions */}
+            {contextMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setContextMenu(null)} />
+                <div
+                  className="fixed z-50 bg-gray-800 border border-white/20 rounded-lg shadow-xl py-1 min-w-[180px]"
+                  style={{ top: contextMenu.y, left: contextMenu.x }}
+                >
+                  {/* Edit — only own messages within 15 min */}
+                  {contextMenu.isOwn && (Date.now() - new Date(contextMenu.createdAt).getTime() < 15 * 60 * 1000) && (
+                    <button
+                      onClick={() => {
+                        const msg = messages.find(m => m.id === contextMenu.messageId)
+                        if (msg) {
+                          setEditingMessageId(msg.id)
+                          setEditingContent(msg.content)
+                        }
+                        setContextMenu(null)
+                      }}
+                      className="w-full px-4 py-2 text-left text-sm text-white hover:bg-white/10 cursor-pointer flex justify-between items-center"
+                    >
+                      <span>Edit</span>
+                      <span className="text-xs text-white/30">
+                        {Math.max(0, Math.ceil((15 * 60 * 1000 - (Date.now() - new Date(contextMenu.createdAt).getTime())) / 60000))}m left
+                      </span>
+                    </button>
+                  )}
+
+                  {/* Delete for everyone — only own messages within 5 min */}
+                  {contextMenu.isOwn && (Date.now() - new Date(contextMenu.createdAt).getTime() < 5 * 60 * 1000) && (
+                    <button
+                      onClick={() => {
+                        dmDeleteForEveryone(contextMenu.messageId)
+                        setContextMenu(null)
+                      }}
+                      className="w-full px-4 py-2 text-left text-sm text-red-400 hover:bg-white/10 cursor-pointer flex justify-between items-center"
+                    >
+                      <span>Delete for everyone</span>
+                      <span className="text-xs text-red-400/50">
+                        {Math.max(0, Math.ceil((5 * 60 * 1000 - (Date.now() - new Date(contextMenu.createdAt).getTime())) / 60000))}m left
+                      </span>
+                    </button>
+                  )}
+
+                  {/* Delete for me — always available */}
+                  <button
+                    onClick={() => {
+                      dmDeleteForMe(contextMenu.messageId)
+                      setContextMenu(null)
+                    }}
+                    className="w-full px-4 py-2 text-left text-sm text-white/60 hover:bg-white/10 cursor-pointer"
+                  >
+                    Delete for me
+                  </button>
+                </div>
+              </>
+            )}
 
             {/* Bottom bar — anchored to bottom, doesn't scroll with messages */}
             <div className="flex-shrink-0 fixed md:sticky bottom-0 left-0 right-0 z-20 bg-black">

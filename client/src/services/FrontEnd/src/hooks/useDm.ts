@@ -10,6 +10,7 @@ import {
   decrypt,
   hasCachedKeyPair,
   getCachedPrivateKey,
+  getCachedPublicKeyHex,
   clearKeyCache
 } from '~/services/DmCryptoService'
 
@@ -37,6 +38,8 @@ type UiConversation = {
 type UiMessage = {
   id: string
   content: string
+  contentType?: string        // "text" | "deleted"
+  editHistory?: Array<{ content: string; editedAt: string }>
   senderId: number
   createdAt: string
   status: string
@@ -88,16 +91,17 @@ export function useDmClient(tokenId?: number) {
       .then(data => {
         if (cancelled) return
         if (data.hasIdentity) {
+          const isAuthed = useAuthStore.getState().isTokenAuthorized(tokenId)
           if (hasCachedKeyPair(tokenId)) {
             // Keys in cache + server identity = fully ready
             privateKeyRef = getCachedPrivateKey()
             setIsInitialized(true)
-            loadConversations()
+            if (isAuthed) loadConversations()
           } else {
             // Server has identity but keys not in memory — need re-derivation
             setIsInitialized(true)
             setNeedsKeyDerivation(true)
-            loadConversations()
+            if (isAuthed) loadConversations()
           }
         }
         // If !hasIdentity, leave isInitialized=false so setup view shows
@@ -175,7 +179,37 @@ export function useDmClient(tokenId?: number) {
     }
 
     if (hasCachedKeyPair(tokenId)) {
-      console.log('[DM] Keys already cached for this tokenId, skipping setup')
+      console.log('[DM] Keys already cached for this tokenId, checking auth...')
+      // Keys are cached but we still need a valid auth session to load conversations
+      if (!useAuthStore.getState().isTokenAuthorized(tokenId)) {
+        console.log('[DM] Token not authorized, verifying wallet...')
+        const ok = await verify()
+        if (!ok) throw new Error('Wallet verification was cancelled or failed')
+        if (!useAuthStore.getState().isTokenAuthorized(tokenId)) {
+          console.warn('[DM] Verified OK but token still not authorized — server may not recognize this wallet as owning any CAW names')
+          throw new Error('Your wallet was verified but is not linked to any CAW name. Make sure you are connected with the correct wallet.')
+        }
+      }
+      privateKeyRef = getCachedPrivateKey()
+
+      // Check if the server actually has the identity registered — cached keys
+      // don't guarantee registration succeeded (e.g. previous attempt may have failed)
+      const identityCheck = await fetch(`${API_HOST}/api/dm/identity/${tokenId}`).then(r => r.json())
+      if (!identityCheck.hasIdentity) {
+        console.log('[DM] Keys cached but server has no identity — re-registering...')
+        const publicKeyHex = getCachedPublicKeyHex()
+        if (!publicKeyHex) throw new Error('Cached keys are missing public key — please re-enable DMs')
+        await apiFetch('/api/dm/identity', {
+          method: 'POST',
+          body: JSON.stringify({
+            userId: tokenId,
+            walletAddress: walletClient!.account.address,
+            publicKey: publicKeyHex
+          })
+        })
+        console.log('[DM] Identity re-registered successfully')
+      }
+
       setIsInitialized(true)
       await loadConversations()
       return
@@ -217,9 +251,11 @@ export function useDmClient(tokenId?: number) {
 
           if (!useAuthStore.getState().isTokenAuthorized(tokenId)) {
             console.log('[DM] Still not authorized, calling verify()...')
-            await verify()
+            const ok = await verify()
+            if (!ok) throw new Error('Wallet verification was cancelled or failed')
             if (!useAuthStore.getState().isTokenAuthorized(tokenId)) {
-              throw new Error('Wallet verification failed — please try again')
+              console.warn('[DM] Verified OK but token still not authorized — server may not recognize this wallet as owning any CAW names')
+              throw new Error('Your wallet was verified but is not linked to any CAW name. Make sure you are connected with the correct wallet.')
             }
           }
         }
@@ -348,6 +384,29 @@ export function useDmMessages(conversationId: string, tokenId?: number) {
         // Decrypt each message
         const decryptedMessages: UiMessage[] = []
         for (const msg of data.messages) {
+          // Handle tombstoned (deleted) messages
+          if (msg.contentType === 'deleted') {
+            decryptedMessages.push({
+              id: msg.id,
+              content: '',
+              contentType: 'deleted',
+              senderId: msg.senderId,
+              createdAt: msg.createdAt,
+              status: msg.status,
+              conversationId: msg.conversationId,
+              isFromCurrentUser: msg.senderId === tokenId,
+              sender: msg.sender ? {
+                user: {
+                  username: msg.sender.user?.username || 'Unknown',
+                  displayName: msg.sender.user?.displayName,
+                  avatarUrl: msg.sender.user?.avatarUrl,
+                  tokenId: msg.senderId
+                }
+              } : undefined
+            })
+            continue
+          }
+
           let content: string
           try {
             content = await decrypt(msg.encryptedPayload, sharedSecret)
@@ -355,9 +414,29 @@ export function useDmMessages(conversationId: string, tokenId?: number) {
             content = '[Unable to decrypt]'
           }
 
+          // Decrypt edit history if present
+          let editHistory: Array<{ content: string; editedAt: string }> | undefined
+          if (msg.editHistory) {
+            try {
+              const historyEntries = JSON.parse(msg.editHistory)
+              editHistory = []
+              for (const entry of historyEntries) {
+                const parsed = JSON.parse(entry)
+                try {
+                  const decryptedContent = await decrypt(parsed.encryptedPayload, sharedSecret)
+                  editHistory.push({ content: decryptedContent, editedAt: parsed.editedAt })
+                } catch {
+                  editHistory.push({ content: '[Unable to decrypt]', editedAt: parsed.editedAt })
+                }
+              }
+            } catch {}
+          }
+
           decryptedMessages.push({
             id: msg.id,
             content,
+            contentType: msg.contentType,
+            editHistory,
             senderId: msg.senderId,
             createdAt: msg.createdAt,
             status: msg.status,
@@ -494,7 +573,57 @@ export function useDmMessages(conversationId: string, tokenId?: number) {
     return getOrComputeSharedSecret(conversationId, tokenId)
   }, [conversationId, tokenId])
 
-  return { messages, isLoading, isSending, sendMessage, markAsRead, addIncomingMessage, peerLastReadAt, getSharedSecret }
+  const editMessage = useCallback(async (messageId: string, newContent: string) => {
+    if (!conversationId || !tokenId) return
+
+    const sharedSecret = await getOrComputeSharedSecret(conversationId, tokenId)
+    if (!sharedSecret) throw new Error('Cannot encrypt')
+
+    // Find original message to pass its encrypted payload as history
+    const original = messages.find(m => m.id === messageId)
+    const previousEncryptedPayload = original ? await encrypt(original.content, sharedSecret) : undefined
+
+    const encryptedPayload = await encrypt(newContent, sharedSecret)
+
+    await apiFetch(`/api/dm/messages/${messageId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ encryptedPayload, previousEncryptedPayload })
+    })
+
+    // Update local state
+    setMessages(prev => prev.map(m =>
+      m.id === messageId
+        ? { ...m, content: newContent, editHistory: [...(m.editHistory || []), { content: m.content, editedAt: new Date().toISOString() }] }
+        : m
+    ))
+  }, [conversationId, tokenId, messages])
+
+  const deleteForMe = useCallback(async (messageId: string) => {
+    if (!tokenId) return
+
+    await apiFetch(`/api/dm/messages/${messageId}/hide`, {
+      method: 'POST',
+      body: JSON.stringify({ userId: tokenId })
+    })
+
+    // Remove from local state
+    setMessages(prev => prev.filter(m => m.id !== messageId))
+  }, [tokenId])
+
+  const deleteForEveryone = useCallback(async (messageId: string) => {
+    await apiFetch(`/api/dm/messages/${messageId}`, {
+      method: 'DELETE'
+    })
+
+    // Replace with tombstone in local state
+    setMessages(prev => prev.map(m =>
+      m.id === messageId
+        ? { ...m, content: '', contentType: 'deleted', editHistory: undefined }
+        : m
+    ))
+  }, [])
+
+  return { messages, isLoading, isSending, sendMessage, editMessage, deleteForMe, deleteForEveryone, markAsRead, addIncomingMessage, peerLastReadAt, getSharedSecret }
 }
 
 /**

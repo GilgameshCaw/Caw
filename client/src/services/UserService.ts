@@ -221,6 +221,55 @@ export async function findOrCreateUser(senderId: number) {
 
 
 /**
+ * refreshOwnership
+ * Checks all known users against L2 on-chain ownerOf and updates any stale addresses.
+ * Called when a verified wallet doesn't match any DB records, suggesting a transfer happened.
+ * Returns tokenIds now owned by the given address.
+ */
+export async function refreshOwnership(walletAddress: string): Promise<number[]> {
+  const normalized = walletAddress.toLowerCase()
+
+  try {
+    const { contract: l2Contract } = await getL2Provider()
+
+    // Get all users to check ownership (typically a small set — hundreds, not millions)
+    const users = await prisma.user.findMany({
+      select: { id: true, tokenId: true, address: true }
+    })
+
+    const updated: number[] = []
+
+    for (const user of users) {
+      try {
+        const onChainOwner: string = await l2Contract.ownerOf(user.tokenId)
+        const onChainLower = onChainOwner.toLowerCase()
+
+        if (onChainLower !== user.address.toLowerCase()) {
+          // Ownership changed on-chain — update DB
+          console.log(`[UserService] Ownership changed for tokenId=${user.tokenId}: ${user.address} → ${onChainLower}`)
+          await prisma.user.update({
+            where: { tokenId: user.tokenId },
+            data: { address: onChainLower }
+          })
+        }
+
+        if (onChainLower === normalized) {
+          updated.push(user.tokenId)
+        }
+      } catch (err: any) {
+        // ownerOf may revert for non-existent tokens on L2
+        console.warn(`[UserService] Could not check ownerOf for tokenId=${user.tokenId}:`, err.message)
+      }
+    }
+
+    return updated
+  } catch (err: any) {
+    console.error('[UserService] refreshOwnership failed:', err.message)
+    return []
+  }
+}
+
+/**
  * enrichUser
  * - calls L2 tokenURI, decodes base64 JSON, writes username+image
  */

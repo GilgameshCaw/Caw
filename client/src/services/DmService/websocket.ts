@@ -191,6 +191,14 @@ export class DmWebSocketService {
   notifyNewConversation(userId: number, conversation: any) {
     this.emitToUser(userId, 'new-conversation', conversation)
   }
+
+  notifyMessageEdited(conversationId: string, messageId: string, senderId: number) {
+    this.emitToConversation(conversationId, 'message-edited', { messageId, senderId }, senderId)
+  }
+
+  notifyMessageDeleted(conversationId: string, messageId: string, senderId: number) {
+    this.emitToConversation(conversationId, 'message-deleted', { messageId, senderId }, senderId)
+  }
 }
 
 export default new DmWebSocketService()

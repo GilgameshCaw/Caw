@@ -177,4 +177,140 @@ router.post('/messages/read',
   }
 )
 
+const EDIT_WINDOW_MS = 15 * 60 * 1000   // 15 minutes
+const DELETE_WINDOW_MS = 5 * 60 * 1000  // 5 minutes
+
+// Edit a message (within 15 minutes, sender only)
+router.patch('/messages/:messageId',
+  requireAuth({ lookup: async (req) => {
+    const msg = await prisma.message.findUnique({ where: { id: req.params.messageId }, select: { senderId: true } })
+    return msg?.senderId
+  }}),
+  async (req: Request, res: Response) => {
+    try {
+      const { messageId } = req.params
+      const { encryptedPayload, previousEncryptedPayload } = req.body
+
+      if (!encryptedPayload) {
+        return res.status(400).json({ error: 'encryptedPayload is required' })
+      }
+
+      const message = await prisma.message.findUnique({ where: { id: messageId } })
+      if (!message) return res.status(404).json({ error: 'Message not found' })
+      if (message.contentType === 'deleted') return res.status(400).json({ error: 'Cannot edit a deleted message' })
+
+      // Check 15-minute window
+      const elapsed = Date.now() - message.createdAt.getTime()
+      if (elapsed > EDIT_WINDOW_MS) {
+        return res.status(403).json({ error: 'Edit window has expired (15 minutes)' })
+      }
+
+      // Build edit history — append the previous version
+      let history: string[] = []
+      if (message.editHistory) {
+        try { history = JSON.parse(message.editHistory) } catch {}
+      }
+      // Store the previous encrypted payload with timestamp
+      history.push(JSON.stringify({
+        encryptedPayload: previousEncryptedPayload || message.encryptedPayload,
+        editedAt: new Date().toISOString()
+      }))
+
+      const updated = await prisma.message.update({
+        where: { id: messageId },
+        data: {
+          encryptedPayload,
+          editHistory: JSON.stringify(history),
+        }
+      })
+
+      // Notify via WebSocket
+      dmWebSocketService.notifyMessageEdited(message.conversationId, messageId, message.senderId)
+
+      return res.json({ success: true, message: updated })
+    } catch (error: any) {
+      console.error('PATCH /api/dm/messages/:messageId error:', error)
+      return res.status(500).json({ error: error.message })
+    }
+  }
+)
+
+// Delete for me — hide message from requesting user
+router.post('/messages/:messageId/hide',
+  requireAuth({ lookup: async (req) => {
+    // Allow either participant to hide
+    const userId = Number(req.body.userId)
+    if (!userId) return undefined
+    const msg = await prisma.message.findUnique({
+      where: { id: req.params.messageId },
+      include: { conversation: { include: { participants: true } } }
+    })
+    const isParticipant = msg?.conversation.participants.some(p => p.userId === userId)
+    return isParticipant ? userId : undefined
+  }}),
+  async (req: Request, res: Response) => {
+    try {
+      const { messageId } = req.params
+      const { userId } = req.body
+
+      if (!userId) return res.status(400).json({ error: 'userId is required' })
+
+      const message = await prisma.message.findUnique({ where: { id: messageId } })
+      if (!message) return res.status(404).json({ error: 'Message not found' })
+
+      await prisma.messageDeletion.upsert({
+        where: { messageId_userId: { messageId, userId: Number(userId) } },
+        update: {},
+        create: { messageId, userId: Number(userId) }
+      })
+
+      return res.json({ success: true })
+    } catch (error: any) {
+      console.error('POST /api/dm/messages/:messageId/hide error:', error)
+      return res.status(500).json({ error: error.message })
+    }
+  }
+)
+
+// Delete for everyone — tombstone message (within 5 minutes, sender only)
+router.delete('/messages/:messageId',
+  requireAuth({ lookup: async (req) => {
+    const msg = await prisma.message.findUnique({ where: { id: req.params.messageId }, select: { senderId: true } })
+    return msg?.senderId
+  }}),
+  async (req: Request, res: Response) => {
+    try {
+      const { messageId } = req.params
+
+      const message = await prisma.message.findUnique({ where: { id: messageId } })
+      if (!message) return res.status(404).json({ error: 'Message not found' })
+      if (message.contentType === 'deleted') return res.status(400).json({ error: 'Already deleted' })
+
+      // Check 5-minute window
+      const elapsed = Date.now() - message.createdAt.getTime()
+      if (elapsed > DELETE_WINDOW_MS) {
+        return res.status(403).json({ error: 'Delete window has expired (5 minutes)' })
+      }
+
+      // Tombstone: wipe payload and edit history, set contentType to deleted
+      await prisma.message.update({
+        where: { id: messageId },
+        data: {
+          encryptedPayload: null,
+          editHistory: null,
+          contentType: 'deleted',
+        }
+      })
+
+      // Notify via WebSocket
+      dmWebSocketService.notifyMessageDeleted(message.conversationId, messageId, message.senderId)
+
+      return res.json({ success: true })
+    } catch (error: any) {
+      console.error('DELETE /api/dm/messages/:messageId error:', error)
+      return res.status(500).json({ error: error.message })
+    }
+  }
+)
+
 export default router
