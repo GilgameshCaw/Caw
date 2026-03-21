@@ -159,7 +159,7 @@ export class DmService {
       }
     }
 
-    return prisma.message.findMany({
+    const messages = await prisma.message.findMany({
       where,
       orderBy: { createdAt: 'asc' },
       take: limit,
@@ -171,6 +171,16 @@ export class DmService {
         }
       }
     })
+
+    // Get the other participant's lastReadAt for seen indicator
+    const otherParticipant = await prisma.conversationParticipant.findFirst({
+      where: { conversationId, userId: { not: userId } }
+    })
+
+    return {
+      messages,
+      peerLastReadAt: otherParticipant?.lastReadAt?.toISOString() || null
+    }
   }
 
   /**
@@ -192,6 +202,14 @@ export class DmService {
                   }
                 }
               }
+            },
+            messages: {
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+              select: {
+                encryptedPayload: true,
+                senderId: true,
+              }
             }
           }
         }
@@ -201,6 +219,7 @@ export class DmService {
 
     return participations.map(p => ({
       ...p.conversation,
+      lastMessage: p.conversation.messages[0] || null,
       unreadCount: p.unreadCount
     }))
   }

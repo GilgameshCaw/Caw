@@ -393,6 +393,32 @@ async function cleanupFailedTxQueue() {
 
             logger.log(` Updated caw ${targetCaw.id} like count to ${actualLikeCount}`)
           }
+        } else if (data.actionType === 4 || data.actionType === 'follow') {
+          // Delete the pending follow record (only if still pending — a prior successful tx may have confirmed it)
+          logger.log(` Removing failed pending follow for user ${data.senderId} -> ${data.receiverId}`)
+
+          await prisma.follow.deleteMany({
+            where: {
+              followerId: data.senderId,
+              followingId: data.receiverId,
+              status: 'PENDING'
+            }
+          })
+        } else if (data.actionType === 5 || data.actionType === 'unfollow') {
+          // Unfollow failed — revert the follow back to SUCCESS (only if still pending)
+          logger.log(` Reverting failed unfollow for user ${data.senderId} -> ${data.receiverId}`)
+
+          await prisma.follow.updateMany({
+            where: {
+              followerId: data.senderId,
+              followingId: data.receiverId,
+              status: 'PENDING'
+            },
+            data: {
+              status: 'SUCCESS',
+              action: 'FOLLOW'
+            }
+          })
         } else if ((data.actionType === 7 || data.actionType === 'other') && data.text?.startsWith('tip:')) {
           // Remove the pending tip
           logger.log(` Removing failed pending tip for user ${data.senderId}`)
@@ -439,6 +465,99 @@ async function cleanupFailedTxQueue() {
 }
 
 /**
+ * Clean up stale pending follows
+ * - If a follow has been PENDING for 5+ minutes, check if the action exists on-chain
+ * - If action exists, mark as SUCCESS
+ * - If action doesn't exist and it's been > 30 minutes, delete the follow
+ */
+async function cleanupPendingFollows() {
+  logger.log('Cleaning up stale pending follows...')
+
+  try {
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
+    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000)
+
+    const stalePendingFollows = await prisma.follow.findMany({
+      where: {
+        status: 'PENDING',
+        updatedAt: { lt: fiveMinutesAgo }
+      }
+    })
+
+    logger.log(`Found ${stalePendingFollows.length} stale pending follows`)
+
+    for (const pendingFollow of stalePendingFollows) {
+      try {
+        const fId = pendingFollow.followerId
+        const tId = pendingFollow.followingId
+        const uniqueWhere = { followerId_followingId: { followerId: fId, followingId: tId } }
+
+        // 1. Check the Action table — the most recent FOLLOW/UNFOLLOW for this pair
+        const action = await prisma.action.findFirst({
+          where: {
+            senderId: fId,
+            actionType: { in: ['FOLLOW', 'UNFOLLOW'] },
+            AND: [{ data: { path: ['receiverId'], equals: tId } }]
+          },
+          orderBy: { createdAt: 'desc' }
+        })
+
+        if (action) {
+          // The most recent on-chain action is the source of truth
+          if (action.actionType === 'UNFOLLOW') {
+            logger.log(` Most recent action is UNFOLLOW — deleting follow: ${fId} -> ${tId}`)
+            await prisma.follow.delete({ where: uniqueWhere })
+          } else {
+            logger.log(` Most recent action is FOLLOW — confirming: ${fId} -> ${tId}`)
+            await prisma.follow.update({ where: uniqueWhere, data: { status: 'SUCCESS', action: 'FOLLOW' } })
+          }
+          continue
+        }
+
+        // 2. No Action record — check if the most recent txqueue for this pair completed
+        //    (ActionProcessor may have missed the on-chain event)
+        const completedTx = await prisma.txQueue.findFirst({
+          where: {
+            senderId: fId,
+            status: 'done',
+            payload: { path: ['data', 'receiverId'], equals: tId }
+          },
+          orderBy: { createdAt: 'desc' }
+        })
+
+        if (completedTx) {
+          const txData = (completedTx.payload as any)?.data
+          const isUnfollow = txData?.actionType === 5 || txData?.actionType === 'unfollow'
+
+          if (isUnfollow) {
+            logger.log(` TxQueue confirms unfollow (event missed): ${fId} -> ${tId}`)
+            await prisma.follow.delete({ where: uniqueWhere })
+          } else {
+            logger.log(` TxQueue confirms follow (event missed): ${fId} -> ${tId}`)
+            await prisma.follow.update({ where: uniqueWhere, data: { status: 'SUCCESS', action: 'FOLLOW' } })
+          }
+          continue
+        }
+
+        // 3. No Action, no completed TxQueue — wait or clean up
+        if (pendingFollow.updatedAt < thirtyMinutesAgo) {
+          logger.log(` No confirmation after 30 min — removing stale follow: ${fId} -> ${tId}`)
+          await prisma.follow.delete({ where: uniqueWhere })
+        } else {
+          logger.log(` Follow still pending (${Math.floor((Date.now() - pendingFollow.updatedAt.getTime()) / 60000)} min): ${fId} -> ${tId}`)
+        }
+      } catch (err) {
+        logger.error(` Error processing pending follow ${pendingFollow.followerId}->${pendingFollow.followingId}:`, err)
+      }
+    }
+
+    logger.log('Pending follows cleanup completed')
+  } catch (err) {
+    logger.error('Fatal error during follow cleanup:', err)
+  }
+}
+
+/**
  * Main cleanup function that runs all data cleaning tasks
  */
 async function runDataCleanup() {
@@ -452,6 +571,9 @@ async function runDataCleanup() {
 
   // Clean up pending replies
   await cleanupPendingReplies()
+
+  // Clean up pending follows
+  await cleanupPendingFollows()
 
   // Clean up failed txqueue records and update associated caws
   await cleanupFailedTxQueue()

@@ -244,7 +244,22 @@ router.get('/', async (req, res) => {
           }
         })
       }
-      results.users = users
+
+      // Attach DM identity status to each user
+      if (users && users.length > 0) {
+        const tokenIds = users.map((u: any) => u.tokenId)
+        const dmIdentities = await prisma.dmIdentity.findMany({
+          where: { userId: { in: tokenIds } },
+          select: { userId: true }
+        })
+        const dmEnabledSet = new Set(dmIdentities.map(d => d.userId))
+        results.users = users.map((u: any) => ({
+          ...u,
+          hasDmIdentity: dmEnabledSet.has(u.tokenId)
+        }))
+      } else {
+        results.users = users
+      }
     }
 
     // Search hashtags (always use Prisma - hashtags are simple lookups)

@@ -2,8 +2,37 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { ActionType } from '@prisma/client'
+import { findOrCreateUser } from '../../services/UserService'
 
 const router = Router()
+
+/**
+ * POST /api/users/ensure
+ * Ensure a user record exists in the DB for a given tokenId.
+ * If not found in DB, queries L1/L2 contracts to verify ownership and username
+ * on-chain before creating. Will fail if the token doesn't exist on-chain.
+ * No auth required (called during onboarding before session is established).
+ * IMPORTANT: This route must be defined BEFORE /:username to avoid conflicts.
+ */
+router.post('/ensure', async (req, res) => {
+  try {
+    const { tokenId } = req.body
+    if (!tokenId || isNaN(Number(tokenId))) {
+      return res.status(400).json({ error: 'tokenId is required' })
+    }
+
+    const resultTokenId = await findOrCreateUser(Number(tokenId))
+    const user = await prisma.user.findUnique({
+      where: { tokenId: resultTokenId },
+      select: { tokenId: true, username: true, address: true }
+    })
+
+    return res.json({ user })
+  } catch (error: any) {
+    console.error('POST /api/users/ensure error:', error)
+    return res.status(500).json({ error: error.message || 'Failed to ensure user' })
+  }
+})
 
 /**
  * GET /api/users/top-followed
@@ -237,6 +266,66 @@ router.get('/by-address/:address', async (req, res) => {
 })
 
 /**
+ * GET /api/users/onboarding/:username
+ * Returns the user's current onboarding step
+ * IMPORTANT: This route must be defined BEFORE /:username to avoid conflicts
+ */
+router.get('/onboarding/:username', async (req, res) => {
+  try {
+    const { username } = req.params
+
+    const user = await prisma.user.findUnique({
+      where: { username },
+      select: { onboardingStep: true }
+    })
+
+    if (!user) {
+      return res.json({ onboardingStep: -1 })
+    }
+
+    return res.json({ onboardingStep: user.onboardingStep })
+  } catch (err: any) {
+    console.error('GET /api/users/onboarding/:username error', err)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
+ * PATCH /api/users/onboarding/:username
+ * Update the user's onboarding step (0-5)
+ * IMPORTANT: This route must be defined BEFORE /:username to avoid conflicts
+ */
+router.patch('/onboarding/:username', async (req, res) => {
+  try {
+    const { username } = req.params
+    const { step } = req.body
+
+    if (typeof step !== 'number' || step < 0 || step > 5) {
+      return res.status(400).json({ error: 'step must be a number between 0 and 5' })
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { username },
+      select: { tokenId: true }
+    })
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' })
+    }
+
+    await prisma.user.update({
+      where: { username },
+      data: { onboardingStep: step }
+    })
+
+    return res.json({ success: true, onboardingStep: step })
+  } catch (err: any) {
+    console.error('PATCH /api/users/onboarding/:username error', err)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
  * GET /api/users/:username
  * Returns user profile data with accurate counts
  */
@@ -330,13 +419,29 @@ router.get('/:username', async (req, res) => {
       }
     }
 
-    // Format response - use cached counts from User model
-    // Ensure counts are never negative
+    // Compute actual follow counts from the follow table (cached counters can drift)
+    const [actualFollowerCount, actualFollowingCount] = await Promise.all([
+      prisma.follow.count({
+        where: { followingId: user.tokenId, action: 'FOLLOW', status: 'SUCCESS' }
+      }),
+      prisma.follow.count({
+        where: { followerId: user.tokenId, action: 'FOLLOW', status: 'SUCCESS' }
+      }),
+    ])
+
+    // Fix cached counters if they drifted
+    if (user.followerCount !== actualFollowerCount || user.followingCount !== actualFollowingCount) {
+      prisma.user.update({
+        where: { tokenId: user.tokenId },
+        data: { followerCount: actualFollowerCount, followingCount: actualFollowingCount }
+      }).catch(() => {}) // fire-and-forget
+    }
+
     const response = {
       ...user,
       cawCount: Math.max(0, user.cawCount),
-      followerCount: Math.max(0, user.followerCount),
-      followingCount: Math.max(0, user.followingCount),
+      followerCount: actualFollowerCount,
+      followingCount: actualFollowingCount,
       likeCount,
       isFollowing,
       followPending,
@@ -344,7 +449,7 @@ router.get('/:username', async (req, res) => {
       tipPending,
     }
 
-    console.log(`[users API] ${username}: followerCount=${user.followerCount}, followingCount=${user.followingCount}`)
+    console.log(`[users API] ${username}: followerCount=${actualFollowerCount}, followingCount=${actualFollowingCount}`)
 
     return res.json(response)
   } catch (err: any) {

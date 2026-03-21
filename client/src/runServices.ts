@@ -8,6 +8,7 @@ import { frontEndService } from './services/FrontEnd';
 import { apiService } from './services/Api'
 import { dataCleanerService } from './services/DataCleaner';
 import { scheduledPostProcessorService } from './services/ScheduledPostProcessor';
+import { instanceRegistryService } from './services/InstanceRegistryService';
 
 import delay from './tools/delay';
 
@@ -44,6 +45,7 @@ const availableServiceList: Service[] = [
   apiService,
   dataCleanerService,
   scheduledPostProcessorService,
+  instanceRegistryService,
 ];
 
 const availableServices = new Map<string, Service>();

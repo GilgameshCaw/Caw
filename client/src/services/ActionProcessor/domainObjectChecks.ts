@@ -24,6 +24,14 @@ export async function checkDomainObjectExists(
     case 'FOLLOW':
       return await checkFollowExists(tx, action, rawAction)
 
+    case 'UNFOLLOW':
+      // For unfollows, always process — we need to delete the follow record if it exists
+      return false
+
+    case 'UNLIKE':
+      // For unlikes, always process — we need to remove the like
+      return false
+
     case 'OTHER':
       return await checkOtherExists(tx, action, rawAction)
 
@@ -101,7 +109,8 @@ async function checkFollowExists(
       followerId_followingId: { followerId, followingId }
     }
   })
-  return !!existingFollow
+  // Only skip if follow exists AND is already SUCCESS (fully processed)
+  return existingFollow?.status === 'SUCCESS' && existingFollow?.action === 'FOLLOW'
 }
 
 /**

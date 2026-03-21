@@ -440,14 +440,27 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // Create the transaction queue entry
-    const txQueueEntry = await prisma.txQueue.create({
-      data: {
-        senderId: data.senderId,          // ← pull out the on-chain sender
-        payload: { data, domain, types },
-        signedTx: signature
+    // Create the transaction queue entry (or return existing if duplicate signature)
+    let txQueueEntry
+    try {
+      txQueueEntry = await prisma.txQueue.create({
+        data: {
+          senderId: data.senderId,          // ← pull out the on-chain sender
+          payload: { data, domain, types },
+          signedTx: signature
+        }
+      })
+    } catch (err: any) {
+      if (err.code === 'P2002') {
+        // Duplicate signature — find the existing entry and return it
+        const existing = await prisma.txQueue.findFirst({ where: { signedTx: signature } })
+        if (existing) {
+          console.log(`Duplicate submission for txQueue ${existing.id}, returning existing entry`)
+          return res.json({ txQueueId: existing.id, status: existing.status })
+        }
       }
-    })
+      throw err
+    }
     console.log(`Created TxQueue entry ${txQueueEntry.id} for action type ${data.actionType}, senderId ${data.senderId}, cawonce ${data.cawonce}`)
 
     // Create pending OnChainImage if this is an image upload action

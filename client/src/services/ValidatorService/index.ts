@@ -923,7 +923,12 @@ console.log("succeededKeys", succeededKeys)
       await Promise.all(queueEntries.map(async (entry, index) => {
         const data = (entry.payload as any).data
         const key  = `${data.senderId}-${data.cawonce}`
-        const newStatus = succeededKeys.has(key)
+
+        // Treat "Cawonce already used" as success — another validator already processed it
+        const rejection = simulationRejections[index] || ''
+        const processedByOther = rejection.includes('Cawonce already used')
+
+        const newStatus = succeededKeys.has(key) || processedByOther
           ? 'done'
           : 'failed'
 
@@ -1247,13 +1252,27 @@ console.log("succeededKeys", succeededKeys)
             try {
               const simResult = await simulateActions(validatorId, subBatch)
               if (!simResult || !simResult.successfulActions?.length) {
+                // Check if all were processed by another validator
+                const allByOther = simResult?.rejectionMessages?.every((msg: string) =>
+                  msg?.includes('Cawonce already used')
+                )
+                if (allByOther) {
+                  console.log(`[Validator] Client ${clientId}: all actions already processed by another validator`)
+                  await Promise.all(subBatchEntries.map(entry =>
+                    prisma.txQueue.update({ where: { id: entry.id }, data: { status: 'done' } })
+                  ))
+                  continue
+                }
+
                 console.log(`[Validator] Client ${clientId} simulation failed or no successful actions`)
                 await Promise.all(subBatchEntries.map((entry, idx) => {
+                  const rejection = simResult?.rejectionMessages?.[idx] || ''
+                  const processedByOther = rejection.includes('Cawonce already used')
                   return prisma.txQueue.update({
                     where: { id: entry.id },
                     data: {
-                      status: 'failed',
-                      reason: simResult?.rejectionMessages?.[idx] || 'Simulation failed'
+                      status: processedByOther ? 'done' : 'failed',
+                      reason: processedByOther ? null : (rejection || 'Simulation failed')
                     }
                   })
                 }))
@@ -1352,6 +1371,21 @@ console.log("succeededKeys", succeededKeys)
         console.log("No successful actions from simulation")
 
         // Check if any rejection is due to RPC/network issues (temporary) vs actual failures (permanent)
+        // Check if all rejections are "Cawonce already used" — another validator processed them
+        const allProcessedByOther = rejectionMessages.every((msg: string) =>
+          msg?.includes('Cawonce already used')
+        )
+        if (allProcessedByOther) {
+          console.log("[Validator] All actions already processed by another validator — marking as done")
+          await Promise.all(validatedEntries.map(entry =>
+            prisma.txQueue.update({
+              where: { id: entry.id },
+              data: { status: 'done' }
+            })
+          ))
+          return
+        }
+
         const hasTemporaryError = rejectionMessages.some((msg: string) => {
           const lowerMsg = msg?.toLowerCase() || ''
           return lowerMsg.includes('timeout') ||

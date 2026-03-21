@@ -44,6 +44,7 @@ model User {
   location              String?
   profileUpdatePending  Boolean        @default(false)
   website               String?
+  onboardingStep        Int            @default(0)
   lastStakedAt          DateTime?
   caws                  Caw[]
   followers             Follow[]       @relation("Follower")

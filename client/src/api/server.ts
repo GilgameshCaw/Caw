@@ -17,6 +17,7 @@ import scheduledRouter from './routes/scheduled'
 import notificationsRouter from './routes/notifications'
 import withdrawalsRouter from './routes/withdrawals'
 import dmRouter from './routes/dm'
+import dmRelayRouter from './routes/dm-relay'
 import giphyRouter from './routes/giphy'
 import statsRouter from './routes/stats'
 import shorturlRouter from './routes/shorturl'
@@ -26,6 +27,7 @@ import reportsRouter from './routes/reports'
 import tipsRouter from './routes/tips'
 import bugReportsRouter from './routes/bugReports'
 import authRouter from './routes/auth'
+import sessionsRouter from './routes/sessions'
 import { getSession } from './sessionStore'
 import { prisma } from '../prismaClient'
 
@@ -148,6 +150,7 @@ function createApp() {
   app.use('/api/notifications', notificationsRouter)
   app.use('/api/withdrawals', withdrawalsRouter)
   app.use('/api/dm', dmRouter)
+  app.use('/api/dm/relay', dmRelayRouter)
   app.use('/api/giphy', giphyRouter)
   app.use('/api/stats', statsRouter)
   app.use('/api/shorturl', shorturlRouter)
@@ -156,6 +159,7 @@ function createApp() {
   app.use('/api/reports', reportsRouter)
   app.use('/api/tips', tipsRouter)
   app.use('/api/bug-reports', bugReportsRouter)
+  app.use('/api/sessions', sessionsRouter)
 
   return app
 }

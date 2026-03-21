@@ -8,7 +8,8 @@ const CawNameL2Abi = [
 ]
 
 const CawNameL1Abi = [
-  'function usernames(uint256 index) view returns (string)'
+  'function usernames(uint256 index) view returns (string)',
+  'function ownerOf(uint256 tokenId) view returns (address)'
 ]
 
 // Lazy-initialized providers - only created when first needed
@@ -186,12 +187,11 @@ export async function findOrCreateUser(senderId: number) {
 
   if (!user) {
     // Get providers lazily - only created when needed (with rate limit handling)
-    const { contract: l2Contract } = await getL2Provider()
     const { contract: l1Contract } = await getL1Provider()
 
-    // Query L2 for owner address and L1 for username
+    // Query L1 for owner address and username (L1 is authoritative — L2 may not have the token yet)
     const [ownerAddress, username] = await Promise.all([
-      l2Contract.ownerOf(tokenId),
+      l1Contract.ownerOf(tokenId),
       l1Contract.usernames(tokenId - 1) // usernames array is 0-indexed, tokenIds start at 1
     ]);
 

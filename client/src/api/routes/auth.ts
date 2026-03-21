@@ -109,6 +109,47 @@ router.get('/session', async (req, res) => {
 })
 
 /**
+ * POST /api/auth/refresh
+ * Refresh session's authorizedTokenIds by re-querying the DB for all tokens
+ * owned by already-authorized addresses. No new signature required.
+ */
+router.post('/refresh', async (req, res) => {
+  try {
+    await extractSession(req)
+
+    if (!req.sessionData) {
+      res.status(401).json({ error: 'AUTH_REQUIRED', message: 'Session token required' })
+      return
+    }
+
+    const sessionToken = req.headers['x-session-token'] as string
+
+    // For each authorized address, look up all tokenIds
+    for (const addr of req.sessionData.authorizedAddresses) {
+      const users = await prisma.user.findMany({
+        where: { address: addr },
+        select: { tokenId: true }
+      })
+      const tokenIds = users.map(u => u.tokenId)
+      await addAuthorization(sessionToken, addr, tokenIds)
+    }
+
+    // Re-read updated session
+    const updated = await getSession(sessionToken)
+
+    res.json({
+      sessionToken,
+      authorizedTokenIds: updated?.authorizedTokenIds || [],
+      authorizedAddresses: updated?.authorizedAddresses || [],
+      expiresAt: updated?.expiresAt
+    })
+  } catch (error) {
+    console.error('POST /api/auth/refresh error:', error)
+    res.status(500).json({ error: 'Failed to refresh session' })
+  }
+})
+
+/**
  * POST /api/auth/logout
  * Delete session
  */

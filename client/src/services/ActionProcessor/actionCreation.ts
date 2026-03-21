@@ -18,13 +18,18 @@ export async function createOrFindAction(
   chainId: number,
   rawAction: RawAction
 ): Promise<CreateActionResult> {
-  // First, try to find existing action
+  // First, try to find existing action (match by rawEventId + senderId + cawonce to
+  // distinguish multiple actions within the same batched event)
   const existingAction = await tx.action.findFirst({
-    where: { rawEventId: rawId }
+    where: {
+      rawEventId: rawId,
+      senderId: rawAction.senderId,
+      cawonce: rawAction.cawonce,
+    }
   })
 
   if (existingAction) {
-    console.log("Action already exists, checking domain objects")
+    console.log(`Action already exists (id=${existingAction.id}, type=${existingAction.actionType}, sender=${existingAction.senderId}, cawonce=${existingAction.cawonce}), checking domain objects`)
 
     // Check if domain objects already exist for this action
     const actionType = getActionType(Number(rawAction.actionType))

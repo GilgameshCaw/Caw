@@ -440,6 +440,8 @@ export async function handleFollowAction(
   const followerId = await findOrCreateUser(action.senderId)
   const followingId = await findOrCreateUser(rawAction.receiverId)
 
+  console.log(`[ActionProcessor] handleFollowAction: ${followerId} -> ${followingId}`)
+
   // Check if follow already exists
   const existingFollow = await tx.follow.findUnique({
     where: {
@@ -449,6 +451,8 @@ export async function handleFollowAction(
       }
     }
   })
+
+  console.log(`[ActionProcessor] existingFollow:`, existingFollow ? `action=${existingFollow.action} status=${existingFollow.status}` : 'null')
 
   if (!existingFollow) {
     // Create new follow relationship or update pending to success

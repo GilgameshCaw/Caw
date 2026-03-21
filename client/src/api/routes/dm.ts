@@ -1,7 +1,10 @@
 import { Router, Request, Response } from 'express'
+import { PrismaClient } from '@prisma/client'
 import dmService from '../../services/DmService'
 import dmWebSocketService from '../../services/DmService/websocket'
 import { requireAuth } from '../middleware/auth'
+
+const prisma = new PrismaClient()
 
 const router = Router()
 
@@ -13,6 +16,12 @@ router.post('/identity',
       const { userId, walletAddress, publicKey } = req.body
       if (!userId || !walletAddress || !publicKey) {
         return res.status(400).json({ error: 'userId, walletAddress, and publicKey are required' })
+      }
+
+      // Verify the wallet address matches the token owner
+      const user = await prisma.user.findUnique({ where: { tokenId: Number(userId) }, select: { address: true } })
+      if (!user || user.address.toLowerCase() !== walletAddress.toLowerCase()) {
+        return res.status(403).json({ error: 'Wallet address does not match the owner of this token' })
       }
 
       const identity = await dmService.registerIdentity(Number(userId), walletAddress, publicKey)
@@ -140,8 +149,8 @@ router.get('/conversations/:id/messages',
         return res.status(400).json({ error: 'userId query parameter is required' })
       }
 
-      const messages = await dmService.getMessages(conversationId, userId, limit, before)
-      return res.json({ messages })
+      const result = await dmService.getMessages(conversationId, userId, limit, before)
+      return res.json({ messages: result.messages, peerLastReadAt: result.peerLastReadAt })
     } catch (error: any) {
       console.error('GET /api/dm/conversations/:id/messages error:', error)
       return res.status(500).json({ error: error.message })
