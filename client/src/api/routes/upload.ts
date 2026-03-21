@@ -95,6 +95,97 @@ router.post('/', upload.array('media', 10), requireAuth({ field: 'tokenId' }), a
 })
 
 /**
+ * Upload encrypted DM attachment.
+ * Accepts raw encrypted binary (application/octet-stream).
+ * Stores as .enc file, returns URL for retrieval.
+ */
+const ENC_DIR = path.join(UPLOAD_DIR, 'encrypted')
+mkdir(ENC_DIR, { recursive: true }).catch(console.error)
+
+// Rate limiting for encrypted uploads: max uploads per user per day, max bytes per user per day
+const ENC_RATE_LIMIT_MAX = 50                      // 50 files per day
+const ENC_RATE_LIMIT_BYTES = 100 * 1024 * 1024     // 100MB per day
+const ENC_RATE_LIMIT_WINDOW = 24 * 60 * 60 * 1000  // 24 hours
+const encRateLimitMap = new Map<number, { timestamps: number[]; bytes: number[] }>()
+
+function checkEncRateLimit(tokenId: number, fileSize: number): { allowed: boolean; reason?: string } {
+  const now = Date.now()
+  const entry = encRateLimitMap.get(tokenId) || { timestamps: [], bytes: [] }
+
+  // Clean old entries
+  const cutoff = now - ENC_RATE_LIMIT_WINDOW
+  const validIndices = entry.timestamps.reduce<number[]>((acc, t, i) => {
+    if (t > cutoff) acc.push(i)
+    return acc
+  }, [])
+  entry.timestamps = validIndices.map(i => entry.timestamps[i])
+  entry.bytes = validIndices.map(i => entry.bytes[i])
+
+  // Check file count
+  if (entry.timestamps.length >= ENC_RATE_LIMIT_MAX) {
+    return { allowed: false, reason: `Upload limit reached (${ENC_RATE_LIMIT_MAX} files per day)` }
+  }
+
+  // Check total bytes
+  const totalBytes = entry.bytes.reduce((sum, b) => sum + b, 0)
+  if (totalBytes + fileSize > ENC_RATE_LIMIT_BYTES) {
+    return { allowed: false, reason: `Daily upload size limit reached (${ENC_RATE_LIMIT_BYTES / 1024 / 1024}MB per day)` }
+  }
+
+  return { allowed: true }
+}
+
+function recordEncUpload(tokenId: number, fileSize: number) {
+  const entry = encRateLimitMap.get(tokenId) || { timestamps: [], bytes: [] }
+  entry.timestamps.push(Date.now())
+  entry.bytes.push(fileSize)
+  encRateLimitMap.set(tokenId, entry)
+}
+
+router.post('/encrypted', requireAuth({ lookup: async (req) => {
+  const tokenId = req.query.tokenId
+  return tokenId ? Number(tokenId) : undefined
+}}), async (req: any, res: any) => {
+  try {
+    const tokenId = Number(req.query.tokenId)
+    const chunks: Buffer[] = []
+    for await (const chunk of req) {
+      chunks.push(chunk)
+    }
+    const data = Buffer.concat(chunks)
+
+    if (data.length === 0) {
+      return res.status(400).json({ error: 'No data received' })
+    }
+
+    // 10MB limit per file
+    if (data.length > 10 * 1024 * 1024) {
+      return res.status(413).json({ error: 'File too large (max 10MB)' })
+    }
+
+    // Rate limit
+    const rateCheck = checkEncRateLimit(tokenId, data.length)
+    if (!rateCheck.allowed) {
+      return res.status(429).json({ error: rateCheck.reason })
+    }
+
+    const uniqueId = randomBytes(8).toString('hex')
+    const filename = `${uniqueId}.enc`
+    await writeFile(path.join(ENC_DIR, filename), data)
+
+    recordEncUpload(tokenId, data.length)
+
+    const apiHost = process.env.API_URL || `http://localhost:4000`
+    const url = `${apiHost}/uploads/encrypted/${filename}`
+
+    res.json({ success: true, url })
+  } catch (error) {
+    console.error('Encrypted upload error:', error)
+    res.status(500).json({ error: 'Failed to upload encrypted file' })
+  }
+})
+
+/**
  * Legacy endpoint: Upload single base64 image
  * Kept for backward compatibility
  */

@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { ethers, Contract, Wallet, JsonRpcProvider, WebSocketProvider } from 'ethers'
 import { cawNameL2Abi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
+import { prisma } from '../../prismaClient'
 
 const router = Router()
 
@@ -21,24 +22,27 @@ const DELEGATION_TYPES = {
   ],
 }
 
-// Rate limiting: 3 registrations per token per day
-const rateLimitMap = new Map<number, number[]>()
+// Rate limiting: 3 registrations per address per day
+const rateLimitMap = new Map<string, number[]>()
 const RATE_LIMIT_MAX = 3
 const RATE_LIMIT_WINDOW = 24 * 60 * 60 * 1000
 
-function checkRateLimit(tokenId: number): boolean {
+function checkRateLimit(address: string): boolean {
   const now = Date.now()
-  const timestamps = rateLimitMap.get(tokenId) || []
+  const timestamps = rateLimitMap.get(address) || []
   const recent = timestamps.filter(t => now - t < RATE_LIMIT_WINDOW)
-  rateLimitMap.set(tokenId, recent)
+  rateLimitMap.set(address, recent)
   return recent.length < RATE_LIMIT_MAX
 }
 
-function recordRateLimit(tokenId: number) {
-  const timestamps = rateLimitMap.get(tokenId) || []
+function recordRateLimit(address: string) {
+  const timestamps = rateLimitMap.get(address) || []
   timestamps.push(Date.now())
-  rateLimitMap.set(tokenId, timestamps)
+  rateLimitMap.set(address, timestamps)
 }
+
+// Max expiry: 30 days
+const MAX_EXPIRY_SECONDS = 30 * 24 * 60 * 60
 
 // Track pending requests for polling
 type SessionRequest = {
@@ -132,6 +136,20 @@ router.post('/', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Missing delegation fields' })
     }
 
+    // Server-side validation: reject expired or unreasonably long sessions before paying gas
+    const nowSeconds = Math.floor(Date.now() / 1000)
+    if (Number(expiry) <= nowSeconds) {
+      return res.status(400).json({ error: 'Session already expired' })
+    }
+    if (Number(expiry) - nowSeconds > MAX_EXPIRY_SECONDS) {
+      return res.status(400).json({ error: 'Session expiry too far in the future (max 30 days)' })
+    }
+
+    // Reject forbidden scope bits server-side (WITHDRAW=0x40, OTHER=0x80)
+    if ((Number(scopeBitmap) & 0xC0) !== 0) {
+      return res.status(400).json({ error: 'Cannot delegate WITHDRAW or OTHER actions' })
+    }
+
     // Verify EIP-712 signature to recover signer address (fast, no RPC needed)
     const message = {
       sessionKey,
@@ -148,19 +166,25 @@ router.post('/', async (req: any, res: any) => {
       signature
     ).toLowerCase()
 
-    // Rate limit by recovered address
-    // Use a hash of the address as the "tokenId" key for rate limiting
-    const rateLimitKey = parseInt(recoveredAddress.slice(2, 10), 16)
-    if (!checkRateLimit(rateLimitKey)) {
+    // Rate limit by full recovered address (no truncation)
+    if (!checkRateLimit(recoveredAddress)) {
       return res.status(429).json({ error: 'Rate limit exceeded. Max 3 session registrations per day.' })
+    }
+
+    // Verify the signer actually owns at least one CAW name (prevents gas drain from random wallets)
+    const ownedName = await prisma.user.findFirst({
+      where: { address: recoveredAddress },
+      select: { id: true },
+    })
+    if (!ownedName) {
+      return res.status(403).json({ error: 'Signer does not own any CAW names' })
     }
 
     // Create request and process in background
     const requestId = randomUUID()
     requests.set(requestId, { status: 'submitting' })
-    recordRateLimit(rateLimitKey)
+    recordRateLimit(recoveredAddress)
 
-    // Fire and forget — no ownership check needed, contract stores by signer address
     processSessionRequest(requestId, delegation, signature)
 
     return res.json({ requestId, status: 'submitting' })

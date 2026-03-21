@@ -1,6 +1,6 @@
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
-import { useState, useEffect, useRef, useMemo } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useAccount } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useSearchParams, useParams, useNavigate } from 'react-router-dom'
@@ -33,7 +33,9 @@ import { useDmWebSocket } from '~/hooks/useDmWebSocket'
 import { useMessageNotifications, useTypingStatus } from '~/hooks/useMessageNotifications'
 import { formatDistanceToNow } from 'date-fns'
 import MessageSearch from '~/components/MessageSearch'
-import MessageFileUpload from '~/components/MessageFileUpload'
+import GifPicker from '~/components/GifPicker'
+import EncryptedImage from '~/components/EncryptedImage'
+import { useDmFileUpload } from '~/hooks/useDmFileUpload'
 
 const MessagesPage: React.FC = () => {
   const { isDark } = useTheme()
@@ -59,11 +61,18 @@ const MessagesPage: React.FC = () => {
   const [showChatOptionsMenu, setShowChatOptionsMenu] = useState(false)
   const [showSearchModal, setShowSearchModal] = useState(false)
   const [showFileUpload, setShowFileUpload] = useState(false)
+  const [showGifPicker, setShowGifPicker] = useState(false)
+  const [gifPreview, setGifPreview] = useState<{ url: string; preview: string } | null>(null)
+  const [isDragOver, setIsDragOver] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [filePreview, setFilePreview] = useState<{ file: File; previewUrl: string; isImage: boolean } | null>(null)
+  const [chatSharedSecret, setChatSharedSecret] = useState<CryptoKey | null>(null)
   const [isTyping, setIsTyping] = useState(false)
   const typingTimeoutRef = useRef<NodeJS.Timeout>()
   const chatMenuRef = useRef<HTMLDivElement>(null)
   const [targetUser, setTargetUser] = useState<{ tokenId: number, username: string } | null>(null)
   const [attemptedConversations, setAttemptedConversations] = useState<Set<string>>(new Set())
+  const messagesContainerRef = useRef<HTMLDivElement>(null)
 
   // Auth state
   const { verify, isVerifying, error: verifyError } = useVerifyWallet()
@@ -89,7 +98,32 @@ const MessagesPage: React.FC = () => {
     refreshConversations,
     clearUnreadCount
   } = useDmClient(currentUser?.id)
-  const { messages, sendMessage: dmSendMessage, isSending, markAsRead, addIncomingMessage, peerLastReadAt } = useDmMessages(selectedConversationId || '', currentUser?.id)
+  const { messages, sendMessage: dmSendMessage, isSending, markAsRead, addIncomingMessage, peerLastReadAt, getSharedSecret } = useDmMessages(selectedConversationId || '', currentUser?.id)
+  const { uploadEncryptedFile, isUploading, uploadProgress } = useDmFileUpload()
+
+  // Scroll to bottom of messages
+  const scrollToBottom = useCallback(() => {
+    setTimeout(() => {
+      const el = messagesContainerRef.current
+      if (el) el.scrollTop = el.scrollHeight
+    }, 50)
+  }, [])
+
+  // Auto-scroll when messages change
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages.length, scrollToBottom])
+
+  // Resolve shared secret for current conversation (used by EncryptedImage)
+  useEffect(() => {
+    setChatSharedSecret(null)
+    if (!selectedConversationId) return
+    let cancelled = false
+    getSharedSecret().then(secret => {
+      if (!cancelled) setChatSharedSecret(secret)
+    })
+    return () => { cancelled = true }
+  }, [selectedConversationId, getSharedSecret])
 
   // Send pending message after conversation selection takes effect
   useEffect(() => {
@@ -284,29 +318,61 @@ const MessagesPage: React.FC = () => {
     sendTyping(selectedConversationId, false)
   }
 
-  // Handle file upload
-  const handleFilesSelected = async (files: File[]) => {
-    if (!selectedConversationId || files.length === 0) return
+  // Stage a file for preview before sending
+  const handleFileSelected = (files: FileList | File[]) => {
+    const file = Array.from(files)[0]
+    if (!file) return
+    setUploadError(null)
+    const isImage = file.type.startsWith('image/')
+    const previewUrl = isImage ? URL.createObjectURL(file) : ''
+    setFilePreview({ file, previewUrl, isImage })
+  }
 
-    // Create FormData for file upload
-    const formData = new FormData()
-    formData.append('conversationId', selectedConversationId)
-    formData.append('senderId', currentUser?.id?.toString() || '')
-    formData.append('content', newMessageContent)
-
-    files.forEach(file => {
-      formData.append('files', file)
-    })
+  // Actually encrypt and send the staged file
+  const handleSendFile = async () => {
+    if (!filePreview || !selectedConversationId || !currentUser?.id) return
+    setUploadError(null)
 
     try {
-      // File attachments not yet supported in E2E encrypted DMs
-      console.log('File upload not yet implemented for E2E encrypted DMs')
-      alert('File attachments are not yet supported in encrypted DMs')
+      const secret = await getSharedSecret()
+      if (!secret) {
+        setUploadError('Cannot encrypt: shared secret not available')
+        return
+      }
 
-      setShowFileUpload(false)
-      setNewMessageContent('')
-    } catch (error) {
-      console.error('Error sending files:', error)
+      const attachment = await uploadEncryptedFile(filePreview.file, secret, currentUser.id)
+      if (!attachment) return
+
+      const msg = JSON.stringify({ msgType: 'encrypted-attachment', ...attachment })
+      await dmSendMessage(msg)
+      // Clean up preview
+      if (filePreview.previewUrl) URL.revokeObjectURL(filePreview.previewUrl)
+      setFilePreview(null)
+    } catch (err: any) {
+      setUploadError(err.message || 'Upload failed')
+    }
+  }
+
+  const handleCancelFilePreview = () => {
+    if (filePreview?.previewUrl) URL.revokeObjectURL(filePreview.previewUrl)
+    setFilePreview(null)
+    setUploadError(null)
+  }
+
+  // Handle drag and drop
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    if (currentView === 'chat') setIsDragOver(true)
+  }
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragOver(false)
+  }
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault()
+    setIsDragOver(false)
+    if (currentView === 'chat' && e.dataTransfer.files.length > 0) {
+      handleFileSelected(e.dataTransfer.files)
     }
   }
 
@@ -398,6 +464,13 @@ const MessagesPage: React.FC = () => {
       setShowChatOptionsMenu(false)
     }
   }, [urlUsername])
+
+  // Reset to inbox when user switches
+  useEffect(() => {
+    setCurrentView('inbox')
+    setSelectedConversationId(null)
+    setAttemptedConversations(new Set())
+  }, [currentUser?.id])
 
   // Route user through sign-in → DM setup → inbox
   useEffect(() => {
@@ -562,7 +635,20 @@ const MessagesPage: React.FC = () => {
 
   return (
     <MainLayout>
-      <div className="max-w-2xl mx-auto px-3 sm:px-6 py-4 bg-black h-screen flex flex-col">
+      <div
+        className="max-w-2xl mx-auto px-3 sm:px-6 py-4 bg-black h-screen flex flex-col relative"
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {/* Drag overlay — covers the center column only */}
+        {isDragOver && (
+          <div className="sticky top-0 left-0 right-0 z-50 h-0">
+            <div className="absolute inset-x-0 top-0 h-screen bg-black/80 flex items-center justify-center border-2 border-dashed border-yellow-500 pointer-events-none">
+              <p className="text-yellow-500 text-lg font-semibold">Drop to encrypt & send</p>
+            </div>
+          </div>
+        )}
         {/* Messages Header */}
         <div className={`mb-6 flex-shrink-0 ${currentView === 'chat' ? 'fixed md:relative top-0 left-0 right-0 z-30 bg-black md:bg-transparent p-4 md:p-0' : ''}`}>
           <div className="flex items-center justify-between">
@@ -940,7 +1026,7 @@ const MessagesPage: React.FC = () => {
             </div>
 
             {/* Chat Messages */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar-alt space-y-4 p-4 md:p-4 pt-32 md:pt-4 pb-20 md:pb-4">
+            <div ref={messagesContainerRef} className="flex-1 overflow-y-auto overflow-x-visible custom-scrollbar-alt space-y-4 p-4 md:p-4 pt-32 md:pt-4 pb-20 md:pb-4">
               {/* Typing Indicator */}
               {otherUserTyping && (
                 <div className="flex items-start space-x-3 animate-pulse">
@@ -1023,8 +1109,50 @@ const MessagesPage: React.FC = () => {
                               : 'bg-gray-200 text-black'
                           }`}
                         >
-                          {/* Message text */}
-                          {messageContent && <p className="text-sm">{messageContent}</p>}
+                          {/* Message content — handle text, images, GIFs, encrypted attachments */}
+                          {messageContent && (() => {
+                            // Check for encrypted attachment JSON
+                            try {
+                              const parsed = JSON.parse(messageContent)
+                              if (parsed.msgType === 'encrypted-attachment' && parsed.url) {
+                                if (parsed.type === 'image') {
+                                  return (
+                                    <EncryptedImage
+                                      url={parsed.url}
+                                      sharedSecret={chatSharedSecret}
+                                      mimeType={parsed.mimeType}
+                                      alt={parsed.name}
+                                      className="max-w-[240px] max-h-[240px] rounded-lg object-contain"
+                                    />
+                                  )
+                                }
+                                // Generic file
+                                return (
+                                  <div className="flex items-center gap-2 p-2 rounded bg-black/20">
+                                    <HiOutlinePaperClip className="w-4 h-4 flex-shrink-0" />
+                                    <span className="text-xs truncate">{parsed.name}</span>
+                                    <span className="text-xs text-white/30">{(parsed.size / 1024).toFixed(0)}KB</span>
+                                  </div>
+                                )
+                              }
+                            } catch {}
+
+                            // Check for image/GIF URLs
+                            const imageUrlPattern = /^https?:\/\/\S+\.(gif|jpg|jpeg|png|webp)(\?\S*)?$/i
+                            const giphyPattern = /^https?:\/\/(media\d?\.giphy\.com|i\.giphy\.com)\//i
+                            const trimmed = messageContent.trim()
+                            if (imageUrlPattern.test(trimmed) || giphyPattern.test(trimmed)) {
+                              return (
+                                <img
+                                  src={trimmed}
+                                  alt="Shared image"
+                                  className="max-w-[240px] max-h-[240px] rounded-lg object-contain"
+                                  loading="lazy"
+                                />
+                              )
+                            }
+                            return <p className="text-sm">{messageContent}</p>
+                          })()}
 
                           {/* Attachments */}
                           {attachments.length > 0 && (
@@ -1078,17 +1206,85 @@ const MessagesPage: React.FC = () => {
               })()}
             </div>
 
-            {/* File Upload Component - Show when enabled */}
-            {showFileUpload && (
-              <MessageFileUpload
-                onFilesSelected={handleFilesSelected}
-                onCancel={() => setShowFileUpload(false)}
-                maxSize={10}
-              />
-            )}
+            {/* Bottom bar — anchored to bottom, doesn't scroll with messages */}
+            <div className="flex-shrink-0 fixed md:sticky bottom-0 left-0 right-0 z-20 bg-black">
+              {/* GIF Picker */}
+              {showGifPicker && !gifPreview && (
+                <div className="border-t border-white/10 max-h-96 overflow-auto">
+                  <GifPicker
+                    onSelect={(gif) => {
+                      setGifPreview({ url: gif.url, preview: gif.preview })
+                      setShowGifPicker(false)
+                    }}
+                    onClose={() => setShowGifPicker(false)}
+                  />
+                </div>
+              )}
 
-            {/* Message Input - Fixed at bottom */}
-            <div className="flex-shrink-0 border-t border-white/10 p-2 md:p-4 fixed md:relative bottom-0 left-0 right-0 z-20 bg-black md:bg-transparent">
+              {/* GIF Preview */}
+              {gifPreview && (
+                <div className="border-t border-white/10 p-3">
+                  <div className="relative inline-block">
+                    <img src={gifPreview.preview || gifPreview.url} alt="GIF preview" className="max-h-48 rounded-lg border border-white/10" />
+                    <button
+                      onClick={() => setGifPreview(null)}
+                      className="absolute top-1 right-1 p-1 rounded-full bg-black/60 text-white hover:bg-black/80 cursor-pointer"
+                    >
+                      <HiOutlineX className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <button
+                    onClick={() => {
+                      dmSendMessage(gifPreview.url)
+                      setGifPreview(null)
+                    }}
+                    className="mt-2 px-4 py-1.5 rounded-full text-sm font-semibold bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer"
+                  >
+                    Send GIF
+                  </button>
+                </div>
+              )}
+
+              {/* File Preview */}
+              {filePreview && !isUploading && (
+                <div className="border-t border-white/10 p-3">
+                  <div className="relative inline-block">
+                    {filePreview.isImage ? (
+                      <img src={filePreview.previewUrl} alt="File preview" className="max-h-48 rounded-lg border border-white/10" />
+                    ) : (
+                      <div className="flex items-center gap-2 p-3 rounded-lg bg-white/5">
+                        <HiOutlinePaperClip className="w-5 h-5 text-white/50" />
+                        <div>
+                          <p className="text-sm text-white truncate max-w-[200px]">{filePreview.file.name}</p>
+                          <p className="text-xs text-white/40">{(filePreview.file.size / 1024).toFixed(0)}KB</p>
+                        </div>
+                      </div>
+                    )}
+                    <button
+                      onClick={handleCancelFilePreview}
+                      className="absolute top-1 right-1 p-1 rounded-full bg-black/60 text-white hover:bg-black/80 cursor-pointer"
+                    >
+                      <HiOutlineX className="w-4 h-4" />
+                    </button>
+                  </div>
+                  <button
+                    onClick={handleSendFile}
+                    className="mt-2 px-4 py-1.5 rounded-full text-sm font-semibold bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer"
+                  >
+                    {filePreview.isImage ? 'Send Image' : 'Send File'}
+                  </button>
+                </div>
+              )}
+
+              {/* Upload progress / error */}
+              {(isUploading || uploadError) && (
+                <div className={`border-t border-white/10 px-4 py-2 text-sm ${uploadError ? 'text-red-400' : 'text-yellow-400'}`}>
+                  {uploadError || uploadProgress || 'Uploading...'}
+                </div>
+              )}
+
+              {/* Message Input */}
+              <div className="border-t border-white/10 p-2 md:p-4">
               <div className={`flex items-center rounded-full border transition-all duration-300 focus-within:ring-2 focus-within:ring-gray-500/30 ${
                 isDark
                   ? 'bg-black border-white/20'
@@ -1096,11 +1292,33 @@ const MessagesPage: React.FC = () => {
               }`}>
                 {/* Left side icons - fixed area */}
                 <div className="flex items-center space-x-3 px-3 py-3">
-                  {/* Image icon */}
+                  {/* Encrypted image upload */}
+                    <label title="Send encrypted image" className={`p-1 rounded-full transition-all duration-200 cursor-pointer ${
+                      isDark
+                        ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
+                        : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50'
+                    }`}>
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
+                      </svg>
+                      <input
+                        type="file"
+                        accept="image/*,video/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          if (e.target.files?.length) {
+                            handleFileSelected(e.target.files)
+                            e.target.value = ''
+                          }
+                        }}
+                      />
+                    </label>
+
+                  {/* GIF picker */}
                   <button
-                    onClick={() => setShowFileUpload(!showFileUpload)}
-                    className={`p-1 rounded-full transition-all duration-200 cursor-pointer ${
-                      showFileUpload
+                    onClick={() => setShowGifPicker(!showGifPicker)}
+                    className={`px-2 py-1 rounded-full text-sm font-medium transition-all duration-200 cursor-pointer ${
+                      showGifPicker
                         ? isDark
                           ? 'text-yellow-400 bg-yellow-400/20'
                           : 'text-yellow-600 bg-yellow-200'
@@ -1108,17 +1326,6 @@ const MessagesPage: React.FC = () => {
                           ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
                           : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50'
                     }`}>
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>
-                    </svg>
-                  </button>
-
-                  {/* GIF text */}
-                  <button className={`px-2 py-1 rounded-full text-sm font-medium transition-all duration-200 cursor-pointer ${
-                    isDark
-                      ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
-                      : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50'
-                  }`}>
                     GIF
                   </button>
 
@@ -1164,6 +1371,7 @@ const MessagesPage: React.FC = () => {
                 </button>
               </div>
             </div>
+          </div>
           </div>
         )}
       </div>

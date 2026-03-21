@@ -12,6 +12,7 @@ import { chains } from '~/config/chains'
 import { CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
 import { cawNameAbi, cawNameQuoterAbi } from '~/../../../abi/generated'
 import { wagmiConfig } from '~/config/Web3Provider'
+import { usePriceStore } from '~/store/tokenDataStore'
 
 const TransferNFTModal: React.FC = () => {
   const { isDark } = useTheme()
@@ -22,6 +23,7 @@ const TransferNFTModal: React.FC = () => {
   const { switchChain, isPending: isSwitchingChain } = useSwitchChain()
   const { writeContract, data: hash, isPending: isSubmitting, error: writeError, reset } = useWriteContract()
   const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({ hash })
+  const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
 
   const [recipient, setRecipient] = useState('')
   const [inputError, setInputError] = useState<string | null>(null)
@@ -169,7 +171,7 @@ const TransferNFTModal: React.FC = () => {
         {/* Show LZ fee estimate */}
         {!isSuccess && lzFee !== null && lzFee > 0n && (
           <div className={`mb-4 p-3 rounded-lg text-xs ${themeBgSubtle(isDark)} ${themeTextMuted(isDark)}`}>
-            L2 sync fee: ~{formatEther(lzFee)} ETH
+            L2 sync fee: ~{formatEther(lzFee)} ETH{ethPrice > 0 && ` (~$${(Number(formatEther(lzFee)) * ethPrice).toFixed(2)})`}
             <span className={`block mt-1 ${themeTextMuted(isDark)}`}>
               This covers the cross-chain message to update ownership on L2.
             </span>

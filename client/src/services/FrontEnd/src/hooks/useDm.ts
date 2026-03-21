@@ -489,7 +489,12 @@ export function useDmMessages(conversationId: string, tokenId?: number) {
     }
   }, [conversationId, tokenId])
 
-  return { messages, isLoading, isSending, sendMessage, markAsRead, addIncomingMessage, peerLastReadAt }
+  const getSharedSecret = useCallback(async (): Promise<CryptoKey | null> => {
+    if (!conversationId || !tokenId) return null
+    return getOrComputeSharedSecret(conversationId, tokenId)
+  }, [conversationId, tokenId])
+
+  return { messages, isLoading, isSending, sendMessage, markAsRead, addIncomingMessage, peerLastReadAt, getSharedSecret }
 }
 
 /**

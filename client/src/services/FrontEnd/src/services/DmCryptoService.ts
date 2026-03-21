@@ -207,6 +207,37 @@ export async function decrypt(ciphertextBase64: string, sharedSecret: CryptoKey)
   return new TextDecoder().decode(decrypted)
 }
 
+/**
+ * Encrypt binary data using AES-256-GCM.
+ * Returns Uint8Array(iv || ciphertext || tag).
+ */
+export async function encryptBinary(data: Uint8Array, sharedSecret: CryptoKey): Promise<Uint8Array> {
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    sharedSecret,
+    data
+  )
+  const result = new Uint8Array(iv.length + ciphertext.byteLength)
+  result.set(iv)
+  result.set(new Uint8Array(ciphertext), iv.length)
+  return result
+}
+
+/**
+ * Decrypt binary data (iv || ciphertext || tag) using AES-256-GCM.
+ */
+export async function decryptBinary(encrypted: Uint8Array, sharedSecret: CryptoKey): Promise<Uint8Array> {
+  const iv = encrypted.slice(0, 12)
+  const ciphertext = encrypted.slice(12)
+  const decrypted = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv },
+    sharedSecret,
+    ciphertext
+  )
+  return new Uint8Array(decrypted)
+}
+
 // --- Utility functions ---
 
 function hexToBytes(hex: string): Uint8Array {
