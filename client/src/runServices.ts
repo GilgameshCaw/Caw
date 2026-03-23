@@ -124,42 +124,62 @@ export default function runServices(fullConfig: RunServicesConfig) {
 function runInstance(instance: InstanceReady): {stop(): Promise<void>} {
   let stopService = async () => {};
   let alive = true;
-  let retryDelay = 1000;
 
   (async () => {
-    let startResult: ReturnType<Service['start']>;
-
     while (alive) {
-      try {
-        startResult = instance.service.start(instance.config);
-        stopService = async () => startResult.stop();
+      let startResult: ReturnType<Service['start']> | undefined;
+      let retryDelay = 1000;
 
-        await startResult.started;
-        break;
+      // Phase 1: Start the service (retry until it starts)
+      while (alive) {
+        try {
+          startResult = instance.service.start(instance.config);
+          stopService = async () => startResult!.stop();
+
+          await startResult.started;
+          break;
+        } catch (error) {
+          console.error(
+            `Starting ${instance.instance} failed, retrying in ${retryDelay.toFixed(0)}ms`,
+            error,
+          );
+
+          if (startResult) {
+            startResult.stop().catch(console.error);
+            startResult = undefined;
+          }
+
+          await delay(retryDelay);
+          retryDelay = Math.min(retryDelay * 1.05, 30_000);
+        }
+      }
+
+      if (!alive || !startResult) break;
+
+      console.log(`Instance ${instance.instance} started`);
+
+      // Phase 2: Monitor the service via stats — restart if it crashes
+      try {
+        await delay(Math.random() * 60_000);
+
+        while (alive) {
+          const stats = await startResult.stats();
+          console.log(`stats for ${instance.instance}:`, stats);
+          await delay(59_000 + 2000 * Math.random());
+        }
       } catch (error) {
+        if (!alive) break;
         console.error(
-          `Starting ${instance.instance} failed, retrying in ${retryDelay.toFixed(0)}ms`,
+          `[runServices] ${instance.instance} crashed, restarting in 5s...`,
           error,
         );
 
-        // Try to stop if startResult was created
-        if (startResult!) {
-          startResult.stop().catch(console.error);
-        }
+        // Stop the dead service before restarting
+        try { await startResult.stop(); } catch { /* ignore cleanup errors */ }
 
-        await delay(retryDelay);
-        retryDelay *= 1.05;
+        await delay(5000);
+        // Loop back to Phase 1 to restart
       }
-    }
-
-    console.log(`Instance ${instance.instance} started`);
-
-    await delay(Math.random() * 60_000);
-
-    while (alive) {
-      const stats = await startResult!.stats();
-      console.log(`stats for ${instance.instance}:`, stats);
-      await delay(59_000 + 2000 * Math.random());
     }
   })();
 
