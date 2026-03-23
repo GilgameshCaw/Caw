@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { apiFetch }              from './client'
 import { baseSepolia }           from 'wagmi/chains'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
-import { useSignTypedData, useAccount } from 'wagmi'
+import { useSignTypedData, useAccount, useSwitchChain } from 'wagmi'
 import { readContract } from '@wagmi/core'
 import type { TypedDataDomain, TypedDataField } from '@ethersproject/abstract-signer'
 import { useActiveToken, useTokenDataStore } from "~/store/tokenDataStore";
@@ -149,6 +149,7 @@ export function buildTypedData(params: ActionParams) {
 export function useSignAndSubmitAction() {
   const { isConnected, address }      = useAccount()
   const { openConnectModal } = useConnectModal()
+  const { switchChainAsync } = useSwitchChain()
   const hasActiveSession = useHasActiveSession()
 
   const { signTypedDataAsync } = useSignTypedData()
@@ -339,8 +340,19 @@ export function useSignAndSubmitAction() {
       // but for now we'll leave it incremented to avoid conflicts
       console.error('Failed to submit action:', error)
 
-      // Detect session key spend limit or expiry errors from the contract/validator
       const errMsg = (error?.message || error?.shortMessage || '').toLowerCase()
+
+      // Wrong chain — switch and retry
+      if (errMsg.includes('chainid should be same') || errMsg.includes('chain mismatch')) {
+        try {
+          await switchChainAsync({ chainId: baseSepolia.id })
+          return await requestAndSubmit(params)
+        } catch {
+          throw new Error('Please switch to the correct network and try again.')
+        }
+      }
+
+      // Detect session key spend limit or expiry errors from the contract/validator
       if (canUseSession && (errMsg.includes('spend limit') || errMsg.includes('session') || errMsg.includes('expired'))) {
         const reason = errMsg.includes('spend') ? 'spend_limit' : 'expired'
         useQuickSignRenewStore.getState().show(reason, () => requestAndSubmit(params))
@@ -351,9 +363,14 @@ export function useSignAndSubmitAction() {
     }
   }, [activeTokenId, address, signTypedDataAsync, bumpCawonce])
 
-  // as soon as we become connected, replay the pending action
+  // as soon as we become connected with the correct wallet, replay the pending action
   useEffect(() => {
     if (!isConnected || !pendingParams || !cawonce || submittingRef.current) {
+      return
+    }
+
+    // Don't auto-submit if connected wallet doesn't match the active token's owner
+    if (activeToken?.address && address && activeToken.address.toLowerCase() !== address.toLowerCase()) {
       return
     }
 
@@ -366,7 +383,7 @@ export function useSignAndSubmitAction() {
     requestAndSubmit(params).finally(() => {
       submittingRef.current = false
     })
-  }, [isConnected, pendingParams, cawonce, requestAndSubmit])
+  }, [isConnected, pendingParams, cawonce, requestAndSubmit, address, activeToken?.address])
 
   return async (params: ActionParams) => {
     // Session key active — skip wallet checks entirely

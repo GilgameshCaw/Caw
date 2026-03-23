@@ -71,6 +71,7 @@ const MessagesPage: React.FC = () => {
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
   const [editingContent, setEditingContent] = useState('')
   const [editHistoryMessageId, setEditHistoryMessageId] = useState<string | null>(null)
+
   const [isTyping, setIsTyping] = useState(false)
   const typingTimeoutRef = useRef<NodeJS.Timeout>()
   const chatMenuRef = useRef<HTMLDivElement>(null)
@@ -107,10 +108,14 @@ const MessagesPage: React.FC = () => {
 
   // Scroll to bottom of messages
   const scrollToBottom = useCallback(() => {
-    setTimeout(() => {
+    const doScroll = () => {
       const el = messagesContainerRef.current
-      if (el) el.scrollTop = el.scrollHeight
-    }, 50)
+      console.log('[DM Scroll] ref:', !!el, 'scrollHeight:', el?.scrollHeight, 'scrollTop:', el?.scrollTop, 'clientHeight:', el?.clientHeight, 'overflow:', el?.style.overflow, 'computedOverflow:', el ? getComputedStyle(el).overflowY : 'n/a')
+      if (el) {
+        el.scrollTop = el.scrollHeight
+      }
+    }
+    setTimeout(doScroll, 150)
   }, [])
 
   // Auto-scroll when messages change
@@ -640,7 +645,8 @@ const MessagesPage: React.FC = () => {
   return (
     <MainLayout>
       <div
-        className="max-w-2xl mx-auto px-3 sm:px-6 py-4 bg-black h-screen flex flex-col relative"
+        className="max-w-2xl mx-auto px-3 sm:px-6 py-4 bg-black flex flex-col relative"
+        style={{ height: 'calc(100vh - 80px)' }}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -654,7 +660,7 @@ const MessagesPage: React.FC = () => {
           </div>
         )}
         {/* Messages Header */}
-        <div className={`mb-6 flex-shrink-0 ${currentView === 'chat' ? 'fixed md:relative top-0 left-0 right-0 z-30 bg-black md:bg-transparent p-4 md:p-0' : ''}`}>
+        <div className={`mb-6 flex-shrink-0 ${currentView === 'chat' ? 'fixed md:sticky top-0 left-0 right-0 z-30 bg-black p-4 md:p-0' : ''}`}>
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
               {currentView === 'chat' && (
@@ -669,9 +675,32 @@ const MessagesPage: React.FC = () => {
                   </svg>
                 </button>
               )}
-              <h1 className={`text-2xl font-bold transition-colors duration-300 ${
-                isDark ? 'text-white' : 'text-black'
-              }`}>
+              {currentView === 'chat' && otherParticipant && (
+                <div
+                  className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 cursor-pointer"
+                  onClick={() => navigate(`/users/${otherParticipant.identity.user.username}`)}
+                >
+                  {otherParticipant.identity.user.image ? (
+                    <img
+                      src={otherParticipant.identity.user.image}
+                      alt={otherParticipant.identity.user.username}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full bg-gray-600 flex items-center justify-center">
+                      <span className="text-white text-sm font-semibold">
+                        {(otherParticipant.identity.user.username || 'U')[0].toUpperCase()}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+              <h1
+                className={`text-2xl font-bold transition-colors duration-300 ${
+                  isDark ? 'text-white' : 'text-black'
+                } ${currentView === 'chat' && otherParticipant ? 'cursor-pointer hover:underline' : ''}`}
+                onClick={currentView === 'chat' && otherParticipant ? () => navigate(`/users/${otherParticipant.identity.user.username}`) : undefined}
+              >
                 {currentView === 'inbox' ? 'Messages' : currentView === 'setup' ? 'Enable DMs' : otherParticipant?.identity.user.displayName || otherParticipant?.identity.user.username || 'Chat'}
               </h1>
             </div>
@@ -1029,8 +1058,8 @@ const MessagesPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Chat Messages */}
-            <div ref={messagesContainerRef} className="flex-1 overflow-y-auto overflow-x-visible custom-scrollbar-alt space-y-4 p-4 md:p-4 pt-32 md:pt-4 pb-20 md:pb-4">
+            {/* Chat Messages — fixed height so overflow scrolling works */}
+            <div ref={messagesContainerRef} className="overflow-y-auto custom-scrollbar-alt space-y-4 p-4 md:p-4 pt-32 md:pt-4 pb-20 md:pb-4" style={{ height: 'calc(100vh - 200px)' }}>
               {/* Typing Indicator */}
               {otherUserTyping && (
                 <div className="flex items-start space-x-3 animate-pulse">
@@ -1090,8 +1119,14 @@ const MessagesPage: React.FC = () => {
                   const showDateDivider = dateLabel !== lastDateLabel
                   lastDateLabel = dateLabel
 
+                  // Animate messages from the last 2 seconds
+                  const isNew = Date.now() - new Date(message.createdAt).getTime() < 2000
+
                   return (
-                    <div key={message.id}>
+                    <div
+                      key={message.id}
+                      className={isNew ? (message.isFromCurrentUser ? 'dm-animate-in-right' : 'dm-animate-in-left') : ''}
+                    >
                       {/* Date divider */}
                       {showDateDivider && (
                         <div className="flex items-center gap-3 my-4">
@@ -1110,25 +1145,43 @@ const MessagesPage: React.FC = () => {
                             [Message deleted]
                           </div>
                         ) : (
-                        <div
-                          className={`max-w-md lg:max-w-xl px-6 py-4 rounded-2xl relative group ${
-                            message.isFromCurrentUser
-                              ? 'bg-gray-600 text-white'
-                              : isDark
-                              ? 'bg-gray-700 text-white'
-                              : 'bg-gray-200 text-black'
-                          }`}
-                          onContextMenu={(e) => {
-                            e.preventDefault()
-                            setContextMenu({
-                              messageId: message.id,
-                              x: e.clientX,
-                              y: e.clientY,
-                              isOwn: message.isFromCurrentUser,
-                              createdAt: message.createdAt,
-                            })
-                          }}
-                        >
+                        <>
+                        {/* Previous versions — shown as separate bubbles when "edited" is clicked */}
+                        {editHistoryMessageId === message.id && message.editHistory?.map((entry, idx) => (
+                          <div key={`edit-${idx}`} className={`flex ${message.isFromCurrentUser ? 'justify-end' : 'justify-start'} mb-1`}>
+                            <Tooltip
+                              text={new Date(entry.editedAt).toLocaleString()}
+                              position={message.isFromCurrentUser ? 'left' : 'right'}
+                            >
+                            <div className={`max-w-md lg:max-w-xl px-6 py-4 rounded-2xl opacity-40 ${
+                              message.isFromCurrentUser
+                                ? 'bg-gray-600 text-white'
+                                : isDark
+                                ? 'bg-gray-700 text-white'
+                                : 'bg-gray-200 text-black'
+                            }`}>
+                              <p className="text-sm whitespace-pre-wrap">{entry.content}</p>
+                            </div>
+                            </Tooltip>
+                          </div>
+                        ))}
+
+                        <div className={`flex items-start gap-1 group ${message.isFromCurrentUser ? 'flex-row-reverse' : 'flex-row'}`}>
+                          {/* Message bubble */}
+                          <Tooltip
+                            text={new Date(message.createdAt).toLocaleString()}
+                            position={message.isFromCurrentUser ? 'left' : 'right'}
+                          >
+                          <div
+                            className={`max-w-md lg:max-w-xl px-6 py-4 rounded-2xl relative ${
+                              message.isFromCurrentUser
+                                ? 'bg-gray-600 text-white'
+                                : isDark
+                                ? 'bg-gray-700 text-white'
+                                : 'bg-gray-200 text-black'
+                            }`}
+                          >
+
                           {/* Inline editing mode */}
                           {editingMessageId === message.id ? (
                             <div className="space-y-2">
@@ -1202,30 +1255,17 @@ const MessagesPage: React.FC = () => {
                                 />
                               )
                             }
-                            return <p className="text-sm">{messageContent}</p>
+                            return <p className="text-sm whitespace-pre-wrap">{messageContent}</p>
                           })()}
 
                           {/* Edited indicator */}
                           {message.editHistory && message.editHistory.length > 0 && (
-                            <button
-                              onClick={() => setEditHistoryMessageId(editHistoryMessageId === message.id ? null : message.id)}
-                              className="text-xs text-white/30 hover:text-white/50 cursor-pointer mt-1"
-                            >
-                              (edited)
-                            </button>
-                          )}
-
-                          {/* Edit history popover */}
-                          {editHistoryMessageId === message.id && message.editHistory && (
-                            <div className="mt-2 p-2 rounded bg-black/30 border border-white/10 text-xs space-y-1 max-h-40 overflow-y-auto">
-                              <p className="text-white/50 font-medium mb-1">Edit history</p>
-                              {message.editHistory.map((entry, idx) => (
-                                <div key={idx} className="flex justify-between gap-2">
-                                  <span className="text-white/60">{entry.content}</span>
-                                  <span className="text-white/20 whitespace-nowrap">{new Date(entry.editedAt).toLocaleTimeString()}</span>
-                                </div>
-                              ))}
-                            </div>
+                              <button
+                                onClick={() => setEditHistoryMessageId(editHistoryMessageId === message.id ? null : message.id)}
+                                className="text-xs text-white/30 hover:text-white/50 mt-1 block cursor-pointer"
+                              >
+                                ({editHistoryMessageId === message.id ? 'hide edits' : 'edited'})
+                              </button>
                           )}
 
                           {/* Attachments */}
@@ -1241,7 +1281,27 @@ const MessagesPage: React.FC = () => {
                           )}
                           </>
                           )}
+                          </div>
+                          </Tooltip>
+
+                          {/* Hover actions — outside the bubble, to the side */}
+                          <button
+                            onClick={(e) => {
+                              const rect = e.currentTarget.getBoundingClientRect()
+                              setContextMenu({
+                                messageId: message.id,
+                                x: message.isFromCurrentUser ? rect.left - 180 : rect.right,
+                                y: rect.top,
+                                isOwn: message.isFromCurrentUser,
+                                createdAt: message.createdAt,
+                              })
+                            }}
+                            className="p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer hover:bg-white/10 self-center flex-shrink-0"
+                          >
+                            <HiOutlineDotsHorizontal className="w-4 h-4 text-white/30" />
+                          </button>
                         </div>
+                        </>
                         )}
 
                         {/* Message metadata with encryption indicator */}
@@ -1250,16 +1310,10 @@ const MessagesPage: React.FC = () => {
                         }`}>
                           <div className="flex items-center space-x-1">
                             {/* Encryption indicator */}
-                            <Tooltip text="End-to-end encrypted" position="top">
+                            <Tooltip text="End-to-end encrypted" position={message.isFromCurrentUser ? 'left' : 'right'}>
                               <HiOutlineLockClosed className="w-3 h-3 text-green-400" />
                             </Tooltip>
 
-                            {/* Read receipt */}
-                            {message.isFromCurrentUser && message.status === 'READ' && (
-                              <Tooltip text="Read" position="top">
-                                <HiOutlineCheckCircle className="w-3 h-3 text-blue-400" />
-                              </Tooltip>
-                            )}
                           </div>
 
                           <p className="text-xs text-white/50 font-medium">
@@ -1304,8 +1358,8 @@ const MessagesPage: React.FC = () => {
                       }}
                       className="w-full px-4 py-2 text-left text-sm text-white hover:bg-white/10 cursor-pointer flex justify-between items-center"
                     >
-                      <span>Edit</span>
-                      <span className="text-xs text-white/30">
+                      <span className="mr-3">Edit</span>
+                      <span className="text-xs text-white/30 flex-shrink-0">
                         {Math.max(0, Math.ceil((15 * 60 * 1000 - (Date.now() - new Date(contextMenu.createdAt).getTime())) / 60000))}m left
                       </span>
                     </button>
@@ -1320,8 +1374,8 @@ const MessagesPage: React.FC = () => {
                       }}
                       className="w-full px-4 py-2 text-left text-sm text-red-400 hover:bg-white/10 cursor-pointer flex justify-between items-center"
                     >
-                      <span>Delete for everyone</span>
-                      <span className="text-xs text-red-400/50">
+                      <span className="mr-3">Delete for everyone</span>
+                      <span className="text-xs text-red-400/50 flex-shrink-0">
                         {Math.max(0, Math.ceil((5 * 60 * 1000 - (Date.now() - new Date(contextMenu.createdAt).getTime())) / 60000))}m left
                       </span>
                     </button>
@@ -1341,11 +1395,11 @@ const MessagesPage: React.FC = () => {
               </>
             )}
 
-            {/* Bottom bar — anchored to bottom, doesn't scroll with messages */}
-            <div className="flex-shrink-0 fixed md:sticky bottom-0 left-0 right-0 z-20 bg-black">
-              {/* GIF Picker */}
-              {showGifPicker && !gifPreview && (
-                <div className="border-t border-white/10 max-h-96 overflow-auto">
+            {/* GIF Picker — fixed overlay */}
+            {showGifPicker && !gifPreview && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowGifPicker(false)} />
+                <div className="fixed bottom-16 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] md:w-[500px] md:max-w-[80vw] md:bottom-20 z-50 rounded-xl border border-white/10 shadow-2xl max-h-[60vh] overflow-auto bg-black">
                   <GifPicker
                     onSelect={(gif) => {
                       setGifPreview({ url: gif.url, preview: gif.preview })
@@ -1354,7 +1408,11 @@ const MessagesPage: React.FC = () => {
                     onClose={() => setShowGifPicker(false)}
                   />
                 </div>
-              )}
+              </>
+            )}
+
+            {/* Bottom bar — anchored to bottom, doesn't scroll with messages */}
+            <div className="flex-shrink-0 fixed md:sticky bottom-0 left-0 right-0 z-20 bg-black">
 
               {/* GIF Preview */}
               {gifPreview && (
@@ -1477,17 +1535,28 @@ const MessagesPage: React.FC = () => {
                 </div>
 
                 {/* Input area - where user can type */}
-                <input
-                  type="text"
+                <textarea
                   placeholder="Start a new message"
                   value={newMessageContent}
-                  onChange={(e) => handleInputChange(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                  className={`flex-1 py-3 pr-12 bg-transparent border-none outline-none ${
+                  onChange={(e) => {
+                    handleInputChange(e.target.value)
+                    // Auto-resize
+                    e.target.style.height = 'auto'
+                    e.target.style.height = Math.min(e.target.scrollHeight, 128) + 'px'
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      handleSendMessage()
+                    }
+                  }}
+                  rows={1}
+                  className={`flex-1 py-3 pr-12 bg-transparent border-none outline-none resize-none ${
                     isDark
                       ? 'text-white placeholder-gray-500'
                       : 'text-black placeholder-gray-500'
                   }`}
+                  style={{ maxHeight: '128px' }}
                 />
 
                 {/* Send button */}

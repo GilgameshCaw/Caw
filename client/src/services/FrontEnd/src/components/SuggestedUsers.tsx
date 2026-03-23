@@ -6,7 +6,7 @@ import { useTokenDataStore } from '~/store/tokenDataStore'
 import { FollowButton } from './FollowButton'
 import cawLogo from '~/assets/images/caw-logo.png'
 import { HiOutlineX } from 'react-icons/hi'
-import Tooltip from '~/components/Tooltip'
+
 
 const DISMISSED_KEY = 'caw-dismissed-suggestions'
 
@@ -134,7 +134,7 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
       <h2 className={`text-lg font-semibold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
         Suggested users to follow
       </h2>
-      <div className={`flex gap-3 overflow-x-auto pb-2 transition-all duration-500 ${visibleUsers.length <= 3 ? 'justify-center' : ''}`}>
+      <div className={`flex gap-3 overflow-x-auto overflow-y-visible pb-2 transition-all duration-500 ${visibleUsers.length <= 3 ? 'justify-center' : ''}`}>
         {visibleUsers.map(user => {
           const isFadingOut = fadingOutIds.has(user.tokenId)
           return (
@@ -150,21 +150,19 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
                 minWidth: isFadingOut ? '0' : '165px',
                 opacity: isFadingOut ? 0 : 1,
                 padding: isFadingOut ? '0' : undefined,
-                overflow: 'hidden',
+                overflow: isFadingOut ? 'hidden' : 'visible',
               }}
             >
               {/* Dismiss button */}
-              <Tooltip text="Dismiss" className="absolute top-2 right-2">
-                <button
-                  onClick={() => handleDismiss(user.tokenId)}
-                  className={`p-1 rounded-full transition-opacity cursor-pointer ${
-                    isDark ? 'hover:bg-white/10 text-white/40 hover:text-white/70' : 'hover:bg-gray-200 text-gray-400 hover:text-gray-600'
-                  }`}
-                  style={{ opacity: 0.4 }}
-                >
-                  <HiOutlineX className="w-4 h-4" />
-                </button>
-              </Tooltip>
+              <button
+                onClick={() => handleDismiss(user.tokenId)}
+                className={`absolute top-2 right-2 p-1 rounded-full transition-opacity cursor-pointer ${
+                  isDark ? 'hover:bg-white/10 text-white/40 hover:text-white/70' : 'hover:bg-gray-200 text-gray-400 hover:text-gray-600'
+                }`}
+                style={{ opacity: 0.4 }}
+              >
+                <HiOutlineX className="w-4 h-4" />
+              </button>
 
               <Link to={`/users/${user.username}`} className="block text-center">
                 <div className="w-16 h-16 rounded-full mx-auto mb-1 overflow-hidden">

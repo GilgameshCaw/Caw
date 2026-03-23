@@ -306,6 +306,105 @@ async function cleanupPendingReplies() {
 }
 
 /**
+ * Clean up stale pending caws (posts)
+ * - If a caw has been PENDING for 5+ minutes, check if the action exists on-chain
+ * - If action exists, mark as SUCCESS
+ * - If action doesn't exist and it's been > 30 minutes, mark as FAILED
+ */
+async function cleanupPendingCaws() {
+  logger.log('Cleaning up stale pending caws...')
+
+  try {
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
+    const thirtyMinutesAgo = new Date(Date.now() - 30 * 60 * 1000)
+
+    const stalePendingCaws = await prisma.caw.findMany({
+      where: {
+        status: 'PENDING',
+        createdAt: {
+          lt: fiveMinutesAgo
+        }
+      }
+    })
+
+    logger.log(`Found ${stalePendingCaws.length} stale pending caws`)
+
+    for (const pendingCaw of stalePendingCaws) {
+      try {
+        // Check if an action exists for this caw (matched by senderId + cawonce)
+        const action = await prisma.action.findFirst({
+          where: {
+            senderId: pendingCaw.userId,
+            actionType: 'CAW',
+            cawonce: pendingCaw.cawonce
+          }
+        })
+
+        if (action) {
+          // Action exists on-chain, mark caw as SUCCESS
+          logger.log(` Confirming caw ${pendingCaw.id} for user ${pendingCaw.userId} (cawonce: ${pendingCaw.cawonce})`)
+
+          await prisma.caw.update({
+            where: { id: pendingCaw.id },
+            data: { status: 'SUCCESS' }
+          })
+        } else {
+          // Check if there's a completed txqueue entry for this caw
+          const completedTx = await prisma.txQueue.findFirst({
+            where: {
+              senderId: pendingCaw.userId,
+              status: 'done',
+              payload: { path: ['data', 'cawonce'], equals: pendingCaw.cawonce }
+            }
+          })
+
+          if (completedTx) {
+            logger.log(` TxQueue confirms caw (event missed): ${pendingCaw.id} user ${pendingCaw.userId}`)
+            await prisma.caw.update({
+              where: { id: pendingCaw.id },
+              data: { status: 'SUCCESS' }
+            })
+          } else if (pendingCaw.createdAt < thirtyMinutesAgo) {
+            // No action found after 30 minutes, mark as FAILED
+            logger.log(` Marking caw ${pendingCaw.id} as FAILED (pending > 30 min, user ${pendingCaw.userId}, cawonce: ${pendingCaw.cawonce})`)
+
+            await prisma.caw.update({
+              where: { id: pendingCaw.id },
+              data: { status: 'FAILED' }
+            })
+
+            // Also clean up any reply records pointing to this caw as a reply
+            const replyRecord = await prisma.reply.findFirst({
+              where: { replyCawId: pendingCaw.id }
+            })
+            if (replyRecord) {
+              await prisma.reply.delete({ where: { id: replyRecord.id } })
+
+              const actualReplyCount = await prisma.reply.count({
+                where: { cawId: replyRecord.cawId, pending: false }
+              })
+              await prisma.caw.update({
+                where: { id: replyRecord.cawId },
+                data: { commentCount: actualReplyCount }
+              })
+              logger.log(` Cleaned up reply record for failed caw, updated parent comment count`)
+            }
+          } else {
+            logger.log(` Caw still pending (${Math.floor((Date.now() - pendingCaw.createdAt.getTime()) / 60000)} minutes): caw ${pendingCaw.id} user ${pendingCaw.userId}`)
+          }
+        }
+      } catch (err) {
+        logger.error(` Error processing pending caw ${pendingCaw.id}:`, err)
+      }
+    }
+
+    logger.log('Pending caws cleanup completed')
+  } catch (err) {
+    logger.error('Fatal error during caw cleanup:', err)
+  }
+}
+
+/**
  * Clean up failed txqueue records and update associated caws
  * - Find txqueue records that have been failed for 5+ minutes
  * - For CAW actions, mark the associated caw as FAILED
@@ -568,6 +667,9 @@ async function runDataCleanup() {
 
   // Clean up pending tips
   await cleanupPendingTips()
+
+  // Clean up pending caws (posts)
+  await cleanupPendingCaws()
 
   // Clean up pending replies
   await cleanupPendingReplies()

@@ -1104,7 +1104,8 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
       </div>
 
       {/* Floating bug report button */}
-      <Tooltip text="Report a bug" position="top" align="start" forceDark className="fixed bottom-5 left-5 md:right-5 md:left-auto z-[101]">
+      <div className="fixed bottom-5 left-5 md:right-5 md:left-auto z-[101]">
+      <Tooltip text="Report a bug" position="top" forceDark>
         <button
           onClick={() => setShowBugReport(true)}
           className="w-9 h-9 rounded-full flex items-center justify-center shadow-lg transition-all cursor-pointer opacity-60 hover:opacity-100 bg-zinc-800 hover:bg-zinc-700 text-white/70"
@@ -1127,6 +1128,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
           </svg>
         </button>
       </Tooltip>
+      </div>
       <BugReportModal isOpen={showBugReport} onClose={() => setShowBugReport(false)} />
     </div>
   )

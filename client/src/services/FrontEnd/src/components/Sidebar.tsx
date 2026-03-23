@@ -6,6 +6,8 @@ import { fetchTxPage }          from '../api/txs'
 import { useTokenDataStore, useActiveToken } from "~/store/tokenDataStore";
 import { useTheme } from "~/hooks/useTheme";
 import { useDmIdentity } from "~/hooks/useDmIdentity";
+import { useDmUnreadStore } from "~/store/dmUnreadStore";
+import { useNotificationUnreadStore } from "~/store/notificationUnreadStore";
 
 
 import { 
@@ -73,6 +75,8 @@ const Sidebar: React.FC = () => {
   const activeToken = useActiveToken()
   const { isDark, toggle } = useTheme()
   const { hasIdentity: dmEnabled } = useDmIdentity(activeToken?.tokenId)
+  const dmUnreadCount = useDmUnreadStore(s => s.totalUnread)
+  const notifUnreadCount = useNotificationUnreadStore(s => s.unreadCount)
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -124,7 +128,7 @@ const Sidebar: React.FC = () => {
         </div>
 
         {/* Navigation */}
-        <nav className="px-2 py-2 pt-20 sm:px-4 sm:py-4 sm:pl-0 sm:pt-4 space-y-1 sm:flex-1">
+        <nav className="px-2 py-2 pt-20 sm:px-4 sm:py-4 sm:pr-2 sm:pl-2 sm:pt-4 space-y-1 sm:flex-1">
           <NavLink
           to="/home"
           className={({ isActive }) =>
@@ -150,7 +154,14 @@ const Sidebar: React.FC = () => {
               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
           >
-            <HiOutlineBell className="w-7 h-7 sm:w-7 sm:h-7" />
+            <div className="relative">
+              <HiOutlineBell className="w-7 h-7 sm:w-7 sm:h-7" />
+              {notifUnreadCount > 0 && (
+                <span className={`absolute -top-2 -right-2 min-w-[18px] h-[18px] flex items-center justify-center text-[11px] font-bold rounded-full bg-yellow-500 text-black px-1 border-2 ${isDark ? 'border-black' : 'border-white'}`}>
+                  {notifUnreadCount > 99 ? '99+' : notifUnreadCount}
+                </span>
+              )}
+            </div>
             <span className="font-medium text-lg sm:text-lg">Notifications</span>
           </NavLink>
 
@@ -171,6 +182,11 @@ const Sidebar: React.FC = () => {
               <HiOutlineChat className="w-7 h-7 sm:w-7 sm:h-7" />
               {activeToken && dmEnabled === false && (
                 <span className={`absolute -top-1 -right-1 w-3 h-3 bg-yellow-500 rounded-full border-2 ${isDark ? 'border-black' : 'border-white'}`} />
+              )}
+              {dmUnreadCount > 0 && (
+                <span className={`absolute -top-2 -right-2 min-w-[18px] h-[18px] flex items-center justify-center text-[11px] font-bold rounded-full bg-yellow-500 text-black px-1 border-2 ${isDark ? 'border-black' : 'border-white'}`}>
+                  {dmUnreadCount > 99 ? '99+' : dmUnreadCount}
+                </span>
               )}
             </div>
             <span className="font-medium text-lg sm:text-lg">Messages</span>

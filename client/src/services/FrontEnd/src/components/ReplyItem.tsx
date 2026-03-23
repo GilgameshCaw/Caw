@@ -231,9 +231,6 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
                   <div className="relative w-5 h-5 group">
                     <div className="w-5 h-5 border-2 border-gray-400 border-t-blue-500 rounded-full animate-spin"></div>
                     <HiOutlineCheck className="absolute inset-0 w-3 h-3 m-auto text-blue-500" />
-                    <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 text-xs bg-black text-white rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap">
-                      Submitted, pending validation
-                    </div>
                   </div>
                 ) : (
                   <HiOutlineChat className="w-5 h-5" />
@@ -315,9 +312,6 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
                     <div className="w-5 h-5 border-2 border-gray-400 border-t-red-500 rounded-full animate-spin"></div>
                     <HiOutlineCheck className="absolute inset-0 w-3 h-3 m-auto text-red-500" />
                     {/* Tooltip */}
-                    <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 text-xs bg-black text-white rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200 pointer-events-none whitespace-nowrap">
-                      Submitted, pending validation
-                    </div>
                   </div>
                 ) : (
                   <HiOutlineHeart className={`w-5 h-5 ${item.hasLiked ? 'fill-current' : ''}`} />

@@ -13,12 +13,16 @@ import SyncTransferModal from '~/components/modals/SyncTransferModal'
 import OnboardingGuard from '~/components/OnboardingGuard'
 import QuickSignRenewModal from '~/components/modals/QuickSignRenewModal'
 import { useSessionSpendSync } from '~/hooks/useSessionSpendSync'
+import { useDmUnreadSync } from '~/hooks/useDmUnreadSync'
+import { useNotificationUnreadSync } from '~/hooks/useNotificationUnreadSync'
 
 function App() {
   useCawonceSync();
   useTxQueueMonitor();
   useClientConfig(CLIENT_ID); // Fetch client config on init for dynamic tip calculation
   useSessionSpendSync(); // Sync on-chain session spending on load
+  useDmUnreadSync(); // Fetch DM unread count for sidebar badge
+  useNotificationUnreadSync(); // Fetch notification unread count for sidebar badge
 
   const stakeModal = useInsufficientStakeStore()
 

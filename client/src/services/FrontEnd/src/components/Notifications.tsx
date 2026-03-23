@@ -413,7 +413,7 @@ const Notifications: React.FC = () => {
                       {notification.caw.content}
                     </p>
                   )}
-                  <Tooltip text={formatFullDateTime(notification.createdAt)}>
+                  <Tooltip text={formatFullDateTime(notification.createdAt)} className="inline-block">
                     <p
                       className={`text-xs mt-1 ${
                         isDark ? 'text-white/40' : 'text-gray-500'

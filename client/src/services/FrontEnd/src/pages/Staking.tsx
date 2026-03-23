@@ -82,6 +82,7 @@ const Staking = () => {
   const [lastStakedAt, setLastStakedAt] = useState<Date | null>(null)
   const [showQuickSignModal, setShowQuickSignModal] = useState(false)
   const hasSeenPrompt = useSessionKeyStore(s => s.hasSeenPrompt)
+  const sessionEnabled = useSessionKeyStore(s => s.enabled)
   const activeToken = useActiveToken()
   const tokenId = activeToken?.tokenId
   const { address, isConnected } = useAccount()
@@ -386,7 +387,7 @@ const Staking = () => {
       }
 
       // Prompt user to enable Quick Sign after staking
-      if (!hasSeenPrompt) {
+      if (!hasSeenPrompt && !sessionEnabled) {
         setShowQuickSignModal(true)
       }
     },
@@ -1015,9 +1016,11 @@ const Staking = () => {
               isDark ? 'border-white/20' : 'border-gray-300'
             }`} style={{ paddingTop: '10px' }}>
               {/* Question mark icon in top right */}
-              <Tooltip text="You must unstake your CAW to withdraw it" position="top" align="end" className="absolute top-1.5 right-1.5">
-                <HiQuestionMarkCircle className={`w-4 h-4 cursor-help ${isDark ? 'text-gray-400' : 'text-gray-500'}`} />
-              </Tooltip>
+              <div className="absolute top-1.5 right-1.5">
+                <Tooltip text="You must unstake your CAW to withdraw it" position="top">
+                  <HiQuestionMarkCircle className={`w-4 h-4 cursor-help ${isDark ? 'text-gray-400' : 'text-gray-500'}`} />
+                </Tooltip>
+              </div>
               <div className={`text-3xl font-bold transition-colors duration-300 text-center flex-1 flex items-center ${
                 isDark ? 'text-yellow-200' : 'text-yellow-800'
               }`}>

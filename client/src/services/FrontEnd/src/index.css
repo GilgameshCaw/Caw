@@ -385,3 +385,34 @@ box-shadow: 0px 0px 5px white;
 .custom-scrollbar-alt::-webkit-scrollbar {
   display: none; /* WebKit browsers */
 }
+
+/* DM message slide-in animation */
+@keyframes slideInFromRight {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideInFromLeft {
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.dm-animate-in-right {
+  animation: slideInFromRight 0.6s ease-out;
+}
+
+.dm-animate-in-left {
+  animation: slideInFromLeft 0.6s ease-out;
+}

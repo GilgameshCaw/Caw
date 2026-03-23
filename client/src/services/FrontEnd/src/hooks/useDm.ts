@@ -13,6 +13,7 @@ import {
   getCachedPublicKeyHex,
   clearKeyCache
 } from '~/services/DmCryptoService'
+import { useDmUnreadStore } from '~/store/dmUnreadStore'
 
 type UiConversation = {
   id: string
@@ -127,13 +128,35 @@ export function useDmClient(tokenId?: number) {
           // Try to decrypt last message preview
           let lastMessagePreview: string | undefined
           let lastMessageSenderId: number | undefined
-          if (conv.lastMessage?.encryptedPayload && privateKeyRef) {
+          if (conv.lastMessage?.contentType === 'deleted') {
+            lastMessageSenderId = conv.lastMessage.senderId
+            lastMessagePreview = '[Message deleted]'
+          } else if (conv.lastMessage?.encryptedPayload && privateKeyRef) {
             lastMessageSenderId = conv.lastMessage.senderId
             try {
               const sharedSecret = await getOrComputeSharedSecret(conv.id, tokenId)
               if (sharedSecret) {
                 const decrypted = await decrypt(conv.lastMessage.encryptedPayload, sharedSecret)
-                lastMessagePreview = decrypted.length > 80 ? decrypted.slice(0, 80) + '…' : decrypted
+
+                // Detect special content types for preview
+                const giphyPattern = /^https?:\/\/(media\d?\.giphy\.com|i\.giphy\.com)\//i
+                const imageUrlPattern = /^https?:\/\/\S+\.(gif|jpg|jpeg|png|webp)(\?\S*)?$/i
+                try {
+                  const parsed = JSON.parse(decrypted)
+                  if (parsed.msgType === 'encrypted-attachment') {
+                    lastMessagePreview = parsed.type === 'image' ? 'Sent an image' : `Sent a file: ${parsed.name}`
+                  } else {
+                    lastMessagePreview = decrypted.length > 80 ? decrypted.slice(0, 80) + '…' : decrypted
+                  }
+                } catch {
+                  if (giphyPattern.test(decrypted.trim()) || (imageUrlPattern.test(decrypted.trim()) && decrypted.trim().includes('.gif'))) {
+                    lastMessagePreview = 'Sent a GIF'
+                  } else if (imageUrlPattern.test(decrypted.trim())) {
+                    lastMessagePreview = 'Sent an image'
+                  } else {
+                    lastMessagePreview = decrypted.length > 80 ? decrypted.slice(0, 80) + '…' : decrypted
+                  }
+                }
               }
             } catch {
               // Can't decrypt — leave as undefined
@@ -164,6 +187,9 @@ export function useDmClient(tokenId?: number) {
       )
 
       setConversations(uiConversations)
+      useDmUnreadStore.getState().setTotalUnread(
+        uiConversations.reduce((sum, c) => sum + c.unreadCount, 0)
+      )
     } catch (err) {
       console.error('[DM] Failed to load conversations:', err)
     }
@@ -315,9 +341,15 @@ export function useDmClient(tokenId?: number) {
   }, [tokenId, loadConversations])
 
   const clearUnreadCount = useCallback((conversationId: string) => {
-    setConversations(prev => prev.map(c =>
-      c.id === conversationId ? { ...c, unreadCount: 0 } : c
-    ))
+    setConversations(prev => {
+      const updated = prev.map(c =>
+        c.id === conversationId ? { ...c, unreadCount: 0 } : c
+      )
+      useDmUnreadStore.getState().setTotalUnread(
+        updated.reduce((sum, c) => sum + c.unreadCount, 0)
+      )
+      return updated
+    })
   }, [])
 
   return {

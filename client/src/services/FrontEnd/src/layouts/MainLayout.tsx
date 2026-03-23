@@ -67,7 +67,7 @@ const MainLayout = ({ children }: MainLayoutProps) => {
 
       {/* Desktop Sidebar */}
       <div className="hidden md:block w-[200px]">
-        <div className={`fixed border-r h-full w-[200px] transition-all duration-300 ${
+        <div className={`fixed border-r h-full w-[200px] z-30 transition-all duration-300 ${
           isDark ? 'border-white/20' : 'border-gray-300'
         }`}>
           <Sidebar />
@@ -89,7 +89,7 @@ const MainLayout = ({ children }: MainLayoutProps) => {
         toastOptions={{ removeDelay: 0 }}
       />
       <div className="hidden lg:block w-[280px]">
-        <div className={`fixed border-l h-full w-[280px] transition-all duration-300 ${
+        <div className={`fixed border-l h-full w-[280px] z-30 transition-all duration-300 ${
           isDark ? 'border-white/20' : 'border-gray-300'
         }`}>
           <div className="p-2">
@@ -103,7 +103,8 @@ const MainLayout = ({ children }: MainLayoutProps) => {
       <Modals />
 
       {/* Floating bug report button */}
-      <Tooltip text="Report a bug" position="top" align="start" className="fixed bottom-5 left-5 md:right-5 md:left-auto z-40">
+      <div className="fixed bottom-5 left-5 md:right-5 md:left-auto z-40">
+      <Tooltip text="Report a bug" position="top">
         <button
           onClick={() => setShowBugReport(true)}
           className={`w-9 h-9 rounded-full flex items-center justify-center shadow-lg transition-all cursor-pointer opacity-60 hover:opacity-100 ${
@@ -138,6 +139,7 @@ const MainLayout = ({ children }: MainLayoutProps) => {
         </svg>
         </button>
       </Tooltip>
+      </div>
       <BugReportModal isOpen={showBugReport} onClose={() => setShowBugReport(false)} />
     </div>
   );
