@@ -18,6 +18,7 @@ interface TokenDataStore {
   bumpCawonce:  (tokenId: number) => void;
   setTokensForAddress: (addr: Address, tokens: TokenData[]) => void;
   removeAddress: (addr: Address) => void;
+  removeToken: (tokenId: number) => void;
   allTokens: () => TokenData[]
 
 
@@ -103,6 +104,21 @@ export const useTokenDataStore = create<TokenDataStore>()(
             tokensByAddress: remainingTokens,
             activeTokenIdByAddress: remainingActiveTokenIds,
           };
+        }),
+
+      removeToken: (tokenId: number) =>
+        set(state => {
+          const updatedTokensByAddress: Record<Address, TokenData[]> = {}
+          for (const [addr, tokens] of Object.entries(state.tokensByAddress)) {
+            const filtered = tokens.filter(t => t.tokenId !== tokenId)
+            if (filtered.length > 0) {
+              updatedTokensByAddress[addr as Address] = filtered
+            }
+          }
+          return {
+            tokensByAddress: updatedTokensByAddress,
+            activeTokenId: state.activeTokenId === tokenId ? undefined : state.activeTokenId,
+          }
         }),
 
       setActiveTokenId: (tokenId) => {

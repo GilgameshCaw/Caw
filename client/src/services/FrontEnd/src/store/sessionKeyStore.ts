@@ -38,7 +38,7 @@ export const useSessionKeyStore = create<SessionKeyState>()(
 
       setSession: (entry) => set({ session: { spent: '0', ...entry } }),
 
-      clearSession: () => set({ session: null }),
+      clearSession: () => set({ session: null, enabled: false }),
 
       setEnabled: (enabled) => set({ enabled }),
 

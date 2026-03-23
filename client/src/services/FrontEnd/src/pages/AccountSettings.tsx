@@ -17,6 +17,7 @@ const AccountSettings: React.FC = () => {
   const { address, isConnected } = useAccount()
   const [copiedField, setCopiedField] = useState<string | null>(null)
   const [showClearDataModal, setShowClearDataModal] = useState(false)
+  const [showLogoutModal, setShowLogoutModal] = useState(false)
 
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const tokensByAddress = useTokenDataStore(s => s.tokensByAddress)
@@ -29,15 +30,26 @@ const AccountSettings: React.FC = () => {
     ? tokensByAddress[address.toLowerCase()] || []
     : Object.values(tokensByAddress).flat()
 
+  const handleLogoutCurrentAccount = () => {
+    if (!activeTokenId) return
+    // Clear DM keys for this account only
+    clearKeyCache(activeTokenId)
+    // Clear session key (wallet-level, but appropriate for logout)
+    useSessionKeyStore.getState().clearSession()
+    // Remove this token from the profile chooser and deactivate it
+    useTokenDataStore.getState().removeToken(activeTokenId)
+    // Clear auth session
+    useAuthStore.getState().clearSession()
+    setShowLogoutModal(false)
+    window.location.reload()
+  }
+
   const handleClearAllData = () => {
     // Clear Zustand persisted stores
     useTokenDataStore.getState().removeActiveToken?.()
     useAuthStore.getState().clearSession()
-    // Clear all session keys
-    const sessionState = useSessionKeyStore.getState()
-    Object.keys(sessionState.sessions).forEach(tokenId => {
-      sessionState.clearSession(Number(tokenId))
-    })
+    // Clear session key
+    useSessionKeyStore.getState().clearSession()
     // Clear DM key cache
     clearKeyCache()
     // Clear all CAW-related localStorage keys
@@ -299,13 +311,37 @@ const AccountSettings: React.FC = () => {
           </Link>
         )}
 
-        {/* Clear Browser Data */}
+        {/* Browser Data */}
         <section className="mt-12 mb-8">
           <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
             isDark ? 'text-white/40' : 'text-gray-400'
           }`}>
             Browser Data
           </h2>
+
+          {/* Log out current account */}
+          {activeToken && (
+            <button
+              onClick={() => setShowLogoutModal(true)}
+              className={`w-full flex items-center justify-between py-4 px-4 rounded-lg transition-colors cursor-pointer mb-3 ${
+                isDark ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-50 hover:bg-gray-100'
+              }`}
+            >
+              <div className="text-left">
+                <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  Log Out @{activeToken.username}
+                </h3>
+                <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+                  Clear session data for this account only
+                </p>
+              </div>
+              <svg className={`w-5 h-5 ${isDark ? 'text-white/40' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
+            </button>
+          )}
+
+          {/* Clear all data */}
           <button
             onClick={() => setShowClearDataModal(true)}
             className={`w-full flex items-center justify-between py-4 px-4 rounded-lg transition-colors cursor-pointer ${
@@ -386,6 +422,67 @@ const AccountSettings: React.FC = () => {
                 className="flex-1 py-2.5 rounded-lg text-sm font-medium bg-red-500 text-white hover:bg-red-600 transition-colors cursor-pointer"
               >
                 Clear Everything
+              </button>
+            </div>
+          </div>
+        </ModalWrapper>
+
+        {/* Logout Current Account Modal */}
+        <ModalWrapper isOpen={showLogoutModal} onClose={() => setShowLogoutModal(false)} maxWidth="max-w-sm">
+          <div className="p-5 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className={`p-2 rounded-full ${isDark ? 'bg-white/10' : 'bg-gray-100'}`}>
+                <svg className={`w-5 h-5 ${isDark ? 'text-white' : 'text-gray-700'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                </svg>
+              </div>
+              <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                Log Out @{activeToken?.username}?
+              </h3>
+            </div>
+
+            <p className={`text-sm ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
+              This will log out the current account from this browser. Other accounts are not affected.
+            </p>
+
+            <div className={`text-sm space-y-2 p-3 rounded-lg ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+              <p className={`font-medium mb-2 ${isDark ? 'text-white/80' : 'text-gray-700'}`}>This will:</p>
+              <ul className={`space-y-1.5 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
+                <li className="flex items-start gap-2">
+                  <span className="text-yellow-500 mt-0.5">•</span>
+                  End your login session
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-yellow-500 mt-0.5">•</span>
+                  Revoke Quick Sign session key
+                </li>
+                <li className="flex items-start gap-2">
+                  <span className="text-yellow-500 mt-0.5">•</span>
+                  Clear DM encryption keys for this account
+                </li>
+              </ul>
+            </div>
+
+            <p className={`text-xs ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+              Your muted/blocked lists, preferences, and other accounts are not affected.
+            </p>
+
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => setShowLogoutModal(false)}
+                className={`flex-1 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+                  isDark
+                    ? 'bg-white/10 text-white hover:bg-white/20'
+                    : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
+                }`}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleLogoutCurrentAccount}
+                className="flex-1 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-600 transition-colors cursor-pointer"
+              >
+                Log Out
               </button>
             </div>
           </div>
