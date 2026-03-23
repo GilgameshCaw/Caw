@@ -18,11 +18,11 @@ export async function createOrFindAction(
   chainId: number,
   rawAction: RawAction
 ): Promise<CreateActionResult> {
-  // First, try to find existing action (match by rawEventId + senderId + cawonce to
-  // distinguish multiple actions within the same batched event)
+  // First, try to find existing action (match by chainId + senderId + cawonce,
+  // which is the unique constraint on the Action table)
   const existingAction = await tx.action.findFirst({
     where: {
-      rawEventId: rawId,
+      chainId,
       senderId: rawAction.senderId,
       cawonce: rawAction.cawonce,
     }
