@@ -313,6 +313,24 @@ async function syncEthPrice(): Promise<void> {
 async function syncPrices(): Promise<void> {
   await syncCawPrice()
   await syncEthPrice()
+
+  // Store price snapshots for historical tracking
+  if (cawPriceCache && ethPriceCache) {
+    try {
+      const ethPerCaw = Number(cawPriceCache.ethPerCaw) / 1e18
+      const usdPerEth = Number(ethPriceCache.usdPerEth) / 1e6
+      const usdPerCaw = ethPerCaw * usdPerEth
+
+      await prisma.priceSnapshot.createMany({
+        data: [
+          { token: 'caw', usdPrice: usdPerCaw, ethPrice: ethPerCaw },
+          { token: 'eth', usdPrice: usdPerEth },
+        ]
+      })
+    } catch (err) {
+      console.warn('[ChainSync] Failed to save price snapshot:', err)
+    }
+  }
 }
 
 // ============================================================================

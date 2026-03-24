@@ -163,6 +163,7 @@ function createApp() {
   app.use('/api/bug-reports', bugReportsRouter)
   app.use('/api/sessions', sessionsRouter)
   app.use('/api/prices', pricesRouter)
+  app.use('/api/blocks', blocksRouter)
 
   return app
 }

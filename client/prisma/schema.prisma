@@ -548,3 +548,14 @@ model BugReport {
   @@index([createdAt])
   @@index([type])
 }
+
+model PriceSnapshot {
+  id         Int      @id @default(autoincrement())
+  token      String   // "caw" or "eth"
+  usdPrice   Float    // Price in USD
+  ethPrice   Float?   // Price in ETH (for CAW only)
+  createdAt  DateTime @default(now())
+
+  @@index([token, createdAt])
+  @@index([createdAt])
+}
