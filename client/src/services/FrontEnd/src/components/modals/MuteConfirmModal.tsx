@@ -125,9 +125,14 @@ const MuteConfirmModal: React.FC<MuteConfirmModalProps> = ({
           </Link>.
         </p>
 
-        {actionType !== 'mute-thread' && (
+        {actionType !== 'mute-thread' && actionType !== 'block-account' && (
           <p className="text-xs mb-4 text-white/40">
             Note: This preference is stored in this browser only and will apply to all accounts you access on this device.
+          </p>
+        )}
+        {actionType === 'block-account' && (
+          <p className="text-xs mb-4 text-white/40">
+            Note: Blocks are saved to your account and will apply across all devices.
           </p>
         )}
 

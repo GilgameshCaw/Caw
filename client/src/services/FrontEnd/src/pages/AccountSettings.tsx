@@ -56,7 +56,7 @@ const AccountSettings: React.FC = () => {
     const keysToRemove = [
       'caw-token-data', 'caw-auth-session', 'caw-session-keys',
       'mutedThreads', 'mutedWords', 'hiddenPosts', 'mutedAccounts',
-      'blockedAccounts', 'reportedPosts', 'notificationPreferences',
+      'caw-blocked-users', 'reportedPosts', 'notificationPreferences',
       'lastStakeTime', 'hideMuteConfirmModal'
     ]
     keysToRemove.forEach(key => localStorage.removeItem(key))

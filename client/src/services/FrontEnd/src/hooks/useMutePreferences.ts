@@ -289,13 +289,15 @@ export function useMutePreferences() {
     })
   }, [])
 
-  // Blocking uses the shared Zustand store (useBlockedUsersStore)
-  const addBlockedAccount = useCallback((blockedTokenId: number, _currentUserTokenId?: number) => {
-    blockUser(blockedTokenId, `user_${blockedTokenId}`)
+  // Blocking uses the shared Zustand store (server-backed)
+  const addBlockedAccount = useCallback((blockedTokenId: number, currentUserTokenId?: number) => {
+    if (!currentUserTokenId) return
+    blockUser(currentUserTokenId, blockedTokenId, `user_${blockedTokenId}`)
   }, [blockUser])
 
-  const removeBlockedAccount = useCallback((blockedTokenId: number, _currentUserTokenId?: number) => {
-    unblockUser(blockedTokenId)
+  const removeBlockedAccount = useCallback((blockedTokenId: number, currentUserTokenId?: number) => {
+    if (!currentUserTokenId) return
+    unblockUser(currentUserTokenId, blockedTokenId)
   }, [unblockUser])
 
   const clearAllMutes = useCallback(() => {

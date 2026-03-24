@@ -6,6 +6,7 @@ import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useSearchParams, useParams, useNavigate } from 'react-router-dom'
 import ConnectButton from '~/components/buttons/ConnectButton'
 import Tooltip from '~/components/Tooltip'
+import ModalWrapper from '~/components/modals/ModalWrapper'
 import { apiFetch, API_HOST } from '~/api/client'
 import {
   HiOutlineCog,
@@ -73,6 +74,7 @@ const MessagesPage: React.FC = () => {
   const [chatSharedSecret, setChatSharedSecret] = useState<CryptoKey | null>(null)
   const [chatReady, setChatReady] = useState(false)
   const [contextMenu, setContextMenu] = useState<{ messageId: string; x: number; y: number; isOwn: boolean; createdAt: string } | null>(null)
+  const [errorModal, setErrorModal] = useState<{ title: string; message: string } | null>(null)
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
   const [editingContent, setEditingContent] = useState('')
   const [editHistoryMessageId, setEditHistoryMessageId] = useState<string | null>(null)
@@ -270,9 +272,9 @@ const MessagesPage: React.FC = () => {
       } catch (err: any) {
         console.error('Failed to start conversation:', err)
         if (err.message?.includes('not enabled DMs')) {
-          alert(`@${targetUser.username} hasn't enabled DMs yet. They need to enable DMs before you can message them.`)
+          setErrorModal({ title: 'DMs Not Enabled', message: `@${targetUser.username} hasn't enabled DMs yet. They need to enable DMs before you can message them.` })
         } else {
-          alert(`Failed to start conversation: ${err.message || 'Unknown error'}`)
+          setErrorModal({ title: 'Conversation Failed', message: err.message || 'Failed to start conversation.' })
         }
       }
     }
@@ -614,7 +616,7 @@ const MessagesPage: React.FC = () => {
       }
     } catch (error) {
       console.error('Failed to enable DMs:', error)
-      alert(`Failed to enable DMs: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      setErrorModal({ title: 'DMs Setup Failed', message: error instanceof Error ? error.message : 'Failed to enable DMs. Please try again.' })
     }
   }
 
@@ -1481,6 +1483,29 @@ const MessagesPage: React.FC = () => {
             {/* Bottom bar — anchored to bottom, doesn't scroll with messages */}
             <div className="flex-shrink-0 fixed md:sticky bottom-0 left-0 right-0 z-20 bg-black">
 
+              {/* Unlock banner — replaces input when keys need derivation */}
+              {needsKeyDerivation && !identityLoading ? (
+                <div className={`p-4 border-t flex items-center justify-between ${
+                  isDark ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-yellow-50 border-yellow-200'
+                }`}>
+                  <p className={`text-sm ${isDark ? 'text-yellow-200' : 'text-yellow-800'}`}>
+                    {!address ? 'Connect your wallet to read messages' : 'Sign to unlock your encrypted messages'}
+                  </p>
+                  {!address ? (
+                    <ConnectButton />
+                  ) : (
+                    <button
+                      onClick={handleRegisterDm}
+                      disabled={identityLoading}
+                      className="px-4 py-1.5 rounded-full text-sm font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      {identityLoading ? 'Signing...' : 'Unlock'}
+                    </button>
+                  )}
+                </div>
+              ) : (
+              <>
+
               {/* GIF Preview */}
               {gifPreview && (
                 <div className="border-t border-white/10 p-3">
@@ -1642,6 +1667,8 @@ const MessagesPage: React.FC = () => {
                 </button>
               </div>
             </div>
+              </>
+              )}
           </div>
           </div>
         )}
@@ -1656,7 +1683,7 @@ const MessagesPage: React.FC = () => {
         onConfirm={() => {
           const peer = otherParticipant
           if (peer) {
-            blockUser(peer.userId, peer.identity.user.username)
+            blockUser(currentUser!.id, peer.userId, peer.identity.user.username)
           }
           setShowBlockConfirm(false)
           goBackToInbox()
@@ -1929,6 +1956,29 @@ const MessagesPage: React.FC = () => {
           </div>
         </div>
       )}
+      <ModalWrapper isOpen={!!errorModal} onClose={() => setErrorModal(null)} usePortal>
+        {errorModal && (
+          <div className="p-6 text-center">
+            <div className={`w-12 h-12 rounded-full flex items-center justify-center mx-auto mb-4 ${
+              isDark ? 'bg-red-500/20' : 'bg-red-100'
+            }`}>
+              <HiOutlineX className="w-6 h-6 text-red-500" />
+            </div>
+            <h2 className={`text-lg font-bold mb-2 ${isDark ? 'text-white' : 'text-black'}`}>
+              {errorModal.title}
+            </h2>
+            <p className={`text-sm mb-5 ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
+              {errorModal.message}
+            </p>
+            <button
+              onClick={() => setErrorModal(null)}
+              className="px-6 py-2.5 rounded-lg font-medium bg-yellow-500 hover:bg-yellow-600 text-black transition-colors cursor-pointer"
+            >
+              OK
+            </button>
+          </div>
+        )}
+      </ModalWrapper>
     </MainLayout>
   )
 }

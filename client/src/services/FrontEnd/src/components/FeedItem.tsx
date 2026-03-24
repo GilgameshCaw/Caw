@@ -25,6 +25,7 @@ import Pencil from '~/assets/images/pencil.svg?react';
 import Bookmark from '~/assets/images/bookmark.svg?react';
 import Share from '~/assets/images/share.svg?react';
 import { useTokenDataStore } from '~/store/tokenDataStore'
+import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import { ShareModal } from './ShareModal'
 import { useModalStore } from '~/store/modalStore'
 import { useOptimisticLikesStore } from '~/store/optimisticLikesStore'
@@ -63,6 +64,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   usePendingTipPolling(parseInt(item.id), tipPending)
 
   const activeTokenId     = useTokenDataStore(s => s.activeTokenId)
+  const blockUser = useBlockedUsersStore(s => s.blockUser)
   const activeToken = useTokenDataStore(s => {
     const tokens = Object.values(s.tokensByAddress).flat()
     return tokens.find(t => t.tokenId === s.activeTokenId) || tokens[0]
@@ -562,15 +564,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         break
       }
       case 'block-account': {
+        const effectiveBlockerId = activeTokenId || activeToken?.tokenId
+        if (effectiveBlockerId) {
+          blockUser(effectiveBlockerId, useItem.user.tokenId, useItem.user.username)
+        }
         if (shouldShowMuteConfirmModal()) {
           setMuteConfirmAction('block-account')
           setShowMuteConfirmModal(true)
-        } else {
-          // Blocking is browser-only (localStorage)
-          const blockedAccounts = JSON.parse(localStorage.getItem('blockedAccounts') || '[]')
-          blockedAccounts.push(useItem.user.tokenId)
-          localStorage.setItem('blockedAccounts', JSON.stringify([...new Set(blockedAccounts)]))
-          window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
         }
         break
       }
@@ -1445,11 +1445,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               break
             }
             case 'block-account': {
-              // Blocking is browser-only (localStorage)
-              const blockedAccounts = JSON.parse(localStorage.getItem('blockedAccounts') || '[]')
-              blockedAccounts.push(useItem.user.tokenId)
-              localStorage.setItem('blockedAccounts', JSON.stringify([...new Set(blockedAccounts)]))
-              window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
+              // Block already executed in handleMenuAction — modal is just confirmation
               break
             }
           }

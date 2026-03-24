@@ -16,6 +16,9 @@ import ClientAuthModal from '~/components/modals/ClientAuthModal'
 import { useSessionSpendSync } from '~/hooks/useSessionSpendSync'
 import { useDmUnreadSync } from '~/hooks/useDmUnreadSync'
 import { useNotificationUnreadSync } from '~/hooks/useNotificationUnreadSync'
+import { useBlockedUsersStore } from '~/store/blockedUsersStore'
+import { useTokenDataStore } from '~/store/tokenDataStore'
+import { useEffect } from 'react'
 
 function App() {
   useCawonceSync();
@@ -24,6 +27,21 @@ function App() {
   useSessionSpendSync(); // Sync on-chain session spending on load
   useDmUnreadSync(); // Fetch DM unread count for sidebar badge
   useNotificationUnreadSync(); // Fetch notification unread count for sidebar badge
+
+  // Fetch blocked users from server on init
+  const activeTokenId = useTokenDataStore(s => s.activeTokenId)
+  const activeTokenFallback = useTokenDataStore(s => {
+    const tokens = Object.values(s.tokensByAddress).flat()
+    return tokens[0]?.tokenId
+  })
+  const effectiveTokenId = activeTokenId || activeTokenFallback
+  const fetchBlocks = useBlockedUsersStore(s => s.fetchBlocks)
+  const blocksInitialized = useBlockedUsersStore(s => s.initialized)
+  useEffect(() => {
+    if (effectiveTokenId && !blocksInitialized) {
+      fetchBlocks(effectiveTokenId)
+    }
+  }, [effectiveTokenId, blocksInitialized, fetchBlocks])
 
   const stakeModal = useInsufficientStakeStore()
 

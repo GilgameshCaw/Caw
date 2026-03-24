@@ -147,7 +147,7 @@ export const Profile: React.FC = () => {
   const [tipPending, setTipPending] = useState(false)
   const [hasTipped, setHasTipped] = useState(false)
 
-  // Browser-level blocking from localStorage
+  // Server-backed blocking
   const { blockUser, unblockUser, isBlocked: checkIsBlocked } = useBlockedUsersStore()
   const isBlocked = profileData?.tokenId ? checkIsBlocked(profileData.tokenId) : false
 
@@ -280,26 +280,25 @@ export const Profile: React.FC = () => {
     }
   }
 
-  // Handle block/unblock (browser-level, localStorage)
+  // Handle block/unblock (server-backed)
+  const effectiveTokenId = activeTokenId || activeToken?.tokenId
+
   const handleToggleBlock = () => {
-    if (!profileData?.tokenId) return
+    if (!profileData?.tokenId || !effectiveTokenId) return
 
     if (isBlocked) {
-      // Unblock directly
-      unblockUser(profileData.tokenId)
+      unblockUser(effectiveTokenId, profileData.tokenId)
       setShowOptionsMenu(false)
     } else {
-      // Show confirmation modal for blocking
       setShowOptionsMenu(false)
       setShowBlockConfirmModal(true)
     }
   }
 
-  // Actually perform the block after confirmation (browser-level)
   const handleConfirmBlock = () => {
-    if (!profileData?.tokenId || !profileData?.username) return
+    if (!profileData?.tokenId || !profileData?.username || !effectiveTokenId) return
 
-    blockUser(profileData.tokenId, profileData.username)
+    blockUser(effectiveTokenId, profileData.tokenId, profileData.username)
     setShowBlockConfirmModal(false)
   }
 
@@ -1501,7 +1500,7 @@ export const Profile: React.FC = () => {
             <div className={`space-y-3 mb-6 text-sm ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>
               <p>You won't see their posts in your feed or be able to view their profile.</p>
               <p className={`p-3 rounded-lg ${isDark ? 'bg-yellow-500/10 text-yellow-400' : 'bg-yellow-50 text-yellow-700'}`}>
-                Note: This block is stored in your browser and applies to all your accounts. It will persist until you clear your browser data or unblock them.
+                Blocks are saved to your account and will apply across all devices. They will also prevent this user from messaging you or appearing in your notifications.
               </p>
             </div>
             <div className="flex space-x-3">
