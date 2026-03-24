@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { themeTextSecondary, themeTextMuted, themeBorder } from '~/utils/theme'
 import { useSignAndSubmitAction, getValidatorTip } from '~/api/actions'
@@ -8,6 +8,8 @@ import { useConnectModal } from '@rainbow-me/rainbowkit'
 import InsufficientStakeModal from './InsufficientStakeModal'
 import ModalWrapper from './ModalWrapper'
 import ModalHeader from './ModalHeader'
+import Tooltip from '~/components/Tooltip'
+import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 
 const PRESET_AMOUNTS = [5000, 10000, 25000, 50000]
 const MIN_TIP_AMOUNT = 1
@@ -41,9 +43,22 @@ const TipModal: React.FC<TipModalProps> = ({
   const signAndSubmit = useSignAndSubmitAction()
   const activeToken = useActiveToken()
   const activeTokenId = activeToken?.tokenId
-  const { isConnected } = useAccount()
+  const { isConnected, address } = useAccount()
   const { openConnectModal } = useConnectModal()
+  const hasActiveSession = useHasActiveSession()
+  const wrongWallet = isConnected && !hasActiveSession && activeToken?.owner && address
+    ? activeToken.owner.toLowerCase() !== address.toLowerCase()
+    : false
   const [showInsufficientStake, setShowInsufficientStake] = useState(false)
+
+  // Reset to fresh state when modal opens (unless tip is still pending)
+  useEffect(() => {
+    if (isOpen && tipState !== 'signing') {
+      setAmount(PRESET_AMOUNTS[0].toString())
+      setTipState('idle')
+      setError(null)
+    }
+  }, [isOpen])
 
   const tipAmount = parseInt(amount) || 0
   const validatorTip = getValidatorTip()
@@ -196,24 +211,32 @@ const TipModal: React.FC<TipModalProps> = ({
               )}
 
               {/* Submit */}
-              <button
-                onClick={handleSubmit}
-                disabled={!isValid || tipState === 'signing'}
-                className={`w-full py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 cursor-pointer ${
-                  !isValid || tipState === 'signing'
-                    ? 'bg-yellow-500/30 text-yellow-500/50 cursor-not-allowed'
-                    : 'bg-yellow-500 text-black hover:bg-yellow-400'
-                }`}
-              >
-                {tipState === 'signing' ? (
-                  <div className="flex items-center justify-center space-x-2">
-                    <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin"></div>
-                    <span>Signing...</span>
-                  </div>
-                ) : (
-                  `Send ${isValid ? tipAmount.toLocaleString() + ' CAW' : 'Tip'}`
-                )}
-              </button>
+              {(() => {
+                const isDisabled = !isValid || tipState === 'signing' || wrongWallet
+                const btn = (
+                  <button
+                    onClick={handleSubmit}
+                    disabled={isDisabled}
+                    className={`w-full py-2.5 rounded-lg text-sm font-semibold transition-all duration-200 cursor-pointer ${
+                      isDisabled
+                        ? `bg-yellow-500/30 cursor-not-allowed ${wrongWallet ? 'text-black/50' : 'text-yellow-500/50'}`
+                        : 'bg-yellow-500 text-black hover:bg-yellow-400'
+                    }`}
+                  >
+                    {wrongWallet ? 'Wrong Wallet' : tipState === 'signing' ? (
+                      <div className="flex items-center justify-center space-x-2">
+                        <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin"></div>
+                        <span>Signing...</span>
+                      </div>
+                    ) : (
+                      `Send ${isValid ? tipAmount.toLocaleString() + ' CAW' : 'Tip'}`
+                    )}
+                  </button>
+                )
+                return wrongWallet
+                  ? <Tooltip text="Please switch to the correct wallet" className="cursor-not-allowed">{btn}</Tooltip>
+                  : btn
+              })()}
             </>
           )}
         </div>

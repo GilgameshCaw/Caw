@@ -28,6 +28,7 @@ import tipsRouter from './routes/tips'
 import bugReportsRouter from './routes/bugReports'
 import authRouter from './routes/auth'
 import sessionsRouter from './routes/sessions'
+import pricesRouter from './routes/prices'
 import { getSession } from './sessionStore'
 import { prisma } from '../prismaClient'
 
@@ -160,6 +161,7 @@ function createApp() {
   app.use('/api/tips', tipsRouter)
   app.use('/api/bug-reports', bugReportsRouter)
   app.use('/api/sessions', sessionsRouter)
+  app.use('/api/prices', pricesRouter)
 
   return app
 }

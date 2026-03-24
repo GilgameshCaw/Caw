@@ -14,6 +14,7 @@ import {
   HiCurrencyDollar
 } from 'react-icons/hi'
 import Tooltip from '~/components/Tooltip'
+import { useNotificationUnreadStore } from '~/store/notificationUnreadStore'
 
 interface Actor {
   tokenId: number
@@ -100,6 +101,7 @@ const Notifications: React.FC = () => {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [unreadCount, setUnreadCount] = useState(0)
+  const setGlobalUnreadCount = useNotificationUnreadStore(s => s.setUnreadCount)
   const [hasMore, setHasMore] = useState(false)
   const [offset, setOffset] = useState(0)
 
@@ -156,6 +158,8 @@ const Notifications: React.FC = () => {
           notificationIds
         })
       })
+      // Clear the sidebar badge immediately
+      setGlobalUnreadCount(0)
     } catch (err) {
       console.error('Failed to mark notifications as read:', err)
     }
@@ -173,6 +177,7 @@ const Notifications: React.FC = () => {
       // Update UI to reflect all notifications as read
       setNotifications(prev => prev.map(n => ({ ...n, isRead: true })))
       setUnreadCount(0)
+      setGlobalUnreadCount(0)
     } catch (err) {
       console.error('Failed to mark all as read:', err)
     }

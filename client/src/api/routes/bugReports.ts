@@ -25,15 +25,18 @@ router.post('/login', (req, res): void => {
  */
 router.post('/', async (req, res): Promise<void> => {
   try {
-    const { userId, username, stakedAmount, description, imageUrls, page, userAgent } = req.body
+    const { type, userId, username, stakedAmount, description, imageUrls, page, userAgent } = req.body
 
     if (!description || !description.trim()) {
       res.status(400).json({ error: 'Description is required' })
       return
     }
 
+    const reportType = type === 'feature' ? 'feature' : 'bug'
+
     const report = await prisma.bugReport.create({
       data: {
+        type: reportType,
         userId: userId || null,
         username: username || null,
         stakedAmount: stakedAmount || null,

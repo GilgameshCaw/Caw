@@ -15,6 +15,7 @@ import type { MediaType, StorageType } from './MediaUpload'
 import { calculateOnChainCost } from '~/utils/imageUtils'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
+import Tooltip from '~/components/Tooltip'
 import { apiFetch } from '~/api/client'
 import { HiCalendar, HiClock, HiX, HiPhotograph } from 'react-icons/hi'
 import MentionAutocomplete from './MentionAutocomplete'
@@ -1190,16 +1191,22 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               >
                 Create profile
               </Link>
-            ) : (
-              <button
-                className="px-3 py-1.5 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer"
-                disabled={(!text && selectedMedia.length === 0) || isOverLimit || !canPost || isProcessingOnChain || hasPendingUploads || isSubmitting}
-                onClick={hasFailedUploads ? handleRetryFailedUploads : hasUnuploadedOnChainImages ? handleUploadOnChain : handleSubmit}
-                title={!isTokenOwner && !hasActiveSession && activeTokenId ? 'You do not own this token' : hasPendingUploads ? 'Waiting for upload to confirm...' : isSubmitting ? 'Waiting for signature...' : ''}
-              >
-                {!isTokenOwner && !hasActiveSession && activeTokenId ? 'Wrong Address' : isSubmitting ? 'Signing...' : isProcessingOnChain ? 'Uploading...' : hasPendingUploads ? 'Pending...' : hasFailedUploads ? 'Retry' : hasUnuploadedOnChainImages ? 'Upload' : replyTo ? 'Reply' : 'Post'}
-              </button>
-            )}
+            ) : (() => {
+                const wrongWallet = !isTokenOwner && !hasActiveSession && activeToken?.tokenId
+                const tooltipText = wrongWallet ? 'Please switch to the correct wallet' : hasPendingUploads ? 'Waiting for upload to confirm...' : isSubmitting ? 'Waiting for signature...' : ''
+                const isDisabled = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isProcessingOnChain || hasPendingUploads || isSubmitting
+                const btn = (
+                  <button
+                    className="px-3 py-1.5 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer"
+                    disabled={isDisabled}
+                    onClick={hasFailedUploads ? handleRetryFailedUploads : hasUnuploadedOnChainImages ? handleUploadOnChain : handleSubmit}
+                  >
+                    {wrongWallet ? 'Wrong Wallet' : isSubmitting ? 'Signing...' : isProcessingOnChain ? 'Uploading...' : hasPendingUploads ? 'Pending...' : hasFailedUploads ? 'Retry' : hasUnuploadedOnChainImages ? 'Upload' : replyTo ? 'Reply' : 'Post'}
+                  </button>
+                )
+                return tooltipText ? <Tooltip text={tooltipText}>{btn}</Tooltip> : btn
+              })()
+            }
           </div>
 
         {/* Mobile Selected Media Display */}
@@ -1543,16 +1550,22 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             <button className="px-5 py-2 bg-yellow-500 text-black font-semibold text-base rounded-full hover:bg-yellow-400 transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer" onClick={handleSwitchChain}>
               Switch Network
             </button>
-          ) : (
-              <button
-                className="px-5 py-2 bg-yellow-500 text-black font-semibold text-base rounded-full hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer"
-                disabled={(!text && selectedMedia.length === 0) || isOverLimit || !canPost || isProcessingOnChain || hasPendingUploads || isSubmitting}
-                onClick={hasFailedUploads ? handleRetryFailedUploads : hasUnuploadedOnChainImages ? handleUploadOnChain : handleSubmit}
-                title={!isTokenOwner && !hasActiveSession && activeTokenId ? 'You do not own this token' : hasNoToken ? 'Please select a token' : hasPendingUploads ? 'Waiting for upload to confirm...' : isSubmitting ? 'Waiting for signature...' : ''}
-              >
-                {!isTokenOwner && !hasActiveSession && activeTokenId ? 'Wrong Address' : hasNoToken ? 'No Token' : isSubmitting ? 'Signing...' : isProcessingOnChain ? 'Uploading...' : hasPendingUploads ? 'Pending...' : hasFailedUploads ? 'Retry' : hasUnuploadedOnChainImages ? 'Upload' : replyTo ? 'Reply' : 'Post'}
-              </button>
-            ) }
+          ) : (() => {
+                const wrongWallet2 = !isTokenOwner && !hasActiveSession && activeToken?.tokenId
+                const tooltipText2 = wrongWallet2 ? 'Please switch to the correct wallet' : hasNoToken ? 'Please select a token' : hasPendingUploads ? 'Waiting for upload to confirm...' : isSubmitting ? 'Waiting for signature...' : ''
+                const isDisabled2 = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isProcessingOnChain || hasPendingUploads || isSubmitting
+                const btn2 = (
+                  <button
+                    className="px-5 py-2 bg-yellow-500 text-black font-semibold text-base rounded-full hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer"
+                    disabled={isDisabled2}
+                    onClick={hasFailedUploads ? handleRetryFailedUploads : hasUnuploadedOnChainImages ? handleUploadOnChain : handleSubmit}
+                  >
+                    {wrongWallet2 ? 'Wrong Wallet' : hasNoToken ? 'No Token' : isSubmitting ? 'Signing...' : isProcessingOnChain ? 'Uploading...' : hasPendingUploads ? 'Pending...' : hasFailedUploads ? 'Retry' : hasUnuploadedOnChainImages ? 'Upload' : replyTo ? 'Reply' : 'Post'}
+                  </button>
+                )
+                return tooltipText2 ? <Tooltip text={tooltipText2}>{btn2}</Tooltip> : btn2
+              })()
+            }
           </div>
         </div>
       </div>

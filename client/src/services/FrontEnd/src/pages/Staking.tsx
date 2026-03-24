@@ -538,7 +538,7 @@ const Staking = () => {
         <p className={`text-sm transition-colors duration-300 ${
           isDark ? 'text-gray-400' : 'text-gray-600'
         }`}>
-          Earn rewards from protocol activity
+          The more CAW you stake, the more you will earn from the protocol's activity
         </p>
       </div>
 

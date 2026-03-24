@@ -102,9 +102,9 @@ const MainLayout = ({ children }: MainLayoutProps) => {
       </div>
       <Modals />
 
-      {/* Floating bug report button */}
+      {/* Floating feedback button */}
       <div className="fixed bottom-5 left-5 md:right-5 md:left-auto z-40">
-      <Tooltip text="Report a bug" position="top">
+      <Tooltip text="Feedback" position="top">
         <button
           onClick={() => setShowBugReport(true)}
           className={`w-9 h-9 rounded-full flex items-center justify-center shadow-lg transition-all cursor-pointer opacity-60 hover:opacity-100 ${

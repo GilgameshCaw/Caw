@@ -200,6 +200,7 @@ export const Profile: React.FC = () => {
   }, [tipPending, displayUsername])
 
   // Poll for profile update completion when localProfileUpdatePending is true
+  const setAvatar = useTokenDataStore(s => s.setAvatar)
   useEffect(() => {
     if (!localProfileUpdatePending || !displayUsername || displayUsername === 'user') return
 
@@ -209,6 +210,10 @@ export const Profile: React.FC = () => {
         setProfileData(data)
         if (!data.profileUpdatePending) {
           setLocalProfileUpdatePending(false)
+          // Update avatar in global store so ProfileChooser reflects the change immediately
+          if (data.tokenId) {
+            setAvatar(data.tokenId, data.avatarUrl || null)
+          }
         }
       } catch {
         // Ignore fetch errors during polling
@@ -846,7 +851,7 @@ export const Profile: React.FC = () => {
                         onMouseEnter={() => setFollowButtonHovered(true)}
                         onMouseLeave={() => setFollowButtonHovered(false)}
                         className={`px-8 py-2 rounded-full font-semibold border transition-all duration-200 ${
-                          followPending || followWrongWallet ? 'opacity-50 cursor-not-allowed' : ''
+                          followPending || followWrongWallet ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
                         } ${
                           isFollowing
                             ? 'border-white bg-white text-black hover:bg-black hover:text-white hover:border-black'
@@ -1410,7 +1415,7 @@ export const Profile: React.FC = () => {
                     </button>
                   </div>
                   {updateCost > 0 && (
-                    <div className="mt-2 self-end mr-4">
+                    <div className="mt-2 self-end mr-[11px]">
                       <button
                         onClick={() => setShowCostExplanation(true)}
                         className={`text-xs cursor-pointer ${

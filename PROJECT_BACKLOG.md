@@ -84,6 +84,16 @@ This document tracks outstanding TODOs, security considerations, and planned fea
   - Allow users to edit and delete their own direct messages
   - See detailed design notes below in [DM Edit/Delete Design Notes](#dm-editdelete-design-notes)
 
+- [ ] **Shadow banning**
+  - Frontend-level content filtering for users flagged by admins/reports
+  - Shadow-banned users can still post and interact, but their content is hidden from other users' feeds
+  - The banned user sees no indication they've been banned (posts appear normal to them)
+  - Applies per-frontend (consistent with manifesto — protocol is uncensorable, frontends moderate)
+  - Admin UI to manage shadow-banned users (via ReportsAdmin page or similar)
+  - DB: add `shadowBanned` boolean to User model
+  - API: filter shadow-banned users' content from feed/search/trending endpoints
+  - Exclude from suggested users, trending hashtags contributions, etc.
+
 - [ ] **Image modal** (FeedItem.tsx:794, 819, 845)
   - Comment: "TODO: Open image in modal"
   - Clicking on post images should open full-size modal

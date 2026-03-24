@@ -13,9 +13,12 @@ interface BugReportModalProps {
   onClose: () => void
 }
 
+type FeedbackType = 'bug' | 'feature'
+
 const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
   const { isDark } = useTheme()
   const activeToken = useActiveToken()
+  const [feedbackType, setFeedbackType] = useState<FeedbackType>('bug')
   const [description, setDescription] = useState('')
   const [images, setImages] = useState<File[]>([])
   const [previews, setPreviews] = useState<string[]>([])
@@ -67,7 +70,7 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
 
   const handleSubmit = () => {
     if (!description.trim()) {
-      setError('Please describe the bug')
+      setError(feedbackType === 'bug' ? 'Please describe the bug' : 'Please describe the feature')
       return
     }
 
@@ -92,6 +95,7 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
       await apiFetch('/api/bug-reports', {
         method: 'POST',
         body: JSON.stringify({
+          type: feedbackType,
           userId: activeToken?.tokenId || null,
           username: activeToken?.username || null,
           stakedAmount: activeToken?.stakedAmount?.toString() || null,
@@ -106,6 +110,7 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
 
   const handleClose = () => {
     previews.forEach(p => URL.revokeObjectURL(p))
+    setFeedbackType('bug')
     setDescription('')
     setImages([])
     setPreviews([])
@@ -131,13 +136,39 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
             </div>
           </div>
         )}
-        <ModalHeader title="Report a Bug" onClose={handleClose} border={false} className="mb-4 px-0" />
+        <ModalHeader title="Feedback" onClose={handleClose} border={false} className="mb-4 px-0" />
+
+        {/* Type toggle */}
+        {!submitted && (
+          <div className="flex gap-2 mb-4">
+            <button
+              onClick={() => setFeedbackType('bug')}
+              className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+                feedbackType === 'bug'
+                  ? 'bg-red-500/20 text-red-400 border border-red-500/40'
+                  : isDark ? 'bg-white/5 text-white/40 hover:bg-white/10' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+              }`}
+            >
+              Bug Report
+            </button>
+            <button
+              onClick={() => setFeedbackType('feature')}
+              className={`flex-1 py-2 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+                feedbackType === 'feature'
+                  ? 'bg-yellow-500/20 text-yellow-400 border border-yellow-500/40'
+                  : isDark ? 'bg-white/5 text-white/40 hover:bg-white/10' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+              }`}
+            >
+              Feature Request
+            </button>
+          </div>
+        )}
 
         {submitted ? (
           <div className="text-center py-8">
             <div className="text-4xl mb-3">Thanks!</div>
             <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
-              Your bug report has been submitted. We'll look into it.
+              {feedbackType === 'bug' ? "Your bug report has been submitted. We'll look into it." : "Your feature request has been submitted. Thanks for the idea!"}
             </p>
             <button
               onClick={handleClose}
@@ -159,7 +190,7 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
             <textarea
               value={description}
               onChange={e => setDescription(e.target.value)}
-              placeholder="Describe the bug... What happened? What did you expect?"
+              placeholder={feedbackType === 'bug' ? "Describe the bug... What happened? What did you expect?" : "Describe the feature you'd like to see..."}
               rows={4}
               className={`w-full px-3 py-2 rounded-lg border text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500/50 ${themeInput(isDark)}`}
             />
