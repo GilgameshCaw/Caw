@@ -316,6 +316,7 @@ model Message {
   contentType      String             @default("text") // "text", "deleted"
   editHistory      String?            // encrypted JSON array of previous versions
   status           MessageStatus      @default(SENT)
+  shadowBlocked    Boolean            @default(false) // hidden from recipient, visible to sender
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
   conversation     Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)

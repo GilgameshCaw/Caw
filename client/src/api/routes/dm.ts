@@ -3,6 +3,7 @@ import { PrismaClient } from '@prisma/client'
 import dmService from '../../services/DmService'
 import dmWebSocketService from '../../services/DmService/websocket'
 import { requireAuth } from '../middleware/auth'
+import { isBlockedEitherDirection, getBlockedUserIds } from '../shared/blockUtils'
 
 const prisma = new PrismaClient()
 
@@ -96,7 +97,16 @@ router.get('/conversations',
       }
 
       const conversations = await dmService.getConversations(userId)
-      return res.json({ conversations })
+
+      // Filter out conversations with blocked users
+      const blockedIds = await getBlockedUserIds(userId)
+      const filtered = blockedIds.length > 0
+        ? conversations.filter((c: any) =>
+            !c.participants?.some((p: any) => p.userId !== userId && blockedIds.includes(p.userId))
+          )
+        : conversations
+
+      return res.json({ conversations: filtered })
     } catch (error: any) {
       console.error('GET /api/dm/conversations error:', error)
       return res.status(500).json({ error: error.message })
@@ -112,6 +122,30 @@ router.post('/messages',
       const { conversationId, senderId, encryptedPayload, contentType } = req.body
       if (!conversationId || !senderId || !encryptedPayload) {
         return res.status(400).json({ error: 'conversationId, senderId, and encryptedPayload are required' })
+      }
+
+      // Check if either user has blocked the other
+      const conv = await prisma.conversation.findUnique({
+        where: { id: conversationId },
+        include: { participants: true }
+      })
+      if (!conv) return res.status(404).json({ error: 'Conversation not found' })
+      const peer = conv.participants.find(p => p.userId !== Number(senderId))
+      const isShadowBlocked = peer ? await isBlockedEitherDirection(Number(senderId), peer.userId) : false
+
+      if (isShadowBlocked) {
+        // Shadow block: store the message but mark it so the recipient never sees it
+        const message = await prisma.message.create({
+          data: {
+            conversationId,
+            senderId: Number(senderId),
+            encryptedPayload,
+            contentType: contentType || 'text',
+            shadowBlocked: true
+          }
+        })
+        // Don't broadcast, don't increment unread — sender sees it, recipient doesn't
+        return res.json(message)
       }
 
       const message = await dmService.sendMessage({

@@ -3,6 +3,7 @@ import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { ActionType } from '@prisma/client'
 import { findOrCreateUser } from '../../services/UserService'
+import { getBlockedUserIds } from '../shared/blockUtils'
 
 const router = Router()
 
@@ -101,7 +102,17 @@ router.get('/top-followed', async (req, res) => {
       }
     }))
 
-    return res.json({ users: usersWithLikes })
+    // Filter out blocked users
+    let filtered = usersWithLikes
+    if (currentUserId) {
+      const blockedIds = await getBlockedUserIds(currentUserId)
+      if (blockedIds.length > 0) {
+        const blockedSet = new Set(blockedIds)
+        filtered = usersWithLikes.filter(u => !blockedSet.has(u.tokenId))
+      }
+    }
+
+    return res.json({ users: filtered })
   } catch (err: any) {
     console.error('GET /api/users/top-followed error', err)
     return res.status(500).json({ error: 'Internal server error' })
@@ -419,6 +430,13 @@ router.get('/:username', async (req, res) => {
       }
     }
 
+    // Check if current user has blocked this profile user
+    let isBlocked = false
+    if (currentUserId && currentUserId !== user.tokenId) {
+      const blockedIds = await getBlockedUserIds(currentUserId)
+      isBlocked = blockedIds.includes(user.tokenId)
+    }
+
     // Compute actual follow counts from the follow table (cached counters can drift)
     const [actualFollowerCount, actualFollowingCount] = await Promise.all([
       prisma.follow.count({
@@ -447,6 +465,7 @@ router.get('/:username', async (req, res) => {
       followPending,
       hasTipped,
       tipPending,
+      isBlocked,
     }
 
     console.log(`[users API] ${username}: followerCount=${actualFollowerCount}, followingCount=${actualFollowingCount}`)
@@ -539,7 +558,17 @@ router.get('/:username/followers', async (req, res) => {
       }
     }))
 
-    return res.json({ items, nextCursor })
+    // Filter out blocked users
+    let filtered = items
+    if (currentUserId) {
+      const blockedIds = await getBlockedUserIds(currentUserId)
+      if (blockedIds.length > 0) {
+        const blockedSet = new Set(blockedIds)
+        filtered = items.filter(u => !blockedSet.has(u.tokenId))
+      }
+    }
+
+    return res.json({ items: filtered, nextCursor })
   } catch (err: any) {
     console.error('GET /api/users/:username/followers error', err)
     return res.status(500).json({ error: 'Internal server error' })
@@ -627,7 +656,17 @@ router.get('/:username/following', async (req, res) => {
       }
     }))
 
-    return res.json({ items, nextCursor })
+    // Filter out blocked users
+    let filtered = items
+    if (currentUserId) {
+      const blockedIds = await getBlockedUserIds(currentUserId)
+      if (blockedIds.length > 0) {
+        const blockedSet = new Set(blockedIds)
+        filtered = items.filter(u => !blockedSet.has(u.tokenId))
+      }
+    }
+
+    return res.json({ items: filtered, nextCursor })
   } catch (err: any) {
     console.error('GET /api/users/:username/following error', err)
     return res.status(500).json({ error: 'Internal server error' })
@@ -668,7 +707,18 @@ router.get('/search/:query', async (req, res) => {
       }
     })
 
-    return res.json({ users })
+    // Filter out blocked users
+    const currentUserId = Number(req.header('x-user-id')) || undefined
+    let filtered = users
+    if (currentUserId) {
+      const blockedIds = await getBlockedUserIds(currentUserId)
+      if (blockedIds.length > 0) {
+        const blockedSet = new Set(blockedIds)
+        filtered = users.filter(u => !blockedSet.has(u.tokenId))
+      }
+    }
+
+    return res.json({ users: filtered })
   } catch (err: any) {
     console.error('GET /api/users/search/:query error', err)
     return res.status(500).json({ error: 'Internal server error' })

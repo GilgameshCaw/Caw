@@ -154,7 +154,12 @@ export class DmService {
     const where: any = {
       conversationId,
       // Exclude messages the user has hidden ("delete for me")
-      deletions: { none: { userId } }
+      deletions: { none: { userId } },
+      // Shadow-blocked messages: sender sees them, recipient doesn't
+      OR: [
+        { shadowBlocked: false },
+        { shadowBlocked: true, senderId: userId }
+      ]
     }
     if (before) {
       const beforeMsg = await prisma.message.findUnique({ where: { id: before }, select: { createdAt: true } })
@@ -210,6 +215,12 @@ export class DmService {
               }
             },
             messages: {
+              where: {
+                OR: [
+                  { shadowBlocked: false },
+                  { shadowBlocked: true, senderId: userId }
+                ]
+              },
               orderBy: { createdAt: 'desc' },
               take: 1,
               select: {

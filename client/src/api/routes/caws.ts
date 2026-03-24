@@ -4,6 +4,7 @@ import { prisma } from '../../prismaClient'
 import { shapeCaw, getCawIncludeConfig, handlePagination } from '../shared/cawUtils'
 import { mockCawItems, userMockItems } from '../shared/mockData'
 import { requireAuth } from '../middleware/auth'
+import { getBlockedUserIds } from '../shared/blockUtils'
 
 const router = Router()
 
@@ -36,6 +37,7 @@ router.get('/', async (req, res) => {
       : undefined
     const userIdHeader = req.header('x-user-id')
     const currentUserId = userIdHeader ? Number(userIdHeader) : undefined
+    const blockedIds = currentUserId ? await getBlockedUserIds(currentUserId) : []
 
     // 1️⃣ if ?user=foo, look up that user
     let targetUserId: number|undefined
@@ -208,6 +210,23 @@ router.get('/', async (req, res) => {
       }
     }
 
+    // Filter out blocked users
+    if (blockedIds.length > 0) {
+      if (where.AND) {
+        where.AND.push({ userId: { notIn: blockedIds } })
+      } else {
+        where.AND = [{ userId: { notIn: blockedIds } }]
+        // Move existing OR/status into AND
+        if (where.OR) {
+          where.AND.unshift({ OR: where.OR })
+          delete where.OR
+        } else if (where.status) {
+          where.AND.unshift({ status: where.status })
+          delete where.status
+        }
+      }
+    }
+
     // 3️⃣ fetch one extra for cursor‐based pagination
     const raws = await prisma.caw.findMany({
       where,
@@ -252,12 +271,18 @@ router.post('/by-ids', async (req, res) => {
 
     const userIdHeader = req.header('x-user-id')
     const currentUserId = userIdHeader ? Number(userIdHeader) : undefined
+    const blockedIds = currentUserId ? await getBlockedUserIds(currentUserId) : []
+
+    const byIdsWhere: any = {
+      id: { in: limitedIds },
+      status: 'SUCCESS' // Only show successful caws
+    }
+    if (blockedIds.length > 0) {
+      byIdsWhere.userId = { notIn: blockedIds }
+    }
 
     const raws = await prisma.caw.findMany({
-      where: {
-        id: { in: limitedIds },
-        status: 'SUCCESS' // Only show successful caws
-      },
+      where: byIdsWhere,
       include: getCawIncludeConfig({ currentUserId }),
       orderBy: { createdAt: 'desc' }
     })
@@ -309,6 +334,7 @@ router.get('/:id', async (req, res) => {
   }
 
   // 2) fetch comments (caws where originalCawId = cawId) with same visibility filter
+  const commentBlockedIds = currentUserId ? await getBlockedUserIds(currentUserId) : []
   const commentWhere: any = { originalCawId: cawId }
 
   // Add status visibility filter for comments
@@ -322,6 +348,20 @@ router.get('/:id', async (req, res) => {
     ]
   } else {
     commentWhere.status = 'SUCCESS'
+  }
+
+  // Filter out comments from blocked users
+  if (commentBlockedIds.length > 0) {
+    const existingConditions: any[] = []
+    if (commentWhere.OR) {
+      existingConditions.push({ OR: commentWhere.OR })
+      delete commentWhere.OR
+    } else if (commentWhere.status) {
+      existingConditions.push({ status: commentWhere.status })
+      delete commentWhere.status
+    }
+    existingConditions.push({ userId: { notIn: commentBlockedIds } })
+    commentWhere.AND = existingConditions
   }
 
   const rawComments = await prisma.caw.findMany({

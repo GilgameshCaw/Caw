@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { elasticsearchService } from '../../services/ElasticsearchService'
+import { getBlockedUserIds } from '../shared/blockUtils'
 
 const router = Router()
 
@@ -206,8 +207,17 @@ router.get('/', async (req, res) => {
       results.caws = cawResults.items
 
       if (type === 'caws') {
+        let filteredItems = cawResults.items
+        const cawCurrentUserId = Number(req.header('x-user-id')) || undefined
+        if (cawCurrentUserId) {
+          const blockedIds = await getBlockedUserIds(cawCurrentUserId)
+          if (blockedIds.length > 0) {
+            const blockedSet = new Set(blockedIds)
+            filteredItems = cawResults.items.filter((c: any) => !blockedSet.has(c.user?.id))
+          }
+        }
         return res.json({
-          items: cawResults.items,
+          items: filteredItems,
           nextCursor: cawResults.hasMore ? searchOffset + searchLimit : undefined
         })
       }
@@ -280,6 +290,17 @@ router.get('/', async (req, res) => {
         }
       })
       results.hashtags = hashtags.map(h => ({ tag: h.name, usageCount: h.usageCount }))
+    }
+
+    // Filter out blocked users from results
+    const currentUserId = Number(req.header('x-user-id')) || undefined
+    if (currentUserId) {
+      const blockedIds = await getBlockedUserIds(currentUserId)
+      if (blockedIds.length > 0) {
+        const blockedSet = new Set(blockedIds)
+        results.caws = results.caws.filter((c: any) => !blockedSet.has(c.user?.id))
+        results.users = results.users.filter((u: any) => !blockedSet.has(u.tokenId))
+      }
     }
 
     // Add hasMore flags for 'all' tab to show "View more" links

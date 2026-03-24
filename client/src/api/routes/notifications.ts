@@ -3,6 +3,7 @@ import { prisma } from '../../prismaClient'
 import { NotificationService } from '../../services/NotificationService'
 import { NotificationType } from '@prisma/client'
 import { requireAuth } from '../middleware/auth'
+import { getBlockedUserIds } from '../shared/blockUtils'
 
 const router = Router()
 
@@ -22,8 +23,15 @@ router.get('/', async (req, res) => {
     const notificationLimit = Math.min(Number(limit), 100)
     const notificationOffset = Number(offset)
 
+    // Filter out notifications from blocked users
+    const blockedIds = await getBlockedUserIds(userTokenId)
+
     // Build where clause
     const where: any = { userId: userTokenId, hidden: false }
+
+    if (blockedIds.length > 0) {
+      where.actorId = { notIn: blockedIds }
+    }
 
     if (type && type !== 'all') {
       if (type === 'mentions') {
@@ -122,8 +130,12 @@ router.get('/', async (req, res) => {
       new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
     )
 
-    // Get unread count
-    const unreadCount = await NotificationService.getUnreadCount(userTokenId)
+    // Get unread count (also filtered by blocked users)
+    const unreadWhere: any = { userId: userTokenId, isRead: false, hidden: false }
+    if (blockedIds.length > 0) {
+      unreadWhere.actorId = { notIn: blockedIds }
+    }
+    const unreadCount = await prisma.notification.count({ where: unreadWhere })
 
     return res.json({
       notifications: groupedNotifications,
@@ -150,7 +162,14 @@ router.get('/unread-count', async (req, res) => {
     }
 
     const userTokenId = parseInt(userId as string)
-    const unreadCount = await NotificationService.getUnreadCount(userTokenId)
+
+    // Filter out notifications from blocked users
+    const blockedIds = await getBlockedUserIds(userTokenId)
+    const unreadWhere: any = { userId: userTokenId, isRead: false, hidden: false }
+    if (blockedIds.length > 0) {
+      unreadWhere.actorId = { notIn: blockedIds }
+    }
+    const unreadCount = await prisma.notification.count({ where: unreadWhere })
 
     return res.json({ unreadCount })
 
