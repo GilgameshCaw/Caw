@@ -181,15 +181,32 @@ async function cleanupPendingTips() {
             where: { id: pendingTip.id },
             data: { pending: false }
           })
-        } else if (pendingTip.createdAt < thirtyMinutesAgo) {
-          // No action found after 30 minutes, delete the optimistic tip
-          logger.log(` Removing failed tip from user ${pendingTip.senderId} to ${pendingTip.recipientId}`)
-
-          await prisma.tip.delete({
-            where: { id: pendingTip.id }
-          })
         } else {
-          logger.log(` Tip still pending (${Math.floor((Date.now() - pendingTip.createdAt.getTime()) / 60000)} minutes): user ${pendingTip.senderId} to ${pendingTip.recipientId}`)
+          // No Action record — check if txQueue completed (ActionProcessor may have missed the event)
+          const completedTx = await prisma.txQueue.findFirst({
+            where: {
+              senderId: pendingTip.senderId,
+              status: 'done',
+              payload: { path: ['data', 'cawonce'], equals: pendingTip.cawonce }
+            }
+          })
+
+          if (completedTx) {
+            logger.log(` TxQueue confirms tip (event missed): user ${pendingTip.senderId} to ${pendingTip.recipientId}`)
+            await prisma.tip.update({
+              where: { id: pendingTip.id },
+              data: { pending: false }
+            })
+          } else if (pendingTip.createdAt < thirtyMinutesAgo) {
+            // No action and no completed tx after 30 minutes, delete the optimistic tip
+            logger.log(` Removing failed tip from user ${pendingTip.senderId} to ${pendingTip.recipientId}`)
+
+            await prisma.tip.delete({
+              where: { id: pendingTip.id }
+            })
+          } else {
+            logger.log(` Tip still pending (${Math.floor((Date.now() - pendingTip.createdAt.getTime()) / 60000)} minutes): user ${pendingTip.senderId} to ${pendingTip.recipientId}`)
+          }
         }
       } catch (err) {
         logger.error(` Error processing pending tip ${pendingTip.id}:`, err)
