@@ -58,6 +58,8 @@ model User {
   onChainImages         OnChainImage[]
   tipsSent              Tip[]          @relation("TipsSent")
   tipsReceived          Tip[]          @relation("TipsReceived")
+  blocksGiven           Block[]        @relation("BlocksGiven")
+  blocksReceived        Block[]        @relation("BlocksReceived")
 
   @@index([address])
 }
@@ -147,6 +149,20 @@ model Follow {
   @@unique([followerId, followingId])
   @@index([followerId, status])
   @@index([followingId, status])
+}
+
+model Block {
+  id        Int      @id @default(autoincrement())
+  blockerId Int
+  blockedId Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  blocker   User     @relation("BlocksGiven", fields: [blockerId], references: [tokenId])
+  blocked   User     @relation("BlocksReceived", fields: [blockedId], references: [tokenId])
+
+  @@unique([blockerId, blockedId])
+  @@index([blockerId])
+  @@index([blockedId])
 }
 
 model TxQueue {

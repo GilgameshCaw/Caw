@@ -521,9 +521,9 @@ export const chainSyncService = {
   name: 'ChainSyncService',
 
   validateConfig(cfg: any) {
-    const errors: string[] = []
+    const errors: Error[] = []
     if (!cfg?.l1RpcUrl) {
-      errors.push('l1RpcUrl is required for ChainSyncService')
+      errors.push(new Error('l1RpcUrl is required for ChainSyncService'))
     }
     return errors
   },
