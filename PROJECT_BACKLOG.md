@@ -156,6 +156,17 @@ This document tracks outstanding TODOs, security considerations, and planned fea
   - **Note**: This is activity-based yield, not time-based APR - more like equity dividends than interest
   - **Status**: Not started
 
+### Price History Tracking
+
+- [ ] **Store price history over time for charting**
+  - Currently ChainSyncService overwrites the latest price in `chainData`
+  - Add a `PriceHistory` table: `{ id, token (caw/eth), usdPrice, ethPrice, timestamp }`
+  - Insert a new row every sync interval (5 min) instead of just overwriting
+  - Add API endpoint `GET /api/prices/history?token=caw&period=24h` for charting
+  - Frontend: price chart on staking page or sidebar showing CAW price over time
+  - Retention policy: keep 5-min granularity for 7 days, hourly for 90 days, daily forever
+  - **Status**: Not started
+
 ### XMTP Messaging System
 
 - [ ] **Complete XMTP integration**
