@@ -9,6 +9,7 @@ import { apiService } from './services/Api'
 import { dataCleanerService } from './services/DataCleaner';
 import { scheduledPostProcessorService } from './services/ScheduledPostProcessor';
 import { instanceRegistryService } from './services/InstanceRegistryService';
+import { chainSyncService } from './services/ChainSyncService';
 
 import delay from './tools/delay';
 
@@ -46,6 +47,7 @@ const availableServiceList: Service[] = [
   dataCleanerService,
   scheduledPostProcessorService,
   instanceRegistryService,
+  chainSyncService,
 ];
 
 const availableServices = new Map<string, Service>();
