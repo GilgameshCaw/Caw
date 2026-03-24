@@ -1,6 +1,8 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import { useOptimisticLikesStore } from '~/store/optimisticLikesStore'
+import { useTokenDataStore } from '~/store/tokenDataStore'
+import { usePendingSpendStore } from '~/store/pendingSpendStore'
 import { apiFetch } from '~/api/client'
 
 // Global callbacks for feed refresh - set by Feed component
@@ -58,21 +60,31 @@ export function useTxQueueMonitor() {
             console.log(`[TxQueueMonitor] Removing optimistic updates for failed txQueue ID: ${status.id}`)
             removePendingPostByTxQueueId(status.id)
             removeOptimisticLikeByTxQueueId(status.id)
+            usePendingSpendStore.getState().removePendingSpend(status.id)
             processedIds.current.add(status.id)
           } else if (status.status === 'done') {
             // The action was successful - remove the pending post and refresh the feed
             console.log(`[TxQueueMonitor] TxQueue ID ${status.id} succeeded, removing pending post and refreshing feed`)
             removePendingPostByTxQueueId(status.id)
             removeOptimisticLikeByTxQueueId(status.id)
+            usePendingSpendStore.getState().removePendingSpend(status.id)
             processedIds.current.add(status.id)
             needsRefresh = true
           }
         })
 
-        // Refresh the feed if any actions completed
-        if (needsRefresh && feedRefreshCallback) {
-          console.log('[TxQueueMonitor] Triggering feed refresh')
-          feedRefreshCallback()
+        // Refresh the feed and token data if any actions completed
+        if (needsRefresh) {
+          if (feedRefreshCallback) {
+            console.log('[TxQueueMonitor] Triggering feed refresh')
+            feedRefreshCallback()
+          }
+          // Refetch token data (staked balance, etc.) since actions spend CAW
+          const refetch = useTokenDataStore.getState().refetchTokenData
+          if (refetch) {
+            console.log('[TxQueueMonitor] Refreshing token data')
+            refetch()
+          }
         }
       } catch (error) {
         console.error('Error checking txQueue status:', error)

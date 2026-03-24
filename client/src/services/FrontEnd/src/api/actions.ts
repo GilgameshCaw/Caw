@@ -7,8 +7,8 @@ import { readContract } from '@wagmi/core'
 import type { TypedDataDomain, TypedDataField } from '@ethersproject/abstract-signer'
 import { useActiveToken, useTokenDataStore } from "~/store/tokenDataStore";
 import { useClientConfigStore } from "~/store/clientConfigStore";
-import { CAW_ACTIONS_ADDRESS } from '~/../../../abi/addresses'
-import { cawActionsAbi } from '~/../../../abi/generated'
+import { CAW_ACTIONS_ADDRESS, CAW_NAMES_L2_ADDRESS } from '~/../../../abi/addresses'
+import { cawActionsAbi, cawNameL2Abi } from '~/../../../abi/generated'
 import { wagmiConfig } from '~/config/Web3Provider'
 import { hasMinimumStake, getRequiredStake, STAKING_REQUIREMENTS } from '~/constants/stakingRequirements'
 import { getActionTypeForModal } from '~/errors/InsufficientStakeError'
@@ -18,8 +18,13 @@ import { privateKeyToAccount } from 'viem/accounts'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import { useQuickSignRenewStore } from '~/components/modals/QuickSignRenewModal'
+import { useClientAuthStore } from '~/store/clientAuthStore'
+import { usePendingSpendStore } from '~/store/pendingSpendStore'
 
 const CAWONCE_STALE_MS = 10 * 60 * 1000 // 10 minutes
+
+// Cache client auth status per tokenId to avoid repeated RPC calls
+const clientAuthCache = new Map<number, boolean>()
 
 /** map human-friendly names to on-chain enum values */
 const ActionTypeMap = {
@@ -168,6 +173,20 @@ export function useSignAndSubmitAction() {
       throw new Error('No active token selected. Please connect your wallet.')
     }
 
+    // Check wallet ownership — if no session key, the connected wallet must own the token
+    const sessionStore0 = useSessionKeyStore.getState()
+    const activeSession0 = sessionStore0.getActiveSession()
+    const actionCode0 = ActionTypeMap[params.actionType]
+    const canUseSession0 = activeSession0 &&
+      actionCode0 <= 5 &&
+      (activeSession0.scopeBitmap & (1 << actionCode0)) !== 0
+
+    if (!canUseSession0 && isConnected && activeToken?.owner && address) {
+      if (activeToken.owner.toLowerCase() !== address.toLowerCase()) {
+        throw new Error('Wrong wallet connected. Please switch to the correct wallet.')
+      }
+    }
+
     // Check for minimum stake based on action type
     // Note: unlike and unfollow don't require stake checks
     const stakingKey = params.actionType === 'like' ? 'MIN_STAKE_LIKE' :
@@ -178,11 +197,37 @@ export function useSignAndSubmitAction() {
                       params.actionType === 'other' ? 'MIN_STAKE_POST' :
                       null
 
-    if (stakingKey && !hasMinimumStake(activeToken?.stakedAmount, stakingKey)) {
+    // Use effective stake (staked - pending) to account for in-flight actions
+    const effectiveStake = usePendingSpendStore.getState().getEffectiveStake(activeToken?.stakedAmount)
+    if (stakingKey && !hasMinimumStake(effectiveStake, stakingKey)) {
       const requiredAmount = getRequiredStake(stakingKey)
       const actionTypeForModal = getActionTypeForModal(params.actionType)
-      useInsufficientStakeStore.getState().show(activeToken?.stakedAmount, requiredAmount, actionTypeForModal)
+      useInsufficientStakeStore.getState().show(effectiveStake, requiredAmount, actionTypeForModal)
       return null
+    }
+
+    // Check if user is authenticated with this client on-chain (cached after first check)
+    if (!clientAuthCache.get(activeTokenId)) {
+      try {
+        const isAuthed = await readContract(wagmiConfig, {
+          address: CAW_NAMES_L2_ADDRESS,
+          abi: cawNameL2Abi,
+          functionName: 'authenticated',
+          args: [CLIENT_ID, activeTokenId],
+          chainId: baseSepolia.id,
+        })
+        if (isAuthed) {
+          clientAuthCache.set(activeTokenId, true)
+        } else {
+          useClientAuthStore.getState().show(activeTokenId, () => {
+            clientAuthCache.set(activeTokenId, true) // Optimistic after successful auth tx
+            requestAndSubmit(params)
+          })
+          return null
+        }
+      } catch (err) {
+        console.warn('[Actions] Failed to check client auth status, proceeding:', err)
+      }
     }
 
     // Wait for token data to be loaded (max 10 seconds)
@@ -334,6 +379,19 @@ export function useSignAndSubmitAction() {
         }
       }
 
+      // Record pending spend so subsequent actions see reduced effective stake
+      if (response.txQueueId) {
+        const actionCostWei: Record<string, bigint> = {
+          caw: 5000n, like: 2000n, recaw: 4000n, follow: 30000n,
+          unlike: 0n, unfollow: 0n, other: 0n, withdraw: 0n,
+        }
+        const costWholeTokens = (actionCostWei[params.actionType] || 0n) + getValidatorTip()
+        const costWei = costWholeTokens * 10n**18n
+        if (costWei > 0n) {
+          usePendingSpendStore.getState().addPendingSpend(response.txQueueId, costWei)
+        }
+      }
+
       return response // Return the response which includes txQueueId
     } catch (error: any) {
       // If submission fails, we should ideally roll back the cawonce bump
@@ -350,6 +408,16 @@ export function useSignAndSubmitAction() {
         } catch {
           throw new Error('Please switch to the correct network and try again.')
         }
+      }
+
+      // Not authenticated with this client — show auth modal
+      if (errMsg.includes('not authenticated')) {
+        clientAuthCache.delete(activeTokenId!)
+        useClientAuthStore.getState().show(activeTokenId!, () => {
+          clientAuthCache.set(activeTokenId!, true)
+          requestAndSubmit(params)
+        })
+        return null
       }
 
       // Detect session key spend limit or expiry errors from the contract/validator

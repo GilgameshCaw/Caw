@@ -114,11 +114,17 @@ const ProfileChooser: React.FC = () => {
 
   const handleSelectProfile = (token: TokenData) => {
     setActiveTokenId(token.tokenId)
+    // Update lastAddress so useTokenDataUpdate refetches data for this token's owner
+    if (token.address) {
+      setLastAddress(token.address.toLowerCase())
+    }
     setDropdownOpen(false);
     // useEffect will fetch avatar when activeToken.tokenId changes
   };
 
-  const notCurrentAddress = !hasActiveSession && address?.toLowerCase() != activeToken?.address?.toLowerCase();
+  const walletMismatch = address?.toLowerCase() != activeToken?.address?.toLowerCase();
+  const notCurrentAddress = !hasActiveSession && walletMismatch;
+  const quickSignWithWrongWallet = hasActiveSession && walletMismatch && isConnected;
 
   // Normalize all addresses to lowercase to prevent duplicates with different cases
   const normalizedTokensByAddress: Record<Address, TokenData[]> = {}
@@ -164,9 +170,16 @@ const ProfileChooser: React.FC = () => {
           }`}>
             {selectedToken.stakedAmount > 0n ? formatUnitsCompact(selectedToken.stakedAmount,18) : "No"} CAW
           </div>
-          <div className={`${notCurrentAddress ? '' : 'hidden'} text-2xs text-red-500`}>
-            {isConnected ? "(Wrong Address)" : "not connected"}
-          </div>
+          {notCurrentAddress && (
+            <div className="text-2xs text-red-500">
+              {isConnected ? "(Wrong Address)" : "not connected"}
+            </div>
+          )}
+          {quickSignWithWrongWallet && (
+            <div className="text-2xs text-yellow-500">
+              (Quick Sign)
+            </div>
+          )}
         </div>
 
       </button>

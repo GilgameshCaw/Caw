@@ -30,7 +30,9 @@ export default function useTokenDataUpdate() {
   const setLastAddress = useTokenDataStore(s => s.setLastAddress)
   const lastAddress = useTokenDataStore(s => s.lastAddress)
 
-  const viewedAddress = ((address ?? lastAddress)?.toLowerCase()) as Address | undefined
+  // Prefer lastAddress (tracks the active profile's owner) over connected wallet
+  // This ensures data refreshes when switching profiles, even to a different owner
+  const viewedAddress = ((lastAddress ?? address)?.toLowerCase()) as Address | undefined
 
   const { data: rawTokens, isError, error, isLoading, isLoadingError, refetch: refetchL1 } = useReadContract({
     address: CAW_NAMES_ADDRESS,
@@ -53,10 +55,9 @@ export default function useTokenDataUpdate() {
     }
   }
 
-  // Only set lastAddress on initial load if it's not already set
-  // Don't update it when wallet address changes - that's handled by manual username selection
+  // Set lastAddress on initial load when wallet connects (if not already set from profile selection)
   if (!!address && rawTokens && rawTokens.length > 0 && !lastAddress) {
-    setLastAddress(address)
+    setLastAddress(address.toLowerCase())
   }
 
 
