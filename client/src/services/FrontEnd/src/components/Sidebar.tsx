@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react'
 import { NavLink, useNavigate, useLocation } from 'react-router-dom'
 import ProfileChooser           from '~/components/ProfileChooser'
 import { fetchTxPage }          from '../api/txs'
-import { useTokenDataStore, useActiveToken } from "~/store/tokenDataStore";
+import { useTokenDataStore, useActiveToken, usePriceStore } from "~/store/tokenDataStore";
 import { useTheme } from "~/hooks/useTheme";
 import { useDmIdentity } from "~/hooks/useDmIdentity";
 import { useDmUnreadStore } from "~/store/dmUnreadStore";
@@ -70,6 +70,30 @@ function ApiHostIndicator() {
   )
 }
 
+function CawPriceTicker() {
+  const priceMap = usePriceStore(s => s.priceMap)
+  const cawPrice = priceMap['a-hunters-dream'] ?? 0
+  const { isDark } = useTheme()
+
+  if (!cawPrice || cawPrice <= 0) return null
+
+  // How many CAW you get for $0.01
+  const cawPerPenny = 0.01 / cawPrice
+
+  const formatAmount = (n: number): string => {
+    if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
+    return n.toFixed(0)
+  }
+
+  return (
+    <div className={`mt-1 ml-3 text-xs ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
+      $0.01 ≈ {formatAmount(cawPerPenny)} CAW
+    </div>
+  )
+}
+
 const Sidebar: React.FC = () => {
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const activeToken = useActiveToken()
@@ -125,6 +149,7 @@ const Sidebar: React.FC = () => {
             </span>
           </NavLink>
           <ApiHostIndicator />
+          <CawPriceTicker />
         </div>
 
         {/* Navigation */}

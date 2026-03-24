@@ -12,6 +12,7 @@ import TransferNFTModal from '~/components/modals/TransferNFTModal'
 import SyncTransferModal from '~/components/modals/SyncTransferModal'
 import OnboardingGuard from '~/components/OnboardingGuard'
 import QuickSignRenewModal from '~/components/modals/QuickSignRenewModal'
+import ClientAuthModal from '~/components/modals/ClientAuthModal'
 import { useSessionSpendSync } from '~/hooks/useSessionSpendSync'
 import { useDmUnreadSync } from '~/hooks/useDmUnreadSync'
 import { useNotificationUnreadSync } from '~/hooks/useNotificationUnreadSync'
@@ -45,6 +46,7 @@ function App() {
       <OnboardingGuard />
       <VerifyWalletModal />
       <QuickSignRenewModal />
+      <ClientAuthModal />
       <TransferNFTModal />
       <SyncTransferModal />
     </BrowserRouter>
