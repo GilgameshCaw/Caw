@@ -837,16 +837,33 @@ export const validatorService: Service = {
       })
 
       try {
+        // Encode calldata and validate before sending
+        const txData = iface.encodeFunctionData('processActions', [
+          validatorId,
+          { actions: multiData.actions, v: multiData.v, r: multiData.r, s: multiData.s },
+          quote.withdrawFee,
+          quote.withdrawLzTokenAmount,
+          quote.replicationLzTokenAmount
+        ])
+
+        if (!txData || txData === '0x' || txData.length < 10) {
+          console.error('[submitProcessActions] CRITICAL: encodeFunctionData returned empty/invalid data:', {
+            txData,
+            validatorId,
+            actionsCount: multiData.actions.length,
+            withdrawFee: quote.withdrawFee.toString(),
+            withdrawLzTokenAmount: quote.withdrawLzTokenAmount.toString(),
+            replicationLzTokenAmount: quote.replicationLzTokenAmount.toString(),
+          })
+          throw new Error(`encodeFunctionData produced invalid calldata: "${txData}"`)
+        }
+
+        console.log(`[submitProcessActions] Calldata encoded (${txData.length} chars), sending transaction...`)
+
         // sendTransaction with full 5-argument signature
         const tx = await wallet.sendTransaction({
           to:    CAW_ACTIONS_ADDRESS,
-          data:  iface.encodeFunctionData('processActions', [
-            validatorId,
-            { actions: multiData.actions, v: multiData.v, r: multiData.r, s: multiData.s },
-            quote.withdrawFee,
-            quote.withdrawLzTokenAmount,
-            quote.replicationLzTokenAmount
-          ]),
+          data:  txData,
           value: quote.nativeFee,
           gasLimit: rawGasLimit,
           maxFeePerGas,
@@ -1881,7 +1898,23 @@ console.log("succeededKeys", succeededKeys)
       }
     }
 
-    // start polling
+    // start polling with overlap protection
+    let isPolling = false
+    const safePollLoop = async () => {
+      if (isPolling) {
+        console.log('[Validator] Poll cycle still in progress, skipping this interval')
+        return
+      }
+      isPolling = true
+      try {
+        await pollLoop()
+      } catch (err) {
+        console.error(err)
+      } finally {
+        isPolling = false
+      }
+    }
+
     console.log(`[Validator] Starting validator service with:`);
     console.log(`  - L2 RPC URL: ${l2RpcUrl}`);
     console.log(`  - ETH Mainnet RPC URL: ${ethMainnetRpcUrl}`);
@@ -1889,8 +1922,8 @@ console.log("succeededKeys", succeededKeys)
     console.log(`  - Check Interval: ${checkInterval}ms`);
     console.log(`  - Wallet Address: ${wallet.address}`);
 
-    timer = setInterval(() => pollLoop().catch(console.error), checkInterval)
-    pollLoop().catch(console.error)
+    timer = setInterval(() => safePollLoop(), checkInterval)
+    safePollLoop()
 
     return {
       started: Promise.resolve(),

@@ -100,7 +100,9 @@ export default async function listenForRawEvents(
         ev.topics
       )
       console.log("Will store: ", ev)
-      for (const tuple of decoded.actions as any[]) {
+      const actions = decoded.actions as any[]
+      for (let i = 0; i < actions.length; i++) {
+        const tuple = actions[i]
         const action = {
           actionType:      Number(tuple[0]),
           senderId:        Number(tuple[1]),
@@ -112,7 +114,9 @@ export default async function listenForRawEvents(
           amounts:         tuple[7],
           text:            tuple[8]
         }
-        const logIndex = ev.logIndex ?? 0
+        // Offset logIndex by action position within the batch so each action
+        // gets a unique (blockNumber, logIndex, transactionHash) key
+        const logIndex = (ev.logIndex ?? 0) + i
         lastHash = hashNext(lastHash, action)
         await config.rawEventsProvider.storeEvent({
           chainId:         config.chainId,
@@ -158,7 +162,8 @@ export default async function listenForRawEvents(
       wsContract.on('ActionsProcessed', async (rawActions: any[], ev: ContractEventPayload) => {
         console.log("[RawEventsGatherer] Raw event received via WebSocket", rawActions, ev)
         try {
-          for (const tuple of rawActions as any[]) {
+          for (let i = 0; i < rawActions.length; i++) {
+            const tuple = rawActions[i]
             const action = {
               actionType:      Number(tuple[0]),
               senderId:        Number(tuple[1]),
@@ -170,7 +175,8 @@ export default async function listenForRawEvents(
               amounts:         tuple[7],
               text:            tuple[8]
             }
-            const logIndex = ev.log.index ?? 0
+            // Offset logIndex by action position within the batch
+            const logIndex = (ev.log.index ?? 0) + i
             lastHash = hashNext(lastHash, action)
             await config.rawEventsProvider.storeEvent({
               chainId:         config.chainId,
