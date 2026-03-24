@@ -36,6 +36,10 @@ import MessageSearch from '~/components/MessageSearch'
 import GifPicker from '~/components/GifPicker'
 import EncryptedImage from '~/components/EncryptedImage'
 import { useDmFileUpload } from '~/hooks/useDmFileUpload'
+import { useBlockedUsersStore } from '~/store/blockedUsersStore'
+import { useDmMuteStore } from '~/store/dmMuteStore'
+import MuteConfirmModal from '~/components/modals/MuteConfirmModal'
+import ReportUserModal from '~/components/modals/ReportUserModal'
 
 const MessagesPage: React.FC = () => {
   const { isDark } = useTheme()
@@ -67,10 +71,15 @@ const MessagesPage: React.FC = () => {
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [filePreview, setFilePreview] = useState<{ file: File; previewUrl: string; isImage: boolean } | null>(null)
   const [chatSharedSecret, setChatSharedSecret] = useState<CryptoKey | null>(null)
+  const [chatReady, setChatReady] = useState(false)
   const [contextMenu, setContextMenu] = useState<{ messageId: string; x: number; y: number; isOwn: boolean; createdAt: string } | null>(null)
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
   const [editingContent, setEditingContent] = useState('')
   const [editHistoryMessageId, setEditHistoryMessageId] = useState<string | null>(null)
+  const [showBlockConfirm, setShowBlockConfirm] = useState(false)
+  const [showReportUser, setShowReportUser] = useState(false)
+  const { blockUser, getBlockedUserIds } = useBlockedUsersStore()
+  const { muteConversation, unmuteConversation, isMuted: isConversationMuted } = useDmMuteStore()
 
   const [isTyping, setIsTyping] = useState(false)
   const typingTimeoutRef = useRef<NodeJS.Timeout>()
@@ -103,25 +112,40 @@ const MessagesPage: React.FC = () => {
     refreshConversations,
     clearUnreadCount
   } = useDmClient(currentUser?.id)
-  const { messages, sendMessage: dmSendMessage, editMessage: dmEditMessage, deleteForMe: dmDeleteForMe, deleteForEveryone: dmDeleteForEveryone, isSending, markAsRead, addIncomingMessage, peerLastReadAt, getSharedSecret } = useDmMessages(selectedConversationId || '', currentUser?.id)
+  const { messages, isLoadingOlder, hasMoreMessages, loadOlderMessages, sendMessage: dmSendMessage, editMessage: dmEditMessage, deleteForMe: dmDeleteForMe, deleteForEveryone: dmDeleteForEveryone, isSending, markAsRead, addIncomingMessage, peerLastReadAt, getSharedSecret } = useDmMessages(selectedConversationId || '', currentUser?.id)
   const { uploadEncryptedFile, isUploading, uploadProgress } = useDmFileUpload()
 
   // Scroll to bottom of messages
-  const scrollToBottom = useCallback(() => {
+  const scrollToBottom = useCallback((instant = false) => {
     const doScroll = () => {
       const el = messagesContainerRef.current
-      console.log('[DM Scroll] ref:', !!el, 'scrollHeight:', el?.scrollHeight, 'scrollTop:', el?.scrollTop, 'clientHeight:', el?.clientHeight, 'overflow:', el?.style.overflow, 'computedOverflow:', el ? getComputedStyle(el).overflowY : 'n/a')
       if (el) {
-        el.scrollTop = el.scrollHeight
+        if (instant) {
+          el.scrollTop = el.scrollHeight
+        } else {
+          el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+        }
       }
     }
-    setTimeout(doScroll, 150)
+    setTimeout(doScroll, 50)
   }, [])
+
+  // Reset chatReady when conversation changes, then scroll + fade in on load
+  useEffect(() => {
+    setChatReady(false)
+  }, [selectedConversationId])
 
   // Auto-scroll when messages change
   useEffect(() => {
-    scrollToBottom()
-  }, [messages.length, scrollToBottom])
+    if (!chatReady && messages.length > 0) {
+      // Initial load — scroll instantly, then fade in
+      scrollToBottom(true)
+      setTimeout(() => setChatReady(true), 100)
+    } else if (chatReady) {
+      // New message arrived — smooth scroll
+      scrollToBottom(false)
+    }
+  }, [messages.length, scrollToBottom, chatReady])
 
   // Resolve shared secret for current conversation (used by EncryptedImage)
   useEffect(() => {
@@ -310,6 +334,9 @@ const MessagesPage: React.FC = () => {
     setSelectedConversationId(null)
     setShowChatOptionsMenu(false)
     navigate('/messages', { replace: true })
+
+    // Refresh conversations to show latest messages
+    refreshConversations()
   }
 
   // Handle send message
@@ -479,6 +506,7 @@ const MessagesPage: React.FC = () => {
     setCurrentView('inbox')
     setSelectedConversationId(null)
     setAttemptedConversations(new Set())
+    navigate('/messages', { replace: true })
   }, [currentUser?.id])
 
   // Route user through sign-in → DM setup → inbox
@@ -595,13 +623,19 @@ const MessagesPage: React.FC = () => {
     setShowChatOptionsMenu(false)
     switch (action) {
       case 'block-user':
-        console.log('Block user:', otherParticipant?.identity.user.username)
+        setShowBlockConfirm(true)
         break
       case 'mute-notifications':
-        console.log('Mute notifications for:', otherParticipant?.identity.user.username)
+        if (selectedConversationId) {
+          if (isConversationMuted(selectedConversationId)) {
+            unmuteConversation(selectedConversationId)
+          } else {
+            muteConversation(selectedConversationId)
+          }
+        }
         break
       case 'report':
-        console.log('Report user:', otherParticipant?.identity.user.username)
+        setShowReportUser(true)
         break
       default:
         break
@@ -748,7 +782,9 @@ const MessagesPage: React.FC = () => {
                           }`}
                         >
                           <HiOutlineVolumeOff className="w-5 h-5 mr-3" />
-                          <span className="text-sm font-medium">Mute notifications</span>
+                          <span className="text-sm font-medium">
+                            {selectedConversationId && isConversationMuted(selectedConversationId) ? 'Unmute notifications' : 'Mute notifications'}
+                          </span>
                         </button>
 
                         <button
@@ -903,7 +939,7 @@ const MessagesPage: React.FC = () => {
                       >
                         Wrong Wallet
                       </button>
-                      <p className="text-sm text-red-400">Please switch to the wallet that owns this profile</p>
+                      <p className="text-sm text-red-400">Please switch to the correct wallet</p>
                     </div>
                   ) : !address ? (
                     <div className="flex flex-col items-center gap-2">
@@ -972,7 +1008,12 @@ const MessagesPage: React.FC = () => {
                 </p>
               </div>
             ) : (
-              conversations.map((conversation) => {
+              conversations.filter((conversation) => {
+                // Hide conversations with blocked users
+                const blockedIds = getBlockedUserIds()
+                const peer = conversation.participants.find(p => p.userId !== currentUser?.id)
+                return !peer || !blockedIds.includes(peer.userId)
+              }).map((conversation) => {
                 const otherUser = conversation.type === 'DM'
                   ? conversation.participants.find(p => p.userId !== currentUser?.id)
                   : null
@@ -1022,6 +1063,9 @@ const MessagesPage: React.FC = () => {
                               : conversation.lastMessageAt ? 'Encrypted message' : 'Start a conversation'}
                           </p>
                         </div>
+                        {isConversationMuted(conversation.id) && (
+                          <HiOutlineVolumeOff className="w-4 h-4 text-white/20 flex-shrink-0" />
+                        )}
                       </div>
 
                       <div className="flex-shrink-0 ml-4">
@@ -1058,8 +1102,31 @@ const MessagesPage: React.FC = () => {
               </div>
             </div>
 
-            {/* Chat Messages — fixed height so overflow scrolling works */}
-            <div ref={messagesContainerRef} className="overflow-y-auto custom-scrollbar-alt space-y-4 p-4 md:p-4 pt-32 md:pt-4 pb-20 md:pb-4" style={{ height: 'calc(100vh - 200px)' }}>
+            {/* Chat Messages — fixed height so overflow scrolling works, fade in when ready */}
+            <div
+              ref={messagesContainerRef}
+              className="overflow-y-auto custom-scrollbar-alt space-y-4 p-4 md:p-4 pt-32 md:pt-4 pb-20 md:pb-4 transition-opacity duration-300"
+              style={{ height: 'calc(100vh - 200px)', opacity: chatReady ? 1 : 0 }}
+              onScroll={(e) => {
+                const el = e.currentTarget
+                // Load older messages when scrolled near the top
+                if (el.scrollTop < 100 && hasMoreMessages && !isLoadingOlder) {
+                  const prevHeight = el.scrollHeight
+                  loadOlderMessages().then(() => {
+                    // Maintain scroll position after prepending older messages
+                    requestAnimationFrame(() => {
+                      el.scrollTop = el.scrollHeight - prevHeight
+                    })
+                  })
+                }
+              }}
+            >
+              {/* Loading older messages indicator */}
+              {isLoadingOlder && (
+                <div className="flex justify-center py-2">
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-yellow-500" />
+                </div>
+              )}
               {/* Typing Indicator */}
               {otherUserTyping && (
                 <div className="flex items-start space-x-3 animate-pulse">
@@ -1579,6 +1646,32 @@ const MessagesPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Block User Confirmation */}
+      <MuteConfirmModal
+        isOpen={showBlockConfirm}
+        onClose={() => setShowBlockConfirm(false)}
+        actionType="block-account"
+        targetName={otherParticipant?.identity.user.username}
+        onConfirm={() => {
+          const peer = otherParticipant
+          if (peer) {
+            blockUser(peer.userId, peer.identity.user.username)
+          }
+          setShowBlockConfirm(false)
+          goBackToInbox()
+        }}
+      />
+
+      {/* Report User Modal */}
+      {otherParticipant && (
+        <ReportUserModal
+          isOpen={showReportUser}
+          onClose={() => setShowReportUser(false)}
+          userId={otherParticipant.userId}
+          username={otherParticipant.identity.user.username}
+        />
+      )}
 
       {/* New Message Modal */}
       {isNewMessageModalOpen && (

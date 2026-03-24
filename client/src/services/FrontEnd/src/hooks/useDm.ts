@@ -368,8 +368,17 @@ export function useDmClient(tokenId?: number) {
 export function useDmMessages(conversationId: string, tokenId?: number) {
   const [messages, setMessages] = useState<UiMessage[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false)
+  const [hasMoreMessages, setHasMoreMessages] = useState(true)
   const [isSending, setIsSending] = useState(false)
   const [peerLastReadAt, setPeerLastReadAt] = useState<string | null>(null)
+
+  // Clear messages immediately when conversation changes
+  useEffect(() => {
+    setMessages([])
+    setPeerLastReadAt(null)
+    setHasMoreMessages(true)
+  }, [conversationId])
 
   // Load and decrypt messages
   useEffect(() => {
@@ -485,7 +494,10 @@ export function useDmMessages(conversationId: string, tokenId?: number) {
           })
         }
 
-        if (!cancelled) setMessages(decryptedMessages)
+        if (!cancelled) {
+          setMessages(decryptedMessages)
+          setHasMoreMessages(data.messages.length >= 50) // If we got a full page, there might be more
+        }
       } catch (err) {
         console.error('[DM] Failed to load messages:', err)
       } finally {
@@ -600,6 +612,74 @@ export function useDmMessages(conversationId: string, tokenId?: number) {
     }
   }, [conversationId, tokenId])
 
+  const loadOlderMessages = useCallback(async () => {
+    if (!conversationId || !tokenId || isLoadingOlder || !hasMoreMessages || messages.length === 0) return
+
+    const oldestMessage = messages[0]
+    setIsLoadingOlder(true)
+
+    try {
+      const data = await apiFetch<{ messages: any[] }>(
+        `/api/dm/conversations/${conversationId}/messages?userId=${tokenId}&before=${oldestMessage.id}`
+      )
+
+      if (data.messages.length === 0) {
+        setHasMoreMessages(false)
+        return
+      }
+
+      if (data.messages.length < 50) {
+        setHasMoreMessages(false)
+      }
+
+      const sharedSecret = await getOrComputeSharedSecret(conversationId, tokenId)
+      if (!sharedSecret) return
+
+      const decrypted: UiMessage[] = []
+      for (const msg of data.messages) {
+        if (msg.contentType === 'deleted') {
+          decrypted.push({
+            id: msg.id, content: '', contentType: 'deleted',
+            senderId: msg.senderId, createdAt: msg.createdAt, status: msg.status,
+            conversationId: msg.conversationId, isFromCurrentUser: msg.senderId === tokenId,
+            sender: msg.sender ? { user: { username: msg.sender.user?.username || 'Unknown', displayName: msg.sender.user?.displayName, avatarUrl: msg.sender.user?.avatarUrl, tokenId: msg.senderId } } : undefined
+          })
+          continue
+        }
+
+        let content: string
+        try { content = await decrypt(msg.encryptedPayload, sharedSecret) } catch { content = '[Unable to decrypt]' }
+
+        let editHistory: Array<{ content: string; editedAt: string }> | undefined
+        if (msg.editHistory) {
+          try {
+            const entries = JSON.parse(msg.editHistory)
+            editHistory = []
+            for (const entry of entries) {
+              const parsed = JSON.parse(entry)
+              try { editHistory.push({ content: await decrypt(parsed.encryptedPayload, sharedSecret), editedAt: parsed.editedAt }) }
+              catch { editHistory.push({ content: '[Unable to decrypt]', editedAt: parsed.editedAt }) }
+            }
+          } catch {}
+        }
+
+        decrypted.push({
+          id: msg.id, content, contentType: msg.contentType, editHistory,
+          senderId: msg.senderId, createdAt: msg.createdAt, status: msg.status,
+          conversationId: msg.conversationId, isFromCurrentUser: msg.senderId === tokenId,
+          sender: msg.sender ? { user: { username: msg.sender.user?.username || 'Unknown', displayName: msg.sender.user?.displayName, avatarUrl: msg.sender.user?.avatarUrl, tokenId: msg.senderId } } : undefined
+        })
+      }
+
+      // Prepend older messages
+      setMessages(prev => [...decrypted, ...prev])
+    } catch (err) {
+      console.error('[DM] Failed to load older messages:', err)
+    } finally {
+      setIsLoadingOlder(false)
+    }
+  }, [conversationId, tokenId, isLoadingOlder, hasMoreMessages, messages])
+
   const getSharedSecret = useCallback(async (): Promise<CryptoKey | null> => {
     if (!conversationId || !tokenId) return null
     return getOrComputeSharedSecret(conversationId, tokenId)
@@ -655,7 +735,7 @@ export function useDmMessages(conversationId: string, tokenId?: number) {
     ))
   }, [])
 
-  return { messages, isLoading, isSending, sendMessage, editMessage, deleteForMe, deleteForEveryone, markAsRead, addIncomingMessage, peerLastReadAt, getSharedSecret }
+  return { messages, isLoading, isLoadingOlder, hasMoreMessages, loadOlderMessages, isSending, sendMessage, editMessage, deleteForMe, deleteForEveryone, markAsRead, addIncomingMessage, peerLastReadAt, getSharedSecret }
 }
 
 /**

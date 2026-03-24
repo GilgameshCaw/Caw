@@ -514,6 +514,7 @@ enum ReportStatus {
 
 model BugReport {
   id          Int       @id @default(autoincrement())
+  type        String    @default("bug") // "bug" or "feature"
   userId      Int?      // Reporter's tokenId (null if not signed in)
   username    String?
   stakedAmount String?  // Staked CAW amount as string
@@ -529,4 +530,5 @@ model BugReport {
 
   @@index([status])
   @@index([createdAt])
+  @@index([type])
 }

@@ -121,4 +121,55 @@ router.patch('/:id', requireAdmin, async (req, res) => {
   }
 })
 
+/**
+ * POST /api/reports/user
+ * Submit a report against a user (e.g. from DMs)
+ */
+router.post('/user', requireAuth({ field: 'reporterId' }), async (req, res) => {
+  try {
+    const { reporterId, reportedUserId, reportedUsername, reason, details, imageUrls } = req.body
+
+    if (!reportedUserId || !reason) {
+      return res.status(400).json({ error: 'reportedUserId and reason are required' })
+    }
+
+    if (!Object.values(ReportReason).includes(reason)) {
+      return res.status(400).json({ error: 'Invalid reason' })
+    }
+
+    // Check for duplicate report
+    const existing = await prisma.report.findFirst({
+      where: {
+        reporterId: parseInt(reporterId || '0'),
+        postAuthorId: parseInt(reportedUserId),
+        postId: 0, // 0 indicates a user report (not a specific post)
+      }
+    })
+
+    if (existing) {
+      return res.status(409).json({ error: 'You have already reported this user' })
+    }
+
+    const report = await prisma.report.create({
+      data: {
+        reporterId: reporterId ? parseInt(reporterId) : 0,
+        postId: 0, // 0 = user report
+        postAuthorId: parseInt(reportedUserId),
+        reason: reason as ReportReason,
+        details: [
+          details || '',
+          reportedUsername ? `Reported user: @${reportedUsername}` : '',
+          imageUrls?.length ? `Evidence: ${imageUrls.join(' | ')}` : '',
+        ].filter(Boolean).join('\n'),
+        status: ReportStatus.PENDING,
+      }
+    })
+
+    return res.status(201).json({ success: true, reportId: report.id })
+  } catch (error) {
+    console.error('POST /api/reports/user error:', error)
+    return res.status(500).json({ error: 'Failed to submit report' })
+  }
+})
+
 export default router

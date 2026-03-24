@@ -2,6 +2,7 @@ import { useEffect } from 'react'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useAuthStore } from '~/store/authStore'
 import { useDmUnreadStore } from '~/store/dmUnreadStore'
+import { useDmMuteStore } from '~/store/dmMuteStore'
 import { apiFetch } from '~/api/client'
 
 /**
@@ -20,11 +21,14 @@ export function useDmUnreadSync() {
 
     const fetchUnread = async () => {
       try {
-        const data = await apiFetch<{ conversations: Array<{ unreadCount?: number }> }>(
+        const data = await apiFetch<{ conversations: Array<{ id: string; unreadCount?: number }> }>(
           `/api/dm/conversations?userId=${tokenId}`
         )
         if (cancelled) return
-        const total = (data.conversations || []).reduce((sum, c) => sum + (c.unreadCount || 0), 0)
+        const mutedIds = useDmMuteStore.getState().mutedConversations
+        const total = (data.conversations || [])
+          .filter(c => !mutedIds.includes(c.id))
+          .reduce((sum, c) => sum + (c.unreadCount || 0), 0)
         useDmUnreadStore.getState().setTotalUnread(total)
       } catch {
         // Silently fail — user may not have DMs enabled

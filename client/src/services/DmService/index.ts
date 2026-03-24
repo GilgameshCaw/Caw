@@ -151,7 +151,11 @@ export class DmService {
     })
     if (!participant) throw new Error('Not a participant in this conversation')
 
-    const where: any = { conversationId }
+    const where: any = {
+      conversationId,
+      // Exclude messages the user has hidden ("delete for me")
+      deletions: { none: { userId } }
+    }
     if (before) {
       const beforeMsg = await prisma.message.findUnique({ where: { id: before }, select: { createdAt: true } })
       if (beforeMsg) {
@@ -159,9 +163,10 @@ export class DmService {
       }
     }
 
+    // Fetch newest messages first, then reverse for chronological display
     const messages = await prisma.message.findMany({
       where,
-      orderBy: { createdAt: 'asc' },
+      orderBy: { createdAt: 'desc' },
       take: limit,
       include: {
         sender: {
@@ -171,6 +176,7 @@ export class DmService {
         }
       }
     })
+    messages.reverse()
 
     // Get the other participant's lastReadAt for seen indicator
     const otherParticipant = await prisma.conversationParticipant.findFirst({
