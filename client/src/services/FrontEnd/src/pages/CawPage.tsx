@@ -16,6 +16,9 @@ export const CawPage: React.FC = () => {
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState<string | null>(null)
   const [initialLoadDone, setInitialLoadDone] = useState(false)
+  const [hasMoreComments, setHasMoreComments] = useState(false)
+  const [commentCursor, setCommentCursor] = useState<number | undefined>(undefined)
+  const [loadingMore, setLoadingMore] = useState(false)
   const { isDark } = useTheme()
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
 
@@ -90,6 +93,23 @@ export const CawPage: React.FC = () => {
     }
   }, [caw?.replyPending, id])
 
+  const loadMoreComments = async () => {
+    if (!commentCursor || loadingMore) return
+    setLoadingMore(true)
+    try {
+      const data = await apiFetch<{ comments: CawItem[]; hasMoreComments?: boolean; nextCommentCursor?: number }>(
+        `/api/caws/${id}?commentCursor=${commentCursor}&commentLimit=20`
+      )
+      setComments(prev => [...prev, ...data.comments])
+      setHasMoreComments(!!data.hasMoreComments)
+      setCommentCursor(data.nextCommentCursor)
+    } catch (err) {
+      console.error('Error loading more comments:', err)
+    } finally {
+      setLoadingMore(false)
+    }
+  }
+
   // Reset initial load state when navigating to a different caw
   useEffect(() => {
     setInitialLoadDone(false)
@@ -106,10 +126,11 @@ export const CawPage: React.FC = () => {
         }
         setError(null)
 
-        const { caw: fetched, comments: fetchedComments } =
-          await apiFetch<{ caw: CawItem; comments: CawItem[] }>(`/api/caws/${id}`)
-        setCaw(fetched)
-        setComments(fetchedComments)
+        const data = await apiFetch<{ caw: CawItem; comments: CawItem[]; hasMoreComments?: boolean; nextCommentCursor?: number }>(`/api/caws/${id}`)
+        setCaw(data.caw)
+        setComments(data.comments)
+        setHasMoreComments(!!data.hasMoreComments)
+        setCommentCursor(data.nextCommentCursor)
         setInitialLoadDone(true)
       } catch (err) {
         console.error('Error loading caw:', err)
@@ -201,7 +222,7 @@ export const CawPage: React.FC = () => {
             ></div>
           )}
           
-          {comments.map((comm, index) => (
+          {comments.map((comm) => (
             <div key={comm.id} className="relative">
               <FeedItem
                 item={comm}
@@ -217,6 +238,17 @@ export const CawPage: React.FC = () => {
               />
             </div>
           ))}
+          {hasMoreComments && (
+            <button
+              onClick={loadMoreComments}
+              disabled={loadingMore}
+              className={`w-full py-3 text-sm font-medium transition-colors ${
+                isDark ? 'text-yellow-400 hover:text-yellow-300' : 'text-yellow-600 hover:text-yellow-500'
+              } disabled:opacity-50`}
+            >
+              {loadingMore ? 'Loading...' : 'Load more replies'}
+            </button>
+          )}
         </div>
       </div>
     </MainLayout>

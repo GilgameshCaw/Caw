@@ -14,24 +14,32 @@ router.get('/post/:cawId', async (req, res) => {
       return res.status(400).json({ error: 'Valid cawId is required' })
     }
 
-    const tips = await prisma.tip.findMany({
-      where: { cawId },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        sender: {
-          select: {
-            tokenId: true,
-            username: true,
-            displayName: true,
-            avatarUrl: true
+    const limit = Math.min(Number(req.query.limit) || 20, 100)
+    const offset = Number(req.query.offset) || 0
+
+    const [tips, totalCount] = await Promise.all([
+      prisma.tip.findMany({
+        where: { cawId },
+        take: limit,
+        skip: offset,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          sender: {
+            select: {
+              tokenId: true,
+              username: true,
+              displayName: true,
+              avatarUrl: true
+            }
           }
         }
-      }
-    })
+      }),
+      prisma.tip.count({ where: { cawId } })
+    ])
 
     const totalAmount = tips.reduce((sum, tip) => sum + tip.amount, 0)
 
-    return res.json({ tips, totalAmount, count: tips.length })
+    return res.json({ tips, totalAmount, count: totalCount, hasMore: offset + tips.length < totalCount })
   } catch (error) {
     console.error('GET /api/tips/post/:cawId error:', error)
     return res.status(500).json({ error: 'Failed to get tips' })

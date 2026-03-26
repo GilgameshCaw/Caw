@@ -17,6 +17,8 @@ const BookmarksPage: React.FC = () => {
   const [bookmarkedPosts, setBookmarkedPosts] = useState<CawItem[]>([])
   const [loading, setLoading] = useState(true)
 
+  const BATCH_SIZE = 30
+
   const fetchBookmarks = async () => {
     if (bookmarkedIds.length === 0) {
       setBookmarkedPosts([])
@@ -28,18 +30,21 @@ const BookmarksPage: React.FC = () => {
       // Convert string IDs to numbers for the API
       const numericIds = bookmarkedIds.map(id => parseInt(id)).filter(id => !isNaN(id))
 
-      const data = await apiFetch('/api/caws/by-ids', {
-        method: 'POST',
-        body: JSON.stringify({ ids: numericIds })
-      })
-
-      const { items } = data
+      // Fetch in batches to avoid oversized requests
+      const allItems: any[] = []
+      for (let i = 0; i < numericIds.length; i += BATCH_SIZE) {
+        const batch = numericIds.slice(i, i + BATCH_SIZE)
+        const data = await apiFetch('/api/caws/by-ids', {
+          method: 'POST',
+          body: JSON.stringify({ ids: batch })
+        })
+        allItems.push(...(data.items || []))
+      }
 
       // Transform the data to match CawItem format
-      const transformedItems = items.map((item: any) => ({
+      const transformedItems = allItems.map((item: any) => ({
         ...item,
         id: item.id.toString(),
-        timestamp: item.createdAt,
         isBookmarked: true,
         hashtags: item.hashtags?.map((h: any) => h.hashtag) || []
       }))

@@ -405,7 +405,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
   // render
   if (error)   return <div className="text-red-400">Error loading feed: {error}</div>
   if (items.length === 0 && loading) return (
-    <div className="space-y-4">
+    <div className="space-y-4 mt-4">
       {[...Array(3)].map((_, i) => (
         <div key={i} className="animate-pulse bg-gray-800 rounded-lg h-32"></div>
       ))}

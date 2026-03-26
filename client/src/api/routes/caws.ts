@@ -364,11 +364,21 @@ router.get('/:id', async (req, res) => {
     commentWhere.AND = existingConditions
   }
 
+  const commentLimit = Math.min(Number(req.query.commentLimit) || 20, 100)
+  const commentCursor = req.query.commentCursor ? Number(req.query.commentCursor) : undefined
+
   const rawComments = await prisma.caw.findMany({
     where: commentWhere,
+    take: commentLimit + 1,
+    skip: commentCursor ? 1 : 0,
+    cursor: commentCursor ? { id: commentCursor } : undefined,
     orderBy: { createdAt: 'asc' },
     include: getCawIncludeConfig({ currentUserId })
   })
+
+  const hasMoreComments = rawComments.length > commentLimit
+  if (hasMoreComments) rawComments.pop()
+  const nextCommentCursor = hasMoreComments ? rawComments[rawComments.length - 1]?.id : undefined
 
   // shape into your CawItem shape…
   const shapedCaw = shapeCaw(raw)
@@ -379,7 +389,9 @@ router.get('/:id', async (req, res) => {
   })
   res.json({
     caw:     shapedCaw,
-    comments: rawComments.map(shapeCaw)
+    comments: rawComments.map(shapeCaw),
+    hasMoreComments,
+    nextCommentCursor,
   })
 })
 
