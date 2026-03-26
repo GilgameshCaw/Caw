@@ -283,7 +283,7 @@ console.log("BALANCE:", balance)
     <MainLayout>
       <div className="max-w-md mx-auto p-6 space-y-4 mt-8"> {/* Cambiado de mt-16 a mt-8 para subir todo el contenido */}
         <div className="text-center space-y-3">
-          <h1 className="text-4xl font-bold">Mint a Username</h1>
+          <h1 className="text-4xl font-bold">Create a Profile</h1>
           <p className="text-gray-400 text-sm mx-auto" style={{ width: '85%' }}>
             Your username is a tradeable NFT that will be used to access your account and posts. Minting a username requires CAW to be burnt, fewer characters increase in cost and rarity.
           </p>

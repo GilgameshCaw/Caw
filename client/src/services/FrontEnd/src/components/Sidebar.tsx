@@ -252,7 +252,7 @@ const Sidebar: React.FC = () => {
           </NavLink>
 
           <NavLink
-            to="/mint"
+            to="/usernames/new"
             className={({ isActive }) =>
               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
@@ -283,7 +283,7 @@ const Sidebar: React.FC = () => {
         </nav>
       </div>
 
-      <div className="px-3 -mt-4 pb-0 sm:px-4 sm:py-4 sm:absolute sm:bottom-0">
+      <div className="px-3 -mt-4 pb-0 sm:px-4 sm:py-4 sm:absolute sm:bottom-0 w-full">
         <ProfileChooser/>
       </div>
     </div>

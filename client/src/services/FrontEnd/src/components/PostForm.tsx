@@ -1186,7 +1186,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               </button>
             ) : hasNoToken ? (
               <Link
-                to="/mint"
+                to="/usernames/new"
                 className="px-3 py-1.5 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer"
               >
                 Create profile
@@ -1552,7 +1552,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             </button>
           ) : (() => {
                 const wrongWallet2 = !isTokenOwner && !hasActiveSession && activeToken?.tokenId
-                const tooltipText2 = wrongWallet2 ? 'Please switch to the correct wallet' : hasNoToken ? 'Please select a token' : hasPendingUploads ? 'Waiting for upload to confirm...' : isSubmitting ? 'Waiting for signature...' : ''
+                const tooltipText2 = wrongWallet2 ? 'Please switch to the correct wallet' : hasNoToken ? '' : hasPendingUploads ? 'Waiting for upload to confirm...' : isSubmitting ? 'Waiting for signature...' : ''
                 const isDisabled2 = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isProcessingOnChain || hasPendingUploads || isSubmitting
                 const btn2 = (
                   <button
@@ -1560,7 +1560,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                     disabled={isDisabled2}
                     onClick={hasFailedUploads ? handleRetryFailedUploads : hasUnuploadedOnChainImages ? handleUploadOnChain : handleSubmit}
                   >
-                    {wrongWallet2 ? 'Wrong Wallet' : hasNoToken ? 'No Token' : isSubmitting ? 'Signing...' : isProcessingOnChain ? 'Uploading...' : hasPendingUploads ? 'Pending...' : hasFailedUploads ? 'Retry' : hasUnuploadedOnChainImages ? 'Upload' : replyTo ? 'Reply' : 'Post'}
+                    {wrongWallet2 ? 'Wrong Wallet' : hasNoToken ? 'Create Account' : isSubmitting ? 'Signing...' : isProcessingOnChain ? 'Uploading...' : hasPendingUploads ? 'Pending...' : hasFailedUploads ? 'Retry' : hasUnuploadedOnChainImages ? 'Upload' : replyTo ? 'Reply' : 'Post'}
                   </button>
                 )
                 return tooltipText2 ? <Tooltip text={tooltipText2}>{btn2}</Tooltip> : btn2

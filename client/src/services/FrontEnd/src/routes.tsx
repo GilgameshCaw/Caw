@@ -56,7 +56,7 @@ export default [
     component: <Staking />,
   },
   {
-    path: "/mint",
+    path: "/usernames/new",
     component: <NewProfile />,
   },
   {
