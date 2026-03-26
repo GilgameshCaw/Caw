@@ -218,4 +218,40 @@ router.get('/status/:requestId', async (req: any, res: any) => {
   return res.json(tracked)
 })
 
+/**
+ * DELETE /api/sessions
+ * Revoke a session key on-chain using a signature from the session key itself.
+ * The session key signs an EIP-712 RevokeSession message, and the validator
+ * submits it on-chain via revokeSessionBySig.
+ */
+router.delete('/', async (req: any, res: any) => {
+  try {
+    const { owner, sessionKey, signature } = req.body
+
+    if (!owner || !sessionKey || !signature) {
+      return res.status(400).json({ error: 'Missing required fields: owner, sessionKey, signature' })
+    }
+
+    const cawNameL2 = getContract()
+    const sig = ethers.Signature.from(signature)
+
+    const tx = await cawNameL2.revokeSessionBySig(
+      owner,
+      sessionKey,
+      sig.v,
+      sig.r,
+      sig.s,
+    )
+
+    console.log(`[Sessions] Revocation tx submitted: ${tx.hash}`)
+    const receipt = await tx.wait()
+    console.log(`[Sessions] Session revoked on-chain in block ${receipt.blockNumber}`)
+
+    return res.json({ success: true, txHash: tx.hash })
+  } catch (err: any) {
+    console.error('[Sessions] Revocation error:', err.message)
+    return res.status(500).json({ error: err.message || 'Failed to revoke session' })
+  }
+})
+
 export default router

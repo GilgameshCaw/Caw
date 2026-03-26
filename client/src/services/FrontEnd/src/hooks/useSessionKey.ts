@@ -6,6 +6,7 @@ import { baseSepolia } from 'wagmi/chains'
 import { apiFetch } from '~/api/client'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { CAW_NAMES_L2_ADDRESS } from '~/../../../abi/addresses'
+import { useActiveToken } from '~/store/tokenDataStore'
 
 export const DEFAULT_SESSION_DURATION = 30 * 24 * 60 * 60 // 1 month
 
@@ -166,8 +167,55 @@ export function useCreateSession() {
 
 export function useRevokeSession() {
   const clearSession = useSessionKeyStore(s => s.clearSession)
+  const session = useSessionKeyStore(s => s.session)
+  const activeToken = useActiveToken()
 
   return useCallback(async () => {
+    const sessionKey = session?.privateKey
+    const sessionAddress = session?.address
+    const ownerAddress = activeToken?.owner
+
+    if (!sessionKey || !sessionAddress || !ownerAddress) {
+      // No session or no owner info — just clear locally
+      clearSession()
+      return
+    }
+
+    // Sign a revocation message with the session key
+    try {
+      const sessionAccount = privateKeyToAccount(sessionKey)
+      const signature = await sessionAccount.signTypedData({
+        domain: SESSION_DOMAIN,
+        types: {
+          RevokeSession: [
+            { name: 'owner', type: 'address' },
+            { name: 'sessionKey', type: 'address' },
+          ],
+        },
+        primaryType: 'RevokeSession',
+        message: {
+          owner: ownerAddress,
+          sessionKey: sessionAddress,
+        },
+      })
+
+      // Send to API — validator submits on-chain
+      await apiFetch('/api/sessions', {
+        method: 'DELETE',
+        body: JSON.stringify({
+          owner: ownerAddress,
+          sessionKey: sessionAddress,
+          signature,
+        }),
+      })
+      console.log('[QuickSign] Session revoked on-chain via API')
+    } catch (err: any) {
+      // On-chain revocation failed — still clear locally
+      // Session will expire naturally on-chain
+      console.warn('[QuickSign] On-chain revocation failed, clearing locally:', err?.message)
+    }
+
+    // Always clear the local session (destroys the private key from this browser)
     clearSession()
-  }, [clearSession])
+  }, [session, activeToken, clearSession])
 }
