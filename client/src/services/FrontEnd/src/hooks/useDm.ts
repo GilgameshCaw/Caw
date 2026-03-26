@@ -65,7 +65,9 @@ export function useDmClient(tokenId?: number) {
 
   const [isInitialized, setIsInitialized] = useState(false)
   const [needsKeyDerivation, setNeedsKeyDerivation] = useState(false) // identity exists but keys not in memory
-  const [isLoading, setIsLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(true) // Start true to avoid flash before identity check
+  const [conversationsLoading, setConversationsLoading] = useState(false)
+  const [conversationsLoaded, setConversationsLoaded] = useState(false)
   const [error, setError] = useState<Error | null>(null)
   const [conversations, setConversations] = useState<UiConversation[]>([])
   const checkedTokenIdRef = useRef<number | undefined>(undefined) // tracks which tokenId the current state belongs to
@@ -118,6 +120,7 @@ export function useDmClient(tokenId?: number) {
   const loadConversations = useCallback(async (loadMore = false) => {
     if (!tokenId) return
 
+    setConversationsLoading(true)
     try {
       const offset = loadMore ? conversations.length : 0
       const data = await apiFetch<{ conversations: any[]; hasMore?: boolean }>(`/api/dm/conversations?userId=${tokenId}&limit=50&offset=${offset}`)
@@ -204,8 +207,12 @@ export function useDmClient(tokenId?: number) {
         )
       }
       setHasMoreConversations(!!data.hasMore)
+      setConversationsLoaded(true)
     } catch (err) {
       console.error('[DM] Failed to load conversations:', err)
+      setConversationsLoaded(true)
+    } finally {
+      setConversationsLoading(false)
     }
   }, [tokenId, conversations.length])
 
@@ -388,6 +395,8 @@ export function useDmClient(tokenId?: number) {
     isInitialized,
     needsKeyDerivation: needsKeyDerivation && checkedTokenIdRef.current === tokenId,
     isLoading,
+    conversationsLoading,
+    conversationsLoaded,
     error,
     initializeClient,
     conversations,

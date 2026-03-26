@@ -121,6 +121,8 @@ const MessagesPage: React.FC = () => {
     isInitialized: identity,
     needsKeyDerivation,
     isLoading: identityLoading,
+    conversationsLoading,
+    conversationsLoaded,
     initializeClient,
     conversations,
     hasMoreConversations,
@@ -714,8 +716,8 @@ const MessagesPage: React.FC = () => {
   return (
     <MainLayout>
       <div
-        className="max-w-2xl mx-auto px-3 sm:px-6 py-4 bg-black flex flex-col relative"
-        style={{ height: 'calc(100vh - 80px)' }}
+        className="max-w-2xl mx-auto px-3 sm:px-6 pt-4 pb-0 bg-black flex flex-col relative"
+        style={{ height: 'calc(100dvh - 64px - 24px)', minHeight: 0 }}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -1024,12 +1026,12 @@ const MessagesPage: React.FC = () => {
 
         {/* Messages List - Only show in inbox view */}
         {currentView === 'inbox' && (
-          <div className="space-y-1 flex-1 overflow-y-auto -mx-3 sm:mx-0 px-3 sm:px-0">
-            {identityLoading ? (
+          <div className="space-y-1 flex-1 overflow-y-auto -mx-3 sm:mx-0 px-3 sm:px-0 min-h-0">
+            {(identityLoading || (conversationsLoading && !conversationsLoaded)) ? (
               <div className="flex justify-center py-8">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yellow-500"></div>
               </div>
-            ) : conversations.length === 0 ? (
+            ) : conversationsLoaded && conversations.length === 0 ? (
               <div className="text-center py-8">
                 <p className={`text-sm ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
