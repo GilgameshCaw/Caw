@@ -41,6 +41,7 @@ import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import { useDmMuteStore } from '~/store/dmMuteStore'
 import MuteConfirmModal from '~/components/modals/MuteConfirmModal'
 import ReportUserModal from '~/components/modals/ReportUserModal'
+import { FollowButton } from '~/components/FollowButton'
 
 const MessagesPage: React.FC = () => {
   const { isDark } = useTheme()
@@ -51,7 +52,9 @@ const MessagesPage: React.FC = () => {
   const [isNewMessageModalOpen, setIsNewMessageModalOpen] = useState(false)
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [messageSettings, setMessageSettings] = useState('Everyone')
+  const [dmPrivacy, setDmPrivacy] = useState<'EVERYONE' | 'FOLLOWERS' | 'FOLLOWING'>('EVERYONE')
+  const [dmPrivacyLoaded, setDmPrivacyLoaded] = useState(false)
+  const [dmPrivacyError, setDmPrivacyError] = useState<{ message: string; reason: string; peer: any } | null>(null)
   const [selectedUser, setSelectedUser] = useState<{name: string, handle: string, avatar: string} | null>(null)
   const [modalStep, setModalStep] = useState<'select' | 'compose'>('select')
   const [newMessageSearch, setNewMessageSearch] = useState('')
@@ -102,6 +105,17 @@ const MessagesPage: React.FC = () => {
   // Get URL parameters
   const [searchParams, setSearchParams] = useSearchParams()
 
+  // Load DM privacy setting
+  useEffect(() => {
+    if (!currentUser?.id || dmPrivacyLoaded) return
+    apiFetch<{ dmPrivacy: 'EVERYONE' | 'FOLLOWERS' | 'FOLLOWING' }>(
+      `/api/dm/settings?userId=${currentUser.id}`
+    ).then(data => {
+      setDmPrivacy(data.dmPrivacy)
+      setDmPrivacyLoaded(true)
+    }).catch(() => setDmPrivacyLoaded(true))
+  }, [currentUser?.id, dmPrivacyLoaded])
+
   // DM hooks
   const {
     isInitialized: identity,
@@ -109,6 +123,8 @@ const MessagesPage: React.FC = () => {
     isLoading: identityLoading,
     initializeClient,
     conversations,
+    hasMoreConversations,
+    loadMoreConversations,
     error: dmError,
     startConversation: dmStartConversation,
     refreshConversations,
@@ -271,7 +287,9 @@ const MessagesPage: React.FC = () => {
         handleConversationSelect(newConv.id)
       } catch (err: any) {
         console.error('Failed to start conversation:', err)
-        if (err.message?.includes('not enabled DMs')) {
+        if (err.code === 'DM_PRIVACY') {
+          setDmPrivacyError({ message: err.message, reason: err.reason, peer: err.peer })
+        } else if (err.message?.includes('not enabled DMs')) {
           setErrorModal({ title: 'DMs Not Enabled', message: `@${targetUser.username} hasn't enabled DMs yet. They need to enable DMs before you can message them.` })
         } else {
           setErrorModal({ title: 'Conversation Failed', message: err.message || 'Failed to start conversation.' })
@@ -342,11 +360,10 @@ const MessagesPage: React.FC = () => {
   }
 
   // Handle send message
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!newMessageContent.trim() || !selectedConversationId) return
 
-    dmSendMessage(newMessageContent.trim())
-
+    const content = newMessageContent.trim()
     setNewMessageContent('')
 
     // Stop typing indicator
@@ -354,6 +371,19 @@ const MessagesPage: React.FC = () => {
       clearTimeout(typingTimeoutRef.current)
     }
     sendTyping(selectedConversationId, false)
+
+    try {
+      console.log('[Messages] Sending message to conversation:', selectedConversationId)
+      await dmSendMessage(content)
+      console.log('[Messages] Message sent successfully')
+    } catch (err: any) {
+      console.log('[Messages] Send message error:', err.code, err.message, err.reason, err.peer)
+      if (err.code === 'DM_PRIVACY') {
+        setDmPrivacyError({ message: err.message, reason: err.reason, peer: err.peer })
+      } else {
+        setErrorModal({ title: 'Message Failed', message: err.message || 'Failed to send message.' })
+      }
+    }
   }
 
   // Stage a file for preview before sending
@@ -481,6 +511,9 @@ const MessagesPage: React.FC = () => {
               })
               .catch((err: any) => {
                 console.error('Failed to create conversation:', err)
+                if (err.code === 'DM_PRIVACY') {
+                  setDmPrivacyError({ message: err.message, reason: err.reason, peer: err.peer })
+                }
                 navigate('/messages', { replace: true })
               })
           } else {
@@ -1081,6 +1114,16 @@ const MessagesPage: React.FC = () => {
                   </div>
                 )
               })
+            )}
+            {hasMoreConversations && (
+              <button
+                onClick={loadMoreConversations}
+                className={`w-full py-3 text-sm font-medium transition-colors ${
+                  isDark ? 'text-yellow-400 hover:text-yellow-300' : 'text-yellow-600 hover:text-yellow-500'
+                }`}
+              >
+                Load more conversations
+              </button>
             )}
           </div>
         )}
@@ -1902,22 +1945,148 @@ const MessagesPage: React.FC = () => {
         </div>
       )}
 
-      {/* Message Settings Modal - Keep existing implementation */}
-      {isSettingsModalOpen && (
-        <div
-          className="fixed inset-0 bg-black/70 flex items-center justify-center z-50"
-          onClick={() => setIsSettingsModalOpen(false)}
-        >
-          <div
-            className={`w-full max-w-md mx-4 rounded-2xl transition-all duration-300 ${
-              isDark ? 'bg-black border border-white/20' : 'bg-white border border-gray-200'
-            }`}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Settings modal implementation remains the same */}
+      {/* Message Settings Modal */}
+      <ModalWrapper isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} maxWidth="max-w-sm">
+        <div className="p-5 space-y-4">
+          <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+            Message Settings
+          </h3>
+          <div>
+            <p className={`text-sm mb-3 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
+              Receive messages from:
+            </p>
+            <div className="space-y-2">
+              {([
+                { value: 'EVERYONE' as const, label: 'Everyone', desc: 'Anyone with DMs enabled can message you' },
+                { value: 'FOLLOWERS' as const, label: 'Users who follow me', desc: 'Your followers and people you follow' },
+                { value: 'FOLLOWING' as const, label: 'Users I follow', desc: 'Only people you follow' },
+              ]).map(option => (
+                <label
+                  key={option.value}
+                  className={`flex items-start gap-3 p-3 rounded-lg cursor-pointer transition-colors ${
+                    dmPrivacy === option.value
+                      ? isDark ? 'bg-yellow-500/10 border border-yellow-500/30' : 'bg-yellow-50 border border-yellow-200'
+                      : isDark ? 'bg-white/5 hover:bg-white/10 border border-transparent' : 'bg-gray-50 hover:bg-gray-100 border border-transparent'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="dmPrivacy"
+                    value={option.value}
+                    checked={dmPrivacy === option.value}
+                    onChange={() => {
+                      setDmPrivacy(option.value)
+                      if (currentUser?.id) {
+                        apiFetch('/api/dm/settings', {
+                          method: 'PUT',
+                          body: JSON.stringify({ userId: currentUser.id, dmPrivacy: option.value })
+                        }).catch(err => console.error('Failed to save DM settings:', err))
+                      }
+                    }}
+                    className="mt-1 accent-yellow-500"
+                  />
+                  <div>
+                    <p className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                      {option.label}
+                    </p>
+                    <p className={`text-xs ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+                      {option.desc}
+                    </p>
+                  </div>
+                </label>
+              ))}
+            </div>
           </div>
+          <button
+            onClick={() => setIsSettingsModalOpen(false)}
+            className={`w-full py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+              isDark
+                ? 'bg-white/10 text-white hover:bg-white/20'
+                : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
+            }`}
+          >
+            Done
+          </button>
         </div>
-      )}
+      </ModalWrapper>
+
+      {/* DM Privacy Restriction Modal */}
+      <ModalWrapper isOpen={!!dmPrivacyError} onClose={() => setDmPrivacyError(null)} maxWidth="max-w-md">
+        {dmPrivacyError && (
+          <div className="p-5 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className={`p-2 rounded-full ${isDark ? 'bg-yellow-500/10' : 'bg-yellow-50'}`}>
+                <HiOutlineMail className="w-5 h-5 text-yellow-500" />
+              </div>
+              <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                Can't Send Message
+              </h3>
+            </div>
+
+            <p className={`text-sm ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
+              {dmPrivacyError.peer?.username ? (
+                <>
+                  <a
+                    href={`/users/${dmPrivacyError.peer.username}`}
+                    onClick={(e) => { e.preventDefault(); setDmPrivacyError(null); navigate(`/users/${dmPrivacyError.peer.username}`) }}
+                    className="text-yellow-500 hover:text-yellow-400 hover:underline"
+                  >
+                    @{dmPrivacyError.peer.username}
+                  </a>
+                  {dmPrivacyError.reason === 'following'
+                    ? ' only accepts messages from users they follow.'
+                    : ' only accepts messages from their followers.'}
+                </>
+              ) : dmPrivacyError.message}
+            </p>
+
+            {/* Show peer info with follow button if the reason is they need to be followed */}
+            {dmPrivacyError.peer && (dmPrivacyError.reason === 'followers') && (
+              <div className={`flex items-center justify-between p-3 rounded-lg ${
+                isDark ? 'bg-white/5' : 'bg-gray-50'
+              }`}>
+                <div className="flex items-center gap-3">
+                  <img
+                    src={dmPrivacyError.peer.avatarUrl || dmPrivacyError.peer.image || '/images/logo.jpeg'}
+                    alt={dmPrivacyError.peer.username}
+                    className="w-10 h-10 rounded-full"
+                  />
+                  <div>
+                    <p className={`font-medium text-sm ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                      {dmPrivacyError.peer.displayName || dmPrivacyError.peer.username}
+                    </p>
+                    <p className={`text-xs ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+                      @{dmPrivacyError.peer.username}
+                    </p>
+                  </div>
+                </div>
+                <FollowButton
+                  targetUserId={dmPrivacyError.peer.tokenId}
+                  initialIsFollowing={false}
+                  size="small"
+                />
+              </div>
+            )}
+
+            {dmPrivacyError.reason === 'following' && (
+              <p className={`text-xs ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+                This user needs to follow you before you can message them.
+              </p>
+            )}
+
+            <button
+              onClick={() => setDmPrivacyError(null)}
+              className={`w-full py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer ${
+                isDark
+                  ? 'bg-white/10 text-white hover:bg-white/20'
+                  : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
+              }`}
+            >
+              Got it
+            </button>
+          </div>
+        )}
+      </ModalWrapper>
 
       {/* Search Modal */}
       {showSearchModal && (

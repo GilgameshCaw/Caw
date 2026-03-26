@@ -224,10 +224,26 @@ router.get('/min-cawonce/:tokenId', async (req, res) => {
       }
     })
 
-    // The minimum safe cawonce is one higher than the highest scheduled cawonce
-    // If no scheduled posts, return null (frontend should use on-chain value)
-    const minSafeCawonce = maxScheduledCawonce._max.cawonce !== null
-      ? maxScheduledCawonce._max.cawonce + 1
+    // Also check pending/processing TxQueue entries for this user
+    const maxTxQueueCawonce = await prisma.txQueue.findFirst({
+      where: {
+        senderId: tokenId,
+        status: { in: ['pending', 'processing'] },
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+    const txQueueMaxCawonce = maxTxQueueCawonce
+      ? (maxTxQueueCawonce.payload as any)?.data?.cawonce ?? null
+      : null
+
+    // The minimum safe cawonce is one higher than the highest in-flight cawonce
+    const candidates = [
+      maxScheduledCawonce._max.cawonce,
+      txQueueMaxCawonce,
+    ].filter((v): v is number => v !== null)
+
+    const minSafeCawonce = candidates.length > 0
+      ? Math.max(...candidates) + 1
       : null
 
     return res.json({

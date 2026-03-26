@@ -4,11 +4,13 @@
 import { PrismaClient } from '@prisma/client'
 import { JsonRpcProvider, Contract } from 'ethers'
 import { cawClientManagerAbi } from '../../abi/generated'
-import { CLIENT_MANAGER_ADDRESS, CAW_ADDRESS, WETH_ADDRESS } from '../../abi/addresses'
+import { CLIENT_MANAGER_ADDRESS } from '../../abi/addresses'
 
 const prisma = new PrismaClient()
 
-// USDT address on Ethereum mainnet
+// Mainnet token addresses for price fetching (distinct from testnet contract addresses)
+const MAINNET_CAW_ADDRESS = '0xf3b9569F82B18aEf890De263B84189bd33EBe452'
+const MAINNET_WETH_ADDRESS = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'
 const USDT_ADDRESS = '0xdAC17F958D2ee523a2206206994597C13D831ec7'
 
 // Uniswap V2 Router ABI (minimal for getAmountsOut)
@@ -78,19 +80,38 @@ let ethPriceCache: CachedEthPrice | null = null
 // ============================================================================
 
 function initializeProviders(config: ChainSyncConfig) {
+  console.log('[ChainSync] Initializing providers with config:', {
+    l1RpcUrl: config.l1RpcUrl ? config.l1RpcUrl.slice(0, 30) + '...' : 'NOT SET',
+    l2RpcUrl: config.l2RpcUrl ? config.l2RpcUrl.slice(0, 30) + '...' : 'NOT SET',
+    ethMainnetRpcUrl: config.ethMainnetRpcUrl ? config.ethMainnetRpcUrl.slice(0, 30) + '...' : 'NOT SET',
+  })
+
   if (!l1Provider && config.l1RpcUrl) {
-    l1Provider = new JsonRpcProvider(config.l1RpcUrl)
+    // Convert WSS/WS URLs to HTTPS/HTTP — JsonRpcProvider only supports HTTP
+    const l1Url = config.l1RpcUrl.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:')
+    console.log('[ChainSync] L1 provider URL:', l1Url.slice(0, 40) + '...')
+    l1Provider = new JsonRpcProvider(l1Url)
     clientManager = new Contract(CLIENT_MANAGER_ADDRESS, cawClientManagerAbi, l1Provider)
   }
 
   if (!l2Provider && config.l2RpcUrl) {
-    l2Provider = new JsonRpcProvider(config.l2RpcUrl)
+    const l2Url = config.l2RpcUrl.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:')
+    console.log('[ChainSync] L2 provider URL:', l2Url.slice(0, 40) + '...')
+    l2Provider = new JsonRpcProvider(l2Url)
   }
 
   if (!mainnetProvider && config.ethMainnetRpcUrl) {
+    console.log('[ChainSync] Mainnet provider URL:', config.ethMainnetRpcUrl.slice(0, 40) + '...')
     mainnetProvider = new JsonRpcProvider(config.ethMainnetRpcUrl)
     uniswapRouter = new Contract(UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_ABI, mainnetProvider)
   }
+
+  console.log('[ChainSync] Providers initialized:', {
+    l1: !!l1Provider,
+    l2: !!l2Provider,
+    mainnet: !!mainnetProvider,
+    uniswapRouter: !!uniswapRouter,
+  })
 }
 
 // ============================================================================
@@ -163,6 +184,23 @@ async function syncClient(clientId: number): Promise<boolean> {
 }
 
 async function syncAllClients(): Promise<void> {
+  if (!clientManager || !l1Provider) {
+    console.log('[ChainSync:Clients] Skipping — L1 provider not available')
+    return
+  }
+
+  // Quick check: verify the contract exists at this address on the connected chain
+  try {
+    const code = await l1Provider.getCode(CLIENT_MANAGER_ADDRESS)
+    if (!code || code === '0x') {
+      console.log('[ChainSync:Clients] Skipping — CawClientManager not deployed on this chain')
+      return
+    }
+  } catch {
+    console.log('[ChainSync:Clients] Skipping — unable to verify contract')
+    return
+  }
+
   console.log('[ChainSync:Clients] Starting sync...')
 
   let synced = 0
@@ -203,7 +241,7 @@ async function syncCawPrice(): Promise<void> {
   try {
     // Get price: how much ETH for 1 million CAW (use large amount for precision)
     const cawAmount = BigInt(1_000_000) * BigInt(10 ** 18) // 1M CAW in wei
-    const path = [CAW_ADDRESS, WETH_ADDRESS]
+    const path = [MAINNET_CAW_ADDRESS, MAINNET_WETH_ADDRESS]
 
     const amounts = await uniswapRouter.getAmountsOut(cawAmount, path)
     const ethOut = BigInt(amounts[1])
@@ -264,7 +302,7 @@ async function syncEthPrice(): Promise<void> {
     // Get price: how much USDT for 1 ETH
     // USDT has 6 decimals, WETH has 18
     const oneEth = BigInt(10 ** 18)
-    const path = [WETH_ADDRESS, USDT_ADDRESS]
+    const path = [MAINNET_WETH_ADDRESS, USDT_ADDRESS]
 
     const amounts = await uniswapRouter.getAmountsOut(oneEth, path)
     const usdtOut = BigInt(amounts[1]) // USDT amount (6 decimals)
@@ -538,19 +576,35 @@ function stopTask(task: SyncTask) {
 export const chainSyncService = {
   name: 'ChainSyncService',
 
-  validateConfig(cfg: any) {
-    const errors: Error[] = []
-    if (!cfg?.l1RpcUrl) {
-      errors.push(new Error('l1RpcUrl is required for ChainSyncService'))
-    }
-    return errors
+  validateConfig() {
+    return []
   },
 
   start(cfg: ChainSyncConfig) {
     console.log('[ChainSync] Starting service...')
 
+    // Resolve env vars — config.json may contain "${VAR}" literals
+    const mainnetRpc = process.env.ETH_MAINNET_RPC_URL || cfg.ethMainnetRpcUrl || ''
+    const resolvedCfg: ChainSyncConfig = {
+      // Use mainnet RPC for L1 client data — prices and CAW token are on mainnet
+      l1RpcUrl: mainnetRpc || process.env.L1_RPC_URL || cfg.l1RpcUrl,
+      l2RpcUrl: process.env.L2_RPC_URL_HTTP || process.env.L2_RPC_URL || cfg.l2RpcUrl,
+      ethMainnetRpcUrl: mainnetRpc,
+    }
+
+    // Guard against unresolved template strings
+    if (resolvedCfg.l1RpcUrl?.includes('${')) resolvedCfg.l1RpcUrl = ''
+    if (resolvedCfg.l2RpcUrl?.includes('${')) resolvedCfg.l2RpcUrl = undefined
+    if (resolvedCfg.ethMainnetRpcUrl?.includes('${')) resolvedCfg.ethMainnetRpcUrl = undefined
+
+    console.log('[ChainSync] Resolved config:', {
+      l1RpcUrl: resolvedCfg.l1RpcUrl ? resolvedCfg.l1RpcUrl.slice(0, 40) + '...' : 'NOT SET',
+      l2RpcUrl: resolvedCfg.l2RpcUrl ? resolvedCfg.l2RpcUrl.slice(0, 40) + '...' : 'NOT SET',
+      ethMainnetRpcUrl: resolvedCfg.ethMainnetRpcUrl ? resolvedCfg.ethMainnetRpcUrl.slice(0, 40) + '...' : 'NOT SET',
+    })
+
     // Initialize providers
-    initializeProviders(cfg)
+    initializeProviders(resolvedCfg)
 
     // Load cached data from DB
     loadPricesFromDb()
@@ -563,7 +617,7 @@ export const chainSyncService = {
     })
 
     // Only register price sync if we have mainnet RPC
-    if (cfg.ethMainnetRpcUrl) {
+    if (resolvedCfg.ethMainnetRpcUrl) {
       registerTask({
         name: 'Prices',
         interval: 5 * 60 * 1000, // 5 minutes

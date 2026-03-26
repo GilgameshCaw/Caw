@@ -71,14 +71,8 @@ function ApiHostIndicator() {
 }
 
 function CawPriceTicker() {
-  const priceMap = usePriceStore(s => s.priceMap)
-  const cawPrice = priceMap['a-hunters-dream'] ?? 0
+  const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
   const { isDark } = useTheme()
-
-  if (!cawPrice || cawPrice <= 0) return null
-
-  // How many CAW you get for $0.01
-  const cawPerPenny = 0.01 / cawPrice
 
   const formatAmount = (n: number): string => {
     if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`
@@ -87,8 +81,18 @@ function CawPriceTicker() {
     return n.toFixed(0)
   }
 
+  if (!cawPrice || cawPrice <= 0) {
+    return (
+      <div className={`mt-3 text-xs text-center ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
+        CAW price loading...
+      </div>
+    )
+  }
+
+  const cawPerPenny = 0.01 / cawPrice
+
   return (
-    <div className={`mt-1 ml-3 text-xs ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
+    <div className={`mt-3 text-xs text-center ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
       $0.01 ≈ {formatAmount(cawPerPenny)} CAW
     </div>
   )

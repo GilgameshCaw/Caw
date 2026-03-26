@@ -941,9 +941,16 @@ console.log("succeededKeys", succeededKeys)
         const data = (entry.payload as any).data
         const key  = `${data.senderId}-${data.cawonce}`
 
-        // Treat "Cawonce already used" as success — another validator already processed it
+        // Check "Cawonce already used" — verify in Action table before marking done
         const rejection = simulationRejections[index] || ''
-        const processedByOther = rejection.includes('Cawonce already used')
+        const cawonceUsed = rejection.includes('Cawonce already used')
+        let processedByOther = false
+        if (cawonceUsed) {
+          const existingAction = await prisma.action.findFirst({
+            where: { senderId: data.senderId, cawonce: data.cawonce }
+          })
+          processedByOther = !!existingAction
+        }
 
         const newStatus = succeededKeys.has(key) || processedByOther
           ? 'done'
@@ -951,7 +958,7 @@ console.log("succeededKeys", succeededKeys)
 
         // Get the rejection reason for this specific entry
         const reason = newStatus === 'failed' && simulationRejections[index]
-          ? simulationRejections[index]
+          ? (cawonceUsed && !processedByOther ? 'Cawonce conflict — a different action used this cawonce. Please retry.' : simulationRejections[index])
           : undefined
 
         console.log("new status", newStatus, reason ? `with reason: ${reason}` : '')
@@ -1269,27 +1276,23 @@ console.log("succeededKeys", succeededKeys)
             try {
               const simResult = await simulateActions(validatorId, subBatch)
               if (!simResult || !simResult.successfulActions?.length) {
-                // Check if all were processed by another validator
-                const allByOther = simResult?.rejectionMessages?.every((msg: string) =>
-                  msg?.includes('Cawonce already used')
-                )
-                if (allByOther) {
-                  console.log(`[Validator] Client ${clientId}: all actions already processed by another validator`)
-                  await Promise.all(subBatchEntries.map(entry =>
-                    prisma.txQueue.update({ where: { id: entry.id }, data: { status: 'done' } })
-                  ))
-                  continue
-                }
-
                 console.log(`[Validator] Client ${clientId} simulation failed or no successful actions`)
-                await Promise.all(subBatchEntries.map((entry, idx) => {
+                await Promise.all(subBatchEntries.map(async (entry, idx) => {
+                  const data = (entry.payload as any).data
                   const rejection = simResult?.rejectionMessages?.[idx] || ''
-                  const processedByOther = rejection.includes('Cawonce already used')
+                  const cawonceUsed = rejection.includes('Cawonce already used')
+                  let processedByOther = false
+                  if (cawonceUsed) {
+                    const existingAction = await prisma.action.findFirst({
+                      where: { senderId: data.senderId, cawonce: data.cawonce }
+                    })
+                    processedByOther = !!existingAction
+                  }
                   return prisma.txQueue.update({
                     where: { id: entry.id },
                     data: {
                       status: processedByOther ? 'done' : 'failed',
-                      reason: processedByOther ? null : (rejection || 'Simulation failed')
+                      reason: processedByOther ? null : (cawonceUsed && !processedByOther ? 'Cawonce conflict — please retry' : (rejection || 'Simulation failed'))
                     }
                   })
                 }))
@@ -1388,18 +1391,32 @@ console.log("succeededKeys", succeededKeys)
         console.log("No successful actions from simulation")
 
         // Check if any rejection is due to RPC/network issues (temporary) vs actual failures (permanent)
-        // Check if all rejections are "Cawonce already used" — another validator processed them
-        const allProcessedByOther = rejectionMessages.every((msg: string) =>
+        // Check if all rejections are "Cawonce already used"
+        // This could mean: (a) another validator processed THIS action, or
+        // (b) a DIFFERENT action used this cawonce and the local counter is stale.
+        // We check the Action table to distinguish the two cases.
+        const allCawonceUsed = rejectionMessages.every((msg: string) =>
           msg?.includes('Cawonce already used')
         )
-        if (allProcessedByOther) {
-          console.log("[Validator] All actions already processed by another validator — marking as done")
-          await Promise.all(validatedEntries.map(entry =>
-            prisma.txQueue.update({
-              where: { id: entry.id },
-              data: { status: 'done' }
+        if (allCawonceUsed) {
+          console.log("[Validator] All actions rejected with 'Cawonce already used' — checking Action table...")
+          await Promise.all(validatedEntries.map(async (entry) => {
+            const data = (entry.payload as any).data
+            // Check if an Action record exists for this exact senderId + cawonce
+            const existingAction = await prisma.action.findFirst({
+              where: { senderId: data.senderId, cawonce: data.cawonce }
             })
-          ))
+            if (existingAction) {
+              console.log(`[Validator] TxQueue ${entry.id}: Action exists for senderId=${data.senderId} cawonce=${data.cawonce} — marking done`)
+              await prisma.txQueue.update({ where: { id: entry.id }, data: { status: 'done' } })
+            } else {
+              console.log(`[Validator] TxQueue ${entry.id}: No Action found for senderId=${data.senderId} cawonce=${data.cawonce} — cawonce conflict, marking failed`)
+              await prisma.txQueue.update({
+                where: { id: entry.id },
+                data: { status: 'failed', reason: 'Cawonce conflict — a different action used this cawonce. Please retry.' }
+              })
+            }
+          }))
           return
         }
 

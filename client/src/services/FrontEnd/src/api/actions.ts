@@ -21,7 +21,6 @@ import { useQuickSignRenewStore } from '~/components/modals/QuickSignRenewModal'
 import { useClientAuthStore } from '~/store/clientAuthStore'
 import { usePendingSpendStore } from '~/store/pendingSpendStore'
 
-const CAWONCE_STALE_MS = 10 * 60 * 1000 // 10 minutes
 
 // Cache client auth status per tokenId to avoid repeated RPC calls
 const clientAuthCache = new Map<number, boolean>()
@@ -270,30 +269,23 @@ export function useSignAndSubmitAction() {
       throw new Error('Token data not loaded. Please refresh and try again.')
     }
 
-    // If cawonce hasn't been synced from chain in 10+ minutes, refresh it now
-    const lastSync = useTokenDataStore.getState().lastCawonceSyncAt
-    if (Date.now() - lastSync > CAWONCE_STALE_MS) {
-      console.log('[Actions] Cawonce stale, refreshing from chain...')
-      try {
-        const onChainCawonce = await readContract(wagmiConfig, {
-          address: CAW_ACTIONS_ADDRESS,
-          abi: cawActionsAbi,
-          functionName: 'nextCawonce',
-          args: [activeTokenId!],
-          chainId: baseSepolia.id,
-        })
-        const fresh = Number(typeof onChainCawonce === 'bigint' ? onChainCawonce : BigInt(onChainCawonce as any))
-        console.log(`[Actions] On-chain cawonce: ${fresh}, local: ${currentCawonce}`)
-        if (fresh > currentCawonce) {
-          useTokenDataStore.getState().setCawonce(activeTokenId!, fresh)
-          currentCawonce = fresh
-        } else {
-          // Update sync timestamp even if value didn't change
-          useTokenDataStore.setState({ lastCawonceSyncAt: Date.now() })
-        }
-      } catch (err) {
-        console.warn('[Actions] Failed to refresh cawonce from chain, using cached value:', err)
+    // Always fetch the on-chain cawonce before signing to prevent desync
+    try {
+      const onChainCawonce = await readContract(wagmiConfig, {
+        address: CAW_ACTIONS_ADDRESS,
+        abi: cawActionsAbi,
+        functionName: 'nextCawonce',
+        args: [activeTokenId!],
+        chainId: baseSepolia.id,
+      })
+      const fresh = Number(typeof onChainCawonce === 'bigint' ? onChainCawonce : BigInt(onChainCawonce as any))
+      if (fresh !== currentCawonce) {
+        console.log(`[Actions] Cawonce synced from chain: ${fresh} (local was: ${currentCawonce})`)
+        useTokenDataStore.getState().setCawonce(activeTokenId!, fresh)
+        currentCawonce = fresh
       }
+    } catch (err) {
+      console.warn('[Actions] Failed to refresh cawonce from chain, using local value:', currentCawonce, err)
     }
 
     // Bump cawonce BEFORE submission to avoid conflicts with concurrent submissions

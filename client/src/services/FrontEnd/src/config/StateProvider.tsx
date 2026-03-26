@@ -22,6 +22,17 @@ export default function StateProvider({ children }: StateProviderProps) {
     prevAddress.current = address
   }, [address])
 
+  // Refetch token data (balances, staked amounts) when the tab becomes visible again
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        const refetch = useTokenDataStore.getState().refetchTokenData
+        if (refetch) refetch()
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [])
 
   return children;
 }
