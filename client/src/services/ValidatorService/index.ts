@@ -5,10 +5,10 @@ import 'dotenv/config'
 import { Service } from '../../Service'
 import { prisma }  from '../../prismaClient'
 import getActionType from '../../abi/getActionType'
-import { cawActionsAbi, cawClientManagerAbi } from '../../abi/generated'
-import { CAW_ACTIONS_ADDRESS, CAW_ADDRESS, WETH_ADDRESS, CLIENT_MANAGER_ADDRESS } from '../../abi/addresses'
+import { cawActionsAbi } from '../../abi/generated'
+import { CAW_ACTIONS_ADDRESS, CAW_ADDRESS, WETH_ADDRESS } from '../../abi/addresses'
 import { WebSocketProvider, JsonRpcProvider, Contract, Wallet } from 'ethers'
-import { cawToEthCached, isPriceFresh, getReplicationCount as getReplicationCountFromCache } from '../ChainSyncService'
+import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 
 // Uniswap V2 Router ABI (minimal for getAmountsOut) - fallback if cache is stale
 const UNISWAP_V2_ROUTER_ABI = [
@@ -38,14 +38,6 @@ const TESTNET_GAS_SCALE_FACTOR = BigInt(10000)
 let cachedRouter: Contract | null = null
 let cachedMainnetProvider: JsonRpcProvider | null = null
 
-// Cache for ClientManager contract (L2)
-let cachedClientManager: Contract | null = null
-let cachedL2Provider: JsonRpcProvider | null = null
-
-// Cache for replication counts (clientId -> count) - refreshes every 5 minutes
-const replicationCountCache: Map<number, { count: number; timestamp: number }> = new Map()
-const REPLICATION_CACHE_TTL = 5 * 60 * 1000 // 5 minutes
-
 /**
  * Get or create Uniswap V2 Router instance
  */
@@ -57,85 +49,18 @@ function getUniswapRouter(mainnetRpcUrl: string): Contract {
   return cachedRouter
 }
 
-/**
- * Get or create ClientManager contract instance
- * Uses L2_RPC_URL_HTTP for JSON-RPC calls (WebSocket URLs don't work with JsonRpcProvider)
- */
-function getClientManager(): Contract {
-  if (!cachedClientManager || !cachedL2Provider) {
-    // Use HTTP URL for JsonRpcProvider (WebSocket URL won't work)
-    const l2HttpUrl = process.env.L2_RPC_URL_HTTP
-    if (!l2HttpUrl) {
-      throw new Error('Missing L2_RPC_URL_HTTP in environment variables')
-    }
-    cachedL2Provider = new JsonRpcProvider(l2HttpUrl)
-    cachedClientManager = new Contract(CLIENT_MANAGER_ADDRESS, cawClientManagerAbi, cachedL2Provider)
-  }
-  return cachedClientManager
-}
-
-/**
- * Get replication count for a client
- * Uses ChainSyncService cache first, falls back to direct contract query
- * @param clientId - The client ID
- * @returns Number of replication destinations for this client
- */
-async function getReplicationCount(clientId: number): Promise<number> {
-  // Try ChainSyncService cache first (synced every 30 minutes)
-  try {
-    const cachedCount = await getReplicationCountFromCache(clientId)
-    // If we got a result from DB, use it
-    if (cachedCount !== undefined) {
-      return cachedCount
-    }
-  } catch (err) {
-    // Cache miss, continue to direct query
-  }
-
-  // Check local memory cache
-  const cached = replicationCountCache.get(clientId)
-  if (cached && Date.now() - cached.timestamp < REPLICATION_CACHE_TTL) {
-    return cached.count
-  }
-
-  // Fallback to direct contract query
-  try {
-    const clientManager = getClientManager()
-
-    // Check if replication is enabled for this client
-    const enabled = await clientManager.clientReplicationEnabled(clientId)
-    if (!enabled) {
-      replicationCountCache.set(clientId, { count: 0, timestamp: Date.now() })
-      return 0
-    }
-
-    const count = Number(await clientManager.getReplicationCount(clientId))
-
-    // Cache the result
-    replicationCountCache.set(clientId, { count, timestamp: Date.now() })
-
-    console.log(`[Validator] Replication count for client ${clientId}: ${count}`)
-    return count
-  } catch (error: any) {
-    console.error('[Validator] Failed to get replication count:', error.message)
-    // Fallback to 0 if we can't query the contract
-    return 0
-  }
-}
 
 // Tip constants - must match frontend actions.ts
 // These are in whole CAW tokens (contract multiplies by 10^18 on-chain)
 // At ~500k CAW = $0.01, 1k CAW ≈ $0.00002 per action
 const BASE_VALIDATOR_TIP = BigInt(process.env.VALIDATOR_BASE_TIP || "1000") // 1k CAW base tip
-const TIP_PER_REPLICATION_CHAIN = BigInt(process.env.VALIDATOR_TIP_PER_CHAIN || "500") // 500 CAW per replication chain
 
 /**
- * Calculate the minimum required tip for an action based on replication chain count
- * @param replicationChainCount - Number of replication destinations for the client
+ * Calculate the minimum required tip for an action
  * @returns Minimum required tip in CAW
  */
-function calculateMinimumTip(replicationChainCount: number): bigint {
-  return BASE_VALIDATOR_TIP + (TIP_PER_REPLICATION_CHAIN * BigInt(replicationChainCount))
+function calculateMinimumTip(): bigint {
+  return BASE_VALIDATOR_TIP
 }
 
 /**
@@ -146,34 +71,29 @@ function calculateMinimumTip(replicationChainCount: number): bigint {
  */
 async function validateActionTip(
   action: any,
-  l2RpcUrl: string
 ): Promise<{ valid: boolean; reason?: string; required?: bigint; provided?: bigint }> {
-  const clientId = action.clientId ?? 1
-  const replicationCount = await getReplicationCount(clientId)
+  const requiredTip = calculateMinimumTip()
 
   // Get the tip from the action's amounts array (last element is the tip)
   const amounts = action.amounts || []
   if (amounts.length === 0) {
     return {
       valid: false,
-      reason: `No tip provided. Required: ${calculateMinimumTip(replicationCount).toString()} CAW`,
-      required: calculateMinimumTip(replicationCount),
+      reason: `No tip provided. Required: ${requiredTip.toString()} CAW`,
+      required: requiredTip,
       provided: BigInt(0)
     }
   }
 
   const providedTip = BigInt(amounts[amounts.length - 1] || '0')
-  const requiredTip = calculateMinimumTip(replicationCount)
 
   if (providedTip < requiredTip) {
     console.log(`[Validator] Insufficient tip for action:`)
-    console.log(`  - Client ID: ${clientId}`)
-    console.log(`  - Replication chains: ${replicationCount}`)
     console.log(`  - Required tip: ${requiredTip.toString()} CAW`)
     console.log(`  - Provided tip: ${providedTip.toString()} CAW`)
     return {
       valid: false,
-      reason: `Insufficient tip: provided ${providedTip.toString()} CAW, required ${requiredTip.toString()} CAW (base + ${replicationCount} chains)`,
+      reason: `Insufficient tip: provided ${providedTip.toString()} CAW, required ${requiredTip.toString()} CAW`,
       required: requiredTip,
       provided: providedTip
     }
@@ -508,79 +428,21 @@ export const validatorService: Service = {
           }
         }
 
-        // Get replication quote for each unique client
-        // For simulation, we need to estimate the total replication cost across all clients
-        console.log("[Validator] Step 2: Getting replication quotes...")
-        const uniqueClientIds = getUniqueClientIds(multiData.actions)
-        console.log(`[Validator] Unique client IDs: ${uniqueClientIds.join(', ')}`)
-        let totalReplicationFee = BigInt(0)
-        let totalReplicationLzToken = BigInt(0)
-
-        for (const clientId of uniqueClientIds) {
-          console.log(`[Validator] Getting replication quote for client ${clientId}...`)
-          try {
-            // Get actions for this client to build payload for quote
-            const clientActions = multiData.actions.filter((a: any) => (a.clientId ?? 1) === clientId)
-            const clientIndices = multiData.actions.map((a: any, i: number) => (a.clientId ?? 1) === clientId ? i : -1).filter(i => i >= 0)
-            const clientData = {
-              actions: clientActions,
-              v: clientIndices.map(i => multiData.v[i]),
-              r: clientIndices.map(i => multiData.r[i]),
-              s: clientIndices.map(i => multiData.s[i])
-            }
-            console.log(`[Validator] Calling cawActions.replicationQuote(${clientId}, ...)`)
-
-            // Add timeout to replicationQuote call
-            const quotePromise = cawActions.replicationQuote(clientId, clientData, false)
-            const timeoutPromise = new Promise((_, reject) => {
-              setTimeout(() => reject(new Error('replicationQuote timeout after 10s')), 10000)
-            })
-            const replicationQuote = await Promise.race([quotePromise, timeoutPromise]) as any
-            console.log(`[Validator] Got replication quote response:`, replicationQuote)
-            if (replicationQuote && replicationQuote.quote) {
-              totalReplicationFee += BigInt(replicationQuote.quote.nativeFee || 0)
-              totalReplicationLzToken += BigInt(replicationQuote.quote.lzTokenFee || 0)
-              console.log(`[Validator] Replication quote for client ${clientId}: nativeFee=${replicationQuote.quote.nativeFee}, chainCount=${replicationQuote.chainCount}`)
-            }
-          } catch (err: any) {
-            // Replication might not be configured for this client - that's OK
-            // Also catch timeouts gracefully
-            console.log(`[Validator] Replication quote error for client ${clientId}:`, err.message)
-
-            // If timeout, reinitialize connection for next attempt
-            if (err.message?.includes('timeout')) {
-              console.log('[Validator] Replication quote timeout - reinitializing connection')
-              initializeConnection()
-            }
-
-            if (!err.message?.includes('Replicator not set')) {
-              console.log(`[Validator] Failed to get replication quote for client ${clientId}:`, err.message)
-            }
-          }
-        }
-        console.log("[Validator] Step 2 complete: replication quotes retrieved")
-
-        // Total native fee = withdraw fee + replication fee
-        const totalNativeFee = BigInt(withdrawQuote.nativeFee || 0) + totalReplicationFee
-
-        // Build the quote object with all fees
+        // Build the quote object (withdraw fees only — replication is handled separately)
         const quote = {
-          nativeFee: totalNativeFee,
+          nativeFee: BigInt(withdrawQuote.nativeFee || 0),
           withdrawFee: BigInt(withdrawQuote.nativeFee || 0),
           withdrawLzTokenAmount: BigInt(withdrawQuote.lzTokenFee || 0),
-          replicationFee: totalReplicationFee,
-          replicationLzTokenAmount: totalReplicationLzToken
         }
 
-        console.log("[Validator] Step 3: Building quote object...")
+        console.log("[Validator] Step 2: Building quote object...")
         console.log("[Validator] Total fees:", {
           withdrawFee: quote.withdrawFee.toString(),
-          replicationFee: quote.replicationFee.toString(),
           totalNativeFee: quote.nativeFee.toString()
         })
 
-        // ABI‐encode with the new 5-argument signature
-        console.log("[Validator] Step 4: Encoding calldata...")
+        // ABI‐encode with the 4-argument signature (replication is handled separately)
+        console.log("[Validator] Step 3: Encoding calldata...")
         let calldata: string
         try {
           calldata = iface.encodeFunctionData('safeProcessActions', [
@@ -588,14 +450,13 @@ export const validatorService: Service = {
             { actions: multiData.actions, v: multiData.v, r: multiData.r, s: multiData.s },
             quote.withdrawFee,
             quote.withdrawLzTokenAmount,
-            quote.replicationLzTokenAmount
           ])
           console.log(`[Validator] Calldata encoded successfully (${calldata.length} chars)`)
         } catch (encodeErr: any) {
           console.error(`[Validator] FAILED to encode calldata:`, encodeErr.message)
           throw encodeErr
         }
-        console.log(`Call data prepared, simulating transaction...`)
+        console.log(`Calldata prepared, simulating transaction...`)
         console.log(`  - Contract: ${CAW_ACTIONS_ADDRESS}`)
         console.log(`  - Value: ${quote?.nativeFee?.toString() || '0'}`)
         console.log(`  - Actions: ${multiData.actions.length}`)
@@ -746,14 +607,13 @@ export const validatorService: Service = {
     async function estimateProcessGasCost(
       validatorId: number,
       multiData: { actions: any[]; v: number[]; r: string[]; s: string[] },
-      quote: { nativeFee: bigint; withdrawFee: bigint; withdrawLzTokenAmount: bigint; replicationFee: bigint; replicationLzTokenAmount: bigint }
+      quote: { nativeFee: bigint; withdrawFee: bigint; withdrawLzTokenAmount: bigint }
     ) {
       const calldata = iface.encodeFunctionData('processActions', [
         validatorId,
         { actions: multiData.actions, v: multiData.v, r: multiData.r, s: multiData.s },
         quote.withdrawFee,
         quote.withdrawLzTokenAmount,
-        quote.replicationLzTokenAmount
       ])
 
       const gasLimitRaw = await provider.estimateGas({
@@ -773,7 +633,7 @@ export const validatorService: Service = {
     async function estimateGasLimit(
       validatorId: number,
       multiData: { actions: any[]; v: number[]; r: string[]; s: string[] },
-      quote: { nativeFee: bigint; withdrawFee: bigint; withdrawLzTokenAmount: bigint; replicationFee: bigint; replicationLzTokenAmount: bigint }
+      quote: { nativeFee: bigint; withdrawFee: bigint; withdrawLzTokenAmount: bigint }
     ): Promise<bigint> {
       // 1) ABI-encode the same calldata you'd send on-chain
       const calldata = iface.encodeFunctionData('processActions', [
@@ -781,7 +641,6 @@ export const validatorService: Service = {
         { actions: multiData.actions, v: multiData.v, r: multiData.r, s: multiData.s },
         quote.withdrawFee,
         quote.withdrawLzTokenAmount,
-        quote.replicationLzTokenAmount
       ]);
 
       // 2) Ask the provider directly for the gas estimate
@@ -798,7 +657,7 @@ export const validatorService: Service = {
     async function submitProcessActions(
       validatorId: number,
       multiData: { actions: any[]; v: number[]; r: string[]; s: string[] },
-      quote: { nativeFee: bigint; withdrawFee: bigint; withdrawLzTokenAmount: bigint; replicationFee: bigint; replicationLzTokenAmount: bigint },
+      quote: { nativeFee: bigint; withdrawFee: bigint; withdrawLzTokenAmount: bigint },
       rawGasLimit: bigint,
       retryCount: number = 0
     ) {
@@ -832,7 +691,6 @@ export const validatorService: Service = {
         actionsCount: multiData.actions.length,
         totalNativeFee: quote.nativeFee.toString(),
         withdrawFee: quote.withdrawFee.toString(),
-        replicationFee: quote.replicationFee.toString(),
         gasLimit: rawGasLimit.toString()
       })
 
@@ -843,7 +701,6 @@ export const validatorService: Service = {
           { actions: multiData.actions, v: multiData.v, r: multiData.r, s: multiData.s },
           quote.withdrawFee,
           quote.withdrawLzTokenAmount,
-          quote.replicationLzTokenAmount
         ])
 
         if (!txData || txData === '0x' || txData.length < 10) {
@@ -853,7 +710,6 @@ export const validatorService: Service = {
             actionsCount: multiData.actions.length,
             withdrawFee: quote.withdrawFee.toString(),
             withdrawLzTokenAmount: quote.withdrawLzTokenAmount.toString(),
-            replicationLzTokenAmount: quote.replicationLzTokenAmount.toString(),
           })
           throw new Error(`encodeFunctionData produced invalid calldata: "${txData}"`)
         }
@@ -1032,13 +888,12 @@ console.log("succeededKeys", succeededKeys)
      */
     async function recalculateQuoteForActions(
       multiData: { actions: any[]; v: number[]; r: string[]; s: string[] }
-    ): Promise<{ nativeFee: bigint; withdrawFee: bigint; withdrawLzTokenAmount: bigint; replicationFee: bigint; replicationLzTokenAmount: bigint }> {
+    ): Promise<{ nativeFee: bigint; withdrawFee: bigint; withdrawLzTokenAmount: bigint }> {
       // Get withdrawal quote
       const withdraws = multiData.actions.filter((action: any) => getActionType(action.actionType).toString() === 'WITHDRAW')
       let withdrawQuote = { nativeFee: BigInt(0), lzTokenFee: BigInt(0) }
       if (withdraws.length > 0) {
         const tokenIds = withdraws.map((action: any) => action.senderId)
-        // Convert amounts from whole CAW units to wei (action struct uses uint64, so amounts are not in wei)
         const amounts = withdraws.map((action: any) => BigInt(action.amounts[0]) * 10n**18n)
         try {
           withdrawQuote = await cawActions.withdrawQuote(tokenIds, amounts, false) as any
@@ -1047,40 +902,10 @@ console.log("succeededKeys", succeededKeys)
         }
       }
 
-      // Get replication quote for each unique client
-      const uniqueClientIds = getUniqueClientIds(multiData.actions)
-      let totalReplicationFee = BigInt(0)
-      let totalReplicationLzToken = BigInt(0)
-
-      for (const clientId of uniqueClientIds) {
-        try {
-          const clientActions = multiData.actions.filter((a: any) => (a.clientId ?? 1) === clientId)
-          const clientIndices = multiData.actions.map((a: any, i: number) => (a.clientId ?? 1) === clientId ? i : -1).filter(i => i >= 0)
-          const clientData = {
-            actions: clientActions,
-            v: clientIndices.map(i => multiData.v[i]),
-            r: clientIndices.map(i => multiData.r[i]),
-            s: clientIndices.map(i => multiData.s[i])
-          }
-
-          const replicationQuote = await cawActions.replicationQuote(clientId, clientData, false) as any
-          if (replicationQuote && replicationQuote.quote) {
-            totalReplicationFee += BigInt(replicationQuote.quote.nativeFee || 0)
-            totalReplicationLzToken += BigInt(replicationQuote.quote.lzTokenFee || 0)
-          }
-        } catch (err: any) {
-          if (!err.message?.includes('Replicator not set')) {
-            console.log(`[Validator] Failed to get replication quote for client ${clientId}:`, err.message)
-          }
-        }
-      }
-
       return {
-        nativeFee: BigInt(withdrawQuote.nativeFee || 0) + totalReplicationFee,
+        nativeFee: BigInt(withdrawQuote.nativeFee || 0),
         withdrawFee: BigInt(withdrawQuote.nativeFee || 0),
         withdrawLzTokenAmount: BigInt(withdrawQuote.lzTokenFee || 0),
-        replicationFee: totalReplicationFee,
-        replicationLzTokenAmount: totalReplicationLzToken
       }
     }
 
@@ -1116,18 +941,12 @@ console.log("succeededKeys", succeededKeys)
         return { valid: true }
       }
 
-      // Get clientId from action to determine replication chain count
-      const clientId = action.clientId ?? 1 // Default to client 1 if not specified
-      const replicationChainCount = await getReplicationCount(clientId)
-
-      // Calculate required CAW for all images
+      // Calculate required CAW for all images (L2 storage cost only — replication is handled separately)
       let totalRequiredCaw = 0
       for (const match of imageMatches) {
         const base64Data = match.replace('image64:', '')
-        // Base64 encoding increases size by ~33%
         const originalSize = Math.ceil((base64Data.length * 3) / 4)
 
-        // L2 storage cost calculation (same as frontend)
         const MIN_CAW_COST = 500
         const l1GasPerByte = 16
         const l1DataGas = originalSize * l1GasPerByte
@@ -1136,35 +955,17 @@ console.log("succeededKeys", succeededKeys)
         const effectiveGasPrice = 8
         const cawPerGwei = 0.03
         const baseCost = Math.ceil(totalGas * effectiveGasPrice * cawPerGwei)
-        const l2Cost = Math.ceil(baseCost * 2.5) // Match frontend 2.5x markup
+        const l2Cost = Math.ceil(baseCost * 2.5)
 
-        // Replication cost calculation (cross-chain replication)
-        // Query actual replication chain count from contract
-        let archiveCost = 0
-        if (replicationChainCount > 0) {
-          const BASE_LZ_FEE_GWEI = 500000 // ~0.0005 ETH base fee per chain
-          const ARCHIVE_GAS_LIMIT = 50000
-          const dataGas = originalSize * l1GasPerByte
-          const totalGasPerChain = ARCHIVE_GAS_LIMIT + Math.min(dataGas, 100000)
-          const archiveGasPrice = 5
-          const executionCost = totalGasPerChain * archiveGasPrice
-          const perChainCostGwei = BASE_LZ_FEE_GWEI + executionCost
-          const perChainCostCaw = Math.ceil(perChainCostGwei * cawPerGwei)
-          archiveCost = Math.ceil(perChainCostCaw * replicationChainCount * 1.5) // 50% buffer
-        }
-
-        const totalCost = l2Cost + archiveCost
-        totalRequiredCaw += Math.max(MIN_CAW_COST, totalCost)
+        totalRequiredCaw += Math.max(MIN_CAW_COST, l2Cost)
       }
 
-      // Check if amounts array has sufficient CAW
       const amounts = action.amounts || []
       const providedCaw = amounts.length > 0 ? Number(amounts[0]) : 0
 
       console.log(`[Validator] Image upload validation:`)
       console.log(`  - Image count: ${imageMatches.length}`)
       console.log(`  - Total data size: ${imageMatches.reduce((sum: number, m: string) => sum + m.replace('image64:', '').length, 0)} chars`)
-      console.log(`  - Replication chains: ${replicationChainCount}`)
       console.log(`  - Provided CAW: ${providedCaw}`)
       console.log(`  - Required CAW: ${totalRequiredCaw}`)
 
@@ -1226,7 +1027,7 @@ console.log("succeededKeys", succeededKeys)
           }
 
           // Then, validate the tip is sufficient for replication costs
-          const tipValidation = await validateActionTip(action, l2RpcUrl)
+          const tipValidation = await validateActionTip(action)
           if (!tipValidation.valid) {
             underpricedEntries.push({
               entry,
@@ -1636,6 +1437,7 @@ console.log("succeededKeys", succeededKeys)
         finalized.forEach((f: any) => {
           console.log(`  - Sender ${f.senderId} cawonce ${f.cawonce}: ${getActionType(f.actionType)}`)
         })
+
       } catch (submitErr: any) {
         console.error("[Validator] ========== TRANSACTION SUBMISSION FAILED ==========")
         console.error("[Validator] Full error object:", submitErr)
@@ -1915,6 +1717,135 @@ console.log("succeededKeys", succeededKeys)
       }
     }
 
+    /**
+     * Background replication loop. Checks for complete 256-action checkpoints
+     * and submits them to archive chains via replicateBatch.
+     *
+     * All data comes from on-chain: reads ActionsProcessed events to get actions,
+     * decodes processActions calldata from the transactions to extract signatures.
+     */
+    async function replicationLoop() {
+      const replicatorAddress = process.env.REPLICATOR_ADDRESS
+      if (!replicatorAddress) return
+
+      try {
+        // Find clients that have replication enabled (from DB — config synced by ChainSyncService)
+        const clients = await prisma.client.findMany({
+          where: { replicationEnabled: true, replicationCount: { gt: 0 } },
+          select: { id: true, replications: true }
+        })
+
+        if (clients.length === 0) return
+
+        const replicatorViewAbi = [
+          'function getNextUnreplicatedCheckpoint(uint32,uint32) view returns (uint256,uint256)',
+          'function quoteReplicateBatch(uint32,uint256,bool) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
+        ]
+        const replicatorView = new Contract(replicatorAddress, replicatorViewAbi, provider)
+
+        const replicatorWriteAbi = [
+          'function replicateBatch(tuple(uint32 clientId, uint32 destEid, uint256 checkpointId, uint256 lzTokenAmount), tuple(uint8 actionType, uint32 senderId, uint32 receiverId, uint32 receiverCawonce, uint32 clientId, uint32 cawonce, uint32[] recipients, uint64[] amounts, string text)[], uint8[], bytes32[], bytes32[]) payable',
+        ]
+        const replicatorWrite = new Contract(replicatorAddress, replicatorWriteAbi, wallet)
+
+        for (const client of clients) {
+          const replications = client.replications as any[]
+          if (!replications?.length) continue
+
+          for (const dest of replications) {
+            const destEid = dest.eid
+            if (!destEid) continue
+
+            try {
+              const [nextCheckpointId, totalCheckpoints] = await replicatorView.getNextUnreplicatedCheckpoint(client.id, destEid)
+              const checkpointId = Number(nextCheckpointId)
+              const total = Number(totalCheckpoints)
+
+              if (checkpointId === 0) continue // Fully caught up
+
+              console.log(`[Replication] Client ${client.id} → chain ${destEid}: checkpoint ${checkpointId}/${total} needs replication`)
+
+              // Reconstruct the 256 actions + signatures from on-chain data.
+              // We read processActions tx calldata from the RawEvent table (which stores
+              // the transactionHash for each ActionsProcessed event) and decode it.
+              const startPos = (checkpointId - 1) * 256
+
+              // Find Action records for this client in the checkpoint range, ordered by rawEventId
+              // (which preserves on-chain processing order)
+              const actionsInRange = await prisma.action.findMany({
+                where: {
+                  data: { path: ['clientId'], equals: client.id }
+                },
+                orderBy: { id: 'asc' },
+                include: { rawEvent: { select: { transactionHash: true } } },
+                skip: startPos,
+                take: 256,
+              })
+
+              if (actionsInRange.length !== 256) {
+                console.log(`[Replication] Only ${actionsInRange.length}/256 actions indexed for checkpoint ${checkpointId}, skipping`)
+                continue
+              }
+
+              // Group by transaction hash to decode calldata in batches
+              const txHashes = [...new Set(actionsInRange.map(a => a.rawEvent?.transactionHash).filter(Boolean))] as string[]
+              const allActions: any[] = []
+              const allV: number[] = []
+              const allR: string[] = []
+              const allS: string[] = []
+
+              for (const txHash of txHashes) {
+                const tx = await provider.getTransaction(txHash)
+                if (!tx) {
+                  console.error(`[Replication] Could not fetch tx ${txHash}`)
+                  break
+                }
+
+                // Decode processActions calldata to extract actions + signatures
+                const decoded = iface.decodeFunctionData('processActions', tx.data)
+                const multiData = decoded[1] // The MultiActionData struct
+                const txActions = multiData.actions
+                const txV = multiData.v
+                const txR = multiData.r
+                const txS = multiData.s
+
+                for (let i = 0; i < txActions.length; i++) {
+                  // Only include actions belonging to this client
+                  if (Number(txActions[i].clientId) === client.id) {
+                    allActions.push(txActions[i])
+                    allV.push(Number(txV[i]))
+                    allR.push(txR[i])
+                    allS.push(txS[i])
+                  }
+                }
+              }
+
+              if (allActions.length !== 256) {
+                console.log(`[Replication] Reconstructed ${allActions.length}/256 actions from calldata, skipping`)
+                continue
+              }
+
+              // Get LZ fee quote
+              const avgTextLength = Math.ceil(allActions.reduce((sum: number, a: any) => sum + (a.text?.length || 0), 0) / 256)
+              const fee = await replicatorView.quoteReplicateBatch(destEid, avgTextLength, false)
+              const nativeFee = BigInt(fee.nativeFee) * 110n / 100n // 10% buffer
+
+              console.log(`[Replication] Submitting checkpoint ${checkpointId} for client ${client.id} → chain ${destEid} (fee: ${nativeFee} wei)`)
+
+              const params = { clientId: client.id, destEid, checkpointId, lzTokenAmount: 0 }
+              const tx = await replicatorWrite.replicateBatch(params, allActions, allV, allR, allS, { value: nativeFee })
+              const receipt = await tx.wait()
+              console.log(`[Replication] Checkpoint ${checkpointId} replicated! tx: ${receipt?.hash}`)
+            } catch (err: any) {
+              console.error(`[Replication] Failed for client ${client.id} → chain ${destEid}:`, err.message)
+            }
+          }
+        }
+      } catch (err: any) {
+        console.error('[Replication] Loop error:', err.message)
+      }
+    }
+
     // start polling with overlap protection
     let isPolling = false
     const safePollLoop = async () => {
@@ -1942,10 +1873,27 @@ console.log("succeededKeys", succeededKeys)
     timer = setInterval(() => safePollLoop(), checkInterval)
     safePollLoop()
 
+    // Start background replication loop (runs every 60 seconds)
+    const REPLICATION_INTERVAL = 60_000
+    let isReplicating = false
+    const safeReplicationLoop = async () => {
+      if (isReplicating) return
+      isReplicating = true
+      try {
+        await replicationLoop()
+      } catch (err) {
+        console.error('[Replication] Unhandled error:', err)
+      } finally {
+        isReplicating = false
+      }
+    }
+    const replicationTimer = setInterval(() => safeReplicationLoop(), REPLICATION_INTERVAL)
+
     return {
       started: Promise.resolve(),
       async stop() {
         clearInterval(timer)
+        clearInterval(replicationTimer)
         // No need to remove handler since it's managed globally
         if (provider) {
           try {

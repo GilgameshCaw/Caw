@@ -1,9 +1,12 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef } from 'react'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import { useOptimisticLikesStore } from '~/store/optimisticLikesStore'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import { usePendingSpendStore } from '~/store/pendingSpendStore'
 import { apiFetch } from '~/api/client'
+import { useQuickSignRenewStore } from '~/components/modals/QuickSignRenewModal'
+import { useSessionKeyStore } from '~/store/sessionKeyStore'
+import { useActionErrorStore } from '~/store/actionErrorStore'
 
 // Global callbacks for feed refresh - set by Feed component
 let feedRefreshCallback: (() => void) | null = null
@@ -56,12 +59,37 @@ export function useTxQueueMonitor() {
           if (processedIds.current.has(status.id)) return
 
           if (status.status === 'failed') {
-            // Remove the optimistic post or like associated with this failed txQueue entry
-            console.log(`[TxQueueMonitor] Removing optimistic updates for failed txQueue ID: ${status.id}`)
+            const reason = (status.reason || '').toLowerCase()
+            console.log(`[TxQueueMonitor] TxQueue ID ${status.id} failed: ${status.reason}`)
             removePendingPostByTxQueueId(status.id)
             removeOptimisticLikeByTxQueueId(status.id)
             usePendingSpendStore.getState().removePendingSpend(status.id)
             processedIds.current.add(status.id)
+
+            // Show session renewal modal for session-related failures
+            if (reason.includes('session expired') || (reason.includes('session') && reason.includes('not found'))) {
+              const sessionStore = useSessionKeyStore.getState()
+              if (sessionStore.enabled) {
+                useQuickSignRenewStore.getState().show('expired')
+              }
+            } else if (reason.includes('spend limit')) {
+              useQuickSignRenewStore.getState().show('spend_limit')
+            } else if (reason) {
+              // Map technical errors to user-friendly messages
+              let userMessage = 'Something went wrong while processing your action. Please try again.'
+              if (reason.includes('cawonce already used')) {
+                userMessage = 'This action was already processed. Please try again.'
+              } else if (reason.includes('insufficient')) {
+                userMessage = 'You don\'t have enough staked CAW for this action.'
+              } else if (reason.includes('not authenticated')) {
+                userMessage = 'Your account needs to be authenticated with this client. Please try reconnecting.'
+              } else if (reason.includes('cannot follow yourself')) {
+                userMessage = 'You can\'t follow your own account.'
+              } else if (reason.includes('text exceeds')) {
+                userMessage = 'Your post is too long. Please shorten it and try again.'
+              }
+              useActionErrorStore.getState().show('Action Failed', userMessage)
+            }
           } else if (status.status === 'done') {
             // The action was successful - remove the pending post and refresh the feed
             console.log(`[TxQueueMonitor] TxQueue ID ${status.id} succeeded, removing pending post and refreshing feed`)
