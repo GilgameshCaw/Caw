@@ -269,26 +269,10 @@ export function useSignAndSubmitAction() {
       throw new Error('Token data not loaded. Please refresh and try again.')
     }
 
-    // Always fetch the on-chain cawonce before signing to prevent desync
-    try {
-      const onChainCawonce = await readContract(wagmiConfig, {
-        address: CAW_ACTIONS_ADDRESS,
-        abi: cawActionsAbi,
-        functionName: 'nextCawonce',
-        args: [activeTokenId!],
-        chainId: baseSepolia.id,
-      })
-      const fresh = Number(typeof onChainCawonce === 'bigint' ? onChainCawonce : BigInt(onChainCawonce as any))
-      if (fresh !== currentCawonce) {
-        console.log(`[Actions] Cawonce synced from chain: ${fresh} (local was: ${currentCawonce})`)
-        useTokenDataStore.getState().setCawonce(activeTokenId!, fresh)
-        currentCawonce = fresh
-      }
-    } catch (err) {
-      console.warn('[Actions] Failed to refresh cawonce from chain, using local value:', currentCawonce, err)
-    }
-
-    // Bump cawonce BEFORE submission to avoid conflicts with concurrent submissions
+    // Bump cawonce BEFORE building the message to avoid conflicts with concurrent submissions.
+    // Use the current value for this action, then immediately increment for the next one.
+    // The local cawonce is synced from chain on page load (useCawonceSync) and stays
+    // ahead of on-chain via local increments — no need to fetch on every action.
     bumpCawonce(activeTokenId)
 
     const { domain, types, primaryType, message } = buildTypedData({...params, cawonce: currentCawonce})
