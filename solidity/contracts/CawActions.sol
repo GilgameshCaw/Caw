@@ -6,13 +6,9 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 
 import "./CawNameL2.sol";
-import { CawActionsReplicator, ReplicationDestination } from "./CawActionsReplicator.sol";
-
 import { MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
 contract CawActions is Ownable {
-  /// @notice Replicator for archiving actions to other chains (can only be set once)
-  CawActionsReplicator public replicator;
   enum ActionType { CAW, LIKE, UNLIKE, RECAW, FOLLOW, UNFOLLOW, WITHDRAW, OTHER }
 
   struct ActionData {
@@ -54,7 +50,6 @@ contract CawActions is Ownable {
 
   event ActionsProcessed(ActionData[] actions);
   event ActionRejected(uint32 senderId, uint32 cawonce, string reason);
-  event ReplicatorSet(address replicator);
 
   CawNameL2 public immutable cawName;
   CawActions public immutable externalSelf;
@@ -71,16 +66,6 @@ contract CawActions is Ownable {
     eip712DomainHash = generateDomainHash();
     externalSelf = CawActions(this);
     cawName = CawNameL2(_cawNames);
-  }
-
-  /// @notice Set the replicator address (can only be called once by owner, then ownership is renounced)
-  /// @param _replicator The address of the CawActionsReplicator contract
-  function setReplicator(address _replicator) external onlyOwner {
-    require(address(replicator) == address(0), "Replicator already set");
-    require(_replicator != address(0), "Invalid replicator address");
-    replicator = CawActionsReplicator(_replicator);
-    emit ReplicatorSet(_replicator);
-    renounceOwnership();
   }
 
   function processAction(uint32 validatorId, ActionData calldata action, uint8 v, bytes32 r, bytes32 s) external {
@@ -275,8 +260,7 @@ contract CawActions is Ownable {
     uint32 validatorId,
     MultiActionData calldata data,
     uint256 withdrawFee,
-    uint256 withdrawLzTokenAmount,
-    uint256 replicationLzTokenAmount
+    uint256 withdrawLzTokenAmount
   ) external payable returns (ActionData[] memory successfulActions, string[] memory rejections){
     uint256 actionsLength = data.actions.length;
     require(actionsLength <= 256, "Cannot process more than 256 actions");
@@ -324,11 +308,6 @@ contract CawActions is Ownable {
     // Handle withdrawals
     setWithdrawable(withdrawBitmap, withdrawCount, data.actions, withdrawLzTokenAmount, withdrawFee);
 
-    // Replicate only successful actions
-    if (successCount > 0) {
-      replicateFiltered(data, successBitmap, successCount, msg.value - withdrawFee, replicationLzTokenAmount);
-    }
-
     return (successfulActions, rejections);
   }
 
@@ -340,8 +319,7 @@ contract CawActions is Ownable {
     uint32 validatorId,
     MultiActionData calldata data,
     uint256 withdrawFee,
-    uint256 withdrawLzTokenAmount,
-    uint256 replicationLzTokenAmount
+    uint256 withdrawLzTokenAmount
   ) external payable {
     uint256 actionsLength = data.actions.length;
     require(actionsLength <= 256, "Cannot process more than 256 actions");
@@ -363,9 +341,6 @@ contract CawActions is Ownable {
 
     // Handle withdrawals
     setWithdrawable(withdrawBitmap, withdrawCount, data.actions, withdrawLzTokenAmount, withdrawFee);
-
-    // Replicate actions
-    replicate(data, msg.value - withdrawFee, replicationLzTokenAmount);
   }
 
   /// @dev Enforces that all actions in a batch belong to the same client.
@@ -375,59 +350,6 @@ contract CawActions is Ownable {
       require(data.actions[i].clientId == clientId, "All actions must belong to the same client");
   }
 
-  /**
-   * @notice Replicates all actions in the batch to archive chains.
-   * @dev Single-client enforced at processActions/safeProcessActions entry point.
-   */
-  function replicate(
-    MultiActionData calldata data,
-    uint256 totalReplicationFee,
-    uint256 replicationLzTokenAmount
-  ) internal {
-    if (address(replicator) == address(0)) return;
-    if (data.actions.length == 0) return;
-
-    bytes memory payload = abi.encode(data.actions, data.v, data.r, data.s);
-    replicator.replicate{ value: totalReplicationFee }(data.actions[0].clientId, payload, replicationLzTokenAmount);
-  }
-
-  /**
-   * @notice Replicates only successful actions (filtered by bitmap) to archive chains.
-   * @dev Used by safeProcessActions. All actions must belong to the same client.
-   */
-  function replicateFiltered(
-    MultiActionData calldata data,
-    uint256 successBitmap,
-    uint256 successCount,
-    uint256 totalReplicationFee,
-    uint256 replicationLzTokenAmount
-  ) internal {
-    if (address(replicator) == address(0)) return;
-    if (successCount == 0) return;
-
-    // All actions share the same clientId (enforced by caller's validation loop)
-    uint32 clientId = data.actions[0].clientId;
-
-    // Build filtered arrays of only successful actions
-    ActionData[] memory filteredActions = new ActionData[](successCount);
-    uint8[] memory filteredV = new uint8[](successCount);
-    bytes32[] memory filteredR = new bytes32[](successCount);
-    bytes32[] memory filteredS = new bytes32[](successCount);
-
-    uint256 idx = 0;
-    for (uint256 i = 0; i < data.actions.length; i++) {
-      if ((successBitmap & (1 << i)) != 0) {
-        filteredActions[idx] = data.actions[i];
-        filteredV[idx] = data.v[i];
-        filteredR[idx] = data.r[i];
-        filteredS[idx] = data.s[i];
-        idx++;
-      }
-    }
-
-    bytes memory payload = abi.encode(filteredActions, filteredV, filteredR, filteredS);
-    replicator.replicate{ value: totalReplicationFee }(clientId, payload, replicationLzTokenAmount);
-  }
 
   function setWithdrawable(uint256 withdrawBitmap, uint256 withdrawCount, ActionData[] memory actions, uint256 lzTokenAmountForWithdraws, uint256 withdrawFee) internal {
     if (withdrawCount > 0) {
@@ -452,24 +374,5 @@ contract CawActions is Ownable {
     return cawName.withdrawQuote(tokenIds, amounts, payInLzToken);
   }
 
-  function replicationQuote(uint32 clientId, MultiActionData calldata data, bool payInLzToken)
-  external view returns (MessagingFee memory quote, uint256 chainCount) {
-    // Return zero fees if no replicator is configured
-    if (address(replicator) == address(0)) {
-      return (MessagingFee(0, 0), 0);
-    }
-    bytes memory payload = abi.encode(data.actions, data.v, data.r, data.s);
-    return replicator.quoteReplication(clientId, payload, payInLzToken);
-  }
-
-  function getReplicationDestinations(uint32 clientId) external view returns (ReplicationDestination[] memory) {
-    require(address(replicator) != address(0), "Replicator not set");
-    return replicator.getReplicationDestinations(clientId);
-  }
-
-  function getReplicationCount(uint32 clientId) external view returns (uint256) {
-    require(address(replicator) != address(0), "Replicator not set");
-    return replicator.getReplicationCount(clientId);
-  }
 }
 

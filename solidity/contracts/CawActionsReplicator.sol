@@ -31,14 +31,16 @@ interface ICawActionsForReplicator {
 /**
  * @title CawActionsReplicator
  * @notice Replicates action data to archive chains via LayerZero.
- * @dev Deployed on L2. Owner registers archive chains globally via addArchiveChain/removeArchiveChain.
+ * @dev Deployed on L2. Replication is decoupled from action processing — it runs
+ *      as a background process that submits complete 256-action checkpoint batches.
+ *      Owner registers archive chains globally via addArchiveChain.
  *      Clients select which available chains they replicate to via setClientChains (called by CawNameL2).
- *      When CawActions processes actions, it calls replicate() to send data to the client's selected chains.
+ *      Anyone can call replicateBatch() — it's fully trustless since all data is verified on-chain.
  */
 contract CawActionsReplicator is OApp {
   using OptionsBuilder for bytes;
 
-  /// @notice The CawActions contract authorized to replicate (immutable, set at deployment)
+  /// @notice The CawActions contract used for checkpoint and signature verification
   address public immutable cawActions;
 
   /// @notice The CawNameL2 contract authorized to set client chains (immutable, set at deployment)
@@ -75,20 +77,18 @@ contract CawActionsReplicator is OApp {
   /// @notice Whether replication is enabled for a client
   mapping(uint32 => bool) public clientReplicationEnabled;
 
-  // Migration state: tracks progress through historical checkpoints (per-client, per-destination)
-  // migrationBitmap[clientId][destEid][checkpointId] = bitmap of which actions have been migrated
-  mapping(uint32 => mapping(uint32 => mapping(uint256 => uint256))) public migrationBitmap;
+  /// @notice Tracks which checkpoints have been replicated: clientId => destEid => checkpointId => done
+  mapping(uint32 => mapping(uint32 => mapping(uint256 => bool))) public checkpointReplicated;
 
-  event Replicated(uint32 indexed destEid, bytes32 guid, uint256 payloadSize, uint32 indexed clientId);
-  event ReplicationFailed(uint32 indexed destEid, uint32 indexed clientId, string reason);
+  event Replicated(uint32 indexed destEid, uint256 payloadSize, uint32 indexed clientId);
   event ArchiveChainAdded(uint32 indexed eid, address target);
   event ClientChainsUpdated(uint32 indexed clientId, uint32[] destEids);
-  event MigrationBatchProcessed(uint256 indexed checkpointId, uint256 offset, uint256 count);
+  event BatchReplicated(uint256 indexed checkpointId, uint32 indexed clientId, uint32 indexed destEid);
 
   /**
    * @param _endpoint LayerZero endpoint address
-   * @param _cawActions The CawActions contract address (immutable)
-   * @param _cawNameL2 The CawNameL2 contract address (immutable, for receiving config updates)
+   * @param _cawActions The CawActions contract address (for checkpoint/signature verification)
+   * @param _cawNameL2 The CawNameL2 contract address (for receiving config updates)
    */
   constructor(
     address _endpoint,
@@ -163,7 +163,6 @@ contract CawActionsReplicator is OApp {
 
   /**
    * @notice Get all replication destinations for a client
-   * @dev Builds ReplicationDestination[] from clientChains + peers mapping for CawActions compatibility
    * @param clientId The client ID
    * @return destinations Array of replication destinations
    */
@@ -195,99 +194,6 @@ contract CawActionsReplicator is OApp {
   }
 
   /**
-   * @notice Replicate action data to all applicable destination chains
-   * @param clientId The client ID (determines which chains to replicate to)
-   * @param payload The encoded action data to replicate
-   * @param lzTokenAmount Amount of LZ token for fees per chain (0 if paying in native)
-   */
-  function replicate(uint32 clientId, bytes calldata payload, uint256 lzTokenAmount) external payable {
-    require(msg.sender == cawActions, "Only CawActions can replicate");
-
-    ReplicationDestination[] memory destinations = getReplicationDestinations(clientId);
-    if (destinations.length == 0) {
-      // No replication configured, refund and return
-      if (msg.value > 0) payable(tx.origin).transfer(msg.value);
-      return;
-    }
-
-    _replicateToDestinations(clientId, payload, destinations, lzTokenAmount);
-  }
-
-  /**
-   * @notice External wrapper for _lzSend to allow try/catch
-   * @dev Only callable by this contract
-   */
-  function doLzSend(
-    uint32 destEid,
-    bytes calldata payload,
-    bytes memory options,
-    uint256 nativeFee,
-    uint256 lzTokenFee
-  ) external payable {
-    require(msg.sender == address(this), "Only self");
-    _lzSend(
-      destEid,
-      payload,
-      options,
-      MessagingFee(nativeFee, lzTokenFee),
-      payable(tx.origin)
-    );
-  }
-
-  /**
-   * @notice Get a quote for replicating actions to all applicable chains
-   * @param clientId The client ID
-   * @param payload The payload to replicate
-   * @param payInLzToken Whether to pay in LZ token
-   * @return totalFee Total fee for all destination chains
-   * @return chainCount Number of chains being replicated to
-   */
-  function quoteReplication(uint32 clientId, bytes calldata payload, bool payInLzToken)
-    external view returns (MessagingFee memory totalFee, uint256 chainCount)
-  {
-    ReplicationDestination[] memory destinations = getReplicationDestinations(clientId);
-    chainCount = destinations.length;
-
-    if (chainCount == 0) return (MessagingFee(0, 0), 0);
-    bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(
-      RECEIVE_GAS_LIMIT, 0
-    );
-
-    uint256 totalNativeFee = 0;
-    uint256 totalLzTokenFee = 0;
-
-    for (uint i = 0; i < destinations.length; i++) {
-      MessagingFee memory fee = _quote(destinations[i].eid, payload, options, payInLzToken);
-      totalNativeFee += fee.nativeFee;
-      totalLzTokenFee += fee.lzTokenFee;
-    }
-
-    totalFee = MessagingFee(totalNativeFee, totalLzTokenFee);
-  }
-
-  /**
-   * @notice Quote per-chain fees for replication (used internally for proportional allocation)
-   * @param clientId The client ID
-   * @param payload The payload to replicate
-   * @return nativeFees Per-chain native fee amounts
-   * @return destinations The replication destinations
-   */
-  function quotePerChain(uint32 clientId, bytes memory payload)
-    public view returns (uint256[] memory nativeFees, ReplicationDestination[] memory destinations)
-  {
-    destinations = getReplicationDestinations(clientId);
-    nativeFees = new uint256[](destinations.length);
-
-    if (destinations.length == 0) return (nativeFees, destinations);
-
-    bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(RECEIVE_GAS_LIMIT, 0);
-    for (uint i = 0; i < destinations.length; i++) {
-      MessagingFee memory fee = _quote(destinations[i].eid, payload, options, false);
-      nativeFees[i] = fee.nativeFee;
-    }
-  }
-
-  /**
    * @notice This contract only sends, it doesn't receive LZ messages
    */
   function _lzReceive(
@@ -301,7 +207,9 @@ contract CawActionsReplicator is OApp {
   }
 
   /**
-   * @dev Internal function to replicate to a single destination (used by migration)
+   * @dev Internal function to replicate to a single destination. Reverts on failure
+   *      so the caller can retry — no silent failures since replication is decoupled
+   *      from action processing.
    */
   function _replicateToDestination(
     uint32 clientId,
@@ -310,138 +218,84 @@ contract CawActionsReplicator is OApp {
     uint256 lzTokenAmount
   ) internal {
     bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(RECEIVE_GAS_LIMIT, 0);
-
-    try this.doLzSend(destEid, payload, options, msg.value, lzTokenAmount) {
-      emit Replicated(destEid, bytes32(0), payload.length, clientId);
-    } catch Error(string memory reason) {
-      emit ReplicationFailed(destEid, clientId, reason);
-    } catch {
-      emit ReplicationFailed(destEid, clientId, "Unknown error");
-    }
-  }
-
-  /**
-   * @dev Internal function to replicate to all destinations (used by regular replicate).
-   *      Allocates fees proportionally based on per-chain LZ quotes to avoid underfunding
-   *      expensive chains while overfunding cheap ones.
-   */
-  function _replicateToDestinations(
-    uint32 clientId,
-    bytes memory payload,
-    ReplicationDestination[] memory destinations,
-    uint256 lzTokenAmount
-  ) internal {
-    bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(RECEIVE_GAS_LIMIT, 0);
-    uint256 lzTokenPerChain = lzTokenAmount / destinations.length;
-
-    // Quote each chain to determine proportional fee allocation
-    // peers[destEid] is already set by addArchiveChain, no sync needed
-    uint256 totalQuoted = 0;
-    uint256[] memory quotedFees = new uint256[](destinations.length);
-    for (uint i = 0; i < destinations.length; i++) {
-      if (peers[destinations[i].eid] == bytes32(0)) continue;
-      MessagingFee memory fee = _quote(destinations[i].eid, payload, options, false);
-      quotedFees[i] = fee.nativeFee;
-      totalQuoted += fee.nativeFee;
-    }
-
-    uint256 feeUsed = 0;
-
-    for (uint i = 0; i < destinations.length; i++) {
-      ReplicationDestination memory dest = destinations[i];
-
-      if (peers[dest.eid] == bytes32(0)) {
-        emit ReplicationFailed(dest.eid, clientId, "Peer not set");
-        continue;
-      }
-
-      // Allocate proportionally; give remainder to the last chain
-      uint256 chainFee;
-      if (i == destinations.length - 1)
-        chainFee = msg.value - feeUsed;
-      else if (totalQuoted > 0)
-        chainFee = msg.value * quotedFees[i] / totalQuoted;
-      else
-        chainFee = msg.value / destinations.length;
-      feeUsed += chainFee;
-
-      try this.doLzSend(dest.eid, payload, options, chainFee, lzTokenPerChain) {
-        emit Replicated(dest.eid, bytes32(0), payload.length, clientId);
-      } catch Error(string memory reason) {
-        emit ReplicationFailed(dest.eid, clientId, reason);
-      } catch {
-        emit ReplicationFailed(dest.eid, clientId, "Unknown error");
-      }
-    }
+    _lzSend(
+      destEid,
+      payload,
+      options,
+      MessagingFee(msg.value, lzTokenAmount),
+      payable(tx.origin)
+    );
+    emit Replicated(destEid, payload.length, clientId);
   }
 
   // ============================================
-  // HISTORICAL MIGRATION
+  // BATCH REPLICATION
   // ============================================
   //
-  // Allows migrating historical actions to new archive chains. Actions are verified
-  // by checking that the r values chain correctly to on-chain checkpoints, and that
-  // each action's signature is valid for its r value.
+  // Replicates a complete 256-action checkpoint to an archive chain. Decoupled from
+  // action processing — intended to be called by a background replication service.
   //
   // Process:
-  // 1. Submit 256 r values for a checkpoint + a batch of actions at an offset
+  // 1. Submit all 256 actions for a checkpoint with their signatures
   // 2. Contract verifies r values chain from previous checkpoint to this checkpoint
-  // 3. Contract verifies each action's signature matches its r value at the offset
-  // 4. Actions are replicated to configured destinations
+  // 3. Contract verifies each action's signature matches its r value
+  // 4. Actions are replicated to the specified destination chain
   //
   // Anyone can call this - it's fully trustless since all data is verified on-chain.
 
-  struct MigrationParams {
+  struct ReplicationParams {
     uint32 clientId;
     uint32 destEid;
     uint256 checkpointId;
-    uint256 offset;
     uint256 lzTokenAmount;
   }
 
   /**
-   * @notice Migrate a batch of historical actions to a specific archive chain
-   * @param params Migration parameters (clientId, destEid, checkpointId, offset, lzTokenAmount)
-   * @param actions The actions to migrate (must all belong to clientId)
-   * @param v Signature v values
-   * @param r Signature r values (must match allR at offset positions)
-   * @param s Signature s values
-   * @param allR All 256 r values for this client's checkpoint
+   * @notice Replicate a complete 256-action checkpoint to an archive chain
+   * @param params Replication parameters (clientId, destEid, checkpointId, lzTokenAmount)
+   * @param actions All 256 actions for this checkpoint (must all belong to clientId)
+   * @param v Signature v values (256 items)
+   * @param r Signature r values (256 items, also used for hash chain verification)
+   * @param s Signature s values (256 items)
    */
-  function migrateHistoricalBatch(
-    MigrationParams calldata params,
+  function replicateBatch(
+    ReplicationParams calldata params,
     ICawActionsForReplicator.ActionData[] calldata actions,
     uint8[] calldata v,
     bytes32[] calldata r,
-    bytes32[] calldata s,
-    bytes32[256] calldata allR
+    bytes32[] calldata s
   ) external payable {
     require(params.checkpointId > 0, "Invalid checkpoint");
-    require(actions.length > 0, "No actions");
-    require(actions.length == v.length && actions.length == r.length && actions.length == s.length, "Array mismatch");
-    require(params.offset + actions.length <= 256, "Offset out of bounds");
+    require(actions.length == 256, "Must submit exactly 256 actions");
+    require(v.length == 256 && r.length == 256 && s.length == 256, "Signature arrays must be 256");
 
-    // Verify destination is valid: must be an available chain and client must have it enabled
+    // Verify destination is valid
     require(isAvailableChain[params.destEid], "Chain not available");
     require(clientChainEnabled[params.clientId][params.destEid], "Client chain not enabled");
 
-    // Verify allR chains correctly
-    _verifyCheckpointHash(params.clientId, params.checkpointId, allR);
+    // Prevent duplicate replication
+    require(!checkpointReplicated[params.clientId][params.destEid][params.checkpointId], "Already replicated");
 
-    // Verify and mark actions
-    _verifyAndMarkActions(params, actions, v, r, s, allR);
+    // Verify r values chain correctly to the on-chain checkpoint hash
+    _verifyCheckpointHash(params.clientId, params.checkpointId, r);
 
-    // Replicate the verified actions to the single destination
+    // Verify each action's signature and that it was processed
+    _verifyActions(params.clientId, actions, v, r, s);
+
+    // Mark as replicated before sending (checks-effects-interactions)
+    checkpointReplicated[params.clientId][params.destEid][params.checkpointId] = true;
+
+    // Replicate to the destination
     bytes memory payload = abi.encode(actions, v, r, s);
     _replicateToDestination(params.clientId, params.destEid, payload, params.lzTokenAmount);
 
-    emit MigrationBatchProcessed(params.checkpointId, params.offset, actions.length);
+    emit BatchReplicated(params.checkpointId, params.clientId, params.destEid);
   }
 
   function _verifyCheckpointHash(
     uint32 clientId,
     uint256 checkpointId,
-    bytes32[256] calldata allR
+    bytes32[] calldata r
   ) internal view {
     ICawActionsForReplicator cawActionsContract = ICawActionsForReplicator(cawActions);
 
@@ -450,132 +304,68 @@ contract CawActionsReplicator is OApp {
       : cawActionsContract.clientHashAtCheckpoint(clientId, checkpointId - 1);
 
     for (uint i = 0; i < 256; i++) {
-      hash = keccak256(abi.encodePacked(hash, allR[i]));
+      hash = keccak256(abi.encodePacked(hash, r[i]));
     }
     require(hash == cawActionsContract.clientHashAtCheckpoint(clientId, checkpointId), "Invalid r sequence");
   }
 
-  function _verifyAndMarkActions(
-    MigrationParams calldata params,
-    ICawActionsForReplicator.ActionData[] calldata actions,
-    uint8[] calldata v,
-    bytes32[] calldata r,
-    bytes32[] calldata s,
-    bytes32[256] calldata allR
-  ) internal {
-    ICawActionsForReplicator cawActionsContract = ICawActionsForReplicator(cawActions);
-
-    for (uint i = 0; i < actions.length; i++) {
-      require(actions[i].clientId == params.clientId, "Action clientId mismatch");
-      require(r[i] == allR[params.offset + i], "R value mismatch");
-
-      cawActionsContract.verifySignature(v[i], r[i], s[i], actions[i]);
-      require(cawActionsContract.isCawonceUsed(actions[i].senderId, actions[i].cawonce), "Action never processed");
-
-      uint256 bit = 1 << (params.offset + i);
-      require((migrationBitmap[params.clientId][params.destEid][params.checkpointId] & bit) == 0, "Already migrated");
-      migrationBitmap[params.clientId][params.destEid][params.checkpointId] |= bit;
-    }
-  }
-
-  // ============================================
-  // PARTIAL CHECKPOINT MIGRATION
-  // ============================================
-
-  /// @notice Event emitted when partial checkpoint is migrated
-  event PartialCheckpointMigrated(uint32 indexed clientId, uint32 indexed destEid, uint256 count);
-
-  /**
-   * @notice Migrate actions from the last complete checkpoint to the current state.
-   * @dev This allows migrating the "partial checkpoint" - actions that haven't yet
-   *      reached a 256-action boundary. Verifies the r-values chain from the last
-   *      checkpoint hash to the current hash stored in CawActions.
-   *
-   *      Example: If clientActionCount is 300, there's 1 complete checkpoint (256 actions)
-   *      and 44 actions in the partial checkpoint. This function migrates those 44.
-   *
-   * @param clientId The client ID these actions belong to
-   * @param destEid The destination chain endpoint ID
-   * @param actions The actions to migrate (must be all actions after last checkpoint)
-   * @param v Signature v values
-   * @param r Signature r values (must chain from last checkpoint hash to current hash)
-   * @param s Signature s values
-   */
-  function migratePartialCheckpoint(
+  function _verifyActions(
     uint32 clientId,
-    uint32 destEid,
     ICawActionsForReplicator.ActionData[] calldata actions,
     uint8[] calldata v,
     bytes32[] calldata r,
     bytes32[] calldata s
-  ) external payable {
-    require(actions.length > 0, "No actions");
-    require(actions.length == v.length && actions.length == r.length && actions.length == s.length, "Array mismatch");
-    require(actions.length <= 256, "Too many actions");
-    require(clientReplicationEnabled[clientId], "Replication not enabled");
-
-    // Verify destination is valid
-    require(isAvailableChain[destEid], "Chain not available");
-    require(clientChainEnabled[clientId][destEid], "Client chain not enabled");
-
+  ) internal view {
     ICawActionsForReplicator cawActionsContract = ICawActionsForReplicator(cawActions);
 
-    // Get current state from CawActions
-    uint256 actionCount = cawActionsContract.clientActionCount(clientId);
-    uint256 lastCheckpoint = actionCount / 256;
-    uint256 partialCount = actionCount % 256;
-
-    require(actions.length == partialCount, "Action count mismatch with on-chain state");
-
-    // Get the starting hash (from last checkpoint, or zero if no checkpoints)
-    bytes32 startHash = lastCheckpoint == 0
-      ? bytes32(0)
-      : cawActionsContract.clientHashAtCheckpoint(clientId, lastCheckpoint);
-
-    // Verify r-values chain to current hash
-    bytes32 computedHash = startHash;
-    for (uint i = 0; i < actions.length; i++) {
+    for (uint i = 0; i < 256; i++) {
       require(actions[i].clientId == clientId, "Action clientId mismatch");
-
-      // Verify signature
       cawActionsContract.verifySignature(v[i], r[i], s[i], actions[i]);
-
-      // Verify action was processed
-      require(cawActionsContract.isCawonceUsed(actions[i].senderId, actions[i].cawonce), "Action not processed");
-
-      // Chain the hash
-      computedHash = keccak256(abi.encodePacked(computedHash, r[i]));
+      require(cawActionsContract.isCawonceUsed(actions[i].senderId, actions[i].cawonce), "Action never processed");
     }
-
-    // Verify computed hash matches current hash
-    require(computedHash == cawActionsContract.clientCurrentHash(clientId), "Hash chain verification failed");
-
-    // Replicate to the destination
-    bytes memory payload = abi.encode(actions, v, r, s);
-    _replicateToDestination(clientId, destEid, payload, 0);
-
-    emit PartialCheckpointMigrated(clientId, destEid, actions.length);
   }
 
   /**
-   * @notice Get a quote for migrating actions to a specific destination
+   * @notice Returns the next checkpoint ID that needs replication for a client/destination pair.
+   *         Returns 0 if fully caught up (no unreplicated checkpoints).
+   * @param clientId The client ID
    * @param destEid The destination chain endpoint ID
-   * @param actionCount Number of actions to migrate (for gas estimation)
+   * @return nextCheckpointId The next unreplicated checkpoint (0 if caught up)
+   * @return totalCheckpoints Total complete checkpoints for this client
+   */
+  function getNextUnreplicatedCheckpoint(uint32 clientId, uint32 destEid)
+    external view returns (uint256 nextCheckpointId, uint256 totalCheckpoints)
+  {
+    ICawActionsForReplicator cawActionsContract = ICawActionsForReplicator(cawActions);
+    uint256 actionCount = cawActionsContract.clientActionCount(clientId);
+    totalCheckpoints = actionCount / 256;
+
+    for (uint256 i = 1; i <= totalCheckpoints; i++) {
+      if (!checkpointReplicated[clientId][destEid][i]) {
+        return (i, totalCheckpoints);
+      }
+    }
+
+    return (0, totalCheckpoints);
+  }
+
+  /**
+   * @notice Get a quote for replicating a batch to a specific destination
+   * @param destEid The destination chain endpoint ID
    * @param avgTextLength Average text length per action (for payload size estimation)
    * @param payInLzToken Whether to pay in LZ token
    * @return fee The messaging fee
    */
-  function quoteMigration(
+  function quoteReplicateBatch(
     uint32 destEid,
-    uint256 actionCount,
     uint256 avgTextLength,
     bool payInLzToken
   ) external view returns (MessagingFee memory fee) {
-    // Estimate payload size:
+    // Estimate payload size for 256 actions:
     // - Each ActionData: ~200 bytes base + text length + arrays
     // - v, r, s: 1 + 32 + 32 = 65 bytes per action
     // - Encoding overhead: ~100 bytes
-    uint256 estimatedSize = 100 + (actionCount * (265 + avgTextLength));
+    uint256 estimatedSize = 100 + (256 * (265 + avgTextLength));
 
     bytes memory dummyPayload = new bytes(estimatedSize);
     bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(RECEIVE_GAS_LIMIT, 0);

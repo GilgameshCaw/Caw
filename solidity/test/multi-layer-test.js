@@ -228,7 +228,7 @@ async function safeProcessActions(actions, params) {
   console.log("attempting to process", transactionData.actions.length, "actions");
 
   var withdrawFee = quote?.nativeFee || '0';
-  t = await cawActions.safeProcessActions(params.validatorId || 1, transactionData, withdrawFee, 0, 0, txOptions);
+  t = await cawActions.safeProcessActions(params.validatorId || 1, transactionData, withdrawFee, 0, txOptions);
 
   var fullTx = await web3.eth.getTransaction(t.tx);
   console.log("processed", signedActions.length, "actions. GAS units:", BigInt(t.receipt.gasUsed));
@@ -318,7 +318,6 @@ async function processActions(actions, params) {
     transactionData,
     withdrawFee, // withdrawFee
     0, // withdrawLzTokenAmount
-    0, // replicationLzTokenAmount
     txOptions
   );
 
@@ -340,7 +339,7 @@ async function processActions(actions, params) {
 
   var t;
   if (transactionData.actions.length > 0) {
-    t = await cawActions.processActions(params.validatorId || 1, transactionData, withdrawFee, 0, 0, txOptions);
+    t = await cawActions.processActions(params.validatorId || 1, transactionData, withdrawFee, 0, txOptions);
 
     var fullTx = await web3.eth.getTransaction(t.tx);
     console.log("processed", signedActions.length, "actions. GAS units:", BigInt(t.receipt.gasUsed));

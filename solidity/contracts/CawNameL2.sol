@@ -302,10 +302,37 @@ contract CawNameL2 is
     emit SessionCreated(signer, sessionKey, expiry, scopeBitmap, spendLimit);
   }
 
-  /// @notice Revoke a session key. Only callable by the delegating wallet.
+  /// @notice Revoke a session key. Callable by the delegating wallet.
   function revokeSession(address sessionKey) external {
     delete sessions[msg.sender][sessionKey];
     emit SessionRevoked(msg.sender, sessionKey);
+  }
+
+  /// @notice Revoke a session key using a signature from the session key itself.
+  ///         Anyone can submit this (e.g., the validator/API), as long as they provide
+  ///         a valid signature from the session key proving it wants to be revoked.
+  function revokeSessionBySig(
+    address owner,
+    address sessionKey,
+    uint8 v, bytes32 r, bytes32 s
+  ) external {
+    require(sessions[owner][sessionKey].expiry != 0, "Session not found");
+
+    // Verify the session key signed a revocation message
+    bytes32 digest = keccak256(abi.encodePacked(
+      "\x19\x01",
+      eip712DomainHash,
+      keccak256(abi.encode(
+        keccak256("RevokeSession(address owner,address sessionKey)"),
+        owner,
+        sessionKey
+      ))
+    ));
+    address signer = ecrecover(digest, v, r, s);
+    require(signer == sessionKey, "Invalid session key signature");
+
+    delete sessions[owner][sessionKey];
+    emit SessionRevoked(owner, sessionKey);
   }
 
   function _lzReceive(

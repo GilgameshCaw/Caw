@@ -402,23 +402,6 @@ const LINKING_STEPS = [
     condition: (state) => state.addresses.CawNameL2_L1 && state.addresses.CawActions_L1,
   },
   {
-    name: 'Set replicator on CawActions_L1',
-    chain: 'L1',
-    phase: 2,
-    contract: 'CawActions_L1',
-    method: 'setReplicator',
-    args: (state) => [state.addresses.CawActionsReplicator_L1],
-    condition: (state) => state.addresses.CawActions_L1 && state.addresses.CawActionsReplicator_L1,
-    skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawActions_L1');
-      if (!contract) return false;
-      try {
-        const current = await contract.replicator();
-        return current !== '0x0000000000000000000000000000000000000000';
-      } catch { return false; }
-    },
-  },
-  {
     name: 'Link CawNameL2_L1 to replicator',
     chain: 'L1',
     phase: 2,
@@ -471,23 +454,6 @@ const LINKING_STEPS = [
     condition: (state) => state.addresses.CawNameL2_L2 && state.addresses.CawActions_L2,
   },
   {
-    name: 'Set replicator on CawActions_L2',
-    chain: 'L2',
-    phase: 3,
-    contract: 'CawActions_L2',
-    method: 'setReplicator',
-    args: (state) => [state.addresses.CawActionsReplicator_L2],
-    condition: (state) => state.addresses.CawActions_L2 && state.addresses.CawActionsReplicator_L2,
-    skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawActions_L2');
-      if (!contract) return false;
-      try {
-        const current = await contract.replicator();
-        return current !== '0x0000000000000000000000000000000000000000';
-      } catch { return false; }
-    },
-  },
-  {
     name: 'Link CawNameL2_L2 to replicator',
     chain: 'L2',
     phase: 3,
@@ -519,23 +485,6 @@ const LINKING_STEPS = [
     method: 'setCawActions',
     args: (state) => [state.addresses.CawActions_L2b],
     condition: (state) => state.addresses.CawNameL2_L2b && state.addresses.CawActions_L2b,
-  },
-  {
-    name: 'Set replicator on CawActions_L2b',
-    chain: 'L2b',
-    phase: 3,
-    contract: 'CawActions_L2b',
-    method: 'setReplicator',
-    args: (state) => [state.addresses.CawActionsReplicator_L2b],
-    condition: (state) => state.addresses.CawActions_L2b && state.addresses.CawActionsReplicator_L2b,
-    skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawActions_L2b');
-      if (!contract) return false;
-      try {
-        const current = await contract.replicator();
-        return current !== '0x0000000000000000000000000000000000000000';
-      } catch { return false; }
-    },
   },
   {
     name: 'Link CawNameL2_L2b to replicator',
