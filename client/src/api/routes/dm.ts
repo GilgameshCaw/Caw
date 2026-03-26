@@ -65,9 +65,54 @@ router.post('/conversations',
       }
 
       // Verify peer has a DM identity
-      const peerHasIdentity = await dmService.hasIdentity(Number(peerUserId))
-      if (!peerHasIdentity) {
+      const peerIdentity = await prisma.dmIdentity.findUnique({
+        where: { userId: Number(peerUserId) },
+        include: { user: { select: { username: true, displayName: true, avatarUrl: true, image: true, tokenId: true } } }
+      })
+      if (!peerIdentity) {
         return res.status(400).json({ error: 'Peer has not enabled DMs' })
+      }
+
+      // Check DM privacy settings
+      const privacy = peerIdentity.dmPrivacy // EVERYONE, FOLLOWERS, FOLLOWING
+      if (privacy !== 'EVERYONE') {
+        const senderId = Number(userId)
+        const recipientId = Number(peerUserId)
+
+        if (privacy === 'FOLLOWING') {
+          // Recipient only accepts from people they follow
+          const recipientFollowsSender = await prisma.follow.findUnique({
+            where: { followerId_followingId: { followerId: recipientId, followingId: senderId } }
+          })
+          if (!recipientFollowsSender || recipientFollowsSender.action !== 'FOLLOW' || recipientFollowsSender.status !== 'SUCCESS') {
+            return res.status(403).json({
+              error: 'DM_PRIVACY',
+              reason: 'following',
+              message: `@${peerIdentity.user.username} only accepts messages from users they follow.`,
+              peer: peerIdentity.user
+            })
+          }
+        } else if (privacy === 'FOLLOWERS') {
+          // Recipient accepts from followers + people they follow
+          const [senderFollowsRecipient, recipientFollowsSender] = await Promise.all([
+            prisma.follow.findUnique({
+              where: { followerId_followingId: { followerId: senderId, followingId: recipientId } }
+            }),
+            prisma.follow.findUnique({
+              where: { followerId_followingId: { followerId: recipientId, followingId: senderId } }
+            })
+          ])
+          const senderIsFollower = senderFollowsRecipient?.action === 'FOLLOW' && senderFollowsRecipient?.status === 'SUCCESS'
+          const recipientFollows = recipientFollowsSender?.action === 'FOLLOW' && recipientFollowsSender?.status === 'SUCCESS'
+          if (!senderIsFollower && !recipientFollows) {
+            return res.status(403).json({
+              error: 'DM_PRIVACY',
+              reason: 'followers',
+              message: `@${peerIdentity.user.username} only accepts messages from their followers.`,
+              peer: peerIdentity.user
+            })
+          }
+        }
       }
 
       const conversation = await dmService.getOrCreateConversation(Number(userId), Number(peerUserId))
@@ -96,7 +141,10 @@ router.get('/conversations',
         return res.status(400).json({ error: 'userId query parameter is required' })
       }
 
-      const conversations = await dmService.getConversations(userId)
+      const limit = Math.min(Number(req.query.limit) || 50, 100)
+      const offset = Number(req.query.offset) || 0
+
+      const { conversations, hasMore } = await dmService.getConversations(userId, limit, offset)
 
       // Filter out conversations with blocked users
       const blockedIds = await getBlockedUserIds(userId)
@@ -106,7 +154,7 @@ router.get('/conversations',
           )
         : conversations
 
-      return res.json({ conversations: filtered })
+      return res.json({ conversations: filtered, hasMore })
     } catch (error: any) {
       console.error('GET /api/dm/conversations error:', error)
       return res.status(500).json({ error: error.message })
@@ -130,11 +178,14 @@ router.post('/messages',
         include: { participants: true }
       })
       if (!conv) return res.status(404).json({ error: 'Conversation not found' })
-      const peer = conv.participants.find(p => p.userId !== Number(senderId))
+      const peer = conv.participants.find((p: any) => p.userId !== Number(senderId))
+      console.log(`[DM] POST /messages: senderId=${senderId}, peer=${peer?.userId || 'none'}`)
+
       const isShadowBlocked = peer ? await isBlockedEitherDirection(Number(senderId), peer.userId) : false
+      console.log(`[DM] Shadow block check: ${isShadowBlocked}`)
 
       if (isShadowBlocked) {
-        // Shadow block: store the message but mark it so the recipient never sees it
+        console.log(`[DM] Shadow blocking message from ${senderId} to ${peer?.userId}`)
         const message = await prisma.message.create({
           data: {
             conversationId,
@@ -144,8 +195,63 @@ router.post('/messages',
             shadowBlocked: true
           }
         })
-        // Don't broadcast, don't increment unread — sender sees it, recipient doesn't
         return res.json(message)
+      }
+
+      // Check DM privacy settings of the recipient
+      if (peer) {
+        const peerIdentity = await prisma.dmIdentity.findUnique({
+          where: { userId: peer.userId },
+          include: { user: { select: { username: true, displayName: true, avatarUrl: true, image: true, tokenId: true } } }
+        })
+
+        const privacy = peerIdentity?.dmPrivacy || 'EVERYONE'
+        console.log(`[DM] Privacy check: peer=${peer.userId}, dmPrivacy=${privacy}, sender=${senderId}`)
+
+        if (peerIdentity && privacy !== 'EVERYONE') {
+          const sid = Number(senderId)
+          const rid = peer.userId
+
+          let allowed = false
+          if (privacy === 'FOLLOWING') {
+            const recipientFollowsSender = await prisma.follow.findUnique({
+              where: { followerId_followingId: { followerId: rid, followingId: sid } }
+            })
+            allowed = !!(recipientFollowsSender?.action === 'FOLLOW' && recipientFollowsSender?.status === 'SUCCESS')
+            console.log(`[DM] FOLLOWING check: recipient ${rid} follows sender ${sid}? ${allowed}`, recipientFollowsSender)
+          } else if (privacy === 'FOLLOWERS') {
+            const [senderFollowsRecipient, recipientFollowsSender] = await Promise.all([
+              prisma.follow.findUnique({
+                where: { followerId_followingId: { followerId: sid, followingId: rid } }
+              }),
+              prisma.follow.findUnique({
+                where: { followerId_followingId: { followerId: rid, followingId: sid } }
+              })
+            ])
+            const senderIsFollower = !!(senderFollowsRecipient?.action === 'FOLLOW' && senderFollowsRecipient?.status === 'SUCCESS')
+            const recipientFollows = !!(recipientFollowsSender?.action === 'FOLLOW' && recipientFollowsSender?.status === 'SUCCESS')
+            allowed = senderIsFollower || recipientFollows
+            console.log(`[DM] FOLLOWERS check: sender ${sid} follows recipient ${rid}? ${senderIsFollower}, recipient follows sender? ${recipientFollows}, allowed=${allowed}`)
+          }
+
+          if (!allowed) {
+            const reason = privacy === 'FOLLOWING' ? 'following' : 'followers'
+            console.log(`[DM] Privacy DENIED: ${reason} — returning 403`)
+            return res.status(403).json({
+              error: 'DM_PRIVACY',
+              reason,
+              message: reason === 'following'
+                ? `@${peerIdentity.user.username} only accepts messages from users they follow.`
+                : `@${peerIdentity.user.username} only accepts messages from their followers.`,
+              peer: peerIdentity.user
+            })
+          }
+          console.log(`[DM] Privacy ALLOWED`)
+        } else {
+          console.log(`[DM] Privacy check skipped: ${privacy === 'EVERYONE' ? 'set to EVERYONE' : 'no identity found'}`)
+        }
+      } else {
+        console.log(`[DM] No peer found in conversation — skipping privacy check`)
       }
 
       const message = await dmService.sendMessage({
@@ -343,6 +449,52 @@ router.delete('/messages/:messageId',
     } catch (error: any) {
       console.error('DELETE /api/dm/messages/:messageId error:', error)
       return res.status(500).json({ error: error.message })
+    }
+  }
+)
+
+// Get DM settings for a user
+router.get('/settings',
+  async (req: any, res: any) => {
+    try {
+      const userId = Number(req.query.userId)
+      if (!userId) return res.status(400).json({ error: 'userId is required' })
+
+      const identity = await prisma.dmIdentity.findUnique({
+        where: { userId },
+        select: { dmPrivacy: true }
+      })
+
+      res.json({ dmPrivacy: identity?.dmPrivacy || 'EVERYONE' })
+    } catch (error: any) {
+      console.error('GET /api/dm/settings error:', error)
+      res.status(500).json({ error: error.message })
+    }
+  }
+)
+
+// Update DM settings
+router.put('/settings',
+  requireAuth({ field: 'userId' }),
+  async (req: any, res: any) => {
+    try {
+      const { userId, dmPrivacy } = req.body
+      if (!userId) return res.status(400).json({ error: 'userId is required' })
+
+      const validValues = ['EVERYONE', 'FOLLOWERS', 'FOLLOWING']
+      if (!validValues.includes(dmPrivacy)) {
+        return res.status(400).json({ error: `dmPrivacy must be one of: ${validValues.join(', ')}` })
+      }
+
+      await prisma.dmIdentity.update({
+        where: { userId: Number(userId) },
+        data: { dmPrivacy }
+      })
+
+      res.json({ success: true, dmPrivacy })
+    } catch (error: any) {
+      console.error('PUT /api/dm/settings error:', error)
+      res.status(500).json({ error: error.message })
     }
   }
 )

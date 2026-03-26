@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useWalletClient } from 'wagmi'
-import { apiFetch, API_HOST } from '~/api/client'
+import { apiFetch, API_HOST, getAuthHeaders } from '~/api/client'
 import { useAuthStore } from '~/store/authStore'
 import { useVerifyWallet } from '~/hooks/useVerifyWallet'
 import {
@@ -113,11 +113,14 @@ export function useDmClient(tokenId?: number) {
     return () => { cancelled = true }
   }, [tokenId])
 
-  const loadConversations = useCallback(async () => {
+  const [hasMoreConversations, setHasMoreConversations] = useState(false)
+
+  const loadConversations = useCallback(async (loadMore = false) => {
     if (!tokenId) return
 
     try {
-      const data = await apiFetch<{ conversations: any[] }>(`/api/dm/conversations?userId=${tokenId}`)
+      const offset = loadMore ? conversations.length : 0
+      const data = await apiFetch<{ conversations: any[]; hasMore?: boolean }>(`/api/dm/conversations?userId=${tokenId}&limit=50&offset=${offset}`)
 
       const uiConversations: UiConversation[] = await Promise.all(
         (data.conversations || []).map(async (conv: any) => {
@@ -186,14 +189,25 @@ export function useDmClient(tokenId?: number) {
         })
       )
 
-      setConversations(uiConversations)
-      useDmUnreadStore.getState().setTotalUnread(
-        uiConversations.reduce((sum, c) => sum + c.unreadCount, 0)
-      )
+      if (loadMore) {
+        setConversations(prev => {
+          const merged = [...prev, ...uiConversations]
+          useDmUnreadStore.getState().setTotalUnread(
+            merged.reduce((sum, c) => sum + c.unreadCount, 0)
+          )
+          return merged
+        })
+      } else {
+        setConversations(uiConversations)
+        useDmUnreadStore.getState().setTotalUnread(
+          uiConversations.reduce((sum, c) => sum + c.unreadCount, 0)
+        )
+      }
+      setHasMoreConversations(!!data.hasMore)
     } catch (err) {
       console.error('[DM] Failed to load conversations:', err)
     }
-  }, [tokenId])
+  }, [tokenId, conversations.length])
 
   const initializeClient = useCallback(async () => {
     console.log('[DM] initializeClient called, walletClient:', !!walletClient, 'tokenId:', tokenId)
@@ -323,11 +337,29 @@ export function useDmClient(tokenId?: number) {
       throw new Error('This user has not enabled DMs yet')
     }
 
-    // Create/get conversation
-    const conversation = await apiFetch('/api/dm/conversations', {
+    // Create/get conversation — use direct fetch to parse structured error bodies
+    const convRes = await fetch('/api/dm/conversations', {
       method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeaders(),
+        ...(tokenId ? { 'x-user-id': String(tokenId) } : {})
+      },
       body: JSON.stringify({ userId: tokenId, peerUserId })
     })
+
+    const conversation = await convRes.json()
+
+    if (!convRes.ok) {
+      if (conversation.error === 'DM_PRIVACY') {
+        const privacyErr = new Error(conversation.message) as any
+        privacyErr.code = 'DM_PRIVACY'
+        privacyErr.reason = conversation.reason
+        privacyErr.peer = conversation.peer
+        throw privacyErr
+      }
+      throw new Error(conversation.error || `API ${convRes.status} ${convRes.statusText}`)
+    }
 
     // Compute shared secret for this conversation if we have the private key
     if (privateKeyRef && peerData.publicKey) {
@@ -359,6 +391,8 @@ export function useDmClient(tokenId?: number) {
     error,
     initializeClient,
     conversations,
+    hasMoreConversations,
+    loadMoreConversations: () => loadConversations(true),
     startConversation,
     clearUnreadCount,
     refreshConversations: loadConversations
@@ -519,8 +553,14 @@ export function useDmMessages(conversationId: string, tokenId?: number) {
 
       const encryptedPayload = await encrypt(content, sharedSecret)
 
-      const msg = await apiFetch('/api/dm/messages', {
+      // Use direct fetch instead of apiFetch so we can parse structured error bodies
+      const res = await fetch('/api/dm/messages', {
         method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...getAuthHeaders(),
+          ...(tokenId ? { 'x-user-id': String(tokenId) } : {})
+        },
         body: JSON.stringify({
           conversationId,
           senderId: tokenId,
@@ -528,6 +568,19 @@ export function useDmMessages(conversationId: string, tokenId?: number) {
           contentType: 'text'
         })
       })
+
+      const msg = await res.json()
+
+      if (!res.ok) {
+        if (msg.error === 'DM_PRIVACY') {
+          const privacyErr = new Error(msg.message) as any
+          privacyErr.code = 'DM_PRIVACY'
+          privacyErr.reason = msg.reason
+          privacyErr.peer = msg.peer
+          throw privacyErr
+        }
+        throw new Error(msg.error || `API ${res.status} ${res.statusText}`)
+      }
 
       // Add decrypted message to local state optimistically
       setMessages(prev => [...prev, {

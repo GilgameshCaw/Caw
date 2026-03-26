@@ -269,6 +269,7 @@ model DmIdentity {
   userId        Int                       @unique
   walletAddress String
   publicKey     String                    // hex-encoded secp256k1 public key
+  dmPrivacy     DmPrivacy                 @default(EVERYONE)
   createdAt     DateTime                  @default(now())
   updatedAt     DateTime                  @updatedAt
   conversations ConversationParticipant[]
@@ -464,6 +465,12 @@ enum MessageStatus {
 
 enum ConversationType {
   DM
+}
+
+enum DmPrivacy {
+  EVERYONE    // Anyone with DMs enabled can message me
+  FOLLOWERS   // My followers + people I follow can message me
+  FOLLOWING   // Only people I follow can message me
 }
 
 model Client {

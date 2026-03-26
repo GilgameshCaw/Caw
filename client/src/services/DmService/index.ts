@@ -197,9 +197,11 @@ export class DmService {
   /**
    * Get conversations for a user with unread counts
    */
-  async getConversations(userId: number) {
+  async getConversations(userId: number, limit = 50, offset = 0) {
     const participations = await prisma.conversationParticipant.findMany({
       where: { userId },
+      take: limit + 1,
+      skip: offset,
       include: {
         conversation: {
           include: {
@@ -234,11 +236,16 @@ export class DmService {
       orderBy: { conversation: { lastMessageAt: 'desc' } }
     })
 
-    return participations.map(p => ({
+    const hasMore = participations.length > limit
+    if (hasMore) participations.pop()
+
+    const conversations = participations.map(p => ({
       ...p.conversation,
       lastMessage: p.conversation.messages[0] || null,
       unreadCount: p.unreadCount
     }))
+
+    return { conversations, hasMore }
   }
 
   /**
