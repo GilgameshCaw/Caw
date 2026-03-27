@@ -83,7 +83,7 @@ function CawPriceTicker() {
 
   if (!cawPrice || cawPrice <= 0) {
     return (
-      <div className={`mt-3 text-xs text-center ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
+      <div className={`mt-2 text-xs ml-[26px] ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
         CAW price loading...
       </div>
     )
@@ -92,7 +92,7 @@ function CawPriceTicker() {
   const cawPerPenny = 0.01 / cawPrice
 
   return (
-    <div className={`mt-3 text-xs text-center ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
+    <div className={`mt-2 text-xs ml-[26px] ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
       $0.01 ≈ {formatAmount(cawPerPenny)} CAW
     </div>
   )
