@@ -1,0 +1,203 @@
+import { Link } from 'react-router-dom'
+import { useConnectModal } from '@rainbow-me/rainbowkit'
+import { useAccount } from 'wagmi'
+import { useActiveToken } from '~/store/tokenDataStore'
+import { useTheme } from '~/hooks/useTheme'
+import { useState, useEffect, useRef } from 'react'
+import cawLogo from '~/assets/images/caw-logo.png'
+
+const KEYWORDS = [
+  'permissionless',
+  'unstoppable',
+  'censorship-resistant',
+  'on-chain',
+  'decentralized',
+  'trustless',
+  'sovereign',
+  'unbreakable',
+]
+
+export default function CaptiveSplash() {
+  const { isDark } = useTheme()
+  const { isConnected } = useAccount()
+  const { openConnectModal } = useConnectModal()
+  const activeToken = useActiveToken()
+
+  const [keywordIndex, setKeywordIndex] = useState(0)
+  const [isAnimating, setIsAnimating] = useState(false)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    intervalRef.current = setInterval(() => {
+      setIsAnimating(true)
+      setTimeout(() => {
+        setKeywordIndex(i => (i + 1) % KEYWORDS.length)
+        setIsAnimating(false)
+      }, 400)
+    }, 3000)
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
+  }, [])
+
+  return (
+    <div className={`min-h-screen flex flex-col ${isDark ? 'bg-black text-white' : 'bg-white text-black'}`}>
+      {/* Main content - centered */}
+      <div className="flex-1 flex flex-col items-center justify-center px-6 py-6">
+        {/* Spinning 3D Coin Logo */}
+        <div className="mb-8" style={{ perspective: '800px' }}>
+          <div
+            className="w-32 h-32 md:w-40 md:h-40 relative"
+            style={{
+              transformStyle: 'preserve-3d',
+              animation: 'coin-spin 4s ease-in-out infinite',
+            }}
+          >
+            {/* Front face */}
+            <img
+              src={cawLogo}
+              alt="CAW"
+              className="absolute inset-0 w-full h-full rounded-full"
+              style={{ backfaceVisibility: 'hidden' }}
+            />
+            {/* Back face */}
+            <img
+              src={cawLogo}
+              alt="CAW"
+              className="absolute inset-0 w-full h-full rounded-full"
+              style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
+            />
+          </div>
+          <style>{`
+            @keyframes coin-spin {
+              0%   { transform: rotateY(0deg); }
+              30%  { transform: rotateY(360deg); }
+              100% { transform: rotateY(360deg); }
+            }
+          `}</style>
+        </div>
+
+        {/* Tagline */}
+        <h1 className="text-3xl md:text-5xl font-bold text-center mb-4 max-w-3xl leading-tight">
+          The world's first
+          <br />
+          <span
+            className={`text-yellow-500 inline-block text-[2.7rem] md:text-7xl whitespace-nowrap transition-all duration-400 my-2 ${
+              isAnimating
+                ? 'opacity-0 translate-y-3'
+                : 'opacity-100 translate-y-0'
+            }`}
+          >
+            {KEYWORDS[keywordIndex]}
+          </span>
+          <br />
+          social network
+        </h1>
+
+        <p className={`text-center text-lg md:text-xl mb-10 max-w-lg ${
+          isDark ? 'text-white/60' : 'text-gray-500'
+        }`}>
+          Speak freely. Own your identity. No middlemen, no censorship, no gatekeepers.
+        </p>
+
+        {/* CTA buttons */}
+        <div className="flex flex-col sm:flex-row items-center gap-4 mb-12">
+          {!isConnected ? (
+            <button
+              onClick={openConnectModal}
+              className="px-8 py-3 bg-yellow-500 text-black font-bold text-lg rounded-full hover:bg-yellow-400 transition-all shadow-lg hover:shadow-xl cursor-pointer"
+            >
+              Sign In
+            </button>
+          ) : !activeToken?.username ? (
+            <Link
+              to="/usernames/new"
+              className="px-8 py-3 bg-yellow-500 text-black font-bold text-lg rounded-full hover:bg-yellow-400 transition-all shadow-lg hover:shadow-xl"
+            >
+              Create Your Profile
+            </Link>
+          ) : (
+            <Link
+              to="/home"
+              className="px-8 py-3 bg-yellow-500 text-black font-bold text-lg rounded-full hover:bg-yellow-400 transition-all shadow-lg hover:shadow-xl"
+            >
+              Go to Feed
+            </Link>
+          )}
+
+          <Link
+            to="/help/faq"
+            className={`px-8 py-3 font-semibold text-lg rounded-full border transition-all ${
+              isDark
+                ? 'border-white/20 text-white/80 hover:bg-white/10'
+                : 'border-gray-300 text-gray-700 hover:bg-gray-100'
+            }`}
+          >
+            Learn More
+          </Link>
+        </div>
+
+        {/* Feature highlights */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 max-w-2xl w-full mb-12">
+          <div className="text-center">
+            <div className={`w-12 h-12 mx-auto mb-3 rounded-full flex items-center justify-center ${
+              isDark ? 'bg-yellow-500/20' : 'bg-yellow-100'
+            }`}>
+              <svg className="w-6 h-6 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+            </div>
+            <h3 className="font-semibold mb-1">Decentralized</h3>
+            <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+              No central authority can silence you
+            </p>
+          </div>
+
+          <div className="text-center">
+            <div className={`w-12 h-12 mx-auto mb-3 rounded-full flex items-center justify-center ${
+              isDark ? 'bg-yellow-500/20' : 'bg-yellow-100'
+            }`}>
+              <svg className="w-6 h-6 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2M15 11h3m-3 4h2" />
+              </svg>
+            </div>
+            <h3 className="font-semibold mb-1">Own Your Name</h3>
+            <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+              Your username is an NFT you control
+            </p>
+          </div>
+
+          <div className="text-center">
+            <div className={`w-12 h-12 mx-auto mb-3 rounded-full flex items-center justify-center ${
+              isDark ? 'bg-yellow-500/20' : 'bg-yellow-100'
+            }`}>
+              <svg className="w-6 h-6 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+            </div>
+            <h3 className="font-semibold mb-1">Uncensorable</h3>
+            <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+              Posts live on-chain forever
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Footer - resource links */}
+      <footer className={`border-t py-8 px-6 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+        <div className="max-w-2xl mx-auto">
+          <div className="flex flex-wrap justify-center gap-x-6 gap-y-3 text-sm">
+            <Link to="/help/faq" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>FAQ</Link>
+            <Link to="/help/manifesto" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>Manifesto</Link>
+            <Link to="/help/history" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>History</Link>
+            <Link to="/help/howto" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>How It Works</Link>
+            <Link to="/help/developers" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>Developers</Link>
+            <Link to="/help/resources" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>Resources</Link>
+            <Link to="/faucet" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>Faucet</Link>
+          </div>
+          <p className={`text-center text-xs mt-4 ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
+            CAW Protocol &mdash; A trustless and decentralized social clearing-house
+          </p>
+        </div>
+      </footer>
+    </div>
+  )
+}

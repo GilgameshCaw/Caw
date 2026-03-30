@@ -6,8 +6,9 @@ import FeedItem from '~/components/FeedItem'
 import { apiFetch } from '~/api/client'
 import type { CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
-import { useTokenDataStore } from '~/store/tokenDataStore'
+import { useTokenDataStore, useActiveToken } from '~/store/tokenDataStore'
 import { HiArrowLeft } from 'react-icons/hi'
+import SignInModal from '~/components/modals/SignInModal'
 
 export const CawPage: React.FC = () => {
   const { id } = useParams<{ id: string }>()
@@ -21,6 +22,9 @@ export const CawPage: React.FC = () => {
   const [loadingMore, setLoadingMore] = useState(false)
   const { isDark } = useTheme()
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
+  const activeToken = useActiveToken()
+  const isAuthenticated = !!activeToken?.username
+  const [showSignInModal, setShowSignInModal] = useState(false)
 
   // Function to refresh comments after posting a reply
   const refreshComments = async () => {
@@ -195,61 +199,95 @@ export const CawPage: React.FC = () => {
           </div>
         </div>
 
-        {/* Reply Form */}
-        <div className="border-b border-white/20 mb-2">
-          <PostForm
-            replyTo={caw}
-            onSuccess={() => {
-              // Set pending state on the main caw
-              setCaw(prev => prev ? { ...prev, replyPending: true } : prev)
-              // Also refresh comments
-              refreshComments()
-            }}
-          />
-        </div>
+        {/* Reply Form — only for authenticated users */}
+        {isAuthenticated && (
+          <div className="border-b border-white/20 mb-2">
+            <PostForm
+              replyTo={caw}
+              onSuccess={() => {
+                setCaw(prev => prev ? { ...prev, replyPending: true } : prev)
+                refreshComments()
+              }}
+            />
+          </div>
+        )}
 
         {/* Comments Section */}
-        <div className="space-y-0 relative">
-          {/* Continuous vertical line connecting all comment avatars */}
-          {comments.length > 0 && (
-            <div
-              className="absolute w-px bg-white/20 z-0"
-              style={{
-                left: '23px',
-                top: '34px',
-                height: `${comments.length * 80 - 40}px` // Height for remaining avatars
-              }}
-            ></div>
-          )}
-          
-          {comments.map((comm) => (
-            <div key={comm.id} className="relative">
-              <FeedItem
-                item={comm}
-                isReply={true}
-                onLikeStateChange={(cawId, likePending) => {
-                  console.log('[CawPage] Like state changed for reply', cawId, 'pending:', likePending)
-                  setComments(current =>
-                    current.map(item =>
-                      item.id === cawId ? { ...item, likePending } : item
-                    )
-                  )
+        {isAuthenticated ? (
+          <div className="space-y-0 relative">
+            {/* Continuous vertical line connecting all comment avatars */}
+            {comments.length > 0 && (
+              <div
+                className="absolute w-px bg-white/20 z-0"
+                style={{
+                  left: '23px',
+                  top: '34px',
+                  height: `${comments.length * 80 - 40}px`
                 }}
-              />
-            </div>
-          ))}
-          {hasMoreComments && (
+              ></div>
+            )}
+
+            {comments.map((comm) => (
+              <div key={comm.id} className="relative">
+                <FeedItem
+                  item={comm}
+                  isReply={true}
+                  onLikeStateChange={(cawId, likePending) => {
+                    console.log('[CawPage] Like state changed for reply', cawId, 'pending:', likePending)
+                    setComments(current =>
+                      current.map(item =>
+                        item.id === cawId ? { ...item, likePending } : item
+                      )
+                    )
+                  }}
+                />
+              </div>
+            ))}
+            {hasMoreComments && (
+              <button
+                onClick={loadMoreComments}
+                disabled={loadingMore}
+                className={`w-full py-3 text-sm font-medium transition-colors ${
+                  isDark ? 'text-yellow-400 hover:text-yellow-300' : 'text-yellow-600 hover:text-yellow-500'
+                } disabled:opacity-50`}
+              >
+                {loadingMore ? 'Loading...' : 'Load more replies'}
+              </button>
+            )}
+          </div>
+        ) : (
+          /* Gated replies — show count and sign-in prompt */
+          (caw.commentCount ?? 0) > 0 ? (
             <button
-              onClick={loadMoreComments}
-              disabled={loadingMore}
-              className={`w-full py-3 text-sm font-medium transition-colors ${
-                isDark ? 'text-yellow-400 hover:text-yellow-300' : 'text-yellow-600 hover:text-yellow-500'
-              } disabled:opacity-50`}
+              onClick={() => setShowSignInModal(true)}
+              className={`w-full py-6 text-center rounded-lg border transition-colors cursor-pointer ${
+                isDark
+                  ? 'border-white/10 hover:border-yellow-500/40 hover:bg-yellow-500/5'
+                  : 'border-gray-200 hover:border-yellow-500/40 hover:bg-yellow-50'
+              }`}
             >
-              {loadingMore ? 'Loading...' : 'Load more replies'}
+              <svg className="w-6 h-6 mx-auto mb-2 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+              <span className={`text-sm font-medium ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
+                {caw.commentCount} {caw.commentCount === 1 ? 'reply' : 'replies'}
+              </span>
+              <span className={`block text-xs mt-1 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+                Sign in to view and reply
+              </span>
             </button>
-          )}
-        </div>
+          ) : (
+            <div className={`py-6 text-center text-sm ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
+              Sign in to be the first to reply
+            </div>
+          )
+        )}
+
+        <SignInModal
+          isOpen={showSignInModal}
+          onClose={() => setShowSignInModal(false)}
+          message="Connect your wallet and create a username to view replies and join the conversation."
+        />
       </div>
     </MainLayout>
   )

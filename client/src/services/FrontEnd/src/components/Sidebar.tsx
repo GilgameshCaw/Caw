@@ -40,31 +40,28 @@ function ApiHostIndicator() {
   const activeApiHost = useInstanceStore(s => s.activeApiHost)
   const { isDark } = useTheme()
 
-  if (!activeApiHost) return null
-
-  // Don't show if the active host matches the current origin or VITE_API_HOST
-  const currentOrigin = window.location.origin
-  if (
-    activeApiHost === '' ||
-    activeApiHost === currentOrigin ||
-    activeApiHost === API_HOST
-  ) return null
-
-  // Extract just the hostname for display
+  // Always show — display the resolved host or fallback to default
+  const effectiveHost = activeApiHost || API_HOST || window.location.origin
   let displayHost: string
   try {
-    displayHost = new URL(activeApiHost).host
+    displayHost = new URL(effectiveHost).host
   } catch {
-    displayHost = activeApiHost
+    displayHost = effectiveHost || 'local'
   }
 
+  const currentOrigin = window.location.origin
+  const isFallback = activeApiHost && activeApiHost !== '' && activeApiHost !== currentOrigin && activeApiHost !== API_HOST
+  const dotColor = isFallback ? 'bg-yellow-500 animate-pulse' : 'bg-green-500'
+
   return (
-    <div className={`mt-1 ml-3 flex items-center gap-1.5 text-xs ${
-      isDark ? 'text-yellow-500/70' : 'text-amber-600/70'
+    <div className={`hidden sm:flex fixed bottom-3 left-3 z-10 items-center gap-1.5 text-xs ${
+      isFallback
+        ? isDark ? 'text-yellow-500/70' : 'text-amber-600/70'
+        : isDark ? 'text-white/30' : 'text-gray-400'
     }`}>
-      <span className="inline-block w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse" />
-      <span className="truncate max-w-[160px]" title={activeApiHost}>
-        via {displayHost}
+      <span className={`inline-block w-1.5 h-1.5 rounded-full ${dotColor}`} />
+      <span className="truncate max-w-[200px]" title={effectiveHost}>
+        {isFallback ? 'via ' : ''}{displayHost}
       </span>
     </div>
   )
@@ -152,7 +149,6 @@ const Sidebar: React.FC = () => {
               CAW
             </span>
           </NavLink>
-          <ApiHostIndicator />
           <CawPriceTicker />
         </div>
 
@@ -252,7 +248,7 @@ const Sidebar: React.FC = () => {
           </NavLink>
 
           <NavLink
-            to="/usernames/new"
+            to="/usernames"
             className={({ isActive }) =>
               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
@@ -262,7 +258,7 @@ const Sidebar: React.FC = () => {
           </NavLink>
 
           <NavLink
-            to={activeToken ? `/users/${activeToken.username}` : "/profile"}
+            to={activeToken?.username ? `/users/${activeToken.username}` : "/welcome"}
             className={({ isActive }) =>
               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }

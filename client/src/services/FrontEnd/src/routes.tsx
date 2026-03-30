@@ -21,7 +21,12 @@ import SearchResultsPage from "./pages/SearchResultsPage";
 import FaucetPage from "./pages/FaucetPage";
 import BugReportsAdmin from "./pages/BugReportsAdmin";
 import ReportsAdmin from "./pages/ReportsAdmin";
+import ValidatorAnalytics from "./pages/ValidatorAnalytics";
+import ValidatorSettings from "./pages/ValidatorSettings";
 import WelcomePage from "./pages/WelcomePage";
+import Marketplace from "./pages/Marketplace";
+import CaptiveSplash from "./pages/CaptiveSplash";
+import AuthGate from "./components/AuthGate";
 import { Navigate } from "react-router-dom";
 
 
@@ -31,29 +36,39 @@ export default [
     path: "/",
     component: <Navigate to="/home" replace />,
   },
+  // Captive splash for unauthenticated users
+  {
+    path: "/welcome",
+    component: <CaptiveSplash />,
+  },
+  // Protected routes — redirect to /welcome if no username
   {
     path: "/home",
-    component: <Main />,
+    component: <AuthGate><Main /></AuthGate>,
   },
   {
     path: "/explore",
-    component: <ExplorePage />,
+    component: <AuthGate><ExplorePage /></AuthGate>,
   },
   {
     path: "/pending",
-    component: <PendingPage />,
+    component: <AuthGate><PendingPage /></AuthGate>,
   },
   {
     path: "/staking",
-    component: <Staking />,
+    component: <AuthGate><Staking /></AuthGate>,
   },
   {
     path: "/staking/unstake",
-    component: <Staking />,
+    component: <AuthGate><Staking /></AuthGate>,
   },
   {
     path: "/staking/info",
-    component: <Staking />,
+    component: <AuthGate><Staking /></AuthGate>,
+  },
+  {
+    path: "/usernames",
+    component: <Marketplace />,
   },
   {
     path: "/usernames/new",
@@ -77,35 +92,35 @@ export default [
   },
   {
     path: "/notifications",
-    component: <NotificationsPage />,
+    component: <AuthGate><NotificationsPage /></AuthGate>,
   },
   {
     path: "/messages",
-    component: <MessagesPage />,
+    component: <AuthGate><MessagesPage /></AuthGate>,
   },
   {
     path: "/messages/:username",
-    component: <MessagesPage />,
+    component: <AuthGate><MessagesPage /></AuthGate>,
   },
   {
     path: "/settings",
-    component: <SettingsPage />,
+    component: <AuthGate><SettingsPage /></AuthGate>,
   },
   {
     path: "/settings/muted",
-    component: <MutedContentPage />,
+    component: <AuthGate><MutedContentPage /></AuthGate>,
   },
   {
     path: "/settings/notifications",
-    component: <NotificationSettings />,
+    component: <AuthGate><NotificationSettings /></AuthGate>,
   },
   {
     path: "/settings/account",
-    component: <AccountSettings />,
+    component: <AuthGate><AccountSettings /></AuthGate>,
   },
   {
     path: "/settings/session-keys",
-    component: <SessionKeySettings />,
+    component: <AuthGate><SessionKeySettings /></AuthGate>,
   },
   {
     path: "/help",
@@ -137,11 +152,11 @@ export default [
   },
   {
     path: "/bookmarks",
-    component: <BookmarksPage />,
+    component: <AuthGate><BookmarksPage /></AuthGate>,
   },
   {
     path: "/scheduled",
-    component: <ScheduledPage />,
+    component: <AuthGate><ScheduledPage /></AuthGate>,
   },
   // {
   //   path: "/gamefi",
@@ -149,19 +164,19 @@ export default [
   // },
   {
     path: "/search",
-    component: <SearchResultsPage />,
+    component: <AuthGate><SearchResultsPage /></AuthGate>,
   },
   {
     path: "/search/caws",
-    component: <SearchResultsPage defaultTab="caws" />,
+    component: <AuthGate><SearchResultsPage defaultTab="caws" /></AuthGate>,
   },
   {
     path: "/search/users",
-    component: <SearchResultsPage defaultTab="users" />,
+    component: <AuthGate><SearchResultsPage defaultTab="users" /></AuthGate>,
   },
   {
     path: "/search/hashtags",
-    component: <SearchResultsPage defaultTab="hashtags" />,
+    component: <AuthGate><SearchResultsPage defaultTab="hashtags" /></AuthGate>,
   },
   {
     path: "/faucet",
@@ -174,6 +189,14 @@ export default [
   {
     path: "/admin/reports",
     component: <ReportsAdmin />,
+  },
+  {
+    path: "/admin/validator",
+    component: <ValidatorAnalytics />,
+  },
+  {
+    path: "/admin/validator/settings",
+    component: <ValidatorSettings />,
   },
   {
     path: "/welcome/:username",

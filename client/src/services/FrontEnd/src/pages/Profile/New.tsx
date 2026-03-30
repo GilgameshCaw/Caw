@@ -1,6 +1,6 @@
 // src/pages/NewProfile.tsx
 import { SubmitButton } from "~/components/buttons/SubmitButton"
-import React, { useState, useCallback, useMemo, useEffect } from 'react'
+import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { useReadContract, useAccount, useConnections, useSwitchChain } from 'wagmi'
 import useAllowance from "~/hooks/useAllowance";
 import { maxUint256, parseUnits, erc20Abi } from "viem";
@@ -15,6 +15,8 @@ import { formatNumber, formatNumberCompact, convertToNumber } from "~/utils";
 import { formatUnits } from "viem";
 import BadgedIcon from '~/assets/images/badged.svg'
 import { useNavigate } from 'react-router-dom'
+import StakingRewardsInfo from '~/components/StakingRewardsInfo'
+import { HiInformationCircle } from 'react-icons/hi'
 
 const CLIENT_ID = Number(import.meta.env.VITE_CLIENT_ID)
 
@@ -52,8 +54,78 @@ export const NewProfile: React.FC = () => {
   const [mintedTokenId, setMintedTokenId] = useState<number | null>(null)
   const [hasResetForm, setHasResetForm] = useState(false)
   const [isApprovePending, setIsApprovePending] = useState(false)
+  const [depositEnabled, setDepositEnabled] = useState(false)
+  const [depositAmount, setDepositAmount] = useState('10000000')
   const useAddress = address || activeToken?.owner;
   const setActiveTokenId = useTokenDataStore(state => state.setActiveTokenId);
+
+  // Typewriter animation for captive users
+  const isCaptive = !activeToken?.username
+  const [typewriterStopped, setTypewriterStopped] = useState(false)
+  const typewriterRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    if (!isCaptive || typewriterStopped) return
+
+    const words = ['choose', 'your', 'username']
+    let wordIdx = 0
+    let charIdx = 0
+    let deleting = false
+    let pausing = false
+
+    const tick = () => {
+      if (!isCaptive || typewriterStopped) return
+
+      const word = words[wordIdx]
+
+      if (pausing) {
+        pausing = false
+        deleting = true
+        typewriterRef.current = setTimeout(tick, 60)
+        return
+      }
+
+      if (!deleting) {
+        charIdx++
+        setUsername(word.slice(0, charIdx))
+        if (charIdx >= word.length) {
+          // Finished typing — pause then delete
+          pausing = true
+          typewriterRef.current = setTimeout(tick, wordIdx === words.length - 1 ? 1000 : 600)
+          return
+        }
+        typewriterRef.current = setTimeout(tick, 100 + Math.random() * 60)
+      } else {
+        charIdx--
+        setUsername(word.slice(0, charIdx))
+        if (charIdx <= 0) {
+          deleting = false
+          const nextIdx = (wordIdx + 1) % words.length
+          wordIdx = nextIdx
+          // Extra pause after deleting "username" before looping
+          typewriterRef.current = setTimeout(tick, nextIdx === 0 ? 1100 : 300)
+          return
+        }
+        typewriterRef.current = setTimeout(tick, 55)
+      }
+    }
+
+    typewriterRef.current = setTimeout(tick, 500)
+    return () => { if (typewriterRef.current) clearTimeout(typewriterRef.current) }
+  }, [isCaptive, typewriterStopped])
+
+  const stopTypewriter = () => {
+    if (!typewriterStopped) {
+      setTypewriterStopped(true)
+      if (typewriterRef.current) clearTimeout(typewriterRef.current)
+      setUsername('')
+    }
+  }
+
+  const depositAmountWei = useMemo(() => {
+    if (!depositEnabled || !depositAmount) return 0n
+    try { return parseUnits(depositAmount, 18) } catch { return 0n }
+  }, [depositEnabled, depositAmount])
 
 
   // is valid username?
@@ -88,18 +160,29 @@ export const NewProfile: React.FC = () => {
   })
 console.log("BALANCE:", balance)
 
-  // quote on‐chain L2 deposit fee from CawNameQuoter
-  const { data: quote, error,failureReason, fetchStatus } = useReadContract({
+  // quote on‐chain LZ fee from CawNameQuoter — switches between mint and mintAndDeposit
+  const { data: mintOnlyQuote } = useReadContract({
     abi: cawNameQuoterAbi,
     chainId: chains.l1.chainId,
     functionName: "mintQuote",
     address: CAW_NAME_QUOTER_ADDRESS,
     args: [ CLIENT_ID, false ],
-    query: { enabled: true }
+    query: { enabled: !depositEnabled }
   })
+  const { data: mintAndDepositQuote, error: mintAndDepositQuoteError, isLoading: mintAndDepositQuoteLoading } = useReadContract({
+    abi: cawNameQuoterAbi,
+    chainId: chains.l1.chainId,
+    functionName: "mintAndDepositQuote",
+    address: CAW_NAME_QUOTER_ADDRESS,
+    args: [ CLIENT_ID, depositAmountWei, chains.l2.layerZero, false ],
+    query: { enabled: depositEnabled && depositAmountWei > 0n }
+  })
+  console.log('[New] mintAndDepositQuote:', { data: mintAndDepositQuote, error: mintAndDepositQuoteError?.message, loading: mintAndDepositQuoteLoading, enabled: depositEnabled && depositAmountWei > 0n, depositAmountWei: depositAmountWei.toString(), CLIENT_ID, layerZero: chains.l2.layerZero })
+  const quote = depositEnabled ? mintAndDepositQuote : mintOnlyQuote
 
   const lzTokenAmount = 0n;
-  const insufficientBalance = !balance || cost > balance;
+  const totalCawNeeded = cost + depositAmountWei;
+  const insufficientBalance = !balance || totalCawNeeded > balance;
 
   const connections = useConnections();
   const wrongChain = connections[0]?.chainId != chains.l1.chainId;
@@ -114,42 +197,55 @@ console.log("BALANCE:", balance)
   // Navigate to onboarding page once mint succeeds
   useEffect(() => {
     if (mintSuccess && mintedTokenId && username) {
-      navigate(`/welcome/${username}`, { replace: true })
+      // Pass state indicating if we deposited (stake is pending via LayerZero)
+      navigate(`/welcome/${username}`, {
+        replace: true,
+        state: { depositPending: depositEnabled && depositAmountWei > 0n }
+      })
     }
-  }, [mintSuccess, mintedTokenId, username])
+  }, [mintSuccess, mintedTokenId, username, depositEnabled, depositAmountWei])
 
-  const { allowance, refetch: refetchAllowance } = useAllowance(CAW_ADDRESS, CAW_NAMES_MINTER_ADDRESS, useAddress);
+  const { allowance: minterAllowance, refetch: refetchMinterAllowance } = useAllowance(CAW_ADDRESS, CAW_NAMES_MINTER_ADDRESS, useAddress);
+  const { allowance: cawNameAllowance, refetch: refetchCawNameAllowance } = useAllowance(CAW_ADDRESS, CAW_NAMES_ADDRESS, useAddress);
   const refetchTokenData = useTokenDataStore(s => s.refetchTokenData)
-  const needsApproval = !allowance || allowance == 0n || BigInt(cost) > allowance;
 
-  const { call: approve, status: approveStatus } = useContractCall({
+  // Minter needs allowance for burn cost; CawName needs allowance for deposit
+  const needsMinterApproval = !minterAllowance || minterAllowance == 0n || cost > minterAllowance;
+  const needsCawNameApproval = depositEnabled && depositAmountWei > 0n && (!cawNameAllowance || cawNameAllowance == 0n || depositAmountWei > cawNameAllowance);
+  const needsApproval = needsMinterApproval || needsCawNameApproval;
+
+  // Approve minter for burn
+  const { call: approveMinter } = useContractCall({
     abi: erc20Abi,
     address: CAW_ADDRESS,
     functionName: "approve",
     args: [CAW_NAMES_MINTER_ADDRESS, maxUint256],
-    disabled: wrongChain || !needsApproval,
-    onPending: () => {
-      setIsApprovePending(true)
-    },
-    onSuccess: () => {
-      setIsApprovePending(false)
-      refetchAllowance()
-    },
-    onError: () => {
-      setIsApprovePending(false)
-    },
+    disabled: wrongChain || !needsMinterApproval,
+    onPending: () => setIsApprovePending(true),
+    onSuccess: () => { setIsApprovePending(false); refetchMinterAllowance() },
+    onError: () => setIsApprovePending(false),
   });
 
+  // Approve CawName for deposit (only needed when depositing)
+  const { call: approveCawName } = useContractCall({
+    abi: erc20Abi,
+    address: CAW_ADDRESS,
+    functionName: "approve",
+    args: [CAW_NAMES_ADDRESS, maxUint256],
+    disabled: wrongChain || !needsCawNameApproval,
+    onPending: () => setIsApprovePending(true),
+    onSuccess: () => { setIsApprovePending(false); refetchCawNameAllowance() },
+    onError: () => setIsApprovePending(false),
+  });
 
-  // hook into mint function
-  const { call: mint, status: mintStatus, gasCostEth }: UseContractCallReturn = useContractCall({
+  // hook into mint function (mint-only)
+  const { call: mintOnly, status: mintOnlyStatus, gasCostEth: mintOnlyGas }: UseContractCallReturn = useContractCall({
     value:        quote?.nativeFee || 0n,
-
     functionName: 'mint',
     abi:      cawNameMinterAbi,
     address: CAW_NAMES_MINTER_ADDRESS,
     args:         [CLIENT_ID, username, lzTokenAmount],
-    disabled:     !quote || !address || !isValid || needsApproval,
+    disabled:     depositEnabled || !address || !isValid || needsApproval,
     onPending:    hash => {
       console.log('tx pending', hash)
       setHasResetForm(false)
@@ -181,17 +277,81 @@ console.log("BALANCE:", balance)
     onError:      err  => console.error(err),
   })
 
+  // hook into mintAndDeposit function
+  const { call: mintAndDeposit, status: mintAndDepositStatus, gasCostEth: mintAndDepositGas }: UseContractCallReturn = useContractCall({
+    value:        quote?.nativeFee || 0n,
+    functionName: 'mintAndDeposit',
+    abi:      cawNameMinterAbi,
+    address: CAW_NAMES_MINTER_ADDRESS,
+    args:         [CLIENT_ID, username, depositAmountWei, chains.l2.layerZero, lzTokenAmount],
+    disabled:     !depositEnabled || !address || !isValid || needsApproval || depositAmountWei === 0n,
+    onPending:    hash => {
+      console.log('mintAndDeposit tx pending', hash)
+      setHasResetForm(false)
+    },
+    onSuccess:    async (hash) => {
+      console.log('minted and deposited!', hash)
+      await refetchTokenData?.()
+      const checkForNewToken = () => {
+        const allTokens = useTokenDataStore.getState().allTokens()
+        const newToken = allTokens.find((t: any) => t.username.toLowerCase() === username.toLowerCase())
+        if (newToken) {
+          setMintedTokenId(newToken.tokenId)
+          setActiveTokenId(newToken.tokenId)
+          setMintSuccess(true)
+        } else {
+          refetchTokenData?.()
+          setTimeout(checkForNewToken, 3000)
+        }
+      }
+      setTimeout(checkForNewToken, 1000)
+    },
+    onError:      err  => console.error(err),
+  })
+
+  // Unified status — pick from whichever path is active
+  const mintStatus = depositEnabled ? mintAndDepositStatus : mintOnlyStatus
+  const gasCostEth = depositEnabled ? mintAndDepositGas : mintOnlyGas
+  const mint = depositEnabled ? mintAndDeposit : mintOnly
+
   const waiting = isApprovePending || Boolean(mintStatus.match(/pending/))
 
+  console.log('[New] mint disabled conditions:', {
+    depositEnabled,
+    quote: !!quote,
+    address: !!address,
+    isValid,
+    needsApproval,
+    needsMinterApproval,
+    needsCawNameApproval,
+    depositAmountWei: depositAmountWei.toString(),
+    minterAllowance: minterAllowance?.toString(),
+    cawNameAllowance: cawNameAllowance?.toString(),
+    cost: cost?.toString(),
+  })
+
   const handleSubmit = useCallback(async () => {
+    console.log('[New] handleSubmit called', { wrongChain, needsMinterApproval, needsCawNameApproval })
     if (wrongChain) {
       handleSwitchChain()
-    } else if (needsApproval) {
-      await approve();
+    } else if (needsMinterApproval) {
+      console.log('[New] approving minter...')
+      await approveMinter();
+    } else if (needsCawNameApproval) {
+      console.log('[New] approving cawName...')
+      await approveCawName();
     } else {
+      console.log('[New] calling mint...', {
+        depositEnabled,
+        hasQuote: !!quote,
+        hasAddress: !!address,
+        isValid,
+        needsApproval,
+        depositAmountWei: depositAmountWei.toString(),
+      })
       await mint();
     }
-  }, [wrongChain, needsApproval, approve, mint, handleSwitchChain]);
+  }, [wrongChain, needsMinterApproval, needsCawNameApproval, approveMinter, approveCawName, mint, handleSwitchChain]);
 
   let submitText;
   if (isSwitchingChain) {
@@ -230,11 +390,13 @@ console.log("BALANCE:", balance)
     } else {
       submitText = "Processing..."
     }
-  } else if (needsApproval)
-    submitText = "Approve"
+  } else if (needsMinterApproval)
+    submitText = "Approve CAW"
+  else if (needsCawNameApproval)
+    submitText = "Approve Deposit"
   else if (usernameTaken)
     submitText = "username taken"
-  else submitText = "Mint"
+  else submitText = depositEnabled && depositAmountWei > 0n ? "Mint & Stake" : "Mint"
 
   // Show loading screen while waiting for mint to complete
   if (!hasResetForm && (mintStatus === 'pending' || (mintStatus === 'success' && !mintSuccess))) {
@@ -281,7 +443,7 @@ console.log("BALANCE:", balance)
 
   return (
     <MainLayout>
-      <div className="max-w-md mx-auto p-6 space-y-4 mt-8"> {/* Cambiado de mt-16 a mt-8 para subir todo el contenido */}
+      <div className={`max-w-md mx-auto p-6 ${isCaptive ? '' : 'space-y-4 mt-8'}`}>
         <div className="text-center space-y-3">
           <h1 className="text-4xl font-bold">Create a Profile</h1>
           <p className="text-gray-400 text-sm mx-auto" style={{ width: '85%' }}>
@@ -290,13 +452,13 @@ console.log("BALANCE:", balance)
         </div>
 
         {/* Imagen generada del username - siempre visible */}
-        <div className="flex justify-center items-center mb-6 mt-16">
+        <div className={`flex justify-center items-center mb-6 ${isCaptive ? 'mt-8' : 'mt-16'}`}>
             <div className="w-64 h-64 overflow-hidden" style={{ borderRadius: '22px' }}>
                 <UsernameSvg username={username}/>
             </div>
         </div>
 
-        <div className="mt-16 space-y-4"> {/* Cambiado de mt-32 a mt-16 para subir el formulario */}
+        <div className={`${isCaptive ? 'mt-12' : 'mt-16'} space-y-4`}>
             <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -307,7 +469,8 @@ console.log("BALANCE:", balance)
                     type="text"
                     value={username}
                     pattern="[A-Za-z0-9]*"
-                    onChange={e => setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9]/g, ''))}
+                    onChange={e => { stopTypewriter(); setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '')); }}
+                    onFocus={stopTypewriter}
                     className="w-full pl-10 pr-12 py-3 bg-black border border-white/20 rounded-full text-white placeholder-white/50 focus:outline-none focus:border-white/30 focus:bg-black transition-all duration-300"
                     placeholder="Enter your username"
                 />
@@ -361,9 +524,79 @@ console.log("BALANCE:", balance)
                 </div>
             </div>
 
+            {/* Deposit option */}
+            <div className="border border-white/10 rounded-xl p-4 space-y-3">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <button
+                  type="button"
+                  onClick={() => setDepositEnabled(!depositEnabled)}
+                  className={`relative w-10 h-6 rounded-full transition-colors duration-200 cursor-pointer ${
+                    depositEnabled ? 'bg-yellow-500' : 'bg-gray-600'
+                  }`}
+                >
+                  <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${
+                    depositEnabled ? 'translate-x-4' : 'translate-x-0.5'
+                  }`} />
+                </button>
+                <div>
+                  <div className="flex items-center gap-1.5">
+                  <span className="text-white text-sm font-medium">{username ? `Stake CAW as @${username}` : 'Stake CAW'}</span>
+                  <div className="relative group">
+                    <HiInformationCircle className="w-4 h-4 text-gray-400 cursor-help" />
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-[min(450px,100vw)] bg-gray-900 rounded-lg shadow-lg">
+                      <StakingRewardsInfo alwaysDark />
+                    </div>
+                  </div>
+                  </div>
+                  <p className="text-gray-500 text-xs mt-0.5">This is required to enable posting, liking, following and all other actions</p>
+                </div>
+              </label>
+
+              {depositEnabled && (
+                <div className="space-y-2">
+                  <div className="relative">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      value={depositAmount}
+                      onChange={e => setDepositAmount(e.target.value.replace(/[^0-9.]/g, ''))}
+                      placeholder="Amount to stake"
+                      className="w-full px-4 py-2.5 bg-black border border-white/20 rounded-full text-white placeholder-white/30 focus:outline-none focus:border-white/30 text-sm"
+                    />
+                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm">CAW</span>
+                  </div>
+                  <div className="flex gap-2">
+                    {['1000000', '10000000', '100000000', '1000000000', '10000000000'].map(preset => {
+                      const active = depositAmount === preset
+                      const label = Number(preset) >= 1_000_000_000 ? `${Number(preset) / 1_000_000_000}B` : `${Number(preset) / 1_000_000}M`
+                      return (
+                        <button
+                          key={preset}
+                          type="button"
+                          onClick={() => setDepositAmount(preset)}
+                          className={`flex-1 py-1.5 text-xs rounded-full border transition-colors cursor-pointer ${
+                            active
+                              ? 'border-yellow-500 text-yellow-400'
+                              : 'border-white/10 text-gray-400 hover:text-white hover:border-white/30'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                  {depositAmountWei > 0n && (
+                    <div className="text-xs text-gray-500 text-center">
+                      Total CAW needed: <span className="text-white font-mono">{formatNumber(convertToNumber(totalCawNeeded, 18), 0)}</span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             <SubmitButton
                 onClick={handleSubmit}
-                disabled={wrongChain ? false : (usernameTaken || waiting || (!needsApproval && (!cost || cost == 0n || !!insufficientBalance)))}
+                disabled={wrongChain ? false : (usernameTaken || waiting || !quote || (!needsApproval && (!cost || cost == 0n || !!insufficientBalance)))}
                 className="btn btn-submit mt-0 transition-all duration-300"
             >
                 {submitText}

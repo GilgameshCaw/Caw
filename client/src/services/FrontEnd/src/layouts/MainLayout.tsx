@@ -8,7 +8,10 @@ import { useTheme } from "~/hooks/useTheme";
 import Tooltip from "~/components/Tooltip";
 import { useState } from "react";
 import { HiOutlineMenu, HiOutlineX } from "react-icons/hi";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
+import { useActiveToken } from "~/store/tokenDataStore";
+import { useConnectModal } from "@rainbow-me/rainbowkit";
+import { useAccount } from "wagmi";
 import cawLogo from '~/assets/images/caw-logo.png';
 
 interface MainLayoutProps {
@@ -19,66 +22,80 @@ const MainLayout = ({ children }: MainLayoutProps) => {
   const { isDark } = useTheme()
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [showBugReport, setShowBugReport] = useState(false)
-  
+  const location = useLocation()
+  const activeToken = useActiveToken()
+  const { isConnected } = useAccount()
+  const { openConnectModal } = useConnectModal()
+
+  // Captive mode: no username and on a public page like /help/*
+  const isCaptive = !activeToken?.username
+  const hideSidebars = isCaptive && (location.pathname.startsWith('/help') || location.pathname.startsWith('/usernames'))
+
   return (
     <div className={`max-h-screen min-h-screen w-full max-w-[1050px] flex m-auto transition-all duration-300 ${
       isDark ? 'bg-black' : 'bg-white'
     }`}>
       {/* Mobile Header */}
-      <div className={`md:hidden fixed top-0 left-0 right-0 z-[9999] flex items-center justify-center p-4 border-b w-screen overflow-hidden transition-all duration-300 ${
-        isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'
-      }`}>
-        <button
-          onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-          className={`absolute left-4 p-2 rounded-lg transition-colors duration-200 ${
-            isDark ? 'text-white hover:bg-white/10' : 'text-black hover:bg-gray-100'
-          }`}
-        >
-          {isMobileMenuOpen ? <HiOutlineX className="w-6 h-6" /> : <HiOutlineMenu className="w-6 h-6" />}
-        </button>
-        
-        <Link to="/home" className="flex items-center justify-center w-full">
-          <img
-            src={cawLogo}
-            alt="CAW Logo"
-            className="w-10 h-10 object-contain"
-          />
-        </Link>
-      </div>
+      {!hideSidebars && (
+        <div className={`md:hidden fixed top-0 left-0 right-0 z-[9999] flex items-center justify-center p-4 border-b w-screen overflow-hidden transition-all duration-300 ${
+          isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'
+        }`}>
+          <button
+            onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+            className={`absolute left-4 p-2 rounded-lg transition-colors duration-200 ${
+              isDark ? 'text-white hover:bg-white/10' : 'text-black hover:bg-gray-100'
+            }`}
+          >
+            {isMobileMenuOpen ? <HiOutlineX className="w-6 h-6" /> : <HiOutlineMenu className="w-6 h-6" />}
+          </button>
+
+          <Link to="/home" className="flex items-center justify-center w-full">
+            <img
+              src={cawLogo}
+              alt="CAW Logo"
+              className="w-10 h-10 object-contain"
+            />
+          </Link>
+        </div>
+      )}
 
       {/* Mobile Sidebar Overlay */}
-      <div 
-        className={`md:hidden fixed inset-0 z-40 transition-all duration-300 ${
-          isMobileMenuOpen ? 'bg-black/50 opacity-100' : 'bg-black/0 opacity-0 pointer-events-none'
-        }`}
-        onClick={() => setIsMobileMenuOpen(false)}
-      >
-        <div 
-          className={`fixed left-0 top-0 h-full w-80 max-w-[90vw] transform transition-transform duration-300 ease-in-out ${
-            isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
-          } ${
-            isDark ? 'bg-black border-r border-white/20' : 'bg-white border-r border-gray-300'
+      {!hideSidebars && (
+        <div
+          className={`md:hidden fixed inset-0 z-40 transition-all duration-300 ${
+            isMobileMenuOpen ? 'bg-black/50 opacity-100' : 'bg-black/0 opacity-0 pointer-events-none'
           }`}
-          onClick={(e) => e.stopPropagation()}
+          onClick={() => setIsMobileMenuOpen(false)}
         >
-          <Sidebar />
+          <div
+            className={`fixed left-0 top-0 h-full w-80 max-w-[90vw] transform transition-transform duration-300 ease-in-out ${
+              isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'
+            } ${
+              isDark ? 'bg-black border-r border-white/20' : 'bg-white border-r border-gray-300'
+            }`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Sidebar />
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Desktop Sidebar */}
-      <div className="hidden md:block w-[200px]">
-        <div className={`fixed border-r h-full w-[200px] z-30 transition-all duration-300 ${
-          isDark ? 'border-white/20' : 'border-gray-300'
-        }`}>
-          <Sidebar />
+      {!hideSidebars && (
+        <div className="hidden md:block w-[200px]">
+          <div className={`fixed border-r h-full w-[200px] z-30 transition-all duration-300 ${
+            isDark ? 'border-white/20' : 'border-gray-300'
+          }`}>
+            <Sidebar />
+          </div>
         </div>
-      </div>
-      
+      )}
+
       {/* Main Content */}
       <main className={`flex-1 min-w-0 transition-all duration-300 ${
         isDark ? 'bg-black text-white' : 'bg-white text-black'
-      } ${isMobileMenuOpen ? 'md:pt-0 pt-16' : 'pt-16 md:pt-0'}`}>
-        <div className="p-3">
+      } ${hideSidebars ? 'pt-0' : isMobileMenuOpen ? 'md:pt-0 pt-16' : 'pt-16 md:pt-0'}`}>
+        <div className={`p-3 ${hideSidebars ? 'pb-24' : ''}`}>
           {children}
         </div>
       </main>
@@ -88,19 +105,71 @@ const MainLayout = ({ children }: MainLayoutProps) => {
         containerStyle={{ marginTop: "40px" }}
         toastOptions={{ removeDelay: 0 }}
       />
-      <div className="hidden lg:block w-[280px]">
-        <div className={`fixed border-l h-full w-[280px] z-30 transition-all duration-300 ${
-          isDark ? 'border-white/20' : 'border-gray-300'
-        }`}>
-          <div className="p-2">
-            <SearchBar />
-          </div>
-          <div className="mt-4">
-            <Trending/>
+      {!hideSidebars && (
+        <div className="hidden lg:block w-[280px]">
+          <div className={`fixed border-l h-full w-[280px] z-30 transition-all duration-300 ${
+            isDark ? 'border-white/20' : 'border-gray-300'
+          }`}>
+            <div className="p-2">
+              <SearchBar />
+            </div>
+            <div className="mt-4">
+              <Trending/>
+            </div>
           </div>
         </div>
-      </div>
+      )}
       <Modals />
+
+      {/* Captive banner — fixed bottom bar for unauthenticated users on public pages */}
+      {hideSidebars && (
+        <div className={`fixed bottom-0 left-0 right-0 z-50 border-t backdrop-blur-md ${
+          isDark ? 'bg-black/90 border-white/10' : 'bg-white/90 border-gray-200'
+        }`}>
+          <div className="max-w-3xl mx-auto flex items-center justify-between px-5 py-3">
+            <Link to="/welcome" className="flex items-center gap-2.5">
+              <img src={cawLogo} alt="CAW" className="w-12 h-12 object-contain" />
+              <span
+                className="text-4xl"
+                style={{
+                  fontFamily: 'Fraunces',
+                  color: '#ebc046',
+                  letterSpacing: '5px',
+                  textShadow: '0 1px 2px rgba(0, 0, 0, 0.6), 0 0 4px rgba(0, 0, 0, 0.3)',
+                }}
+              >
+                CAW
+              </span>
+            </Link>
+            {location.pathname.startsWith('/usernames') ? (
+              <Link
+                to="/help/faq"
+                className={`px-6 py-2.5 font-semibold text-base rounded-full border transition-all ${
+                  isDark
+                    ? 'border-white/20 text-white/80 hover:bg-white/10'
+                    : 'border-gray-300 text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                Learn More
+              </Link>
+            ) : !isConnected ? (
+              <button
+                onClick={openConnectModal}
+                className="px-6 py-2.5 bg-yellow-500 text-black font-bold text-base rounded-full hover:bg-yellow-400 transition-all shadow-lg cursor-pointer"
+              >
+                Sign In
+              </button>
+            ) : (
+              <Link
+                to="/usernames/new"
+                className="px-6 py-2.5 bg-yellow-500 text-black font-bold text-base rounded-full hover:bg-yellow-400 transition-all shadow-lg"
+              >
+                Create Your Profile
+              </Link>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Floating feedback button */}
       <div className="fixed bottom-5 left-5 md:right-5 md:left-auto z-40">

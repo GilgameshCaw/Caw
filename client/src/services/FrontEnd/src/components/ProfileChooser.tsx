@@ -1,6 +1,5 @@
 // src/components/ProfileChooser.tsx
 import React, { useState, useEffect, useRef } from "react";
-import ConnectButton from "~/components/buttons/ConnectButton";
 import { useTokenDataStore, useActiveToken } from "~/store/tokenDataStore";
 import { formatAddress, formatUnitsCompact, convertToText } from "~/utils";
 import UsernameSvg from "./UsernameSvg";
@@ -69,11 +68,13 @@ const ProfileChooser: React.FC = () => {
     // Check if there are ANY profiles in the browser
     const hasAnyProfiles = Object.values(tokensByAddress).some(tokens => tokens.length > 0);
 
-    // If no wallet connected and no profiles exist, show "Connect Wallet"
+    // If no wallet connected and no profiles exist, show "Sign In"
     if (!isConnected && !hasActiveSession && !hasAnyProfiles) {
       return (
         <div className="mb-2 flex justify-center">
-          <ConnectButton />
+          <button onClick={() => openConnectModal?.()} type="button" className="btn btn-connect cursor-pointer">
+            Sign In
+          </button>
         </div>
       );
     }
@@ -244,7 +245,7 @@ const ProfileChooser: React.FC = () => {
                 ))}
                   {normalizedAddress == ownerAddress && (
                     <li className="text-xs text-center pt-1 pb-3">
-                      <Link to={`/mint`} className="block">
+                      <Link to={`/usernames/new`} className="block">
                         + Create new profile
                       </Link>
                     </li>
