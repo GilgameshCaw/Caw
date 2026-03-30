@@ -164,6 +164,10 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
       answer: "CAW is a decentralized social protocol built on blockchain smart contracts. It's designed as a trustless social clearing house focused on freedom of speech, where no single person, entity, or group has ultimate control over the system."
     },
     {
+      question: "How does CAW work under the hood?",
+      answer: "CAW uses EIP-712 signature-based transactions for gasless social interactions. When you post, like, or follow, you sign a message off-chain with your wallet. Validators collect these signatures and batch them into on-chain transactions on L2 networks (like Base) where gas costs are minimal.\n\nAll actions are automatically archived to multiple blockchain networks via LayerZero cross-chain messaging. This means your data is stored on both the L2 network and archive chains like Arbitrum, ensuring permanent accessibility even if one network goes offline.\n\nBecause everything is on-chain and the contracts are immutable (no admin keys), anyone can verify the data, run their own client, or build alternative frontends. This creates a truly trustless system where no single entity controls the protocol."
+    },
+    {
       question: "How do I get a CAW username?",
       answer: "You burn CAW tokens through a smart contract to mint an NFT that becomes your username. The fewer characters in your username, the higher the cost. This NFT grants access to your account, including your CAW balance and direct messages."
     },
