@@ -177,7 +177,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
     },
     {
       question: "Why is there a 420 character limit?",
-      answer: "The protocol limits posts to 420 characters by design. This keeps messages concise and reduces on-chain storage costs while still allowing meaningful communication."
+      answer: "The protocol limits posts to 420 characters by design. This keeps messages concise and reduces on-chain storage costs while still allowing meaningful communication. If your message exceeds 420 characters, the frontend will automatically split it into multiple posts (a thread) to preserve your full message."
     },
     {
       question: "Can my content be censored?",
