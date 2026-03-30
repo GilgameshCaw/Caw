@@ -726,18 +726,68 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
         {/* Developers Section */}
         {activeSection === 'developers' && (
           <div className="space-y-6">
+            {/* Architecture Overview */}
             <div className={`p-6 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
               <h2 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                Host Your Own Frontend
+                Understanding CAW Architecture
               </h2>
 
               <div className={`space-y-4 text-sm leading-relaxed ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
                 <p>
-                  As outlined in the manifesto, anyone is free to host their own CAW frontend. The protocol is open and permissionless — your frontend can display whatever content you choose, with your own moderation policies.
+                  CAW is a decentralized social protocol with two key components: <strong>validators</strong> and <strong>frontends</strong>. Both are permissionless and can be run by anyone.
                 </p>
 
                 <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  Getting Started
+                  The Role of Validators
+                </h3>
+                <p>
+                  Validators process gasless transactions for users. When you post, like, or follow, you sign an EIP-712 message off-chain. The validator collects these signatures, batches them together, and submits them as on-chain transactions to L2 networks (like Base) where gas costs are minimal.
+                </p>
+                <p className="mt-2">
+                  Validators pay the gas fees upfront but are economically incentivized through the platform's token economics. They're essential infrastructure that enables the smooth, gasless user experience.
+                </p>
+
+                <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  The Role of Frontends
+                </h3>
+                <p>
+                  Frontends are the user-facing applications (like this one) that read blockchain data, display posts, and submit user actions to validators. Each frontend can implement its own content moderation policies, design choices, and features while still interacting with the same underlying protocol.
+                </p>
+                <p className="mt-2">
+                  Because everything is on-chain and the contracts are immutable, users blocked on one frontend can always access CAW through another frontend or by interacting directly with the contracts.
+                </p>
+
+                <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  Client Separation & Isolated Networks
+                </h3>
+                <p>
+                  The beauty of CAW's architecture is that validators and frontends are completely separate. You can:
+                </p>
+                <ul className={`list-disc list-inside space-y-2 mt-2 ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
+                  <li><strong>Run just a frontend</strong> — Connect to existing validators for transaction processing</li>
+                  <li><strong>Run just a validator</strong> — Process transactions for any frontend that connects to you</li>
+                  <li><strong>Run both</strong> — Create a fully independent client with your own validator and frontend</li>
+                  <li><strong>Run an isolated network</strong> — Deploy your own validator and frontend for a private or community-specific CAW network, all while still using the same underlying smart contracts</li>
+                </ul>
+                <p className="mt-2">
+                  This separation ensures censorship resistance and gives communities maximum flexibility in how they interact with the protocol.
+                </p>
+              </div>
+            </div>
+
+            {/* Frontend Hosting */}
+            <div className={`p-6 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+              <h2 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                Hosting a Frontend
+              </h2>
+
+              <div className={`space-y-4 text-sm leading-relaxed ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
+                <p>
+                  If you just want to host a frontend (without running a validator), the setup is straightforward. You'll build the static frontend files and deploy them to any static hosting platform.
+                </p>
+
+                <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  Building the Frontend
                 </h3>
 
                 <ol className={`list-decimal list-inside space-y-3 ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
@@ -748,31 +798,41 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                     </div>
                   </li>
                   <li>
-                    <strong>Install dependencies</strong>
-                    <div className={`mt-2 p-3 rounded-lg font-mono text-xs whitespace-pre-line ${isDark ? 'bg-black/50' : 'bg-gray-100'}`}>
-                      cd client{'\n'}npm install
+                    <strong>Navigate to the frontend directory</strong>
+                    <div className={`mt-2 p-3 rounded-lg font-mono text-xs ${isDark ? 'bg-black/50' : 'bg-gray-100'}`}>
+                      cd client/src/services/FrontEnd
                     </div>
                   </li>
                   <li>
-                    <strong>Configure environment</strong>
-                    <p className="mt-1">Copy <code className={`px-1 rounded ${isDark ? 'bg-black/50' : 'bg-gray-200'}`}>.env.example</code> to <code className={`px-1 rounded ${isDark ? 'bg-black/50' : 'bg-gray-200'}`}>.env</code> and configure your RPC endpoints and API keys.</p>
+                    <strong>Install dependencies</strong>
+                    <div className={`mt-2 p-3 rounded-lg font-mono text-xs ${isDark ? 'bg-black/50' : 'bg-gray-100'}`}>
+                      yarn install
+                    </div>
                   </li>
                   <li>
-                    <strong>Run the development server</strong>
+                    <strong>Configure your environment</strong>
+                    <p className="mt-1">Create a <code className={`px-1 rounded ${isDark ? 'bg-black/50' : 'bg-gray-200'}`}>.env</code> file with your validator API endpoint and RPC URLs.</p>
+                  </li>
+                  <li>
+                    <strong>Build for production</strong>
                     <div className={`mt-2 p-3 rounded-lg font-mono text-xs ${isDark ? 'bg-black/50' : 'bg-gray-100'}`}>
-                      npm run dev
+                      yarn build
                     </div>
                   </li>
                 </ol>
 
                 <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  Requirements
+                  Deployment Options
                 </h3>
-                <ul className={`list-disc list-inside space-y-2 ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
-                  <li>Node.js 18+</li>
-                  <li>PostgreSQL database</li>
-                  <li>Redis (for caching)</li>
-                  <li>RPC endpoints for Ethereum and Base</li>
+                <p>
+                  Once built, you can deploy the <code className={`px-1 rounded ${isDark ? 'bg-black/50' : 'bg-gray-200'}`}>dist/</code> folder to any static hosting platform:
+                </p>
+                <ul className={`list-disc list-inside space-y-2 mt-2 ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
+                  <li><strong>Vercel</strong> — Import your GitHub repo and it will auto-detect the build settings</li>
+                  <li><strong>Netlify</strong> — Drag and drop the dist folder or connect via Git</li>
+                  <li><strong>Cloudflare Pages</strong> — Fast CDN-based hosting with free tier</li>
+                  <li><strong>GitHub Pages</strong> — Free hosting directly from your repository</li>
+                  <li><strong>IPFS</strong> — Decentralized hosting via Fleek or Pinata</li>
                 </ul>
 
                 <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
@@ -781,22 +841,69 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                 <p>
                   Your frontend, your rules. The protocol itself has no content moderation, but you can implement whatever filtering policies make sense for your community. Users blocked on your frontend can still access CAW through other frontends or directly.
                 </p>
+              </div>
+            </div>
 
-                <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  Validator Service
-                </h3>
+            {/* Validator Hosting */}
+            <div className={`p-6 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+              <h2 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                Running a Validator
+              </h2>
+
+              <div className={`space-y-4 text-sm leading-relaxed ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
                 <p>
-                  To process gasless transactions, you'll need to run a validator service. The validator collects signed user actions, batches them together, and submits them to the blockchain.
+                  Running a validator requires a VPS (Virtual Private Server) since the validator needs to be online 24/7 to process user actions. The validator collects signed messages from users and submits batched transactions to the blockchain.
                 </p>
 
                 <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  Architecture
+                  Prerequisites
+                </h3>
+                <ul className={`list-disc list-inside space-y-2 ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
+                  <li>A VPS with at least 2GB RAM (DigitalOcean, AWS, Linode, etc.)</li>
+                  <li>Ubuntu 20.04+ or similar Linux distribution</li>
+                  <li>A wallet with ETH for paying gas fees on L2</li>
+                  <li>RPC endpoints for Ethereum L1 and Base L2</li>
+                </ul>
+
+                <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  Quick Setup
                 </h3>
                 <p>
-                  For economic feasibility, social actions are validated on L2 networks where gas costs are significantly lower. The validator submits batched transactions to the CawActions contract on L2, which processes likes, posts, follows, and other interactions at a fraction of mainnet costs.
+                  We provide a one-liner CLI installer that handles the entire setup process:
                 </p>
+                <div className={`mt-2 p-3 rounded-lg font-mono text-xs ${isDark ? 'bg-black/50' : 'bg-gray-100'}`}>
+                  curl -sSL https://raw.githubusercontent.com/GilgameshCaw/Caw/master/install.sh | bash
+                </div>
                 <p className="mt-2">
-                  Username NFTs and CAW token balances live on Ethereum mainnet. LayerZero enables cross-chain messaging between L1 and L2, allowing users to bridge their CAW balance to L2 networks for use in the social protocol while maintaining the security of mainnet for core assets.
+                  The installer will:
+                </p>
+                <ul className={`list-disc list-inside space-y-1 mt-2 ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
+                  <li>Install Node.js, PostgreSQL, and Redis</li>
+                  <li>Clone the CAW repository</li>
+                  <li>Prompt you for configuration (RPC URLs, validator wallet private key, etc.)</li>
+                  <li>Set up systemd services for automatic restarts</li>
+                  <li>Start the validator and API services</li>
+                </ul>
+
+                <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  Manual Setup
+                </h3>
+                <p>
+                  If you prefer manual setup, follow these steps on your VPS:
+                </p>
+                <ol className={`list-decimal list-inside space-y-2 mt-2 ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
+                  <li>Install Node.js 22+, PostgreSQL, Redis, and Elasticsearch</li>
+                  <li>Clone the repository and install dependencies</li>
+                  <li>Configure your <code className={`px-1 rounded ${isDark ? 'bg-black/50' : 'bg-gray-200'}`}>.env</code> file with RPC endpoints and validator wallet</li>
+                  <li>Run database migrations with <code className={`px-1 rounded ${isDark ? 'bg-black/50' : 'bg-gray-200'}`}>npm run prisma:push</code></li>
+                  <li>Start the services with <code className={`px-1 rounded ${isDark ? 'bg-black/50' : 'bg-gray-200'}`}>npm run dev</code></li>
+                </ol>
+
+                <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  Economics
+                </h3>
+                <p>
+                  Validators pay gas fees upfront to submit batched transactions. The protocol is designed with economic incentives to make validation profitable, but you should monitor your gas costs and validator earnings.
                 </p>
               </div>
             </div>
