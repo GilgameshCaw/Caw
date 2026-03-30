@@ -7,7 +7,7 @@ import { useChainId } from 'wagmi'
 import { chains } from '~/config/chains'
 import { sepolia, baseSepolia } from 'wagmi/chains'
 
-type TabType = 'faq' | 'history' | 'manifesto' | 'howto' | 'developers' | 'resources'
+type TabType = 'faq' | 'history' | 'manifesto' | 'gettingstarted' | 'developers' | 'resources'
 type MobileDropdown = 'faq' | 'history' | null
 
 interface FAQItem {
@@ -53,7 +53,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
     if (path === '/help/faq' || path === '/help') return 'faq'
     if (path === '/help/history') return 'history'
     if (path === '/help/manifesto') return 'manifesto'
-    if (path === '/help/howto') return 'howto'
+    if (path === '/help/gettingstarted' || path === '/help/howto') return 'gettingstarted'
     if (path === '/help/developers') return 'developers'
     if (path === '/help/resources') return 'resources'
     return 'faq'
@@ -66,7 +66,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
       faq: '/help/faq',
       history: '/help/history',
       manifesto: '/help/manifesto',
-      howto: '/help/howto',
+      gettingstarted: '/help/gettingstarted',
       developers: '/help/developers',
       resources: '/help/resources'
     }
@@ -257,7 +257,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
           <TabButton tab="faq" label="FAQ" />
           <TabButton tab="history" label="History" />
           <TabButton tab="manifesto" label="Manifesto" />
-          <TabButton tab="howto" label="How It Works" />
+          <TabButton tab="gettingstarted" label="Getting Started" />
           <TabButton tab="developers" label="Developers" />
           <TabButton tab="resources" label="Resources" />
         </div>
@@ -269,14 +269,14 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
             <button
               onClick={() => setMobileDropdown(mobileDropdown === 'faq' ? null : 'faq')}
               className={`w-full px-2 py-3 text-sm font-medium transition-colors relative cursor-pointer flex items-center justify-center gap-1 ${
-                (activeSection === 'faq' || activeSection === 'howto')
+                (activeSection === 'faq' || activeSection === 'gettingstarted')
                   ? isDark ? 'text-yellow-500' : 'text-yellow-600'
                   : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
               }`}
             >
-              {activeSection === 'howto' ? 'How It Works' : 'FAQ'}
+              {activeSection === 'gettingstarted' ? 'Getting Started' : 'FAQ'}
               <HiChevronDown className={`w-4 h-4 transition-transform ${mobileDropdown === 'faq' ? 'rotate-180' : ''}`} />
-              {(activeSection === 'faq' || activeSection === 'howto') && (
+              {(activeSection === 'faq' || activeSection === 'gettingstarted') && (
                 <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
               )}
             </button>
@@ -295,14 +295,14 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                   FAQ
                 </button>
                 <button
-                  onClick={() => { handleTabClick('howto'); setMobileDropdown(null) }}
+                  onClick={() => { handleTabClick('gettingstarted'); setMobileDropdown(null) }}
                   className={`w-full px-4 py-3 text-sm text-left ${
-                    activeSection === 'howto'
+                    activeSection === 'gettingstarted'
                       ? isDark ? 'text-yellow-500 bg-yellow-500/10' : 'text-yellow-600 bg-yellow-50'
                       : isDark ? 'text-white hover:bg-white/5' : 'text-gray-900 hover:bg-gray-50'
                   }`}
                 >
-                  How It Works
+                  Getting Started
                 </button>
               </div>
             )}
@@ -628,8 +628,8 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
           </div>
         )}
 
-        {/* How It Works Section */}
-        {activeSection === 'howto' && (
+        {/* Getting Started Section */}
+        {activeSection === 'gettingstarted' && (
           <div className="space-y-4">
             <div className={`p-5 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
               <div className="flex items-start gap-4">
