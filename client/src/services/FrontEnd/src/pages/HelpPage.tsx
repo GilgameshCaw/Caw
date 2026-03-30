@@ -204,12 +204,8 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
       answer: "Images stored on-chain are included in the archive. The cost of storing images includes both the L2 storage fee and the cross-chain archiving fee, ensuring your visual content is preserved across networks."
     },
     {
-      question: "Can clients add additional archive chains?",
-      answer: "Yes. CAW clients (apps built on the protocol) can configure additional archive chains for their users. This allows different communities to choose where their data is stored based on their trust preferences and regional requirements."
-    },
-    {
-      question: "How can I recover my data if needed?",
-      answer: "All archived actions are stored as events on the archive chains. Anyone can read these events and reconstruct the complete history of CAW actions. This means your data can never be lost as long as at least one archive chain remains accessible."
+      question: "What happens if the storage chain goes away?",
+      answer: "Your data is automatically archived to multiple blockchain networks via LayerZero cross-chain messaging. Even if one storage chain were to go offline or censor content, the data remains permanently accessible on other archive chains like Arbitrum. As long as at least one archive chain remains accessible, your complete history of actions can be reconstructed from the blockchain events."
     }
   ]
 
