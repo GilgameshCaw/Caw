@@ -60,6 +60,7 @@ model User {
   tipsReceived          Tip[]          @relation("TipsReceived")
   blocksGiven           Block[]        @relation("BlocksGiven")
   blocksReceived        Block[]        @relation("BlocksReceived")
+  bookmarks             Bookmark[]
 
   @@index([address])
 }
@@ -92,6 +93,8 @@ model Caw {
   isReplyTo     Reply[]        @relation("ReplyCaw")
   notifications Notification[]
   tips          Tip[]
+  bookmarks     Bookmark[]
+  bookmarkCount Int            @default(0)
 
   @@unique([userId, cawonce])
   @@index([userId, action, createdAt])
@@ -566,4 +569,156 @@ model PriceSnapshot {
 
   @@index([token, createdAt])
   @@index([createdAt])
+}
+
+/// Tracks every validator-submitted transaction for analytics
+model ValidatorTx {
+  id          Int      @id @default(autoincrement())
+  txHash      String   @unique
+  blockNumber BigInt?
+  txType      String   @default("processActions") // processActions | sessionRegister | sessionRevoke
+  actionCount     Int                // Number of actions in the batch (0 for session txs)
+  actionBreakdown Json?              // { CAW: 3, LIKE: 2, FOLLOW: 1, ... }
+  gasUsed     String             // Actual gas used (from receipt)
+  gasPrice    String             // Effective gas price (wei)
+  ethCost     String             // gasUsed * gasPrice in wei
+  tipCaw      String             // Total CAW tip earned from the batch
+  tipEthValue String             // Tip converted to ETH (wei) at submission time
+  profit      String             // tipEthValue - ethCost (can be negative)
+  validatorId Int
+  status      String   @default("confirmed") // confirmed | failed | reverted
+  failReason  String?
+  avgWaitMs   Int?               // Avg time from TxQueue.createdAt to submission
+  sessionUser String?            // Address of user who requested the session (for session txs)
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([validatorId, createdAt])
+  @@index([txType, createdAt])
+}
+
+/// Tracks every replicateBatch submission
+model ReplicationTx {
+  id           Int      @id @default(autoincrement())
+  txHash       String   @unique
+  blockNumber  BigInt?
+  clientId     Int
+  destEid      Int                // LayerZero destination endpoint ID
+  checkpointId Int
+  actionCount  Int      @default(256)
+  gasUsed      String
+  gasPrice     String
+  ethCost      String             // Gas cost in wei
+  lzFee        String             // LayerZero native fee paid (wei)
+  totalCost    String             // ethCost + lzFee
+  status       String   @default("confirmed")
+  failReason   String?
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([clientId, createdAt])
+}
+
+/// Admin-configurable validator settings (DB-backed, overrides env vars)
+model ValidatorSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+// ============================================
+// MARKETPLACE
+// ============================================
+
+model MarketplaceListing {
+  id              Int                  @id @default(autoincrement())
+  listingId       Int                  @unique
+  tokenId         Int
+  seller          String
+  listingType     MarketListingType
+  paymentToken    String               // "ETH", "CAW", "WETH", "USDC", "USDT"
+  paymentAddress  String
+  startPrice      String
+  endPrice        String?
+  startTime       DateTime
+  endTime         DateTime?
+  status          MarketListingStatus  @default(ACTIVE)
+  highestBid      String?
+  highestBidder   String?
+  username        String
+  usernameLength  Int
+  stakedCaw       String?
+  txHash          String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  bids            MarketplaceBid[]
+  sale            MarketplaceSale?
+
+  @@index([status, createdAt])
+  @@index([status, usernameLength])
+  @@index([tokenId])
+}
+
+model MarketplaceBid {
+  id          Int                  @id @default(autoincrement())
+  listingId   Int
+  bidder      String
+  amount      String
+  txHash      String?
+  status      BidStatus            @default(ACTIVE)
+  createdAt   DateTime             @default(now())
+  listing     MarketplaceListing   @relation(fields: [listingId], references: [id])
+
+  @@index([listingId, status])
+  @@index([bidder])
+}
+
+model MarketplaceSale {
+  id           Int                  @id @default(autoincrement())
+  listingId    Int                  @unique
+  buyer        String
+  seller       String
+  tokenId      Int
+  price        String
+  paymentToken String
+  username     String
+  txHash       String?
+  createdAt    DateTime             @default(now())
+  listing      MarketplaceListing   @relation(fields: [listingId], references: [id])
+
+  @@index([createdAt])
+  @@index([tokenId])
+}
+
+enum MarketListingType {
+  FIXED
+  DUTCH_AUCTION
+  ENGLISH_AUCTION
+}
+
+enum MarketListingStatus {
+  ACTIVE
+  SOLD
+  CANCELLED
+  EXPIRED
+}
+
+enum BidStatus {
+  ACTIVE
+  OUTBID
+  WON
+  WITHDRAWN
+}
+
+model Bookmark {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  cawId     Int
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [tokenId], onDelete: Cascade)
+  caw       Caw      @relation(fields: [cawId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, cawId])
+  @@index([userId, createdAt])
+  @@index([cawId])
 }
