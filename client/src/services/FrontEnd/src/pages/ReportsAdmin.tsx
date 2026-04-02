@@ -148,7 +148,11 @@ const ReportsAdmin: React.FC = () => {
     <div className={`min-h-screen p-6 ${isDark ? 'bg-black text-white' : 'bg-gray-50 text-gray-900'}`}>
       <div className="max-w-4xl mx-auto">
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-bold">Post Reports ({total})</h1>
+          <div className="flex items-center gap-3">
+            <Link to="/admin" className={`text-sm ${isDark ? 'text-white/40 hover:text-white/60' : 'text-gray-400 hover:text-gray-600'}`}>Admin</Link>
+            <span className={isDark ? 'text-white/20' : 'text-gray-300'}>/</span>
+            <h1 className="text-2xl font-bold">Post Reports ({total})</h1>
+          </div>
           <div className="flex gap-2">
             {['', 'PENDING', 'REVIEWED', 'ACTIONED', 'DISMISSED'].map(s => (
               <button

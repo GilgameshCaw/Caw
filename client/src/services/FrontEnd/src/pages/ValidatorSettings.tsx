@@ -155,13 +155,13 @@ const ValidatorSettings: React.FC = () => {
       <div className="max-w-2xl mx-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-2">
-          <h1 className="text-2xl font-bold">Validator Settings</h1>
-          <Link
-            to="/admin/validator"
-            className={`text-sm transition-colors ${isDark ? 'text-white/40 hover:text-white/60' : 'text-gray-400 hover:text-gray-600'}`}
-          >
-            Back to Analytics
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link to="/admin" className={`text-sm transition-colors ${isDark ? 'text-white/40 hover:text-white/60' : 'text-gray-400 hover:text-gray-600'}`}>Admin</Link>
+            <span className={isDark ? 'text-white/20' : 'text-gray-300'}>/</span>
+            <Link to="/admin/validator" className={`text-sm transition-colors ${isDark ? 'text-white/40 hover:text-white/60' : 'text-gray-400 hover:text-gray-600'}`}>Analytics</Link>
+            <span className={isDark ? 'text-white/20' : 'text-gray-300'}>/</span>
+            <h1 className="text-2xl font-bold">Settings</h1>
+          </div>
         </div>
         <p className={`text-sm mb-6 ${isDark ? 'text-white/40' : 'text-gray-500'}`}>
           Configure how the validator processes and submits actions. Changes take effect on the next poll cycle.

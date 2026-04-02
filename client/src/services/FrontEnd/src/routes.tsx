@@ -24,6 +24,7 @@ import ReportsAdmin from "./pages/ReportsAdmin";
 import ValidatorAnalytics from "./pages/ValidatorAnalytics";
 import ValidatorSettings from "./pages/ValidatorSettings";
 import DatabaseAdmin from "./pages/DatabaseAdmin";
+import Admin from "./pages/Admin";
 import WelcomePage from "./pages/WelcomePage";
 import Marketplace from "./pages/Marketplace";
 import CaptiveSplash from "./pages/CaptiveSplash";
@@ -182,6 +183,10 @@ export default [
   {
     path: "/faucet",
     component: <FaucetPage />,
+  },
+  {
+    path: "/admin",
+    component: <Admin />,
   },
   {
     path: "/admin/bugs",

@@ -406,7 +406,7 @@ const DatabaseAdmin: React.FC = () => {
         <div className={`w-52 shrink-0 border-r ${isDark ? 'border-white/10' : 'border-gray-200'} p-3 overflow-y-auto`}>
           <div className="flex items-center justify-between mb-3">
             <h2 className={`text-sm font-bold ${text}`}>Tables</h2>
-            <Link to="/admin/validator" className={`text-xs ${muted} hover:underline`}>Admin</Link>
+            <Link to="/admin" className={`text-xs ${muted} hover:underline`}>Admin</Link>
           </div>
           {models.map(m => (
             <button
