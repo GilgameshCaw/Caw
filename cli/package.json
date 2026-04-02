@@ -1,0 +1,20 @@
+{
+  "name": "caw-cli",
+  "version": "0.1.0",
+  "description": "CAW Protocol node installer and manager",
+  "type": "module",
+  "bin": {
+    "caw": "./bin/caw.js"
+  },
+  "scripts": {
+    "start": "node bin/caw.js",
+    "install-node": "node bin/caw.js install"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "inquirer": "^9.3.0",
+    "ora": "^8.0.1",
+    "commander": "^12.1.0",
+    "yaml": "^2.4.0"
+  }
+}
