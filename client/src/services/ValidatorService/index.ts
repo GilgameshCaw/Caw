@@ -10,6 +10,17 @@ import { CAW_ACTIONS_ADDRESS, CAW_ADDRESS, WETH_ADDRESS } from '../../abi/addres
 import { WebSocketProvider, JsonRpcProvider, Contract, Wallet } from 'ethers'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 
+/** Build { CAW: 3, LIKE: 2, ... } breakdown from submitted actions (which have actionType) */
+function buildActionBreakdown(actions: any[]): Record<string, number> {
+  const breakdown: Record<string, number> = {}
+  for (const a of actions) {
+    if (a.actionType === undefined) continue
+    const type = getActionType(Number(a.actionType)).toString()
+    breakdown[type] = (breakdown[type] || 0) + 1
+  }
+  return breakdown
+}
+
 // Uniswap V2 Router ABI (minimal for getAmountsOut) - fallback if cache is stale
 const UNISWAP_V2_ROUTER_ABI = [
   {
@@ -53,14 +64,38 @@ function getUniswapRouter(mainnetRpcUrl: string): Contract {
 // Tip constants - must match frontend actions.ts
 // These are in whole CAW tokens (contract multiplies by 10^18 on-chain)
 // At ~500k CAW = $0.01, 1k CAW ≈ $0.00002 per action
-const BASE_VALIDATOR_TIP = BigInt(process.env.VALIDATOR_BASE_TIP || "1000") // 1k CAW base tip
+const DEFAULT_VALIDATOR_TIP = BigInt(process.env.VALIDATOR_BASE_TIP || "1000") // 1k CAW base tip
+
+/** Live settings loaded from DB, refreshed each poll cycle */
+const liveSettings = {
+  validatorBaseTip: DEFAULT_VALIDATOR_TIP,
+  checkInterval: 10_000,
+  minActionsPerBatch: 1,
+  maxWaitTime: 60_000,
+  replicationInterval: 60_000,
+}
+
+/** Load settings from ValidatorSetting table, falling back to defaults */
+async function refreshSettings(configCheckInterval?: number) {
+  try {
+    const rows = await prisma.validatorSetting.findMany()
+    const map = new Map(rows.map(r => [r.key, r.value]))
+    if (map.has('validatorBaseTip'))    liveSettings.validatorBaseTip = BigInt(map.get('validatorBaseTip')!)
+    if (map.has('checkInterval'))       liveSettings.checkInterval = Number(map.get('checkInterval')!) || configCheckInterval || 10_000
+    if (map.has('minActionsPerBatch'))  liveSettings.minActionsPerBatch = Number(map.get('minActionsPerBatch')!) || 1
+    if (map.has('maxWaitTime'))         liveSettings.maxWaitTime = Number(map.get('maxWaitTime')!) || 60_000
+    if (map.has('replicationInterval')) liveSettings.replicationInterval = Number(map.get('replicationInterval')!) || 60_000
+  } catch (e: any) {
+    console.error('[Validator] Failed to refresh settings from DB:', e.message)
+  }
+}
 
 /**
  * Calculate the minimum required tip for an action
  * @returns Minimum required tip in CAW
  */
 function calculateMinimumTip(): bigint {
-  return BASE_VALIDATOR_TIP
+  return liveSettings.validatorBaseTip
 }
 
 /**
@@ -747,7 +782,7 @@ export const validatorService: Service = {
           cawonce:      Number(a.cawonce)
         }))
         console.log("[submitProcessActions] Processed actions:", processed)
-        return processed
+        return { processed, receipt }
       } catch (err: any) {
         // Handle REPLACEMENT_UNDERPRICED - retry with higher gas
         if (err.code === 'REPLACEMENT_UNDERPRICED' || err.message?.includes('replacement transaction underpriced')) {
@@ -805,7 +840,22 @@ console.log("succeededKeys", succeededKeys)
           const existingAction = await prisma.action.findFirst({
             where: { senderId: data.senderId, cawonce: data.cawonce }
           })
-          processedByOther = !!existingAction
+          if (existingAction) {
+            // Verify this is actually the same action, not a different one reusing the cawonce.
+            // Compare actionType, receiverId, receiverCawonce, and text.
+            const ex = existingAction.data as any
+            const sameAction =
+              Number(ex?.actionType ?? -1) === Number(data.actionType) &&
+              Number(ex?.receiverId ?? -1) === Number(data.receiverId ?? 0) &&
+              Number(ex?.receiverCawonce ?? -1) === Number(data.receiverCawonce ?? 0) &&
+              (ex?.text ?? '') === (data.text ?? '')
+            processedByOther = sameAction
+            if (!sameAction) {
+              console.log(`[Validator] TxQueue ${entry.id}: Cawonce ${data.cawonce} used by DIFFERENT action — marking failed`)
+              console.log(`  existing: type=${ex?.actionType} receiver=${ex?.receiverId} text="${(ex?.text ?? '').slice(0, 40)}"`)
+              console.log(`  new:      type=${data.actionType} receiver=${data.receiverId} text="${(data.text ?? '').slice(0, 40)}"`)
+            }
+          }
         }
 
         const newStatus = succeededKeys.has(key) || processedByOther
@@ -814,7 +864,7 @@ console.log("succeededKeys", succeededKeys)
 
         // Get the rejection reason for this specific entry
         const reason = newStatus === 'failed' && simulationRejections[index]
-          ? (cawonceUsed && !processedByOther ? 'Cawonce conflict — a different action used this cawonce. Please retry.' : simulationRejections[index])
+          ? (cawonceUsed && !processedByOther ? 'Cawonce already used by a different action — please retry' : simulationRejections[index])
           : undefined
 
         console.log("new status", newStatus, reason ? `with reason: ${reason}` : '')
@@ -981,9 +1031,21 @@ console.log("succeededKeys", succeededKeys)
 
     /** natstat: core polling loop */
     async function pollLoop() {
+      await refreshSettings(checkInterval)
       try {
         const entries = await fetchPendingQueue()
         if (!entries.length) return
+
+        // Batch accumulation: wait for more actions unless the oldest has been waiting too long
+        const { minActionsPerBatch, maxWaitTime } = liveSettings
+        if (entries.length < minActionsPerBatch) {
+          const oldestAge = Date.now() - new Date(entries[0].createdAt).getTime()
+          if (oldestAge < maxWaitTime) {
+            console.log(`[Validator] Waiting for more actions: ${entries.length}/${minActionsPerBatch} (oldest: ${Math.round(oldestAge / 1000)}s / ${Math.round(maxWaitTime / 1000)}s max)`)
+            return
+          }
+          console.log(`[Validator] Max wait time reached (${Math.round(oldestAge / 1000)}s), submitting ${entries.length} action(s)`)
+        }
 
         console.log(`\n========== [Validator] NEW POLL CYCLE ==========`)
         console.log(`[Validator] Processing ${entries.length} pending transactions`)
@@ -1087,13 +1149,20 @@ console.log("succeededKeys", succeededKeys)
                     const existingAction = await prisma.action.findFirst({
                       where: { senderId: data.senderId, cawonce: data.cawonce }
                     })
-                    processedByOther = !!existingAction
+                    if (existingAction) {
+                      const ex = existingAction.data as any
+                      processedByOther =
+                        Number(ex?.actionType ?? -1) === Number(data.actionType) &&
+                        Number(ex?.receiverId ?? -1) === Number(data.receiverId ?? 0) &&
+                        Number(ex?.receiverCawonce ?? -1) === Number(data.receiverCawonce ?? 0) &&
+                        (ex?.text ?? '') === (data.text ?? '')
+                    }
                   }
                   return prisma.txQueue.update({
                     where: { id: entry.id },
                     data: {
                       status: processedByOther ? 'done' : 'failed',
-                      reason: processedByOther ? null : (cawonceUsed && !processedByOther ? 'Cawonce conflict — please retry' : (rejection || 'Simulation failed'))
+                      reason: processedByOther ? null : (cawonceUsed && !processedByOther ? 'Cawonce already used by a different action — please retry' : (rejection || 'Simulation failed'))
                     }
                   })
                 }))
@@ -1114,8 +1183,31 @@ console.log("succeededKeys", succeededKeys)
               const subQuote = await recalculateQuoteForActions(succeededData)
               const gasLimit = await estimateGasLimit(validatorId, succeededData, subQuote)
 
-              const finalized = await submitProcessActions(validatorId, succeededData, subQuote, gasLimit)
+              const { processed: finalized, receipt: subReceipt } = await submitProcessActions(validatorId, succeededData, subQuote, gasLimit)
               console.log(`[Validator] Client ${clientId}: ${finalized.length} actions finalized`)
+
+              // Record analytics
+              if (subReceipt) {
+                const subTipCaw = computeTotalTip(succeededSubEntries)
+                const subAvgWait = succeededSubEntries.reduce((s, e) => s + (Date.now() - new Date(e.createdAt).getTime()), 0) / succeededSubEntries.length
+                try {
+                  const subFee = subReceipt.fee ?? (subReceipt.gasUsed * (subReceipt.gasPrice ?? 0n))
+                  await prisma.validatorTx.create({ data: {
+                    txHash: subReceipt.hash,
+                    blockNumber: BigInt(subReceipt.blockNumber),
+                    actionCount: finalized.length,
+                    actionBreakdown: buildActionBreakdown(succeededData.actions),
+                    gasUsed: subReceipt.gasUsed.toString(),
+                    gasPrice: subFee > 0n ? (subFee / subReceipt.gasUsed).toString() : '0',
+                    ethCost: subFee.toString(),
+                    tipCaw: subTipCaw.toString(),
+                    tipEthValue: '0', // Not calculated in sub-batch path
+                    profit: (0n - subFee).toString(),
+                    validatorId,
+                    avgWaitMs: Math.round(subAvgWait),
+                  }})
+                } catch (e: any) { console.error('[Analytics] ❌ Failed to record ValidatorTx:', e.message, e.stack) }
+              }
 
               const finalizedKeys = new Set(finalized.map((f: any) => `${f.senderId}-${f.cawonce}`))
               await Promise.all(subBatchEntries.map(async (entry, idx) => {
@@ -1208,8 +1300,25 @@ console.log("succeededKeys", succeededKeys)
               where: { senderId: data.senderId, cawonce: data.cawonce }
             })
             if (existingAction) {
-              console.log(`[Validator] TxQueue ${entry.id}: Action exists for senderId=${data.senderId} cawonce=${data.cawonce} — marking done`)
-              await prisma.txQueue.update({ where: { id: entry.id }, data: { status: 'done' } })
+              // Verify this is the same action, not a different one reusing the cawonce
+              const ex = existingAction.data as any
+              const sameAction =
+                Number(ex?.actionType ?? -1) === Number(data.actionType) &&
+                Number(ex?.receiverId ?? -1) === Number(data.receiverId ?? 0) &&
+                Number(ex?.receiverCawonce ?? -1) === Number(data.receiverCawonce ?? 0) &&
+                (ex?.text ?? '') === (data.text ?? '')
+              if (sameAction) {
+                console.log(`[Validator] TxQueue ${entry.id}: Same action exists for senderId=${data.senderId} cawonce=${data.cawonce} — marking done`)
+                await prisma.txQueue.update({ where: { id: entry.id }, data: { status: 'done' } })
+              } else {
+                console.log(`[Validator] TxQueue ${entry.id}: Cawonce ${data.cawonce} used by DIFFERENT action — marking failed`)
+                console.log(`  existing: type=${ex?.actionType} receiver=${ex?.receiverId} text="${(ex?.text ?? '').slice(0, 40)}"`)
+                console.log(`  new:      type=${data.actionType} receiver=${data.receiverId} text="${(data.text ?? '').slice(0, 40)}"`)
+                await prisma.txQueue.update({
+                  where: { id: entry.id },
+                  data: { status: 'failed', reason: 'Cawonce already used by a different action — please retry' }
+                })
+              }
             } else {
               console.log(`[Validator] TxQueue ${entry.id}: No Action found for senderId=${data.senderId} cawonce=${data.cawonce} — cawonce conflict, marking failed`)
               await prisma.txQueue.update({
@@ -1429,14 +1538,38 @@ console.log("succeededKeys", succeededKeys)
 
       try {
         console.log("[Validator] ========== SUBMITTING TRANSACTION TO BLOCKCHAIN ==========")
-        finalized = await submitProcessActions(
+        const submitResult = await submitProcessActions(
            validatorId, multiSucceeded, succeededQuote, rawGasLimit
          )
+        finalized = submitResult.processed
+        const txReceipt = submitResult.receipt
         console.log("[Validator] ========== TRANSACTION SUBMISSION SUCCESSFUL ==========")
         console.log(`[Validator] ${finalized.length} actions finalized on chain`)
         finalized.forEach((f: any) => {
           console.log(`  - Sender ${f.senderId} cawonce ${f.cawonce}: ${getActionType(f.actionType)}`)
         })
+
+        // Record analytics
+        if (txReceipt) {
+          const avgWait = succeededEntries.reduce((s: number, e: any) => s + (Date.now() - new Date(e.createdAt).getTime()), 0) / succeededEntries.length
+          try {
+            const txFee = txReceipt.fee ?? (txReceipt.gasUsed * (txReceipt.gasPrice ?? 0n))
+            await prisma.validatorTx.create({ data: {
+              txHash: txReceipt.hash,
+              blockNumber: BigInt(txReceipt.blockNumber),
+              actionCount: finalized.length,
+              actionBreakdown: buildActionBreakdown(multiSucceeded.actions),
+              gasUsed: txReceipt.gasUsed.toString(),
+              gasPrice: txFee > 0n ? (txFee / txReceipt.gasUsed).toString() : '0',
+              ethCost: txFee.toString(),
+              tipCaw: totalTipCaw.toString(),
+              tipEthValue: tipInWei.toString(),
+              profit: (tipInWei - txFee).toString(),
+              validatorId,
+              avgWaitMs: Math.round(avgWait),
+            }})
+          } catch (e: any) { console.error('[Analytics] ❌ Failed to record ValidatorTx:', e.message, e.stack) }
+        }
 
       } catch (submitErr: any) {
         console.error("[Validator] ========== TRANSACTION SUBMISSION FAILED ==========")
@@ -1836,6 +1969,25 @@ console.log("succeededKeys", succeededKeys)
               const tx = await replicatorWrite.replicateBatch(params, allActions, allV, allR, allS, { value: nativeFee })
               const receipt = await tx.wait()
               console.log(`[Replication] Checkpoint ${checkpointId} replicated! tx: ${receipt?.hash}`)
+
+              // Record replication analytics
+              if (receipt) {
+                try {
+                  await prisma.replicationTx.create({ data: {
+                    txHash: receipt.hash,
+                    blockNumber: BigInt(receipt.blockNumber),
+                    clientId: client.id,
+                    destEid,
+                    checkpointId,
+                    actionCount: 256,
+                    gasUsed: receipt.gasUsed.toString(),
+                    gasPrice: receipt.fee ? (receipt.fee / receipt.gasUsed).toString() : '0',
+                    ethCost: receipt.fee.toString(),
+                    lzFee: nativeFee.toString(),
+                    totalCost: (receipt.fee + nativeFee).toString(),
+                  }})
+                } catch (e: any) { console.error('[Analytics] Failed to record replication:', e.message) }
+              }
             } catch (err: any) {
               console.error(`[Replication] Failed for client ${client.id} → chain ${destEid}:`, err.message)
             }
@@ -1863,19 +2015,9 @@ console.log("succeededKeys", succeededKeys)
       }
     }
 
-    console.log(`[Validator] Starting validator service with:`);
-    console.log(`  - L2 RPC URL: ${l2RpcUrl}`);
-    console.log(`  - ETH Mainnet RPC URL: ${ethMainnetRpcUrl}`);
-    console.log(`  - Validator ID: ${validatorId}`);
-    console.log(`  - Check Interval: ${checkInterval}ms`);
-    console.log(`  - Wallet Address: ${wallet.address}`);
-
-    timer = setInterval(() => safePollLoop(), checkInterval)
-    safePollLoop()
-
-    // Start background replication loop (runs every 60 seconds)
-    const REPLICATION_INTERVAL = 60_000
+    // Start background replication loop
     let isReplicating = false
+    let replicationTimer: ReturnType<typeof setInterval>
     const safeReplicationLoop = async () => {
       if (isReplicating) return
       isReplicating = true
@@ -1887,7 +2029,23 @@ console.log("succeededKeys", succeededKeys)
         isReplicating = false
       }
     }
-    const replicationTimer = setInterval(() => safeReplicationLoop(), REPLICATION_INTERVAL)
+
+    // Load DB settings before first poll (env/config values serve as defaults).
+    // Settings are also refreshed at the start of every poll cycle.
+    refreshSettings(checkInterval).then(() => {
+      console.log(`[Validator] Starting validator service with:`);
+      console.log(`  - L2 RPC URL: ${l2RpcUrl}`);
+      console.log(`  - ETH Mainnet RPC URL: ${ethMainnetRpcUrl}`);
+      console.log(`  - Validator ID: ${validatorId}`);
+      console.log(`  - Check Interval: ${liveSettings.checkInterval}ms`);
+      console.log(`  - Base Tip: ${liveSettings.validatorBaseTip} CAW`);
+      console.log(`  - Replication Interval: ${liveSettings.replicationInterval}ms`);
+      console.log(`  - Wallet Address: ${wallet.address}`);
+
+      timer = setInterval(() => safePollLoop(), liveSettings.checkInterval)
+      safePollLoop()
+      replicationTimer = setInterval(() => safeReplicationLoop(), liveSettings.replicationInterval)
+    })
 
     return {
       started: Promise.resolve(),
