@@ -51,6 +51,7 @@ export default async function listenForRawEvents(
     rpcUrl: string
     contractAddress: string
     chainId: number
+    startBlock?: number // Minimum block to start scanning from (avoids old contract events)
     rawEventsProvider: {
       getLastProcessedEvent(): Promise<{
         blockNumber: number
@@ -72,7 +73,17 @@ export default async function listenForRawEvents(
   const httpContract = new Contract(CAW_ACTIONS_ADDRESS, CONTRACT_ABI, httpProvider)
 
   const last = await config.rawEventsProvider.getLastProcessedEvent()
-  const startBlock = last ? last.blockNumber : 0
+  // On fresh DB: use configured startBlock, or current block (never scan from 0)
+  let startBlock: number
+  if (last) {
+    startBlock = last.blockNumber
+  } else if (config.startBlock !== undefined) {
+    startBlock = config.startBlock
+    console.log(`[RawEventsGatherer] Fresh DB — starting from configured startBlock ${startBlock}`)
+  } else {
+    startBlock = await httpProvider.getBlockNumber()
+    console.log(`[RawEventsGatherer] Fresh DB, no startBlock configured — starting from current block ${startBlock}`)
+  }
   let lastHash = last?.parentHash ?? 'genesis'
 
   function hashNext(prev: string, action: any): string {

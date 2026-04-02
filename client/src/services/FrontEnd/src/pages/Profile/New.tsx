@@ -8,7 +8,7 @@ import MainLayout from '~/layouts/MainLayout'
 import useContractCall, { UseContractCallReturn } from '~/hooks/useContractCall'
 import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_MINTER_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
 import { cawNameAbi, cawNameMinterAbi, cawNameQuoterAbi } from '~/../../../abi/generated'
-import { useActiveToken, useTokenDataStore } from "~/store/tokenDataStore";
+import { useActiveToken, useTokenDataStore, usePriceStore } from "~/store/tokenDataStore";
 import { chains } from '~/config/chains'
 import UsernameSvg from '~/components/UsernameSvg'
 import { formatNumber, formatNumberCompact, convertToNumber } from "~/utils";
@@ -54,15 +54,30 @@ export const NewProfile: React.FC = () => {
   const [mintedTokenId, setMintedTokenId] = useState<number | null>(null)
   const [hasResetForm, setHasResetForm] = useState(false)
   const [isApprovePending, setIsApprovePending] = useState(false)
-  const [depositEnabled, setDepositEnabled] = useState(false)
-  const [depositAmount, setDepositAmount] = useState('10000000')
+  const [depositEnabled, setDepositEnabled] = useState(true)
+  const [depositAmount, setDepositAmount] = useState('')
+  const [depositDefaultSet, setDepositDefaultSet] = useState(false)
   const useAddress = address || activeToken?.owner;
   const setActiveTokenId = useTokenDataStore(state => state.setActiveTokenId);
+  const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
+
+  // Dollar presets for staking — converted to CAW amounts
+  const DOLLAR_PRESETS = [10, 25, 50, 100]
+  const dollarToCaw = (dollars: number) => cawPrice > 0 ? Math.round(dollars / cawPrice) : 0
+
+  // Set default deposit to $25 worth of CAW once price loads
+  useEffect(() => {
+    if (!depositDefaultSet && cawPrice > 0) {
+      setDepositAmount(String(dollarToCaw(25)))
+      setDepositDefaultSet(true)
+    }
+  }, [cawPrice, depositDefaultSet])
 
   // Typewriter animation for captive users
   const isCaptive = !activeToken?.username
   const [typewriterStopped, setTypewriterStopped] = useState(false)
   const typewriterRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const usernameInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!isCaptive || typewriterStopped) return
@@ -72,6 +87,7 @@ export const NewProfile: React.FC = () => {
     let charIdx = 0
     let deleting = false
     let pausing = false
+    let cycles = 0
 
     const tick = () => {
       if (!isCaptive || typewriterStopped) return
@@ -102,11 +118,21 @@ export const NewProfile: React.FC = () => {
           deleting = false
           const nextIdx = (wordIdx + 1) % words.length
           wordIdx = nextIdx
+          if (nextIdx === 0) {
+            cycles++
+            if (cycles >= 2) {
+              // Stop after 2 full cycles, focus the input
+              setTypewriterStopped(true)
+              setUsername('')
+              setTimeout(() => usernameInputRef.current?.focus(), 100)
+              return
+            }
+          }
           // Extra pause after deleting "username" before looping
           typewriterRef.current = setTimeout(tick, nextIdx === 0 ? 1100 : 300)
           return
         }
-        typewriterRef.current = setTimeout(tick, 55)
+        typewriterRef.current = setTimeout(tick, 63)
       }
     }
 
@@ -137,6 +163,12 @@ export const NewProfile: React.FC = () => {
     if (len === 0) return 0n
     return (COST_SCHEDULE[len as keyof typeof COST_SCHEDULE] ?? DEFAULT_COST) *10n**18n
   }, [username])
+
+  const costInDollars = useMemo(() => {
+    if (!cost || cost === 0n) return null
+    const cawAmount = convertToNumber(cost, 18)
+    return cawPrice > 0 ? (cawAmount * cawPrice) : null
+  }, [cost, cawPrice])
 
   const { data: existingId, isLoading: checkingUsername } = useReadContract({
     address:      CAW_NAMES_MINTER_ADDRESS,
@@ -200,7 +232,7 @@ console.log("BALANCE:", balance)
       // Pass state indicating if we deposited (stake is pending via LayerZero)
       navigate(`/welcome/${username}`, {
         replace: true,
-        state: { depositPending: depositEnabled && depositAmountWei > 0n }
+        state: { pendingDeposit: depositEnabled && depositAmountWei > 0n ? depositAmountWei.toString() : null }
       })
     }
   }, [mintSuccess, mintedTokenId, username, depositEnabled, depositAmountWei])
@@ -334,12 +366,16 @@ console.log("BALANCE:", balance)
     console.log('[New] handleSubmit called', { wrongChain, needsMinterApproval, needsCawNameApproval })
     if (wrongChain) {
       handleSwitchChain()
-    } else if (needsMinterApproval) {
-      console.log('[New] approving minter...')
-      await approveMinter();
-    } else if (needsCawNameApproval) {
-      console.log('[New] approving cawName...')
-      await approveCawName();
+    } else if (needsMinterApproval || needsCawNameApproval) {
+      // Approve both spenders in sequence with a single button press
+      if (needsMinterApproval) {
+        console.log('[New] approving minter...')
+        await approveMinter();
+      }
+      if (needsCawNameApproval) {
+        console.log('[New] approving cawName...')
+        await approveCawName();
+      }
     } else {
       console.log('[New] calling mint...', {
         depositEnabled,
@@ -390,13 +426,11 @@ console.log("BALANCE:", balance)
     } else {
       submitText = "Processing..."
     }
-  } else if (needsMinterApproval)
+  } else if (needsMinterApproval || needsCawNameApproval)
     submitText = "Approve CAW"
-  else if (needsCawNameApproval)
-    submitText = "Approve Deposit"
   else if (usernameTaken)
     submitText = "username taken"
-  else submitText = depositEnabled && depositAmountWei > 0n ? "Mint & Stake" : "Mint"
+  else submitText = depositEnabled && depositAmountWei > 0n ? "Mint & Deposit" : "Mint"
 
   // Show loading screen while waiting for mint to complete
   if (!hasResetForm && (mintStatus === 'pending' || (mintStatus === 'success' && !mintSuccess))) {
@@ -443,22 +477,55 @@ console.log("BALANCE:", balance)
 
   return (
     <MainLayout>
-      <div className={`max-w-md mx-auto p-6 ${isCaptive ? '' : 'space-y-4 mt-8'}`}>
-        <div className="text-center space-y-3">
-          <h1 className="text-4xl font-bold">Create a Profile</h1>
-          <p className="text-gray-400 text-sm mx-auto" style={{ width: '85%' }}>
-            Your username is a tradeable NFT that will be used to access your account and posts. Minting a username requires CAW to be burnt, fewer characters increase in cost and rarity.
-          </p>
-        </div>
-
-        {/* Imagen generada del username - siempre visible */}
-        <div className={`flex justify-center items-center mb-6 ${isCaptive ? 'mt-8' : 'mt-16'}`}>
-            <div className="w-64 h-64 overflow-hidden" style={{ borderRadius: '22px' }}>
-                <UsernameSvg username={username}/>
+      <div className={`${isCaptive ? 'max-w-4xl' : 'max-w-md'} mx-auto p-6 ${isCaptive ? '' : 'space-y-4 mt-8'}`}>
+        <div className={isCaptive ? 'flex flex-col md:flex-row gap-8 md:gap-0 items-start md:divide-x md:divide-white/10 pt-12 md:pt-20' : ''}>
+          {/* Left column (captive) or full-width header (normal) */}
+          <div className={isCaptive ? 'w-full md:w-1/2 md:sticky md:top-8 md:pr-10' : ''}>
+            <div className="text-center space-y-3">
+              <h1 className="text-4xl font-bold">Create a Profile</h1>
+              <p className="text-gray-400 text-sm mx-auto" style={{ width: '85%' }}>
+                Your username is a tradeable NFT that will be used to access your account and posts. Creating a profile requires CAW tokens to be burnt, fewer characters increase in cost and rarity.
+              </p>
             </div>
-        </div>
 
-        <div className={`${isCaptive ? 'mt-12' : 'mt-16'} space-y-4`}>
+            {/* Username SVG preview */}
+            <div className={`flex justify-center items-center mb-6 ${isCaptive ? 'mt-6' : 'mt-16'}`}>
+                <div className="w-64 h-64 overflow-hidden" style={{ borderRadius: '22px' }}>
+                    <UsernameSvg username={username || 'username'} textOpacity={username ? 1 : 0.5} />
+                </div>
+            </div>
+            <div className="text-center">
+              <a
+                href="https://app.uniswap.org/#/swap?inputCurrency=ETH&outputCurrency=0xf3b9569F82B18aEf890De263B84189bd33EBe452"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-sm text-yellow-500/70 hover:text-yellow-500 transition-colors cursor-pointer"
+              >
+                Need more CAW? Click here.
+              </a>
+            </div>
+          </div>
+
+          {/* Right column (captive) or continuation (normal) */}
+          <div className={isCaptive ? 'w-full md:w-1/2 md:pl-[55px]' : ''}>
+            {isCaptive && (
+              <h2 className="text-2xl font-bold text-center md:text-left mb-4 mt-2.5">Choose Your Username</h2>
+            )}
+
+        <div className={`${isCaptive ? '' : 'mt-16'} space-y-4`}>
+            {usernameTaken && username && (
+              <div className="text-sm text-red-400 text-center">
+                This username{' '}
+                <a
+                  href={`/users/${username}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="underline"
+                >
+                  is taken
+                </a>.
+              </div>
+            )}
             <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -466,6 +533,7 @@ console.log("BALANCE:", balance)
                     </svg>
                 </div>
                 <input
+                    ref={usernameInputRef}
                     type="text"
                     value={username}
                     pattern="[A-Za-z0-9]*"
@@ -490,7 +558,7 @@ console.log("BALANCE:", balance)
                         
                         {/* Modal de precios */}
                         {showPricingModal && (
-                            <div className="absolute bottom-full right-0 mb-6 w-72 bg-black border border-white/20 rounded-lg p-5 shadow-xl z-50">
+                            <div className="absolute top-1/2 -translate-y-1/2 right-full mr-3 w-72 bg-black border border-white/20 rounded-lg p-5 shadow-xl z-50">
                                 <div className="text-sm font-medium text-center text-white mb-3">Username Pricing</div>
                                 <div className="space-y-2">
                                     {[
@@ -516,21 +584,24 @@ console.log("BALANCE:", balance)
             </div>
 
             <div className="flex justify-between items-center text-sm">
-                <div className="text-gray-400">
+                {useAddress ? (
+                  <div className="text-gray-400">
                     Balance: <span className="font-mono text-white">{formatNumberCompact(convertToNumber(balance))} CAW</span>
-                </div>
+                  </div>
+                ) : <div />}
                 <div className="text-gray-400">
-                    Cost: <span className="font-mono text-white">{formatNumber(convertToNumber(cost, 18),0)} CAW</span>
+                    Cost: <span className="font-mono text-white">{formatNumberCompact(convertToNumber(cost, 18))} CAW</span>
+                    {costInDollars != null && <span className="text-gray-500 ml-1">(~${costInDollars < 0.01 ? '<0.01' : costInDollars.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})</span>}
                 </div>
             </div>
 
             {/* Deposit option */}
-            <div className="border border-white/10 rounded-xl p-4 space-y-3">
+            <div className="border border-white/10 rounded-xl p-4 space-y-3 mt-6">
               <label className="flex items-center gap-3 cursor-pointer">
                 <button
                   type="button"
                   onClick={() => setDepositEnabled(!depositEnabled)}
-                  className={`relative w-10 h-6 rounded-full transition-colors duration-200 cursor-pointer ${
+                  className={`relative w-10 min-w-[40px] h-6 rounded-full transition-colors duration-200 cursor-pointer flex-shrink-0 ${
                     depositEnabled ? 'bg-yellow-500' : 'bg-gray-600'
                   }`}
                 >
@@ -540,7 +611,7 @@ console.log("BALANCE:", balance)
                 </button>
                 <div>
                   <div className="flex items-center gap-1.5">
-                  <span className="text-white text-sm font-medium">{username ? `Stake CAW as @${username}` : 'Stake CAW'}</span>
+                  <span className="text-white text-sm font-medium">{username ? `Deposit CAW as @${username}` : 'Deposit CAW'}</span>
                   <div className="relative group">
                     <HiInformationCircle className="w-4 h-4 text-gray-400 cursor-help" />
                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-[min(450px,100vw)] bg-gray-900 rounded-lg shadow-lg">
@@ -548,7 +619,7 @@ console.log("BALANCE:", balance)
                     </div>
                   </div>
                   </div>
-                  <p className="text-gray-500 text-xs mt-0.5">This is required to enable posting, liking, following and all other actions</p>
+                  <p className="text-gray-500 text-xs mt-0.5">Required to post, like, and follow. You earn tokens from every action on the protocol based on your deposit.</p>
                 </div>
               </label>
 
@@ -558,36 +629,53 @@ console.log("BALANCE:", balance)
                     <input
                       type="text"
                       inputMode="numeric"
-                      value={depositAmount}
-                      onChange={e => setDepositAmount(e.target.value.replace(/[^0-9.]/g, ''))}
-                      placeholder="Amount to stake"
+                      value={depositAmount ? Number(depositAmount).toLocaleString() : ''}
+                      onChange={e => setDepositAmount(e.target.value.replace(/[^0-9]/g, ''))}
+                      placeholder="Amount to deposit"
                       className="w-full px-4 py-2.5 bg-black border border-white/20 rounded-full text-white placeholder-white/30 focus:outline-none focus:border-white/30 text-sm"
                     />
                     <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm">CAW</span>
                   </div>
                   <div className="flex gap-2">
-                    {['1000000', '10000000', '100000000', '1000000000', '10000000000'].map(preset => {
-                      const active = depositAmount === preset
-                      const label = Number(preset) >= 1_000_000_000 ? `${Number(preset) / 1_000_000_000}B` : `${Number(preset) / 1_000_000}M`
+                    {DOLLAR_PRESETS.map(dollars => {
+                      const cawAmount = dollarToCaw(dollars)
+                      const cawStr = String(cawAmount)
+                      const active = depositAmount === cawStr
                       return (
                         <button
-                          key={preset}
+                          key={dollars}
                           type="button"
-                          onClick={() => setDepositAmount(preset)}
+                          onClick={() => setDepositAmount(cawStr)}
+                          disabled={cawPrice <= 0}
                           className={`flex-1 py-1.5 text-xs rounded-full border transition-colors cursor-pointer ${
                             active
                               ? 'border-yellow-500 text-yellow-400'
                               : 'border-white/10 text-gray-400 hover:text-white hover:border-white/30'
-                          }`}
+                          } disabled:opacity-30 disabled:cursor-not-allowed`}
                         >
-                          {label}
+                          ${dollars}
                         </button>
                       )
                     })}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (balance && balance > cost) {
+                          const maxDeposit = balance - cost
+                          // Convert wei to whole tokens (floor to avoid rounding issues)
+                          setDepositAmount(String(maxDeposit / 10n**18n))
+                        }
+                      }}
+                      disabled={!balance || balance <= cost}
+                      className={`flex-1 py-1.5 text-xs rounded-full border transition-colors cursor-pointer border-white/10 text-gray-400 hover:text-white hover:border-white/30 disabled:opacity-30 disabled:cursor-not-allowed`}
+                    >
+                      Max
+                    </button>
                   </div>
                   {depositAmountWei > 0n && (
                     <div className="text-xs text-gray-500 text-center">
                       Total CAW needed: <span className="text-white font-mono">{formatNumber(convertToNumber(totalCawNeeded, 18), 0)}</span>
+                      {cawPrice > 0 && <span className="text-gray-500 ml-1">(~${(convertToNumber(totalCawNeeded, 18) * cawPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})</span>}
                     </div>
                   )}
                 </div>
@@ -602,22 +690,13 @@ console.log("BALANCE:", balance)
                 {submitText}
             </SubmitButton>
 
-            <div className="text-center">
-              <a
-                href="https://app.uniswap.org/#/swap?inputCurrency=ETH&outputCurrency=0xf3b9569F82B18aEf890De263B84189bd33EBe452"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-sm text-yellow-500/70 hover:text-yellow-500 transition-colors cursor-pointer"
-              >
-                Need more CAW? Click here.
-              </a>
-            </div>
-
             {gasCostEth != null && (
                 <div className="text-sm text-gray-500 text-center">
                     est. gas: {gasCostEth.toFixed(4)} ETH
                 </div>
             )}
+        </div>
+          </div>
         </div>
       </div>
     </MainLayout>

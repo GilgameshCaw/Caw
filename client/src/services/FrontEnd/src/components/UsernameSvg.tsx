@@ -2,12 +2,13 @@ import React from "react";
 
 interface UsernameSvgProps {
   username: string;
+  textOpacity?: number;
 }
 
 const DESCENDER_CHARS = new Set(['j', 'f', 'y', 'g', 'p', 'q']);
 const TALL_ENDING_CHARS = new Set(['d', 'f', 'l']);
 
-const UsernameSvg: React.FC<UsernameSvgProps> = ({ username }) => {
+const UsernameSvg: React.FC<UsernameSvgProps> = ({ username, textOpacity }) => {
   const length = username.length;
   let fontSize = 22;
   if (length === 16) fontSize = 23;
@@ -89,6 +90,7 @@ const UsernameSvg: React.FC<UsernameSvgProps> = ({ username }) => {
         y={yPosition}
         fontSize={`${fontSize}px`}
         fill="rgb(235, 192, 70)"
+        opacity={textOpacity ?? 1}
         fontFamily="cursive"
         fontWeight="bold"
         filter="url(#dropShadow)"

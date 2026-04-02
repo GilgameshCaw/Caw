@@ -44,10 +44,9 @@ export const CawPage: React.FC = () => {
 
     const interval = setInterval(async () => {
       try {
-        const { caw: fetched, comments: fetchedComments } =
-          await apiFetch<{ caw: CawItem; comments: CawItem[] }>(`/api/caws/${id}`)
+        const { caw: fetched } =
+          await apiFetch<{ caw: CawItem }>(`/api/caws/${id}`)
         setCaw(fetched)
-        setComments(fetchedComments)
 
         // Stop polling if no longer pending
         if (fetched.status !== 'PENDING') {
@@ -68,33 +67,23 @@ export const CawPage: React.FC = () => {
     console.log('[CawPage] Starting reply poll for main caw:', caw.id)
     const interval = setInterval(async () => {
       try {
-        console.log(`[CawPage] Polling for pending reply on caw ${caw.id}...`)
         const { caw: fetched, comments: fetchedComments } =
           await apiFetch<{ caw: CawItem; comments: CawItem[] }>(`/api/caws/${id}`)
 
-        console.log(`[CawPage] Got response:`, {
-          replyPending: fetched.replyPending,
-          hasReplied: fetched.hasReplied,
-          commentCount: fetched.commentCount
-        })
-
         setCaw(fetched)
-        setComments(fetchedComments)
-
-        // Stop polling if no longer pending
+        // Only update comments if the reply was confirmed (new comments available)
+        // This avoids resetting paginated comments during polling
         if (!fetched.replyPending) {
-          console.log('[CawPage] Reply confirmed, stopping poll')
+          setComments(fetchedComments)
+          console.log('[CawPage] Reply confirmed, updating comments and stopping poll')
           clearInterval(interval)
         }
       } catch (error) {
         console.error('Error polling for reply updates:', error)
       }
-    }, 3000) // Poll every 3 seconds
+    }, 3000)
 
-    return () => {
-      console.log('[CawPage] Clearing reply poll interval')
-      clearInterval(interval)
-    }
+    return () => clearInterval(interval)
   }, [caw?.replyPending, id])
 
   const loadMoreComments = async () => {

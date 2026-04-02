@@ -5,6 +5,8 @@ import Feed, { type FeedRef } from "~/components/Feed";
 import React, { useState, useRef, useEffect } from "react";
 import { useTheme } from '~/hooks/useTheme';
 import { useSearchParams } from 'react-router-dom';
+import { useTokenDataStore } from '~/store/tokenDataStore';
+import { apiFetch } from '~/api/client';
 
 type MainTab = 'following' | 'foryou'
 
@@ -21,9 +23,27 @@ const TAB_TO_FILTER: Record<MainTab, 'Following' | 'For you'> = {
 export const Main: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams()
   const tabParam = searchParams.get('tab') as MainTab | null
+  const activeToken = useTokenDataStore(s => {
+    const tokens = Object.values(s.tokensByAddress).flat()
+    return tokens.find(t => t.tokenId === s.activeTokenId) || tokens[0]
+  })
+  const [defaultResolved, setDefaultResolved] = useState(!!tabParam)
   const [activeTab, setActiveTab] = useState<MainTab>(
     tabParam && (tabParam === 'following' || tabParam === 'foryou') ? tabParam : 'following'
   )
+
+  // If no explicit tab param, check following count and default to 'foryou' if 0
+  useEffect(() => {
+    if (tabParam || defaultResolved || !activeToken?.username) return
+    apiFetch<{ followingCount: number }>(`/api/users/${activeToken.username}`)
+      .then(response => {
+        if (response.followingCount === 0) {
+          setActiveTab('foryou')
+        }
+        setDefaultResolved(true)
+      })
+      .catch(() => setDefaultResolved(true))
+  }, [tabParam, defaultResolved, activeToken?.username])
 
   // Sync URL when tab changes
   useEffect(() => {

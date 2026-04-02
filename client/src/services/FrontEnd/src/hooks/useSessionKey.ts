@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useCallback, useEffect } from 'react'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { useSignTypedData, useSwitchChain, useChainId, useAccount } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
@@ -11,7 +11,6 @@ import { useActiveToken } from '~/store/tokenDataStore'
 export const DEFAULT_SESSION_DURATION = 30 * 24 * 60 * 60 // 1 month
 
 export const SESSION_DURATION_OPTIONS = [
-  { label: '5 min',     value: 5 * 60 },
   { label: '1 week',    value: 7 * 24 * 60 * 60 },
   { label: '1 month',   value: 30 * 24 * 60 * 60 },
   { label: '3 months',  value: 90 * 24 * 60 * 60 },
@@ -23,15 +22,13 @@ export const SESSION_DURATION_OPTIONS = [
 const DEFAULT_SCOPE = 0x3F // 0b00111111
 
 // Default spend limit in whole CAW tokens (0 = unlimited)
-export const DEFAULT_SPEND_LIMIT = BigInt(1_000_000) // 1M CAW
+export const DEFAULT_SPEND_LIMIT = BigInt(10_000_000) // 10M CAW
 
 export const SPEND_LIMIT_OPTIONS = [
-  { label: '20K',  value: BigInt(20_000) },
-  { label: '100K', value: BigInt(100_000) },
-  { label: '500K', value: BigInt(500_000) },
-  { label: '1M',   value: BigInt(1_000_000) },
-  { label: '5M',   value: BigInt(5_000_000) },
+  { label: '10M',  value: BigInt(10_000_000) },
   { label: '50M',  value: BigInt(50_000_000) },
+  { label: '100M', value: BigInt(100_000_000) },
+  { label: '500M', value: BigInt(500_000_000) },
   { label: 'No limit', value: BigInt(0) },
 ]
 
@@ -54,7 +51,7 @@ const DELEGATION_TYPES = {
 export function useCreateSession() {
   const { signTypedDataAsync } = useSignTypedData()
   const { switchChainAsync } = useSwitchChain()
-  const { isConnected } = useAccount()
+  const { isConnected, address: connectedAddress } = useAccount()
   const { openConnectModal } = useConnectModal()
   const chainId = useChainId()
   const setSession = useSessionKeyStore(s => s.setSession)
@@ -62,7 +59,7 @@ export function useCreateSession() {
   return useCallback(async (onProgress?: (status: string) => void, spendLimit: bigint = DEFAULT_SPEND_LIMIT, durationSeconds: number = DEFAULT_SESSION_DURATION) => {
     if (!isConnected) {
       openConnectModal?.()
-      throw new Error('Please connect your wallet first')
+      return null as any // User will retry after connecting
     }
 
     // Ensure wallet is on Base Sepolia (where CawNameL2 lives)
@@ -156,18 +153,19 @@ export function useCreateSession() {
     setSession({
       privateKey,
       address: sessionAccount.address,
+      ownerAddress: connectedAddress?.toLowerCase(),
       expiry,
       scopeBitmap: DEFAULT_SCOPE,
       spendLimit: spendLimit.toString(),
     })
 
     return { address: sessionAccount.address, expiry }
-  }, [isConnected, openConnectModal, chainId, signTypedDataAsync, switchChainAsync, setSession])
+  }, [isConnected, connectedAddress, openConnectModal, chainId, signTypedDataAsync, switchChainAsync, setSession])
 }
 
 export function useRevokeSession() {
   const clearSession = useSessionKeyStore(s => s.clearSession)
-  const session = useSessionKeyStore(s => s.session)
+  const session = useSessionKeyStore(s => s.getSession())
   const activeToken = useActiveToken()
 
   return useCallback(async () => {
@@ -218,4 +216,18 @@ export function useRevokeSession() {
     // Always clear the local session (destroys the private key from this browser)
     clearSession()
   }, [session, activeToken, clearSession])
+}
+
+/**
+ * Keeps the session store's active wallet in sync with the connected wallet.
+ * Sessions are stored per-wallet, so switching wallets just changes which session is active —
+ * switching back restores the original session without re-registration.
+ */
+export function useSessionKeyWalletGuard() {
+  const { address } = useAccount()
+  const setActiveWallet = useSessionKeyStore(s => s.setActiveWallet)
+
+  useEffect(() => {
+    setActiveWallet(address || null)
+  }, [address, setActiveWallet])
 }

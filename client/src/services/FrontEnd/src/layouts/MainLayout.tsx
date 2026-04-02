@@ -172,7 +172,7 @@ const MainLayout = ({ children }: MainLayoutProps) => {
       )}
 
       {/* Floating feedback button */}
-      <div className="fixed bottom-5 left-5 md:right-5 md:left-auto z-40">
+      <div className={`fixed left-5 md:right-5 md:left-auto z-40 ${hideSidebars ? 'bottom-20' : 'bottom-5'}`}>
       <Tooltip text="Feedback" position="top">
         <button
           onClick={() => setShowBugReport(true)}

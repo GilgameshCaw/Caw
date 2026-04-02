@@ -7,7 +7,7 @@ import Feed             from '~/components/Feed'
 import { useTheme } from '~/hooks/useTheme'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useModalStore } from '~/store/modalStore'
-import { HiPencil, HiX, HiCamera, HiGlobe, HiLink, HiLocationMarker, HiOutlineMail, HiDotsHorizontal, HiOutlineCurrencyDollar, HiOutlineLockClosed } from 'react-icons/hi'
+import { HiPencil, HiX, HiCamera, HiGlobe, HiLink, HiLocationMarker, HiOutlineMail, HiDotsHorizontal, HiOutlineCurrencyDollar, HiOutlineLockClosed, HiClipboardCopy, HiCheck } from 'react-icons/hi'
 import { apiFetch } from '~/api/client'
 import { useDmIdentity } from '~/hooks/useDmIdentity'
 import { useDmClient } from '~/hooks/useDm'
@@ -22,6 +22,7 @@ import { useFollowButton } from '~/hooks/useFollowButton'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import TipModal from '~/components/modals/TipModal'
 import { useTransferModalStore } from '~/store/transferModalStore'
+import { useMarketplaceStore, MarketplaceListing } from '~/store/marketplaceStore'
 import Tooltip from '~/components/Tooltip'
 
 type ProfileTab = 'posts' | 'likes' | 'replies' | 'media'
@@ -102,7 +103,7 @@ export const Profile: React.FC = () => {
   // DM identity check for prompts
   const { hasIdentity: ownDmEnabled } = useDmIdentity(activeToken?.tokenId)
   const { hasIdentity: peerDmEnabled } = useDmIdentity(profileData?.tokenId)
-  const { initializeClient, isLoading: dmEnabling } = useDmClient(activeToken?.tokenId)
+  const { initializeClient, isLoading: dmEnabling } = useDmClient(activeToken?.tokenId, activeToken?.username)
   const [dmEnableError, setDmEnableError] = useState<string | null>(null)
 
   const handleEnableDms = async () => {
@@ -146,6 +147,16 @@ export const Profile: React.FC = () => {
   const [showTipModal, setShowTipModal] = useState(false)
   const [tipPending, setTipPending] = useState(false)
   const [hasTipped, setHasTipped] = useState(false)
+  const [activeListing, setActiveListing] = useState<MarketplaceListing | null>(null)
+  const [addressCopied, setAddressCopied] = useState(false)
+
+  // Fetch active marketplace listing for this profile
+  useEffect(() => {
+    if (!profileData?.tokenId) { setActiveListing(null); return }
+    apiFetch<MarketplaceListing | null>(`/api/marketplace/listings/token/${profileData.tokenId}`)
+      .then(data => setActiveListing(data))
+      .catch(() => setActiveListing(null))
+  }, [profileData?.tokenId])
 
   // Server-backed blocking
   const { blockUser, unblockUser, isBlocked: checkIsBlocked } = useBlockedUsersStore()
@@ -509,8 +520,8 @@ export const Profile: React.FC = () => {
 
       // Calculate total cost: data-dependent cost + validator tip
       // Both are in whole CAW tokens (contract multiplies by 10^18)
-      const { VALIDATOR_TIP } = await import('~/api/actions')
-      const totalCost = BigInt(updateCost) + VALIDATOR_TIP
+      const { getValidatorTip } = await import('~/api/actions')
+      const totalCost = BigInt(updateCost) + getValidatorTip()
 
       // Check if user has enough CAW staked to cover the cost
       const totalCostWei = totalCost * 10n**18n
@@ -697,11 +708,56 @@ export const Profile: React.FC = () => {
                 }`}>
                   @{profileData?.username || displayUsername}
                 </p>
+                {profileData?.address && (
+                  <Tooltip text={addressCopied ? 'Copied!' : 'Click to copy full address'}>
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(profileData.address)
+                        setAddressCopied(true)
+                        setTimeout(() => setAddressCopied(false), 2000)
+                      }}
+                      className={`flex items-center gap-1 text-xs mt-1 font-mono cursor-pointer transition-all duration-200 ${
+                        isDark
+                          ? 'text-gray-500 hover:text-gray-300'
+                          : 'text-gray-400 hover:text-gray-600'
+                      }`}
+                    >
+                      {profileData.address.slice(0, 5)}...{profileData.address.slice(-4)}
+                      {addressCopied
+                        ? <HiCheck className="w-3 h-3 text-green-500" />
+                        : <HiClipboardCopy className="w-3 h-3" />
+                      }
+                    </button>
+                  </Tooltip>
+                )}
                 <p className={`text-sm mt-1 transition-all duration-300 ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}>
                   {profileData?.createdAt ? `Joined ${formatJoinDate(profileData.createdAt)}` : 'Joined recently'}
                 </p>
+
+                {/* For Sale banner */}
+                {activeListing && (
+                  <button
+                    onClick={() => {
+                      if (activeListing.listingType === 'ENGLISH_AUCTION') {
+                        useMarketplaceStore.getState().openBidModal(activeListing)
+                      } else {
+                        useMarketplaceStore.getState().openBuyModal(activeListing)
+                      }
+                    }}
+                    className={`mt-2 inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer ${
+                      isDark
+                        ? 'bg-yellow-500/15 text-yellow-400 hover:bg-yellow-500/25'
+                        : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100'
+                    }`}
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z" />
+                    </svg>
+                    For Sale
+                  </button>
+                )}
               </div>
 
               {/* Stats - Alineadas horizontalmente */}
@@ -1349,8 +1405,23 @@ export const Profile: React.FC = () => {
                 </div>
               </div>
 
-              {/* Transfer Profile Button */}
-              <div className={`pt-4 border-t ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+              {/* List for Sale / Transfer Buttons */}
+              <div className={`pt-4 border-t ${isDark ? 'border-white/10' : 'border-gray-200'} space-y-3`}>
+                <button
+                  onClick={() => {
+                    setIsEditModalOpen(false)
+                    if (profileData?.tokenId !== undefined && profileData?.username) {
+                      useMarketplaceStore.getState().openCreateListing(profileData.tokenId, profileData.username)
+                    }
+                  }}
+                  className={`w-full px-4 py-2.5 rounded-full text-sm border transition-all duration-200 cursor-pointer ${
+                    isDark
+                      ? 'border-yellow-500/30 text-yellow-500 hover:border-yellow-500/60 hover:bg-yellow-500/10'
+                      : 'border-yellow-500/50 text-yellow-600 hover:border-yellow-500 hover:bg-yellow-50'
+                  }`}
+                >
+                  List for Sale
+                </button>
                 <button
                   onClick={() => {
                     setIsEditModalOpen(false)
@@ -1367,7 +1438,7 @@ export const Profile: React.FC = () => {
                   Transfer Profile
                 </button>
                 <p className={`mt-2 text-xs text-center ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                  Transfer ownership of this profile to another wallet
+                  Transfer or sell ownership of this profile
                 </p>
               </div>
             </div>

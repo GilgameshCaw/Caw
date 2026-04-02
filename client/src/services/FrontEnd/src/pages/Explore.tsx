@@ -96,13 +96,14 @@ const ExplorePage: React.FC = () => {
         {/* Content Area */}
         <div className="flex-1 overflow-y-auto custom-scrollbar-alt">
           {activeTab === 'foryou' && (
-            <div className="space-y-4">
-              <h2 className={`text-lg font-semibold transition-colors duration-300 ${
-                isDark ? 'text-white' : 'text-black'
-              }`}>
-                Recommended for you
-              </h2>
-              <Feed filter="For you" />
+            <div>
+              <Feed filter="For you" title={
+                <h2 className={`text-lg font-semibold mb-4 transition-colors duration-300 ${
+                  isDark ? 'text-white' : 'text-black'
+                }`}>
+                  Recommended for you
+                </h2>
+              } />
             </div>
           )}
 
@@ -121,13 +122,14 @@ const ExplorePage: React.FC = () => {
                 isDark ? 'border-white/20' : 'border-gray-200'
               }`}></div>
 
-              <div className="space-y-4">
-                <h2 className={`text-lg font-semibold transition-colors duration-300 ${
-                  isDark ? 'text-white' : 'text-black'
-                }`}>
-                  Discover more
-                </h2>
-                <Feed filter="For you" />
+              <div>
+                <Feed filter="For you" title={
+                  <h2 className={`text-lg font-semibold mb-4 transition-colors duration-300 ${
+                    isDark ? 'text-white' : 'text-black'
+                  }`}>
+                    Discover more
+                  </h2>
+                } />
               </div>
             </div>
           )}
@@ -176,13 +178,14 @@ const ExplorePage: React.FC = () => {
               }`}></div>
 
               {/* Community Highlights */}
-              <div className="space-y-4">
-                <h2 className={`text-lg font-semibold transition-colors duration-300 ${
-                  isDark ? 'text-white' : 'text-black'
-                }`}>
-                  Community highlights
-                </h2>
-                <Feed filter="For you" />
+              <div>
+                <Feed filter="For you" title={
+                  <h2 className={`text-lg font-semibold mb-4 transition-colors duration-300 ${
+                    isDark ? 'text-white' : 'text-black'
+                  }`}>
+                    Community highlights
+                  </h2>
+                } />
               </div>
             </div>
           )}

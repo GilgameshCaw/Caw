@@ -7,6 +7,8 @@ import { z } from 'zod'
 import { createOrFindAction, ensureActionExists } from './actionCreation'
 import { processDomainEffects } from './domainProcessor'
 import type { RawAction } from './types'
+import { StaleTokenError } from '../UserService'
+import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
 
 const Config = z.object({
   redisUrl: z.string().optional().default('redis://127.0.0.1:6379'),
@@ -24,13 +26,23 @@ export const actionProcessorService: Service = {
     const { redisUrl } = Config.parse(_cfg)
     const redis = new Redis(redisUrl)
     let stopRequested = false
-    let lastId = 0
-
 
     const started = (async () => {
       await prisma.$connect()
+
+      // Resume from last processed action's rawEventId instead of reprocessing everything on restart
+      const lastAction = await prisma.action.findFirst({
+        orderBy: { id: 'desc' },
+        select: { rawEventId: true }
+      })
+      let lastId = lastAction?.rawEventId ?? 0
+      console.log(`[ActionProcessor] Resuming from lastId=${lastId}`)
+
       const backlog = await prisma.rawEvent.findMany({
-        where: { id: { gt: lastId } },
+        where: {
+          id: { gt: lastId },
+          contractAddress: CAW_ACTIONS_ADDRESS
+        },
         orderBy: { id: 'asc' }
       })
       for (const raw of backlog) {
@@ -39,8 +51,11 @@ export const actionProcessorService: Service = {
           await handleRawEvent(raw)
           lastId = raw.id
         } catch (err) {
-          console.error(`[ActionProcessor] Failed to process backlog event ${raw.id}:`, err)
-          // Continue processing other events
+          if (err instanceof StaleTokenError) {
+            console.warn(`[ActionProcessor] Skipping stale event ${raw.id}: ${err.message}`)
+          } else {
+            console.error(`[ActionProcessor] Failed to process backlog event ${raw.id}:`, err)
+          }
           lastId = raw.id
         }
       }
@@ -58,8 +73,11 @@ export const actionProcessorService: Service = {
               await handleRawEvent(raw)
               lastId = rawEventId
             } catch (err) {
-              console.error(`[ActionProcessor] Failed to process event ${rawEventId}:`, err)
-              // Continue processing other events
+              if (err instanceof StaleTokenError) {
+                console.warn(`[ActionProcessor] Skipping stale event ${rawEventId}: ${(err as Error).message}`)
+              } else {
+                console.error(`[ActionProcessor] Failed to process event ${rawEventId}:`, err)
+              }
               lastId = rawEventId
             }
           }
@@ -131,6 +149,9 @@ async function handleRawAction(rawId: number, chainId: number, rawAction: RawAct
       } catch (retryErr) {
         console.error('[ActionProcessor] Failed to handle raw action after retry:', retryErr)
       }
+    } else if (err instanceof StaleTokenError) {
+      // Token doesn't exist on current L1 contract — skip silently
+      console.warn(`[ActionProcessor] Skipping stale action (sender=${rawAction.senderId}): ${err.message}`)
     } else {
       console.error('[ActionProcessor] Failed to handle raw action:', err)
     }

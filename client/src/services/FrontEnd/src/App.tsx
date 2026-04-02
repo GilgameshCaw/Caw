@@ -1,5 +1,6 @@
 import { BrowserRouter, Route, Routes } from "react-router";
 import { useCawonceSync } from '~/hooks/useCawonce'
+import { useSessionKeyWalletGuard } from '~/hooks/useSessionKey'
 import { useTxQueueMonitor } from '~/hooks/useTxQueueMonitor'
 import { useClientConfig } from '~/store/clientConfigStore'
 import { CLIENT_ID } from '~/api/actions'
@@ -9,9 +10,13 @@ import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
 import { useInsufficientStakeStore } from '~/store/insufficientStakeStore'
 import VerifyWalletModal from '~/components/modals/VerifyWalletModal'
 import TransferNFTModal from '~/components/modals/TransferNFTModal'
+import CreateListingModal from '~/components/modals/CreateListingModal'
+import BuyModal from '~/components/modals/BuyModal'
+import PlaceBidModal from '~/components/modals/PlaceBidModal'
 import SyncTransferModal from '~/components/modals/SyncTransferModal'
 import OnboardingGuard from '~/components/OnboardingGuard'
 import QuickSignRenewModal from '~/components/modals/QuickSignRenewModal'
+import QuickSignModal from '~/components/modals/QuickSignModal'
 import ClientAuthModal from '~/components/modals/ClientAuthModal'
 import { useSessionSpendSync } from '~/hooks/useSessionSpendSync'
 import { useDmUnreadSync } from '~/hooks/useDmUnreadSync'
@@ -25,6 +30,7 @@ import { useEffect } from 'react'
 function App() {
   useCawonceSync();
   useTxQueueMonitor();
+  useSessionKeyWalletGuard();
   useClientConfig(CLIENT_ID); // Fetch client config on init for dynamic tip calculation
   useSessionSpendSync(); // Sync on-chain session spending on load
   useDmUnreadSync(); // Fetch DM unread count for sidebar badge
@@ -67,8 +73,12 @@ function App() {
       <OnboardingGuard />
       <VerifyWalletModal />
       <QuickSignRenewModal />
+      <QuickSignModal />
       <ClientAuthModal />
       <TransferNFTModal />
+      <CreateListingModal />
+      <BuyModal />
+      <PlaceBidModal />
       <SyncTransferModal />
 
       {/* Global action error modal */}

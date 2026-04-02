@@ -11,11 +11,13 @@ import { useMutePreferences, shouldFilterPost } from '~/hooks/useMutePreferences
 import { setFeedRefreshCallback } from '~/hooks/useTxQueueMonitor'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import SuggestedUsers from './SuggestedUsers'
+import { useHostVerification } from '~/hooks/useHostVerification'
 
 type Props = {
   filter: 'For you' | 'Following' | 'profile' | 'profile-likes' | 'profile-replies' | 'profile-media' | string
   username?: string
   apiEndpoint?: string
+  title?: React.ReactNode
 }
 
 // whatever shape your backend now returns
@@ -28,7 +30,7 @@ export interface FeedRef {
   refresh: () => void
 }
 
-const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref) => {
+const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title }, ref) => {
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const activeToken = useTokenDataStore(s => {
     const tokens = Object.values(s.tokensByAddress).flat()
@@ -76,6 +78,14 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
       loadPage(true)
     }
   }), [])
+
+  // Spot-check posts against on-chain data to detect dishonest API hosts
+  useHostVerification(filteredItems.map(item => ({
+    user: { tokenId: item.user?.tokenId || 0 },
+    cawonce: item.cawonce || 0,
+    content: item.content,
+    status: item.status,
+  })))
 
   // Track views for visible caws (use filtered items)
   const visibleCawIds = filteredItems.map(item => item.id).filter(id => id != null)
@@ -223,9 +233,9 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
     loadPage(true)
   }, [filter, activeTokenId, apiEndpoint, username])
 
-  // Fetch following count for current user when on Following tab
+  // Fetch following count for current user when on Following or For You tab
   useEffect(() => {
-    if (filter !== 'Following' || !activeToken?.username) {
+    if ((filter !== 'Following' && filter !== 'For you') || !activeToken?.username) {
       setFollowingCount(null)
       return
     }
@@ -261,6 +271,30 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
     window.addEventListener('scroll', onScroll)
     return () => window.removeEventListener('scroll', onScroll)
   }, [loadPage, loading, hasMore, nextCursor])
+
+  // Poll for pending caws - refetch caws that are still PENDING
+  useEffect(() => {
+    const pendingCaws = items.filter(item => item.status === 'PENDING')
+
+    if (pendingCaws.length === 0) return
+
+    const interval = setInterval(async () => {
+      for (const caw of pendingCaws) {
+        try {
+          const updated = await apiFetch<{ caw: CawItem }>(`/api/caws/${caw.id}`)
+          setItems(current =>
+            current.map(item =>
+              item.id === caw.id ? updated.caw : item
+            )
+          )
+        } catch {
+          // Ignore errors
+        }
+      }
+    }, 3000)
+
+    return () => clearInterval(interval)
+  }, [items])
 
   // Poll for pending likes - refetch specific caws that have pending likes
   useEffect(() => {
@@ -403,18 +437,35 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
   }, [activeToken?.username])
 
   // render
-  if (error)   return <div className="text-red-400">Error loading feed: {error}</div>
-  if (items.length === 0 && loading) return (
+  if (error) return (
+    <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
+      <div className="w-12 h-12 mb-4 rounded-full bg-red-500/10 flex items-center justify-center">
+        <svg className="w-6 h-6 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+        </svg>
+      </div>
+      <p className="text-sm text-gray-400 mb-4">{error}</p>
+      <button
+        onClick={() => { setError(undefined); loadPage(true) }}
+        className="px-5 py-2 text-sm font-medium rounded-full bg-white/10 text-white hover:bg-white/20 transition cursor-pointer"
+      >
+        Try again
+      </button>
+    </div>
+  )
+  const hasPending = (filter === 'For you' || filter === 'Following') && pendingPosts.length > 0
+
+  if (items.length === 0 && loading && !hasPending) return (
     <div className="space-y-4 mt-4">
       {[...Array(3)].map((_, i) => (
         <div key={i} className="animate-pulse bg-gray-800 rounded-lg h-32"></div>
       ))}
     </div>
   )
-  // Always show suggested users on Following tab
-  const showSuggestedUsers = filter === 'Following'
+  // Show suggested users on Following tab, or on For You tab when not following anyone
+  const showSuggestedUsers = filter === 'Following' || (filter === 'For you' && followingCount === 0)
 
-  if (items.length === 0) {
+  if (items.length === 0 && !hasPending) {
     // Show suggested users when Following feed is empty
     if (filter === 'Following') {
       return (
@@ -425,7 +476,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
     }
     return <div className="text-gray-400 text-center py-8">No posts yet.</div>
   }
-  if (filteredItems.length === 0) return <div className="text-gray-400 text-center py-8">No posts to show (some may be hidden by your settings).</div>
+  if (filteredItems.length === 0 && !hasPending) return <div className="text-gray-400 text-center py-8">No posts to show (some may be hidden by your settings).</div>
 
   return (
     <div>
@@ -435,6 +486,9 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint }, ref)
           <SuggestedUsers onFollowChange={handleFollowChange} />
         </div>
       )}
+
+      {/* Section title (rendered after suggested users) */}
+      {title}
 
       {/* Show pending posts at the top (on main feeds, not profiles) */}
       {(filter === 'For you' || filter === 'Following') && pendingPosts.map(post => (

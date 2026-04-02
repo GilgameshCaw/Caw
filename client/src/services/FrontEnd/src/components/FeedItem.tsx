@@ -89,9 +89,14 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const [showTipModal, setShowTipModal] = useState(false)
   const [imageCollapsed, setImageCollapsed] = useState(false)
   const [textCopied, setTextCopied] = useState(false)
-  // Bookmarks are browser-only (localStorage)
   const bookmarksStore = useBookmarksStore()
+  // Sync server-provided bookmark state into store on mount
+  useEffect(() => {
+    if (item.isBookmarked === true) bookmarksStore.markBookmarked(item.id)
+    else if (item.isBookmarked === false) bookmarksStore.markNotBookmarked(item.id)
+  }, [item.id, item.isBookmarked])
   const isBookmarked = bookmarksStore.isBookmarked(item.id)
+  const [localBookmarkCount, setLocalBookmarkCount] = useState(item.bookmarkCount ?? 0)
   const [translatedText, setTranslatedText] = useState<string | null>(null)
   const [isTranslating, setIsTranslating] = useState(false)
   const [isRetrying, setIsRetrying] = useState(false)
@@ -335,24 +340,41 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     event.preventDefault()
     event.stopPropagation()
 
-    if (!activeTokenId || !activeToken || isRetrying) return
+    const effectiveTokenId = activeTokenId || activeToken?.tokenId
+    console.log('[FeedItem] Retry clicked:', { effectiveTokenId, isRetrying, content: useItem.content?.substring(0, 50) })
+
+    if (!effectiveTokenId || !activeToken || isRetrying) {
+      console.log('[FeedItem] Retry blocked:', { effectiveTokenId, hasActiveToken: !!activeToken, isRetrying })
+      return
+    }
 
     setIsRetrying(true)
 
     try {
-      // Resubmit the caw action
-      await signAndSubmit({
+      // Resubmit the caw action, preserving reply context if present
+      const retryParams: any = {
         actionType: 'caw',
-        senderId: activeTokenId,
+        senderId: effectiveTokenId,
         text: useItem.content,
-        amounts: []
-      })
+      }
 
-      // Hide this failed caw — the retry created a new pending caw
-      // The old FAILED caw is also deleted server-side
-      setRetrySucceeded(true)
+      // If this was a reply, include the parent's info
+      if (item.parent?.user?.tokenId != null && item.parent?.cawonce != null) {
+        retryParams.receiverId = item.parent.user.tokenId
+        retryParams.receiverCawonce = item.parent.cawonce
+      }
+
+      const result = await signAndSubmit(retryParams)
+
+      console.log('[FeedItem] Retry result:', result)
+
+      if (result) {
+        // Hide this failed caw — the retry created a new pending caw
+        // The old FAILED caw is also deleted server-side
+        setRetrySucceeded(true)
+      }
     } catch (error) {
-      console.error('Retry failed:', error)
+      console.error('[FeedItem] Retry failed:', error)
     } finally {
       setIsRetrying(false)
     }
@@ -445,9 +467,14 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     e.preventDefault()
     e.stopPropagation()
 
-    // Bookmarks are browser-only (localStorage) - no auth required
     const cawId = useItem.id
+    const wasBookmarked = bookmarksStore.isBookmarked(cawId)
     const newState = bookmarksStore.toggleBookmark(cawId)
+
+    // Only adjust count if the state actually changed
+    if (newState !== wasBookmarked) {
+      setLocalBookmarkCount(prev => Math.max(0, prev + (newState ? 1 : -1)))
+    }
 
     if (onBookmarkUpdate) {
       onBookmarkUpdate(parseInt(cawId), newState)
@@ -583,6 +610,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   }
 
   const handleCardClick = (e: React.MouseEvent) => {
+    // Don't navigate if user is selecting text
+    const selection = window.getSelection()
+    if (selection && selection.toString().length > 0) {
+      return
+    }
     // Don't navigate if clicking on interactive elements (they handle their own navigation)
     const target = e.target as HTMLElement
     if (target.closest('a') || target.closest('button')) {
@@ -1094,20 +1126,23 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
             </div>
 
             <div className="flex items-center space-x-4">
-              {/* Bookmark (browser-only, stored in localStorage) */}
+              {/* Bookmark */}
               <Tooltip text={isBookmarked ? "Remove bookmark" : "Save"}><button
                 onClick={handleBookmark}
-                className={`transition-colors duration-300 hover:text-yellow-500 cursor-pointer ${
+                className={`flex items-center gap-1 transition-colors duration-300 hover:text-yellow-500 cursor-pointer ${
                   isBookmarked
                     ? 'text-yellow-500'
                     : isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
               >
-                <Bookmark className={`w-5 h-5 transition-all duration-300 ${
+                <Bookmark className={`w-5 h-5 -translate-y-[3px] transition-all duration-300 ${
                   isBookmarked
                     ? 'fill-yellow-500 stroke-yellow-500'
                     : isDark ? 'stroke-white stroke-[1.5]' : 'stroke-gray-600'
                 }`} />
+                {localBookmarkCount > 0 && (
+                  <span className="text-xs">{localBookmarkCount}</span>
+                )}
               </button></Tooltip>
 
               {/* Tip - hidden on own posts and pending/failed caws */}

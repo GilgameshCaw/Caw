@@ -388,7 +388,7 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
   }
 
   return (
-    <div className={className}>
+    <div className={`break-words ${className}`}>
       {parseContent(content)}
     </div>
   )

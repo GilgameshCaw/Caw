@@ -13,7 +13,7 @@ import useContractCall from "~/hooks/useContractCall";
 import useAllowance from "~/hooks/useAllowance";
 import { useAccount, useConnections, useReadContract, useSwitchChain, useChainId } from "wagmi"
 import { useConnectModal } from "@rainbow-me/rainbowkit"
-import { useActiveToken, useTokenDataStore } from "~/store/tokenDataStore"
+import { useActiveToken, useTokenDataStore, usePriceStore } from "~/store/tokenDataStore"
 import { cawNameAbi, cawNameL2Abi, cawNameQuoterAbi } from "~/../../../abi/generated"
 import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_L2_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from "~/../../../abi/addresses"
 import { maxUint256, parseUnits, formatUnits, erc20Abi } from "viem";
@@ -268,18 +268,16 @@ const Staking = () => {
   const insufficientBalance = !balance || parseUnits(amount || "0", 18) > balance
   const needsApproval = !allowance || parseUnits(amount || "0", 18) > allowance
 
-  // Generate preset amount buttons based on what the user can afford
-  // Returns up to 5 highest affordable values from the series: 10K, 100K, 1M, 10M, 100M, 1B, 10B, 100B, 1T, 10T, 100T
-  const getPresetAmounts = (maxBalance: number): number[] => {
-    const allPresets = [
-      10_000, 100_000, 1_000_000, 10_000_000, 100_000_000,
-      1_000_000_000, 10_000_000_000, 100_000_000_000,
-      1_000_000_000_000, 10_000_000_000_000, 100_000_000_000_000
-    ]
-    return allPresets.filter(v => v <= maxBalance).slice(-5)
-  }
+  // Dollar-based preset buttons, converted to CAW at current price
+  const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
+  const DOLLAR_PRESETS = [10, 25, 50, 100]
+  const dollarToCaw = (dollars: number) => cawPrice > 0 ? Math.round(dollars / cawPrice) : 0
 
+  // Legacy helpers kept for compatibility
+  const getPresetAmounts = (_maxBalance: number): number[] => DOLLAR_PRESETS.map(dollarToCaw).filter(v => v > 0)
   const formatPresetLabel = (value: number): string => {
+    const dollarIdx = DOLLAR_PRESETS.findIndex(d => dollarToCaw(d) === value)
+    if (dollarIdx >= 0) return `$${DOLLAR_PRESETS[dollarIdx]}`
     if (value >= 1_000_000_000_000) return `${value / 1_000_000_000_000}T`
     if (value >= 1_000_000_000) return `${value / 1_000_000_000}B`
     if (value >= 1_000_000) return `${value / 1_000_000}M`

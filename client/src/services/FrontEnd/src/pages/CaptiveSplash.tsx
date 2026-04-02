@@ -3,8 +3,10 @@ import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useAccount } from 'wagmi'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useTheme } from '~/hooks/useTheme'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import cawLogo from '~/assets/images/caw-logo.png'
+
+const CawCoin3D = lazy(() => import('~/components/CawCoin3D'))
 
 const KEYWORDS = [
   'permissionless',
@@ -42,45 +44,28 @@ export default function CaptiveSplash() {
     <div className={`min-h-screen flex flex-col ${isDark ? 'bg-black text-white' : 'bg-white text-black'}`}>
       {/* Main content - centered */}
       <div className="flex-1 flex flex-col items-center justify-center px-6 py-6">
-        {/* Spinning 3D Coin Logo */}
-        <div className="mb-8" style={{ perspective: '800px' }}>
-          <div
-            className="w-32 h-32 md:w-40 md:h-40 relative"
-            style={{
-              transformStyle: 'preserve-3d',
-              animation: 'coin-spin 4s ease-in-out infinite',
-            }}
-          >
-            {/* Front face */}
-            <img
-              src={cawLogo}
-              alt="CAW"
-              className="absolute inset-0 w-full h-full rounded-full"
-              style={{ backfaceVisibility: 'hidden' }}
-            />
-            {/* Back face */}
-            <img
-              src={cawLogo}
-              alt="CAW"
-              className="absolute inset-0 w-full h-full rounded-full"
-              style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
-            />
+        {/* 3D Coin Logo — lazy loaded, CSS fallback while loading */}
+        <Suspense fallback={
+          <div className="mb-8 w-40 h-40 md:w-48 md:h-48" style={{ perspective: '800px' }}>
+            <div
+              className="w-full h-full relative"
+              style={{ transformStyle: 'preserve-3d', animation: 'coin-spin 4s ease-in-out infinite' }}
+            >
+              <img src={cawLogo} alt="CAW" className="absolute inset-0 w-full h-full rounded-full" style={{ backfaceVisibility: 'hidden' }} />
+              <img src={cawLogo} alt="CAW" className="absolute inset-0 w-full h-full rounded-full" style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }} />
+            </div>
+            <style>{`@keyframes coin-spin { 0% { transform: rotateY(0deg); } 30% { transform: rotateY(360deg); } 100% { transform: rotateY(360deg); } }`}</style>
           </div>
-          <style>{`
-            @keyframes coin-spin {
-              0%   { transform: rotateY(0deg); }
-              30%  { transform: rotateY(360deg); }
-              100% { transform: rotateY(360deg); }
-            }
-          `}</style>
-        </div>
+        }>
+          <CawCoin3D logoUrl={cawLogo} className="mb-8 w-40 h-40 md:w-48 md:h-48" />
+        </Suspense>
 
         {/* Tagline */}
         <h1 className="text-3xl md:text-5xl font-bold text-center mb-4 max-w-3xl leading-tight">
           The world's first
           <br />
           <span
-            className={`text-yellow-500 inline-block text-[2.7rem] md:text-7xl whitespace-nowrap transition-all duration-400 my-2 ${
+            className={`text-yellow-500 inline-block text-[2.7rem] md:text-7xl whitespace-nowrap transition-all duration-400 ${
               isAnimating
                 ? 'opacity-0 translate-y-3'
                 : 'opacity-100 translate-y-0'

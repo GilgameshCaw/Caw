@@ -29,7 +29,7 @@ export const SubmitButton: React.FC<React.PropsWithChildren<SubmitButtonProps>> 
 
   return (
     <button
-      className={`${className} ${loading ? "btn-loading pointer-events-none" : ""}`}
+      className={`${className} ${loading ? "btn-loading pointer-events-none" : ""} ${disabled ? "pointer-events-none" : ""}`}
       onClick={onClick}
       disabled={disabled}
     >

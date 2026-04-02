@@ -16,6 +16,7 @@ export interface UseFollowButtonReturn {
   isFollowing: boolean
   isPending: boolean
   wrongWallet: boolean
+  error: string | null
   handleFollowClick: () => Promise<void>
   buttonText: string
   hoverText: string
@@ -38,6 +39,7 @@ export function useFollowButton({
   const hasActiveSession = useHasActiveSession()
   const [isFollowing, setIsFollowing] = useState(initialIsFollowing)
   const [isPending, setPending] = useState(initialIsPending)
+  const [error, setError] = useState<string | null>(null)
   const [isPolling, setIsPolling] = useState(initialIsPending) // Start polling immediately if mounting in pending state
   const [hasUserAction, setHasUserAction] = useState(false) // Track if user has taken action
   const [awaitingConnection, setAwaitingConnection] = useState(false) // Track if waiting for wallet connection
@@ -112,7 +114,21 @@ export function useFollowButton({
                              error?.message?.toLowerCase().includes('user rejected') ||
                              error?.message?.toLowerCase().includes('user denied')
 
+      // Check if it's a server validation error that should be shown to the user
+      const errorMsg = error?.message || error?.shortMessage || ''
+      const isServerError = errorMsg.toLowerCase().includes('cannot follow') ||
+                           errorMsg.toLowerCase().includes('already following') ||
+                           errorMsg.toLowerCase().includes('insufficient') ||
+                           errorMsg.toLowerCase().includes('invalid')
+
       if (isUserRejection) {
+        setIsFollowing(!newFollowingState)
+        setPending(false)
+        setHasUserAction(false)
+        onFollowStateChange?.(!newFollowingState)
+      } else if (isServerError) {
+        // Server validation error - show to user and revert state
+        setError(errorMsg)
         setIsFollowing(!newFollowingState)
         setPending(false)
         setHasUserAction(false)
@@ -228,6 +244,9 @@ export function useFollowButton({
     // Don't do anything if wrong wallet or pending
     if (wrongWallet || isPending) return
 
+    // Clear any previous error
+    setError(null)
+
     const effectiveTokenId = activeTokenId || activeToken?.tokenId
 
     // If no token OR wallet not connected (and no session key), trigger wallet connection
@@ -288,10 +307,26 @@ export function useFollowButton({
                              error?.message?.toLowerCase().includes('user rejected') ||
                              error?.message?.toLowerCase().includes('user denied')
 
+      // Check if it's a server validation error that should be shown to the user
+      const errorMsg = error?.message || error?.shortMessage || ''
+      const isServerError = errorMsg.toLowerCase().includes('cannot follow') ||
+                           errorMsg.toLowerCase().includes('already following') ||
+                           errorMsg.toLowerCase().includes('insufficient') ||
+                           errorMsg.toLowerCase().includes('invalid')
+
       if (isUserRejection) {
         setIsFollowing(isFollowing)
         setPending(false)
         setHasUserAction(false) // Allow prop sync again
+        setAwaitingConnection(false)
+        pendingActionRef.current = null
+        onFollowStateChange?.(isFollowing)
+      } else if (isServerError) {
+        // Server validation error - show to user and revert state
+        setError(errorMsg)
+        setIsFollowing(isFollowing)
+        setPending(false)
+        setHasUserAction(false)
         setAwaitingConnection(false)
         pendingActionRef.current = null
         onFollowStateChange?.(isFollowing)
@@ -309,6 +344,7 @@ export function useFollowButton({
     isFollowing,
     isPending,
     wrongWallet,
+    error,
     handleFollowClick,
     buttonText,
     hoverText

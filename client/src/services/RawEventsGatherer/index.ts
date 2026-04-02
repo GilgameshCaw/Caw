@@ -10,7 +10,8 @@ import { prisma } from '../../prismaClient'
 const Config = z.object({
   chainId:         z.number().int().positive(),
   rpcUrl:          z.string(), // Validated at runtime after env var substitution
-  redisUrl:        z.string().optional().default('redis://127.0.0.1:6379')
+  redisUrl:        z.string().optional().default('redis://127.0.0.1:6379'),
+  startBlock:      z.number().int().optional() // If set, never scan earlier than this block
 })
 
 type Config = z.infer<typeof Config>
@@ -46,7 +47,7 @@ export const rawEventsGathererService: Service = {
 
       const getLast = async () => {
         const last = await prisma.rawEvent.findFirst({
-          where: { chainId },
+          where: { chainId, contractAddress: CAW_ACTIONS_ADDRESS },
           orderBy: [
             { blockNumber: 'desc' },
             { logIndex:    'desc' }
@@ -95,6 +96,7 @@ export const rawEventsGathererService: Service = {
         rpcUrl,
         chainId,
         contractAddress: CAW_ACTIONS_ADDRESS,
+        startBlock: cfg.startBlock,
         rawEventsProvider: {
           getLastProcessedEvent: getLast,
           storeEvent:            storeAndPublish

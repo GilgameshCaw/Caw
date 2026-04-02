@@ -4,7 +4,7 @@ import { useReadContract, useAccount, useConnections, useSwitchChain } from 'wag
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
-import { useActiveToken } from '~/store/tokenDataStore'
+import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { useCreateSession, useRevokeSession, DEFAULT_SPEND_LIMIT, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
 import { HiArrowLeft } from 'react-icons/hi'
@@ -18,13 +18,15 @@ const SessionKeySettings: React.FC = () => {
   const activeToken = useActiveToken()
   const enabled = useSessionKeyStore(s => s.enabled)
   const setEnabled = useSessionKeyStore(s => s.setEnabled)
-  const session = useSessionKeyStore(s => s.session)
+  const session = useSessionKeyStore(s => s.getSession())
   const createSession = useCreateSession()
   const revokeSession = useRevokeSession()
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [spendLimit, setSpendLimit] = useState<bigint>(DEFAULT_SPEND_LIMIT)
+  const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
+  const defaultLimit = cawPrice > 0 ? BigInt(Math.round(5 / cawPrice)) : DEFAULT_SPEND_LIMIT
+  const [spendLimit, setSpendLimit] = useState<bigint>(defaultLimit)
   const [duration, setDuration] = useState<number>(DEFAULT_SESSION_DURATION)
 
   const { address, isConnected } = useAccount()
@@ -50,8 +52,9 @@ const SessionKeySettings: React.FC = () => {
   useEffect(() => {
     if (onChainSpent != null && session) {
       const store = useSessionKeyStore.getState()
-      if (store.session) {
-        store.setSession({ ...store.session, spent: onChainSpent.toString() })
+      const currentSession = store.getSession()
+      if (currentSession) {
+        store.setSession({ ...currentSession, spent: onChainSpent.toString() })
       }
     }
   }, [onChainSpent, session?.address])
@@ -246,13 +249,25 @@ const SessionKeySettings: React.FC = () => {
                     )}
 
                     <div className="text-center">
-                      <button
-                        onClick={handleActivate}
-                        disabled={loading}
-                        className="px-6 py-3 rounded-lg font-medium bg-yellow-500 hover:bg-yellow-600 text-black transition-colors disabled:opacity-50 cursor-pointer"
-                      >
-                        {loading ? (status || 'Activating...') : !isConnected ? 'Connect Wallet' : wrongChain ? 'Switch Network' : 'Activate Quick Sign'}
-                      </button>
+                      {(() => {
+                        const wrongWallet = isConnected && activeToken?.owner && address?.toLowerCase() !== activeToken.owner.toLowerCase()
+                        return (
+                          <>
+                            <button
+                              onClick={handleActivate}
+                              disabled={loading || !!wrongWallet}
+                              className="px-6 py-3 rounded-lg font-medium bg-yellow-500 hover:bg-yellow-600 text-black transition-colors disabled:opacity-50 disabled:hover:bg-yellow-500 cursor-pointer"
+                            >
+                              {loading ? (status || 'Activating...') : !isConnected ? 'Connect Wallet' : wrongChain ? 'Switch Network' : 'Activate Quick Sign'}
+                            </button>
+                            {wrongWallet && (
+                              <p className={`text-xs mt-2 ${isDark ? 'text-red-400' : 'text-red-500'}`}>
+                                Wrong wallet — switch to the address that owns this profile.
+                              </p>
+                            )}
+                          </>
+                        )
+                      })()}
                     </div>
                   </>
                 )}

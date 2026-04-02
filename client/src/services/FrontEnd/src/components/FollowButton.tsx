@@ -30,6 +30,7 @@ export const FollowButton: React.FC<FollowButtonProps> = ({
     isFollowing,
     isPending,
     wrongWallet,
+    error,
     handleFollowClick,
     buttonText,
     hoverText
@@ -97,6 +98,14 @@ export const FollowButton: React.FC<FollowButtonProps> = ({
   if (wrongWallet) {
     return (
       <Tooltip text="Please switch to the correct wallet" className="inline-block">
+        {button}
+      </Tooltip>
+    )
+  }
+
+  if (error) {
+    return (
+      <Tooltip text={error} className="inline-block">
         {button}
       </Tooltip>
     )

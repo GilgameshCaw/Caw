@@ -23,28 +23,27 @@ export function useTxQueueMonitor() {
   const pendingPosts = usePendingPostsStore(state => state.pendingPosts)
   const removeOptimisticLikeByTxQueueId = useOptimisticLikesStore(state => state.removeOptimisticLikeByTxQueueId)
   const optimisticLikes = useOptimisticLikesStore(state => state.optimisticLikes)
+  const pendingSpendCount = usePendingSpendStore(state => Object.keys(state.pendingByTxQueue).length)
   const processedIds = useRef(new Set<number>())
 
   useEffect(() => {
-    // Don't poll if there are no pending posts or likes with txQueue IDs
+    // Collect all txQueue IDs that need monitoring
     const postsWithTxQueueIds = pendingPosts.filter(p => p.txQueueId)
     const likesWithTxQueueIds = optimisticLikes.filter(l => l.txQueueId)
+    const pendingSpendIds = Object.keys(usePendingSpendStore.getState().pendingByTxQueue).map(Number)
 
-    if (postsWithTxQueueIds.length === 0 && likesWithTxQueueIds.length === 0) return
+    const postTxQueueIds = postsWithTxQueueIds
+      .map(p => p.txQueueId)
+      .filter((id): id is number => id !== undefined)
+    const likeTxQueueIds = likesWithTxQueueIds
+      .map(l => l.txQueueId)
+      .filter((id): id is number => id !== undefined)
+    const allTxQueueIds = [...new Set([...postTxQueueIds, ...likeTxQueueIds, ...pendingSpendIds])]
+
+    if (allTxQueueIds.length === 0) return
 
     const checkTxQueueStatus = async () => {
       try {
-        // Get all txQueue IDs from pending posts and likes
-        const postTxQueueIds = postsWithTxQueueIds
-          .map(p => p.txQueueId)
-          .filter((id): id is number => id !== undefined)
-
-        const likeTxQueueIds = likesWithTxQueueIds
-          .map(l => l.txQueueId)
-          .filter((id): id is number => id !== undefined)
-
-        const allTxQueueIds = [...new Set([...postTxQueueIds, ...likeTxQueueIds])]
-
         if (allTxQueueIds.length === 0) return
 
         // Fetch status for all txQueue entries
@@ -126,5 +125,5 @@ export function useTxQueueMonitor() {
     const interval = setInterval(checkTxQueueStatus, 2000)
 
     return () => clearInterval(interval)
-  }, [pendingPosts, optimisticLikes, removePendingPostByTxQueueId, removeOptimisticLikeByTxQueueId])
+  }, [pendingPosts, optimisticLikes, pendingSpendCount, removePendingPostByTxQueueId, removeOptimisticLikeByTxQueueId])
 }

@@ -53,6 +53,7 @@ export type CawItem = {
   status?: 'SUCCESS' | 'PENDING' | 'FAILED' // Transaction status of the caw
   reason?: string | null // Failure reason if status is FAILED
   isBookmarked?: boolean // True when post is bookmarked by current user
+  bookmarkCount?: number
   commentCount: number
   recawCount: number
   cawonce: number

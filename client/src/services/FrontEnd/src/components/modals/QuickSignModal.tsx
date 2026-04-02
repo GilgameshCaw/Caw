@@ -1,27 +1,60 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
+import { create } from 'zustand'
 import ModalWrapper from './ModalWrapper'
 import { useTheme } from '~/hooks/useTheme'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
+import { usePriceStore } from '~/store/tokenDataStore'
 import { useCreateSession, DEFAULT_SPEND_LIMIT, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
 import { HiLightningBolt } from 'react-icons/hi'
 import QuickSignOptions from '~/components/QuickSignOptions'
 
-interface QuickSignModalProps {
+interface QuickSignPromptState {
   isOpen: boolean
-  onClose: () => void
+  /** Callback to continue the action after the user decides */
+  onContinue: (() => Promise<any> | void) | null
+  /** Skip the prompt for the next action (set after "Sign Manually") */
+  skipOnce: boolean
+  show: (onContinue?: () => Promise<any> | void) => void
+  close: () => void
 }
 
-const QuickSignModal: React.FC<QuickSignModalProps> = ({ isOpen, onClose }) => {
+export const useQuickSignPromptStore = create<QuickSignPromptState>((set) => ({
+  isOpen: false,
+  onContinue: null,
+  skipOnce: false,
+  show: (onContinue) => set({ isOpen: true, onContinue: onContinue || null }),
+  close: () => set({ isOpen: false, onContinue: null }),
+}))
+
+interface QuickSignModalProps {
+  isOpen?: boolean
+  onClose?: () => void
+}
+
+const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
+  const prompt = useQuickSignPromptStore()
+  const isOpen = props.isOpen ?? prompt.isOpen
+  const onClose = props.onClose ?? prompt.close
   const { isDark } = useTheme()
   const setEnabled = useSessionKeyStore(s => s.setEnabled)
   const createSession = useCreateSession()
   const setHasSeenPrompt = useSessionKeyStore(s => s.setHasSeenPrompt)
+  const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [spendLimit, setSpendLimit] = useState<bigint>(DEFAULT_SPEND_LIMIT)
+  const defaultLimit = cawPrice > 0 ? BigInt(Math.round(5 / cawPrice)) : DEFAULT_SPEND_LIMIT
+  const [spendLimit, setSpendLimit] = useState<bigint>(defaultLimit)
   const [duration, setDuration] = useState<number>(DEFAULT_SESSION_DURATION)
   const [dontShowAgain, setDontShowAgain] = useState(false)
+
+  // Reset state when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setError(null)
+      if (cawPrice > 0) setSpendLimit(BigInt(Math.round(5 / cawPrice)))
+    }
+  }, [isOpen, cawPrice])
 
   const handleEnable = async () => {
     setLoading(true)
@@ -30,7 +63,10 @@ const QuickSignModal: React.FC<QuickSignModalProps> = ({ isOpen, onClose }) => {
       setEnabled(true)
       await createSession((s) => setStatus(s), spendLimit, duration)
       if (dontShowAgain) setHasSeenPrompt(true)
+      const cont = prompt.onContinue
       onClose()
+      // Retry the action now that Quick Sign is enabled
+      if (cont) setTimeout(() => cont(), 100)
     } catch (err: any) {
       setError(err?.shortMessage || err?.message || 'Failed to activate')
       setEnabled(false)
@@ -42,11 +78,16 @@ const QuickSignModal: React.FC<QuickSignModalProps> = ({ isOpen, onClose }) => {
 
   const handleSkip = () => {
     if (dontShowAgain) setHasSeenPrompt(true)
+    const cont = prompt.onContinue
+    // Set skipOnce so the retry doesn't re-trigger the prompt
+    useQuickSignPromptStore.setState({ skipOnce: true })
     onClose()
+    // Continue with manual wallet signing
+    if (cont) setTimeout(() => cont(), 100)
   }
 
   return (
-    <ModalWrapper isOpen={isOpen} onClose={onClose} usePortal>
+    <ModalWrapper isOpen={isOpen} onClose={onClose} usePortal maxWidth="max-w-[540px]">
       <div className="p-6">
         <div className="flex items-center gap-3 mb-4">
           <div className="p-2 rounded-full bg-yellow-500/20">
@@ -64,8 +105,7 @@ const QuickSignModal: React.FC<QuickSignModalProps> = ({ isOpen, onClose }) => {
 
         <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-3 mb-4 text-sm">
           <p className={`${isDark ? 'text-gray-300' : 'text-gray-600'}`} style={{ marginBottom: 10 }}>
-            This creates a temporary key in your browser that can post, like, and follow
-            on your behalf.
+            This creates a temporary key in your browser that can act on your behalf.
           </p>
           <p className={`${isDark ? 'text-gray-300' : 'text-gray-600'}`} style={{ marginBottom: 10 }}>
             It <strong>cannot withdraw tokens or transfer your name</strong>.
@@ -75,7 +115,7 @@ const QuickSignModal: React.FC<QuickSignModalProps> = ({ isOpen, onClose }) => {
           </p>
         </div>
 
-        <div className="mb-4">
+        <div className="mb-3">
           <QuickSignOptions
             spendLimit={spendLimit}
             onSpendLimitChange={setSpendLimit}
@@ -93,7 +133,7 @@ const QuickSignModal: React.FC<QuickSignModalProps> = ({ isOpen, onClose }) => {
         )}
 
         {/* Don't show again checkbox */}
-        <label className="flex items-center gap-2 mb-4 cursor-pointer text-sm text-white/60">
+        <label className="flex items-center justify-center gap-2 mb-5 cursor-pointer text-sm text-white/60">
           <button
             type="button"
             role="checkbox"
@@ -131,7 +171,7 @@ const QuickSignModal: React.FC<QuickSignModalProps> = ({ isOpen, onClose }) => {
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
             }`}
           >
-            Not now
+            Sign Manually
           </button>
         </div>
 

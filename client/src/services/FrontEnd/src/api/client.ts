@@ -75,8 +75,13 @@ export async function apiFetch<T = any>(
 ): Promise<T> {
   const headers = buildHeaders(init)
 
-  // Get ordered list of API hosts (preferred first, then on-chain instances)
+  // Get ordered list of API hosts, filtered by trust score
+  const { useHostVerificationStore } = await import('~/hooks/useHostVerification')
+  const verificationStore = useHostVerificationStore.getState()
+
   const hosts = useInstanceStore.getState().getApiHosts()
+    .filter((h: string) => !verificationStore.isBlacklisted(h))
+    .sort((a: string, b: string) => verificationStore.getHostScore(a) - verificationStore.getHostScore(b))
 
   // If no discovered instances, fall back to API_HOST (may be empty for dev proxy)
   const targets = hosts.length > 0 ? hosts : [API_HOST]
@@ -85,11 +90,15 @@ export async function apiFetch<T = any>(
 
   for (const host of targets) {
     try {
+      const startTime = Date.now()
       const url = `${host}${path}`
       const res = await fetch(url, {
         ...init,
         headers,
       })
+
+      // Track response time for host ranking
+      verificationStore.recordResponseTime(host, Date.now() - startTime)
 
       // Auth errors are not failover-able — they mean the user needs to re-auth
       if (res.status === 401) {

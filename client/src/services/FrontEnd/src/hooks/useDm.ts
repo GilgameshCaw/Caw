@@ -59,7 +59,7 @@ type UiMessage = {
 // Module-level private key reference (never in state to avoid serialization)
 let privateKeyRef: Uint8Array | null = null
 
-export function useDmClient(tokenId?: number) {
+export function useDmClient(tokenId?: number, username?: string) {
   const { data: walletClient } = useWalletClient()
   const { verify } = useVerifyWallet()
 
@@ -275,49 +275,53 @@ export function useDmClient(tokenId?: number) {
         return sig
       }
 
-      const { privateKey, publicKeyHex } = await deriveKeyPair(signMessage, tokenId)
+      // Use username for new users (nicer wallet prompt), tokenId for existing (backwards compat)
+      const useUsername = !needsKeyDerivation && username
+      const { privateKey, publicKeyHex, rawSignature, sigMessage } = await deriveKeyPair(
+        signMessage, tokenId, useUsername ? username : undefined
+      )
       privateKeyRef = privateKey
       console.log('[DM] Key pair derived, needsKeyDerivation:', needsKeyDerivation)
 
       // If identity already exists on server, just re-derive keys — no need to
       // re-register or re-verify auth (avoids logging out the other account)
       if (!needsKeyDerivation) {
-        // Fresh setup — need auth and server registration
-        console.log('[DM] Fresh setup — checking auth, isTokenAuthorized:', useAuthStore.getState().isTokenAuthorized(tokenId))
-        if (!useAuthStore.getState().isTokenAuthorized(tokenId)) {
-          try {
-            console.log('[DM] Trying auth refresh...')
-            const res = await apiFetch<{ authorizedTokenIds: number[], authorizedAddresses: string[] }>(
-              '/api/auth/refresh', { method: 'POST' }
-            )
-            useAuthStore.getState().addAuthorization(res.authorizedTokenIds, res.authorizedAddresses)
-            console.log('[DM] Auth refresh succeeded, isTokenAuthorized:', useAuthStore.getState().isTokenAuthorized(tokenId))
-          } catch (e) {
-            console.log('[DM] Auth refresh failed:', e)
-          }
-
-          if (!useAuthStore.getState().isTokenAuthorized(tokenId)) {
-            console.log('[DM] Still not authorized, calling verify()...')
-            const ok = await verify()
-            if (!ok) throw new Error('Wallet verification was cancelled or failed')
-            if (!useAuthStore.getState().isTokenAuthorized(tokenId)) {
-              console.warn('[DM] Verified OK but token still not authorized — server may not recognize this wallet as owning any CAW names')
-              throw new Error('Your wallet was verified but is not linked to any CAW name. Make sure you are connected with the correct wallet.')
-            }
-          }
-        }
-
-        // Register public key on backend
-        console.log('[DM] Registering public key on backend...')
-        await apiFetch('/api/dm/identity', {
+        // Fresh setup — use the DM signature for both auth + identity registration
+        console.log('[DM] Fresh setup — calling verify-dm (combined auth + DM registration)...')
+        const sessionToken = useAuthStore.getState().sessionToken
+        const res = await fetch(`${API_HOST}/api/auth/verify-dm`, {
           method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(sessionToken ? { 'x-session-token': sessionToken } : {}),
+          },
           body: JSON.stringify({
+            signature: rawSignature,
+            message: sigMessage,
             userId: tokenId,
-            walletAddress: walletClient.account.address,
             publicKey: publicKeyHex
           })
         })
-        console.log('[DM] Public key registered successfully')
+
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}))
+          throw new Error(data.error || 'Failed to verify wallet and register DM identity')
+        }
+
+        const data = await res.json()
+
+        // Update auth store with session from the combined endpoint
+        if (sessionToken && data.sessionToken === sessionToken) {
+          useAuthStore.getState().addAuthorization(data.authorizedTokenIds, data.authorizedAddresses)
+        } else {
+          useAuthStore.getState().setSession(
+            data.sessionToken,
+            data.authorizedTokenIds,
+            data.authorizedAddresses,
+            data.expiresAt
+          )
+        }
+        console.log('[DM] Combined auth + DM registration complete')
       }
 
       setIsInitialized(true)

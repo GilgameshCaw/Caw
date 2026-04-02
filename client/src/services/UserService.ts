@@ -1,6 +1,14 @@
 import { prisma } from '../prismaClient'
 import { CAW_NAMES_L2_ADDRESS, CAW_NAMES_ADDRESS } from '../abi/addresses'
-import { Contract, WebSocketProvider } from 'ethers'
+import { Contract, WebSocketProvider, JsonRpcProvider } from 'ethers'
+
+/** Thrown when a token ID doesn't exist on the current L1 contract (old deployment) */
+export class StaleTokenError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'StaleTokenError'
+  }
+}
 
 const CawNameL2Abi = [
   'function ownerOf(uint256 tokenId) view returns (address)',
@@ -176,33 +184,103 @@ async function getL1Provider() {
  * - uses on‑chain senderId as both L2 address and NFT tokenId
  */
 export async function findOrCreateUser(senderId: number) {
+  const startTime = Date.now()
   const tokenId = senderId;
+  console.log(`[UserService] findOrCreateUser START tokenId=${tokenId}`)
+
   if (tokenId === 0) {
     throw new Error("senderId cannot be zero");
   }
 
+  console.log(`[UserService] Checking if user exists in DB...`)
   let user = await prisma.user.findUnique({
     where: { tokenId: senderId }
   })
 
   if (!user) {
+    console.log(`[UserService] User not in DB, querying L1 blockchain...`)
+
     // Get providers lazily - only created when needed (with rate limit handling)
+    const providerStart = Date.now()
     const { contract: l1Contract } = await getL1Provider()
+    console.log(`[UserService] L1 provider ready in ${Date.now() - providerStart}ms`)
 
     // Query L1 for owner address and username (L1 is authoritative — L2 may not have the token yet)
-    const [ownerAddress, username] = await Promise.all([
-      l1Contract.ownerOf(tokenId),
-      l1Contract.usernames(tokenId - 1) // usernames array is 0-indexed, tokenIds start at 1
-    ]);
+    console.log(`[UserService] Querying L1 for tokenId=${tokenId}...`)
+    const queryStart = Date.now()
+    let ownerAddress: string
+    let username: string
+
+    // Helper: race a promise against a timeout
+    const withTimeout = <T>(promise: Promise<T>, ms: number, label: string): Promise<T> =>
+      Promise.race([
+        promise,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms))
+      ])
+
+    try {
+      [ownerAddress, username] = await withTimeout(
+        Promise.all([
+          l1Contract.ownerOf(tokenId),
+          l1Contract.usernames(tokenId - 1) // usernames array is 0-indexed, tokenIds start at 1
+        ]),
+        15000,
+        'L1 query'
+      );
+    } catch (err: any) {
+      // Token doesn't exist on current contract — likely a stale event from an old deployment
+      if (err?.reason?.includes('invalid token ID') || err?.code === 'CALL_EXCEPTION') {
+        const msg = `Token ${tokenId} does not exist on L1 contract (stale event from old deployment)`
+        console.warn(`[UserService] ${msg} — skipping`)
+        throw new StaleTokenError(msg)
+      }
+
+      // If WebSocket timed out, try HTTP fallback
+      if (err?.message?.includes('timed out')) {
+        console.warn(`[UserService] WebSocket timed out, trying HTTP fallback...`)
+        const httpUrl = (process.env.L1_RPC_URL || '').replace(/^wss:/, 'https:').replace('/ws/', '/')
+        if (httpUrl) {
+          const httpProvider = new JsonRpcProvider(httpUrl)
+          const httpContract = new Contract(CAW_NAMES_ADDRESS, CawNameL1Abi, httpProvider)
+          try {
+            ;[ownerAddress, username] = await withTimeout(
+              Promise.all([
+                httpContract.ownerOf(tokenId),
+                httpContract.usernames(tokenId - 1)
+              ]),
+              15000,
+              'L1 HTTP fallback'
+            )
+            // Reset WSS provider so it reconnects next time
+            l1Provider = null
+            l1NameContract = null
+            console.log(`[UserService] HTTP fallback succeeded in ${Date.now() - queryStart}ms`)
+          } catch (fallbackErr: any) {
+            if (fallbackErr?.reason?.includes('invalid token ID') || fallbackErr?.code === 'CALL_EXCEPTION') {
+              const msg = `Token ${tokenId} does not exist on L1 contract (stale event from old deployment)`
+              console.warn(`[UserService] ${msg} — skipping`)
+              throw new StaleTokenError(msg)
+            }
+            throw fallbackErr
+          }
+        } else {
+          throw err
+        }
+      } else {
+        throw err
+      }
+    }
+    console.log(`[UserService] L1 query completed in ${Date.now() - queryStart}ms`)
 
     // Validate username - NEVER use defaults
     if (!username || username.trim() === '') {
       throw new Error(`Username not set on L1 contract for tokenId ${tokenId}. Cannot create user without username.`);
     }
 
-    console.log(`Creating user from blockchain: tokenId=${tokenId}, owner=${ownerAddress}, username=${username}`);
+    console.log(`[UserService] Creating user in DB: tokenId=${tokenId}, owner=${ownerAddress}, username=${username}`);
 
     // atomic create‑or‑return (id = tokenId)
+    const dbStart = Date.now()
     user = await prisma.user.upsert({
       where:  { tokenId },
       update: {},           // no changes if it already exists
@@ -214,8 +292,13 @@ export async function findOrCreateUser(senderId: number) {
         image: '',  // L2 contract doesn't store images
       },
     });
+    console.log(`[UserService] User created in DB in ${Date.now() - dbStart}ms`)
+  } else {
+    console.log(`[UserService] User already exists in DB: tokenId=${user.tokenId}, username=${user.username}`)
   }
 
+  const totalDuration = Date.now() - startTime
+  console.log(`[UserService] findOrCreateUser COMPLETE in ${totalDuration}ms, returning tokenId=${user.tokenId}`)
   return user.tokenId;
 }
 

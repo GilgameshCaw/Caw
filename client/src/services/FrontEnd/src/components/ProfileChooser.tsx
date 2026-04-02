@@ -109,8 +109,24 @@ const ProfileChooser: React.FC = () => {
     }
   };
 
-  const handleRemoveAddress = (address: Address) => {
-    removeAddress(address);
+  const handleRemoveAddress = (addressToRemove: Address) => {
+    const store = useTokenDataStore.getState()
+    const normalized = addressToRemove.toLowerCase()
+
+    removeAddress(addressToRemove);
+
+    // If we removed the active address, switch to another one
+    if (store.lastAddress?.toLowerCase() === normalized) {
+      const remaining = Object.keys(store.tokensByAddress).filter(a => a.toLowerCase() !== normalized)
+      if (remaining.length > 0) {
+        const newAddr = remaining[0]
+        setLastAddress(newAddr.toLowerCase())
+        const tokens = store.tokensByAddress[newAddr as Address]
+        if (tokens?.length > 0) {
+          setActiveTokenId(tokens[0].tokenId)
+        }
+      }
+    }
   };
 
   const handleSelectProfile = (token: TokenData) => {
@@ -187,12 +203,13 @@ const ProfileChooser: React.FC = () => {
 
       {isDropdownOpen && (
         <ul
-          className={`absolute bottom-0 mt-2 shadow-lg rounded-md overflow-hidden z-[9999] transition-all duration-300 ${
+          className={`${window.innerWidth < 1350 ? 'fixed' : 'absolute'} mt-2 shadow-lg rounded-md overflow-hidden z-[9999] transition-all duration-300 ${
             isDark ? 'bg-black border border-white/20' : 'bg-white border border-gray-200'
           }`}
           style={{
-            right: window.innerWidth < 1100 ? 'auto' : '0',
-            left: window.innerWidth < 1100 ? '15px' : 'auto'
+            right: window.innerWidth < 1350 ? 'auto' : '0',
+            left: window.innerWidth < 1350 ? '10px' : 'auto',
+            bottom: window.innerWidth < 1350 ? '15px' : '0',
           }}
         >
           {Object.entries(visibleTokensByAddress).map(([ownerAddress, tokenList]) => (
@@ -200,7 +217,7 @@ const ProfileChooser: React.FC = () => {
               isDark ? 'border-gray-700' : 'border-gray-200'
             }`}>
               {/* group header */}
-              <div className={`px-4 py-2 text-xs font-semibold flex space-between transition-all duration-300 ${
+              <div className={`px-4 py-2 text-xs font-semibold flex space-between transition-all duration-300 hover-parent ${
                 isDark ? 'bg-gray-900 text-white' : 'bg-gray-100 text-black'
               }`}>
                 <div className="">

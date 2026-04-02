@@ -131,7 +131,7 @@ const MessagesPage: React.FC = () => {
     startConversation: dmStartConversation,
     refreshConversations,
     clearUnreadCount
-  } = useDmClient(currentUser?.id)
+  } = useDmClient(currentUser?.id, currentUser?.username)
   const { messages, isLoadingOlder, hasMoreMessages, loadOlderMessages, sendMessage: dmSendMessage, editMessage: dmEditMessage, deleteForMe: dmDeleteForMe, deleteForEveryone: dmDeleteForEveryone, isSending, markAsRead, addIncomingMessage, peerLastReadAt, getSharedSecret } = useDmMessages(selectedConversationId || '', currentUser?.id)
   const { uploadEncryptedFile, isUploading, uploadProgress } = useDmFileUpload()
 
@@ -547,12 +547,14 @@ const MessagesPage: React.FC = () => {
   }, [currentUser?.id])
 
   // Route user through sign-in → DM setup → inbox
+  // If DM identity is not set up, go straight to setup (the DM signature handles auth too)
+  // Only show signin if user has DM identity but no auth session (re-login case)
   useEffect(() => {
     if (!currentUser) return
-    if (!isWalletAuthorized) {
-      setCurrentView('signin')
-    } else if (!identityLoading && !identity) {
+    if (!identityLoading && !identity) {
       setCurrentView('setup')
+    } else if (identity && !isWalletAuthorized) {
+      setCurrentView('signin')
     } else if (identity && (currentView === 'signin' || currentView === 'setup')) {
       setCurrentView('inbox')
     }

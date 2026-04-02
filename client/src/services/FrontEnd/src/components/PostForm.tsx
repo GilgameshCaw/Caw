@@ -22,6 +22,139 @@ import MentionAutocomplete from './MentionAutocomplete'
 import GifPicker from './GifPicker'
 import HighlightedTextarea from './HighlightedTextarea'
 
+const POST_CHAR_LIMIT = 420
+
+/**
+ * Split text into chunks that fit within the character limit.
+ * Breaks at word boundaries. Optionally prepends (1/N) page indicators.
+ */
+function splitTextIntoChunks(text: string, includePageIndicators: boolean): string[] {
+  if (text.length <= POST_CHAR_LIMIT) return [text]
+
+  const chunks: string[] = []
+  let remaining = text
+
+  // First pass: split by words respecting the limit (without indicators, to count chunks)
+  while (remaining.length > 0) {
+    if (remaining.length <= POST_CHAR_LIMIT) {
+      chunks.push(remaining)
+      break
+    }
+    // Find last space within the limit
+    let splitAt = remaining.lastIndexOf(' ', POST_CHAR_LIMIT)
+    if (splitAt <= 0) {
+      // No space found — hard break at the limit
+      splitAt = POST_CHAR_LIMIT
+    }
+    chunks.push(remaining.slice(0, splitAt))
+    remaining = remaining.slice(splitAt).trimStart()
+  }
+
+  if (!includePageIndicators) return chunks
+
+  // Second pass: re-split accounting for indicator prefix length
+  const totalChunks = chunks.length
+  // Estimate: "(1/3) " = 6 chars for single digits, could be more for 10+
+  // We'll do a proper re-split with the indicator space reserved
+  const result: string[] = []
+  remaining = text
+  // Re-estimate total — iterate to converge
+  let estimatedTotal = totalChunks
+  for (let attempt = 0; attempt < 3; attempt++) {
+    result.length = 0
+    remaining = text
+    let chunkIndex = 0
+    while (remaining.length > 0) {
+      const indicator = `(${chunkIndex + 1}/${estimatedTotal}) `
+      const available = POST_CHAR_LIMIT - indicator.length
+      if (remaining.length <= available) {
+        result.push(indicator + remaining)
+        break
+      }
+      let splitAt = remaining.lastIndexOf(' ', available)
+      if (splitAt <= 0) splitAt = available
+      result.push(indicator + remaining.slice(0, splitAt))
+      remaining = remaining.slice(splitAt).trimStart()
+      chunkIndex++
+    }
+    if (result.length === estimatedTotal) break
+    estimatedTotal = result.length
+  }
+  return result
+}
+
+/**
+ * Calculate which chunk the cursor is in, and the chunk boundaries,
+ * for display purposes. When includePageIndicators is true, reserves
+ * space for the "(1/N) " prefix in each chunk.
+ */
+function getChunkInfo(text: string, includePageIndicators = false, firstChunkReserved = 0, lastChunkReserved = 0): { chunkCount: number; chunkBoundaries: number[] } {
+  const firstChunkLimit = POST_CHAR_LIMIT - firstChunkReserved
+  if (text.length <= firstChunkLimit - lastChunkReserved) return { chunkCount: 1, chunkBoundaries: [0] }
+
+  // Helper to get the available chars for a given chunk
+  const getLimit = (chunkIdx: number, total: number, indicatorLen: number) => {
+    let limit = chunkIdx === 0 ? firstChunkLimit : POST_CHAR_LIMIT
+    // Reserve space in the last chunk for media
+    if (lastChunkReserved > 0 && chunkIdx === total - 1) limit -= lastChunkReserved
+    return limit - indicatorLen
+  }
+
+  // First pass without indicators to estimate chunk count
+  let estimatedTotal = 0
+  {
+    const boundaries: number[] = [0]
+    let remaining = text
+    let chunkIdx = 0
+    while (remaining.length > 0) {
+      const limit = chunkIdx === 0 ? firstChunkLimit : POST_CHAR_LIMIT
+      if (remaining.length <= limit) break
+      let splitAt = remaining.lastIndexOf(' ', limit)
+      if (splitAt <= 0) splitAt = limit
+      remaining = remaining.slice(splitAt).trimStart()
+      boundaries.push(0)
+      chunkIdx++
+    }
+    estimatedTotal = boundaries.length
+    // Check if last chunk overflows with reserved space
+    if (lastChunkReserved > 0 && remaining.length > POST_CHAR_LIMIT - lastChunkReserved) {
+      estimatedTotal++
+    }
+  }
+
+  // Second pass with indicator space and last-chunk reserve
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const boundaries: number[] = [0]
+    let remaining = text
+    let offset = 0
+    let chunkIndex = 0
+
+    while (remaining.length > 0) {
+      const indicatorLen = includePageIndicators ? `(${chunkIndex + 1}/${estimatedTotal}) `.length : 0
+      const available = getLimit(chunkIndex, estimatedTotal, indicatorLen)
+
+      if (remaining.length <= available) break
+      let splitAt = remaining.lastIndexOf(' ', available)
+      if (splitAt <= 0) splitAt = available
+      offset += splitAt
+      const trimmed = remaining.slice(splitAt)
+      const trimmedLen = trimmed.length - trimmed.trimStart().length
+      offset += trimmedLen
+      boundaries.push(offset)
+      remaining = remaining.slice(splitAt).trimStart()
+      chunkIndex++
+    }
+
+    if (boundaries.length === estimatedTotal || !includePageIndicators) {
+      return { chunkCount: boundaries.length, chunkBoundaries: boundaries }
+    }
+    estimatedTotal = boundaries.length
+  }
+
+  // Fallback
+  return { chunkCount: estimatedTotal, chunkBoundaries: [0] }
+}
+
 // URL detection regex - matches http(s) URLs
 const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`[\]]+/gi
 
@@ -92,6 +225,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   const [showMediaOverlay, setShowMediaOverlay] = useState(false)
   const [showScheduledSuccessModal, setShowScheduledSuccessModal] = useState(false)
   const [scheduledSuccessTime, setScheduledSuccessTime] = useState<Date | null>(null)
+  const [includePageIndicators, setIncludePageIndicators] = useState(true)
+  const [mediaPosition, setMediaPosition] = useState<'start' | 'end'>('start')
   const [showImageLibrary, setShowImageLibrary] = useState(false)
   const [libraryImages, setLibraryImages] = useState<any[]>([])
   const [libraryNextCursor, setLibraryNextCursor] = useState<number | undefined>(undefined)
@@ -924,9 +1059,15 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       }
     })
 
-    // Append all media URLs to text (in order)
-    if (mediaUrls.length > 0) {
-      finalText = finalText + '\n' + mediaUrls.join('\n')
+    // Append all media URLs to text — at start or end depending on user choice
+    // (only matters for threads; for single posts it's always appended)
+    const mediaBlock = mediaUrls.length > 0 ? '\n' + mediaUrls.join('\n') : ''
+    if (mediaBlock) {
+      if (isThreadMode && mediaPosition === 'end') {
+        // Media will be appended to the last chunk after splitting
+      } else {
+        finalText = finalText + mediaBlock
+      }
     }
 
     // Shorten any URLs in the text (including GIF URLs, but not on-chain refs)
@@ -937,11 +1078,67 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     // For replies and quotes, include the original post's info
     const parentCaw = replyTo || quote
 
-    // Always use 'caw' action type now - images are uploaded separately
-    const params: ActionParams = {
+    // Split into thread chunks if text exceeds the limit
+    const chunks = splitTextIntoChunks(finalText, includePageIndicators)
+
+    // If media goes at end of thread, append to last chunk
+    if (isThreadMode && mediaPosition === 'end' && mediaBlock && chunks.length > 1) {
+      chunks[chunks.length - 1] = chunks[chunks.length - 1] + mediaBlock
+    }
+
+    // Pre-check: verify spending limit can cover all chunks (only when Quick Sign is active)
+    if (chunks.length > 1) {
+      const { useSessionKeyStore } = await import('~/store/sessionKeyStore')
+      const { getValidatorTip } = await import('~/api/actions')
+      const { useQuickSignRenewStore } = await import('~/components/modals/QuickSignRenewModal')
+      const sessionStore = useSessionKeyStore.getState()
+
+      if (sessionStore.enabled) {
+        const remaining = sessionStore.getRemainingLimit()
+        const CAW_COST_PER_POST = 5000n
+        const tip = getValidatorTip()
+        const costPerChunk = CAW_COST_PER_POST + tip
+        const totalThreadCost = costPerChunk * BigInt(chunks.length)
+
+        if (remaining !== null && totalThreadCost > remaining) {
+          useQuickSignRenewStore.getState().show('spend_limit', () => handleSubmit())
+          return
+        }
+      }
+    }
+
+    // Get the current cawonce BEFORE submitting (signAndSubmit bumps it internally)
+    const getCawonce = () => {
+      const state = useTokenDataStore.getState()
+      for (const tokens of Object.values(state.tokensByAddress)) {
+        const found = tokens.find(t => t.tokenId === effectiveTokenId)
+        if (found) return found.cawonce ?? 0
+      }
+      return 0
+    }
+
+    // For threads (multiple chunks), verify the cawonce range is clear.
+    // This prevents "cawonce already used" errors from cancelled retries.
+    if (chunks.length > 1) {
+      try {
+        const { findSafeCawonceStart } = await import('~/api/actions')
+        const currentCawonce = getCawonce()
+        const safeCawonce = await findSafeCawonceStart(effectiveTokenId, currentCawonce, chunks.length)
+        if (safeCawonce !== currentCawonce) {
+          console.log(`[Thread] Cawonce conflict detected: local=${currentCawonce}, resetting to safe=${safeCawonce}`)
+          const setCawonce = useTokenDataStore.getState().setCawonce
+          setCawonce(effectiveTokenId, safeCawonce)
+        }
+      } catch (err) {
+        console.warn('[Thread] Could not verify cawonce range, proceeding with local value:', err)
+      }
+    }
+
+    // Post first chunk (with media, parent info, etc.)
+    const firstParams: ActionParams = {
       actionType: 'caw',
       senderId: effectiveTokenId,
-      text: finalText,
+      text: chunks[0],
       ...(parentCaw && {
         receiverId: parentCaw.user.tokenId,
         receiverCawonce: parentCaw.cawonce,
@@ -952,7 +1149,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       })
     }
 
-    const response = await signAndSubmit(params)
+    let prevCawonce = getCawonce()
+    const response = await signAndSubmit(firstParams)
 
     // If signAndSubmit returned null (e.g. insufficient stake modal), don't clear the form
     if (!response) return
@@ -961,7 +1159,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     // This prevents showing the post before user confirms the signature
     if (!replyTo && activeToken) {
       const tempId = addPendingPost({
-        content: finalText,
+        content: chunks[0],
         username: activeToken.username,
         tokenId: effectiveTokenId,
         displayName: activeToken.displayName,
@@ -972,6 +1170,36 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       // Update pending post with txQueue ID if available
       if (response.txQueueId) {
         updatePostWithTxQueueId(tempId, response.txQueueId)
+      }
+    }
+
+    // Post remaining chunks as replies to the first post
+    const firstPostCawonce = prevCawonce
+    for (let i = 1; i < chunks.length; i++) {
+      const replyParams: ActionParams = {
+        actionType: 'caw',
+        senderId: effectiveTokenId,
+        text: chunks[i],
+        receiverId: effectiveTokenId,
+        receiverCawonce: firstPostCawonce,
+      }
+
+      const replyResponse = await signAndSubmit(replyParams)
+      if (!replyResponse) break // User cancelled or error
+
+      // Add pending posts for thread replies too
+      if (activeToken) {
+        const tempId = addPendingPost({
+          content: chunks[i],
+          username: activeToken.username,
+          tokenId: effectiveTokenId,
+          displayName: activeToken.displayName,
+          image: activeToken.image,
+          avatarUrl: activeToken.avatarUrl
+        })
+        if (replyResponse.txQueueId) {
+          updatePostWithTxQueueId(tempId, replyResponse.txQueueId)
+        }
       }
     }
 
@@ -996,32 +1224,65 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     }
   }
 
-  // Calculate character count including media URLs
-  const calculateCharCount = () => {
-    let totalLength = text.length
-
-    // Add estimated URL lengths for off-chain media
+  // Calculate total media URL character cost
+  const getMediaCharCost = () => {
+    let mediaCost = 0
     const offChainImages = selectedMedia.filter(m => m.type === 'image' && m.storageType !== 'on-chain')
     const videos = selectedMedia.filter(m => m.type === 'video')
     const gifs = selectedMedia.filter(m => m.type === 'gif')
-
-    // Add actual ref lengths for on-chain images that have uploadedRef (library images)
     const onChainWithRef = selectedMedia.filter(m => m.type === 'image' && m.storageType === 'on-chain' && m.uploadedRef)
     onChainWithRef.forEach(img => {
-      // Format: [img:5:33] - include brackets and space separator
-      totalLength += `[${img.uploadedRef}] `.length
+      mediaCost += `[${img.uploadedRef}] `.length
     })
+    mediaCost += offChainImages.length * 80
+    mediaCost += videos.length * 90
+    mediaCost += gifs.length * 100
+    return mediaCost
+  }
 
-    // Estimate ~80 chars per image URL, ~90 chars per video URL, ~100 chars per GIF URL
-    totalLength += offChainImages.length * 80
-    totalLength += videos.length * 90
-    totalLength += gifs.length * 100
+  // Thread splitting info
+  const mediaCost = getMediaCharCost()
+  const effectiveTextLength = text.length + mediaCost
+  const isThreadMode = effectiveTextLength > POST_CHAR_LIMIT
+  const firstChunkMediaCost = (!isThreadMode || mediaPosition === 'start') ? mediaCost : 0
+  const lastChunkMediaCost = (isThreadMode && mediaPosition === 'end') ? mediaCost : 0
+  const { chunkCount, chunkBoundaries } = getChunkInfo(text, includePageIndicators, firstChunkMediaCost, lastChunkMediaCost)
 
-    return 420 - totalLength
+  // Figure out which chunk the cursor is in
+  const currentChunkIndex = (() => {
+    if (!isThreadMode) return 0
+    for (let i = chunkBoundaries.length - 1; i >= 0; i--) {
+      if (cursorPosition >= chunkBoundaries[i]) return i
+    }
+    return 0
+  })()
+
+  // Calculate chars remaining for the current chunk
+  const calculateCharCount = () => {
+    if (!isThreadMode) {
+      return POST_CHAR_LIMIT - effectiveTextLength
+    }
+    // In thread mode, show remaining chars for the current chunk
+    const chunkStart = chunkBoundaries[currentChunkIndex]
+    const chunkEnd = currentChunkIndex < chunkBoundaries.length - 1
+      ? chunkBoundaries[currentChunkIndex + 1]
+      : text.length
+    const chunkLen = chunkEnd - chunkStart
+    // Add media cost to the chunk that will contain the media
+    const isFirstChunk = currentChunkIndex === 0
+    const isLastChunk = currentChunkIndex === chunkCount - 1
+    const extraCost = mediaPosition === 'end'
+      ? (isLastChunk ? mediaCost : 0)
+      : (isFirstChunk ? mediaCost : 0)
+    return POST_CHAR_LIMIT - chunkLen - extraCost
   }
 
   const charCount = calculateCharCount()
-  const isOverLimit = charCount < 0
+
+  // Dynamic textarea rows — grow after 4 lines, max 12
+  const lineCount = text.split('\n').length
+  const desktopRows = Math.max(3, Math.min(lineCount, 12))
+  const isOverLimit = false // Thread mode handles overflow by splitting
 
   return (
     <div className={`p-4 transition-all duration-300 ${isDark ? 'bg-black' : 'bg-white'}`}>
@@ -1079,15 +1340,20 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               )}
             </div>
             
-            {/* Character counter and token ownership status */}
+            {/* Character counter and thread indicator */}
             <div className="flex items-center space-x-2">
+              {isThreadMode && (
+                <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                  isDark ? 'bg-yellow-500/20 text-yellow-400' : 'bg-yellow-100 text-yellow-700'
+                }`}>
+                  {currentChunkIndex + 1}/{chunkCount}
+                </span>
+              )}
               {(text.length > 0 || selectedMedia.length > 0) && (
                 <span className={`text-xs font-medium ${
-                  isOverLimit
-                    ? 'text-red-500'
-                    : charCount <= 20
-                      ? 'text-yellow-500'
-                      : isDark ? 'text-gray-400' : 'text-gray-500'
+                  charCount <= 20
+                    ? 'text-yellow-500'
+                    : isDark ? 'text-gray-400' : 'text-gray-500'
                 }`}>
                   {charCount}
                 </span>
@@ -1201,13 +1467,51 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                     disabled={isDisabled}
                     onClick={hasFailedUploads ? handleRetryFailedUploads : hasUnuploadedOnChainImages ? handleUploadOnChain : handleSubmit}
                   >
-                    {wrongWallet ? 'Wrong Wallet' : isSubmitting ? 'Signing...' : isProcessingOnChain ? 'Uploading...' : hasPendingUploads ? 'Pending...' : hasFailedUploads ? 'Retry' : hasUnuploadedOnChainImages ? 'Upload' : replyTo ? 'Reply' : 'Post'}
+                    {wrongWallet ? 'Wrong Wallet' : isSubmitting ? 'Signing...' : isProcessingOnChain ? 'Uploading...' : hasPendingUploads ? 'Pending...' : hasFailedUploads ? 'Retry' : hasUnuploadedOnChainImages ? 'Upload' : isThreadMode ? `Thread (${chunkCount})` : replyTo ? 'Reply' : 'Post'}
                   </button>
                 )
                 return tooltipText ? <Tooltip text={tooltipText}>{btn}</Tooltip> : btn
               })()
             }
           </div>
+
+        {/* Mobile Thread Info */}
+        {isThreadMode && (
+          <div className={`mt-3 p-3 rounded-lg flex items-center justify-between ${
+            isDark ? 'bg-yellow-500/10 border border-yellow-500/30' : 'bg-yellow-50 border border-yellow-200'
+          }`}>
+            <div className="flex items-center gap-2">
+              <svg className="w-4 h-4 flex-shrink-0 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+              </svg>
+              <span className={`text-xs font-medium ${isDark ? 'text-yellow-200' : 'text-yellow-800'}`}>
+                This will be posted as a thread of {chunkCount} posts
+              </span>
+            </div>
+            {selectedMedia.length > 0 && (
+              <div className={`flex items-center gap-3 mt-1 text-xs ${isDark ? 'text-yellow-200' : 'text-yellow-800'}`}>
+                <span>Attach media to:</span>
+                <label className="flex items-center gap-1 cursor-pointer">
+                  <input type="radio" name="mediaPosMobile" checked={mediaPosition === 'start'} onChange={() => setMediaPosition('start')} className="accent-yellow-500" />
+                  First post
+                </label>
+                <label className="flex items-center gap-1 cursor-pointer">
+                  <input type="radio" name="mediaPosMobile" checked={mediaPosition === 'end'} onChange={() => setMediaPosition('end')} className="accent-yellow-500" />
+                  Last post
+                </label>
+              </div>
+            )}
+            <label className={`flex items-center gap-1.5 cursor-pointer text-xs mt-1 ${isDark ? 'text-yellow-200' : 'text-yellow-800'}`}>
+              <input
+                type="checkbox"
+                checked={includePageIndicators}
+                onChange={(e) => setIncludePageIndicators(e.target.checked)}
+                className="w-3.5 h-3.5 rounded accent-yellow-500"
+              />
+              Include (1/{chunkCount}) indicators
+            </label>
+          </div>
+        )}
 
         {/* Mobile Selected Media Display */}
         {selectedMedia.length > 0 && (
@@ -1276,7 +1580,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             onDragOver={handleTextareaDragOver}
             onDragLeave={handleTextareaDragLeave}
             onDrop={handleTextareaDrop}
-            rows={3}
+            rows={desktopRows}
             placeholder={
               replyTo
                 ? `Reply to @${replyTo.user.username}`
@@ -1432,7 +1736,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
 
         {/* Functionality Icons */}
         <div className="flex items-center justify-between mt-4">
-          <div className="flex items-center space-x-6">
+          <div className="flex items-center space-x-3">
             {/* Media Upload */}
             <button
               onClick={() => fileInputRef.current?.click()}
@@ -1525,13 +1829,18 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           <div className="flex items-center space-x-3">
             {/* Token ownership and character counter */}
             <div className="flex items-center space-x-3">
+              {isThreadMode && (
+                <span className={`text-sm font-medium px-2 py-0.5 rounded ${
+                  isDark ? 'bg-yellow-500/20 text-yellow-400' : 'bg-yellow-100 text-yellow-700'
+                }`}>
+                  {currentChunkIndex + 1}/{chunkCount}
+                </span>
+              )}
               {(text.length > 0 || selectedMedia.length > 0) && (
                 <span className={`text-sm font-medium ${
-                  isOverLimit
-                    ? 'text-red-500'
-                    : charCount <= 20
-                      ? 'text-yellow-500'
-                      : isDark ? 'text-gray-400' : 'text-gray-500'
+                  charCount <= 20
+                    ? 'text-yellow-500'
+                    : isDark ? 'text-gray-400' : 'text-gray-500'
                 }`}>
                   {charCount}
                 </span>
@@ -1560,7 +1869,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                     disabled={isDisabled2}
                     onClick={hasFailedUploads ? handleRetryFailedUploads : hasUnuploadedOnChainImages ? handleUploadOnChain : handleSubmit}
                   >
-                    {wrongWallet2 ? 'Wrong Wallet' : hasNoToken ? 'Create Account' : isSubmitting ? 'Signing...' : isProcessingOnChain ? 'Uploading...' : hasPendingUploads ? 'Pending...' : hasFailedUploads ? 'Retry' : hasUnuploadedOnChainImages ? 'Upload' : replyTo ? 'Reply' : 'Post'}
+                    {wrongWallet2 ? 'Wrong Wallet' : hasNoToken ? 'Create Account' : isSubmitting ? 'Signing...' : isProcessingOnChain ? 'Uploading...' : hasPendingUploads ? 'Pending...' : hasFailedUploads ? 'Retry' : hasUnuploadedOnChainImages ? 'Upload' : isThreadMode ? `Thread (${chunkCount})` : replyTo ? 'Reply' : 'Post'}
                   </button>
                 )
                 return tooltipText2 ? <Tooltip text={tooltipText2}>{btn2}</Tooltip> : btn2
@@ -1568,6 +1877,44 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             }
           </div>
         </div>
+
+        {/* Desktop Thread Info */}
+        {isThreadMode && (
+          <div className={`mt-3 p-3 rounded-lg ${
+            isDark ? 'bg-yellow-500/10 border border-yellow-500/30' : 'bg-yellow-50 border border-yellow-200'
+          }`}>
+            <div className="flex items-center gap-2">
+              <svg className="w-4 h-4 flex-shrink-0 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+              </svg>
+              <span className={`text-sm ${isDark ? 'text-yellow-200' : 'text-yellow-800'}`}>
+                This will be posted as a thread of {chunkCount} posts
+              </span>
+            </div>
+            {selectedMedia.length > 0 && (
+              <div className={`flex items-center gap-4 mt-2 text-sm ${isDark ? 'text-yellow-200' : 'text-yellow-800'}`}>
+                <span>Attach media to:</span>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="radio" name="mediaPosDesktop" checked={mediaPosition === 'start'} onChange={() => setMediaPosition('start')} className="accent-yellow-500" />
+                  First post
+                </label>
+                <label className="flex items-center gap-1.5 cursor-pointer">
+                  <input type="radio" name="mediaPosDesktop" checked={mediaPosition === 'end'} onChange={() => setMediaPosition('end')} className="accent-yellow-500" />
+                  Last post
+                </label>
+              </div>
+            )}
+            <label className={`flex items-center gap-2 cursor-pointer text-sm mt-2 ${isDark ? 'text-yellow-200' : 'text-yellow-800'}`}>
+              <input
+                type="checkbox"
+                checked={includePageIndicators}
+                onChange={(e) => setIncludePageIndicators(e.target.checked)}
+                className="w-4 h-4 rounded accent-yellow-500"
+              />
+              Include (1/{chunkCount}) indicators
+            </label>
+          </div>
+        )}
       </div>
 
       {/* Image Library Modal */}

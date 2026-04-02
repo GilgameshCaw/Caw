@@ -1,78 +1,69 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { HiOutlineSearch, HiOutlineInformationCircle } from 'react-icons/hi'
 import FeedItem from '~/components/FeedItem'
 import type { CawItem } from '~/types'
 import { apiFetch } from '~/api/client'
-import { useBookmarksStore } from '~/store/bookmarksStore'
 
 const BookmarksPage: React.FC = () => {
   const { isDark } = useTheme()
   const [searchQuery, setSearchQuery] = useState('')
-
-  // Bookmarks are stored in localStorage (browser-only)
-  const bookmarkedIds = useBookmarksStore(state => state.bookmarkedCawIds)
-
   const [bookmarkedPosts, setBookmarkedPosts] = useState<CawItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [hasMore, setHasMore] = useState(false)
+  const [nextCursor, setNextCursor] = useState<number | undefined>(undefined)
+  const [loadingMore, setLoadingMore] = useState(false)
 
-  const BATCH_SIZE = 30
-
-  const fetchBookmarks = async () => {
-    if (bookmarkedIds.length === 0) {
-      setBookmarkedPosts([])
-      setLoading(false)
-      return
-    }
-
+  const fetchBookmarks = useCallback(async (cursor?: number) => {
     try {
-      // Convert string IDs to numbers for the API
-      const numericIds = bookmarkedIds.map(id => parseInt(id)).filter(id => !isNaN(id))
+      const params = new URLSearchParams({ limit: '20' })
+      if (cursor) params.set('cursor', String(cursor))
 
-      // Fetch in batches to avoid oversized requests
-      const allItems: any[] = []
-      for (let i = 0; i < numericIds.length; i += BATCH_SIZE) {
-        const batch = numericIds.slice(i, i + BATCH_SIZE)
-        const data = await apiFetch('/api/caws/by-ids', {
-          method: 'POST',
-          body: JSON.stringify({ ids: batch })
-        })
-        allItems.push(...(data.items || []))
+      const data = await apiFetch<{
+        bookmarks: CawItem[]
+        hasMore: boolean
+        nextCursor?: number
+      }>(`/api/bookmarks?${params}`)
+
+      if (cursor) {
+        setBookmarkedPosts(prev => [...prev, ...data.bookmarks])
+      } else {
+        setBookmarkedPosts(data.bookmarks)
       }
-
-      // Transform the data to match CawItem format
-      const transformedItems = allItems.map((item: any) => ({
-        ...item,
-        id: item.id.toString(),
-        isBookmarked: true,
-        hashtags: item.hashtags?.map((h: any) => h.hashtag) || []
-      }))
-
-      setBookmarkedPosts(transformedItems)
+      setHasMore(data.hasMore)
+      setNextCursor(data.nextCursor)
     } catch (error) {
       console.error('Failed to fetch bookmarks:', error)
     } finally {
       setLoading(false)
+      setLoadingMore(false)
     }
-  }
+  }, [])
 
   useEffect(() => {
     fetchBookmarks()
-  }, [bookmarkedIds])
+  }, [fetchBookmarks])
+
+  const loadMore = () => {
+    if (!nextCursor || loadingMore) return
+    setLoadingMore(true)
+    fetchBookmarks(nextCursor)
+  }
 
   const handleBookmarkUpdate = (cawId: number, isBookmarked: boolean) => {
     if (!isBookmarked) {
-      // Remove from list when unbookmarked (store already updated by FeedItem)
-      setBookmarkedPosts(prev => prev.filter(caw => caw.id !== cawId.toString()))
+      setBookmarkedPosts(prev => prev.filter(caw => Number(caw.id) !== cawId))
     }
   }
 
   // Filter bookmarks based on search query
-  const filteredPosts = bookmarkedPosts.filter(post =>
-    post.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    post.user.username.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  const filteredPosts = searchQuery
+    ? bookmarkedPosts.filter(post =>
+        post.content.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        post.user.username.toLowerCase().includes(searchQuery.toLowerCase())
+      )
+    : bookmarkedPosts
 
   return (
     <MainLayout>
@@ -88,7 +79,7 @@ const BookmarksPage: React.FC = () => {
             isDark ? 'text-gray-400' : 'text-gray-500'
           }`}>
             <HiOutlineInformationCircle className="w-4 h-4" />
-            <span>Bookmarks are stored in your browser and are private to you.</span>
+            <span>Bookmarks are saved to your account on this client.</span>
           </div>
         </div>
 
@@ -134,7 +125,22 @@ const BookmarksPage: React.FC = () => {
           </div>
         )}
 
-        {/* Empty State (if no bookmarks) */}
+        {/* Load more */}
+        {hasMore && !loading && (
+          <div className="flex justify-center py-4">
+            <button
+              onClick={loadMore}
+              disabled={loadingMore}
+              className={`px-6 py-2 rounded-lg text-sm font-medium transition cursor-pointer ${
+                isDark ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-900'
+              } disabled:opacity-50`}
+            >
+              {loadingMore ? 'Loading...' : 'Load more'}
+            </button>
+          </div>
+        )}
+
+        {/* Empty State */}
         {!loading && bookmarkedPosts.length === 0 && (
           <div className="text-center py-12">
             <div className={`w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center ${
@@ -155,7 +161,7 @@ const BookmarksPage: React.FC = () => {
             <p className={`text-sm mt-2 transition-colors duration-300 ${
               isDark ? 'text-gray-500' : 'text-gray-400'
             }`}>
-              Bookmarks are stored locally in your browser.
+              Bookmarks are tied to your account on this client.
             </p>
           </div>
         )}

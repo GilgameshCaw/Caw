@@ -8,6 +8,7 @@ import { useActiveToken } from '~/store/tokenDataStore'
 import { useCreateSession, DEFAULT_SPEND_LIMIT, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
 import { HiLightningBolt } from 'react-icons/hi'
 import QuickSignOptions from '~/components/QuickSignOptions'
+import Tooltip from '~/components/Tooltip'
 import { chains } from '~/config/chains'
 import { create } from 'zustand'
 
@@ -50,6 +51,9 @@ const QuickSignRenewModal: React.FC = () => {
     ? activeToken.address.toLowerCase() !== address.toLowerCase()
     : false
   const wrongChain = isConnected && !wrongWallet && chainId !== chains.l2.chainId
+
+  // Clear stale errors when connection state changes
+  React.useEffect(() => { setError(null) }, [isConnected, address, chainId])
 
   const handleRenew = async () => {
     setLoading(true)
@@ -102,10 +106,10 @@ const QuickSignRenewModal: React.FC = () => {
     }
   }
 
-  const signManuallyNote = !isConnected
-    ? 'Connect your wallet first'
-    : wrongWallet
-      ? 'Wrong wallet connected'
+  const signManuallyNote = wrongWallet
+    ? null // Handled by the dedicated wrong wallet message above buttons
+    : !isConnected
+      ? 'Connect your wallet first'
       : wrongChain
         ? 'Switch to the correct network first'
         : null
@@ -119,9 +123,9 @@ const QuickSignRenewModal: React.FC = () => {
     : 'Your Quick Sign session has reached its spending limit. Re-sign with a new session to continue, or sign this action manually with your wallet.'
 
   return (
-    <ModalWrapper isOpen={isOpen} onClose={close} usePortal>
+    <ModalWrapper isOpen={isOpen} onClose={close} usePortal maxWidth="max-w-[493px]">
       <div className="p-6">
-        <div className="flex items-center gap-3 mb-4">
+        <div className="flex flex-col items-center gap-3 mb-4">
           <div className="p-2 rounded-full bg-yellow-500/20">
             <HiLightningBolt className="w-6 h-6 text-yellow-500" />
           </div>
@@ -130,7 +134,7 @@ const QuickSignRenewModal: React.FC = () => {
           </h2>
         </div>
 
-        <p className={`text-sm mb-4 ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>
+        <p className={`text-sm mb-4 text-center ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>
           {description}
         </p>
 
@@ -151,35 +155,47 @@ const QuickSignRenewModal: React.FC = () => {
           </div>
         )}
 
+        {wrongWallet && (
+          <p className={`text-center text-xs mb-3 text-red-400`}>
+            Please connect to the wallet that owns @{activeToken?.username}
+          </p>
+        )}
+
         <div className="flex gap-3">
-          <button
-            onClick={handleRenew}
-            disabled={loading}
-            className="flex-1 py-3 rounded-full font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-colors disabled:opacity-50 cursor-pointer"
-          >
-            {loading ? (status || 'Activating...') : 'Re-enable Quick Sign'}
-          </button>
-          <button
-            onClick={handleSignManually}
-            disabled={loading || wrongWallet}
-            className={`flex-1 py-3 rounded-full font-semibold transition-colors ${
-              wrongWallet
-                ? 'text-red-400 bg-red-900/20 cursor-not-allowed'
-                : isDark
-                  ? 'bg-white/10 text-white hover:bg-white/20 cursor-pointer'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200 cursor-pointer'
-            } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
-          >
-            Sign Manually
-          </button>
-        </div>
-        {signManuallyNote && (
-          <p className={`text-center text-xs whitespace-nowrap mt-2 ${wrongWallet ? 'text-red-400' : isDark ? 'text-white/40' : 'text-gray-400'}`}>
-            {wrongWallet ? signManuallyNote : (
-              <button onClick={handleNoteClick} className="underline hover:opacity-80 cursor-pointer">
-                {signManuallyNote}
+          {(() => {
+            const renewBtn = (
+              <button
+                onClick={handleRenew}
+                disabled={loading || !!wrongWallet}
+                className="w-full px-4 py-3 rounded-full font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-colors disabled:opacity-50 disabled:hover:bg-yellow-500 cursor-pointer disabled:cursor-not-allowed"
+              >
+                {loading ? (status || 'Activating...') : 'Re-enable Quick Sign'}
               </button>
-            )}
+            )
+            return <div className="flex-1">{wrongWallet ? <Tooltip text={`Connect to the wallet that owns @${activeToken?.username}`}>{renewBtn}</Tooltip> : renewBtn}</div>
+          })()}
+          {(() => {
+            const manualBtn = (
+              <button
+                onClick={handleSignManually}
+                disabled={loading || !!wrongWallet}
+                className={`w-full px-4 py-3 rounded-full font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                  isDark
+                    ? 'bg-white/10 text-white hover:bg-white/20 disabled:hover:bg-white/10 cursor-pointer'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:hover:bg-gray-100 cursor-pointer'
+                }`}
+              >
+                Sign Manually
+              </button>
+            )
+            return <div className="flex-1">{wrongWallet ? <Tooltip text={`Connect to the wallet that owns @${activeToken?.username}`}>{manualBtn}</Tooltip> : manualBtn}</div>
+          })()}
+        </div>
+        {signManuallyNote && !wrongWallet && (
+          <p className={`text-center text-xs whitespace-nowrap mt-2 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+            <button onClick={handleNoteClick} className="underline hover:opacity-80 cursor-pointer">
+              {signManuallyNote}
+            </button>
           </p>
         )}
       </div>

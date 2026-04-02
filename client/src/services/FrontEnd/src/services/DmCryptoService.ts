@@ -51,8 +51,9 @@ function restoreFromStorage(tokenId: number): boolean {
  */
 export async function deriveKeyPair(
   signMessage: (message: string) => Promise<string>,
-  tokenId: number
-): Promise<{ privateKey: Uint8Array; publicKeyHex: string }> {
+  tokenId: number,
+  username?: string
+): Promise<{ privateKey: Uint8Array; publicKeyHex: string; rawSignature?: string; sigMessage?: string }> {
   // Return cached if available and for the same tokenId
   if (cachedPrivateKey && cachedPublicKey && cachedTokenId === tokenId) {
     return { privateKey: cachedPrivateKey, publicKeyHex: cachedPublicKey }
@@ -71,7 +72,10 @@ export async function deriveKeyPair(
     return { privateKey: cachedPrivateKey!, publicKeyHex: cachedPublicKey! }
   }
 
-  const message = `CAW Protocol DM Key\nUser: ${tokenId}`
+  // Use username-based message for new users, falls back to tokenId for compatibility
+  const message = username
+    ? `CAW Protocol\nEnable DMs\n@${username}`
+    : `CAW Protocol DM Key\nUser: ${tokenId}`
   const signature = await signMessage(message)
 
   // SHA-256 of the signature → 32-byte private key
@@ -87,7 +91,7 @@ export async function deriveKeyPair(
   cachedTokenId = tokenId
   persistKeys()
 
-  return { privateKey, publicKeyHex }
+  return { privateKey, publicKeyHex, rawSignature: signature, sigMessage: message }
 }
 
 /**

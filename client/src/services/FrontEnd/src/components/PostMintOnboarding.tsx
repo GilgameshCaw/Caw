@@ -3,7 +3,7 @@ import Tooltip from '~/components/Tooltip'
 import { useAccount, useConnections, useSwitchChain, useReadContract } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { maxUint256, parseUnits, formatUnits, erc20Abi } from 'viem'
-import { useActiveToken, useTokenDataStore } from '~/store/tokenDataStore'
+import { useActiveToken, useTokenDataStore, usePriceStore } from '~/store/tokenDataStore'
 import { useVerifyWallet } from '~/hooks/useVerifyWallet'
 import { useAuthStore } from '~/store/authStore'
 import { useDmClient } from '~/hooks/useDm'
@@ -56,7 +56,7 @@ interface SuggestedUser {
   followPending: boolean
 }
 
-type StepId = 'verify' | 'stake' | 'dms' | 'quicksign' | 'follow'
+type StepId = 'verify' | 'stake' | 'dms' | 'quicksign' | 'setup' | 'follow'
 
 interface StepDef {
   id: StepId
@@ -67,21 +67,49 @@ interface StepDef {
 }
 
 const STEPS: StepDef[] = [
-  { id: 'verify',    label: 'Log In',       icon: <div className="w-6 h-6" style={{ backgroundColor: 'currentColor', maskImage: 'url(/icons/crow-2.svg)', maskSize: 'contain', maskRepeat: 'no-repeat', maskPosition: 'center', WebkitMaskImage: 'url(/icons/crow-2.svg)', WebkitMaskSize: 'contain', WebkitMaskRepeat: 'no-repeat', WebkitMaskPosition: 'center' }} />, skipWarning: 'You\'ll likely need to do this later.' },
-  { id: 'stake',     label: 'Stake',        icon: <HiOutlineCube className="w-5 h-5" />,                   skipWarning: 'Staked CAW is needed to post, like, and follow.' },
-  { id: 'dms',       label: 'DMs',          icon: <HiOutlineLockClosed className="w-5 h-5" />,             skipWarning: 'Other users won\'t be able to message you.' },
-  { id: 'quicksign', label: 'Quick Sign',     shortLabel: 'QS', icon: <HiLightningBolt className="w-5 h-5" />, skipWarning: 'You\'ll see a wallet popup for every action.' },
-  { id: 'follow',    label: 'Follow',       icon: <HiOutlineUserGroup className="w-5 h-5" />,              skipWarning: '' },
+  { id: 'stake',  label: 'Stake',  icon: <HiOutlineCube className="w-5 h-5" />,      skipWarning: 'Staked CAW is needed to post, like, and follow.' },
+  { id: 'setup',  label: 'Set Up', icon: <HiLightningBolt className="w-5 h-5" />,    skipWarning: 'You can set these up later in settings.' },
+  { id: 'follow', label: 'Follow', icon: <HiOutlineUserGroup className="w-5 h-5" />, skipWarning: '' },
 ]
+
+function CawPriceTicker() {
+  const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
+
+  const formatAmount = (n: number): string => {
+    if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}B`
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+    if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`
+    return n.toFixed(0)
+  }
+
+  if (!cawPrice || cawPrice <= 0) {
+    return (
+      <div className="mt-4 text-xs text-white/30">
+        CAW price loading...
+      </div>
+    )
+  }
+
+  const cawPerPenny = 0.01 / cawPrice
+
+  return (
+    <div className="mt-4 text-xs text-white/30">
+      $0.01 ≈ {formatAmount(cawPerPenny)} CAW
+    </div>
+  )
+}
 
 interface PostMintOnboardingProps {
   username: string
   tokenId: number
   initialStep?: number
+  pendingDeposit?: string | null  // wei amount as string, or null if no deposit
   onComplete: () => void
 }
 
-const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, tokenId, initialStep = 0, onComplete }) => {
+const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, tokenId, initialStep = 0, pendingDeposit = null, onComplete }) => {
+  const depositPending = !!pendingDeposit
+  const pendingDepositAmount = pendingDeposit ? BigInt(pendingDeposit) : 0n
   const [currentStep, setCurrentStep] = useState(initialStep)
   const [completedSteps, setCompletedSteps] = useState<Set<StepId>>(new Set())
   const [skippedSteps, setSkippedSteps] = useState<Set<StepId>>(new Set())
@@ -138,7 +166,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
     functionName: 'depositQuote',
     address: CAW_NAME_QUOTER_ADDRESS,
     args: [CLIENT_ID, tokenId ?? 0, parseUnits(amount || '0', 18), chains.l2.layerZero, false],
-    query: { enabled: !!tokenId && !!amount && currentStep === 1 }
+    query: { enabled: !!tokenId && !!amount && currentStep === 0 }
   })
 
   useEffect(() => {
@@ -253,7 +281,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   }, [stakeTxSubmitted, stakeConfirmed, stakedAmountBefore, tokenId, refetchTokenData])
 
   // ── Step 3: Enable DMs ──
-  const { initializeClient: initDm, isLoading: dmEnabling } = useDmClient(tokenId)
+  const { initializeClient: initDm, isLoading: dmEnabling } = useDmClient(tokenId, username)
   const { hasIdentity: dmAlreadyEnabled } = useDmIdentity(tokenId)
   const [dmComplete, setDmComplete] = useState(false)
   const [dmError, setDmError] = useState<string | null>(null)
@@ -269,6 +297,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
       await initDm()
       setDmComplete(true)
       markComplete('dms')
+      markComplete('verify')
     } catch (err) {
       setDmError(err instanceof Error ? err.message : 'Failed to enable DMs')
     }
@@ -282,7 +311,9 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   const [qsStatus, setQsStatus] = useState('')
   const [qsError, setQsError] = useState<string | null>(null)
   const [qsComplete, setQsComplete] = useState(false)
-  const [qsSpendLimit, setQsSpendLimit] = useState<bigint>(DEFAULT_SPEND_LIMIT)
+  const onboardingCawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
+  const qsDefaultLimit = onboardingCawPrice > 0 ? BigInt(Math.round(5 / onboardingCawPrice)) : DEFAULT_SPEND_LIMIT
+  const [qsSpendLimit, setQsSpendLimit] = useState<bigint>(qsDefaultLimit)
   const [qsDuration, setQsDuration] = useState<number>(DEFAULT_SESSION_DURATION)
 
   const handleEnableQuickSign = async () => {
@@ -303,13 +334,79 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
     }
   }
 
+  // ── Combined Setup step (DMs + Quick Sign sequentially) ──
+  const hasActiveSession = useHasActiveSession()
+  const [setupBusy, setSetupBusy] = useState(false)
+  const [setupSubStep, setSetupSubStep] = useState<'idle' | 'dms' | 'quicksign' | 'done'>('idle')
+  const [setupError, setSetupError] = useState<string | null>(null)
+
+  // Track which sub-steps already succeeded (persists across retries)
+  const setupDmDone = dmComplete || !!dmAlreadyEnabled
+  const setupQsDone = qsComplete || hasActiveSession
+
+  const handleCombinedSetup = async () => {
+    setSetupBusy(true)
+    setSetupError(null)
+
+    // Step 1: DMs (if not already done)
+    if (!setupDmDone) {
+      setSetupSubStep('dms')
+      try {
+        await initDm()
+        setDmComplete(true)
+        markComplete('dms')
+        markComplete('verify')
+      } catch (err: any) {
+        const msg = err?.message || 'DM setup failed'
+        if (msg.includes('rejected') || msg.includes('cancelled') || err?.code === 4001) {
+          setSetupError('DM signature was rejected. Tap below to try again.')
+        } else {
+          setSetupError(msg)
+        }
+        setSetupBusy(false)
+        setSetupSubStep('idle')
+        return
+      }
+    }
+
+    // Step 2: Quick Sign (if not already done)
+    if (!setupQsDone) {
+      setSetupSubStep('quicksign')
+      setQsError(null)
+      try {
+        setSessionEnabled(true)
+        await createSession((s) => setQsStatus(s), qsSpendLimit, qsDuration)
+        setHasSeenPrompt(true)
+        setQsComplete(true)
+        markComplete('quicksign')
+      } catch (err: any) {
+        const msg = err?.shortMessage || err?.message || 'Quick Sign failed'
+        if (msg.includes('rejected') || msg.includes('cancelled') || err?.code === 4001) {
+          setSetupError('Quick Sign signature was rejected. Tap below to try again.')
+        } else {
+          setSetupError(msg)
+        }
+        setSessionEnabled(false)
+        setSetupBusy(false)
+        setSetupSubStep('idle')
+        return
+      } finally {
+        setQsStatus('')
+      }
+    }
+
+    setSetupSubStep('done')
+    markComplete('setup')
+    setSetupBusy(false)
+  }
+
   // ── Step 5: Follow users ──
   const [suggestedUsers, setSuggestedUsers] = useState<SuggestedUser[]>([])
   const [loadingUsers, setLoadingUsers] = useState(false)
   const fetchingUsersRef = useRef(false)
 
   useEffect(() => {
-    if (currentStep === 4 && suggestedUsers.length === 0 && !fetchingUsersRef.current) {
+    if (currentStep === 2 && suggestedUsers.length === 0 && !fetchingUsersRef.current) {
       fetchingUsersRef.current = true
       setLoadingUsers(true)
       apiFetch<{ users: SuggestedUser[] }>('/api/users/top-followed?limit=10')
@@ -354,15 +451,18 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   // ── Side-effect detection for stepper states ──
   // Check actual state for each step and mark completed or skipped accordingly.
   // This runs on mount and whenever the underlying state changes.
-  const hasActiveSession = useHasActiveSession()
+  // (hasActiveSession is declared earlier, near the combined setup step)
   const authorizedTokenIds = useAuthStore(s => s.authorizedTokenIds)
 
   useEffect(() => {
+    const dmDone = dmComplete || !!dmAlreadyEnabled
+    const qsDone = qsComplete || hasActiveSession
     const checks: Record<StepId, boolean> = {
       verify:    isProfileAuthorized,
-      stake:     stakeConfirmed || !!(activeToken?.stakedAmount && activeToken.stakedAmount > 0n),
-      dms:       dmComplete || !!dmAlreadyEnabled,
-      quicksign: qsComplete || hasActiveSession,
+      stake:     depositPending || stakeConfirmed || !!(activeToken?.stakedAmount && activeToken.stakedAmount > 0n),
+      dms:       dmDone,
+      quicksign: qsDone,
+      setup:     dmDone && qsDone,
       follow:    false, // no persistent side effect to check
     }
 
@@ -381,10 +481,10 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
 
     setCompletedSteps(completed)
     setSkippedSteps(skipped)
-  }, [isProfileAuthorized, activeToken?.stakedAmount, dmAlreadyEnabled, dmComplete, hasActiveSession, qsComplete, stakeConfirmed, currentStep])
+  }, [isProfileAuthorized, activeToken?.stakedAmount, dmAlreadyEnabled, dmComplete, hasActiveSession, qsComplete, stakeConfirmed, currentStep, depositPending])
 
   // Auto-advance past steps that are already completed (but not when user explicitly clicked a step)
-  const isStakeComplete = stakeConfirmed || !!(activeToken?.stakedAmount && activeToken.stakedAmount > 0n)
+  const isStakeComplete = depositPending || stakeConfirmed || !!(activeToken?.stakedAmount && activeToken.stakedAmount > 0n)
   const isDmsComplete = dmComplete || !!dmAlreadyEnabled
   const isQsComplete = qsComplete || hasActiveSession
   useEffect(() => {
@@ -397,6 +497,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
       stake: isStakeComplete,
       dms: isDmsComplete,
       quicksign: isQsComplete,
+      setup: isDmsComplete && isQsComplete,
       follow: false,
     }
     const currentStepId = STEPS[currentStep]?.id
@@ -413,7 +514,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
       persistOnboardingStep(username, 5)
       onComplete()
     }
-  }, [isProfileAuthorized, isStakeComplete, isDmsComplete, isQsComplete, currentStep])
+  }, [isProfileAuthorized, isStakeComplete, isDmsComplete, isQsComplete, currentStep, depositPending])
 
   // If wallet is authorized but this specific tokenId isn't in the session yet,
   // silently refresh the session to pick up the new tokenId (no signature needed)
@@ -531,7 +632,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
           {renderStepper()}
         </div>
 
-        <div className={`flex-1 flex flex-col min-[800px]:flex-row min-[800px]:items-start min-[800px]:justify-center ${currentStep === 4 ? 'hidden' : ''}`}>
+        <div className={`flex-1 flex flex-col min-[800px]:flex-row min-[800px]:items-start min-[800px]:justify-center ${currentStep === 2 ? 'hidden' : ''}`}>
 
         {/* Left column — welcome + NFT */}
         <div className="flex items-center justify-center min-[800px]:sticky min-[800px]:top-16 min-[800px]:border-r min-[800px]:border-white/10">
@@ -566,12 +667,16 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
             </p>
           )}
           <br/>
-          <p className="text-gray-400 text-center text-xl min-[800px]:text-base mb-6 max-w-sm">
+          <p className="text-gray-400 text-center text-sm min-[800px]:text-base max-w-sm">
+            <b className="text-lg text-white">Your username is live</b>
+          </p>
+          <p className="text-gray-400 text-center text-xl min-[800px]:text-base mt-2 max-w-sm">
             You have successfully minted a new profile.
           </p>
-          <p className="text-gray-400 text-center text-sm min-[800px]:text-base mt-3 max-w-sm">
-            <b className="text-lg text-white">Your username is live</b><br/>follow the steps to finish setting up your account.
+          <p className="text-gray-400 text-center text-sm min-[800px]:text-base mt-2 max-w-sm">
+            Follow the steps to finish setting up your account.
           </p>
+          <CawPriceTicker />
           {/* Show stepper inline on mobile only */}
           <div className="w-full min-[800px]:hidden mt-4">
             {renderStepper()}
@@ -585,58 +690,8 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
 
           <div className="space-y-6">
 
-          {/* ── Step 1: Log In ── */}
+          {/* ── Step 1: Stake CAW ── */}
           {currentStep === 0 && (
-            <div className="space-y-6">
-              <div className="text-center space-y-3">
-                <div className="w-16 h-16 rounded-full bg-yellow-500/20 flex items-center justify-center mx-auto">
-                  <div className="w-9 h-9" style={{ backgroundColor: '#eab308', maskImage: 'url(/icons/crow-2.svg)', maskSize: 'contain', maskRepeat: 'no-repeat', maskPosition: 'center', WebkitMaskImage: 'url(/icons/crow-2.svg)', WebkitMaskSize: 'contain', WebkitMaskRepeat: 'no-repeat', WebkitMaskPosition: 'center' }} />
-                </div>
-                <h2 className="text-2xl font-bold text-white">Log In to Your Profile</h2>
-                <p className="text-gray-400 text-sm">
-                  Sign a free message to verify you own this wallet.
-                  This logs you into your new CAW profile so you can start using it right away.
-                </p>
-              </div>
-
-              {isComplete ? (
-                <div className="text-center space-y-4">
-                  <div className="flex items-center justify-center gap-2 text-green-400">
-                    <HiCheck className="w-5 h-5" />
-                    <span className="font-medium">Logged in!</span>
-                  </div>
-                  <button
-                    onClick={goNext}
-                    className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all cursor-pointer"
-                  >
-                    Continue <HiArrowRight className="w-4 h-4 inline ml-1" />
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {verifyError && (
-                    <p className="text-red-400 text-sm text-center">{verifyError}</p>
-                  )}
-                  <button
-                    onClick={() => !isConnected ? openConnectModal?.() : handleVerify()}
-                    disabled={isVerifying}
-                    className={`w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all ${isVerifying ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
-                  >
-                    {!isConnected ? 'Connect Wallet' : isVerifying ? 'Signing...' : 'Sign to Log In'}
-                  </button>
-                  <button
-                    onClick={handleSkip}
-                    className="w-full py-2 text-white/40 hover:text-white/60 text-sm transition-colors cursor-pointer"
-                  >
-                    Skip — {step.skipWarning}
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* ── Step 2: Stake CAW ── */}
-          {currentStep === 1 && (
             <div className="space-y-6">
               <div className="text-center space-y-3">
                 <div className="w-16 h-16 rounded-full bg-yellow-500/20 flex items-center justify-center mx-auto">
@@ -651,7 +706,32 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
 
               <StakingRewardsInfo alwaysDark />
 
-              {isComplete ? (
+              {depositPending ? (
+                <div className="text-center space-y-4">
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-center gap-2 text-yellow-400">
+                      <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                      </svg>
+                      <span className="font-medium">
+                        {pendingDepositAmount > 0n
+                          ? `${Number(formatUnits(pendingDepositAmount, 18)).toLocaleString('en-US', { maximumFractionDigits: 0 })} CAW deposit — waiting for confirmation...`
+                          : 'Deposit submitted — waiting for confirmation...'}
+                      </span>
+                    </div>
+                    {address && (
+                      <LayerZeroStatus address={address} alwaysDark message="Your stake from minting is being transferred cross-chain." />
+                    )}
+                  </div>
+                  <button
+                    onClick={goNext}
+                    className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all cursor-pointer"
+                  >
+                    Continue <HiArrowRight className="w-4 h-4 inline ml-1" />
+                  </button>
+                </div>
+              ) : isComplete ? (
                 <div className="text-center space-y-4">
                   <div className="flex items-center justify-center gap-2 text-green-400">
                     <HiCheck className="w-5 h-5" />
@@ -781,144 +861,77 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
             </div>
           )}
 
-          {/* ── Step 3: Enable DMs ── */}
-          {currentStep === 2 && (
+          {/* ── Step 2: Combined Setup (DMs + Quick Sign) ── */}
+          {currentStep === 1 && (
             <div className="space-y-6">
-              <div className="text-center space-y-3">
-                <div className="w-16 h-16 rounded-full bg-yellow-500/20 flex items-center justify-center mx-auto">
-                  <HiOutlineLockClosed className="w-8 h-8 text-yellow-500" />
-                </div>
-                <h2 className="text-2xl font-bold text-white">Enable Direct Messages</h2>
-                <p className="text-gray-400 text-sm">
-                  Sign once to generate your encryption keys.
-                  All messages are end-to-end encrypted — only you and the recipient can read them.
-                </p>
-              </div>
-
-              {(dmComplete || isComplete) ? (
-                <div className="text-center space-y-4">
-                  <div className="flex items-center justify-center gap-2 text-green-400">
-                    <HiCheck className="w-5 h-5" />
-                    <span className="font-medium">DMs enabled!</span>
-                  </div>
-                  <button
-                    onClick={goNext}
-                    className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all cursor-pointer"
-                  >
-                    Continue <HiArrowRight className="w-4 h-4 inline ml-1" />
-                  </button>
-                </div>
-              ) : !isConnected ? (
-                <div className="space-y-3">
-                  <button
-                    onClick={() => openConnectModal?.()}
-                    className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all cursor-pointer"
-                  >
-                    Connect Wallet
-                  </button>
-                  <button
-                    onClick={handleSkip}
-                    className="w-full py-2 text-white/40 hover:text-white/60 text-sm transition-colors cursor-pointer"
-                  >
-                    Skip — {step.skipWarning}
-                  </button>
-                </div>
-              ) : !isWalletAuthorized ? (
-                <div className="space-y-3">
-                  <div className="rounded-xl border border-yellow-700/50 bg-yellow-900/20 p-3 text-sm text-gray-300 text-center">
-                    You need to log in before enabling DMs.
-                  </div>
-                  {verifyError && (
-                    <p className="text-red-400 text-sm text-center">{verifyError}</p>
-                  )}
-                  <button
-                    onClick={async () => {
-                      try {
-                        await apiFetch('/api/users/ensure', {
-                          method: 'POST',
-                          body: JSON.stringify({ tokenId }),
-                        })
-                      } catch {}
-                      await verify()
-                      setTimeout(() => {
-                        if (useAuthStore.getState().authorizedAddresses.includes(address?.toLowerCase() || '')) {
-                          markComplete('verify')
-                        }
-                      }, 500)
-                    }}
-                    disabled={isVerifying}
-                    className={`w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all ${isVerifying ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
-                  >
-                    {isVerifying ? 'Signing...' : 'Sign to Log In'}
-                  </button>
-                  <button
-                    onClick={handleSkip}
-                    className="w-full py-2 text-white/40 hover:text-white/60 text-sm transition-colors cursor-pointer"
-                  >
-                    Skip — {step.skipWarning}
-                  </button>
-                </div>
-              ) : (() => {
-                const wrongDmWallet = address && activeToken?.address && address.toLowerCase() !== activeToken.address.toLowerCase()
-                return (
-                <div className="space-y-3">
-                  {dmError && (
-                    <p className="text-red-400 text-sm text-center">{dmError}</p>
-                  )}
-                  {wrongDmWallet ? (
-                    <>
-                      <button
-                        disabled
-                        className="w-full py-3 bg-white/10 text-gray-400 font-bold rounded-full cursor-not-allowed"
-                      >
-                        Wrong Wallet
-                      </button>
-                      <p className="text-red-400 text-sm text-center">Please switch to the correct wallet</p>
-                    </>
-                  ) : (
-                    <button
-                      onClick={handleEnableDms}
-                      disabled={dmEnabling}
-                      className={`w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all ${dmEnabling ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
-                    >
-                      {dmEnabling ? 'Enabling...' : 'Sign to Enable DMs'}
-                    </button>
-                  )}
-                  <button
-                    onClick={handleSkip}
-                    className="w-full py-2 text-white/40 hover:text-white/60 text-sm transition-colors cursor-pointer"
-                  >
-                    Skip — {step.skipWarning}
-                  </button>
-                </div>
-                )
-              })(
-              )}
-            </div>
-          )}
-
-          {/* ── Step 4: Quick Sign ── */}
-          {currentStep === 3 && (
-            <div className="space-y-2">
               <div className="text-center space-y-3">
                 <div className="w-16 h-16 rounded-full bg-yellow-500/20 flex items-center justify-center mx-auto">
                   <HiLightningBolt className="w-8 h-8 text-yellow-500" />
                 </div>
-                <h2 className="text-2xl font-bold text-white">Enable Quick Sign</h2>
-                <p className="text-gray-400 text-sm mb-6">
-                  Creates a temporary key in your browser so you can post, like, and follow
-                  without a wallet popup every time.
-                </p>
-                <p className="text-gray-400 text-md mt-4">
-                  <strong className="text-gray-300">It cannot withdraw tokens or transfer your name</strong>.
+                <h2 className="text-2xl font-bold text-white">Set Up Your Account</h2>
+                <p className="text-gray-400 text-sm">
+                  Two quick signatures to enable encrypted messaging and frictionless posting.
                 </p>
               </div>
 
-              {(qsComplete || isComplete) ? (
+              {/* Sub-step progress indicators */}
+              <div className="space-y-3">
+                <div className={`flex items-center gap-3 p-3 rounded-xl border ${
+                  setupDmDone
+                    ? 'border-green-500/30 bg-green-500/10'
+                    : setupSubStep === 'dms'
+                    ? 'border-yellow-500/30 bg-yellow-500/10'
+                    : 'border-white/10 bg-white/5'
+                }`}>
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                    setupDmDone ? 'bg-green-500' : 'bg-white/10'
+                  }`}>
+                    {setupDmDone
+                      ? <HiCheck className="w-4 h-4 text-white" />
+                      : setupSubStep === 'dms'
+                      ? <div className="w-4 h-4 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin" />
+                      : <HiOutlineLockClosed className="w-4 h-4 text-white/50" />
+                    }
+                  </div>
+                  <div className="flex-1">
+                    <p className={`text-sm font-medium ${setupDmDone ? 'text-green-400' : 'text-white'}`}>
+                      Encrypted DMs & Login
+                    </p>
+                    <p className="text-xs text-gray-500">End-to-end encrypted messaging</p>
+                  </div>
+                </div>
+
+                <div className={`flex items-center gap-3 p-3 rounded-xl border ${
+                  setupQsDone
+                    ? 'border-green-500/30 bg-green-500/10'
+                    : setupSubStep === 'quicksign'
+                    ? 'border-yellow-500/30 bg-yellow-500/10'
+                    : 'border-white/10 bg-white/5'
+                }`}>
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                    setupQsDone ? 'bg-green-500' : 'bg-white/10'
+                  }`}>
+                    {setupQsDone
+                      ? <HiCheck className="w-4 h-4 text-white" />
+                      : setupSubStep === 'quicksign'
+                      ? <div className="w-4 h-4 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin" />
+                      : <HiLightningBolt className="w-4 h-4 text-white/50" />
+                    }
+                  </div>
+                  <div className="flex-1">
+                    <p className={`text-sm font-medium ${setupQsDone ? 'text-green-400' : 'text-white'}`}>
+                      Quick Sign
+                    </p>
+                    <p className="text-xs text-gray-500">Post and interact without wallet popups</p>
+                  </div>
+                </div>
+              </div>
+
+              {(setupDmDone && setupQsDone) ? (
                 <div className="text-center space-y-4">
                   <div className="flex items-center justify-center gap-2 text-green-400">
                     <HiCheck className="w-5 h-5" />
-                    <span className="font-medium">Quick Sign enabled!</span>
+                    <span className="font-medium">All set!</span>
                   </div>
                   <button
                     onClick={goNext}
@@ -935,10 +948,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                   >
                     Connect Wallet
                   </button>
-                  <button
-                    onClick={handleSkip}
-                    className="w-full py-2 text-white/40 hover:text-white/60 text-sm transition-colors cursor-pointer"
-                  >
+                  <button onClick={handleSkip} className="w-full py-2 text-white/40 hover:text-white/60 text-sm transition-colors cursor-pointer">
                     Skip — {step.skipWarning}
                   </button>
                 </div>
@@ -951,20 +961,22 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                     onDurationChange={setQsDuration}
                   />
 
-                  {qsError && (
-                    <p className="text-red-400 text-sm text-center">{qsError}</p>
+                  {setupError && (
+                    <p className="text-red-400 text-sm text-center">{setupError}</p>
                   )}
+
                   <button
-                    onClick={handleEnableQuickSign}
-                    disabled={qsLoading}
-                    className={`w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all ${qsLoading ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+                    onClick={handleCombinedSetup}
+                    disabled={setupBusy}
+                    className={`w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all ${setupBusy ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
                   >
-                    {qsLoading ? (qsStatus || 'Activating...') : 'Enable Quick Sign'}
+                    {setupBusy
+                      ? setupSubStep === 'dms' ? 'Sign DM key...' : setupSubStep === 'quicksign' ? (qsStatus || 'Sign Quick Sign...') : 'Setting up...'
+                      : setupDmDone ? 'Sign to Enable Quick Sign'
+                      : setupQsDone ? 'Sign to Enable DMs'
+                      : `Set Up Account (${setupDmDone || setupQsDone ? '1' : '2'} signature${setupDmDone || setupQsDone ? '' : 's'})`}
                   </button>
-                  <button
-                    onClick={handleSkip}
-                    className="w-full py-2 text-white/40 hover:text-white/60 text-sm transition-colors cursor-pointer"
-                  >
+                  <button onClick={handleSkip} className="w-full py-2 text-white/40 hover:text-white/60 text-sm transition-colors cursor-pointer">
                     Skip — {step.skipWarning}
                   </button>
                 </div>
@@ -979,11 +991,12 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
         </div>
 
         {/* ── Step 5: Follow Users (full-width, no two-column) ── */}
-        {currentStep === 4 && (() => {
+        {currentStep === 2 && (() => {
           const stakedAmount = activeToken?.stakedAmount ?? 0n
+          const effectiveStake = stakedAmount + (depositPending ? pendingDepositAmount : 0n)
           const MIN_STAKE_FOLLOW = 30000n * 10n**18n
-          const hasEnoughStake = stakedAmount >= MIN_STAKE_FOLLOW
-          const stakePending = stakeTxSubmitted && !stakeConfirmed && !hasEnoughStake
+          const hasEnoughStake = effectiveStake >= MIN_STAKE_FOLLOW || stakeConfirmed
+          const stakePending = stakeTxSubmitted && !stakeConfirmed && effectiveStake < MIN_STAKE_FOLLOW
           const followDisabled = !hasEnoughStake
 
           return (
@@ -1076,8 +1089,8 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
               <div className="max-w-sm mx-auto">
                 {!hasEnoughStake && !stakePending && (
                   <div className="flex items-center justify-center gap-3 p-3 mb-3 rounded-lg bg-red-500/10 border border-red-500/30 w-fit mx-auto">
-                    <p className="text-red-300 text-sm">
-                      You will <button onClick={() => setCurrentStep(1)} className="underline text-yellow-500 hover:text-yellow-400 cursor-pointer">need to stake</button> at least 30K CAW to follow a user.
+                    <p className="text-red-300 text-sm text-center">
+                      You will <button onClick={() => { userNavigatedRef.current = true; setCurrentStep(0) }} className="underline cursor-pointer">need to stake</button> at least<br/>30K CAW to follow a user.
                     </p>
                   </div>
                 )}

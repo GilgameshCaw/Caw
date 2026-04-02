@@ -1,10 +1,7 @@
 // Minimum CAW staking requirements for various actions
 // All values are in wei (1 CAW = 10^18 wei)
 
-import { useClientConfigStore } from '~/store/clientConfigStore'
-
-const BASE_VALIDATOR_TIP = BigInt(import.meta.env.VITE_VALIDATOR_TIP || "1000")
-const TIP_PER_REPLICATION_CHAIN = BigInt(import.meta.env.VITE_TIP_PER_CHAIN || "500")
+import { getValidatorTip } from '~/api/actions'
 
 export const STAKING_REQUIREMENTS = {
   MIN_STAKE_POST: 5000n * 10n**18n,     // 5,000 CAW to post
@@ -17,9 +14,7 @@ export const STAKING_REQUIREMENTS = {
 
 /** Get the validator tip in wei (accounts for replication chains) */
 function getValidatorTipWei(): bigint {
-  const chainCount = useClientConfigStore.getState().getReplicationChainCount()
-  const tipInWholeTokens = BASE_VALIDATOR_TIP + (TIP_PER_REPLICATION_CHAIN * BigInt(chainCount))
-  return tipInWholeTokens * 10n**18n
+  return getValidatorTip() * 10n**18n
 }
 
 // Helper function to check if user has sufficient stake (includes validator tip)

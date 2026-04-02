@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useMemo, useRef } from "react";
 import { useAccount, useEstimateGas, useGasPrice, useWriteContract, usePublicClient } from "wagmi";
 import {
   Abi,
@@ -70,9 +70,16 @@ export default function useContractCall<
   const { writeContractAsync, status } = useWriteContract();
   const publicClient = usePublicClient();
 
+  // Use refs so the call always reads the latest values regardless of closure timing
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
+  const accountRef = useRef(account);
+  accountRef.current = account;
+
   const call = useCallback(async () => {
-    if (!account) throw new Error("Wallet is not connected");
-    if (disabled) throw new Error("Contract call is disabled");
+    console.log(`[useContractCall] ${functionName} called — disabled:`, disabledRef.current, 'account:', !!accountRef.current)
+    if (!accountRef.current) throw new Error("Wallet is not connected");
+    if (disabledRef.current) throw new Error("Contract call is disabled");
 
     try {
       const hash = await writeContractAsync({
