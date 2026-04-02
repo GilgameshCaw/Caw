@@ -4,6 +4,7 @@ import { ethers, Contract, Wallet, JsonRpcProvider, WebSocketProvider } from 'et
 import { cawNameL2Abi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 import { prisma } from '../../prismaClient'
+import { refreshOwnership } from '../../services/UserService'
 import Redis from 'ioredis'
 
 const router = Router()
@@ -24,8 +25,8 @@ const DELEGATION_TYPES = {
   ],
 }
 
-// Rate limiting: 3 registrations per address per day (Redis-backed, survives restarts)
-const RATE_LIMIT_MAX = 3
+// Rate limiting: 20 registrations per address per day (Redis-backed, survives restarts)
+const RATE_LIMIT_MAX = 20
 const RATE_LIMIT_WINDOW = 24 * 60 * 60 // seconds
 
 async function checkRateLimit(address: string): Promise<boolean> {
@@ -111,6 +112,32 @@ async function processSessionRequest(
     console.log(`[Sessions] Confirmed tx ${tx.hash} in block ${receipt.blockNumber}`)
     requests.set(requestId, { status: 'confirmed', txHash: tx.hash, blockNumber: receipt.blockNumber })
 
+    // Record in ValidatorTx for analytics
+    const gasUsed = receipt.gasUsed.toString()
+    const gasPrice = (receipt.gasPrice ?? tx.gasPrice ?? 0n).toString()
+    const ethCost = (BigInt(gasUsed) * BigInt(gasPrice)).toString()
+    try {
+      await prisma.validatorTx.create({
+        data: {
+          txHash: tx.hash,
+          blockNumber: receipt.blockNumber ? BigInt(receipt.blockNumber) : null,
+          txType: 'sessionRegister',
+          actionCount: 0,
+          gasUsed,
+          gasPrice,
+          ethCost,
+          tipCaw: '0',
+          tipEthValue: '0',
+          profit: `-${ethCost}`, // pure cost, no revenue
+          validatorId: 0,
+          status: 'confirmed',
+          sessionUser: recoveredAddress,
+        }
+      })
+    } catch (err: any) {
+      console.error(`[Sessions] Failed to record tx analytics:`, err.message)
+    }
+
     // Only count against rate limit on successful confirmation
     await recordRateLimit(recoveredAddress)
   } catch (err: any) {
@@ -174,7 +201,7 @@ router.post('/', async (req: any, res: any) => {
 
     // Rate limit by full recovered address (Redis-backed)
     if (!await checkRateLimit(recoveredAddress)) {
-      return res.status(429).json({ error: 'Rate limit exceeded. Max 3 session registrations per day.' })
+      return res.status(429).json({ error: `You can only re-enable Quick Sign ${RATE_LIMIT_MAX} times per day.` })
     }
 
     // Block concurrent submissions for the same address
@@ -183,10 +210,22 @@ router.post('/', async (req: any, res: any) => {
     }
 
     // Verify the signer actually owns at least one CAW name (prevents gas drain from random wallets)
-    const ownedName = await prisma.user.findFirst({
+    let ownedName = await prisma.user.findFirst({
       where: { address: { equals: recoveredAddress, mode: 'insensitive' } },
       select: { id: true },
     })
+    // If no match in DB, the NFT may have been transferred — check L2 on-chain
+    if (!ownedName) {
+      console.log(`[Sessions] No tokens found for ${recoveredAddress} in DB, checking on-chain ownership...`)
+      const refreshed = await refreshOwnership(recoveredAddress)
+      if (refreshed.length > 0) {
+        console.log(`[Sessions] Found ${refreshed.length} token(s) after ownership refresh:`, refreshed)
+        ownedName = await prisma.user.findFirst({
+          where: { address: { equals: recoveredAddress, mode: 'insensitive' } },
+          select: { id: true },
+        })
+      }
+    }
     if (!ownedName) {
       return res.status(403).json({ error: 'Signer does not own any CAW names' })
     }
@@ -246,6 +285,32 @@ router.delete('/', async (req: any, res: any) => {
     console.log(`[Sessions] Revocation tx submitted: ${tx.hash}`)
     const receipt = await tx.wait()
     console.log(`[Sessions] Session revoked on-chain in block ${receipt.blockNumber}`)
+
+    // Record in ValidatorTx for analytics
+    const gasUsed = receipt.gasUsed.toString()
+    const gasPrice = (receipt.gasPrice ?? tx.gasPrice ?? 0n).toString()
+    const ethCost = (BigInt(gasUsed) * BigInt(gasPrice)).toString()
+    try {
+      await prisma.validatorTx.create({
+        data: {
+          txHash: tx.hash,
+          blockNumber: receipt.blockNumber ? BigInt(receipt.blockNumber) : null,
+          txType: 'sessionRevoke',
+          actionCount: 0,
+          gasUsed,
+          gasPrice,
+          ethCost,
+          tipCaw: '0',
+          tipEthValue: '0',
+          profit: `-${ethCost}`,
+          validatorId: 0,
+          status: 'confirmed',
+          sessionUser: owner.toLowerCase(),
+        }
+      })
+    } catch (err: any) {
+      console.error(`[Sessions] Failed to record revocation tx analytics:`, err.message)
+    }
 
     return res.json({ success: true, txHash: tx.hash })
   } catch (err: any) {

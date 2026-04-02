@@ -30,6 +30,9 @@ import authRouter from './routes/auth'
 import blocksRouter from './routes/blocks'
 import sessionsRouter from './routes/sessions'
 import pricesRouter from './routes/prices'
+import validatorAnalyticsRouter from './routes/validator-analytics'
+import marketplaceRouter from './routes/marketplace'
+import bookmarksRouter from './routes/bookmarks'
 import { getSession } from './sessionStore'
 import { prisma } from '../prismaClient'
 
@@ -164,6 +167,9 @@ function createApp() {
   app.use('/api/sessions', sessionsRouter)
   app.use('/api/prices', pricesRouter)
   app.use('/api/blocks', blocksRouter)
+  app.use('/api/validator-analytics', validatorAnalyticsRouter)
+  app.use('/api/marketplace', marketplaceRouter)
+  app.use('/api/bookmarks', bookmarksRouter)
 
   return app
 }

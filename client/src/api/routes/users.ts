@@ -2,7 +2,7 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { ActionType } from '@prisma/client'
-import { findOrCreateUser } from '../../services/UserService'
+import { findOrCreateUser, StaleTokenError } from '../../services/UserService'
 import { getBlockedUserIds } from '../shared/blockUtils'
 
 const router = Router()
@@ -16,21 +16,37 @@ const router = Router()
  * IMPORTANT: This route must be defined BEFORE /:username to avoid conflicts.
  */
 router.post('/ensure', async (req, res) => {
+  const startTime = Date.now()
   try {
     const { tokenId } = req.body
+    console.log(`[/api/users/ensure] START tokenId=${tokenId}`)
+
     if (!tokenId || isNaN(Number(tokenId))) {
       return res.status(400).json({ error: 'tokenId is required' })
     }
 
+    console.log(`[/api/users/ensure] Calling findOrCreateUser(${tokenId})...`)
     const resultTokenId = await findOrCreateUser(Number(tokenId))
+    const findDuration = Date.now() - startTime
+    console.log(`[/api/users/ensure] findOrCreateUser completed in ${findDuration}ms, resultTokenId=${resultTokenId}`)
+
+    console.log(`[/api/users/ensure] Fetching user from DB...`)
     const user = await prisma.user.findUnique({
       where: { tokenId: resultTokenId },
       select: { tokenId: true, username: true, address: true }
     })
+    const totalDuration = Date.now() - startTime
+    console.log(`[/api/users/ensure] SUCCESS in ${totalDuration}ms, user=${JSON.stringify(user)}`)
 
     return res.json({ user })
   } catch (error: any) {
-    console.error('POST /api/users/ensure error:', error)
+    const totalDuration = Date.now() - startTime
+    if (error instanceof StaleTokenError) {
+      console.warn(`[/api/users/ensure] Token not found on chain after ${totalDuration}ms: ${error.message}`)
+      return res.status(404).json({ error: 'Token not found on current contract. It may still be propagating — try again in a moment.' })
+    }
+    console.error(`[/api/users/ensure] ERROR after ${totalDuration}ms:`, error.message)
+    console.error('Stack trace:', error.stack)
     return res.status(500).json({ error: error.message || 'Failed to ensure user' })
   }
 })
@@ -225,21 +241,35 @@ router.get('/min-cawonce/:tokenId', async (req, res) => {
     })
 
     // Also check pending/processing TxQueue entries for this user
-    const maxTxQueueCawonce = await prisma.txQueue.findFirst({
+    // Scan all pending entries since cawonce is inside JSON and can't be sorted by DB
+    const pendingTxQueue = await prisma.txQueue.findMany({
       where: {
         senderId: tokenId,
         status: { in: ['pending', 'processing'] },
       },
-      orderBy: { createdAt: 'desc' },
+      select: { payload: true },
     })
-    const txQueueMaxCawonce = maxTxQueueCawonce
-      ? (maxTxQueueCawonce.payload as any)?.data?.cawonce ?? null
+    const txQueueCawonces = pendingTxQueue
+      .map(e => (e.payload as any)?.data?.cawonce)
+      .filter((c): c is number => typeof c === 'number')
+    const txQueueMaxCawonce = txQueueCawonces.length > 0
+      ? Math.max(...txQueueCawonces)
       : null
 
-    // The minimum safe cawonce is one higher than the highest in-flight cawonce
+    // Also check the highest confirmed Action cawonce.
+    // This handles gaps in the on-chain bitmap (e.g. cawonces that were skipped
+    // but later slots are used). Without this, nextCawonce on-chain returns
+    // the first gap, causing the frontend to reuse already-confirmed cawonces.
+    const maxConfirmedAction = await prisma.action.aggregate({
+      where: { senderId: tokenId },
+      _max: { cawonce: true }
+    })
+
+    // The minimum safe cawonce is one higher than the highest in-flight or confirmed cawonce
     const candidates = [
       maxScheduledCawonce._max.cawonce,
       txQueueMaxCawonce,
+      maxConfirmedAction._max.cawonce,
     ].filter((v): v is number => v !== null)
 
     const minSafeCawonce = candidates.length > 0
@@ -252,6 +282,73 @@ router.get('/min-cawonce/:tokenId', async (req, res) => {
     })
   } catch (err: any) {
     console.error('GET /api/users/min-cawonce/:tokenId error', err)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
+ * POST /api/users/check-cawonces
+ * Check which cawonces in a given range are already used (pending or confirmed).
+ * Body: { tokenId: number, start: number, count: number }
+ * Returns: { used: number[], nextSafe: number }
+ *
+ * Used before thread submission to find a contiguous block of available cawonces.
+ * Only checks a bounded range (max 50) to prevent abuse.
+ */
+router.post('/check-cawonces', async (req, res) => {
+  try {
+    const { tokenId, start, count } = req.body
+    if (!tokenId || typeof start !== 'number' || typeof count !== 'number') {
+      return res.status(400).json({ error: 'tokenId, start, and count are required' })
+    }
+    const safeCount = Math.min(Math.max(count, 1), 50)
+    const end = start + safeCount - 1
+    const range = Array.from({ length: safeCount }, (_, i) => start + i)
+
+    // Check confirmed actions (on-chain)
+    const confirmedActions = await prisma.action.findMany({
+      where: { senderId: tokenId, cawonce: { in: range } },
+      select: { cawonce: true },
+    })
+
+    // Check pending/processing TxQueue entries
+    const pendingEntries = await prisma.txQueue.findMany({
+      where: {
+        senderId: tokenId,
+        status: { in: ['pending', 'processing'] },
+      },
+      select: { payload: true },
+    })
+    const pendingCawonces = pendingEntries
+      .map(e => (e.payload as any)?.data?.cawonce)
+      .filter((c): c is number => typeof c === 'number' && c >= start && c <= end)
+
+    // Check scheduled posts
+    const scheduledEntries = await prisma.scheduledCaw.findMany({
+      where: {
+        userId: tokenId,
+        status: 'pending',
+        cawonce: { in: range },
+      },
+      select: { cawonce: true },
+    })
+
+    const usedSet = new Set([
+      ...confirmedActions.map(a => a.cawonce),
+      ...pendingCawonces,
+      ...scheduledEntries.map(s => s.cawonce!),
+    ])
+    const used = range.filter(c => usedSet.has(c))
+
+    // Find the first contiguous block of `count` available cawonces starting from `start`
+    let nextSafe = start
+    while (usedSet.has(nextSafe) && nextSafe < start + safeCount + 100) {
+      nextSafe++
+    }
+
+    return res.json({ used, nextSafe })
+  } catch (err: any) {
+    console.error('POST /api/users/check-cawonces error', err)
     return res.status(500).json({ error: 'Internal server error' })
   }
 })

@@ -11,6 +11,8 @@ export interface CawRaw {
   recaws?: Array<{ id: number; status?: 'SUCCESS' | 'PENDING' | 'FAILED' }>
   repliesOnThis?: Array<{ userId: number; pending?: boolean }>
   tips?: Array<{ senderId: number; pending?: boolean }>
+  bookmarks?: Array<{ userId: number }>
+  bookmarkCount?: number
   commentCount: number
   recawCount: number
   likeCount: number
@@ -37,6 +39,7 @@ export interface ShapedCaw {
   hasTipped: boolean
   tipPending?: boolean
   isBookmarked?: boolean
+  bookmarkCount?: number
   likePending?: boolean
   recawPending?: boolean
   replyPending?: boolean
@@ -83,7 +86,8 @@ export function shapeCaw(raw: CawRaw): ShapedCaw {
     hasTipped,
     tipPending,
     replyPending,
-    // isBookmarked is now handled client-side (localStorage)
+    isBookmarked: raw.bookmarks ? raw.bookmarks.length > 0 : undefined,
+    bookmarkCount: raw.bookmarkCount ?? 0,
     commentCount: raw.commentCount,
     recawCount: raw.recawCount,
     cawonce: raw.cawonce,
@@ -133,7 +137,9 @@ export function getCawIncludeConfig(options: CawQueryOptions = {}) {
     tips: currentUserId
       ? { where: { senderId: currentUserId }, select: { senderId: true, pending: true }, take: 1 }
       : false,
-    // bookmarks are now handled client-side (localStorage)
+    bookmarks: currentUserId
+      ? { where: { userId: currentUserId }, select: { userId: true }, take: 1 }
+      : false,
     ...(includeHashtags && {
       hashtags: {
         include: { hashtag: { select: { name: true } } }

@@ -428,5 +428,51 @@ router.post('/:id/dismiss', requireAuth({
   }
 })
 
+/**
+ * GET /api/caws/verify/:userId/:cawonce
+ * Returns the EIP-712 signature and action data for a post, enabling client-side verification.
+ * The frontend can recover the signer from the signature and verify it matches the post author.
+ */
+router.get('/verify/:userId/:cawonce', async (req, res) => {
+  try {
+    const userId = Number(req.params.userId)
+    const cawonce = Number(req.params.cawonce)
+
+    if (isNaN(userId) || isNaN(cawonce)) {
+      return res.status(400).json({ error: 'Invalid userId or cawonce' })
+    }
+
+    // Find the TxQueue entry which has the signature
+    const txEntry = await prisma.txQueue.findFirst({
+      where: {
+        senderId: userId,
+        status: 'done',
+        payload: {
+          path: ['data', 'cawonce'],
+          equals: cawonce,
+        }
+      },
+      orderBy: { createdAt: 'desc' },
+    })
+
+    if (!txEntry) {
+      return res.json({ verified: false, reason: 'No transaction record found' })
+    }
+
+    const payload = txEntry.payload as any
+
+    return res.json({
+      verified: true,
+      signature: txEntry.signedTx,
+      data: payload.data,
+      domain: payload.domain,
+      types: payload.types,
+    })
+  } catch (error) {
+    console.error('GET /api/caws/verify error:', error)
+    return res.status(500).json({ error: 'Verification lookup failed' })
+  }
+})
+
 export default router
 

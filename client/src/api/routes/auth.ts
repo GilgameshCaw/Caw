@@ -4,10 +4,13 @@ import { prisma } from '../../prismaClient'
 import { createSession, getSession, addAuthorization, deleteSession } from '../sessionStore'
 import { extractSession } from '../middleware/auth'
 import { refreshOwnership } from '../../services/UserService'
+import dmService from '../../services/DmService'
 
 const router = Router()
 
 const MESSAGE_PREFIX = 'Verify wallet ownership for CAW\nTimestamp: '
+const DM_MESSAGE_LEGACY_PREFIX = 'CAW Protocol DM Key\nUser: '
+const DM_MESSAGE_PREFIX = 'CAW Protocol\nEnable DMs\n@'
 const MAX_MESSAGE_AGE_MS = 5 * 60 * 1000 // 5 minutes
 
 /**
@@ -93,6 +96,94 @@ router.post('/verify', async (req, res) => {
   } catch (error) {
     console.error('POST /api/auth/verify error:', error)
     res.status(500).json({ error: 'Failed to verify wallet' })
+  }
+})
+
+/**
+ * POST /api/auth/verify-dm
+ * Combined auth + DM identity registration in one call.
+ * Accepts the DM key derivation signature, recovers the wallet address,
+ * creates/extends the auth session, and registers the DM public key.
+ * Eliminates the need for a separate auth personal_sign.
+ */
+router.post('/verify-dm', async (req, res) => {
+  try {
+    const { signature, message: clientMessage, userId, publicKey } = req.body
+
+    if (!signature || !userId || !publicKey) {
+      res.status(400).json({ error: 'signature, userId, and publicKey are required' })
+      return
+    }
+
+    const tokenId = Number(userId)
+    if (isNaN(tokenId)) {
+      res.status(400).json({ error: 'Invalid userId' })
+      return
+    }
+
+    // Accept the message from the client, but validate it matches an expected format
+    // New format: "CAW Protocol\nEnable DMs\n@username"
+    // Legacy format: "CAW Protocol DM Key\nUser: {tokenId}"
+    const message = clientMessage || (DM_MESSAGE_LEGACY_PREFIX + tokenId)
+    if (!message.startsWith(DM_MESSAGE_PREFIX) && !message.startsWith(DM_MESSAGE_LEGACY_PREFIX)) {
+      res.status(400).json({ error: 'Invalid message format' })
+      return
+    }
+
+    // Recover address from signature
+    let recoveredAddress: string
+    try {
+      recoveredAddress = ethers.verifyMessage(message, signature).toLowerCase()
+    } catch {
+      res.status(400).json({ error: 'Invalid signature' })
+      return
+    }
+
+    // Verify the recovered address owns this tokenId
+    const user = await prisma.user.findUnique({
+      where: { tokenId },
+      select: { address: true }
+    })
+    if (!user || user.address.toLowerCase() !== recoveredAddress) {
+      // Check on-chain in case of transfer
+      const refreshed = await refreshOwnership(recoveredAddress)
+      if (!refreshed.includes(tokenId)) {
+        res.status(403).json({ error: 'Signature does not match the owner of this token' })
+        return
+      }
+    }
+
+    // Look up all tokenIds owned by this address
+    const users = await prisma.user.findMany({
+      where: { address: { equals: recoveredAddress, mode: 'insensitive' } },
+      select: { tokenId: true }
+    })
+    const tokenIds = users.map(u => u.tokenId)
+
+    // Create or extend auth session
+    let sessionToken = req.headers['x-session-token'] as string | undefined
+    let session = sessionToken ? await getSession(sessionToken) : null
+
+    if (!session) {
+      const created = await createSession()
+      sessionToken = created.token
+      session = created.session
+    }
+
+    const updated = await addAuthorization(sessionToken!, recoveredAddress, tokenIds)
+
+    // Register DM identity
+    await dmService.registerIdentity(tokenId, recoveredAddress, publicKey)
+
+    res.json({
+      sessionToken,
+      authorizedTokenIds: updated?.authorizedTokenIds || tokenIds,
+      authorizedAddresses: updated?.authorizedAddresses || [recoveredAddress],
+      expiresAt: updated?.expiresAt || session.expiresAt
+    })
+  } catch (error) {
+    console.error('POST /api/auth/verify-dm error:', error)
+    res.status(500).json({ error: 'Failed to verify wallet and register DM identity' })
   }
 })
 
