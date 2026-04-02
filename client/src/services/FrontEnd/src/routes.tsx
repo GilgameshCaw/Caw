@@ -23,6 +23,7 @@ import BugReportsAdmin from "./pages/BugReportsAdmin";
 import ReportsAdmin from "./pages/ReportsAdmin";
 import ValidatorAnalytics from "./pages/ValidatorAnalytics";
 import ValidatorSettings from "./pages/ValidatorSettings";
+import DatabaseAdmin from "./pages/DatabaseAdmin";
 import WelcomePage from "./pages/WelcomePage";
 import Marketplace from "./pages/Marketplace";
 import CaptiveSplash from "./pages/CaptiveSplash";
@@ -197,6 +198,10 @@ export default [
   {
     path: "/admin/validator/settings",
     component: <ValidatorSettings />,
+  },
+  {
+    path: "/admin/database",
+    component: <DatabaseAdmin />,
   },
   {
     path: "/welcome/:username",
