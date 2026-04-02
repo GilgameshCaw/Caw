@@ -317,16 +317,19 @@ const DatabaseAdmin: React.FC = () => {
     return (
       <div className={`min-h-screen ${bg} p-4`}>
         <div className="max-w-4xl mx-auto">
-          {/* Header */}
+          {/* Breadcrumb + Header */}
           <div className="flex items-center gap-3 mb-4">
+            <Link to="/admin" className={`text-sm ${muted} hover:underline`}>Admin</Link>
+            <span className={muted}>/</span>
             <button
               onClick={() => { setDetailRecord(null); setDetailId(null) }}
-              className={`text-sm px-3 py-1 rounded-lg border ${card} ${text} ${hover}`}
+              className={`text-sm ${muted} hover:underline`}
             >
-              Back
+              {activeMeta?.label || activeModel}
             </button>
+            <span className={muted}>/</span>
             <h2 className={`text-lg font-bold ${text}`}>
-              {activeMeta?.label || activeModel} #{detailRecord[idField]}
+              #{detailRecord[idField]}
             </h2>
             {activeMeta?.writable && (
               <div className="flex gap-2 ml-auto">
@@ -427,6 +430,8 @@ const DatabaseAdmin: React.FC = () => {
         <div className="flex-1 p-4 overflow-x-auto">
           {/* Toolbar */}
           <div className="flex items-center gap-3 mb-3 flex-wrap">
+            <Link to="/admin" className={`text-sm ${muted} hover:underline`}>Admin</Link>
+            <span className={muted}>/</span>
             <h1 className={`text-lg font-bold ${text}`}>{activeMeta?.label || activeModel}</h1>
             <span className={`text-sm ${muted}`}>{total.toLocaleString()} records</span>
 
