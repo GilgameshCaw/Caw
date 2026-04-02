@@ -2124,3 +2124,150 @@ contract("CawActionsReplicator - Full Integration", function(accounts) {
 
 });
 
+// ============================================
+// mintAndDeposit tests
+// ============================================
+contract("CawNameMinter - mintAndDeposit", function(accounts) {
+  var l1Endpoint, l2Endpoint;
+  var localToken, localMinter, localCawNames, localCawNamesL2;
+  var localClientManager, localQuoter, localUriGenerator;
+
+  before(async function() {
+    this.timeout(120000);
+
+    l1Endpoint = await MockLayerZeroEndpoint.new(l1);
+    l2Endpoint = await MockLayerZeroEndpoint.new(l2);
+
+    localToken = await MintableCaw.new();
+    localClientManager = await CawClientManager.new(accounts[0]);
+    localUriGenerator = await CawNameURI.new();
+    localCawNamesL2 = await CawNameL2.new(l1, l2Endpoint.address);
+    await l1Endpoint.setDestLzEndpoint(localCawNamesL2.address, l2Endpoint.address);
+
+    localCawNames = await CawName.new(
+      localToken.address, localUriGenerator.address, accounts[0],
+      localClientManager.address, l1Endpoint.address, l1
+    );
+
+    await localCawNamesL2.setL1Peer(l1, localCawNames.address, false);
+    await l2Endpoint.setDestLzEndpoint(localCawNames.address, l1Endpoint.address);
+    await localCawNames.setL2Peer(l2, localCawNamesL2.address);
+
+    // Client with fees: mint=1, deposit=1, auth=1, withdraw=1
+    await localClientManager.createClient("Test Client", accounts[0], l2, 1, 1, 1, 1);
+    await localClientManager.setCawName(localCawNames.address);
+
+    localMinter = await CawNameMinter.new(localToken.address, localCawNames.address);
+    await localCawNames.setMinter(localMinter.address);
+    localQuoter = await CawNameQuoter.new(localCawNames.address);
+
+    // Give test account plenty of CAW
+    var mintAmount = BigInt(100) * 1_000_000_000n * 10n**18n;
+    await localToken.mint(accounts[1], mintAmount.toString());
+    // Approve both minter (for burn) and CawName (for deposit)
+    await localToken.approve(localMinter.address, mintAmount.toString(), { from: accounts[1] });
+    await localToken.approve(localCawNames.address, mintAmount.toString(), { from: accounts[1] });
+  });
+
+  it("should mint and deposit in one transaction", async function() {
+    this.timeout(60000);
+
+    var depositAmount = web3.utils.toWei('1000000', 'ether'); // 1M CAW
+    var quote = await localQuoter.mintAndDepositQuote(1, depositAmount, l2, false);
+
+    var balanceBefore = await localToken.balanceOf(accounts[1]);
+
+    await localMinter.mintAndDeposit(1, 'combined', depositAmount, l2, 0, {
+      from: accounts[1],
+      value: (BigInt(quote.nativeFee)).toString(),
+    });
+
+    // Verify NFT was minted
+    var tokenId = (await localCawNames.totalSupply()).toNumber();
+    var owner = await localCawNames.ownerOf(tokenId);
+    expect(owner).to.equal(accounts[1]);
+
+    // Verify username
+    var username = await localCawNames.usernames(tokenId - 1);
+    expect(username).to.equal('combined');
+
+    // Verify authenticated
+    var isAuthed = await localCawNames.authenticated(1, tokenId);
+    expect(isAuthed).to.be.true;
+
+    // Verify CAW was deposited (totalCaw increased)
+    var totalCaw = await localCawNames.totalCaw();
+    expect(BigInt(totalCaw.toString())).to.equal(BigInt(depositAmount));
+
+    // Verify CAW was burned for username + deposited
+    var balanceAfter = await localToken.balanceOf(accounts[1]);
+    var burnCost = await localMinter.costOfName('combined'); // 8 chars = 1M CAW
+    var totalSpent = BigInt(burnCost.toString()) + BigInt(depositAmount);
+    expect(BigInt(balanceBefore.toString()) - BigInt(balanceAfter.toString())).to.equal(totalSpent);
+
+    console.log("mintAndDeposit test passed - minted, deposited, and authenticated in one tx");
+  });
+
+  it("should reject mintAndDeposit with taken username", async function() {
+    this.timeout(60000);
+
+    var depositAmount = web3.utils.toWei('1000000', 'ether');
+    var quote = await localQuoter.mintAndDepositQuote(1, depositAmount, l2, false);
+
+    await expectRevert(
+      localMinter.mintAndDeposit(1, 'combined', depositAmount, l2, 0, {
+        from: accounts[1],
+        value: (BigInt(quote.nativeFee)).toString(),
+      }),
+      "Username has already been taken"
+    );
+
+    console.log("mintAndDeposit duplicate username rejection test passed");
+  });
+
+  it("should reject mintAndDeposit with insufficient CAW", async function() {
+    this.timeout(60000);
+
+    // Give account[2] very little CAW
+    var smallAmount = web3.utils.toWei('100', 'ether');
+    await localToken.mint(accounts[2], smallAmount);
+    await localToken.approve(localMinter.address, smallAmount, { from: accounts[2] });
+    await localToken.approve(localCawNames.address, smallAmount, { from: accounts[2] });
+
+    var depositAmount = web3.utils.toWei('1000000', 'ether');
+    var quote = await localQuoter.mintAndDepositQuote(1, depositAmount, l2, false);
+
+    await expectRevert(
+      localMinter.mintAndDeposit(1, 'pooruser', depositAmount, l2, 0, {
+        from: accounts[2],
+        value: (BigInt(quote.nativeFee)).toString(),
+      }),
+      "You do not have enough CAW"
+    );
+
+    console.log("mintAndDeposit insufficient CAW rejection test passed");
+  });
+
+  it("should work with zero deposit (mint only)", async function() {
+    this.timeout(60000);
+
+    // mintAndDeposit with 0 deposit should still work (just mint)
+    var quote = await localQuoter.mintAndDepositQuote(1, 0, l2, false);
+
+    await localMinter.mintAndDeposit(1, 'nodeptest', 0, l2, 0, {
+      from: accounts[1],
+      value: (BigInt(quote.nativeFee)).toString(),
+    });
+
+    var tokenId = (await localCawNames.totalSupply()).toNumber();
+    var owner = await localCawNames.ownerOf(tokenId);
+    expect(owner).to.equal(accounts[1]);
+
+    // Should still be authenticated (mintAndDeposit always authenticates)
+    var isAuthed = await localCawNames.authenticated(1, tokenId);
+    expect(isAuthed).to.be.true;
+
+    console.log("mintAndDeposit with zero deposit test passed");
+  });
+});
+

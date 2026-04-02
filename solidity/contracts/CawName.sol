@@ -121,6 +121,49 @@ contract CawName is
     _updateNewOwners(peerWithMaxPendingTransfers(), lzEthAmount, lzTokenAmount);
   }
 
+  /// @notice Mint a username and deposit CAW in one transaction.
+  /// @dev Only callable by the minter. Combines mint + deposit to save the user a separate tx.
+  ///      The deposit amount is transferred from the owner (not the minter) via transferFrom.
+  function mintAndDeposit(
+    uint32 cawClientId, address owner, string memory username, uint32 newId,
+    uint256 depositAmount, uint32 lzDestId, uint256 lzTokenAmount
+  ) public payable {
+    require(minter == _msgSender(), "caller is not the minter");
+    usernames.push(username);
+    _mint(owner, newId);
+
+    // Transfer deposit CAW from the owner to this contract
+    CAW.transferFrom(owner, address(this), depositAmount);
+    totalCaw += depositAmount;
+    chosenChainIds[newId].add(uint256(lzDestId));
+
+    // Calculate fees: mint fee + deposit fee + auth fee (first deposit auto-authenticates)
+    uint256 totalFeesPaid = 0;
+    {
+      (uint256 mintFee, address mintFeeAddr) = clientManager.getMintFeeAndAddress(cawClientId);
+      totalFeesPaid += payFee(mintFee, mintFeeAddr);
+
+      (uint256 depositFee, address depositFeeAddr) = clientManager.getDepositFeeAndAddress(cawClientId);
+      totalFeesPaid += payFee(depositFee, depositFeeAddr);
+
+      (uint256 authFee, address authFeeAddr) = clientManager.getAuthFeeAndAddress(cawClientId);
+      totalFeesPaid += payFee(authFee, authFeeAddr);
+    }
+
+    authenticated[cawClientId][newId] = true;
+    uint256 lzEthAmount = msg.value - totalFeesPaid;
+
+    if (lzDestId == mainnetLzId) {
+      cawNameL2.deposit(cawClientId, newId, depositAmount);
+    } else {
+      uint32[] memory tokenIds;
+      address[] memory owners;
+      (tokenIds, owners) = extractPendingTransferUpdates(lzDestId, owner, newId);
+      bytes memory payload = abi.encodeWithSelector(addToBalanceSelector, cawClientId, newId, depositAmount, tokenIds, owners);
+      lzSend(lzDestId, addToBalanceSelector, payload, lzEthAmount, lzTokenAmount);
+    }
+  }
+
   /// @notice Accrued fees available for withdrawal (pull pattern to prevent DOS)
   mapping(address => uint256) public accruedFees;
 
@@ -281,8 +324,14 @@ contract CawName is
    * @param lzTokenAmount LZ token amount for fees (usually 0)
    */
   function transferAndSync(address to, uint256 tokenId, uint256 lzTokenAmount) external payable {
-    require(ownerOf(tokenId) == msg.sender, "caller is not the token owner");
-    _transfer(msg.sender, to, tokenId);
+    address owner = ownerOf(tokenId);
+    require(
+      owner == msg.sender ||
+      isApprovedForAll(owner, msg.sender) ||
+      getApproved(tokenId) == msg.sender,
+      "caller is not owner or approved"
+    );
+    _transfer(owner, to, tokenId);
     // _afterTokenTransfer queued this token — now flush the queue via LZ
     _updateNewOwners(peerWithMaxPendingTransfers(), msg.value, lzTokenAmount);
   }

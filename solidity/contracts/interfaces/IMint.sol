@@ -14,5 +14,15 @@ interface IMint {
     uint256 lzTokenAmount
   ) external payable;
 
+  function mintAndDeposit(
+    uint32 clientId,
+    address sender,
+    string memory username,
+    uint32 newId,
+    uint256 depositAmount,
+    uint32 lzDestId,
+    uint256 lzTokenAmount
+  ) external payable;
+
 }
 

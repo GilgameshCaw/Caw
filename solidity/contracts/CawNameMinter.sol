@@ -33,6 +33,32 @@ contract CawNameMinter is Context {
     CawName.mint{value: msg.value}(clientId, msg.sender, username, newId, lzTokenAmount);
   }
 
+  /// @notice Mint a username and deposit CAW in one transaction.
+  /// @dev The user must approve both the Minter (for burn) and CawName (for deposit) for CAW spending.
+  /// @param clientId The client ID to authenticate with
+  /// @param username The username to mint
+  /// @param depositAmount The amount of CAW to deposit (in wei)
+  /// @param lzDestId The L2 chain endpoint ID for the deposit
+  /// @param lzTokenAmount LZ token amount for fees (usually 0)
+  function mintAndDeposit(uint32 clientId, string memory username, uint256 depositAmount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
+    require(idByUsername[username] == 0, "Username has already been taken");
+    require(isValidUsername(username), "Username must only consist of 1-255 lowercase letters and numbers");
+    uint256 burnAmount = costOfName(username);
+
+    uint256 totalCawNeeded = burnAmount + depositAmount;
+    require(CAW.balanceOf(_msgSender()) >= totalCawNeeded, "You do not have enough CAW");
+    require(CAW.allowance(_msgSender(), address(this)) >= burnAmount, "You must approve spending of your CAW for username burn");
+
+    // Burn CAW for the username
+    CAW.transferFrom(_msgSender(), address(0xdEAD000000000000000042069420694206942069), burnAmount);
+
+    uint32 newId = CawName.nextId();
+    idByUsername[username] = newId;
+
+    // Mint + deposit in one call (CawName pulls depositAmount from the user via transferFrom)
+    CawName.mintAndDeposit{value: msg.value}(clientId, msg.sender, username, newId, depositAmount, lzDestId, lzTokenAmount);
+  }
+
   function isValidUsername(string memory _input) public pure returns (bool) {
     bytes memory input = bytes(_input);
     if (input.length == 0 || input.length > 255) return false;

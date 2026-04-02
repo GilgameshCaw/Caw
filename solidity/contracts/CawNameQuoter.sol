@@ -70,6 +70,24 @@ contract CawNameQuoter {
     return quote;
   }
 
+  function mintAndDepositQuote(uint32 clientId, uint256 depositAmount, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+    // Use the same pattern as depositQuote — include a placeholder owner in the payload
+    // so the LZ quote estimates gas for a realistic payload size
+    uint32[] memory tokenIds; address[] memory owners;
+    (tokenIds, owners) = cawName.pendingTransferUpdates(lzDestId, msg.sender, 0);
+
+    bytes memory payload = abi.encodeWithSelector(
+      cawName.addToBalanceSelector(), clientId, uint32(0), depositAmount, tokenIds, owners
+    );
+
+    quote = cawName.lzQuote(cawName.addToBalanceSelector(), payload, lzDestId, payInLzToken);
+    // Mint fee + deposit fee + auth fee (new user always needs auth)
+    quote.nativeFee += cawName.clientManager().getMintFee(clientId) * 2;
+    quote.nativeFee += cawName.clientManager().getDepositFee(clientId) * 2;
+    quote.nativeFee += cawName.clientManager().getAuthFee(clientId) * 2;
+    return quote;
+  }
+
   function withdrawQuote(uint32 clientId, bool payInLzToken) public view returns (MessagingFee memory quote) {
     quote = updateOwnerQuote(payInLzToken);
     quote.nativeFee += cawName.clientManager().getWithdrawFee(clientId) * 2;

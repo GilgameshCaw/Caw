@@ -234,6 +234,12 @@ const CONTRACTS = {
     dependencies: ['CawName'],
     constructorArgs: (state) => [state.addresses.CawName],
   },
+  CawNameMarketplace: {
+    chain: 'L1',
+    phase: 2,
+    dependencies: ['CawName'],
+    constructorArgs: (state) => [state.addresses.CawName],
+  },
   CawActions_L1: {
     artifact: 'CawActions',
     chain: 'L1',
@@ -317,7 +323,8 @@ const LINKING_STEPS = [
     phase: 2,
     contract: 'CawClientManager',
     method: 'createClient',
-    args: (state, chainConfig) => ['CAW Protocol', state.deployerAddress, CHAINS[chainConfig.env + 'L2'].lzEid, 1, 1, 1, 1],
+    // Fees: ~$3 each at ETH=$2000 → 0.0015 ETH = 1500000000000000 wei
+    args: (state, chainConfig) => ['CAW Protocol', state.deployerAddress, CHAINS[chainConfig.env + 'L2'].lzEid, '1500000000000000', '1500000000000000', '1500000000000000', '1500000000000000'],
     condition: (state) => state.addresses.CawClientManager,
     skipIf: async (state, deployer) => {
       return state.linking?.clientCreated === true;
@@ -624,6 +631,70 @@ const LINKING_STEPS = [
   },
   // Note: Client 1's storage chain is L2 (Base Sepolia). Replication config auto-syncs there.
   // To add a second client on L2b, call createClient with L2b's EID.
+
+  // Phase 5: Marketplace payment token configuration
+  // WETH
+  {
+    name: 'Allow WETH as marketplace payment token',
+    chain: 'L1',
+    phase: 5,
+    contract: 'CawNameMarketplace',
+    method: 'setAllowedPaymentToken',
+    args: () => ['0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', true], // Mainnet WETH
+    condition: (state) => !!state.addresses.CawNameMarketplace,
+    skipIf: async (state, deployer) => {
+      const contract = deployer.getContract('CawNameMarketplace');
+      if (!contract) return false;
+      try { return await contract.allowedPaymentTokens('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'); } catch { return false; }
+    },
+  },
+  // USDC
+  {
+    name: 'Allow USDC as marketplace payment token',
+    chain: 'L1',
+    phase: 5,
+    contract: 'CawNameMarketplace',
+    method: 'setAllowedPaymentToken',
+    args: () => ['0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', true], // Mainnet USDC
+    condition: (state) => !!state.addresses.CawNameMarketplace,
+    skipIf: async (state, deployer) => {
+      const contract = deployer.getContract('CawNameMarketplace');
+      if (!contract) return false;
+      try { return await contract.allowedPaymentTokens('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'); } catch { return false; }
+    },
+  },
+  // USDT
+  {
+    name: 'Allow USDT as marketplace payment token',
+    chain: 'L1',
+    phase: 5,
+    contract: 'CawNameMarketplace',
+    method: 'setAllowedPaymentToken',
+    args: () => ['0xdAC17F958D2ee523a2206206994597C13D831ec7', true], // Mainnet USDT
+    condition: (state) => !!state.addresses.CawNameMarketplace,
+    skipIf: async (state, deployer) => {
+      const contract = deployer.getContract('CawNameMarketplace');
+      if (!contract) return false;
+      try { return await contract.allowedPaymentTokens('0xdAC17F958D2ee523a2206206994597C13D831ec7'); } catch { return false; }
+    },
+  },
+  // CAW
+  {
+    name: 'Allow CAW as marketplace payment token',
+    chain: 'L1',
+    phase: 5,
+    contract: 'CawNameMarketplace',
+    method: 'setAllowedPaymentToken',
+    args: (state) => [state.addresses.MintableCaw || state.addresses.CAW, true],
+    condition: (state) => !!state.addresses.CawNameMarketplace && !!(state.addresses.MintableCaw || state.addresses.CAW),
+    skipIf: async (state, deployer) => {
+      const contract = deployer.getContract('CawNameMarketplace');
+      if (!contract) return false;
+      const cawAddr = state.addresses.MintableCaw || state.addresses.CAW;
+      if (!cawAddr) return false;
+      try { return await contract.allowedPaymentTokens(cawAddr); } catch { return false; }
+    },
+  },
 ];
 
 // ============================================
@@ -728,7 +799,7 @@ class MultiChainDeployer {
     );
 
     if (!fs.existsSync(artifactPath)) {
-      throw new Error(`Artifact not found: ${artifactPath}. Run 'npx hardhat compile' first.`);
+      return null; // Contract not compiled yet — skip gracefully
     }
 
     const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf8'));
@@ -770,6 +841,10 @@ class MultiChainDeployer {
 
     const artifactName = config.artifact || contractKey;
     const artifact = this.loadArtifact(artifactName);
+    if (!artifact) {
+      console.log(`  Skipping ${contractKey} — contract not compiled yet`);
+      return null;
+    }
     const wallet = this.wallets[chainKey];
 
     const args = config.constructorArgs(this.state, chainKey);
@@ -944,7 +1019,7 @@ class MultiChainDeployer {
   async redeploy(contractKey) {
     console.log(`\nRedeploying ${contractKey} and dependents...\n`);
 
-    // Find all contracts that depend on this one
+    // Find all contracts that depend on this one (transitive closure)
     const toRedeploy = new Set([contractKey]);
     let changed = true;
 
@@ -962,6 +1037,28 @@ class MultiChainDeployer {
       }
     }
 
+    // If CawName (L1) is being redeployed, token IDs will change —
+    // all CawNameL2 and CawActions contracts must also be redeployed,
+    // and the database must be reset (old actions reference stale token IDs).
+    const nameContracts = ['CawName', 'CawNameL2_L1', 'CawNameL2_L2', 'CawNameL2_L2b'];
+    const isNameRedeploy = nameContracts.some(c => toRedeploy.has(c));
+    if (isNameRedeploy) {
+      // Force-include all CawActions and related contracts
+      const forceInclude = [
+        'CawNameL2_L1', 'CawNameL2_L2', 'CawNameL2_L2b',
+        'CawActions_L1', 'CawActions_L2', 'CawActions_L2b',
+        'CawActionsReplicator_L1', 'CawActionsReplicator_L2', 'CawActionsReplicator_L2b',
+        'CawActionsArchive_L2', 'CawActionsArchive_L2b',
+        'CawNameMinter', 'CawNameQuoter', 'CawNameMarketplace',
+      ];
+      for (const key of forceInclude) {
+        if (CONTRACTS[key]) toRedeploy.add(key);
+      }
+      console.log('\n   ⚠️  CawName redeploy detected — forcing full contract redeploy.');
+      console.log('   ⚠️  You MUST reset the database after this deployment!');
+      console.log('   ⚠️  Run: cd client && npx prisma migrate reset\n');
+    }
+
     console.log(`   Will redeploy: ${[...toRedeploy].join(', ')}`);
 
     // Clear addresses
@@ -969,12 +1066,29 @@ class MultiChainDeployer {
       delete this.state.addresses[key];
       delete this.contracts[key];
     }
-    // Clear linking state since we're redeploying
-    this.state.linking = {};
+    // Only clear clientCreated if CawClientManager itself is being redeployed
+    if (toRedeploy.has('CawClientManager')) {
+      this.state.linking = {};
+    }
     this.saveState();
 
     // Redeploy by phase
     await this.deployAll();
+
+    // Record the L2 deployment block so RawEventsGatherer starts from the right place
+    if (isNameRedeploy) {
+      try {
+        const l2ChainKey = this.getChainKey('L2');
+        await this.initChain(l2ChainKey);
+        const currentBlock = await this.wallets[l2ChainKey].provider.getBlockNumber();
+        this.state.l2DeployBlock = currentBlock;
+        this.saveState();
+        console.log(`\n   Recorded L2 deploy block: ${currentBlock}`);
+        console.log('   Set "startBlock" in RawEventsGatherer config to this value.');
+      } catch (e) {
+        console.warn('   Could not record L2 deploy block:', e.message);
+      }
+    }
   }
 
   printState() {
@@ -1133,6 +1247,7 @@ After deployment, ABIs are automatically regenerated for the frontend.
       CawActionsReplicator_L2: 'CAW_ACTIONS_REPLICATOR_L2_ADDRESS',
       CawActionsArchive_L2: 'CAW_ACTIONS_ARCHIVE_L2_ADDRESS',
       CawActionsArchive_L2b: 'CAW_ACTIONS_ARCHIVE_L2B_ADDRESS',
+      CawNameMarketplace: 'CAW_NAME_MARKETPLACE_ADDRESS',
     };
 
     try {
@@ -1148,6 +1263,22 @@ After deployment, ABIs are automatically regenerated for the frontend.
       console.log('\nUpdated client/src/abi/addresses.ts');
     } catch (e) {
       console.warn('\nFailed to update addresses.ts:', e.message);
+    }
+
+    // Update RawEventsGatherer startBlock in config.json if l2DeployBlock was recorded
+    if (deployer.state.l2DeployBlock) {
+      const configFile = path.join(__dirname, '../../client/config.json');
+      try {
+        const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+        const gatherer = config.find(s => s.service === 'RawEventsGatherer');
+        if (gatherer) {
+          gatherer.config.startBlock = deployer.state.l2DeployBlock;
+          fs.writeFileSync(configFile, JSON.stringify(config, null, 2) + '\n');
+          console.log(`Updated RawEventsGatherer startBlock to ${deployer.state.l2DeployBlock} in config.json`);
+        }
+      } catch (e) {
+        console.warn('Failed to update config.json startBlock:', e.message);
+      }
     }
 
     // Regenerate ABIs
