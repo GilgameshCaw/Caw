@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useAccount, useReadContract } from 'wagmi'
+import { useReadContract } from 'wagmi'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { CAW_ACTIONS_ADDRESS } from '~/../../../abi/addresses'
@@ -8,16 +8,17 @@ import { chains } from '~/config/chains'
 
 /**
  * Syncs the on-chain sessionSpent value into the local session store.
- * Runs whenever the wallet or session changes.
+ * Uses the active token's owner address (not the connected wallet) to find the
+ * correct session key, so spend tracking works even when a different wallet is connected.
  */
 export function useSessionSpendSync() {
-  const { address: walletAddress } = useAccount()
   const activeToken = useActiveToken()
-  const session = useSessionKeyStore(s => s.session)
   const enabled = useSessionKeyStore(s => s.enabled)
+  const sessions = useSessionKeyStore(s => s.sessions)
 
-  // Owner address: prefer connected wallet, fall back to token owner address
-  const ownerAddress = walletAddress || activeToken?.address
+  // Use the token owner's address to find the right session
+  const ownerAddress = activeToken?.owner?.toLowerCase()
+  const session = ownerAddress ? sessions[ownerAddress] || null : null
   const isActive = !!(enabled && session && session.expiry > Date.now() / 1000)
   const queryEnabled = isActive && !!ownerAddress && !!session?.address
 
@@ -40,14 +41,19 @@ export function useSessionSpendSync() {
       console.log(`[QuickSign SpendSync] onChainSpent is null/undefined`)
       return
     }
-    if (!session) return
+    if (!session || !ownerAddress) return
 
-    const spent = onChainSpent.toString()
-    console.log(`[QuickSign SpendSync] On-chain spent: ${spent} (limit: ${session.spendLimit})`)
+    const onChainSpentBigInt = BigInt(onChainSpent.toString())
+    const localSpentBigInt = BigInt(session.spent || '0')
+    // Use the higher of on-chain vs local — local tracks optimistically ahead of on-chain
+    const effectiveSpent = onChainSpentBigInt > localSpentBigInt ? onChainSpentBigInt : localSpentBigInt
+    const spent = effectiveSpent.toString()
+    console.log(`[QuickSign SpendSync] On-chain: ${onChainSpent.toString()}, local: ${localSpentBigInt.toString()}, effective: ${spent} (limit: ${session.spendLimit})`)
 
     const store = useSessionKeyStore.getState()
-    if (store.session && store.session.spent !== spent) {
-      store.setSession({ ...store.session, spent })
+    const currentSession = store.getSessionForAddress(ownerAddress)
+    if (currentSession && currentSession.spent !== spent) {
+      store.setSession({ ...currentSession, spent })
     }
   }, [onChainSpent, spendError, session?.address])
 }

@@ -20,6 +20,8 @@ import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import { useQuickSignRenewStore } from '~/components/modals/QuickSignRenewModal'
 import { useClientAuthStore } from '~/store/clientAuthStore'
 import { usePendingSpendStore } from '~/store/pendingSpendStore'
+import { useInstanceStore } from '~/store/instanceStore'
+import { API_HOST } from './client'
 
 
 // Cache client auth status per tokenId to avoid repeated RPC calls
@@ -43,17 +45,26 @@ export type ActionTypeKey = keyof typeof ActionTypeMap
 export const CLIENT_ID = Number(import.meta.env.VITE_CLIENT_ID) || 1
 
 /**
- * Validator tip constants (in whole CAW tokens - contract multiplies by 10^18)
+ * Validator tip (in whole CAW tokens - contract multiplies by 10^18)
  *
- * Base tip: Default tip for validator to cover L2 gas costs
- * Per-chain tip: Additional tip per replication chain to cover LZ fees
- *
- * At ~500k CAW = $0.01, 1k CAW ≈ $0.00002 per action
+ * Base tip is fetched from the server (set via admin settings page).
+ * Falls back to VITE_VALIDATOR_TIP env var, then 1000.
+ * Per-chain tip: Additional tip per replication chain to cover LZ fees.
  */
-const BASE_VALIDATOR_TIP = BigInt(import.meta.env.VITE_VALIDATOR_TIP || "1000") // 1k CAW base
+let BASE_VALIDATOR_TIP = BigInt(import.meta.env.VITE_VALIDATOR_TIP || "1000")
 
 /** Additional tip per replication chain (to cover share of LZ fees) */
 const TIP_PER_REPLICATION_CHAIN = BigInt(import.meta.env.VITE_TIP_PER_CHAIN || "500") // 500 CAW per chain
+
+// Fetch live tip config from server on startup
+apiFetch<{ baseTip: string }>('/api/validator-analytics/tip-config')
+  .then(cfg => {
+    BASE_VALIDATOR_TIP = BigInt(cfg.baseTip)
+    console.log(`[Actions] Loaded validator base tip: ${BASE_VALIDATOR_TIP} CAW`)
+  })
+  .catch(() => {
+    console.warn('[Actions] Could not fetch tip config, using default:', BASE_VALIDATOR_TIP.toString())
+  })
 
 /**
  * Calculate the validator tip based on replication chain count
@@ -64,10 +75,20 @@ export function getValidatorTip(): bigint {
   return BASE_VALIDATOR_TIP + (TIP_PER_REPLICATION_CHAIN * BigInt(chainCount))
 }
 
-/** Legacy export for backwards compatibility */
-export const VALIDATOR_TIP = BASE_VALIDATOR_TIP
-
-
+/**
+ * Check which cawonces in a range are already used (pending or confirmed).
+ * Returns the first safe cawonce to start a contiguous block of `count` actions.
+ */
+export async function findSafeCawonceStart(tokenId: number, start: number, count: number): Promise<number> {
+  const result = await apiFetch<{ used: number[]; nextSafe: number }>('/api/users/check-cawonces', {
+    method: 'POST',
+    body: JSON.stringify({ tokenId, start, count }),
+  })
+  // If no conflicts, the original start is fine
+  if (result.used.length === 0) return start
+  // Otherwise use the server's suggestion
+  return result.nextSafe
+}
 
 
 /** natstat: EIP-712 domain */
@@ -172,9 +193,14 @@ export function useSignAndSubmitAction() {
       throw new Error('No active token selected. Please connect your wallet.')
     }
 
-    // Check wallet ownership — if no session key, the connected wallet must own the token
+    // Look up session key for the token owner (not the connected wallet).
+    // This allows Quick Sign to work regardless of which wallet is connected,
+    // since the session key was delegated by the token owner on-chain.
     const sessionStore0 = useSessionKeyStore.getState()
-    const activeSession0 = sessionStore0.getActiveSession()
+    const tokenOwner = activeToken?.owner
+    const activeSession0 = tokenOwner
+      ? sessionStore0.getActiveSessionForAddress(tokenOwner)
+      : sessionStore0.getActiveSession()
     const actionCode0 = ActionTypeMap[params.actionType]
     const canUseSession0 = activeSession0 &&
       actionCode0 <= 5 &&
@@ -183,6 +209,19 @@ export function useSignAndSubmitAction() {
     if (!canUseSession0 && isConnected && activeToken?.owner && address) {
       if (activeToken.owner.toLowerCase() !== address.toLowerCase()) {
         throw new Error('Wrong wallet connected. Please switch to the correct wallet.')
+      }
+    }
+
+    // Prompt to enable Quick Sign if it's not active and user hasn't dismissed the prompt
+    if (!canUseSession0 && !sessionStore0.hasSeenPrompt && !sessionStore0.enabled) {
+      const { useQuickSignPromptStore } = await import('~/components/modals/QuickSignModal')
+      const promptStore = useQuickSignPromptStore.getState()
+      if (promptStore.skipOnce) {
+        // User chose "Sign Manually" — consume the flag and proceed with wallet signing
+        useQuickSignPromptStore.setState({ skipOnce: false })
+      } else {
+        promptStore.show(() => requestAndSubmit(params))
+        return null
       }
     }
 
@@ -197,7 +236,9 @@ export function useSignAndSubmitAction() {
                       null
 
     // Use effective stake (staked - pending) to account for in-flight actions
-    const effectiveStake = usePendingSpendStore.getState().getEffectiveStake(activeToken?.stakedAmount)
+    const pendingState = usePendingSpendStore.getState()
+    const effectiveStake = pendingState.getEffectiveStake(activeToken?.stakedAmount)
+    console.log(`[StakeCheck] stakedAmount=${activeToken?.stakedAmount?.toString()}, pendingSpend=${pendingState.pendingSpend.toString()}, effectiveStake=${effectiveStake.toString()}, pendingItems=${Object.keys(pendingState.pendingByTxQueue).length}`)
     if (stakingKey && !hasMinimumStake(effectiveStake, stakingKey)) {
       const requiredAmount = getRequiredStake(stakingKey)
       const actionTypeForModal = getActionTypeForModal(params.actionType)
@@ -273,17 +314,24 @@ export function useSignAndSubmitAction() {
     // Use the current value for this action, then immediately increment for the next one.
     // The local cawonce is synced from chain on page load (useCawonceSync) and stays
     // ahead of on-chain via local increments — no need to fetch on every action.
+    console.log(`[signAndSubmit] Using cawonce=${currentCawonce} for ${params.actionType}, bumping to ${currentCawonce + 1}`)
     bumpCawonce(activeTokenId)
 
     const { domain, types, primaryType, message } = buildTypedData({...params, cawonce: currentCawonce})
 
-    // Check for an active session key that covers this action type
+    // Check for an active session key that covers this action type.
+    // Look up by token owner so Quick Sign works regardless of connected wallet.
     const actionCode = ActionTypeMap[params.actionType]
     const sessionStore = useSessionKeyStore.getState()
-    const activeSession = sessionStore.getActiveSession()
+    const activeSession = tokenOwner
+      ? sessionStore.getActiveSessionForAddress(tokenOwner)
+      : sessionStore.getActiveSession()
 
     // If Quick Sign is enabled but session expired, show renewal modal
-    if (sessionStore.enabled && !activeSession && sessionStore.session) {
+    const rawSession = tokenOwner
+      ? sessionStore.getSessionForAddress(tokenOwner)
+      : sessionStore.getSession()
+    if (sessionStore.enabled && !activeSession && rawSession) {
       useQuickSignRenewStore.getState().show('expired', () => requestAndSubmit(params))
       return null
     }
@@ -302,7 +350,7 @@ export function useSignAndSubmitAction() {
     if (canUseSession) {
       const limit = BigInt(activeSession.spendLimit || '0')
       if (limit > 0n) {
-        const spent = BigInt(sessionStore.session?.spent || '0')
+        const spent = BigInt(rawSession?.spent || '0')
         const tip = getValidatorTip()
         const protocolCost = ACTION_COSTS[params.actionType] || 0n
         const totalCost = protocolCost + tip
@@ -368,6 +416,27 @@ export function useSignAndSubmitAction() {
         }
       }
 
+      // Broadcast to other instances as redundancy (fire-and-forget after 2s delay)
+      // Other instances will either accept it or reject as duplicate — both are fine
+      const actionPayload = JSON.stringify({ data: message, domain, types, signature })
+      setTimeout(() => {
+        try {
+          const allHosts = useInstanceStore.getState().getApiHosts()
+          const activeHost = useInstanceStore.getState().activeApiHost || API_HOST || ''
+          const otherHosts = allHosts.filter((h: string) => h !== activeHost && h !== '')
+          for (const host of otherHosts) {
+            fetch(`${host}/api/actions`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: actionPayload,
+            }).catch(() => {}) // Silently ignore failures on redundant broadcasts
+          }
+          if (otherHosts.length > 0) {
+            console.log(`[Actions] Broadcast to ${otherHosts.length} redundant instance(s)`)
+          }
+        } catch {}
+      }, 2000)
+
       return response // Return the response which includes txQueueId
     } catch (error: any) {
       // If submission fails, we should ideally roll back the cawonce bump
@@ -430,7 +499,7 @@ export function useSignAndSubmitAction() {
   }, [isConnected, pendingParams, cawonce, requestAndSubmit, address, activeToken?.address])
 
   return async (params: ActionParams) => {
-    // Session key active — skip wallet checks entirely
+    // Session key active for this token's owner — skip wallet checks entirely
     if (hasActiveSession) {
       return await requestAndSubmit(params)
     }
@@ -440,7 +509,7 @@ export function useSignAndSubmitAction() {
       setPendingParams(params)
       openConnectModal?.()
       return null
-    } else if (activeToken?.address?.toLowerCase() !== address?.toLowerCase()) {
+    } else if (activeToken?.owner?.toLowerCase() !== address?.toLowerCase()) {
       console.error("That profile tokenId is not owned by your connected wallet")
       return null
     } else {
