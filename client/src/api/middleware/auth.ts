@@ -14,10 +14,16 @@ declare global {
   }
 }
 
-const JWT_SECRET = process.env.JWT_SECRET || 'caw-secret-key-dev'
+const JWT_SECRET = process.env.JWT_SECRET
+if (!JWT_SECRET) {
+  console.warn('[Auth] WARNING: JWT_SECRET not set. JWT authentication will reject all tokens.')
+}
 
 // --- Admin token auth ---
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'caw-admin-2026'
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD
+if (!ADMIN_PASSWORD) {
+  console.warn('[Auth] WARNING: ADMIN_PASSWORD not set. Admin login will be disabled.')
+}
 const adminTokens = new Map<string, number>() // token -> expiry timestamp
 const ADMIN_TOKEN_TTL = 24 * 60 * 60 * 1000 // 24 hours
 
@@ -26,7 +32,7 @@ export function generateAdminToken(): string {
 }
 
 export function loginAdmin(password: string): string | null {
-  if (password !== ADMIN_PASSWORD) return null
+  if (!ADMIN_PASSWORD || password !== ADMIN_PASSWORD) return null
   const token = generateAdminToken()
   adminTokens.set(token, Date.now() + ADMIN_TOKEN_TTL)
   return token
@@ -131,13 +137,12 @@ export function requireAuth(opts: RequireAuthOpts) {
 // --- JWT auth (existing) ---
 
 export function authenticateToken(req: Request, res: Response, next: NextFunction) {
+  if (!JWT_SECRET) {
+    return res.status(500).json({ error: 'JWT not configured' })
+  }
+
   const authHeader = req.headers['authorization']
   const token = authHeader && authHeader.split(' ')[1]
-
-  // For development, allow requests without authentication
-  if (!token && process.env.NODE_ENV === 'development') {
-    return next()
-  }
 
   if (!token) {
     return res.status(401).json({ error: 'Access token required' })
@@ -154,5 +159,6 @@ export function authenticateToken(req: Request, res: Response, next: NextFunctio
 }
 
 export function generateToken(payload: any): string {
+  if (!JWT_SECRET) throw new Error('JWT_SECRET not configured')
   return jwt.sign(payload, JWT_SECRET, { expiresIn: '24h' })
 }
