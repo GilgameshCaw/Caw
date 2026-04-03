@@ -196,6 +196,14 @@ router.post('/listings/:id/sold', async (req, res) => {
       return res.status(400).json({ error: 'txHash and buyer required' })
     }
 
+    // Validate txHash format (0x + 64 hex chars) and buyer address (0x + 40 hex chars)
+    if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) {
+      return res.status(400).json({ error: 'Invalid transaction hash format' })
+    }
+    if (!/^0x[0-9a-fA-F]{40}$/.test(buyer)) {
+      return res.status(400).json({ error: 'Invalid buyer address format' })
+    }
+
     const listing = await prisma.marketplaceListing.findUnique({ where: { id } })
     if (!listing) return res.status(404).json({ error: 'Listing not found' })
     if (listing.status !== 'ACTIVE') return res.json({ ok: true }) // already updated

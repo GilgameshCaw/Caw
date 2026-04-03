@@ -146,6 +146,15 @@ function createApp() {
     message: { error: 'Too many short URL requests, try again later' }
   }))
 
+  // Marketplace sold: rate limit to prevent spam (5 per minute per IP)
+  app.use('/api/marketplace/listings', rateLimit({
+    windowMs: 60 * 1000,
+    max: 5,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many requests, try again later' }
+  }))
+
   // API routes
   app.use('/api/auth', authRouter)
   app.use('/api/actions', actionsRouter)
