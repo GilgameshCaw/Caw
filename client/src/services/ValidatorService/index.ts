@@ -812,6 +812,25 @@ export const validatorService: Service = {
           return submitProcessActions(validatorId, multiData, quote, rawGasLimit, retryCount + 1)
         }
 
+        // Handle transient RPC/network errors - retry with backoff
+        const isTransient = err.code === 'UNKNOWN_ERROR' ||
+          err.code === 'SERVER_ERROR' ||
+          err.code === 'TIMEOUT' ||
+          err.code === 'NETWORK_ERROR' ||
+          err.message?.includes('error sending request') ||
+          err.message?.includes('could not coalesce') ||
+          err.message?.includes('ECONNREFUSED') ||
+          err.message?.includes('ETIMEDOUT') ||
+          err.message?.includes('fetch failed') ||
+          err.message?.includes('network error')
+
+        if (isTransient && retryCount < maxRetries) {
+          const delay = Math.min(2000 * (retryCount + 1), 10000)
+          console.log(`[submitProcessActions] Transient RPC error - retrying in ${delay}ms (attempt ${retryCount + 1}/${maxRetries}): ${err.message?.substring(0, 100)}`)
+          await new Promise(resolve => setTimeout(resolve, delay))
+          return submitProcessActions(validatorId, multiData, quote, rawGasLimit, retryCount + 1)
+        }
+
         throw err
       }
     }
