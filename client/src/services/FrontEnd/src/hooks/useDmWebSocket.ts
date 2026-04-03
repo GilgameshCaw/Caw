@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { io, Socket } from 'socket.io-client'
 import { useQueryClient } from '@tanstack/react-query'
-import { generateToken } from '~/api/auth'
+import { useAuthStore } from '~/store/authStore'
 
 const SOCKET_URL = import.meta.env.VITE_API_HOST || 'http://localhost:4000'
 
@@ -21,11 +21,12 @@ export function useDmWebSocket({ userId, username, enabled = true, onNewMessage 
   const connect = useCallback(() => {
     if (!userId || !username || !enabled) return
 
-    const token = generateToken({ userId, username })
+    const sessionToken = useAuthStore.getState().sessionToken
+    if (!sessionToken) return
 
     socketRef.current = io(SOCKET_URL, {
       path: '/dm-ws/',
-      auth: { token },
+      auth: { sessionToken, userId, username },
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 5,

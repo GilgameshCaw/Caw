@@ -1,10 +1,9 @@
 import { Server as HttpServer } from 'http'
 import { Server as SocketIOServer, Socket } from 'socket.io'
 import { PrismaClient } from '@prisma/client'
-import jwt from 'jsonwebtoken'
+import { getSession } from '../../api/sessionStore'
 
 const prisma = new PrismaClient()
-const JWT_SECRET = process.env.JWT_SECRET || 'caw-secret-key-dev'
 
 interface AuthenticatedSocket extends Socket {
   userId?: number
@@ -27,31 +26,30 @@ export class DmWebSocketService {
       path: '/dm-ws/'
     })
 
-    // Authentication middleware
+    // Authentication middleware — uses the same session token system as the REST API
     this.io.use(async (socket: AuthenticatedSocket, next) => {
       try {
-        const token = socket.handshake.auth.token
-        if (!token) return next(new Error('Authentication required'))
+        const sessionToken = socket.handshake.auth.sessionToken
+        const userId = Number(socket.handshake.auth.userId)
+        const username = socket.handshake.auth.username
 
-        let decoded: any
-
-        try {
-          decoded = jwt.verify(token, JWT_SECRET) as any
-        } catch {
-          // Fallback: base64 decode for development
-          try {
-            decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf-8'))
-          } catch {
-            throw new Error('Invalid token format')
-          }
+        if (!sessionToken || !userId || !username) {
+          return next(new Error('Authentication required'))
         }
 
-        socket.userId = decoded.userId
-        socket.username = decoded.username
-
-        if (!socket.userId || !socket.username) {
-          return next(new Error('Invalid token payload'))
+        // Verify session token in Redis (same as REST API auth)
+        const session = await getSession(sessionToken)
+        if (!session) {
+          return next(new Error('Invalid or expired session'))
         }
+
+        // Verify the userId is authorized in this session
+        if (!session.authorizedTokenIds.includes(userId)) {
+          return next(new Error('Token not authorized in session'))
+        }
+
+        socket.userId = userId
+        socket.username = username
 
         if (!this.userSockets.has(socket.userId)) {
           this.userSockets.set(socket.userId, new Set())

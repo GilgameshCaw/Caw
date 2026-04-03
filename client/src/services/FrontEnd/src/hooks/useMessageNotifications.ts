@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { io, Socket } from 'socket.io-client'
-import { generateToken } from '~/api/auth'
+import { useAuthStore } from '~/store/authStore'
 
 const SOCKET_URL = import.meta.env.VITE_API_HOST || 'http://localhost:4000'
 
@@ -97,13 +97,13 @@ export function useMessageNotifications({
 
     console.log('[MessageNotifications] Connecting WebSocket for user:', username, userId)
 
-    // Generate auth token for WebSocket
-    const token = generateToken({ userId, username })
+    const sessionToken = useAuthStore.getState().sessionToken
+    if (!sessionToken) return
 
     // Connect to WebSocket for real-time notifications
     socketRef.current = io(SOCKET_URL, {
       path: '/dm-ws/',
-      auth: { token },
+      auth: { sessionToken, userId, username },
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 5,
