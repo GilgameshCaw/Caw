@@ -65,8 +65,13 @@ function createApp() {
   app.use(cors(corsOpts))
   app.use(express.json({ limit: '50mb' })) // Increase limit for image uploads
 
-  // Serve static uploaded files
-  app.use('/uploads', express.static(path.join(process.cwd(), 'public', 'uploads')))
+  // Serve static uploaded files with security headers
+  app.use('/uploads', express.static(path.join(process.cwd(), 'public', 'uploads'), {
+    setHeaders: (res) => {
+      res.set('X-Content-Type-Options', 'nosniff')
+      res.set('Content-Security-Policy', "default-src 'none'")
+    }
+  }))
 
   // Short URL redirect handler (before API routes)
   app.get('/s/:code', async (req, res) => {

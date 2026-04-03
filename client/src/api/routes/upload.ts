@@ -27,9 +27,15 @@ const storage = multer.diskStorage({
     cb(null, dir)
   },
   filename: (req, file, cb) => {
-    // Generate shorter filename - just 8 random hex chars + extension
+    // Generate shorter filename - just 8 random hex chars + safe extension
     const uniqueId = randomBytes(4).toString('hex')
-    const ext = path.extname(file.originalname)
+    // Derive extension from validated MIME type, not user-supplied filename
+    const MIME_TO_EXT: Record<string, string> = {
+      'image/jpeg': '.jpg', 'image/png': '.png', 'image/gif': '.gif', 'image/webp': '.webp',
+      'video/mp4': '.mp4', 'video/webm': '.webm', 'video/quicktime': '.mov',
+      'video/x-msvideo': '.avi', 'video/x-matroska': '.mkv', 'video/ogg': '.ogv',
+    }
+    const ext = MIME_TO_EXT[file.mimetype] || '.bin'
     cb(null, `${uniqueId}${ext}`)
   }
 })
@@ -212,8 +218,9 @@ router.post('/image', async (req, res) => {
       return res.status(400).json({ error: 'Image too large (max 10MB)' })
     }
 
-    // Generate unique filename
-    const fileExtension = imageType.split('/')[1] || 'jpg'
+    // Generate unique filename with safe extension from allowlist
+    const SAFE_EXT: Record<string, string> = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif', 'image/webp': 'webp' }
+    const fileExtension = SAFE_EXT[imageType] || 'jpg'
     const fileName = `${tokenId}_${Date.now()}_${randomBytes(8).toString('hex')}.${fileExtension}`
     const filePath = path.join(IMAGE_DIR, fileName)
 
