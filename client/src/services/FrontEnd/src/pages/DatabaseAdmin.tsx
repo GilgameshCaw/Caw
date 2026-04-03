@@ -317,14 +317,17 @@ const DatabaseAdmin: React.FC = () => {
     return (
       <div className={`min-h-screen ${bg} p-4`}>
         <div className="max-w-4xl mx-auto">
-          {/* Breadcrumb + Header */}
+          {/* Header */}
           <div className="flex items-center gap-3 mb-4">
-            <Link to="/admin" className={`text-sm ${muted} hover:underline`}>Admin</Link>
-            <span className={muted}>/</span>
             <button
               onClick={() => { setDetailRecord(null); setDetailId(null) }}
-              className={`text-sm ${muted} hover:underline`}
+              className={`flex items-center gap-1.5 text-sm font-medium transition-colors ${
+                isDark ? 'text-white/70 hover:text-white' : 'text-gray-500 hover:text-gray-900'
+              }`}
             >
+              <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                <path fillRule="evenodd" d="M17 10a.75.75 0 01-.75.75H5.612l4.158 3.96a.75.75 0 11-1.04 1.08l-5.5-5.25a.75.75 0 010-1.08l5.5-5.25a.75.75 0 111.04 1.08L5.612 9.25H16.25A.75.75 0 0117 10z" clipRule="evenodd" />
+              </svg>
               {activeMeta?.label || activeModel}
             </button>
             <span className={muted}>/</span>
@@ -407,10 +410,18 @@ const DatabaseAdmin: React.FC = () => {
       <div className="flex min-h-screen">
         {/* Sidebar — model list */}
         <div className={`w-52 shrink-0 border-r ${isDark ? 'border-white/10' : 'border-gray-200'} p-3 overflow-y-auto`}>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className={`text-sm font-bold ${text}`}>Tables</h2>
-            <Link to="/admin" className={`text-xs ${muted} hover:underline`}>Admin</Link>
-          </div>
+          <Link
+            to="/admin"
+            className={`flex items-center gap-2 px-3 py-2 mb-3 rounded-lg text-sm font-medium transition-colors ${
+              isDark ? 'text-white/70 hover:text-white hover:bg-white/10' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+          >
+            <svg viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+              <path fillRule="evenodd" d="M17 10a.75.75 0 01-.75.75H5.612l4.158 3.96a.75.75 0 11-1.04 1.08l-5.5-5.25a.75.75 0 010-1.08l5.5-5.25a.75.75 0 111.04 1.08L5.612 9.25H16.25A.75.75 0 0117 10z" clipRule="evenodd" />
+            </svg>
+            Admin
+          </Link>
+          <h2 className={`text-xs font-bold px-3 mb-2 ${muted}`}>Tables</h2>
           {models.map(m => (
             <button
               key={m.name}
@@ -430,8 +441,6 @@ const DatabaseAdmin: React.FC = () => {
         <div className="flex-1 p-4 overflow-x-auto">
           {/* Toolbar */}
           <div className="flex items-center gap-3 mb-3 flex-wrap">
-            <Link to="/admin" className={`text-sm ${muted} hover:underline`}>Admin</Link>
-            <span className={muted}>/</span>
             <h1 className={`text-lg font-bold ${text}`}>{activeMeta?.label || activeModel}</h1>
             <span className={`text-sm ${muted}`}>{total.toLocaleString()} records</span>
 
