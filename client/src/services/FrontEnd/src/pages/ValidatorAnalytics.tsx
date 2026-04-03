@@ -273,12 +273,16 @@ const ValidatorAnalytics: React.FC = () => {
         const dateKey = timeStr.slice(0, 10) // '2026-03-25'
         const hourKey = timeStr.slice(0, 13)  // '2026-03-25T14'
         const hh = timeStr.slice(11, 13)
-        const mm = timeStr.slice(14, 16)
-        const label = chartInterval === 'hour'
-          ? `${hh}:${mm}`
-          : chartInterval === '6hour'
-          ? `${dateKey.slice(5)} ${hh}:${mm}`
-          : dateFromKey(dateKey).toLocaleDateString()
+        const hhNum = parseInt(hh, 10)
+        let label: string
+        if (chartInterval === 'hour') {
+          label = `${hh}:00 – ${String(hhNum + 1).padStart(2, '0')}:00`
+        } else if (chartInterval === '6hour') {
+          const endHh = String(hhNum + 6).padStart(2, '0')
+          label = `${dateKey.slice(5)} ${hh}:00 – ${endHh}:00`
+        } else {
+          label = dateFromKey(dateKey).toLocaleDateString()
+        }
         return {
           dateKey,
           hourKey,
@@ -333,9 +337,11 @@ const ValidatorAnalytics: React.FC = () => {
           if (existing) {
             paddedChart.push({ ...existing, dateKey: dk })
           } else {
+            const hhNum = cursor.getHours()
+            const endHh = String(hhNum + stepHours).padStart(2, '0')
             const label = chartInterval === 'hour'
-              ? `${hh}:00`
-              : `${dk.slice(5)} ${hh}:00`
+              ? `${hh}:00 – ${endHh}:00`
+              : `${dk.slice(5)} ${hh}:00 – ${endHh}:00`
             paddedChart.push({ date: label, dateKey: dk, ...emptyPoint })
           }
           cursor.setTime(cursor.getTime() + stepHours * 3600000)
@@ -389,7 +395,7 @@ const ValidatorAnalytics: React.FC = () => {
         const bucketHour = parseInt(timeStr.slice(11, 13), 10)
         return {
           hour: bucketHour,
-          date: `${bucketHour.toString().padStart(2, '0')}:00`,
+          date: `${bucketHour.toString().padStart(2, '0')}:00 – ${String(bucketHour + 1).padStart(2, '0')}:00`,
           profit: Number(p.profit || 0) / 1e18,
           txCount: Number(p.txCount || 0),
           actionCount: Number(p.actionCount || 0),
@@ -405,7 +411,7 @@ const ValidatorAnalytics: React.FC = () => {
         if (existing) {
           padded.push(existing)
         } else {
-          const label = `${h.toString().padStart(2, '0')}:00`
+          const label = `${h.toString().padStart(2, '0')}:00 – ${String(h + 1).padStart(2, '0')}:00`
           padded.push({ ...emptyPoint, date: label })
         }
       }
@@ -776,6 +782,18 @@ const ValidatorAnalytics: React.FC = () => {
             )}
           </div>
         )}
+
+        {/* Action Type Legend */}
+        <div className={`flex flex-wrap gap-x-4 gap-y-1 mb-4 text-xs ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+          {Object.entries(ACTION_TYPE_STYLE).map(([type, style]) => (
+            <div key={type} className="flex items-center gap-1">
+              <span className={`inline-flex items-center justify-center rounded px-1 py-0 text-[9px] font-bold leading-tight ${style.color}`}>
+                {style.label}
+              </span>
+              <span className="capitalize">{type.toLowerCase()}</span>
+            </div>
+          ))}
+        </div>
 
         {/* Tab Selector */}
         <div className="flex gap-2 mb-4">

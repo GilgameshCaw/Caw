@@ -175,28 +175,45 @@ router.get('/chart', async (req, res) => {
       return res.status(400).json({ error: 'invalid timezone' })
     }
 
+    // Timezone is validated above (IANA-style only) — safe to interpolate into SQL.
+    // Using $3 parameterization for AT TIME ZONE causes issues when the expression
+    // appears multiple times (bucket + TO_CHAR + GROUP BY), so we interpolate directly.
+    const tzLiteral = tz.replace(/'/g, "''") // escape single quotes for SQL safety
+
     // For 6hour, floor the hour to the nearest 6-hour block (0, 6, 12, 18)
     const bucketExpr = interval === '6hour'
-      ? `date_trunc('day', "createdAt" AT TIME ZONE $3) + (FLOOR(EXTRACT(HOUR FROM "createdAt" AT TIME ZONE $3) / 6) * INTERVAL '6 hours')`
-      : `date_trunc('${interval}', "createdAt" AT TIME ZONE $3)`
+      ? `date_trunc('day', "createdAt" AT TIME ZONE '${tzLiteral}') + (FLOOR(EXTRACT(HOUR FROM "createdAt" AT TIME ZONE '${tzLiteral}') / 6) * INTERVAL '6 hours')`
+      : `date_trunc('${interval}', "createdAt" AT TIME ZONE '${tzLiteral}')`
 
     const rows: any[] = await prisma.$queryRawUnsafe(`
       SELECT
-        ${bucketExpr} as bucket,
-        TO_CHAR(${bucketExpr}, 'YYYY-MM-DD"T"HH24:MI:SS') as bucket_str,
-        COUNT(*)::int as tx_count,
-        SUM("actionCount")::int as action_count,
-        SUM(CAST("ethCost" AS NUMERIC)) as total_eth_cost,
-        SUM(CAST("tipCaw" AS NUMERIC)) as total_tip_caw,
-        SUM(CAST("tipEthValue" AS NUMERIC)) as total_tip_eth,
-        SUM(CAST("profit" AS NUMERIC)) as total_profit,
-        AVG("avgWaitMs")::int as avg_wait_ms,
-        jsonb_agg("actionBreakdown") FILTER (WHERE "actionBreakdown" IS NOT NULL) as breakdowns
-      FROM "ValidatorTx"
-      WHERE "createdAt" >= $1 AND "createdAt" <= $2 AND "status" = 'confirmed'
-      GROUP BY bucket
+        bucket,
+        TO_CHAR(bucket, 'YYYY-MM-DD"T"HH24:MI:SS') as bucket_str,
+        tx_count,
+        action_count,
+        total_eth_cost,
+        total_tip_caw,
+        total_tip_eth,
+        total_profit,
+        avg_wait_ms,
+        breakdowns
+      FROM (
+        SELECT
+          ${bucketExpr} as bucket,
+          COUNT(*)::int as tx_count,
+          SUM("actionCount")::int as action_count,
+          SUM(CAST("ethCost" AS NUMERIC)) as total_eth_cost,
+          SUM(CAST("tipCaw" AS NUMERIC)) as total_tip_caw,
+          SUM(CAST("tipEthValue" AS NUMERIC)) as total_tip_eth,
+          SUM(CAST("profit" AS NUMERIC)) as total_profit,
+          AVG("avgWaitMs")::int as avg_wait_ms,
+          jsonb_agg("actionBreakdown") FILTER (WHERE "actionBreakdown" IS NOT NULL) as breakdowns
+        FROM "ValidatorTx"
+        WHERE "createdAt" >= $1 AND "createdAt" <= $2 AND "status" = 'confirmed'
+        GROUP BY bucket
+      ) sub
       ORDER BY bucket ASC
-    `, from, to, tz)
+    `, from, to)
 
     // Merge per-tx breakdowns into a single aggregate per bucket
     function mergeBreakdowns(arr: Record<string, number>[] | null): Record<string, number> {
