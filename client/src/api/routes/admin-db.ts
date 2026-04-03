@@ -340,7 +340,7 @@ router.get('/:model', async (req, res) => {
     })
   } catch (err: any) {
     console.error(`[AdminDB] Error listing ${model}:`, err.message)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
@@ -379,7 +379,7 @@ router.get('/:model/:id', async (req, res) => {
     })
   } catch (err: any) {
     console.error(`[AdminDB] Error fetching ${model}/${id}:`, err.message)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
@@ -421,7 +421,7 @@ router.patch('/:model/:id', async (req, res) => {
     })
   } catch (err: any) {
     console.error(`[AdminDB] Error updating ${model}/${id}:`, err.message)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
@@ -453,7 +453,7 @@ router.delete('/:model/:id', async (req, res) => {
     res.json({ success: true })
   } catch (err: any) {
     console.error(`[AdminDB] Error deleting ${model}/${id}:`, err.message)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 

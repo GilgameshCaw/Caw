@@ -8,7 +8,7 @@ const router = Router()
  * Helper to hash IP address for privacy
  */
 function hashIP(ip: string): string {
-  return crypto.createHash('sha256').update(ip + process.env.IP_SALT || 'default-salt').digest('hex')
+  return crypto.createHash('sha256').update(ip + (process.env.IP_SALT || 'default-salt')).digest('hex')
 }
 
 /**

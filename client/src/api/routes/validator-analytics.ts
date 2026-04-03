@@ -19,7 +19,7 @@ router.get('/tip-config', async (_req, res) => {
       baseTip: map.get('validatorBaseTip') || process.env.VALIDATOR_BASE_TIP || '1000',
     })
   } catch (err: any) {
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
@@ -80,7 +80,7 @@ router.get('/summary', async (req, res) => {
     })
   } catch (err: any) {
     console.error('[validator-analytics] summary error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
@@ -115,7 +115,7 @@ router.get('/transactions', async (req, res) => {
     res.json({ transactions: serialized, total })
   } catch (err: any) {
     console.error('[validator-analytics] transactions error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
@@ -149,7 +149,7 @@ router.get('/replication', async (req, res) => {
     res.json({ transactions: serialized, total })
   } catch (err: any) {
     console.error('[validator-analytics] replication error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
@@ -242,7 +242,7 @@ router.get('/chart', async (req, res) => {
     res.json({ chart, interval })
   } catch (err: any) {
     console.error('[validator-analytics] chart error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
@@ -265,7 +265,7 @@ router.get('/settings', async (req, res) => {
     for (const s of settings) result[s.key] = s.value
     res.json(result)
   } catch (err: any) {
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
@@ -290,7 +290,7 @@ router.patch('/settings', async (req, res) => {
 
     res.json({ ok: true, key, value: String(value) })
   } catch (err: any) {
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 

@@ -61,6 +61,50 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Invalid conversation ID format' })
     }
 
+    // Check if recipient has blocked the sender
+    const blocked = await prisma.block.findFirst({
+      where: {
+        OR: [
+          { blockerId: Number(recipientId), blockedId: Number(senderId) },
+          { blockerId: Number(senderId), blockedId: Number(recipientId) },
+        ]
+      }
+    })
+    if (blocked) {
+      return res.status(403).json({ error: 'Blocked' })
+    }
+
+    // Check recipient's DM privacy settings
+    const recipientIdentity = await prisma.dmIdentity.findUnique({
+      where: { userId: Number(recipientId) }
+    })
+    if (recipientIdentity?.dmPrivacy && recipientIdentity.dmPrivacy !== 'EVERYONE') {
+      // Check if an existing conversation exists — if so, they've already accepted
+      const existingConv = await prisma.conversation.findUnique({
+        where: { id: conversationId }
+      })
+      if (!existingConv) {
+        // New conversation — check privacy rules
+        if (recipientIdentity.dmPrivacy === 'FOLLOWERS') {
+          // Recipient only accepts DMs from people they follow
+          const follows = await prisma.follow.findFirst({
+            where: { followerId: Number(recipientId), followingId: Number(senderId), action: 'FOLLOW' }
+          })
+          if (!follows) {
+            return res.status(403).json({ error: 'DM_PRIVACY', reason: 'FOLLOWERS' })
+          }
+        } else if (recipientIdentity.dmPrivacy === 'FOLLOWING') {
+          // Recipient only accepts DMs from their followers
+          const follower = await prisma.follow.findFirst({
+            where: { followerId: Number(senderId), followingId: Number(recipientId), action: 'FOLLOW' }
+          })
+          if (!follower) {
+            return res.status(403).json({ error: 'DM_PRIVACY', reason: 'FOLLOWING' })
+          }
+        }
+      }
+    }
+
     // Get or create conversation
     let conversation = await prisma.conversation.findUnique({
       where: { id: conversationId }

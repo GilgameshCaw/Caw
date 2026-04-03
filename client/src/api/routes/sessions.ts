@@ -240,7 +240,7 @@ router.post('/', async (req: any, res: any) => {
     return res.json({ requestId, status: 'submitting' })
   } catch (err: any) {
     console.error('[Sessions] Error:', err.message)
-    return res.status(500).json({ error: err.message || 'Failed to register session' })
+    return res.status(500).json({ error: 'Failed to register session' })
   }
 })
 
@@ -315,7 +315,7 @@ router.delete('/', async (req: any, res: any) => {
     return res.json({ success: true, txHash: tx.hash })
   } catch (err: any) {
     console.error('[Sessions] Revocation error:', err.message)
-    return res.status(500).json({ error: err.message || 'Failed to revoke session' })
+    return res.status(500).json({ error: 'Failed to revoke session' })
   }
 })
 

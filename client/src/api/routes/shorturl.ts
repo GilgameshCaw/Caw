@@ -41,6 +41,28 @@ function generateShortCode(length: number = 6): string {
   return code
 }
 
+// Block SSRF: reject URLs pointing to private/internal networks
+function isPrivateUrl(url: string): boolean {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase()
+    // Block localhost, private IPs, link-local, and metadata endpoints
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') return true
+    if (hostname === '0.0.0.0' || hostname === '[::1]') return true
+    if (hostname.endsWith('.local') || hostname.endsWith('.internal')) return true
+    // Block private IPv4 ranges
+    const parts = hostname.split('.').map(Number)
+    if (parts.length === 4 && parts.every(n => !isNaN(n))) {
+      if (parts[0] === 10) return true                                         // 10.0.0.0/8
+      if (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) return true   // 172.16.0.0/12
+      if (parts[0] === 192 && parts[1] === 168) return true                    // 192.168.0.0/16
+      if (parts[0] === 169 && parts[1] === 254) return true                    // 169.254.0.0/16 (link-local/cloud metadata)
+    }
+    return false
+  } catch {
+    return true // Block on parse failure
+  }
+}
+
 // Extract Open Graph metadata from a URL
 async function extractMetadata(url: string): Promise<{
   title?: string
@@ -49,6 +71,8 @@ async function extractMetadata(url: string): Promise<{
   siteName?: string
 }> {
   try {
+    if (isPrivateUrl(url)) return {}
+
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 5000) // 5s timeout
 
@@ -107,11 +131,17 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'URL is required' })
     }
 
-    // Validate URL format
+    // Validate URL format and scheme
+    let parsedUrl: URL
     try {
-      new URL(url)
+      parsedUrl = new URL(url)
     } catch {
       return res.status(400).json({ error: 'Invalid URL format' })
+    }
+
+    // Only allow http/https schemes (block javascript:, data:, etc.)
+    if (parsedUrl.protocol !== 'https:' && parsedUrl.protocol !== 'http:') {
+      return res.status(400).json({ error: 'Only http and https URLs are allowed' })
     }
 
     // Get extension from original URL to preserve it

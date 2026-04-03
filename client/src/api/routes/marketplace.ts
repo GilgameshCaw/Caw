@@ -58,7 +58,7 @@ router.get('/listings', async (req, res) => {
     res.json({ listings, total })
   } catch (err: any) {
     console.error('[marketplace] listings error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
@@ -81,7 +81,7 @@ router.get('/listings/:id', async (req, res) => {
     res.json(listing)
   } catch (err: any) {
     console.error('[marketplace] listing detail error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
@@ -100,7 +100,7 @@ router.get('/listings/token/:tokenId', async (req, res) => {
     res.json(listing || null)
   } catch (err: any) {
     console.error('[marketplace] token listing error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
@@ -125,7 +125,7 @@ router.get('/sales', async (req, res) => {
     res.json({ sales, total })
   } catch (err: any) {
     console.error('[marketplace] sales error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
@@ -150,7 +150,7 @@ router.get('/sales/stats', async (req, res) => {
     res.json({ totalSales, volumeByToken })
   } catch (err: any) {
     console.error('[marketplace] sales stats error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
@@ -178,7 +178,7 @@ router.get('/bids/:address', async (req, res) => {
     res.json({ bids, total })
   } catch (err: any) {
     console.error('[marketplace] bids error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
@@ -239,7 +239,7 @@ router.post('/listings/:id/sold', async (req, res) => {
     res.json({ ok: true })
   } catch (err: any) {
     console.error('[marketplace] mark sold error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
@@ -270,7 +270,7 @@ router.get('/listings/seller/:address', async (req, res) => {
     res.json({ listings, total })
   } catch (err: any) {
     console.error('[marketplace] seller listings error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: 'Internal server error' })
   }
 })
 
