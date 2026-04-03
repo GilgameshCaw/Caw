@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '~/api/client'
+import { useVerifyWalletStore } from '~/store/verifyWalletStore'
 import { useTheme } from '~/hooks/useTheme'
 import { useActiveToken } from '~/store/tokenDataStore'
 import {
@@ -139,9 +140,10 @@ const Notifications: React.FC = () => {
           await markAsRead(unreadIds)
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to fetch notifications:', err)
-      setError('Failed to load notifications')
+      const isAuth = err?.name === 'AuthError' || err?.message?.includes('401')
+      setError(isAuth ? 'auth' : 'Failed to load notifications')
     } finally {
       setLoading(false)
     }
@@ -372,7 +374,21 @@ const Notifications: React.FC = () => {
         </div>
       ) : error ? (
         <div className="text-center py-8">
-          <p className="text-red-500">{error}</p>
+          {error === 'auth' ? (
+            <>
+              <p className={`mb-3 ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
+                Sign in to view your notifications
+              </p>
+              <button
+                onClick={() => useVerifyWalletStore.getState().show()}
+                className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+              >
+                Verify Wallet
+              </button>
+            </>
+          ) : (
+            <p className="text-red-500">{error}</p>
+          )}
         </div>
       ) : notifications.length === 0 ? (
         <div className="text-center py-12">
