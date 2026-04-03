@@ -52,6 +52,13 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields: data and signature' })
     }
 
+    // Limit payload size — on-chain images use a separate flow (OnChainImage model),
+    // so action text shouldn't need more than ~100KB (base64 image + metadata overhead)
+    const bodySize = JSON.stringify(req.body).length
+    if (bodySize > 100 * 1024) {
+      return res.status(413).json({ error: 'Payload too large (max 100KB)' })
+    }
+
     // Validate and sanitize amounts field
     if (data.amounts && Array.isArray(data.amounts)) {
       data.amounts = data.amounts.map((amt: any) => {

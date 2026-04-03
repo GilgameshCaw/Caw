@@ -11,7 +11,7 @@ const router = Router()
  * GET /api/notifications
  * Get notifications for the authenticated user
  */
-router.get('/', async (req, res) => {
+router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) || undefined }), async (req, res) => {
   try {
     const { userId, type, limit = 50, offset = 0, unreadOnly = false } = req.query
 
@@ -153,7 +153,7 @@ router.get('/', async (req, res) => {
  * GET /api/notifications/unread-count
  * Get unread notification count for a user
  */
-router.get('/unread-count', async (req, res) => {
+router.get('/unread-count', requireAuth({ lookup: async (req) => Number(req.query.userId) || undefined }), async (req, res) => {
   try {
     const { userId } = req.query
 

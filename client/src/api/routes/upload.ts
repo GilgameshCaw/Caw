@@ -195,7 +195,7 @@ router.post('/encrypted', requireAuth({ lookup: async (req) => {
  * Legacy endpoint: Upload single base64 image
  * Kept for backward compatibility
  */
-router.post('/image', async (req, res) => {
+router.post('/image', requireAuth({ field: 'tokenId' }), async (req, res) => {
   try {
     const { image, tokenId } = req.body
 
@@ -246,7 +246,7 @@ router.post('/image', async (req, res) => {
  * Legacy endpoint: Upload multiple base64 images
  * Kept for backward compatibility
  */
-router.post('/images', async (req, res) => {
+router.post('/images', requireAuth({ field: 'tokenId' }), async (req, res) => {
   try {
     const { images, tokenId } = req.body
 

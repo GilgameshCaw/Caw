@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { elasticsearchService } from '../../services/ElasticsearchService'
 import { getBlockedUserIds } from '../shared/blockUtils'
+import { requireAdmin } from '../middleware/auth'
 
 const router = Router()
 
@@ -460,7 +461,7 @@ router.get('/trending', async (req, res) => {
  * POST /api/search/sync
  * Trigger a full sync of data to Elasticsearch
  */
-router.post('/sync', async (req, res) => {
+router.post('/sync', requireAdmin, async (req, res) => {
   try {
     if (!elasticsearchService.isAvailable()) {
       return res.status(503).json({ error: 'Elasticsearch is not available' })

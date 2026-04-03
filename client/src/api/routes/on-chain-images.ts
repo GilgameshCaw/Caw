@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { CawStatus } from '@prisma/client'
-import { requireAuth } from '../middleware/auth'
+import { requireAuth, requireAdmin } from '../middleware/auth'
 
 const router = Router()
 
@@ -197,7 +197,7 @@ router.get('/ref/:ref', async (req, res) => {
  * Note: ValidatorService updates status directly via Prisma, not through this endpoint.
  * Kept for admin debugging purposes only.
  */
-router.patch('/:id/status', async (req, res) => {
+router.patch('/:id/status', requireAdmin, async (req, res) => {
   try {
     const id = Number(req.params.id)
     const { status, reason } = req.body

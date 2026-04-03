@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { getCawPriceCache, getEthPriceCache } from '../../services/ChainSyncService'
 import { prisma } from '../../prismaClient'
+import { requireAdmin } from '../middleware/auth'
 
 const router = Router()
 
@@ -110,7 +111,7 @@ router.get('/history', async (req, res) => {
  * Prune old price snapshots to save disk space.
  * Keeps 5-min granularity for 7 days, then thins to ~1 per hour.
  */
-router.delete('/history/cleanup', async (_req, res) => {
+router.delete('/history/cleanup', requireAdmin, async (_req, res) => {
   try {
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
 
