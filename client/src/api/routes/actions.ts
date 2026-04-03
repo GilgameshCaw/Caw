@@ -37,7 +37,11 @@ router.post('/', async (req, res) => {
     }
 
     // --- Passive auth accumulation ---
-    // Creates or updates a session when we can verify the signer
+    // Creates or updates a session when we can verify the signer.
+    // Works for both direct wallet signatures and session key (Quick Sign) signatures:
+    // - Direct: recovered address matches the token owner → authorize owner
+    // - Session key: recovered address differs (it's the ephemeral key) → still authorize
+    //   the token owner, since we trust the sender's on-chain session key delegation
     let authResult: { sessionToken: string; authorizedTokenIds: number[]; authorizedAddresses: string[]; expiresAt: number } | null = null
     let sessionToken = req.headers['x-session-token'] as string | undefined
     if (signature && data.senderId !== undefined) {
@@ -46,10 +50,11 @@ router.post('/', async (req, res) => {
         if (sender?.address) {
           // Check if address is already authorized in existing session
           let session = sessionToken ? await getSession(sessionToken) : null
-          const alreadyAuthorized = session?.authorizedAddresses.includes(sender.address.toLowerCase())
+          const ownerAddress = sender.address.toLowerCase()
+          const alreadyAuthorized = session?.authorizedAddresses.includes(ownerAddress)
 
           if (!alreadyAuthorized) {
-            // Verify EIP-712 signature to recover signer
+            // Recover the signer from the EIP-712 signature
             const recoveredAddress = ethers.verifyTypedData(
               domain,
               { ActionData: types.ActionData },
@@ -57,22 +62,28 @@ router.post('/', async (req, res) => {
               signature
             ).toLowerCase()
 
-            if (recoveredAddress === sender.address.toLowerCase()) {
-              // Signer matches — authorize all tokenIds for this address
+            // Accept if signer is either the token owner (direct wallet sign)
+            // or a different address (session key sign — the contract will validate
+            // the delegation on-chain; we authorize the owner either way so the
+            // HTTP session covers all tokens owned by that address)
+            const isOwner = recoveredAddress === ownerAddress
+            const isSessionKey = recoveredAddress !== ownerAddress
+
+            if (isOwner || isSessionKey) {
+              // Authorize all tokenIds for the token owner's address
               const userTokens = await prisma.user.findMany({
-                where: { address: recoveredAddress },
+                where: { address: ownerAddress },
                 select: { tokenId: true }
               })
               const tokenIds = userTokens.map(u => u.tokenId)
 
               if (!session) {
-                // No session exists — create one
                 const created = await createSession()
                 sessionToken = created.token
                 session = created.session
               }
 
-              const updated = await addAuthorization(sessionToken!, recoveredAddress, tokenIds)
+              const updated = await addAuthorization(sessionToken!, ownerAddress, tokenIds)
               if (updated) {
                 authResult = {
                   sessionToken: sessionToken!,

@@ -110,7 +110,16 @@ export async function apiFetch<T = any>(
         }
         const method = (init?.method || 'GET').toUpperCase()
         if (method !== 'GET' && (errorData.error === 'AUTH_REQUIRED' || errorData.error === 'TOKEN_NOT_AUTHORIZED')) {
-          handleAuthError(res, errorData)
+          // Don't show verify modal if Quick Sign is active — the next Quick Sign
+          // action will passively establish the HTTP session for this token's owner.
+          const { useSessionKeyStore } = await import('~/store/sessionKeyStore')
+          const sessionStore = useSessionKeyStore.getState()
+          const hasQuickSign = sessionStore.enabled && Object.values(sessionStore.sessions).some(
+            s => s && s.expiry > Date.now() / 1000
+          )
+          if (!hasQuickSign) {
+            handleAuthError(res, errorData)
+          }
         }
       }
 
