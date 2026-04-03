@@ -1202,13 +1202,16 @@ console.log("succeededKeys", succeededKeys)
               const subQuote = await recalculateQuoteForActions(succeededData)
               const gasLimit = await estimateGasLimit(validatorId, succeededData, subQuote)
 
+              // Capture wait time before submission (not after confirmation)
+              const subPreSubmitTime = Date.now()
+              const subAvgWait = succeededSubEntries.reduce((s, e) => s + (subPreSubmitTime - new Date(e.createdAt).getTime()), 0) / succeededSubEntries.length
+
               const { processed: finalized, receipt: subReceipt } = await submitProcessActions(validatorId, succeededData, subQuote, gasLimit)
               console.log(`[Validator] Client ${clientId}: ${finalized.length} actions finalized`)
 
               // Record analytics
               if (subReceipt) {
                 const subTipCaw = computeTotalTip(succeededSubEntries)
-                const subAvgWait = succeededSubEntries.reduce((s, e) => s + (Date.now() - new Date(e.createdAt).getTime()), 0) / succeededSubEntries.length
                 try {
                   const subFee = subReceipt.fee ?? (subReceipt.gasUsed * (subReceipt.gasPrice ?? 0n))
                   await prisma.validatorTx.create({ data: {
@@ -1557,6 +1560,9 @@ console.log("succeededKeys", succeededKeys)
 
       try {
         console.log("[Validator] ========== SUBMITTING TRANSACTION TO BLOCKCHAIN ==========")
+        // Capture wait time before submission (not after confirmation, which adds block time)
+        const preSubmitTime = Date.now()
+        const avgWait = succeededEntries.reduce((s: number, e: any) => s + (preSubmitTime - new Date(e.createdAt).getTime()), 0) / succeededEntries.length
         const submitResult = await submitProcessActions(
            validatorId, multiSucceeded, succeededQuote, rawGasLimit
          )
@@ -1570,7 +1576,6 @@ console.log("succeededKeys", succeededKeys)
 
         // Record analytics
         if (txReceipt) {
-          const avgWait = succeededEntries.reduce((s: number, e: any) => s + (Date.now() - new Date(e.createdAt).getTime()), 0) / succeededEntries.length
           try {
             const txFee = txReceipt.fee ?? (txReceipt.gasUsed * (txReceipt.gasPrice ?? 0n))
             await prisma.validatorTx.create({ data: {
@@ -2061,16 +2066,29 @@ console.log("succeededKeys", succeededKeys)
       console.log(`  - Replication Interval: ${liveSettings.replicationInterval}ms`);
       console.log(`  - Wallet Address: ${wallet.address}`);
 
-      timer = setInterval(() => safePollLoop(), liveSettings.checkInterval)
+      // Use setTimeout chains instead of setInterval so updated settings take effect immediately
+      function schedulePoll() {
+        timer = setTimeout(async () => {
+          await safePollLoop()
+          schedulePoll()
+        }, liveSettings.checkInterval)
+      }
+      function scheduleReplication() {
+        replicationTimer = setTimeout(async () => {
+          await safeReplicationLoop()
+          scheduleReplication()
+        }, liveSettings.replicationInterval)
+      }
       safePollLoop()
-      replicationTimer = setInterval(() => safeReplicationLoop(), liveSettings.replicationInterval)
+      schedulePoll()
+      scheduleReplication()
     })
 
     return {
       started: Promise.resolve(),
       async stop() {
-        clearInterval(timer)
-        clearInterval(replicationTimer)
+        clearTimeout(timer)
+        clearTimeout(replicationTimer)
         // No need to remove handler since it's managed globally
         if (provider) {
           try {
