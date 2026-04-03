@@ -7,7 +7,7 @@ const redis = new Redis({
 })
 
 const KEY_PREFIX = 'caw:session:'
-const SESSION_TTL = 90 * 24 * 60 * 60 // 90 days in seconds
+const SESSION_TTL = 365 * 24 * 60 * 60 // 1 year in seconds
 
 export interface SessionData {
   authorizedTokenIds: number[]
