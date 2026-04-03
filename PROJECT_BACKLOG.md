@@ -55,6 +55,46 @@ This document tracks outstanding TODOs, security considerations, and planned fea
   - **Considerations**: `msg.value` = CAW cost + LZ fee; if LZ part fails, mint still succeeds (user retries auth only)
   - **Status**: Not started
 
+### Marketplace
+
+- [ ] **Buy Offers (OTC offer system)** (CawNameMarketplace.sol)
+  - **Goal**: Allow anyone to make a buy offer on any username, even if it's not listed
+  - **Contract changes**:
+    - New `Offer` struct: `{ offerer, tokenId, paymentToken, amount, expiry, active }`
+    - `createOffer(tokenId, paymentToken, amount, expiry)` — buyer escrows funds in contract
+    - `acceptOffer(offerId)` — seller accepts, NFT transfers to buyer, funds to seller (one click)
+    - `cancelOffer(offerId)` — buyer withdraws their escrowed funds before acceptance
+    - `offers[]` mapping and `offersByTokenId[]` for lookup
+    - Offers auto-expire after `expiry` timestamp; buyer can reclaim after expiry
+    - Multiple offers can exist on the same tokenId (from different buyers or different amounts)
+  - **Frontend**:
+    - "Make Offer" button on any user profile page
+    - Modal: choose currency, amount, expiry duration (1d, 3d, 7d, 30d)
+    - Notification to the profile owner when they receive an offer
+    - "Pending Offers" section on the marketplace "My Profiles" tab
+    - One-click accept with approval check
+    - Buyer can view and cancel their pending offers
+  - **Indexer**: Index `OfferCreated`, `OfferAccepted`, `OfferCancelled` events
+  - **API**: New endpoints for offers (list by tokenId, by buyer, by seller)
+  - **Considerations**:
+    - Offers are fully escrowed (funds held in contract) so acceptance is guaranteed
+    - Seller must still own the NFT at acceptance time (check in `acceptOffer`)
+    - If seller has an active listing, they should be able to accept an offer (cancels the listing)
+    - 0% fee, consistent with marketplace philosophy
+  - **Status**: Not started
+
+- [ ] **English auction safety: reclaimBid for transferred NFTs** (CawNameMarketplace.sol)
+  - **Problem**: If seller transfers their NFT while an English auction has bids, `settleAuction` reverts because `safeTransferFrom(seller, ...)` fails. The highest bidder's escrowed funds are stuck.
+  - **Solution**: Add `reclaimBid(listingId)` function
+    - Callable by the highest bidder (or anyone)
+    - Checks: listing is active, auction ended, seller no longer owns the tokenId
+    - Refunds the highest bidder's escrowed funds
+    - Marks listing as cancelled
+    - Also refund any outbid bidders via existing `pendingReturns` pattern
+  - **Design choice**: Seller keeps their NFT until settlement — better UX than locking NFT in escrow at listing time. The `reclaimBid` is a safety valve for the edge case where seller transfers away.
+  - **Frontend**: Show "Reclaim Bid" button if auction ended and seller no longer owns NFT
+  - **Status**: Not started — requires contract redeploy
+
 ### Refactoring
 
 - [ ] **Unused mintSelector** (CawName.sol:41)
@@ -182,36 +222,67 @@ This document tracks outstanding TODOs, security considerations, and planned fea
   - Many contract addresses marked as TBD in documentation
   - Update after deployment
 
-### Client Deployment CLI
+### Client Deployment CLI (`cli/`)
 
-- [ ] **Create CLI tool for easy client deployment**
-  - **Goal**: Enable anyone to deploy their own CAW client with a simple CLI wizard
-  - **Features**:
-    - Interactive setup wizard (prompts for configuration)
-    - Choose fee structure (deposit fees, withdrawal fees, action fees)
-    - Choose replication chains (which archive chains to replicate to)
-    - Choose validator tip amounts
-    - Deploy smart contracts to chosen networks
-    - Generate environment configuration files
-    - Set up database schema
-    - Configure and start backend services
-  - **Configuration options**:
-    - Client name and branding
-    - Fee percentages and recipient addresses
-    - Supported networks (L1, L2, archive chains)
-    - Replication settings (which chains, gas limits)
-    - Validator settings (tips, batching thresholds)
-    - Frontend customization (colors, logo, domain)
-  - **Output**:
-    - Deployed contract addresses
-    - Ready-to-run Docker compose or deployment scripts
-    - Admin dashboard for managing client settings
-  - **Benefits**:
-    - Lower barrier to entry for new clients
-    - Standardized deployment process
-    - Reduced deployment errors
-    - Easy upgrades and migrations
-  - **Status**: Not started
+One-liner install: `curl -fsSL https://raw.githubusercontent.com/.../install.sh | bash`
+
+#### Phase 1 — Interactive installer & process management (IN PROGRESS)
+
+- [ ] **Node type selection** — user picks what they want to run:
+  - **Full node** (validator + API + frontend): earns tips, serves users, max decentralization. Needs validator PEM, client ID, RPC URLs, domain, PostgreSQL, Redis.
+  - **Validator only**: earns tips but lower priority (not discoverable as a client). Needs validator PEM, RPC URLs. Minimal infra (no domain, smaller DB).
+  - **Frontend + API** (no validator): serves users, reads chain, delegates action submission to external validators. Needs client ID, RPC URLs, domain, DB.
+  - **Frontend only** (static site): just the React app pointed at an external API. No backend, no DB. Cheapest option.
+  - **API only** (headless): serves data to other frontends. No validator, no public UI.
+- [ ] **Guided config collection** — colored prompts for:
+  - L1/L2 RPC URLs (with provider suggestions: Infura, Alchemy, public RPCs)
+  - Validator private key (import PEM or generate new one)
+  - Validator profile tokenId (enter username, CLI looks up tokenId)
+  - Client ID (enter existing or explain how to register one)
+  - Domain name and SSL (for API/frontend nodes)
+  - Admin password
+  - Validator tip amount (with explanation of economics)
+  - API URL (if using external API instead of running own)
+  - Database connection (PostgreSQL — Docker or existing)
+  - Redis connection (Docker or existing)
+- [ ] **Dependency installation** — based on node type:
+  - Node.js 22, PostgreSQL, Redis (or Docker equivalents)
+  - `npm install` / `yarn install`
+  - Prisma schema push
+- [ ] **Config generation** — produces `client/config.json` and `client/.env`
+- [ ] **Process management** — pm2 for:
+  - Start/stop/restart services
+  - Auto-restart on crash
+  - Log management
+  - Startup on boot (`pm2 startup`)
+- [ ] **Docker support** (optional) — `docker-compose.yml` generation for PostgreSQL + Redis + app
+- [ ] **Pros/cons guidance** — at each decision point, explain tradeoffs:
+  - Running a validator: earn tips, help process transactions, need ETH for gas
+  - Running a frontend: help decentralize access, attract users
+  - Replication chains: permanence vs gas costs
+  - Tip amounts: higher tips = faster processing, but cost more per action
+
+#### Phase 2 — On-chain operations
+
+- [ ] **Mint username** — if user doesn't have a CawName, walk them through minting (requires ETH + CAW on L1)
+- [ ] **Register client** — submit `registerClient` transaction on-chain using the validator PEM
+- [ ] **Check balances** — verify validator wallet has enough ETH for gas
+- [ ] **Buy CAW** — Uniswap integration to swap ETH for CAW (if needed for staking/minting)
+- [ ] **Authenticate** — submit L1→L2 authentication via LayerZero
+- [ ] **Register session key** — create and register a session key for the validator
+
+#### Phase 3 — Management & operations
+
+- [ ] **`caw status`** — show running services, uptime, pending txQueue count, validator earnings
+- [ ] **`caw restart`** — restart all or specific services
+- [ ] **`caw update`** — pull latest from GitHub, rebuild, restart
+- [ ] **`caw config`** — edit configuration interactively
+- [ ] **`caw logs`** — tail logs for specific services
+- [ ] **`caw domain`** — change domain, regenerate SSL
+- [ ] **`caw api-priority`** — manage API endpoint discovery priority
+- [ ] **`caw api-blacklist`** — block specific API endpoints
+- [ ] **`caw uninstall`** — clean removal of all CAW components
+- [ ] **`caw analytics`** — validator profitability, action throughput, gas costs
 
 ## Testing
 
