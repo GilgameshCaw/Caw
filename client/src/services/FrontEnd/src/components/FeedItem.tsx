@@ -38,6 +38,7 @@ import ContentWithHashtags from './ContentWithHashtags'
 import { formatEngagementCount } from '~/utils/numberFormat'
 import { apiFetch } from '~/api/client'
 import MuteWordsModal from './modals/MuteWordsModal'
+import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import Tooltip from '~/components/Tooltip'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import MuteConfirmModal, { shouldShowMuteConfirmModal } from './modals/MuteConfirmModal'
@@ -369,8 +370,21 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       console.log('[FeedItem] Retry result:', result)
 
       if (result) {
+        // Add a pending post to the feed so the user sees it immediately
+        const { addPendingPost, updatePostWithTxQueueId } = usePendingPostsStore.getState()
+        const tempId = addPendingPost({
+          content: useItem.content || '',
+          username: item.user?.username || '',
+          tokenId: effectiveTokenId,
+          displayName: item.user?.displayName,
+          image: item.user?.image,
+          avatarUrl: item.user?.avatarUrl,
+        })
+        if (result.txQueueId) {
+          updatePostWithTxQueueId(tempId, result.txQueueId)
+        }
+
         // Hide this failed caw — the retry created a new pending caw
-        // The old FAILED caw is also deleted server-side
         setRetrySucceeded(true)
       }
     } catch (error) {
