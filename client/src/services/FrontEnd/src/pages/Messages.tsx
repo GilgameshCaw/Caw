@@ -917,7 +917,7 @@ const MessagesPage: React.FC = () => {
                 {!address
                   ? 'Connect your wallet to get started.'
                   : isWrongWallet
-                  ? <>This profile is owned by <span className="font-mono text-xs">{tokenOwner?.slice(0, 6)}...{tokenOwner?.slice(-4)}</span>. Please switch to that wallet.</>
+                  ? `Please switch wallets to the owner of @${activeToken?.username || 'this profile'}.`
                   : 'Sign a free message to verify you own this wallet.'}
               </p>
               {verifyError && (
@@ -927,15 +927,11 @@ const MessagesPage: React.FC = () => {
               )}
               {!address ? (
                 <ConnectButton />
-              ) : isWrongWallet ? (
-                <p className={`text-sm ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-                  Connected: <span className="font-mono">{connectedAddress?.slice(0, 6)}...{connectedAddress?.slice(-4)}</span>
-                </p>
               ) : (
                 <button
                   onClick={() => verify()}
-                  disabled={isVerifying}
-                  className={`px-6 py-3 rounded-full font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-all duration-300 cursor-pointer ${isVerifying ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  disabled={isVerifying || isWrongWallet}
+                  className={`px-6 py-3 rounded-full font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-all duration-300 cursor-pointer ${isVerifying || isWrongWallet ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
                   {isVerifying ? 'Signing...' : 'Sign to Log In'}
                 </button>
