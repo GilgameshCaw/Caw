@@ -1,11 +1,44 @@
 import { Router } from 'express'
-import { ethers } from 'ethers'
+import { ethers, JsonRpcProvider, WebSocketProvider, Contract } from 'ethers'
 import { prisma } from '../../prismaClient'
 import { CawStatus } from '@prisma/client'
 import { findOrCreateUser } from '../../services/UserService'
 import { getSession, addAuthorization, createSession } from '../sessionStore'
+import { cawNameL2Abi } from '../../abi/generated'
+import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 
 const router = Router()
+
+// Lazy-initialized read-only provider for on-chain session key verification
+let _readProvider: JsonRpcProvider | WebSocketProvider | null = null
+let _readContract: Contract | null = null
+
+function getReadContract(): Contract {
+  if (_readContract) return _readContract
+  const rpcUrl = process.env.L2_RPC_URL_HTTP || process.env.L2_RPC_URL
+  if (!rpcUrl) throw new Error('L2 RPC not configured')
+  _readProvider = rpcUrl.startsWith('wss://') || rpcUrl.startsWith('ws://')
+    ? new WebSocketProvider(rpcUrl)
+    : new JsonRpcProvider(rpcUrl)
+  _readContract = new Contract(CAW_NAMES_L2_ADDRESS, cawNameL2Abi as any, _readProvider)
+  return _readContract
+}
+
+/**
+ * Verify on-chain that a session key is delegated by an owner and still active.
+ * Calls the CawNameL2.sessions(owner, sessionKey) view function (free, no gas).
+ */
+async function verifySessionKeyOnChain(ownerAddress: string, sessionKeyAddress: string): Promise<boolean> {
+  try {
+    const contract = getReadContract()
+    const session = await contract.sessions(ownerAddress, sessionKeyAddress)
+    const expiry = Number(session.expiry)
+    return expiry > Math.floor(Date.now() / 1000)
+  } catch (err) {
+    console.warn('[Actions] On-chain session key verification failed:', err)
+    return false
+  }
+}
 
 /**
  * natstat: enqueue signed actions into TxQueue
@@ -62,14 +95,13 @@ router.post('/', async (req, res) => {
               signature
             ).toLowerCase()
 
-            // Accept if signer is either the token owner (direct wallet sign)
-            // or a different address (session key sign — the contract will validate
-            // the delegation on-chain; we authorize the owner either way so the
-            // HTTP session covers all tokens owned by that address)
+            // Accept if signer is the token owner (direct wallet sign),
+            // or if signer is a session key verified on-chain as delegated by the owner
             const isOwner = recoveredAddress === ownerAddress
-            const isSessionKey = recoveredAddress !== ownerAddress
+            const isVerifiedSessionKey = !isOwner &&
+              await verifySessionKeyOnChain(ownerAddress, recoveredAddress)
 
-            if (isOwner || isSessionKey) {
+            if (isOwner || isVerifiedSessionKey) {
               // Authorize all tokenIds for the token owner's address
               const userTokens = await prisma.user.findMany({
                 where: { address: ownerAddress },
