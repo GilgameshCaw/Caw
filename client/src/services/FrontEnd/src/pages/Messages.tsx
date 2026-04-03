@@ -1006,8 +1006,8 @@ const MessagesPage: React.FC = () => {
 
         {/* Key derivation banner — DMs enabled but keys not in memory */}
         {currentView === 'inbox' && needsKeyDerivation && !identityLoading && (
-          <div className={`mb-3 p-3 rounded-lg border flex items-center justify-between ${
-            isDark ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-yellow-50 border-yellow-200'
+          <div className={`-mx-3 sm:-mx-6 px-4 sm:px-6 py-3 flex items-center justify-between ${
+            isDark ? 'bg-yellow-500/10 border-b border-yellow-500/30' : 'bg-yellow-50 border-b border-yellow-200'
           }`}>
             <p className={`text-sm ${isDark ? 'text-yellow-200' : 'text-yellow-800'}`}>
               {!address ? 'Connect your wallet to read messages' : 'Sign to unlock your encrypted messages'}
@@ -1136,7 +1136,7 @@ const MessagesPage: React.FC = () => {
         {currentView === 'chat' && selectedConversationId && (
           <div className="flex flex-col flex-1 md:flex-1 h-screen md:h-auto">
             {/* Encryption Status Banner */}
-            <div className={`flex items-center justify-center py-2 px-4 ${
+            <div className={`flex items-center justify-center py-2 px-6 -mx-3 sm:-mx-6 ${
               isDark ? 'bg-green-900/20 border-b border-green-800/30' : 'bg-green-50 border-b border-green-200'
             }`}>
               <div className="flex items-center space-x-2">
