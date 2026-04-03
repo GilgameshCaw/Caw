@@ -100,6 +100,11 @@ const MessagesPage: React.FC = () => {
 
   // Get wallet address from wagmi
   const { address } = useAccount()
+
+  // Detect wallet mismatch: connected wallet differs from token owner
+  const tokenOwner = activeToken?.owner?.toLowerCase()
+  const connectedAddress = address?.toLowerCase()
+  const isWrongWallet = !!connectedAddress && !!tokenOwner && connectedAddress !== tokenOwner
   const { openConnectModal } = useConnectModal()
 
   // Get URL parameters
@@ -906,10 +911,14 @@ const MessagesPage: React.FC = () => {
                 <div className="w-11 h-11" style={{ backgroundColor: '#eab308', maskImage: 'url(/icons/crow-2.svg)', maskSize: 'contain', maskRepeat: 'no-repeat', maskPosition: 'center', WebkitMaskImage: 'url(/icons/crow-2.svg)', WebkitMaskSize: 'contain', WebkitMaskRepeat: 'no-repeat', WebkitMaskPosition: 'center' }} />
               </div>
               <h2 className={`text-xl font-bold mb-3 ${isDark ? 'text-white' : 'text-black'}`}>
-                Log In to Access Messages
+                {isWrongWallet ? 'Wrong Wallet Connected' : 'Log In to Access Messages'}
               </h2>
               <p className={`mb-6 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                {!address ? 'Connect your wallet to get started.' : 'Sign a free message to verify you own this wallet.'}
+                {!address
+                  ? 'Connect your wallet to get started.'
+                  : isWrongWallet
+                  ? <>This profile is owned by <span className="font-mono text-xs">{tokenOwner?.slice(0, 6)}...{tokenOwner?.slice(-4)}</span>. Please switch to that wallet.</>
+                  : 'Sign a free message to verify you own this wallet.'}
               </p>
               {verifyError && (
                 <div className="mb-4 p-3 rounded-lg bg-red-500/20 border border-red-500">
@@ -918,6 +927,10 @@ const MessagesPage: React.FC = () => {
               )}
               {!address ? (
                 <ConnectButton />
+              ) : isWrongWallet ? (
+                <p className={`text-sm ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+                  Connected: <span className="font-mono">{connectedAddress?.slice(0, 6)}...{connectedAddress?.slice(-4)}</span>
+                </p>
               ) : (
                 <button
                   onClick={() => verify()}
