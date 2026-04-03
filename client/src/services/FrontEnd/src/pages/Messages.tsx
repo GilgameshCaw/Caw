@@ -1842,7 +1842,7 @@ const MessagesPage: React.FC = () => {
                             <img
                               src={user.avatarUrl || '/images/logo.jpeg'}
                               alt={user.username}
-                              className="w-10 h-10 rounded-full"
+                              className="w-10 h-10 rounded-full object-cover"
                             />
                             <div className="flex-1 text-left">
                               <div className="font-semibold">{user.displayName || user.username}</div>
@@ -1884,7 +1884,7 @@ const MessagesPage: React.FC = () => {
                             <img
                               src={user.avatarUrl || '/images/logo.jpeg'}
                               alt={user.username}
-                              className="w-10 h-10 rounded-full"
+                              className="w-10 h-10 rounded-full object-cover"
                             />
                             <div className="flex-1 text-left">
                               <div className="font-semibold">{user.displayName || user.username}</div>
@@ -1914,7 +1914,7 @@ const MessagesPage: React.FC = () => {
                     <img
                       src={selectedUser?.avatar || '/images/logo.jpeg'}
                       alt={selectedUser?.name}
-                      className="w-10 h-10 rounded-full"
+                      className="w-10 h-10 rounded-full object-cover"
                     />
                     <div>
                       <div className={`font-semibold ${isDark ? 'text-white' : 'text-black'}`}>
@@ -2062,7 +2062,7 @@ const MessagesPage: React.FC = () => {
                   <img
                     src={dmPrivacyError.peer.avatarUrl || dmPrivacyError.peer.image || '/images/logo.jpeg'}
                     alt={dmPrivacyError.peer.username}
-                    className="w-10 h-10 rounded-full"
+                    className="w-10 h-10 rounded-full object-cover"
                   />
                   <div>
                     <p className={`font-medium text-sm ${isDark ? 'text-white' : 'text-gray-900'}`}>
