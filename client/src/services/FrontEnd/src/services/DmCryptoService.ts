@@ -72,10 +72,9 @@ export async function deriveKeyPair(
     return { privateKey: cachedPrivateKey!, publicKeyHex: cachedPublicKey! }
   }
 
-  // Use username-based message for new users, falls back to tokenId for compatibility
-  const message = username
-    ? `CAW Protocol\nEnable DMs\n@${username}`
-    : `CAW Protocol DM Key\nUser: ${tokenId}`
+  // Always use username-based message (testnet — no legacy compatibility needed)
+  if (!username) throw new Error('Username is required for DM key derivation')
+  const message = `CAW Protocol\nEnable DMs\n@${username}`
   const signature = await signMessage(message)
 
   // SHA-256 of the signature → 32-byte private key

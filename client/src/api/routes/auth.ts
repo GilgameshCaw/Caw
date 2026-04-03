@@ -9,7 +9,6 @@ import dmService from '../../services/DmService'
 const router = Router()
 
 const MESSAGE_PREFIX = 'Verify wallet ownership for CAW\nTimestamp: '
-const DM_MESSAGE_LEGACY_PREFIX = 'CAW Protocol DM Key\nUser: '
 const DM_MESSAGE_PREFIX = 'CAW Protocol\nEnable DMs\n@'
 const MAX_MESSAGE_AGE_MS = 5 * 60 * 1000 // 5 minutes
 
@@ -121,11 +120,9 @@ router.post('/verify-dm', async (req, res) => {
       return
     }
 
-    // Accept the message from the client, but validate it matches an expected format
-    // New format: "CAW Protocol\nEnable DMs\n@username"
-    // Legacy format: "CAW Protocol DM Key\nUser: {tokenId}"
-    const message = clientMessage || (DM_MESSAGE_LEGACY_PREFIX + tokenId)
-    if (!message.startsWith(DM_MESSAGE_PREFIX) && !message.startsWith(DM_MESSAGE_LEGACY_PREFIX)) {
+    // Validate message format: "CAW Protocol\nEnable DMs\n@username"
+    const message = clientMessage
+    if (!message || !message.startsWith(DM_MESSAGE_PREFIX)) {
       res.status(400).json({ error: 'Invalid message format' })
       return
     }

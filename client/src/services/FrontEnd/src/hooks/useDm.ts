@@ -275,10 +275,8 @@ export function useDmClient(tokenId?: number, username?: string) {
         return sig
       }
 
-      // Use username for new users (nicer wallet prompt), tokenId for existing (backwards compat)
-      const useUsername = !needsKeyDerivation && username
       const { privateKey, publicKeyHex, rawSignature, sigMessage } = await deriveKeyPair(
-        signMessage, tokenId, useUsername ? username : undefined
+        signMessage, tokenId, username
       )
       privateKeyRef = privateKey
       console.log('[DM] Key pair derived, needsKeyDerivation:', needsKeyDerivation)
