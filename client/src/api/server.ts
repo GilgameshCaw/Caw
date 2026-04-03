@@ -127,24 +127,25 @@ function createApp() {
     message: { error: 'Too many uploads, try again later' }
   }))
 
-  // Short URL: 10/day unauthenticated
-  app.use('/api/shorturl', rateLimit({
+  // Short URL creation: 10/day unauthenticated (POST only — GET metadata reads are unlimited)
+  const shorturlCreateLimiter = rateLimit({
     windowMs: 24 * 60 * 60 * 1000,
     max: 10,
     skip: hasValidSession,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many short URL requests. Verify your wallet to increase your limit.' }
-  }))
-  // Short URL: 60/15min authenticated
-  app.use('/api/shorturl', rateLimit({
+  })
+  // Short URL creation: 60/15min authenticated
+  const shorturlCreateLimiterAuth = rateLimit({
     windowMs: 15 * 60 * 1000,
     max: 60,
     skip: async (req) => !(await hasValidSession(req)),
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many short URL requests, try again later' }
-  }))
+  })
+  app.post('/api/shorturl', shorturlCreateLimiter, shorturlCreateLimiterAuth)
 
   // Marketplace sold: rate limit to prevent spam (5 per minute per IP)
   app.use('/api/marketplace/listings', rateLimit({
