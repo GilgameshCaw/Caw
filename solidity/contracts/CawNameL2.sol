@@ -273,7 +273,7 @@ contract CawNameL2 is
   ///         Address-based: covers all tokens owned by the signer's wallet.
   /// @param sessionKey The ephemeral address that will sign actions
   /// @param expiry Unix timestamp after which the session is invalid
-  /// @param scopeBitmap Bitfield of allowed ActionTypes (bits 0-5 only; WITHDRAW and OTHER forbidden)
+  /// @param scopeBitmap Bitfield of allowed ActionTypes (bits 0-7; only WITHDRAW bit 6 is forbidden)
   /// @param spendLimit Max whole CAW tokens this session key can spend (0 = unlimited)
   function registerSession(
     address sessionKey,
@@ -284,7 +284,7 @@ contract CawNameL2 is
   ) external {
     require(sessionKey != address(0), "Zero session key");
     require(expiry > block.timestamp, "Already expired");
-    require((scopeBitmap & 0xC0) == 0, "Cannot delegate WITHDRAW or OTHER");
+    require((scopeBitmap & 0x40) == 0, "Cannot delegate WITHDRAW");
 
     bytes32 structHash = keccak256(abi.encode(
       DELEGATION_TYPEHASH,

@@ -207,7 +207,7 @@ export function useSignAndSubmitAction() {
       : sessionStore0.getActiveSession()
     const actionCode0 = ActionTypeMap[params.actionType]
     const canUseSession0 = activeSession0 &&
-      actionCode0 <= 5 &&
+      actionCode0 !== 6 && // exclude WITHDRAW
       (activeSession0.scopeBitmap & (1 << actionCode0)) !== 0
 
     if (!canUseSession0 && isConnected && activeToken?.owner && address) {
@@ -221,7 +221,7 @@ export function useSignAndSubmitAction() {
     // Tips (other=7) and withdrawals (6) always require wallet signing — don't prompt for those.
     const hasActiveSessions = Object.keys(sessionStore0.sessions).length > 0
     const suppressPrompt = sessionStore0.hasSeenPrompt && (sessionStore0.enabled || hasActiveSessions)
-    const actionEligibleForQuickSign = actionCode0 <= 5
+    const actionEligibleForQuickSign = actionCode0 !== 6 // everything except WITHDRAW
     if (!canUseSession0 && !suppressPrompt && actionEligibleForQuickSign) {
       const { useQuickSignPromptStore } = await import('~/components/modals/QuickSignModal')
       const promptStore = useQuickSignPromptStore.getState()
@@ -366,7 +366,7 @@ export function useSignAndSubmitAction() {
     }
 
     const canUseSession = activeSession &&
-      actionCode <= 5 &&
+      actionCode !== 6 && // exclude WITHDRAW
       (activeSession.scopeBitmap & (1 << actionCode)) !== 0
 
     // Fixed protocol costs per action type (whole CAW tokens) — must match CawActions.sol

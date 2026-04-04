@@ -178,9 +178,9 @@ router.post('/', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Session expiry too far in the future (max 30 days)' })
     }
 
-    // Reject forbidden scope bits server-side (WITHDRAW=0x40, OTHER=0x80)
-    if ((Number(scopeBitmap) & 0xC0) !== 0) {
-      return res.status(400).json({ error: 'Cannot delegate WITHDRAW or OTHER actions' })
+    // Reject forbidden scope bits server-side (WITHDRAW=0x40 only)
+    if ((Number(scopeBitmap) & 0x40) !== 0) {
+      return res.status(400).json({ error: 'Cannot delegate WITHDRAW actions' })
     }
 
     // Verify EIP-712 signature to recover signer address (fast, no RPC needed)

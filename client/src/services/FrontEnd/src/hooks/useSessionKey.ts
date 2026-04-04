@@ -19,7 +19,9 @@ export const SESSION_DURATION_OPTIONS = [
 ]
 
 // Default scope: CAW(0), LIKE(1), UNLIKE(2), RECAW(3), FOLLOW(4), UNFOLLOW(5)
-const DEFAULT_SCOPE = 0x3F // 0b00111111
+// Bits 0-5 (caw, like, unlike, recaw, follow, unfollow) + bit 7 (other: tips, profile updates, etc.)
+// Bit 6 (withdraw) is the only one excluded
+const DEFAULT_SCOPE = 0xBF // 0b10111111
 
 // Default spend limit: $5 worth of CAW at current price, with a generous fallback
 const DEFAULT_SPEND_USD = 5
