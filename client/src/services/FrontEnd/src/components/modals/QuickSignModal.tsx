@@ -61,7 +61,8 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
     try {
       setEnabled(true)
       await createSession((s) => setStatus(s), spendLimit, duration)
-      if (dontShowAgain) setHasSeenPrompt(true)
+      // Don't set hasSeenPrompt here — enabling Quick Sign is the "happy path".
+      // The prompt naturally won't show while Quick Sign is active.
       const cont = prompt.onContinue
       onClose()
       // Retry the action now that Quick Sign is enabled
@@ -76,6 +77,7 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
   }
 
   const handleSkip = () => {
+    // Only "don't show again" applies to manual signing — the user explicitly opts out
     if (dontShowAgain) setHasSeenPrompt(true)
     const cont = prompt.onContinue
     // Set skipOnce so the retry doesn't re-trigger the prompt

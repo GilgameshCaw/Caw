@@ -216,8 +216,12 @@ export function useSignAndSubmitAction() {
       }
     }
 
-    // Prompt to enable Quick Sign if it's not active and user hasn't dismissed the prompt
-    if (!canUseSession0 && !sessionStore0.hasSeenPrompt && !sessionStore0.enabled) {
+    // Prompt to enable Quick Sign if it's not active.
+    // hasSeenPrompt means the user checked "don't show again" — respect that only if
+    // they actually have Quick Sign enabled. If it's disabled with no sessions, prompt again.
+    const hasActiveSessions = Object.keys(sessionStore0.sessions).length > 0
+    const suppressPrompt = sessionStore0.hasSeenPrompt && (sessionStore0.enabled || hasActiveSessions)
+    if (!canUseSession0 && !suppressPrompt) {
       const { useQuickSignPromptStore } = await import('~/components/modals/QuickSignModal')
       const promptStore = useQuickSignPromptStore.getState()
       if (promptStore.skipOnce) {
