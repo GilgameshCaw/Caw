@@ -56,6 +56,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const [replyPending, setReplyPending] = useState(item.replyPending || false)
   const [tipPending, setTipPending] = useState(item.tipPending || false)
 
+  // Optimistic count adjustments (added when pending, removed on failure)
+  const [likeCountAdj, setLikeCountAdj] = useState(0)
+  const [recawCountAdj, setRecawCountAdj] = useState(0)
+  const [replyCountAdj, setReplyCountAdj] = useState(0)
+
   // Polling for pending items is handled centrally by Feed.tsx (unified polling interval).
   // No per-item polling hooks needed here — avoids 5 timers × N items = cascading jank.
 
@@ -184,19 +189,20 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     });
   }, [pendingLikeAction, isConnected, activeTokenId, activeToken, address, signAndSubmit, useItem.id])
 
-  // Sync local likePending state with item.likePending from polling
+  // Sync local pending states with item from polling — reset adjustments when server confirms
   useEffect(() => {
     setLikePending(item.likePending || false)
+    if (!item.likePending) setLikeCountAdj(0)
   }, [item.likePending])
 
-  // Sync local recawPending state with item.recawPending from polling
   useEffect(() => {
     setRecawPending(item.recawPending || false)
+    if (!item.recawPending) setRecawCountAdj(0)
   }, [item.recawPending])
 
-  // Sync local replyPending state with item.replyPending from polling
   useEffect(() => {
     setReplyPending(item.replyPending || false)
+    if (!item.replyPending) setReplyCountAdj(0)
   }, [item.replyPending])
 
   // Sync local tipPending state with item.tipPending from polling
@@ -293,16 +299,21 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       // null = insufficient stake (no retry) — just clear busy
       if (!response) return
 
-      // Action submitted — switch to pending state
-      if (!useItem.hasLiked) {
+      // Action submitted — switch to pending state and increment count optimistically
+      const isLiking = !useItem.hasLiked
+      if (isLiking) {
         tempLikeId = addOptimisticLike({ userId: effectiveTokenId, cawId: useItem.id })
         if (response?.txQueueId) updateLikeWithTxQueueId(tempLikeId, response.txQueueId)
+        setLikeCountAdj(1)
+      } else {
+        setLikeCountAdj(-1)
       }
       setLikePending(true)
       if (onLikeStateChange) onLikeStateChange(useItem.id, true)
     } catch (err) {
       console.error('Like failed', err)
       setLikePending(false)
+      setLikeCountAdj(0)
       if (tempLikeId) useOptimisticLikesStore.getState().removeOptimisticLike(tempLikeId)
       if (onLikeStateChange) onLikeStateChange(useItem.id, false)
     } finally {
@@ -419,16 +430,17 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       // signAndSubmit returns null if insufficient stake (modal shown automatically)
       if (!result) return
 
-      // Set pending state - will be cleared when the recaw caw is confirmed
+      // Set pending state and increment count optimistically
       setRecawPending(true)
+      setRecawCountAdj(1)
 
-      // Notify parent component about recaw state change
       if (onRecawStateChange) {
         onRecawStateChange(useItem.id, true)
       }
     } catch (err) {
       console.error('Recaw failed', err)
       setRecawPending(false)
+      setRecawCountAdj(0)
     } finally {
       setBusyRecaw(false)
     }
@@ -446,6 +458,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     // Open modal with onSuccess callback to set pending state
     openModal('comment', item, () => {
       setReplyPending(true)
+      setReplyCountAdj(1)
       if (onReplyStateChange) {
         onReplyStateChange(useItem.id, true)
       }
@@ -1030,7 +1043,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               >
                 <HiOutlineChat className="w-5 h-5" />
                 <span className={`text-sm ${(useItem.hasReplied || replyPending) ? 'text-blue-500' : ''}`}>
-                  {formatEngagementCount(useItem.commentCount)}
+                  {formatEngagementCount(useItem.commentCount + replyCountAdj)}
                 </span>
               </button></Tooltip>
 
@@ -1072,7 +1085,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   )}
                   <span className={`text-sm transition-colors duration-300 ${
                     (useItem.hasRecawed || isRecawByCurrentUser) ? 'text-green-500' : ''
-                  }`}>{formatEngagementCount(useItem.recawCount)}</span>
+                  }`}>{formatEngagementCount(useItem.recawCount + recawCountAdj)}</span>
                 </button></Tooltip>
 
                 {showRecawMenu && (
@@ -1137,7 +1150,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 ) : (
                   <HiOutlineHeart className={`w-5 h-5 ${(useItem.hasLiked || likePending || item.likePending) ? 'fill-current' : ''}`} />
                 )}
-                <span className="text-sm">{formatEngagementCount(useItem.likeCount)}</span>
+                <span className="text-sm">{formatEngagementCount(useItem.likeCount + likeCountAdj)}</span>
               </button></Tooltip>
 
               {/* Views */}
@@ -1185,7 +1198,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       : isDark ? 'text-gray-400' : 'text-gray-600'
                   }`}
                 >
-                  <HiOutlineCurrencyDollar className="w-5 h-5" />
+                  <HiOutlineCurrencyDollar className="w-5 h-5 mb-[5px]" />
                   {(useItem.tipCount ?? 0) > 0 && (
                     <span className="text-xs">{useItem.tipCount}</span>
                   )}
