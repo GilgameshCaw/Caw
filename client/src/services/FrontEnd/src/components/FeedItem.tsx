@@ -75,7 +75,6 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const navigate = useNavigate()
   const [busyLike, setBusyLike]     = useState(false)
   const [busyRecaw, setBusyRecaw]   = useState(false)
-  const [txSubmitted, setTxSubmitted] = useState(false) // Track if tx was submitted during this session only
   const [pendingLikeAction, setPendingLikeAction] = useState<{ receiverId: number, receiverCawonce: number, actionType: 'like' | 'unlike' } | null>(null) // Track pending like data
   const [wrongWalletError, setWrongWalletError] = useState(false) // Track if wrong wallet is connected
   const signAndSubmit     = useSignAndSubmitAction()
@@ -171,7 +170,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         updateLikeWithTxQueueId(tempLikeId, response.txQueueId);
       }
       setLikePending(true);
-      setTxSubmitted(true);
+
       // Notify parent component about like state change
       if (onLikeStateChange) {
         onLikeStateChange(useItem.id, true);
@@ -179,7 +178,6 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     }).catch(err => {
       console.error('Like failed', err);
       setLikePending(false);
-      setTxSubmitted(false);
     }).finally(() => {
       setBusyLike(false);
       isSubmittingLikeRef.current = false;
@@ -279,7 +277,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     }
 
     setBusyLike(true)
-    setTxSubmitted(false)
+
 
     let tempLikeId: string | undefined
     const addOptimisticLike = useOptimisticLikesStore.getState().addOptimisticLike
@@ -310,13 +308,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         if (response?.txQueueId) updateLikeWithTxQueueId(tempLikeId, response.txQueueId)
       }
       setLikePending(true)
-      setTxSubmitted(true)
       if (onLikeStateChange) onLikeStateChange(useItem.id, true)
     } catch (err) {
       console.error('Like failed', err)
       setBusyLike(false)
       setLikePending(false)
-      setTxSubmitted(false)
+  
       if (tempLikeId) useOptimisticLikesStore.getState().removeOptimisticLike(tempLikeId)
       if (onLikeStateChange) onLikeStateChange(useItem.id, false)
     }
@@ -1148,16 +1145,15 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 onClick={handleLike}
                 disabled={busyLike || likePending || item.status === 'PENDING' || item.status === 'FAILED'}
               >
-                {(busyLike && !txSubmitted) ? (
-                  // Just spinner while signing/submitting transaction
-                  <div className="w-5 h-5 border-2 border-gray-400 border-t-red-500 rounded-full animate-spin"></div>
-                ) : (likePending || item.likePending) ? (
-                  // Spinner with checkmark after transaction is submitted (or if pending from DB)
+                {(likePending || item.likePending) ? (
+                  // Spinner with checkmark — transaction submitted, processing on-chain
                   <div className="relative w-5 h-5 group">
                     <div className="w-5 h-5 border-2 border-gray-400 border-t-red-500 rounded-full animate-spin"></div>
                     <HiOutlineCheck className="absolute inset-0 w-3 h-3 m-auto text-red-500" />
-                    {/* Tooltip */}
                   </div>
+                ) : busyLike ? (
+                  // Just spinner while signing/submitting
+                  <div className="w-5 h-5 border-2 border-gray-400 border-t-red-500 rounded-full animate-spin"></div>
                 ) : (
                   <HiOutlineHeart className={`w-5 h-5 ${useItem.hasLiked ? 'fill-current' : ''}`} />
                 )}
