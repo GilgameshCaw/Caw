@@ -1207,13 +1207,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
               {/* Tip - hidden on own posts and pending/failed caws */}
               {item.status !== 'PENDING' && item.status !== 'FAILED' && (
-                <Tooltip text="Tip"><button
+                <Tooltip text={useItem.totalTipAmount ? `${(useItem.totalTipAmount).toLocaleString()} CAW tipped` : 'Tip'}><button
                   onClick={(e) => {
                     e.preventDefault()
                     e.stopPropagation()
                     setShowTipModal(true)
                   }}
-                  className={`transition-colors duration-300 hover:text-yellow-500 cursor-pointer ${
+                  className={`flex items-center gap-1 transition-colors duration-300 hover:text-yellow-500 cursor-pointer ${
                     (tipPending || useItem.hasTipped)
                       ? 'text-yellow-500'
                       : isDark ? 'text-gray-400' : 'text-gray-600'
@@ -1228,6 +1228,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     </div>
                   ) : (
                     <HiOutlineCurrencyDollar className="w-5 h-5" />
+                  )}
+                  {(useItem.tipCount ?? 0) > 0 && (
+                    <span className="text-xs">{useItem.tipCount}</span>
                   )}
                 </button></Tooltip>
               )}

@@ -8,9 +8,11 @@ export interface CawRaw {
   user: { id: number; tokenId: number; username: string; displayName?: string; image?: string; avatarUrl?: string }
   _count?: { likes: number; recaws: number }
   likes?: Array<{ userId: number; pending?: boolean }>
-  recaws?: Array<{ id: number; status?: 'SUCCESS' | 'PENDING' | 'FAILED' }>
-  repliesOnThis?: Array<{ userId: number; pending?: boolean }>
-  tips?: Array<{ senderId: number; pending?: boolean }>
+  recaws?: Array<{ id: number; status?: 'SUCCESS' | 'PENDING' | 'FAILED'; action?: string; content?: string }>
+  repliesOnThis?: Array<{ userId: number; pending?: boolean; replyCawId?: number }>
+  tips?: Array<{ senderId: number; pending?: boolean; amount?: number }>
+  tipCount?: number
+  totalTipAmount?: number
   bookmarks?: Array<{ userId: number }>
   bookmarkCount?: number
   commentCount: number
@@ -38,6 +40,8 @@ export interface ShapedCaw {
   hasReplied: boolean
   hasTipped: boolean
   tipPending?: boolean
+  tipCount: number
+  totalTipAmount: number
   isBookmarked?: boolean
   bookmarkCount?: number
   likePending?: boolean
@@ -57,11 +61,17 @@ export interface ShapedCaw {
 
 export function shapeCaw(raw: CawRaw): ShapedCaw {
   const userLike = raw.likes && raw.likes[0]
-  const userRecaw = raw.recaws && raw.recaws[0]
+  // Find recaws or quotes (exclude plain replies which are CAW with content but have a Reply record)
+  // A RECAW is always a repost. A CAW with content is a quote IF it has no Reply record.
+  // Since repliesOnThis tracks Reply records, we can cross-check.
+  const replyIds = new Set((raw.repliesOnThis || []).map((r: any) => r.replyCawId).filter(Boolean))
+  const userRecawOrQuote = raw.recaws?.find((r: any) =>
+    r.action === 'RECAW' || (r.action === 'CAW' && r.content && !replyIds.has(r.id))
+  )
   const userReply = raw.repliesOnThis && raw.repliesOnThis[0]
 
-  const hasRecawed = Boolean(userRecaw && userRecaw.status !== 'PENDING' && userRecaw.status !== 'FAILED')
-  const recawPending = userRecaw?.status === 'PENDING'
+  const hasRecawed = Boolean(userRecawOrQuote && userRecawOrQuote.status !== 'PENDING' && userRecawOrQuote.status !== 'FAILED')
+  const recawPending = userRecawOrQuote?.status === 'PENDING'
 
   const hasReplied = Boolean(userReply && !userReply.pending)
   const replyPending = userReply?.pending
@@ -69,11 +79,12 @@ export function shapeCaw(raw: CawRaw): ShapedCaw {
   const hasTipped = Boolean(userTip && !userTip.pending) // Only true if confirmed
   const tipPending = userTip?.pending
 
-  console.log(`[shapeCaw ${raw.id}] userRecaw:`, userRecaw, 'hasRecawed:', hasRecawed, 'recawPending:', recawPending, 'recawCount:', raw.recawCount)
+  console.log(`[shapeCaw ${raw.id}] userRecawOrQuote:`, userRecawOrQuote, 'hasRecawed:', hasRecawed, 'recawPending:', recawPending, 'recawCount:', raw.recawCount)
 
   return {
     id: raw.id.toString(),
     content: raw.content,
+    action: raw.action,
     timestamp: raw.createdAt.toISOString(),
     user: raw.user,
     likeCount: raw.likeCount,
@@ -85,6 +96,8 @@ export function shapeCaw(raw: CawRaw): ShapedCaw {
     hasReplied, // Only true if replied AND confirmed
     hasTipped,
     tipPending,
+    tipCount: raw.tipCount ?? 0,
+    totalTipAmount: raw.totalTipAmount ?? 0,
     replyPending,
     isBookmarked: raw.bookmarks ? raw.bookmarks.length > 0 : undefined,
     bookmarkCount: raw.bookmarkCount ?? 0,
@@ -129,14 +142,15 @@ export function getCawIncludeConfig(options: CawQueryOptions = {}) {
       ? { where: { userId: currentUserId }, select: { userId: true, pending: true } }
       : false,
     recaws: currentUserId
-      ? { where: { userId: currentUserId, action: 'RECAW' }, select: { id: true, status: true } }
+      ? { where: { userId: currentUserId }, select: { id: true, status: true, action: true, content: true } }
       : false,
     repliesOnThis: currentUserId
-      ? { where: { userId: currentUserId }, select: { userId: true, pending: true } }
+      ? { where: { userId: currentUserId }, select: { userId: true, pending: true, replyCawId: true } }
       : false,
     tips: currentUserId
       ? { where: { senderId: currentUserId }, select: { senderId: true, pending: true }, take: 1 }
       : false,
+    _count: { select: { tips: true } },
     bookmarks: currentUserId
       ? { where: { userId: currentUserId }, select: { userId: true }, take: 1 }
       : false,

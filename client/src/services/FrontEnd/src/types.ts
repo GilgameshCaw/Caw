@@ -37,6 +37,7 @@ export interface User {
 export type CawItem = {
   id: string
   content: string
+  action?: string
   timestamp: string
   user: { id: number; tokenId: number; username: string; displayName?: string; image?: string; avatarUrl?: string }
   parent: CawItem
@@ -47,6 +48,8 @@ export type CawItem = {
   hasReplied?: boolean // True when current user has replied (confirmed)
   hasTipped?: boolean // True when current user has tipped this post (confirmed)
   tipPending?: boolean // True when tip is pending on-chain confirmation
+  tipCount?: number // Total number of tips on this caw
+  totalTipAmount?: number // Total CAW tipped on this caw
   likePending?: boolean // True when like is pending on-chain confirmation
   recawPending?: boolean // True when recaw is pending on-chain confirmation
   replyPending?: boolean // True when reply is pending on-chain confirmation

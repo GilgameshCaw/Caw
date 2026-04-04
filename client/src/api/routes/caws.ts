@@ -333,6 +333,15 @@ router.get('/:id', async (req, res) => {
     return res.status(404).end()
   }
 
+  // Aggregate tip data for this caw
+  const tipAgg = await prisma.tip.aggregate({
+    where: { cawId: cawId, pending: false },
+    _count: true,
+    _sum: { amount: true },
+  })
+  ;(raw as any).tipCount = tipAgg._count
+  ;(raw as any).totalTipAmount = tipAgg._sum.amount || 0
+
   // 2) fetch comments (caws where originalCawId = cawId) with same visibility filter
   const commentBlockedIds = currentUserId ? await getBlockedUserIds(currentUserId) : []
   const commentWhere: any = { originalCawId: cawId }
