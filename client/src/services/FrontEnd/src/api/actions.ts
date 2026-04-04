@@ -229,8 +229,18 @@ export function useSignAndSubmitAction() {
         // User chose "Sign Manually" — consume the flag and proceed with wallet signing
         useQuickSignPromptStore.setState({ skipOnce: false })
       } else {
-        promptStore.show(() => requestAndSubmit(params))
-        return null
+        // Return a promise that resolves when the modal callback completes.
+        // This way the caller sees the actual response, not null.
+        return new Promise((resolve, reject) => {
+          promptStore.show(async () => {
+            try {
+              const result = await requestAndSubmit(params)
+              resolve(result)
+            } catch (err) {
+              reject(err)
+            }
+          })
+        })
       }
     }
 
@@ -252,7 +262,7 @@ export function useSignAndSubmitAction() {
       const requiredAmount = getRequiredStake(stakingKey)
       const actionTypeForModal = getActionTypeForModal(params.actionType)
       useInsufficientStakeStore.getState().show(effectiveStake, requiredAmount, actionTypeForModal)
-      return null
+      return null // Insufficient stake — no retry callback, user must stake more
     }
 
     // Check if user is authenticated with this client on-chain (cached after first check)
@@ -268,11 +278,15 @@ export function useSignAndSubmitAction() {
         if (isAuthed) {
           clientAuthCache.set(activeTokenId, true)
         } else {
-          useClientAuthStore.getState().show(activeTokenId, () => {
-            clientAuthCache.set(activeTokenId, true) // Optimistic after successful auth tx
-            requestAndSubmit(params)
+          return new Promise((resolve, reject) => {
+            useClientAuthStore.getState().show(activeTokenId, async () => {
+              try {
+                clientAuthCache.set(activeTokenId, true)
+                const result = await requestAndSubmit(params)
+                resolve(result)
+              } catch (err) { reject(err) }
+            })
           })
-          return null
         }
       } catch (err) {
         console.warn('[Actions] Failed to check client auth status, proceeding:', err)
@@ -341,8 +355,14 @@ export function useSignAndSubmitAction() {
       ? sessionStore.getSessionForAddress(tokenOwner)
       : sessionStore.getSession()
     if (sessionStore.enabled && !activeSession && rawSession) {
-      useQuickSignRenewStore.getState().show('expired', () => requestAndSubmit(params))
-      return null
+      return new Promise((resolve, reject) => {
+        useQuickSignRenewStore.getState().show('expired', async () => {
+          try {
+            const result = await requestAndSubmit(params)
+            resolve(result)
+          } catch (err) { reject(err) }
+        })
+      })
     }
 
     const canUseSession = activeSession &&
@@ -366,8 +386,14 @@ export function useSignAndSubmitAction() {
         const remaining = limit - spent
         console.log(`[QuickSign] Spend limit: ${limit}, spent: ${spent}, remaining: ${remaining}, actionCost: ${protocolCost}, tip: ${tip}, totalCost: ${totalCost}`)
         if (spent + totalCost > limit) {
-          useQuickSignRenewStore.getState().show('spend_limit', () => requestAndSubmit(params))
-          return null
+          return new Promise((resolve, reject) => {
+            useQuickSignRenewStore.getState().show('spend_limit', async () => {
+              try {
+                const result = await requestAndSubmit(params)
+                resolve(result)
+              } catch (err) { reject(err) }
+            })
+          })
         }
       }
     }
@@ -467,18 +493,28 @@ export function useSignAndSubmitAction() {
       // Not authenticated with this client — show auth modal
       if (errMsg.includes('not authenticated')) {
         clientAuthCache.delete(activeTokenId!)
-        useClientAuthStore.getState().show(activeTokenId!, () => {
-          clientAuthCache.set(activeTokenId!, true)
-          requestAndSubmit(params)
+        return new Promise((resolve, reject) => {
+          useClientAuthStore.getState().show(activeTokenId!, async () => {
+            try {
+              clientAuthCache.set(activeTokenId!, true)
+              const result = await requestAndSubmit(params)
+              resolve(result)
+            } catch (err) { reject(err) }
+          })
         })
-        return null
       }
 
       // Detect session key spend limit or expiry errors from the contract/validator
       if (canUseSession && (errMsg.includes('spend limit') || errMsg.includes('session') || errMsg.includes('expired'))) {
         const reason = errMsg.includes('spend') ? 'spend_limit' : 'expired'
-        useQuickSignRenewStore.getState().show(reason, () => requestAndSubmit(params))
-        return null
+        return new Promise((resolve, reject) => {
+          useQuickSignRenewStore.getState().show(reason, async () => {
+            try {
+              const result = await requestAndSubmit(params)
+              resolve(result)
+            } catch (err) { reject(err) }
+          })
+        })
       }
 
       throw error
