@@ -33,7 +33,6 @@ import { useBookmarksStore } from '~/store/bookmarksStore'
 import { Link, useNavigate } from 'react-router-dom'
 import { User, CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
-import { usePendingPolling, usePendingCawPolling, usePendingLikePolling, usePendingRecawPolling, usePendingReplyPolling, usePendingTipPolling } from '~/hooks/usePendingPolling'
 import ContentWithHashtags from './ContentWithHashtags'
 import { formatEngagementCount } from '~/utils/numberFormat'
 import { apiFetch } from '~/api/client'
@@ -57,12 +56,8 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const [replyPending, setReplyPending] = useState(item.replyPending || false)
   const [tipPending, setTipPending] = useState(item.tipPending || false)
 
-  // Enable polling for pending items - use local state so it works with auto-trigger
-  usePendingCawPolling(parseInt(item.id), item.status === 'PENDING')
-  usePendingLikePolling(parseInt(item.id), likePending)
-  usePendingRecawPolling(parseInt(item.id), recawPending)
-  usePendingReplyPolling(parseInt(item.id), replyPending)
-  usePendingTipPolling(parseInt(item.id), tipPending)
+  // Polling for pending items is handled centrally by Feed.tsx (unified polling interval).
+  // No per-item polling hooks needed here — avoids 5 timers × N items = cascading jank.
 
   const activeTokenId     = useTokenDataStore(s => s.activeTokenId)
   const blockUser = useBlockedUsersStore(s => s.blockUser)

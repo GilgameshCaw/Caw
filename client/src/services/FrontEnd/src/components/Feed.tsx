@@ -84,15 +84,17 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   }), [])
 
   // Spot-check posts against on-chain data to detect dishonest API hosts
-  useHostVerification(filteredItems.map(item => ({
+  // Memoize to avoid creating new arrays on every render
+  const verificationItems = useMemo(() => filteredItems.map(item => ({
     user: { tokenId: item.user?.tokenId || 0 },
     cawonce: item.cawonce || 0,
     content: item.content,
     status: item.status,
-  })))
+  })), [filteredItems])
+  useHostVerification(verificationItems)
 
-  // Track views for visible caws (use filtered items)
-  const visibleCawIds = filteredItems.map(item => item.id).filter(id => id != null)
+  // Track views for visible caws (memoize to avoid re-triggering on every render)
+  const visibleCawIds = useMemo(() => filteredItems.map(item => item.id).filter(id => id != null), [filteredItems])
   useViewTracking(visibleCawIds)
 
   // Ref for loadPage to use in callbacks
