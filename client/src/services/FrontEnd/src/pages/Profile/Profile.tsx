@@ -136,8 +136,9 @@ export const Profile: React.FC = () => {
 
   const [followButtonHovered, setFollowButtonHovered] = useState(false)
 
-  // Options menu state (mute/block)
+  // Options menu state (mute/block for other profiles, manage for own profile)
   const [showOptionsMenu, setShowOptionsMenu] = useState(false)
+  const [showOwnProfileMenu, setShowOwnProfileMenu] = useState(false)
   const [isMuted, setIsMuted] = useState(false)
   const [showBlockConfirmModal, setShowBlockConfirmModal] = useState(false)
   const [showCostExplanation, setShowCostExplanation] = useState(false)
@@ -542,6 +543,18 @@ export const Profile: React.FC = () => {
       // Set local pending state immediately
       setLocalProfileUpdatePending(true)
 
+      // Optimistically update profile data so changes show immediately
+      setProfileData(prev => prev ? {
+        ...prev,
+        profileUpdatePending: true,
+        ...(formData.displayName !== (prev.displayName || '') && { displayName: formData.displayName }),
+        ...(formData.description !== (prev.bio || '') && { bio: formData.description }),
+        ...(formData.location !== (prev.location || '') && { location: formData.location }),
+        ...(formData.website !== (prev.website || '') && { website: formData.website }),
+        ...(avatarUrl && { avatarUrl }),
+        ...(coverUrl && { coverPhotoUrl: coverUrl }),
+      } : prev)
+
       // Close modal and refresh profile data
       setIsEditModalOpen(false)
 
@@ -869,58 +882,108 @@ export const Profile: React.FC = () => {
               {/* Edit Button */}
               <div>
                 {isOwnProfile ? (
-                  <button
-                    onClick={() => setIsEditModalOpen(true)}
-                    disabled={profileData?.profileUpdatePending || localProfileUpdatePending}
-                    className={`px-4 py-2 rounded-full font-semibold border transition-all duration-200 ${
-                      profileData?.profileUpdatePending || localProfileUpdatePending
-                        ? 'opacity-60 cursor-not-allowed'
-                        : 'cursor-pointer'
-                    } ${
-                      isDark
-                        ? 'border-white/60 text-white hover:bg-white hover:text-black'
-                        : 'border-black/60 text-black hover:bg-black hover:text-white'
-                    }`}
-                  >
-                    {(profileData?.profileUpdatePending || localProfileUpdatePending) ? (
-                      <>
-                        <svg className="w-4 h-4 inline mr-2 animate-spin" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                        </svg>
-                        Updating...
-                      </>
-                    ) : (
-                      <>
-                        <HiPencil className="w-4 h-4 inline mr-2" />
-                        Edit Profile
-                      </>
-                    )}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setIsEditModalOpen(true)}
+                      disabled={profileData?.profileUpdatePending || localProfileUpdatePending}
+                      className={`px-4 py-2 rounded-full font-semibold border transition-all duration-200 ${
+                        profileData?.profileUpdatePending || localProfileUpdatePending
+                          ? 'opacity-60 cursor-not-allowed'
+                          : 'cursor-pointer'
+                      } ${
+                        isDark
+                          ? 'border-white/60 text-white hover:bg-white hover:text-black'
+                          : 'border-black/60 text-black hover:bg-black hover:text-white'
+                      }`}
+                    >
+                      {(profileData?.profileUpdatePending || localProfileUpdatePending) ? (
+                        <>
+                          <svg className="w-4 h-4 inline mr-2 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                          </svg>
+                          Updating...
+                        </>
+                      ) : (
+                        <>
+                          <HiPencil className="w-4 h-4 inline mr-2" />
+                          Edit Profile
+                        </>
+                      )}
+                    </button>
+                    {/* Three-dot menu for List for Sale / Transfer */}
+                    <div className="relative">
+                      <button
+                        onClick={() => setShowOwnProfileMenu(!showOwnProfileMenu)}
+                        className={`p-2 rounded-full border transition-all duration-200 cursor-pointer ${
+                          isDark
+                            ? 'border-white/60 text-white hover:bg-white/10'
+                            : 'border-black/60 text-black hover:bg-black/10'
+                        }`}
+                      >
+                        <HiDotsHorizontal className="w-5 h-5" />
+                      </button>
+                      {showOwnProfileMenu && (
+                        <>
+                          <div
+                            className="fixed inset-0 z-40"
+                            onClick={() => setShowOwnProfileMenu(false)}
+                          />
+                          <div className={`absolute right-0 top-full mt-2 w-48 rounded-lg shadow-lg z-50 overflow-hidden ${
+                            isDark ? 'bg-gray-900 border border-white/20' : 'bg-white border border-gray-200'
+                          }`}>
+                            <button
+                              onClick={() => {
+                                setShowOwnProfileMenu(false)
+                                if (profileData?.tokenId !== undefined && profileData?.username) {
+                                  useMarketplaceStore.getState().openCreateListing(profileData.tokenId, profileData.username)
+                                }
+                              }}
+                              className={`w-full px-4 py-3 text-left text-sm transition-colors ${
+                                isDark ? 'hover:bg-white/10 text-yellow-500' : 'hover:bg-gray-100 text-yellow-600'
+                              }`}
+                            >
+                              List for Sale
+                            </button>
+                            <button
+                              onClick={() => {
+                                setShowOwnProfileMenu(false)
+                                if (profileData?.tokenId !== undefined && profileData?.username) {
+                                  useTransferModalStore.getState().show(profileData.tokenId, profileData.username)
+                                }
+                              }}
+                              className={`w-full px-4 py-3 text-left text-sm transition-colors ${
+                                isDark ? 'hover:bg-red-500/20 text-red-400' : 'hover:bg-red-50 text-red-500'
+                              }`}
+                            >
+                              Transfer Profile
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
                 ) : (
                   <div className="flex flex-col space-y-3">
                     <div className="flex flex-col items-center">
+                      <Tooltip text={followPending ? "Processing on-chain" : ""}>
                       <button
                         onClick={handleFollowClick}
                         disabled={followPending || followWrongWallet}
                         onMouseEnter={() => setFollowButtonHovered(true)}
                         onMouseLeave={() => setFollowButtonHovered(false)}
                         className={`px-8 py-2 rounded-full font-semibold border transition-all duration-200 ${
-                          followPending || followWrongWallet ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                          followWrongWallet ? 'opacity-50 cursor-not-allowed' :
+                          followPending ? 'opacity-90 cursor-not-allowed' : 'cursor-pointer'
                         } ${
                           isFollowing
-                            ? 'border-white bg-white text-black hover:bg-black hover:text-white hover:border-black'
-                            : 'border-white text-white hover:bg-white hover:text-black'
+                            ? 'border-white bg-white text-black' + (!followPending ? ' hover:bg-black hover:text-white hover:border-black' : '')
+                            : 'border-white text-white' + (!followPending ? ' hover:bg-white hover:text-black' : '')
                         }`}
                       >
-                        {followPending && (
-                          <svg className="inline w-4 h-4 mr-2 animate-spin" fill="none" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                          </svg>
-                        )}
                         {followPending ? followButtonText : (followButtonHovered && isFollowing ? followHoverText : followButtonText)}
                       </button>
+                      </Tooltip>
                       {followWrongWallet && (
                         <p className="mt-2 text-xs text-yellow-500">Please switch to the correct wallet</p>
                       )}
@@ -1405,42 +1468,6 @@ export const Profile: React.FC = () => {
                 </div>
               </div>
 
-              {/* List for Sale / Transfer Buttons */}
-              <div className={`pt-4 border-t ${isDark ? 'border-white/10' : 'border-gray-200'} space-y-3`}>
-                <button
-                  onClick={() => {
-                    setIsEditModalOpen(false)
-                    if (profileData?.tokenId !== undefined && profileData?.username) {
-                      useMarketplaceStore.getState().openCreateListing(profileData.tokenId, profileData.username)
-                    }
-                  }}
-                  className={`w-full px-4 py-2.5 rounded-full text-sm border transition-all duration-200 cursor-pointer ${
-                    isDark
-                      ? 'border-yellow-500/30 text-yellow-500 hover:border-yellow-500/60 hover:bg-yellow-500/10'
-                      : 'border-yellow-500/50 text-yellow-600 hover:border-yellow-500 hover:bg-yellow-50'
-                  }`}
-                >
-                  List for Sale
-                </button>
-                <button
-                  onClick={() => {
-                    setIsEditModalOpen(false)
-                    if (profileData?.tokenId !== undefined && profileData?.username) {
-                      useTransferModalStore.getState().show(profileData.tokenId, profileData.username)
-                    }
-                  }}
-                  className={`w-full px-4 py-2.5 rounded-full text-sm border transition-all duration-200 cursor-pointer ${
-                    isDark
-                      ? 'border-white/20 text-white/60 hover:border-red-500/60 hover:text-red-400 hover:bg-red-500/10'
-                      : 'border-black/20 text-black/60 hover:border-red-500/60 hover:text-red-500 hover:bg-red-50'
-                  }`}
-                >
-                  Transfer Profile
-                </button>
-                <p className={`mt-2 text-xs text-center ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                  Transfer or sell ownership of this profile
-                </p>
-              </div>
             </div>
 
             {/* Modal Footer */}
