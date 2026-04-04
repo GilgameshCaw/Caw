@@ -1023,7 +1023,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
             <div className="flex items-center space-x-6">
               {/* Comments/Replies */}
               <Tooltip text={
-                  replyPending ? "Processing reply..." :
+                  replyPending ? "Processing on-chain" :
                   item.status === 'PENDING' ? "Cannot reply to pending caw" :
                   item.status === 'FAILED' ? "Cannot reply to failed caw" :
                   "Reply"
@@ -1056,7 +1056,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               {/* Retweets */}
               <div className="relative">
                 <Tooltip text={
-                    recawPending ? "Processing repost..." :
+                    recawPending ? "Processing on-chain" :
                     item.status === 'PENDING' ? "Cannot recaw pending caw" :
                     item.status === 'FAILED' ? "Cannot recaw failed caw" :
                     "ReCaw"
@@ -1135,7 +1135,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               </div>
 
               {/* Likes */}
-              <Tooltip text={item.status === 'PENDING' ? "Cannot like pending caw" : item.status === 'FAILED' ? "Cannot like failed caw" : likePending ? "Processing like..." : "Like"}><button
+              <Tooltip text={item.status === 'PENDING' ? "Cannot like pending caw" : item.status === 'FAILED' ? "Cannot like failed caw" : likePending ? "Processing on-chain" : "Like"}><button
                 className={`flex items-center space-x-2 transition-colors duration-300 ${
                   (item.status === 'PENDING' || item.status === 'FAILED')
                     ? 'cursor-not-allowed opacity-50'
