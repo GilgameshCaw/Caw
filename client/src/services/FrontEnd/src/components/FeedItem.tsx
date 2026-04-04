@@ -295,12 +295,16 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
       // signAndSubmit returns null when a modal is shown (Quick Sign prompt, insufficient
       // stake, client auth, etc). The action may still succeed via a modal callback retry.
-      // Don't set pending yet — we'll let the Feed polling pick it up if it succeeds.
+      // Keep busyLike true — the Feed polling will pick up the result.
       if (!response) {
+        // The modal retry runs async. If it succeeds, polling updates the item.
+        // If it fails/cancels, we need to clear busyLike. Use a short timeout as fallback.
+        setTimeout(() => setBusyLike(false), 30_000)
         return
       }
 
-      // Action was submitted successfully — now show pending state
+      // Action was submitted successfully — show pending state
+      setBusyLike(false)
       if (!useItem.hasLiked) {
         tempLikeId = addOptimisticLike({ userId: effectiveTokenId, cawId: useItem.id })
         if (response?.txQueueId) updateLikeWithTxQueueId(tempLikeId, response.txQueueId)
@@ -310,12 +314,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       if (onLikeStateChange) onLikeStateChange(useItem.id, true)
     } catch (err) {
       console.error('Like failed', err)
+      setBusyLike(false)
       setLikePending(false)
       setTxSubmitted(false)
       if (tempLikeId) useOptimisticLikesStore.getState().removeOptimisticLike(tempLikeId)
       if (onLikeStateChange) onLikeStateChange(useItem.id, false)
-    } finally {
-      setBusyLike(false)
     }
   }
 
