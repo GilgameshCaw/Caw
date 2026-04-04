@@ -32,7 +32,7 @@ const MainLayout = ({ children }: MainLayoutProps) => {
   const hideSidebars = isCaptive && (location.pathname.startsWith('/help') || location.pathname.startsWith('/usernames'))
 
   return (
-    <div className={`max-h-screen min-h-screen w-full max-w-[1050px] flex m-auto transition-all duration-300 ${
+    <div className={`min-h-screen w-full max-w-[1050px] flex m-auto transition-colors duration-300 ${
       isDark ? 'bg-black' : 'bg-white'
     }`}>
       {/* Mobile Header */}
@@ -83,7 +83,7 @@ const MainLayout = ({ children }: MainLayoutProps) => {
       {/* Desktop Sidebar */}
       {!hideSidebars && (
         <div className="hidden md:block w-[200px]">
-          <div className={`fixed border-r h-full w-[200px] z-30 transition-all duration-300 ${
+          <div className={`fixed border-r h-full w-[200px] z-30 transition-colors duration-300 ${
             isDark ? 'border-white/20' : 'border-gray-300'
           }`}>
             <Sidebar />
@@ -92,7 +92,7 @@ const MainLayout = ({ children }: MainLayoutProps) => {
       )}
 
       {/* Main Content */}
-      <main className={`flex-1 min-w-0 transition-all duration-300 ${
+      <main className={`flex-1 min-w-0 transition-colors duration-300 ${
         isDark ? 'bg-black text-white' : 'bg-white text-black'
       } ${hideSidebars ? 'pt-0' : isMobileMenuOpen ? 'md:pt-0 pt-16' : 'pt-16 md:pt-0'}`}>
         <div className={`p-3 ${hideSidebars ? 'pb-24' : ''}`}>
@@ -107,7 +107,7 @@ const MainLayout = ({ children }: MainLayoutProps) => {
       />
       {!hideSidebars && (
         <div className="hidden lg:block w-[280px]">
-          <div className={`fixed border-l h-full w-[280px] z-30 transition-all duration-300 ${
+          <div className={`fixed border-l h-full w-[280px] z-30 transition-colors duration-300 ${
             isDark ? 'border-white/20' : 'border-gray-300'
           }`}>
             <div className="p-2">
