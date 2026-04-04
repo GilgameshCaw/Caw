@@ -1022,20 +1022,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     : 'hover:text-blue-500 cursor-pointer'
                 } ${
                   (useItem.hasReplied || replyPending)
-                    ? 'text-blue-500'
+                    ? `text-blue-500 ${replyPending ? 'opacity-90' : ''}`
                     : isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
                 onClick={handleReply}
                 disabled={item.status === 'PENDING' || item.status === 'FAILED'}
               >
-                {replyPending ? (
-                  <div className="relative w-5 h-5 group">
-                    <div className="w-5 h-5 border-2 border-gray-400 border-t-blue-500 rounded-full animate-spin"></div>
-                    <HiOutlineCheck className="absolute inset-0 w-3 h-3 m-auto text-blue-500" />
-                  </div>
-                ) : (
-                  <HiOutlineChat className="w-5 h-5" />
-                )}
+                <HiOutlineChat className="w-5 h-5" />
                 <span className={`text-sm ${(useItem.hasReplied || replyPending) ? 'text-blue-500' : ''}`}>
                   {formatEngagementCount(useItem.commentCount)}
                 </span>
@@ -1050,12 +1043,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     "ReCaw"
                   }><button
                   className={`group flex items-center space-x-2 transition-colors duration-300 ${
-                    (item.status === 'PENDING' || item.status === 'FAILED' || recawPending)
+                    (item.status === 'PENDING' || item.status === 'FAILED')
                       ? 'cursor-not-allowed opacity-50'
-                      : 'hover:text-green-500 cursor-pointer'
+                      : recawPending ? '' : 'hover:text-green-500 cursor-pointer'
                   } ${
-                    (useItem.hasRecawed || isRecawByCurrentUser)
-                      ? 'text-green-500'
+                    (useItem.hasRecawed || isRecawByCurrentUser || recawPending)
+                      ? `text-green-500 ${recawPending ? 'opacity-90' : ''}`
                       : isDark ? 'text-gray-400' : 'text-gray-600'
                   }`}
                   onClick={e => {
@@ -1067,16 +1060,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   }}
                   disabled={item.status === 'PENDING' || item.status === 'FAILED' || recawPending}
                 >
-                  {recawPending ? (
-                    <div className="relative w-5 h-5 group">
-                      <div className="w-5 h-5 border-2 border-gray-400 border-t-green-500 rounded-full animate-spin"></div>
-                      <HiOutlineCheck className="absolute inset-0 w-3 h-3 m-auto text-green-500" />
-                    </div>
-                  ) : busyRecaw ? (
+                  {busyRecaw ? (
                     <div className="w-5 h-5 border-2 border-gray-400 border-t-green-500 rounded-full animate-spin"></div>
                   ) : (
                     <Recaw className={`w-5 h-5 transition-all duration-300 ${
-                      (useItem.hasRecawed || isRecawByCurrentUser) ? 'text-green-500' : ''
+                      (useItem.hasRecawed || isRecawByCurrentUser || recawPending) ? 'text-green-500' : ''
                     }`} />
                   )}
                   <span className={`text-sm transition-colors duration-300 ${
@@ -1125,30 +1113,23 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               </div>
 
               {/* Likes */}
-              <Tooltip text={item.status === 'PENDING' ? "Cannot like pending caw" : item.status === 'FAILED' ? "Cannot like failed caw" : likePending ? "Processing on-chain" : "Like"}><button
+              <Tooltip text={item.status === 'PENDING' ? "Cannot like pending caw" : item.status === 'FAILED' ? "Cannot like failed caw" : (likePending || item.likePending) ? "Processing on-chain" : "Like"}><button
                 className={`flex items-center space-x-2 transition-colors duration-300 ${
                   (item.status === 'PENDING' || item.status === 'FAILED')
                     ? 'cursor-not-allowed opacity-50'
                     : 'hover:text-red-500 cursor-pointer'
                 } ${
-                  useItem.hasLiked
-                    ? 'text-red-500'
+                  (useItem.hasLiked || likePending || item.likePending)
+                    ? `text-red-500 ${(likePending || item.likePending) ? 'opacity-90' : ''}`
                     : isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
                 onClick={handleLike}
                 disabled={busyLike || likePending || item.status === 'PENDING' || item.status === 'FAILED'}
               >
-                {(likePending || item.likePending) ? (
-                  // Spinner with checkmark — transaction submitted, processing on-chain
-                  <div className="relative w-5 h-5 group">
-                    <div className="w-5 h-5 border-2 border-gray-400 border-t-red-500 rounded-full animate-spin"></div>
-                    <HiOutlineCheck className="absolute inset-0 w-3 h-3 m-auto text-red-500" />
-                  </div>
-                ) : busyLike ? (
-                  // Just spinner while signing/submitting
+                {busyLike ? (
                   <div className="w-5 h-5 border-2 border-gray-400 border-t-red-500 rounded-full animate-spin"></div>
                 ) : (
-                  <HiOutlineHeart className={`w-5 h-5 ${useItem.hasLiked ? 'fill-current' : ''}`} />
+                  <HiOutlineHeart className={`w-5 h-5 ${(useItem.hasLiked || likePending || item.likePending) ? 'fill-current' : ''}`} />
                 )}
                 <span className="text-sm">{formatEngagementCount(useItem.likeCount)}</span>
               </button></Tooltip>
@@ -1186,7 +1167,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
               {/* Tip - hidden on own posts and pending/failed caws */}
               {item.status !== 'PENDING' && item.status !== 'FAILED' && (
-                <Tooltip text={useItem.totalTipAmount ? `${(useItem.totalTipAmount).toLocaleString()} CAW tipped` : 'Tip'}><button
+                <Tooltip text={tipPending ? 'Processing on-chain' : useItem.totalTipAmount ? `${(useItem.totalTipAmount).toLocaleString()} CAW tipped` : 'Tip'}><button
                   onClick={(e) => {
                     e.preventDefault()
                     e.stopPropagation()
@@ -1194,20 +1175,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   }}
                   className={`flex items-center gap-1 transition-colors duration-300 hover:text-yellow-500 cursor-pointer ${
                     (tipPending || useItem.hasTipped)
-                      ? 'text-yellow-500'
+                      ? `text-yellow-500 ${tipPending ? 'opacity-90' : ''}`
                       : isDark ? 'text-gray-400' : 'text-gray-600'
                   }`}
                 >
-                  {tipPending ? (
-                    <div className="relative w-5 h-5 group">
-                      <div className="w-5 h-5 border-2 border-gray-400 border-t-yellow-500 rounded-full animate-spin"></div>
-                      <svg className="absolute inset-0 w-3 h-3 m-auto text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                    </div>
-                  ) : (
-                    <HiOutlineCurrencyDollar className="w-5 h-5" />
-                  )}
+                  <HiOutlineCurrencyDollar className="w-5 h-5" />
                   {(useItem.tipCount ?? 0) > 0 && (
                     <span className="text-xs">{useItem.tipCount}</span>
                   )}
