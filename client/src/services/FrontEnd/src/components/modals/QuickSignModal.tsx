@@ -4,7 +4,7 @@ import ModalWrapper from './ModalWrapper'
 import { useTheme } from '~/hooks/useTheme'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { usePriceStore } from '~/store/tokenDataStore'
-import { useCreateSession, DEFAULT_SPEND_LIMIT, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
+import { useCreateSession, getDefaultSpendLimit, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
 import { HiLightningBolt } from 'react-icons/hi'
 import QuickSignOptions from '~/components/QuickSignOptions'
 
@@ -43,8 +43,7 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const defaultLimit = cawPrice > 0 ? BigInt(Math.round(5 / cawPrice)) : DEFAULT_SPEND_LIMIT
-  const [spendLimit, setSpendLimit] = useState<bigint>(defaultLimit)
+  const [spendLimit, setSpendLimit] = useState<bigint>(() => getDefaultSpendLimit())
   const [duration, setDuration] = useState<number>(DEFAULT_SESSION_DURATION)
   const [dontShowAgain, setDontShowAgain] = useState(false)
 

@@ -6,7 +6,7 @@ import { baseSepolia } from 'wagmi/chains'
 import { apiFetch } from '~/api/client'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { CAW_NAMES_L2_ADDRESS } from '~/../../../abi/addresses'
-import { useActiveToken } from '~/store/tokenDataStore'
+import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
 
 export const DEFAULT_SESSION_DURATION = 30 * 24 * 60 * 60 // 1 month
 
@@ -21,10 +21,21 @@ export const SESSION_DURATION_OPTIONS = [
 // Default scope: CAW(0), LIKE(1), UNLIKE(2), RECAW(3), FOLLOW(4), UNFOLLOW(5)
 const DEFAULT_SCOPE = 0x3F // 0b00111111
 
-// Default spend limit in whole CAW tokens (0 = unlimited).
-// High enough that the $5 USD preset in QuickSignOptions covers it at typical prices.
-// The UI shows USD-denominated presets; this is the fallback if price data isn't loaded.
-export const DEFAULT_SPEND_LIMIT = BigInt(500_000_000) // 500M CAW
+// Default spend limit: $5 worth of CAW at current price, with a generous fallback
+const DEFAULT_SPEND_USD = 5
+const FALLBACK_SPEND_LIMIT = BigInt(500_000_000) // 500M CAW fallback if price unavailable
+
+/** Get the default spend limit ($5 worth of CAW at current price) */
+export function getDefaultSpendLimit(): bigint {
+  const cawPrice = usePriceStore.getState().priceMap['a-hunters-dream'] ?? 0
+  if (cawPrice > 0) {
+    return BigInt(Math.round(DEFAULT_SPEND_USD / cawPrice))
+  }
+  return FALLBACK_SPEND_LIMIT
+}
+
+// Legacy export for any direct references
+export const DEFAULT_SPEND_LIMIT = FALLBACK_SPEND_LIMIT
 
 export const SPEND_LIMIT_OPTIONS = [
   { label: '10M',  value: BigInt(10_000_000) },

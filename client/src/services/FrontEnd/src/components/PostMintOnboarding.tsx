@@ -8,7 +8,7 @@ import { useVerifyWallet } from '~/hooks/useVerifyWallet'
 import { useAuthStore } from '~/store/authStore'
 import { useDmClient } from '~/hooks/useDm'
 import { useDmIdentity } from '~/hooks/useDmIdentity'
-import { useCreateSession, DEFAULT_SPEND_LIMIT, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
+import { useCreateSession, getDefaultSpendLimit, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import { useInsufficientStakeStore } from '~/store/insufficientStakeStore'
@@ -312,7 +312,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   const [qsError, setQsError] = useState<string | null>(null)
   const [qsComplete, setQsComplete] = useState(false)
   const onboardingCawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
-  const qsDefaultLimit = onboardingCawPrice > 0 ? BigInt(Math.round(5 / onboardingCawPrice)) : DEFAULT_SPEND_LIMIT
+  const qsDefaultLimit = getDefaultSpendLimit()
   const [qsSpendLimit, setQsSpendLimit] = useState<bigint>(qsDefaultLimit)
   const [qsDuration, setQsDuration] = useState<number>(DEFAULT_SESSION_DURATION)
 
