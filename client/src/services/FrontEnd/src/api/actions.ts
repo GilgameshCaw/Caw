@@ -217,11 +217,12 @@ export function useSignAndSubmitAction() {
     }
 
     // Prompt to enable Quick Sign if it's not active.
-    // hasSeenPrompt means the user checked "don't show again" — respect that only if
-    // they actually have Quick Sign enabled. If it's disabled with no sessions, prompt again.
+    // Only for action types that Quick Sign supports (codes 0-5: caw, like, unlike, recaw, follow, unfollow).
+    // Tips (other=7) and withdrawals (6) always require wallet signing — don't prompt for those.
     const hasActiveSessions = Object.keys(sessionStore0.sessions).length > 0
     const suppressPrompt = sessionStore0.hasSeenPrompt && (sessionStore0.enabled || hasActiveSessions)
-    if (!canUseSession0 && !suppressPrompt) {
+    const actionEligibleForQuickSign = actionCode0 <= 5
+    if (!canUseSession0 && !suppressPrompt && actionEligibleForQuickSign) {
       const { useQuickSignPromptStore } = await import('~/components/modals/QuickSignModal')
       const promptStore = useQuickSignPromptStore.getState()
       if (promptStore.skipOnce) {
