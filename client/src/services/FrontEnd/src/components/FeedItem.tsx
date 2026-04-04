@@ -281,22 +281,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     setBusyLike(true)
     setTxSubmitted(false)
 
-    // Optimistically update UI immediately — shows pending state
-    if (!useItem.hasLiked) {
-      setLikePending(true)
-      if (onLikeStateChange) onLikeStateChange(useItem.id, true)
-    }
-
-    // Add optimistic like to store
     let tempLikeId: string | undefined
     const addOptimisticLike = useOptimisticLikesStore.getState().addOptimisticLike
     const updateLikeWithTxQueueId = useOptimisticLikesStore.getState().updateLikeWithTxQueueId
-    if (!useItem.hasLiked) {
-      tempLikeId = addOptimisticLike({
-        userId: effectiveTokenId,
-        cawId: useItem.id
-      })
-    }
 
     try {
       const response = await signAndSubmit({
@@ -307,26 +294,25 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       })
 
       // signAndSubmit returns null when a modal is shown (Quick Sign prompt, insufficient
-      // stake, client auth, etc). The action may still succeed via a modal callback retry,
-      // so keep the optimistic state and let polling resolve it.
+      // stake, client auth, etc). The action may still succeed via a modal callback retry.
+      // Don't set pending yet — we'll let the Feed polling pick it up if it succeeds.
       if (!response) {
         return
       }
 
-      // Update optimistic like with txQueue ID
-      if (tempLikeId && response?.txQueueId) {
-        updateLikeWithTxQueueId(tempLikeId, response.txQueueId)
+      // Action was submitted successfully — now show pending state
+      if (!useItem.hasLiked) {
+        tempLikeId = addOptimisticLike({ userId: effectiveTokenId, cawId: useItem.id })
+        if (response?.txQueueId) updateLikeWithTxQueueId(tempLikeId, response.txQueueId)
       }
-
+      setLikePending(true)
       setTxSubmitted(true)
+      if (onLikeStateChange) onLikeStateChange(useItem.id, true)
     } catch (err) {
       console.error('Like failed', err)
-      // Revert optimistic state on actual error
       setLikePending(false)
       setTxSubmitted(false)
-      if (tempLikeId) {
-        useOptimisticLikesStore.getState().removeOptimisticLike(tempLikeId)
-      }
+      if (tempLikeId) useOptimisticLikesStore.getState().removeOptimisticLike(tempLikeId)
       if (onLikeStateChange) onLikeStateChange(useItem.id, false)
     } finally {
       setBusyLike(false)

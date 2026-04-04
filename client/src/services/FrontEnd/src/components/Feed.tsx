@@ -300,6 +300,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
               // Preserve pending flags until the action is actually confirmed
               return {
                 ...freshCaw,
+                likePending: caw.likePending ? (freshCaw.hasLiked ? false : true) : freshCaw.likePending,
                 recawPending: caw.recawPending ? (freshCaw.hasRecawed ? false : true) : freshCaw.recawPending,
                 replyPending: caw.replyPending ? (freshCaw.hasReplied ? false : true) : freshCaw.replyPending,
                 tipPending: caw.tipPending ? (freshCaw.tipPending ?? false) : freshCaw.tipPending,
