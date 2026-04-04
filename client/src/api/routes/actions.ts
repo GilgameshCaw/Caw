@@ -50,19 +50,60 @@ function getReadContract(): Contract {
   return _readContract
 }
 
-/**
- * Verify on-chain that a session key is delegated by an owner and still active.
- * Calls the CawNameL2.sessions(owner, sessionKey) view function (free, no gas).
- */
-async function verifySessionKeyOnChain(ownerAddress: string, sessionKeyAddress: string): Promise<boolean> {
+interface SessionKeyCheck {
+  valid: boolean
+  reason?: string
+}
+
+async function checkSessionKeyOnChain(
+  ownerAddress: string,
+  sessionKeyAddress: string,
+  actionType?: number
+): Promise<SessionKeyCheck> {
   try {
     const contract = getReadContract()
     const session = await contract.sessions(ownerAddress, sessionKeyAddress)
     const expiry = Number(session.expiry)
-    return expiry > Math.floor(Date.now() / 1000)
+    const scopeBitmap = Number(session.scopeBitmap)
+    const spendLimit = BigInt(session.spendLimit?.toString() || '0')
+
+    if (expiry === 0) {
+      return { valid: false, reason: 'Session key not registered' }
+    }
+
+    if (expiry <= Math.floor(Date.now() / 1000)) {
+      return { valid: false, reason: 'Session key expired' }
+    }
+
+    // Check scope if action type is provided
+    if (actionType !== undefined && actionType <= 7) {
+      if ((scopeBitmap & (1 << actionType)) === 0) {
+        return { valid: false, reason: 'Action type not in session scope' }
+      }
+    }
+
+    // Check spend limit (read on-chain spent amount)
+    if (spendLimit > 0n) {
+      try {
+        // CawActions.sessionSpent(owner, sessionKey) returns the amount spent
+        const actionsContract = new Contract(
+          (await import('../../abi/addresses')).CAW_ACTIONS_ADDRESS,
+          (await import('../../abi/generated')).cawActionsAbi as any,
+          _readProvider!
+        )
+        const spent = BigInt((await actionsContract.sessionSpent(ownerAddress, sessionKeyAddress)).toString())
+        if (spent >= spendLimit) {
+          return { valid: false, reason: 'Session key spend limit reached' }
+        }
+      } catch {
+        // If we can't check spend, allow it — the contract will enforce
+      }
+    }
+
+    return { valid: true }
   } catch (err) {
     console.warn('[Actions] On-chain session key verification failed:', err)
-    return false
+    return { valid: false, reason: 'Verification failed' }
   }
 }
 
@@ -71,7 +112,7 @@ async function verifySessionKeyOnChain(ownerAddress: string, sessionKeyAddress: 
  */
 router.post('/', async (req, res) => {
   try {
-    const { data, domain, types, signature } = req.body
+    const { data, domain, types, signature, isQuote } = req.body
 
     // Validate required fields
     if (!data || !signature) {
@@ -107,67 +148,77 @@ router.post('/', async (req, res) => {
       data.amounts = []
     }
 
+    // --- Signer verification (mandatory) ---
+    // Recover the EIP-712 signer and verify they are authorized to act on behalf of senderId.
+    // Rejects with 403 if the signer is neither the token owner nor a valid session key delegate.
+    // This prevents queuing actions that will definitely fail on-chain.
+    let recoveredAddress: string | null = null
+    let ownerAddress: string | null = null
+    const sender = await prisma.user.findUnique({ where: { tokenId: data.senderId } })
+
+    if (!sender?.address) {
+      return res.status(400).json({ error: 'Unknown sender' })
+    }
+
+    ownerAddress = sender.address.toLowerCase()
+
+    try {
+      recoveredAddress = ethers.verifyTypedData(
+        domain,
+        { ActionData: types.ActionData },
+        data,
+        signature
+      ).toLowerCase()
+    } catch (err) {
+      return res.status(400).json({ error: 'Invalid signature' })
+    }
+
+    const isOwner = recoveredAddress === ownerAddress
+
+    if (!isOwner) {
+      // Check if signer is a valid session key for this owner
+      const actionType = typeof data.actionType === 'number' ? data.actionType : undefined
+      const sessionCheck = await checkSessionKeyOnChain(ownerAddress, recoveredAddress, actionType)
+
+      if (!sessionCheck.valid) {
+        console.warn(`[Actions] Rejected: signer ${recoveredAddress} not authorized for owner ${ownerAddress}: ${sessionCheck.reason}`)
+        return res.status(403).json({ error: sessionCheck.reason || 'Signer is not authorized for this token' })
+      }
+    }
+
     // --- Passive auth accumulation ---
-    // Creates or updates a session when we can verify the signer.
-    // Works for both direct wallet signatures and session key (Quick Sign) signatures:
-    // - Direct: recovered address matches the token owner → authorize owner
-    // - Session key: recovered address differs (it's the ephemeral key) → still authorize
-    //   the token owner, since we trust the sender's on-chain session key delegation
+    // Now that the signer is verified, create/extend the HTTP session for the token owner.
     let authResult: { sessionToken: string; authorizedTokenIds: number[]; authorizedAddresses: string[]; expiresAt: number } | null = null
     let sessionToken = req.headers['x-session-token'] as string | undefined
-    if (signature && data.senderId !== undefined) {
-      try {
-        const sender = await prisma.user.findUnique({ where: { tokenId: data.senderId } })
-        if (sender?.address) {
-          // Check if address is already authorized in existing session
-          let session = sessionToken ? await getSession(sessionToken) : null
-          const ownerAddress = sender.address.toLowerCase()
-          const alreadyAuthorized = session?.authorizedAddresses.includes(ownerAddress)
+    try {
+      let session = sessionToken ? await getSession(sessionToken) : null
+      const alreadyAuthorized = session?.authorizedAddresses.includes(ownerAddress)
 
-          if (!alreadyAuthorized) {
-            // Recover the signer from the EIP-712 signature
-            const recoveredAddress = ethers.verifyTypedData(
-              domain,
-              { ActionData: types.ActionData },
-              data,
-              signature
-            ).toLowerCase()
+      if (!alreadyAuthorized) {
+        const userTokens = await prisma.user.findMany({
+          where: { address: ownerAddress },
+          select: { tokenId: true }
+        })
+        const tokenIds = userTokens.map(u => u.tokenId)
 
-            // Accept if signer is the token owner (direct wallet sign),
-            // or if signer is a session key verified on-chain as delegated by the owner
-            const isOwner = recoveredAddress === ownerAddress
-            const isVerifiedSessionKey = !isOwner &&
-              await verifySessionKeyOnChain(ownerAddress, recoveredAddress)
+        if (!session) {
+          const created = await createSession()
+          sessionToken = created.token
+          session = created.session
+        }
 
-            if (isOwner || isVerifiedSessionKey) {
-              // Authorize all tokenIds for the token owner's address
-              const userTokens = await prisma.user.findMany({
-                where: { address: ownerAddress },
-                select: { tokenId: true }
-              })
-              const tokenIds = userTokens.map(u => u.tokenId)
-
-              if (!session) {
-                const created = await createSession()
-                sessionToken = created.token
-                session = created.session
-              }
-
-              const updated = await addAuthorization(sessionToken!, ownerAddress, tokenIds)
-              if (updated) {
-                authResult = {
-                  sessionToken: sessionToken!,
-                  authorizedTokenIds: updated.authorizedTokenIds,
-                  authorizedAddresses: updated.authorizedAddresses,
-                  expiresAt: updated.expiresAt
-                }
-              }
-            }
+        const updated = await addAuthorization(sessionToken!, ownerAddress, tokenIds)
+        if (updated) {
+          authResult = {
+            sessionToken: sessionToken!,
+            authorizedTokenIds: updated.authorizedTokenIds,
+            authorizedAddresses: updated.authorizedAddresses,
+            expiresAt: updated.expiresAt
           }
         }
-      } catch (err) {
-        console.warn('[Actions] Passive auth failed (non-fatal):', err)
       }
+    } catch (err) {
+      console.warn('[Actions] Passive auth failed (non-fatal):', err)
     }
 
     // Create optimistic pending state for profile updates
@@ -277,7 +328,7 @@ router.post('/', async (req, res) => {
         }
 
         // Create pending Reply record if this is a reply (not a quote)
-        if (originalCawId && caw && !data.isQuote) {
+        if (originalCawId && caw && !isQuote) {
           try {
             await prisma.reply.upsert({
               where: {
@@ -527,7 +578,7 @@ router.post('/', async (req, res) => {
       txQueueEntry = await prisma.txQueue.create({
         data: {
           senderId: data.senderId,          // ← pull out the on-chain sender
-          payload: { data, domain, types },
+          payload: { data, domain, types, isQuote: isQuote || false },
           signedTx: signature
         }
       })
