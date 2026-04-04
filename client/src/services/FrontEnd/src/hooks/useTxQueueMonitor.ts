@@ -52,7 +52,8 @@ export function useTxQueueMonitor() {
         if (!response || !response.statuses) return
 
         // Process each status update
-        let needsRefresh = false
+        let needsFeedRefresh = false
+        let anyCompleted = false
         response.statuses.forEach((status: any) => {
           // Skip already processed IDs to avoid duplicate refreshes
           if (processedIds.current.has(status.id)) return
@@ -73,12 +74,25 @@ export function useTxQueueMonitor() {
               }
             } else if (reason.includes('spend limit')) {
               useQuickSignRenewStore.getState().show('spend_limit')
+            } else if (reason.includes('cawonce already used')) {
+              // Cawonce collision — silently bump the local cawonce so the next action uses a fresh one.
+              // Don't show an error — the user's action likely already went through via a previous attempt.
+              console.log(`[TxQueueMonitor] Cawonce collision for TxQueue ${status.id}, bumping local cawonce`)
+              const tokenDataStore = useTokenDataStore.getState()
+              if (status.senderId) {
+                // Sync cawonce from server to get the correct next value
+                apiFetch(`/api/users/min-cawonce/${status.senderId}`)
+                  .then((res: any) => {
+                    if (res.minSafeCawonce != null) {
+                      tokenDataStore.setCawonce(status.senderId, res.minSafeCawonce)
+                    }
+                  })
+                  .catch(() => {})
+              }
             } else if (reason) {
               // Map technical errors to user-friendly messages
               let userMessage = 'Something went wrong while processing your action. Please try again.'
-              if (reason.includes('cawonce already used')) {
-                userMessage = 'This action was already processed. Please try again.'
-              } else if (reason.includes('insufficient')) {
+              if (reason.includes('insufficient')) {
                 userMessage = 'You don\'t have enough staked CAW for this action.'
               } else if (reason.includes('not authenticated')) {
                 userMessage = 'Your account needs to be authenticated with this client. Please try reconnecting.'
@@ -90,26 +104,33 @@ export function useTxQueueMonitor() {
               useActionErrorStore.getState().show('Action Failed', userMessage)
             }
           } else if (status.status === 'done') {
-            // The action was successful - remove the pending post and refresh the feed
-            console.log(`[TxQueueMonitor] TxQueue ID ${status.id} succeeded, removing pending post and refreshing feed`)
+            console.log(`[TxQueueMonitor] TxQueue ID ${status.id} succeeded`)
+            // Only trigger a full feed refresh for new posts (which have a pending post entry).
+            // Likes, recaws, replies, follows, and tips are updated in-place by Feed's own polling,
+            // so a full refresh would just wipe the feed and scroll the user to the top.
+            const wasPendingPost = pendingPosts.some(p => p.txQueueId === status.id)
             removePendingPostByTxQueueId(status.id)
             removeOptimisticLikeByTxQueueId(status.id)
             usePendingSpendStore.getState().removePendingSpend(status.id)
             processedIds.current.add(status.id)
-            needsRefresh = true
+            anyCompleted = true
+            if (wasPendingPost) {
+              needsFeedRefresh = true
+            }
           }
         })
 
-        // Refresh the feed and token data if any actions completed
-        if (needsRefresh) {
+        // Refresh the feed only when new posts are confirmed (not for likes/recaws/etc.)
+        if (needsFeedRefresh) {
           if (feedRefreshCallback) {
-            console.log('[TxQueueMonitor] Triggering feed refresh')
+            console.log('[TxQueueMonitor] Triggering feed refresh (new post confirmed)')
             feedRefreshCallback()
           }
-          // Refetch token data (staked balance, etc.) since actions spend CAW
+        }
+        // Refresh token data when any action completes (staked balance changes)
+        if (anyCompleted) {
           const refetch = useTokenDataStore.getState().refetchTokenData
           if (refetch) {
-            console.log('[TxQueueMonitor] Refreshing token data')
             refetch()
           }
         }
