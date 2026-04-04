@@ -47,6 +47,10 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   const [error,      setError]      = useState<string>()
   const [followingCount, setFollowingCount] = useState<number | null>(null)
 
+  // Ref to track current items without causing effect re-runs
+  const itemsRef = useRef<CawItem[]>(items)
+  useEffect(() => { itemsRef.current = items }, [items])
+
   // Filter items based on mute preferences and blocked users
   const filteredItems = useMemo(() => {
     const blockedUserIds = blockedUsers.map(u => u.tokenId)
@@ -208,14 +212,13 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   useEffect(() => {
     if (filter === 'For you' || filter === 'Following') {
       const refreshCallback = () => {
-        setItems([])
+        // Don't clear items — that causes a flash/scroll-jump.
+        // Just re-fetch the first page; loadPage(true) replaces items atomically.
         setNextCursor(undefined)
         setHasMore(true)
-        setTimeout(() => {
-          if (loadPageRef.current) {
-            loadPageRef.current(true)
-          }
-        }, 50)
+        if (loadPageRef.current) {
+          loadPageRef.current(true)
+        }
       }
       setFeedRefreshCallback(refreshCallback)
 
@@ -272,20 +275,34 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
     return () => window.removeEventListener('scroll', onScroll)
   }, [loadPage, loading, hasMore, nextCursor])
 
-  // Poll for pending caws - refetch caws that are still PENDING
+  // Unified polling for all pending states.
+  // Uses itemsRef to avoid tearing down/recreating intervals on every items change,
+  // which was causing cascading re-renders and UI flashing (e.g. SuggestedUsers).
   useEffect(() => {
-    const pendingCaws = items.filter(item => item.status === 'PENDING')
-
-    if (pendingCaws.length === 0) return
-
     const interval = setInterval(async () => {
-      for (const caw of pendingCaws) {
+      const currentItems = itemsRef.current
+      const toRefetch = currentItems.filter(item =>
+        item.status === 'PENDING' || item.likePending || item.recawPending || item.replyPending || item.tipPending
+      )
+      if (toRefetch.length === 0) return
+
+      for (const caw of toRefetch) {
         try {
           const updated = await apiFetch<{ caw: CawItem }>(`/api/caws/${caw.id}`)
+
           setItems(current =>
-            current.map(item =>
-              item.id === caw.id ? updated.caw : item
-            )
+            current.map(item => {
+              if (item.id !== caw.id) return item
+              const freshCaw = updated.caw
+
+              // Preserve pending flags until the action is actually confirmed
+              return {
+                ...freshCaw,
+                recawPending: caw.recawPending ? (freshCaw.hasRecawed ? false : true) : freshCaw.recawPending,
+                replyPending: caw.replyPending ? (freshCaw.hasReplied ? false : true) : freshCaw.replyPending,
+                tipPending: caw.tipPending ? (freshCaw.tipPending ?? false) : freshCaw.tipPending,
+              }
+            })
           )
         } catch {
           // Ignore errors
@@ -294,136 +311,24 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
     }, 3000)
 
     return () => clearInterval(interval)
-  }, [items])
+  }, []) // No dependencies — uses itemsRef
 
-  // Poll for pending likes - refetch specific caws that have pending likes
-  useEffect(() => {
-    const pendingLikeCaws = items.filter(item => item.likePending)
+  // Stable callbacks for FeedItem state changes — use functional setItems so no deps needed
+  const handleLikeStateChange = useCallback((cawId: string, likePending: boolean) => {
+    setItems(current => current.map(item => item.id === cawId ? { ...item, likePending } : item))
+  }, [])
 
-    if (pendingLikeCaws.length === 0) return
+  const handleRecawStateChange = useCallback((cawId: string, recawPending: boolean) => {
+    setItems(current => current.map(item => item.id === cawId ? { ...item, recawPending } : item))
+  }, [])
 
-    const interval = setInterval(async () => {
-      // Refetch each caw with a pending like
-      for (const caw of pendingLikeCaws) {
-        try {
-          const updated = await apiFetch<{ caw: CawItem }>(`/api/caws/${caw.id}`)
+  const handleReplyStateChange = useCallback((cawId: string, replyPending: boolean) => {
+    setItems(current => current.map(item => item.id === cawId ? { ...item, replyPending } : item))
+  }, [])
 
-          // Update the specific item in the list
-          setItems(current =>
-            current.map(item =>
-              item.id === caw.id ? updated.caw : item
-            )
-          )
-        } catch (err) {
-          // Ignore errors
-        }
-      }
-    }, 3000) // Poll every 3 seconds
-
-    return () => clearInterval(interval)
-  }, [items])
-
-  // Poll for pending recaws - refetch specific caws that have pending recaws
-  useEffect(() => {
-    const pendingRecawCaws = items.filter(item => item.recawPending)
-
-    if (pendingRecawCaws.length === 0) return
-
-    const interval = setInterval(async () => {
-      // Refetch each caw with a pending recaw
-      for (const caw of pendingRecawCaws) {
-        try {
-          const updated = await apiFetch<{ caw: CawItem }>(`/api/caws/${caw.id}`)
-
-          // Update the specific item in the list
-          // Keep recawPending true until hasRecawed is confirmed (to handle race condition)
-          setItems(current =>
-            current.map(item => {
-              if (item.id === caw.id) {
-                const isConfirmed = updated.caw.hasRecawed === true
-                // If not yet confirmed, keep recawPending true to continue polling
-                return {
-                  ...updated.caw,
-                  recawPending: isConfirmed ? false : true
-                }
-              }
-              return item
-            })
-          )
-        } catch (err) {
-          // Ignore errors
-        }
-      }
-    }, 3000) // Poll every 3 seconds
-
-    return () => clearInterval(interval)
-  }, [items])
-
-  // Poll for pending replies - refetch specific caws that have pending replies
-  useEffect(() => {
-    const pendingReplyCaws = items.filter(item => item.replyPending)
-
-    if (pendingReplyCaws.length === 0) return
-
-    const interval = setInterval(async () => {
-      // Refetch each caw with a pending reply
-      for (const caw of pendingReplyCaws) {
-        try {
-          const updated = await apiFetch<{ caw: CawItem }>(`/api/caws/${caw.id}`)
-
-          // Update the specific item in the list
-          setItems(current =>
-            current.map(item => {
-              if (item.id === caw.id) {
-                const isConfirmed = updated.caw.hasReplied === true
-                // If not yet confirmed, keep replyPending true to continue polling
-                return {
-                  ...updated.caw,
-                  replyPending: isConfirmed ? false : true
-                }
-              }
-              return item
-            })
-          )
-        } catch (err) {
-          // Ignore errors
-        }
-      }
-    }, 3000) // Poll every 3 seconds
-
-    return () => clearInterval(interval)
-  }, [items])
-
-  // Poll for pending tips - refetch specific caws that have pending tips
-  useEffect(() => {
-    const pendingTipCaws = items.filter(item => item.tipPending)
-
-    if (pendingTipCaws.length === 0) return
-
-    const interval = setInterval(async () => {
-      for (const caw of pendingTipCaws) {
-        try {
-          const updated = await apiFetch<{ caw: CawItem }>(`/api/caws/${caw.id}`)
-
-          setItems(current =>
-            current.map(item => {
-              if (item.id === caw.id) {
-                return {
-                  ...updated.caw,
-                  tipPending: updated.caw.tipPending ?? false
-                }
-              }
-              return item
-            })
-          )
-        } catch (err) {
-          // Ignore errors
-        }
-      }
-    }, 3000)
-
-    return () => clearInterval(interval)
-  }, [items])
+  const handleTipStateChange = useCallback((cawId: string, tipPending: boolean) => {
+    setItems(current => current.map(item => item.id === cawId ? { ...item, tipPending } : item))
+  }, [])
 
   // Helper to refresh following count after a follow action
   // Don't reload the feed immediately — the follow is still processing on-chain.
@@ -496,49 +401,26 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       ))}
 
       {/* Posts with consistent styling across all pages */}
-      {filteredItems.map(caw => (
+      {filteredItems.map((caw, idx) => {
+        // Hide parent preview if the previous item in the feed is a reply to the same parent
+        const prevItem = idx > 0 ? filteredItems[idx - 1] : null
+        const sameParentAsPrev = !!(
+          caw.parent?.id &&
+          prevItem?.parent?.id &&
+          caw.parent.id === prevItem.parent.id
+        )
+        return (
         <FeedItem
           key={caw.id}
           item={caw}
-          onLikeStateChange={(cawId, likePending) => {
-            console.log('[Feed] Like state changed for caw', cawId, 'pending:', likePending)
-            setItems(current =>
-              current.map(item =>
-                item.id === cawId ? { ...item, likePending } : item
-              )
-            )
-          }}
-          onRecawStateChange={(cawId, recawPending) => {
-            console.log('[Feed] Recaw state changed for caw', cawId, 'pending:', recawPending, 'type:', typeof cawId)
-            setItems(current => {
-              const updated = current.map(item => {
-                const match = item.id === cawId
-                if (match) {
-                  console.log('[Feed] Found matching item:', item.id, '- setting recawPending to', recawPending)
-                }
-                return match ? { ...item, recawPending } : item
-              })
-              console.log('[Feed] Items with recawPending after update:', updated.filter(i => i.recawPending).map(i => i.id))
-              return updated
-            })
-          }}
-          onReplyStateChange={(cawId, replyPending) => {
-            console.log('[Feed] Reply state changed for caw', cawId, 'pending:', replyPending)
-            setItems(current =>
-              current.map(item =>
-                item.id === cawId ? { ...item, replyPending } : item
-              )
-            )
-          }}
-          onTipStateChange={(cawId, tipPending) => {
-            setItems(current =>
-              current.map(item =>
-                item.id === cawId ? { ...item, tipPending } : item
-              )
-            )
-          }}
+          hideParentPreview={sameParentAsPrev}
+          onLikeStateChange={handleLikeStateChange}
+          onRecawStateChange={handleRecawStateChange}
+          onReplyStateChange={handleReplyStateChange}
+          onTipStateChange={handleTipStateChange}
         />
-      ))}
+        )
+      })}
 
       {loading && <div className="py-4 text-center text-gray-400">Loading more…</div>}
       {!hasMore && <div className="py-4 text-center text-gray-500">You've reached the end.</div>}

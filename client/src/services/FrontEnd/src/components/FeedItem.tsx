@@ -50,7 +50,7 @@ import { chains } from '~/config/chains'
 
 import { formatTimeAgo } from '~/utils/formatTimeAgo'
 
-const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void; onLikeStateChange?: (cawId: string, likePending: boolean) => void; onRecawStateChange?: (cawId: string, recawPending: boolean) => void; onReplyStateChange?: (cawId: string, replyPending: boolean) => void; onTipStateChange?: (cawId: string, tipPending: boolean) => void }> = ({ item, isMainPost = false, isReply = false, onBookmarkUpdate, onLikeStateChange, onRecawStateChange, onReplyStateChange, onTipStateChange }) => {
+const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; hideParentPreview?: boolean; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void; onLikeStateChange?: (cawId: string, likePending: boolean) => void; onRecawStateChange?: (cawId: string, recawPending: boolean) => void; onReplyStateChange?: (cawId: string, replyPending: boolean) => void; onTipStateChange?: (cawId: string, tipPending: boolean) => void }> = ({ item, isMainPost = false, isReply = false, hideParentPreview = false, onBookmarkUpdate, onLikeStateChange, onRecawStateChange, onReplyStateChange, onTipStateChange }) => {
   // Local pending states (declared early so polling can use them)
   const [likePending, setLikePending] = useState(item.likePending || false)
   const [recawPending, setRecawPending] = useState(item.recawPending || false)
@@ -114,6 +114,8 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   let headline;
   let isRecaw = false;
   let isRecawByCurrentUser = false;
+  // A quote is a post with its own content that references a parent, displayed in the main feed (not as a reply)
+  const isQuote = !!(item.content && item.parent && !isReply);
   if (item.content === "" && item.parent) {
     // Check if the recaw is by the current user
     const userId = item.user.tokenId;
@@ -658,12 +660,19 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         } ${
           (item.status === 'PENDING' || item.status === 'FAILED') ? 'opacity-60' : ''
         }`}>
-          {/* Replying to header - left aligned, no extra padding (only for replies, not recaws) */}
-          {item.parent && !isRecaw && item.parent.user && (
-            <Link to={`/caws/${item.parent.id}`} className={`block text-xs transition-all duration-300 mb-3 truncate md:truncate-none ${
+          {/* Replying to header - only for actual replies (not quotes or recaws) */}
+          {item.parent && !isRecaw && !isQuote && item.parent.user && !hideParentPreview && (
+            <Link to={`/caws/${item.parent.id}`} className={`block text-xs transition-all duration-300 mb-3 ${
               isDark ? 'text-gray-400' : 'text-gray-600'
             }`}>
-              Replying to <span className="underline">@{item.parent.user.username}</span>
+              <span className="truncate md:truncate-none">Replying to <span className="underline">@{item.parent.user.username}</span></span>
+              {item.parent.content && (
+                <span className={`block mt-1 text-[11px] leading-snug line-clamp-2 ${
+                  isDark ? 'text-white/25' : 'text-gray-400'
+                }`}>
+                  {item.parent.content}
+                </span>
+              )}
             </Link>
           )}
 
@@ -676,10 +685,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
             </div>
           )}
 
-          {/* Content wrapper with left padding for replies - applies when isReply OR when it has a parent (reply in main feed), but NOT for recaws */}
-          <div className={`relative ${(isReply || (item.parent && !isRecaw)) ? 'pl-6' : ''}`}>
+          {/* Content wrapper with left padding for replies - applies when isReply OR when it has a parent (reply in main feed), but NOT for recaws or quotes */}
+          <div className={`relative ${(isReply || (item.parent && !isRecaw && !isQuote)) ? 'pl-6' : ''}`}>
             {/* Vertical line for replies */}
-            {(isReply || (item.parent && !isRecaw)) && (
+            {(isReply || (item.parent && !isRecaw && !isQuote)) && (
               <div
                 className="absolute w-px bg-white/20"
                 style={{
@@ -719,8 +728,14 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       {useItem.user.displayName || useItem.user.username}
                     </Link>
                     {item.status === 'PENDING' && (
-                      <span className="px-2 py-0.5 text-xs bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 rounded-full">
-                        Pending
+                      <span className="relative group">
+                        <span className="px-2 py-0.5 text-xs bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 rounded-full cursor-help">
+                          Pending
+                        </span>
+                        <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 z-50 bg-white text-black dark:bg-white dark:text-black">
+                          Saving on-chain forever
+                          <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-white"></span>
+                        </span>
                       </span>
                     )}
                     {item.status === 'FAILED' && (
@@ -988,6 +1003,36 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
             </div>
           )}
 
+          {/* Quoted post embed */}
+          {isQuote && item.parent && item.parent.user && (
+            <Link
+              to={`/caws/${item.parent.id}`}
+              onClick={(e) => e.stopPropagation()}
+              className={`block mt-3 mb-3 rounded-xl border p-3 transition-colors ${
+                isDark ? 'border-white/10 bg-white/[0.02] hover:bg-white/[0.04]' : 'border-gray-200 bg-gray-50 hover:bg-gray-100'
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-1.5">
+                <img
+                  src={item.parent.user.avatarUrl || item.parent.user.image || '/images/logo.jpeg'}
+                  alt=""
+                  className="w-5 h-5 rounded-full object-cover"
+                />
+                <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  {item.parent.user.displayName || item.parent.user.username}
+                </span>
+                <span className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                  @{item.parent.user.username}
+                </span>
+              </div>
+              {item.parent.content && (
+                <div className={`text-sm line-clamp-3 ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
+                  <ContentWithHashtags content={item.parent.content} />
+                </div>
+              )}
+            </Link>
+          )}
+
           {/* Post Actions */}
           <div className="flex items-center justify-between" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center space-x-6">
@@ -1088,7 +1133,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       className={`flex items-center gap-2 px-3 py-1 cursor-pointer rounded transition-all duration-200 ${
                         isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-100'
                       }`}
-                      onClick={e => { e.preventDefault(); e.stopPropagation(); setShowRecawMenu(false); openModal('quote', item) }}
+                      onClick={e => {
+                        e.preventDefault(); e.stopPropagation(); setShowRecawMenu(false);
+                        openModal('quote', item, () => {
+                          setRecawPending(true)
+                          if (onRecawStateChange) onRecawStateChange(useItem.id, true)
+                        })
+                      }}
                     >
                       <Pencil className={`w-4 h-4 transition-all duration-300 ${
                         isDark ? 'fill-white' : 'fill-gray-600'
@@ -1155,7 +1206,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     : isDark ? 'stroke-white stroke-[1.5]' : 'stroke-gray-600'
                 }`} />
                 {localBookmarkCount > 0 && (
-                  <span className="text-xs">{localBookmarkCount}</span>
+                  <span className="text-xs -translate-y-[3px]">{localBookmarkCount}</span>
                 )}
               </button></Tooltip>
 
@@ -1540,4 +1591,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   )
 }
 
-export default FeedItem
+export default React.memo(FeedItem, (prev, next) => {
+  // Re-render only when the item data or key props actually change
+  return (
+    prev.item === next.item &&
+    prev.isMainPost === next.isMainPost &&
+    prev.isReply === next.isReply &&
+    prev.hideParentPreview === next.hideParentPreview
+  )
+})
