@@ -1067,11 +1067,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   }}
                   disabled={item.status === 'PENDING' || item.status === 'FAILED' || recawPending}
                 >
-                  {(busyRecaw || recawPending) ? (
+                  {recawPending ? (
                     <div className="relative w-5 h-5 group">
                       <div className="w-5 h-5 border-2 border-gray-400 border-t-green-500 rounded-full animate-spin"></div>
                       <HiOutlineCheck className="absolute inset-0 w-3 h-3 m-auto text-green-500" />
                     </div>
+                  ) : busyRecaw ? (
+                    <div className="w-5 h-5 border-2 border-gray-400 border-t-green-500 rounded-full animate-spin"></div>
                   ) : (
                     <Recaw className={`w-5 h-5 transition-all duration-300 ${
                       (useItem.hasRecawed || isRecawByCurrentUser) ? 'text-green-500' : ''
