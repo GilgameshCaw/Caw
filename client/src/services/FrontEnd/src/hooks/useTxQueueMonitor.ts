@@ -7,6 +7,12 @@ import { apiFetch } from '~/api/client'
 import { useQuickSignRenewStore } from '~/components/modals/QuickSignRenewModal'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { useActionErrorStore } from '~/store/actionErrorStore'
+import { privateKeyToAccount } from 'viem/accounts'
+import { buildTypedData, TYPES } from '~/api/actions'
+
+// Track retry counts per TxQueue ID to prevent infinite loops
+const cawonceRetries = new Map<number, number>()
+const MAX_CAWONCE_RETRIES = 2
 
 // Global callbacks for feed refresh - set by Feed component
 let feedRefreshCallback: (() => void) | null = null
@@ -75,19 +81,80 @@ export function useTxQueueMonitor() {
             } else if (reason.includes('spend limit')) {
               useQuickSignRenewStore.getState().show('spend_limit')
             } else if (reason.includes('cawonce already used')) {
-              // Cawonce collision — silently bump the local cawonce so the next action uses a fresh one.
-              // Don't show an error — the user's action likely already went through via a previous attempt.
-              console.log(`[TxQueueMonitor] Cawonce collision for TxQueue ${status.id}, bumping local cawonce`)
-              const tokenDataStore = useTokenDataStore.getState()
-              if (status.senderId) {
-                // Sync cawonce from server to get the correct next value
-                apiFetch(`/api/users/min-cawonce/${status.senderId}`)
-                  .then((res: any) => {
-                    if (res.minSafeCawonce != null) {
-                      tokenDataStore.setCawonce(status.senderId, res.minSafeCawonce)
+              // Cawonce collision — auto-retry with a fresh cawonce using Quick Sign.
+              // If Quick Sign isn't available or retries exhausted, silently drop it.
+              const retryCount = cawonceRetries.get(status.id) || 0
+              if (retryCount >= MAX_CAWONCE_RETRIES) {
+                console.warn(`[TxQueueMonitor] Cawonce retry limit reached for TxQueue ${status.id}`)
+                cawonceRetries.delete(status.id)
+                useActionErrorStore.getState().show('Action Failed', 'Something went wrong. Please try again.')
+              } else {
+                cawonceRetries.set(status.id, retryCount + 1)
+                console.log(`[TxQueueMonitor] Cawonce collision for TxQueue ${status.id}, auto-retrying (attempt ${retryCount + 1})`)
+
+                // Async retry — fetch fresh cawonce, re-sign with session key, resubmit
+                ;(async () => {
+                  try {
+                    const senderId = status.senderId
+                    const originalData = status.payload?.data
+                    if (!senderId || !originalData) return
+
+                    // Get fresh cawonce
+                    const cawonceRes = await apiFetch(`/api/users/min-cawonce/${senderId}`)
+                    const freshCawonce = cawonceRes.minSafeCawonce
+                    if (freshCawonce == null) return
+
+                    // Update local cawonce
+                    useTokenDataStore.getState().setCawonce(senderId, freshCawonce + 1)
+
+                    // Find the session key for the token owner
+                    const user = await apiFetch(`/api/users/by-token/${senderId}`)
+                    const ownerAddress = user?.address?.toLowerCase()
+                    if (!ownerAddress) return
+
+                    const sessionStore = useSessionKeyStore.getState()
+                    const session = sessionStore.getSessionForAddress(ownerAddress)
+                    if (!session || !sessionStore.enabled || session.expiry < Date.now() / 1000) {
+                      console.log(`[TxQueueMonitor] No active session key for auto-retry`)
+                      return
                     }
-                  })
-                  .catch(() => {})
+
+                    // Build new typed data with fresh cawonce
+                    const actionTypeMap: Record<number, string> = { 0: 'caw', 1: 'like', 2: 'unlike', 3: 'recaw', 4: 'follow', 5: 'unfollow', 6: 'withdraw', 7: 'other' }
+                    const actionKey = actionTypeMap[originalData.actionType] || 'other'
+                    const { domain, types, primaryType, message } = buildTypedData({
+                      actionType: actionKey as any,
+                      senderId: originalData.senderId,
+                      receiverId: originalData.receiverId,
+                      receiverCawonce: originalData.receiverCawonce,
+                      cawonce: freshCawonce,
+                      recipients: originalData.recipients,
+                      amounts: (originalData.amounts || []).map((a: string) => BigInt(a)),
+                      text: originalData.text,
+                    })
+
+                    // Sign with session key
+                    const sessionAccount = privateKeyToAccount(session.privateKey)
+                    const signature = await sessionAccount.signTypedData({
+                      domain,
+                      types: { ActionData: TYPES.ActionData },
+                      primaryType,
+                      message,
+                    })
+
+                    // Submit new action
+                    const isQuote = status.payload?.isQuote || false
+                    await apiFetch('/api/actions', {
+                      method: 'POST',
+                      body: JSON.stringify({ data: message, domain, types, signature, isQuote }),
+                    })
+
+                    console.log(`[TxQueueMonitor] Auto-retried TxQueue ${status.id} with cawonce ${freshCawonce}`)
+                    cawonceRetries.delete(status.id)
+                  } catch (err) {
+                    console.warn(`[TxQueueMonitor] Auto-retry failed for TxQueue ${status.id}:`, err)
+                  }
+                })()
               }
             } else if (reason) {
               // Map technical errors to user-friendly messages

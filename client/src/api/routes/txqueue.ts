@@ -27,7 +27,9 @@ router.get('/status', async (req, res) => {
       select: {
         id: true,
         status: true,
-        reason: true
+        reason: true,
+        senderId: true,
+        payload: true,
       }
     })
 
@@ -35,7 +37,9 @@ router.get('/status', async (req, res) => {
       statuses: txQueueEntries.map(entry => ({
         id: entry.id,
         status: entry.status,
-        reason: entry.reason
+        reason: entry.reason,
+        // Include senderId and payload for failed entries so the client can auto-retry
+        ...(entry.status === 'failed' ? { senderId: entry.senderId, payload: entry.payload } : {}),
       }))
     })
   } catch (err: any) {
