@@ -1061,7 +1061,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   disabled={item.status === 'PENDING' || item.status === 'FAILED' || recawPending}
                 >
                   {busyRecaw ? (
-                    <div className="w-5 h-5 border-2 border-gray-400 border-t-green-500 rounded-full animate-spin"></div>
+                    <div className="relative w-5 h-5">
+                      <div className="w-5 h-5 border-2 border-gray-400 border-t-green-500 rounded-full animate-spin"></div>
+                      <HiOutlineCheck className="absolute inset-0 w-3 h-3 m-auto text-green-500" />
+                    </div>
                   ) : (
                     <Recaw className={`w-5 h-5 transition-all duration-300 ${
                       (useItem.hasRecawed || isRecawByCurrentUser || recawPending) ? 'text-green-500' : ''
@@ -1127,7 +1130,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 disabled={busyLike || likePending || item.status === 'PENDING' || item.status === 'FAILED'}
               >
                 {busyLike ? (
-                  <div className="w-5 h-5 border-2 border-gray-400 border-t-red-500 rounded-full animate-spin"></div>
+                  <div className="relative w-5 h-5">
+                    <div className="w-5 h-5 border-2 border-gray-400 border-t-red-500 rounded-full animate-spin"></div>
+                    <HiOutlineCheck className="absolute inset-0 w-3 h-3 m-auto text-red-500" />
+                  </div>
                 ) : (
                   <HiOutlineHeart className={`w-5 h-5 ${(useItem.hasLiked || likePending || item.likePending) ? 'fill-current' : ''}`} />
                 )}
