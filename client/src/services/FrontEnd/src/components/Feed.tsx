@@ -8,7 +8,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import { useViewTracking } from '~/hooks/useViewTracking'
 import { useMutePreferences, shouldFilterPost } from '~/hooks/useMutePreferences'
-import { setFeedRefreshCallback } from '~/hooks/useTxQueueMonitor'
+import { setFeedRefreshCallback, setFeedItemUpdateCallback } from '~/hooks/useTxQueueMonitor'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import SuggestedUsers from './SuggestedUsers'
 import { useHostVerification } from '~/hooks/useHostVerification'
@@ -223,9 +223,15 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
         }
       }
       setFeedRefreshCallback(refreshCallback)
+      setFeedItemUpdateCallback((cawId, updates) => {
+        setItems(current => current.map(item =>
+          item.id === cawId ? { ...item, ...updates } : item
+        ))
+      })
 
       return () => {
         setFeedRefreshCallback(null)
+        setFeedItemUpdateCallback(null)
       }
     }
   }, [filter])

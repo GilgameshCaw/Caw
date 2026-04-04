@@ -16,9 +16,14 @@ const MAX_CAWONCE_RETRIES = 2
 
 // Global callbacks for feed refresh - set by Feed component
 let feedRefreshCallback: (() => void) | null = null
+let feedItemUpdateCallback: ((cawId: string, updates: Record<string, any>) => void) | null = null
 
 export function setFeedRefreshCallback(callback: (() => void) | null) {
   feedRefreshCallback = callback
+}
+
+export function setFeedItemUpdateCallback(callback: ((cawId: string, updates: Record<string, any>) => void) | null) {
+  feedItemUpdateCallback = callback
 }
 
 /**
@@ -172,10 +177,8 @@ export function useTxQueueMonitor() {
             }
           } else if (status.status === 'done') {
             console.log(`[TxQueueMonitor] TxQueue ID ${status.id} succeeded`)
-            // Only trigger a full feed refresh for new posts (which have a pending post entry).
-            // Likes, recaws, replies, follows, and tips are updated in-place by Feed's own polling,
-            // so a full refresh would just wipe the feed and scroll the user to the top.
             const wasPendingPost = pendingPosts.some(p => p.txQueueId === status.id)
+            const wasOptimisticLike = optimisticLikes.some(l => l.txQueueId === status.id)
             removePendingPostByTxQueueId(status.id)
             removeOptimisticLikeByTxQueueId(status.id)
             usePendingSpendStore.getState().removePendingSpend(status.id)
@@ -183,6 +186,14 @@ export function useTxQueueMonitor() {
             anyCompleted = true
             if (wasPendingPost) {
               needsFeedRefresh = true
+            }
+            // When a like completes, flag the feed item as likePending so the
+            // Feed's polling picks it up and refreshes from server (hasLiked: true)
+            if (wasOptimisticLike) {
+              const like = optimisticLikes.find(l => l.txQueueId === status.id)
+              if (like?.cawId && feedItemUpdateCallback) {
+                feedItemUpdateCallback(String(like.cawId), { likePending: true })
+              }
             }
           }
         })
