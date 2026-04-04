@@ -8,7 +8,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import { useViewTracking } from '~/hooks/useViewTracking'
 import { useMutePreferences, shouldFilterPost } from '~/hooks/useMutePreferences'
-import { setFeedRefreshCallback, setFeedItemUpdateCallback } from '~/hooks/useTxQueueMonitor'
+import { setFeedRefreshCallback, setFeedItemUpdateCallback, setFeedRefreshVisibleCallback } from '~/hooks/useTxQueueMonitor'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import SuggestedUsers from './SuggestedUsers'
 import { useHostVerification } from '~/hooks/useHostVerification'
@@ -229,9 +229,27 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
         ))
       })
 
+      // Refresh visible items in-place (re-fetch from server without resetting scroll)
+      setFeedRefreshVisibleCallback(() => {
+        const currentItems = itemsRef.current
+        if (currentItems.length === 0) return
+        // Refresh a sample of items (first 10) to avoid hammering the server
+        const toRefresh = currentItems.slice(0, 10)
+        for (const caw of toRefresh) {
+          apiFetch<{ caw: CawItem }>(`/api/caws/${caw.id}`)
+            .then(updated => {
+              setItems(current => current.map(item =>
+                item.id === caw.id ? { ...updated.caw } : item
+              ))
+            })
+            .catch(() => {})
+        }
+      })
+
       return () => {
         setFeedRefreshCallback(null)
         setFeedItemUpdateCallback(null)
+        setFeedRefreshVisibleCallback(null)
       }
     }
   }, [filter])
