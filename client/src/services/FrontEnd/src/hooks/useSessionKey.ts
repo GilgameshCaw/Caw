@@ -21,8 +21,10 @@ export const SESSION_DURATION_OPTIONS = [
 // Default scope: CAW(0), LIKE(1), UNLIKE(2), RECAW(3), FOLLOW(4), UNFOLLOW(5)
 const DEFAULT_SCOPE = 0x3F // 0b00111111
 
-// Default spend limit in whole CAW tokens (0 = unlimited)
-export const DEFAULT_SPEND_LIMIT = BigInt(10_000_000) // 10M CAW
+// Default spend limit in whole CAW tokens (0 = unlimited).
+// High enough that the $5 USD preset in QuickSignOptions covers it at typical prices.
+// The UI shows USD-denominated presets; this is the fallback if price data isn't loaded.
+export const DEFAULT_SPEND_LIMIT = BigInt(500_000_000) // 500M CAW
 
 export const SPEND_LIMIT_OPTIONS = [
   { label: '10M',  value: BigInt(10_000_000) },

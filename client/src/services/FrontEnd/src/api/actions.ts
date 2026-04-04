@@ -129,6 +129,7 @@ export type ActionParams = {
   recipients?:    number[]
   amounts?:       BigInt[]
   text?:          string
+  isQuote?:       boolean
 }
 
 /**
@@ -196,8 +197,11 @@ export function useSignAndSubmitAction() {
     // Look up session key for the token owner (not the connected wallet).
     // This allows Quick Sign to work regardless of which wallet is connected,
     // since the session key was delegated by the token owner on-chain.
+    // Read fresh from the store to avoid stale closures.
     const sessionStore0 = useSessionKeyStore.getState()
-    const tokenOwner = activeToken?.owner
+    const freshToken = Object.values(useTokenDataStore.getState().tokensByAddress)
+      .flat().find(t => t.tokenId === activeTokenId)
+    const tokenOwner = freshToken?.owner || activeToken?.owner
     const activeSession0 = tokenOwner
       ? sessionStore0.getActiveSessionForAddress(tokenOwner)
       : sessionStore0.getActiveSession()
@@ -387,7 +391,7 @@ export function useSignAndSubmitAction() {
 
       const response = await apiFetch('/api/actions', {
         method: 'POST',
-        body: JSON.stringify({ data: message, domain, types, signature })
+        body: JSON.stringify({ data: message, domain, types, signature, isQuote: params.isQuote || false })
       })
 
       // If the server returned auth data (passive auth), store it immediately
