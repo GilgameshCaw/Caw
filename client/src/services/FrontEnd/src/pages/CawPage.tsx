@@ -204,23 +204,12 @@ export const CawPage: React.FC = () => {
         {/* Comments Section */}
         {isAuthenticated ? (
           <div className="space-y-0 relative">
-            {/* Continuous vertical line connecting all comment avatars */}
-            {comments.length > 0 && (
-              <div
-                className="absolute w-px bg-white/20 z-0"
-                style={{
-                  left: '23px',
-                  top: '34px',
-                  height: `${comments.length * 80 - 40}px`
-                }}
-              ></div>
-            )}
-
             {comments.map((comm) => (
               <div key={comm.id} className="relative">
                 <FeedItem
                   item={comm}
                   isReply={true}
+                  hideParentPreview={true}
                   onLikeStateChange={(cawId, likePending) => {
                     console.log('[CawPage] Like state changed for reply', cawId, 'pending:', likePending)
                     setComments(current =>

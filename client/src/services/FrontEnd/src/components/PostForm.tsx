@@ -239,6 +239,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const activeTokenId = useTokenDataStore(state => state.activeTokenId);
   const activeToken = useActiveToken();
+  const avatars = useTokenDataStore(s => s.avatarsByTokenId);
   const signAndSubmit = useSignAndSubmitAction()
   const { signTypedDataAsync } = useSignTypedData()
   const bumpCawonce = useTokenDataStore(s => s.bumpCawonce)
@@ -1162,9 +1163,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         content: chunks[0],
         username: activeToken.username,
         tokenId: effectiveTokenId,
-        displayName: activeToken.displayName,
-        image: activeToken.image,
-        avatarUrl: activeToken.avatarUrl
+        avatarUrl: avatars[effectiveTokenId] || undefined
       })
 
       // Update pending post with txQueue ID if available
@@ -1193,9 +1192,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           content: chunks[i],
           username: activeToken.username,
           tokenId: effectiveTokenId,
-          displayName: activeToken.displayName,
-          image: activeToken.image,
-          avatarUrl: activeToken.avatarUrl
+          avatarUrl: avatars[effectiveTokenId] || undefined
         })
         if (replyResponse.txQueueId) {
           updatePostWithTxQueueId(tempId, replyResponse.txQueueId)

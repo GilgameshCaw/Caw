@@ -10,6 +10,7 @@ interface QuoteModalProps {
   isOpen: boolean
   caw: CawItem
   onClose: () => void
+  onSuccess?: () => void
 }
 
 import { formatTimeAgo } from '~/utils/formatTimeAgo'
@@ -51,7 +52,7 @@ function renderImages(imageData: string | null | undefined) {
   }
 }
 
-export const QuoteModal: React.FC<QuoteModalProps> = ({ isOpen, caw, onClose }) => {
+export const QuoteModal: React.FC<QuoteModalProps> = ({ isOpen, caw, onClose, onSuccess }) => {
   return (
     <ModalWrapper
       isOpen={isOpen}
@@ -75,7 +76,7 @@ export const QuoteModal: React.FC<QuoteModalProps> = ({ isOpen, caw, onClose }) 
         <div className="mb-4">
           <PostForm
             quote={caw}
-            onSuccess={onClose}
+            onSuccess={onSuccess || onClose}
           />
         </div>
 

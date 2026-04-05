@@ -34,6 +34,7 @@ export const Modals: React.FC = () => {
           isOpen={true}
           caw={modalData}
           onClose={closeModal}
+          onSuccess={() => { onSuccess?.(); closeModal() }}
         />
       )}
       {modal === "message" && modalData && (
