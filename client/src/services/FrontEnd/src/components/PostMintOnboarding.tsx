@@ -968,10 +968,16 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                     <p className="text-red-400 text-sm text-center">{setupError}</p>
                   )}
 
+                  {isConnected && !isTokenOwner && (
+                    <p className="text-yellow-400 text-sm text-center">
+                      Wrong wallet — please switch to {activeToken?.owner?.slice(0, 6)}...{activeToken?.owner?.slice(-4)}
+                    </p>
+                  )}
+
                   <button
                     onClick={handleCombinedSetup}
-                    disabled={setupBusy}
-                    className={`w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all ${setupBusy ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+                    disabled={setupBusy || (isConnected && !isTokenOwner)}
+                    className={`w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all ${setupBusy || (isConnected && !isTokenOwner) ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
                   >
                     {setupBusy
                       ? setupSubStep === 'dms' ? 'Sign DM key...' : setupSubStep === 'quicksign' ? (qsStatus || 'Sign Quick Sign...') : 'Setting up...'
