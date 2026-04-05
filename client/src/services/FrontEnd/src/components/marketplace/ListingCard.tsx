@@ -1,14 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { useWriteContract, useWaitForTransactionReceipt, useChainId, useSwitchChain } from 'wagmi'
+import { useWriteContract, useWaitForTransactionReceipt, useChainId, useSwitchChain, useAccount } from 'wagmi'
+import { readContract } from '@wagmi/core'
 import { useTheme } from '~/hooks/useTheme'
 import { themeTextSecondary, themeTextMuted, themeBorder } from '~/utils/theme'
 import { MarketplaceListing, MarketplaceBid, useMarketplaceStore } from '~/store/marketplaceStore'
 import { formatEther, formatUnits } from 'viem'
 import { usePriceStore } from '~/store/tokenDataStore'
 import { apiFetch } from '~/api/client'
-import { CAW_NAME_MARKETPLACE_ADDRESS } from '~/../../../abi/addresses'
-import { cawNameMarketplaceAbi } from '~/../../../abi/generated'
+import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
+import { cawNameMarketplaceAbi, cawNameQuoterAbi } from '~/../../../abi/generated'
 import { chains } from '~/config/chains'
+import { wagmiConfig } from '~/config/Web3Provider'
 import ProfileCard from './ProfileCard'
 import LiveCountdown from './LiveCountdown'
 import ModalWrapper from '~/components/modals/ModalWrapper'
@@ -90,6 +92,51 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
       abi: cawNameMarketplaceAbi,
       functionName: 'cancelListing',
       args: [BigInt(listing.listingId)],
+      chainId: chains.l1.chainId,
+    })
+  }
+
+  // Settle auction
+  const { writeContract: writeSettle, data: settleHash, isPending: isSettling, error: settleError, reset: resetSettle } = useWriteContract()
+  const { isLoading: isSettleConfirming, isSuccess: isSettleSuccess } = useWaitForTransactionReceipt({ hash: settleHash })
+  const [settleLzFee, setSettleLzFee] = useState(0n)
+  const { address } = useAccount()
+
+  const isAuctionEnded = listing.listingType === 'ENGLISH_AUCTION' && listing.endTime && new Date(listing.endTime).getTime() <= Date.now()
+  const hasBids = listing.highestBid && listing.highestBid !== '0'
+  const isWinner = hasBids && address && listing.highestBidder?.toLowerCase() === address.toLowerCase()
+  const canSettle = isAuctionEnded && isWinner && !isSettleSuccess
+
+  // Quote LZ fee for settle
+  useEffect(() => {
+    if (!canSettle || !listing.highestBidder) return
+    readContract(wagmiConfig, {
+      address: CAW_NAME_QUOTER_ADDRESS,
+      abi: cawNameQuoterAbi,
+      functionName: 'syncTransferQuote',
+      args: [listing.tokenId, listing.highestBidder as `0x${string}`, false],
+      chainId: chains.l1.chainId,
+    }).then((quote: any) => {
+      setSettleLzFee((quote.nativeFee * 120n) / 100n)
+    }).catch(() => {})
+  }, [canSettle, listing.highestBidder])
+
+  useEffect(() => {
+    if (isSettleSuccess) triggerRefresh()
+  }, [isSettleSuccess])
+
+  const handleSettle = (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (chainId !== chains.l1.chainId) {
+      switchChain({ chainId: chains.l1.chainId })
+      return
+    }
+    writeSettle({
+      address: CAW_NAME_MARKETPLACE_ADDRESS,
+      abi: cawNameMarketplaceAbi,
+      functionName: 'settleAuction',
+      args: [BigInt(listing.listingId)],
+      value: settleLzFee,
       chainId: chains.l1.chainId,
     })
   }
@@ -192,8 +239,32 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
             )}
           </div>
 
+          {/* Settle auction button */}
+          {canSettle && (
+            <div className="text-center">
+              {isSettleSuccess ? (
+                <span className={`text-xs font-medium ${isDark ? 'text-green-400' : 'text-green-600'}`}>
+                  Auction settled!
+                </span>
+              ) : (
+                <button
+                  onClick={handleSettle}
+                  disabled={isSettling || isSettleConfirming}
+                  className="w-full px-4 py-2 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isSettling ? 'Confirm in wallet...' : isSettleConfirming ? 'Settling...' : 'Claim Username'}
+                </button>
+              )}
+              {settleError && (
+                <p className="text-xs text-red-400 mt-1">
+                  {settleError.message?.includes('User rejected') ? 'Transaction rejected' : 'Failed to settle'}
+                </p>
+              )}
+            </div>
+          )}
+
           {/* Cancel link for seller */}
-          {showCancel && (
+          {showCancel && !canSettle && (
             <div className="text-center">
               <button
                 onClick={(e) => { e.stopPropagation(); setShowCancelConfirm(true) }}
