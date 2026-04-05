@@ -92,6 +92,8 @@ async function processSessionRequest(
     const cawNameL2 = getContract()
 
     requests.set(requestId, { status: 'submitting' })
+    console.log(`[Sessions] Using contract at: ${CAW_NAMES_L2_ADDRESS}`)
+    console.log(`[Sessions] Scope bitmap: ${delegation.scopeBitmap} (0x${Number(delegation.scopeBitmap).toString(16)})`)
     const sig = ethers.Signature.from(signature)
     const { sessionKey, expiry, scopeBitmap, spendLimit } = delegation
 
@@ -142,6 +144,7 @@ async function processSessionRequest(
     await recordRateLimit(recoveredAddress)
   } catch (err: any) {
     console.error(`[Sessions] Error processing ${requestId}:`, err.message)
+    console.error(`[Sessions] Full error:`, JSON.stringify({ reason: err.reason, code: err.code, data: err.data, revert: err.revert }, null, 2))
     // Map contract/RPC errors to user-friendly messages
     const rawMsg = (err.reason || err.message || '').toLowerCase()
     let userError = 'Session registration failed. Please try again.'

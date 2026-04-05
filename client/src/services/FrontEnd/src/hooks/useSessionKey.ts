@@ -156,7 +156,7 @@ export function useCreateSession() {
           console.log('[QuickSign] Confirmed:', status.txHash, 'block:', status.blockNumber)
           break
         } else if (status.status === 'failed') {
-          console.error('[QuickSign] Registration failed:', status.error)
+          console.error('[QuickSign] Registration failed:', status.error, 'Full status:', JSON.stringify(status))
           throw new Error(status.error || 'Something went wrong. Please try again.')
         }
       } catch (e: any) {
