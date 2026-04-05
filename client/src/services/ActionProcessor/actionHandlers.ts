@@ -198,6 +198,7 @@ export async function handleCawAction(
   }
 
   // Create notification and confirm Reply record if this references a parent caw
+  let isReplyNotQuote = false
   if (parentCawId && newCaw) {
     // Check if a Reply record exists — if so, it's a reply; otherwise it's a quote
     const replyRecord = await tx.reply.findFirst({
@@ -205,6 +206,7 @@ export async function handleCawAction(
     })
 
     if (replyRecord) {
+      isReplyNotQuote = true
       // It's a reply — confirm pending Reply record and send REPLY notification
       try {
         await tx.reply.updateMany({
@@ -225,7 +227,15 @@ export async function handleCawAction(
         console.error(`Failed to create reply notification for caw ${newCaw.id}:`, err)
       }
     } else {
-      // It's a quote — send QUOTE notification
+      // It's a quote — increment recaw count and send QUOTE notification
+      try {
+        await tx.caw.update({
+          where: { id: parentCawId },
+          data: { recawCount: { increment: 1 } }
+        })
+      } catch (err) {
+        console.error(`Failed to increment recawCount for quote on caw ${parentCawId}:`, err)
+      }
       try {
         await NotificationService.createQuoteNotification(parentCawId, newCaw.id, authorId)
       } catch (err) {
@@ -240,8 +250,8 @@ export async function handleCawAction(
     data: { cawCount: { increment: 1 } }
   })
 
-  // If this was a comment/reply, bump the parent's comment count (once)
-  if (parentCawId) {
+  // Only bump comment count for actual replies, not quotes
+  if (parentCawId && isReplyNotQuote) {
     await tx.caw.update({
       where: { id: parentCawId },
       data: { commentCount: { increment: 1 } }
