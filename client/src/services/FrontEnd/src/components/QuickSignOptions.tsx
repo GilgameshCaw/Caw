@@ -120,7 +120,7 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
       {/* Spending limit */}
       <div>
         <p className={labelClass}>Spending limit</p>
-        <p className={descClass}>Safety cap on how much staked CAW this key can use.<br/>This is not a charge — it just limits the key's access.</p>
+        <p className={descClass}>Safety cap on how much deposited CAW this key can use.<br/>This is not a charge — it just limits the key's access.</p>
         <div className="flex flex-wrap gap-2">
           {dollarOptions ? (
             <>
@@ -173,7 +173,7 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
         )}
         {spendLimit === 0n && (
           <p className="text-xs text-red-400 mt-1 text-left">
-            No spending limit means a compromised<br/>session key could drain your staked CAW.
+            No spending limit means a compromised<br/>session key could drain your deposited CAW.
           </p>
         )}
       </div>

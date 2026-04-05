@@ -49,7 +49,7 @@ const Marketplace: React.FC = () => {
         <div className="mb-8">
           <h1 className={`text-3xl font-bold mb-2 ${themeText(isDark)}`}>Usernames</h1>
           <p className={`text-sm ${themeTextSecondary(isDark)}`}>
-            Your username is an NFT — mint one, or buy and sell on the feeless marketplace.
+            Your username is an NFT — create one, or buy and sell on the feeless marketplace.
           </p>
 
           {/* Stats row */}

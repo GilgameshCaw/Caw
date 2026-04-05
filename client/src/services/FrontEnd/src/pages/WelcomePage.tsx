@@ -177,7 +177,7 @@ const WelcomePage: React.FC = () => {
               <p className="text-gray-300 text-sm mb-4">{error}</p>
               <p className="text-gray-400 text-xs mb-4">
                 This usually happens when the blockchain RPC connection is slow or unavailable.
-                Your mint was successful, but we're having trouble fetching your profile data.
+                Your account was created successfully, but we're having trouble fetching your profile data.
               </p>
               <div className="flex gap-3 justify-center">
                 <button

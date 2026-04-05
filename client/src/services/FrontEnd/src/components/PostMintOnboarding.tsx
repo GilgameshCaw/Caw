@@ -67,7 +67,7 @@ interface StepDef {
 }
 
 const STEPS: StepDef[] = [
-  { id: 'stake',  label: 'Stake',  icon: <HiOutlineCube className="w-5 h-5" />,      skipWarning: 'Staked CAW is needed to post, like, and follow.' },
+  { id: 'stake',  label: 'Deposit',  icon: <HiOutlineCube className="w-5 h-5" />,      skipWarning: 'Deposited CAW is needed to post, like, and follow.' },
   { id: 'setup',  label: 'Set Up', icon: <HiLightningBolt className="w-5 h-5" />,    skipWarning: 'You can set these up later in settings.' },
   { id: 'follow', label: 'Follow', icon: <HiOutlineUserGroup className="w-5 h-5" />, skipWarning: '' },
 ]
@@ -674,7 +674,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
             <b className="text-lg text-white">Your username is live</b>
           </p>
           <p className="text-gray-400 text-center text-xl min-[800px]:text-base mt-2 max-w-sm">
-            You have successfully minted a new profile.
+            You have successfully created a new profile.
           </p>
           <p className="text-gray-400 text-center text-sm min-[800px]:text-base mt-2 max-w-sm">
             Follow the steps to finish setting up your account.
@@ -700,10 +700,10 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                 <div className="w-16 h-16 rounded-full bg-yellow-500/20 flex items-center justify-center mx-auto">
                   <HiOutlineCube className="w-8 h-8 text-yellow-500" />
                 </div>
-                <h2 className="text-2xl font-bold text-white">Stake CAW</h2>
+                <h2 className="text-2xl font-bold text-white">Deposit CAW</h2>
                 <p className="text-gray-400 text-sm">
-                  Staking is required to interact on CAW. Every action on the protocol
-                  generates fees that are distributed to stakers — the more you stake, the more you earn.
+                  Depositing CAW is required to interact on CAW. Every action on the protocol
+                  generates fees that are distributed to depositors — the more you deposit, the more you earn.
                 </p>
               </div>
 
@@ -724,7 +724,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                       </span>
                     </div>
                     {address && (
-                      <LayerZeroStatus address={address} alwaysDark message="Your stake from minting is being transferred cross-chain." />
+                      <LayerZeroStatus address={address} alwaysDark message="Your deposit is being transferred cross-chain." />
                     )}
                   </div>
                   <button
@@ -738,7 +738,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                 <div className="text-center space-y-4">
                   <div className="flex items-center justify-center gap-2 text-green-400">
                     <HiCheck className="w-5 h-5" />
-                    <span className="font-medium">CAW staked successfully!</span>
+                    <span className="font-medium">CAW deposited successfully!</span>
                   </div>
                   <button
                     onClick={goNext}
@@ -752,7 +752,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                   {stakeConfirmed ? (
                     <div className="flex items-center justify-center gap-2 text-green-400">
                       <HiCheck className="w-5 h-5" />
-                      <span className="font-medium">CAW staked successfully!</span>
+                      <span className="font-medium">CAW deposited successfully!</span>
                     </div>
                   ) : (
                     <div className="space-y-3">
@@ -761,10 +761,10 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
                         </svg>
-                        <span className="font-medium">Stake submitted — waiting for confirmation...</span>
+                        <span className="font-medium">Deposit submitted — waiting for confirmation...</span>
                       </div>
                       {address && (
-                        <LayerZeroStatus address={address} alwaysDark message="Your stake is being transferred cross-chain." />
+                        <LayerZeroStatus address={address} alwaysDark message="Your deposit is being transferred cross-chain." />
                       )}
                     </div>
                   )}
@@ -778,7 +778,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
               ) : (
                 <div className="space-y-4">
                   <div className="space-y-2">
-                    <label className="text-sm font-medium text-gray-300">Amount to Stake</label>
+                    <label className="text-sm font-medium text-gray-300">Amount to Deposit</label>
                     {getPresetAmounts(availableBalance).length > 0 && (
                       <div className="flex flex-wrap gap-2">
                         {getPresetAmounts(availableBalance).map(preset => (

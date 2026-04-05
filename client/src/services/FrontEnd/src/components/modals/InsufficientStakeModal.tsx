@@ -86,7 +86,7 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
           </div>
-          <h2 className="text-xl font-bold text-white">Insufficient CAW Staked</h2>
+          <h2 className="text-xl font-bold text-white">Insufficient CAW Deposited</h2>
         </div>
         <button
           onClick={onClose}
@@ -101,7 +101,7 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
       {/* Message */}
       <div className="text-center mb-6">
         <p className="text-gray-300 mb-2">
-          You don't have enough CAW staked to {getActionText()}.
+          You don't have enough CAW deposited to {getActionText()}.
         </p>
 
         {/* Show current wallet balance */}
@@ -117,7 +117,7 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
           <div className="bg-white/5 rounded-lg p-3 mb-3">
             <div className="grid grid-cols-2 gap-2 text-sm">
               <div>
-                <p className="text-gray-400">Staked:</p>
+                <p className="text-gray-400">Deposited:</p>
                 <p className="text-white font-medium">
                   {(Number(currentAmount) / 1e18).toLocaleString(undefined, { maximumFractionDigits: 2 })} CAW
                 </p>
@@ -135,11 +135,11 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
         {/* Conditional message based on balance */}
         <p className="text-sm text-gray-400 mt-3">
           {hasEnoughToBuy ? (
-            <>You have enough CAW in your wallet! Stake it to start participating in the CAW ecosystem.</>
+            <>You have enough CAW in your wallet! Deposit it to start participating in the CAW ecosystem.</>
           ) : hasZeroBalance ? (
             <>You'll need to buy CAW tokens to get started with the CAW ecosystem.</>
           ) : (
-            <>You have some CAW, but need more. Buy additional tokens or stake what you have.</>
+            <>You have some CAW, but need more. Buy additional tokens or deposit what you have.</>
           )}
         </p>
       </div>
@@ -153,7 +153,7 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
               onClick={handleStakeCAW}
               className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all duration-300 cursor-pointer"
             >
-              Stake CAW
+              Deposit CAW
             </button>
             {/* Secondary: Buy more */}
             <button
@@ -177,7 +177,7 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
               onClick={handleStakeCAW}
               className="w-full py-3 border border-white/20 hover:border-white/40 text-white font-semibold rounded-full transition-all duration-300 cursor-pointer"
             >
-              Stake CAW
+              Deposit CAW
             </button>
           </>
         )}

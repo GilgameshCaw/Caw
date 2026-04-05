@@ -531,12 +531,12 @@ const Staking = () => {
         <h2 className={`text-xl font-bold mb-2 transition-colors duration-300 ${
           isDark ? 'text-white' : 'text-black'
         }`}>
-          Stake CAW
+          Deposit CAW
         </h2>
         <p className={`text-sm transition-colors duration-300 ${
           isDark ? 'text-gray-400' : 'text-gray-600'
         }`}>
-          The more CAW you stake, the more you will earn from the protocol's activity
+          The more CAW you deposit, the more you will earn from the protocol's activity
         </p>
       </div>
 
@@ -556,7 +556,7 @@ const Staking = () => {
         <label className={`text-sm font-medium transition-colors duration-300 ${
           isDark ? 'text-gray-300' : 'text-gray-700'
         }`}>
-          Amount to Stake
+          Amount to Deposit
         </label>
         {getPresetAmounts(mockData.availableBalance).length > 0 && (
           <div className="flex flex-wrap gap-2 my-3">
@@ -630,7 +630,7 @@ const Staking = () => {
           : !isTokenOwner && activeToken && !wrongChainForStake
           ? 'Wrong Address'
           : isStakePending
-          ? 'Staking...'
+          ? 'Depositing...'
           : isApprovePending
           ? 'Approving...'
           : wrongChainForStake
@@ -639,7 +639,7 @@ const Staking = () => {
           ? 'Approve'
           : insufficientBalance
           ? "Insufficient Balance"
-          : "Stake CAW"}
+          : "Deposit CAW"}
       </button>
 
       <div className="text-center mt-4">
@@ -661,12 +661,12 @@ const Staking = () => {
         <h2 className={`text-xl font-bold mb-2 transition-colors duration-300 ${
           isDark ? 'text-white' : 'text-black'
         }`}>
-          Unstake CAW
+          Withdraw CAW
         </h2>
         <p className={`text-sm transition-colors duration-300 ${
           isDark ? 'text-gray-400' : 'text-gray-600'
         }`}>
-          Withdraw your staked tokens
+          Withdraw your deposited tokens
         </p>
       </div>
 
@@ -870,7 +870,7 @@ const Staking = () => {
         <p className={`text-sm transition-colors duration-300 ${
           isDark ? 'text-gray-400' : 'text-gray-600'
         }`}>
-          Learn about CAW Protocol staking mechanics
+          Learn about CAW Protocol deposit mechanics
         </p>
       </div>
 
@@ -895,7 +895,7 @@ const Staking = () => {
             <p className={`text-sm transition-colors duration-300 ${
               isDark ? 'text-gray-400' : 'text-gray-600'
             }`}>
-              Staking CAW requires a minted username NFT, which will retain the staked amount and accrue rewards over time.
+              Depositing CAW requires a username NFT, which will retain the deposited amount and accrue rewards over time.
             </p>
           </div>
         </div>
@@ -922,7 +922,7 @@ const Staking = () => {
             <p className={`text-sm transition-colors duration-300 ${
               isDark ? 'text-gray-400' : 'text-gray-600'
             }`}>
-              With every action (CAW, RECAW, LIKE, FOLLOW, etc...) on the CAW Protocol, a small CAW fee is collected and automatically distributed to all CAW stakers in proportion to their deposits.
+              With every action (CAW, RECAW, LIKE, FOLLOW, etc...) on the CAW Protocol, a small CAW fee is collected and automatically distributed to all CAW depositors in proportion to their deposits.
             </p>
           </div>
         </div>
@@ -1078,7 +1078,7 @@ const Staking = () => {
                     }`}
                   >
                     <HiOutlineTrendingUp className="w-5 h-5" />
-                    <span>Stake</span>
+                    <span>Deposit</span>
                   </button>
 
                   <button
@@ -1090,7 +1090,7 @@ const Staking = () => {
                     }`}
                   >
                     <HiOutlineTrendingDown className="w-5 h-5" />
-                    <span>Unstake</span>
+                    <span>Withdraw</span>
                   </button>
 
                   <button

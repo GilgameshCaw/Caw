@@ -380,7 +380,7 @@ const CreateListingModal: React.FC = () => {
                         <div className={`absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 rounded-lg text-xs whitespace-nowrap z-50 ${
                           isDark ? 'bg-gray-800 text-gray-200 border border-white/10' : 'bg-gray-900 text-white'
                         }`}>
-                          Minting a {username?.length}-character username today costs {mintCostUsd}
+                          Creating a {username?.length}-character username today costs {mintCostUsd}
                           <div className={`absolute top-full left-1/2 -translate-x-1/2 w-2 h-2 rotate-45 ${
                             isDark ? 'bg-gray-800 border-r border-b border-white/10' : 'bg-gray-900'
                           }`} />

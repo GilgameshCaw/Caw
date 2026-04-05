@@ -1,7 +1,7 @@
 // src/pages/NewProfile.tsx
 import { SubmitButton } from "~/components/buttons/SubmitButton"
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
-import { useReadContract, useAccount, useConnections, useSwitchChain } from 'wagmi'
+import { useReadContract, useAccount, useSwitchChain } from 'wagmi'
 import useAllowance from "~/hooks/useAllowance";
 import { maxUint256, parseUnits, erc20Abi } from "viem";
 import MainLayout from '~/layouts/MainLayout'
@@ -47,7 +47,7 @@ export const NewProfile: React.FC = () => {
   };
   const navigate = useNavigate();
   const activeToken = useActiveToken();
-  const { isConnected, address }      = useAccount()
+  const { isConnected, address, chainId }      = useAccount()
   const [username, setUsername] = useState('')
   const [showPricingModal, setShowPricingModal] = useState(false)
   const [mintSuccess, setMintSuccess] = useState(false)
@@ -216,8 +216,7 @@ console.log("BALANCE:", balance)
   const totalCawNeeded = cost + depositAmountWei;
   const insufficientBalance = !balance || totalCawNeeded > balance;
 
-  const connections = useConnections();
-  const wrongChain = connections[0]?.chainId != chains.l1.chainId;
+  const wrongChain = chainId !== chains.l1.chainId;
 
   // Reset switching state when chain changes to correct one
   React.useEffect(() => {
@@ -410,7 +409,7 @@ console.log("BALANCE:", balance)
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
           </svg>
-          <span>Minting...</span>
+          <span>Creating...</span>
         </div>
       )
     } else if (isApprovePending) {
@@ -430,7 +429,7 @@ console.log("BALANCE:", balance)
     submitText = "Approve CAW"
   else if (usernameTaken)
     submitText = "username taken"
-  else submitText = depositEnabled && depositAmountWei > 0n ? "Mint & Deposit" : "Mint"
+  else submitText = depositEnabled && depositAmountWei > 0n ? "Create & Deposit" : "Create"
 
   // Show loading screen while waiting for mint to complete
   if (!hasResetForm && (mintStatus === 'pending' || (mintStatus === 'success' && !mintSuccess))) {
@@ -439,7 +438,7 @@ console.log("BALANCE:", balance)
         <div className="max-w-xl mx-auto p-6 space-y-4 mt-8">
           <div className="text-center space-y-6">
             <h1 className="text-4xl font-bold text-white">Creating your new profile...</h1>
-            <p className="text-gray-400 text-sm">Your username will be minted as a tradeable and transferable NFT, and will live forever on the Ethereum Blockchain</p>
+            <p className="text-gray-400 text-sm">Your username will be created as a tradeable and transferable NFT, and will live forever on the Ethereum Blockchain</p>
 
             {/* Show the username SVG with loader overlay */}
             <div className="flex justify-center items-center my-8">
@@ -456,6 +455,10 @@ console.log("BALANCE:", balance)
                 </div>
               </div>
             </div>
+
+            {depositEnabled && depositAmountWei > 0n && (
+              <p className="text-yellow-500 text-sm">{Number(depositAmount).toLocaleString()} CAW deposit pending</p>
+            )}
 
             <div className="space-y-4">
               {mintStatus === 'pending' && (
@@ -619,7 +622,11 @@ console.log("BALANCE:", balance)
                     </div>
                   </div>
                   </div>
-                  <p className="text-gray-500 text-xs mt-0.5">Required to post, like, and follow. You earn tokens from every action on the protocol based on your deposit.</p>
+                  <ul className="text-gray-500 text-xs mt-0.5 list-disc list-outside pl-4 space-y-0.5">
+                    <li>Required to post, like, and follow</li>
+                    <li>You earn tokens from every action on the protocol based on your deposit</li>
+                    <li>The more you deposit, the more you earn</li>
+                  </ul>
                 </div>
               </label>
 

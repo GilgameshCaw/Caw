@@ -171,7 +171,7 @@ export function useTxQueueMonitor() {
               // Map technical errors to user-friendly messages
               let userMessage = 'Something went wrong while processing your action. Please try again.'
               if (reason.includes('insufficient')) {
-                userMessage = 'You don\'t have enough staked CAW for this action.'
+                userMessage = 'You don\'t have enough deposited CAW for this action.'
               } else if (reason.includes('not authenticated')) {
                 userMessage = 'Your account needs to be authenticated with this client. Please try reconnecting.'
               } else if (reason.includes('cannot follow yourself')) {

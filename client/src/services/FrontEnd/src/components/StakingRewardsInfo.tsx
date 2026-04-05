@@ -7,10 +7,10 @@ interface StakingRewardsInfoProps {
 }
 
 const REWARDS = [
-  { action: 'Post', cost: '5,000 CAW', distribution: '100% to stakers' },
-  { action: 'Like', cost: '2,000 CAW', distribution: '80% to poster, 20% to stakers' },
-  { action: 'ReCAW', cost: '4,000 CAW', distribution: '50% to poster, 50% to stakers' },
-  { action: 'Follow', cost: '30,000 CAW', distribution: '80% to followed, 20% to stakers' },
+  { action: 'Post', cost: '5,000 CAW', distribution: '100% to depositors' },
+  { action: 'Like', cost: '2,000 CAW', distribution: '80% to poster, 20% to depositors' },
+  { action: 'ReCAW', cost: '4,000 CAW', distribution: '50% to poster, 50% to depositors' },
+  { action: 'Follow', cost: '30,000 CAW', distribution: '80% to followed, 20% to depositors' },
 ]
 
 const StakingRewardsInfo: React.FC<StakingRewardsInfoProps> = ({
