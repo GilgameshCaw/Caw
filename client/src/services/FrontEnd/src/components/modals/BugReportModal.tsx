@@ -98,7 +98,7 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
           type: feedbackType,
           userId: activeToken?.tokenId || null,
           username: activeToken?.username || null,
-          stakedAmount: activeToken?.stakedAmount?.toString() || null,
+          stakedAmount: activeToken?.stakedAmount ? (BigInt(activeToken.stakedAmount) / BigInt(10 ** 18)).toString() : null,
           description: description.trim(),
           imageUrls: imageUrls.length > 0 ? imageUrls.join('|||') : null,
           page: window.location.pathname,
@@ -182,7 +182,7 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
             {/* User info */}
             {activeToken && (
               <div className={`text-xs mb-3 px-3 py-2 rounded-lg ${themeBgSubtle(isDark)} text-white/40`}>
-                Reporting as @{activeToken.username} (staked: {activeToken.stakedAmount?.toString() || '0'} CAW)
+                Reporting as @{activeToken.username} (staked: {activeToken.stakedAmount ? Number(BigInt(activeToken.stakedAmount) / BigInt(10 ** 18)).toLocaleString() : '0'} CAW)
               </div>
             )}
 

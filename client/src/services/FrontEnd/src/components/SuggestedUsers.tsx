@@ -214,4 +214,4 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
   )
 }
 
-export default SuggestedUsers
+export default React.memo(SuggestedUsers)

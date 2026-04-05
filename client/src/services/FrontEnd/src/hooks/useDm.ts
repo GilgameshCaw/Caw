@@ -560,7 +560,7 @@ export function useDmMessages(conversationId: string, tokenId?: number) {
     setIsSending(true)
     try {
       const sharedSecret = await getOrComputeSharedSecret(conversationId, tokenId)
-      if (!sharedSecret) throw new Error('Cannot encrypt: shared secret not available. Try re-enabling DMs.')
+      if (!sharedSecret) throw new Error('Cannot encrypt: encryption key not available. Try re-enabling DMs.')
 
       const encryptedPayload = await encrypt(content, sharedSecret)
 

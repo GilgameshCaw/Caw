@@ -29,7 +29,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   txQueue: {
     defaultSort: 'createdAt',
     searchFields: ['signedTx', 'status', 'reason'],
-    listFields: ['id', 'senderId', 'status', 'reason', 'createdAt', 'updatedAt'],
+    listFields: ['id', 'senderId', 'payload', 'status', 'reason', 'createdAt', 'updatedAt'],
     writable: true,
     label: 'Tx Queue',
   },
