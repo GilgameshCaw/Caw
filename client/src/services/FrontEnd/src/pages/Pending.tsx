@@ -72,7 +72,7 @@ export const PendingPage: React.FC = () => {
 
   return (
     <MainLayout>
-      <ul className="space-y-4">
+      <ul className="space-y-4 p-3">
         {actions.map(a => {
           const sender = userById.get(a.senderId)
           const who    = sender?.username || sender?.address

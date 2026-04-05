@@ -411,7 +411,7 @@ const MessagesPage: React.FC = () => {
     try {
       const secret = await getSharedSecret()
       if (!secret) {
-        setUploadError('Cannot encrypt: shared secret not available')
+        setUploadError('Cannot encrypt: encryption key not available')
         return
       }
 
@@ -723,8 +723,7 @@ const MessagesPage: React.FC = () => {
   return (
     <MainLayout>
       <div
-        className="max-w-2xl mx-auto px-3 sm:px-6 pt-4 pb-0 bg-black flex flex-col relative"
-        style={{ height: 'calc(100dvh - 64px - 24px)', minHeight: 0 }}
+        className="max-w-2xl mx-auto pt-4 pb-0 bg-black flex flex-col relative h-full"
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -738,7 +737,7 @@ const MessagesPage: React.FC = () => {
           </div>
         )}
         {/* Messages Header */}
-        <div className={`mb-6 flex-shrink-0 ${currentView === 'chat' ? 'fixed md:sticky top-0 left-0 right-0 z-30 bg-black p-4 md:p-0' : ''}`}>
+        <div className={`mb-6 flex-shrink-0 mx-3 sm:mx-6 ${currentView === 'chat' ? 'fixed md:sticky top-0 left-0 right-0 z-30 bg-black p-4 md:p-0' : ''}`}>
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
               {currentView === 'chat' && (
@@ -884,7 +883,7 @@ const MessagesPage: React.FC = () => {
 
         {/* Search Bar - Only show in inbox view */}
         {currentView === 'inbox' && (
-          <div className="mb-6 flex-shrink-0">
+          <div className="mb-6 flex-shrink-0 mx-3 sm:mx-6">
             <div className="relative">
               <button
                 onClick={() => setShowSearchModal(true)}
@@ -1015,7 +1014,7 @@ const MessagesPage: React.FC = () => {
 
         {/* Key derivation banner — DMs enabled but keys not in memory */}
         {currentView === 'inbox' && needsKeyDerivation && !identityLoading && (
-          <div className={`-mx-3 sm:-mx-6 px-4 sm:px-6 py-3 flex items-center justify-between ${
+          <div className={`mt-auto px-4 sm:px-6 py-3 flex items-center justify-between ${
             isDark ? 'bg-yellow-500/10 border-b border-yellow-500/30' : 'bg-yellow-50 border-b border-yellow-200'
           }`}>
             <p className={`text-sm ${isDark ? 'text-yellow-200' : 'text-yellow-800'}`}>
@@ -1037,7 +1036,7 @@ const MessagesPage: React.FC = () => {
 
         {/* Messages List - Only show in inbox view */}
         {currentView === 'inbox' && (
-          <div className="space-y-1 flex-1 overflow-y-auto -mx-3 sm:mx-0 px-3 sm:px-0 min-h-0">
+          <div className="space-y-1 flex-1 overflow-y-auto min-h-0 mt-2">
             {(identityLoading || (conversationsLoading && !conversationsLoaded)) ? (
               <div className="flex justify-center py-8">
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yellow-500"></div>
@@ -1069,7 +1068,7 @@ const MessagesPage: React.FC = () => {
                 return (
                   <div
                     key={conversation.id}
-                    className="p-2 rounded-lg transition-all duration-300 hover:bg-gray-500/5 cursor-pointer"
+                    className="px-3 sm:px-6 py-2 rounded-lg transition-all duration-300 hover:bg-gray-500/5 cursor-pointer"
                     onClick={() => handleConversationSelect(conversation.id)}
                   >
                     <div className="flex items-center justify-between">
@@ -1145,7 +1144,7 @@ const MessagesPage: React.FC = () => {
         {currentView === 'chat' && selectedConversationId && (
           <div className="flex flex-col flex-1 md:flex-1 h-screen md:h-auto">
             {/* Encryption Status Banner */}
-            <div className={`flex items-center justify-center py-2 px-6 -mx-3 sm:-mx-6 ${
+            <div className={`flex items-center justify-center py-4 px-6 -mx-3 sm:-mx-6 ${
               isDark ? 'bg-green-900/20 border-b border-green-800/30' : 'bg-green-50 border-b border-green-200'
             }`}>
               <div className="flex items-center space-x-2">
@@ -1164,7 +1163,7 @@ const MessagesPage: React.FC = () => {
             <div
               ref={messagesContainerRef}
               className="overflow-y-auto custom-scrollbar-alt space-y-4 p-4 md:p-4 pt-32 md:pt-4 pb-20 md:pb-4 transition-opacity duration-300"
-              style={{ height: 'calc(100vh - 200px)', opacity: chatReady ? 1 : 0 }}
+              style={{ height: '100%', opacity: chatReady ? 1 : 0 }}
               onScroll={(e) => {
                 const el = e.currentTarget
                 // Load older messages when scrolled near the top

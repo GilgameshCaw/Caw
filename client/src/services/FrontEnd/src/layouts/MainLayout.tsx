@@ -92,10 +92,10 @@ const MainLayout = ({ children }: MainLayoutProps) => {
       )}
 
       {/* Main Content */}
-      <main className={`flex-1 min-w-0 transition-colors duration-300 ${
+      <main className={`flex-1 min-w-0 transition-colors duration-300 flex flex-col ${
         isDark ? 'bg-black text-white' : 'bg-white text-black'
       } ${hideSidebars ? 'pt-0' : isMobileMenuOpen ? 'md:pt-0 pt-16' : 'pt-16 md:pt-0'}`}>
-        <div className={`p-3 ${hideSidebars ? 'pb-24' : ''}`}>
+        <div className={`flex-1 min-h-0 ${hideSidebars ? 'pb-24' : ''}`}>
           {children}
         </div>
       </main>
@@ -172,7 +172,7 @@ const MainLayout = ({ children }: MainLayoutProps) => {
       )}
 
       {/* Floating feedback button */}
-      <div className={`fixed left-5 md:right-5 md:left-auto z-40 ${hideSidebars ? 'bottom-20' : 'bottom-5'}`}>
+      <div className={`fixed z-40 left-[5px] bottom-[5px]`}>
       <Tooltip text="Feedback" position="top">
         <button
           onClick={() => setShowBugReport(true)}
