@@ -1,129 +1,122 @@
 import { useRef, useEffect, useMemo } from 'react'
-import { Canvas, useFrame, useThree, useLoader } from '@react-three/fiber'
+import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
+import { SVGLoader } from 'three/examples/jsm/loaders/SVGLoader.js'
 
-const COIN_RADIUS = 1.8
-const COIN_THICKNESS = 0.18
-const RIDGE_COUNT = 120
-const RIDGE_DEPTH = 0.025
-const EDGE_COLOR = '#7a6520'
-const EDGE_HIGHLIGHT = '#a08630'
-const BUMP_SCALE = 1.2
-const FACE_SEGMENTS = 128
+const DEPTH = 30
+const BORDER_COLOR = '#ebc046'
+const FACE_COLOR = '#1a1a1a'
 
-/**
- * Build a ridged cylinder edge (like a US quarter).
- * Uses a standard cylinder but displaces outer vertices radially with a sine wave.
- */
-function useRidgedEdge() {
+// SVG path from the single-bird CAW logo
+const CROW_SVG_PATH = 'M355.2,118.75l-117.46-9.88s-24.86,1.13-40.66,23.15l14.12,55.91c-26.07,3.29-46.32,2.92-67.39.24l14.31-56.15s-13-24-50.76-22.57c-5.73.21-107.36,9.59-107.36,9.59L57.08,39.04l44-4.17s17.51-2.82,31.62,2.26c8.28,2.92,16.05,7.15,23,12.52L177.62,0l21,49.56c4.05-1.93,7.94-4.2,11.62-6.78,15.58-10.45,42.21-8.28,42.21-8.28l44.75,3.66,58,80.59Z'
+
+function useCrowShape() {
   return useMemo(() => {
-    const geo = new THREE.CylinderGeometry(
-      COIN_RADIUS, COIN_RADIUS, COIN_THICKNESS,
-      RIDGE_COUNT * 2, // radial segments — 2 per ridge for peaks and valleys
-      1,               // height segments
-      true             // open ended (faces are separate meshes)
-    )
+    // Parse the SVG path using Three's SVGLoader
+    const paths = new SVGLoader().parse(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 355.2 190.29"><path d="${CROW_SVG_PATH}"/></svg>`
+    ).paths
 
-    const pos = geo.attributes.position
-    for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i)
-      const z = pos.getZ(i)
-      const angle = Math.atan2(z, x)
-      const ridge = Math.sin(angle * RIDGE_COUNT) * RIDGE_DEPTH
-      const currentR = Math.sqrt(x * x + z * z)
-      const newR = currentR + ridge
-      const scale = newR / currentR
-      pos.setX(i, x * scale)
-      pos.setZ(i, z * scale)
-    }
-    geo.computeVertexNormals()
-    return geo
+    if (paths.length === 0) return null
+
+    const shapes = SVGLoader.createShapes(paths[0])
+    if (shapes.length === 0) return null
+
+    return shapes[0]
   }, [])
 }
 
-/**
- * Generate a high-contrast bump map from the logo texture.
- */
-function useBumpMap(texture: THREE.Texture) {
+function useExtrudedCrow() {
+  const crowShape = useCrowShape()
   return useMemo(() => {
-    const img = texture.image as HTMLImageElement
-    if (!img || !img.width) return null
-
-    const canvas = document.createElement('canvas')
-    const size = 512
-    canvas.width = size
-    canvas.height = size
-    const ctx = canvas.getContext('2d')!
-
-    // Fill black background first
-    ctx.fillStyle = '#000000'
-    ctx.fillRect(0, 0, size, size)
-
-    // Draw the logo centered
-    ctx.drawImage(img, 0, 0, size, size)
-    const imageData = ctx.getImageData(0, 0, size, size)
-    const data = imageData.data
-
-    // Convert to high-contrast grayscale for stronger bump effect
-    for (let i = 0; i < data.length; i += 4) {
-      const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114
-      // Boost contrast: push darks darker, lights lighter
-      const boosted = Math.min(255, Math.max(0, (gray - 128) * 2.0 + 128))
-      data[i] = boosted
-      data[i + 1] = boosted
-      data[i + 2] = boosted
+    if (!crowShape) return null
+    const extrudeSettings: THREE.ExtrudeGeometryOptions = {
+      depth: DEPTH,
+      bevelEnabled: true,
+      bevelThickness: 0.05,
+      bevelSize: 0.03,
+      bevelOffset: 0,
+      bevelSegments: 6,
     }
-    ctx.putImageData(imageData, 0, 0)
+    const geo = new THREE.ExtrudeGeometry(crowShape, extrudeSettings)
+    geo.center()
+    const scale = 3.6 / 355.2
+    geo.scale(scale, -scale, scale)
+    geo.computeVertexNormals()
 
-    const bumpTex = new THREE.CanvasTexture(canvas)
-    bumpTex.needsUpdate = true
-    return bumpTex
-  }, [texture.image])
-}
+    // Build outline for just front and back faces from the shape's points
+    const points = crowShape.getPoints(64)
+    const s = scale
+    const bbox = geo.boundingBox!
+    const frontZ = bbox.max.z
+    const backZ = bbox.min.z
+    // Compute center of shape points to match geo.center() offset
+    let cx = 0, cy = 0
+    for (const p of points) { cx += p.x; cy += p.y }
+    cx /= points.length
+    cy /= points.length
+    // Actually, since we centered the geometry, derive offset from the original extrude
+    const rawGeo = new THREE.ExtrudeGeometry(crowShape, extrudeSettings)
+    rawGeo.computeBoundingBox()
+    const rawBB = rawGeo.boundingBox!
+    const offsetX = (rawBB.min.x + rawBB.max.x) / 2
+    const offsetY = (rawBB.min.y + rawBB.max.y) / 2
+    rawGeo.dispose()
 
-/**
- * Create a circle geometry with enough subdivisions for bump mapping to be visible.
- */
-function useDetailedCircle() {
-  return useMemo(() => {
-    // PlaneGeometry with many segments, then warp into a circle
-    const segments = FACE_SEGMENTS
-    const geo = new THREE.PlaneGeometry(
-      COIN_RADIUS * 2, COIN_RADIUS * 2,
-      segments, segments
-    )
-    const pos = geo.attributes.position
-    const uv = geo.attributes.uv
-
-    // Mask vertices outside the circle radius
-    for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i)
-      const y = pos.getY(i)
-      const dist = Math.sqrt(x * x + y * y)
-      if (dist > COIN_RADIUS) {
-        // Clamp to edge
-        const scale = COIN_RADIUS / dist
-        pos.setX(i, x * scale)
-        pos.setY(i, y * scale)
-        // Update UVs to match
-        uv.setX(i, (x * scale / (COIN_RADIUS * 2)) + 0.5)
-        uv.setY(i, (y * scale / (COIN_RADIUS * 2)) + 0.5)
+    const outlinePositions: number[] = []
+    for (let face = 0; face < 2; face++) {
+      const z = face === 0 ? frontZ : backZ
+      for (let i = 0; i < points.length; i++) {
+        const a = points[i]
+        const b = points[(i + 1) % points.length]
+        outlinePositions.push(
+          (a.x - offsetX) * s, -(a.y - offsetY) * s, z,
+          (b.x - offsetX) * s, -(b.y - offsetY) * s, z,
+        )
       }
     }
-    geo.computeVertexNormals()
-    return geo
-  }, [])
+
+    // Key landmark points from the SVG path (in SVG coords):
+    // Beak tip: (177.62, 0)
+    // Right wing tip: (355.2, 118.75)
+    // Right wing inner: (297, 39)  — near L57.08 mirror
+    // Left wing tip: (0, 119.04)
+    // Left wing inner: (57.08, 39.04)
+    // Tail bottom-left: (143.81, 187.93)  — approx from curves
+    // Tail bottom-right: (211.2, 187.93)  — approx from curves
+    const landmarks = [
+      { x: 177.62, y: 0 },        // beak
+      { x: 355.2, y: 118.75 },    // right wing tip
+      { x: 298, y: 39 },          // right wing upper edge
+      { x: 0, y: 119.04 },        // left wing tip
+      { x: 57.08, y: 39.04 },     // left wing upper edge
+      { x: 143.81, y: 187.93 },   // tail left
+      { x: 211.2, y: 187.93 },    // tail right
+    ]
+
+    const connectPositions: number[] = []
+    for (const lm of landmarks) {
+      const x = (lm.x - offsetX) * s
+      const y = -(lm.y - offsetY) * s
+      connectPositions.push(x, y, frontZ, x, y, backZ)
+    }
+
+    const connectGeo = new THREE.BufferGeometry()
+    connectGeo.setAttribute('position', new THREE.Float32BufferAttribute(connectPositions, 3))
+
+    const outlineGeo = new THREE.BufferGeometry()
+    outlineGeo.setAttribute('position', new THREE.Float32BufferAttribute(outlinePositions, 3))
+
+    return { mesh: geo, outline: outlineGeo, connects: connectGeo }
+  }, [crowShape])
 }
 
-function Coin({ logoUrl }: { logoUrl: string }) {
+function CrowMesh() {
   const meshRef = useRef<THREE.Group>(null)
-  const texture = useLoader(THREE.TextureLoader, logoUrl)
-  const bumpMap = useBumpMap(texture)
-  const ridgedEdge = useRidgedEdge()
-  const faceGeo = useDetailedCircle()
+  const result = useExtrudedCrow()
 
   const dragging = useRef(false)
-  const velocity = useRef({ x: 0, y: 0.1625 })
+  const velocity = useRef({ x: 0, y: 0.024 })
   const lastDrag = useRef({ x: 0, y: 0 })
   const rotationRef = useRef({ x: 0, y: 0 })
   const mousePos = useRef({ x: 0, y: 0 })
@@ -132,7 +125,6 @@ function Coin({ logoUrl }: { logoUrl: string }) {
   useEffect(() => {
     const canvas = gl.domElement
 
-    // Track mouse across the whole page for tilt effect
     const onWindowMouseMove = (e: MouseEvent) => {
       mousePos.current.x = (e.clientX / window.innerWidth - 0.5) * 2
       mousePos.current.y = (e.clientY / window.innerHeight - 0.5) * 2
@@ -204,8 +196,12 @@ function Coin({ logoUrl }: { logoUrl: string }) {
 
       const speed = Math.abs(velocity.current.x) + Math.abs(velocity.current.y)
       if (speed < 0.01) {
-        velocity.current.y += (0.1625 - velocity.current.y) * 0.005
+        velocity.current.y += (0.024 - velocity.current.y) * 0.005
       }
+
+      // Slowly re-orient so beak points up (x rotation → nearest multiple of 2π)
+      const targetX = Math.round(rotationRef.current.x / (Math.PI * 2)) * Math.PI * 2
+      rotationRef.current.x += (targetX - rotationRef.current.x) * 0.003
     }
 
     rotationRef.current.x += velocity.current.x
@@ -218,47 +214,31 @@ function Coin({ logoUrl }: { logoUrl: string }) {
     meshRef.current.rotation.y = rotationRef.current.y + tiltY
   })
 
+  if (!result) return null
+
   return (
     <group ref={meshRef}>
-      {/* Front face — high-poly plane for bump visibility */}
-      <mesh geometry={faceGeo} position={[0, 0, COIN_THICKNESS / 2 + 0.001]}>
+      {/* Main black shape */}
+      <mesh geometry={result.mesh}>
         <meshStandardMaterial
-          color="#ebc046"
-          map={texture}
-          bumpMap={bumpMap}
-          bumpScale={BUMP_SCALE}
-          metalness={0.4}
-          roughness={0.45}
+          color={FACE_COLOR}
+          metalness={0.3}
+          roughness={0.6}
         />
       </mesh>
-
-      {/* Back face */}
-      <mesh geometry={faceGeo} position={[0, 0, -(COIN_THICKNESS / 2 + 0.001)]} rotation={[0, Math.PI, 0]}>
-        <meshStandardMaterial
-          color="#ebc046"
-          map={texture}
-          bumpMap={bumpMap}
-          bumpScale={BUMP_SCALE}
-          metalness={0.4}
-          roughness={0.45}
-        />
-      </mesh>
-
-      {/* Ridged coin edge — rotated so cylinder axis aligns with Z */}
-      <mesh geometry={ridgedEdge} rotation={[Math.PI / 2, 0, 0]}>
-        <meshStandardMaterial
-          color={EDGE_COLOR}
-          metalness={0.8}
-          roughness={0.2}
-          emissive={EDGE_HIGHLIGHT}
-          emissiveIntensity={0.05}
-        />
-      </mesh>
+      {/* Gold outline on front and back faces only */}
+      <lineSegments geometry={result.outline}>
+        <lineBasicMaterial color={BORDER_COLOR} linewidth={1} />
+      </lineSegments>
+      {/* Connecting lines at key points */}
+      <lineSegments geometry={result.connects}>
+        <lineBasicMaterial color={BORDER_COLOR} linewidth={1} />
+      </lineSegments>
     </group>
   )
 }
 
-export default function CawCoin3D({ logoUrl, className }: { logoUrl: string; className?: string }) {
+export default function CawCoin3D({ className }: { className?: string }) {
   return (
     <div className={className} style={{ cursor: 'grab' }}>
       <Canvas
@@ -270,10 +250,10 @@ export default function CawCoin3D({ logoUrl, className }: { logoUrl: string; cla
         <directionalLight position={[4, 4, 6]} intensity={2.0} />
         <directionalLight position={[-3, -1, -4]} intensity={0.6} />
         <spotLight position={[0, 5, 5]} angle={0.4} penumbra={0.5} intensity={1.5} color="#fff5e0" />
-        <pointLight position={[0, 0, 4]} intensity={0.8} color={EDGE_HIGHLIGHT} />
+        <pointLight position={[0, 0, 4]} intensity={0.8} color={BORDER_COLOR} />
         <directionalLight position={[5, -3, 2]} intensity={0.8} color="#ffe8b0" />
         <pointLight position={[-4, 2, 3]} intensity={0.6} color="#ffffff" />
-        <Coin logoUrl={logoUrl} />
+        <CrowMesh />
       </Canvas>
     </div>
   )

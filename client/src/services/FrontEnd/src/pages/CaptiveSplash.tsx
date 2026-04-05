@@ -4,7 +4,7 @@ import { useAccount } from 'wagmi'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useTheme } from '~/hooks/useTheme'
 import { useState, useEffect, useRef, lazy, Suspense } from 'react'
-import cawLogo from '~/assets/images/caw-logo.png'
+import BoidsBg from '~/components/BoidsBg'
 
 const CawCoin3D = lazy(() => import('~/components/CawCoin3D'))
 
@@ -41,23 +41,15 @@ export default function CaptiveSplash() {
   }, [])
 
   return (
-    <div className={`min-h-screen flex flex-col ${isDark ? 'bg-black text-white' : 'bg-white text-black'}`}>
+    <div className={`min-h-screen flex flex-col relative overflow-hidden ${isDark ? 'bg-black text-white' : 'bg-white text-black'}`}>
+      <BoidsBg isDark={isDark} />
       {/* Main content - centered */}
-      <div className="flex-1 flex flex-col items-center justify-center px-6 py-6">
-        {/* 3D Coin Logo — lazy loaded, CSS fallback while loading */}
+      <div className="flex-1 flex flex-col items-center justify-center px-6 pb-6 relative z-10">
+        {/* 3D Crow shape — lazy loaded */}
         <Suspense fallback={
-          <div className="mb-8 w-40 h-40 md:w-48 md:h-48" style={{ perspective: '800px' }}>
-            <div
-              className="w-full h-full relative"
-              style={{ transformStyle: 'preserve-3d', animation: 'coin-spin 4s ease-in-out infinite' }}
-            >
-              <img src={cawLogo} alt="CAW" className="absolute inset-0 w-full h-full rounded-full" style={{ backfaceVisibility: 'hidden' }} />
-              <img src={cawLogo} alt="CAW" className="absolute inset-0 w-full h-full rounded-full" style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }} />
-            </div>
-            <style>{`@keyframes coin-spin { 0% { transform: rotateY(0deg); } 30% { transform: rotateY(360deg); } 100% { transform: rotateY(360deg); } }`}</style>
-          </div>
+          <div className="my-1 w-64 h-64 md:w-80 md:h-72" />
         }>
-          <CawCoin3D logoUrl={cawLogo} className="mb-8 w-40 h-40 md:w-48 md:h-48" />
+          <CawCoin3D className="my-1 w-64 h-64 md:w-80 md:h-72" />
         </Suspense>
 
         {/* Tagline */}
@@ -144,9 +136,9 @@ export default function CaptiveSplash() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2M15 11h3m-3 4h2" />
               </svg>
             </div>
-            <h3 className="font-semibold mb-1">Own Your Name</h3>
+            <h3 className="font-semibold mb-1">Own Your Profile</h3>
             <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-              Your username is an NFT you control
+              Your profile is an on-chain tradable NFT that you control
             </p>
           </div>
 
@@ -160,14 +152,16 @@ export default function CaptiveSplash() {
             </div>
             <h3 className="font-semibold mb-1">Uncensorable</h3>
             <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-              Posts live on-chain forever
+              Every post is stored on-chain and can never be deleted
             </p>
           </div>
         </div>
+
+
       </div>
 
       {/* Footer - resource links */}
-      <footer className={`border-t py-8 px-6 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+      <footer className={`border-t py-8 px-6 relative z-10 backdrop-blur-[2px] ${isDark ? 'border-white/10 bg-black/10' : 'border-gray-200 bg-white/10'}`}>
         <div className="max-w-2xl mx-auto">
           <div className="flex flex-wrap justify-center gap-x-6 gap-y-3 text-sm">
             <Link to="/help/faq" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>FAQ</Link>
