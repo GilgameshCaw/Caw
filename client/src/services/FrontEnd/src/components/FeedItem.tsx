@@ -40,6 +40,7 @@ import MuteWordsModal from './modals/MuteWordsModal'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import Tooltip from '~/components/Tooltip'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
+import { useSignInModalStore } from '~/store/signInModalStore'
 import MuteConfirmModal, { shouldShowMuteConfirmModal } from './modals/MuteConfirmModal'
 import ReportPostModal, { ReportReason } from './modals/ReportPostModal'
 import SwitchChainModal from './modals/SwitchChainModal'
@@ -66,6 +67,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
   const activeTokenId     = useTokenDataStore(s => s.activeTokenId)
   const blockUser = useBlockedUsersStore(s => s.blockUser)
+  const isCaptive = !useTokenDataStore(s => {
+    const tokens = Object.values(s.tokensByAddress).flat()
+    return (tokens.find(t => t.tokenId === s.activeTokenId) || tokens[0])?.username
+  })
   const activeToken = useTokenDataStore(s => {
     const tokens = Object.values(s.tokensByAddress).flat()
     return tokens.find(t => t.tokenId === s.activeTokenId) || tokens[0]
@@ -237,9 +242,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   }, [showRecawMenu, showOptionsMenu])
 
   const handleLike = async (event: React.MouseEvent) => {
-    // MUST call these first, before any early returns!
     event.preventDefault()
     event.stopPropagation()
+
+    if (isCaptive) { useSignInModalStore.getState().show('Create a profile to like posts.'); return }
 
     // Don't allow interactions with pending or failed caws
     if (item.status === 'PENDING' || item.status === 'FAILED') {
@@ -382,7 +388,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
   const handleRecaw = async (event: React.MouseEvent) => {
     event.preventDefault()
-    event.stopPropagation() // Prevent navigation to caw page
+    event.stopPropagation()
+
+    if (isCaptive) { useSignInModalStore.getState().show('Create a profile to repost.'); return }
 
     // Don't allow interactions with pending or failed caws
     if (item.status === 'PENDING' || item.status === 'FAILED') {
@@ -448,7 +456,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
   const handleReply = (e: React.MouseEvent) => {
     e.preventDefault()
-    e.stopPropagation() // Prevent navigation to caw page
+    e.stopPropagation()
+
+    if (isCaptive) { useSignInModalStore.getState().show('Create a profile to reply.'); return }
 
     // Don't allow interactions with pending or failed caws
     if (item.status === 'PENDING' || item.status === 'FAILED') {
@@ -719,7 +729,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                           Pending
                         </span>
                         <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 z-50 bg-white text-black dark:bg-white dark:text-black">
-                          Saving on-chain forever
+                          Processing on-chain
                           <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-white"></span>
                         </span>
                       </span>
@@ -1114,7 +1124,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       }`}
                       onClick={e => {
                         e.preventDefault(); e.stopPropagation(); setShowRecawMenu(false);
-                        openModal('quote', item, () => {
+                        openModal('quote', useItem, () => {
                           setRecawPending(true)
                           if (onRecawStateChange) onRecawStateChange(useItem.id, true)
                         })

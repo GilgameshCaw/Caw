@@ -2,22 +2,29 @@ import { Link } from 'react-router-dom'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useAccount } from 'wagmi'
 import { useActiveToken } from '~/store/tokenDataStore'
+import { useSignInModalStore } from '~/store/signInModalStore'
 import ModalWrapper from './ModalWrapper'
 
 interface SignInModalProps {
-  isOpen: boolean
-  onClose: () => void
+  isOpen?: boolean
+  onClose?: () => void
   message?: string
 }
 
 /**
  * Modal that prompts unauthenticated users to connect a wallet and create a username.
- * Shown when they try to interact with gated content (e.g. view replies).
+ * Can be used standalone (with isOpen/onClose props) or via the global useSignInModalStore.
  */
-export default function SignInModal({ isOpen, onClose, message }: SignInModalProps) {
+export default function SignInModal({ isOpen: propIsOpen, onClose: propOnClose, message: propMessage }: SignInModalProps) {
   const { isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
   const activeToken = useActiveToken()
+  const store = useSignInModalStore()
+
+  // Support both prop-driven and store-driven usage
+  const isOpen = propIsOpen ?? store.isOpen
+  const onClose = propOnClose ?? store.close
+  const message = propMessage ?? store.message
 
   return (
     <ModalWrapper isOpen={isOpen} onClose={onClose} maxWidth="max-w-sm">
@@ -32,7 +39,7 @@ export default function SignInModal({ isOpen, onClose, message }: SignInModalPro
             Sign in to continue
           </h3>
           <p className="text-sm text-white/60">
-            {message || 'Connect your wallet and create a username to unlock this content.'}
+            {message || 'Connect your wallet and create a username to get started.'}
           </p>
         </div>
 

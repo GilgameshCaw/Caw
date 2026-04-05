@@ -9,6 +9,7 @@ import routes from "./routes";
 import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
 import { useInsufficientStakeStore } from '~/store/insufficientStakeStore'
 import VerifyWalletModal from '~/components/modals/VerifyWalletModal'
+import SignInModal from '~/components/modals/SignInModal'
 import TransferNFTModal from '~/components/modals/TransferNFTModal'
 import CreateListingModal from '~/components/modals/CreateListingModal'
 import BuyModal from '~/components/modals/BuyModal'
@@ -72,6 +73,7 @@ function App() {
       />
       <OnboardingGuard />
       <VerifyWalletModal />
+      <SignInModal />
       <QuickSignRenewModal />
       <QuickSignModal />
       <ClientAuthModal />

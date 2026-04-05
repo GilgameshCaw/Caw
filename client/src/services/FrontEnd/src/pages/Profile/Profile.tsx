@@ -24,6 +24,7 @@ import TipModal from '~/components/modals/TipModal'
 import { useTransferModalStore } from '~/store/transferModalStore'
 import { useMarketplaceStore, MarketplaceListing } from '~/store/marketplaceStore'
 import Tooltip from '~/components/Tooltip'
+import { useSignInModalStore } from '~/store/signInModalStore'
 
 type ProfileTab = 'posts' | 'likes' | 'replies' | 'media'
 
@@ -87,6 +88,8 @@ export const Profile: React.FC = () => {
   const [error, setError] = useState<string | null>(null)
   const { isDark } = useTheme()
   const activeToken = useActiveToken()
+  const showSignIn = useSignInModalStore(s => s.show)
+  const isCaptive = !activeToken?.username
   const { openModal } = useModalStore()
   const { isConnected, address } = useAccount()
   const currentChainId = useChainId()
@@ -968,7 +971,7 @@ export const Profile: React.FC = () => {
                     <div className="flex flex-col items-center">
                       <Tooltip text={followPending ? "Processing on-chain" : ""}>
                       <button
-                        onClick={handleFollowClick}
+                        onClick={() => { if (isCaptive) { showSignIn('Create a profile to follow users.'); return } handleFollowClick() }}
                         disabled={followPending || followWrongWallet}
                         onMouseEnter={() => setFollowButtonHovered(true)}
                         onMouseLeave={() => setFollowButtonHovered(false)}
@@ -991,7 +994,7 @@ export const Profile: React.FC = () => {
                     
                     <div className="flex justify-center space-x-2">
                       <Tooltip text="Tip"><button
-                        onClick={() => setShowTipModal(true)}
+                        onClick={() => { if (isCaptive) { showSignIn('Create a profile to tip users.'); return } setShowTipModal(true) }}
                         className={`p-2 rounded-full border transition-all duration-200 cursor-pointer hover:bg-yellow-500/10 ${
                           tipPending || hasTipped
                             ? 'border-yellow-500/60 text-yellow-500'
@@ -1013,6 +1016,7 @@ export const Profile: React.FC = () => {
                       </button></Tooltip>
                       <Tooltip text={peerDmEnabled === false ? "This user hasn't enabled DMs yet" : "Send Message"}><button
                         onClick={() => {
+                          if (isCaptive) { showSignIn('Create a profile to send messages.'); return }
                           navigate(`/messages/${profileData?.username || displayUsername}`)
                         }}
                         disabled={peerDmEnabled === false}

@@ -29,6 +29,7 @@ import {
 import cawLogo from '~/assets/images/caw-logo.png'
 import { useInstanceStore } from '~/store/instanceStore'
 import { API_HOST } from '~/api/client'
+import { useSignInModalStore } from '~/store/signInModalStore'
 
 const links = ['Home','Explore','Notifications','Messages','Profile'] as const
 
@@ -104,6 +105,16 @@ const Sidebar: React.FC = () => {
   const notifUnreadCount = useNotificationUnreadStore(s => s.unreadCount)
   const navigate = useNavigate()
   const location = useLocation()
+  const showSignIn = useSignInModalStore(s => s.show)
+  const isCaptive = !activeToken?.username
+
+  // Intercept nav clicks for captive users — show sign-in modal instead of navigating
+  const guardClick = (e: React.MouseEvent) => {
+    if (isCaptive) {
+      e.preventDefault()
+      showSignIn()
+    }
+  }
 
   // Helper function for consistent NavLink styling
   const getNavLinkClasses = (isActive: boolean) => {
@@ -156,6 +167,7 @@ const Sidebar: React.FC = () => {
         <nav className="px-2 py-2 pt-20 sm:px-4 sm:py-4 sm:pr-2 sm:pl-2 sm:pt-4 space-y-1 sm:flex-1">
           <NavLink
           to="/home"
+          onClick={guardClick}
           className={({ isActive }) =>
             `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
           }>
@@ -175,6 +187,7 @@ const Sidebar: React.FC = () => {
 
           <NavLink
             to="/notifications"
+            onClick={guardClick}
             className={({ isActive }) =>
               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
@@ -193,7 +206,7 @@ const Sidebar: React.FC = () => {
           <NavLink
             to="/messages"
             onClick={(e) => {
-              // If already on any /messages route, force navigate to inbox
+              if (isCaptive) { e.preventDefault(); showSignIn(); return }
               if (location.pathname.startsWith('/messages')) {
                 e.preventDefault()
                 navigate('/messages')
@@ -219,6 +232,7 @@ const Sidebar: React.FC = () => {
 
           <NavLink
             to="/bookmarks"
+            onClick={guardClick}
             className={({ isActive }) =>
               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
@@ -229,6 +243,7 @@ const Sidebar: React.FC = () => {
 
           <NavLink
             to="/scheduled"
+            onClick={guardClick}
             className={({ isActive }) =>
               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
@@ -239,6 +254,7 @@ const Sidebar: React.FC = () => {
 
           <NavLink
             to="/staking"
+            onClick={guardClick}
             className={({ isActive }) =>
               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
@@ -259,6 +275,7 @@ const Sidebar: React.FC = () => {
 
           <NavLink
             to={activeToken?.username ? `/users/${activeToken.username}` : "/welcome"}
+            onClick={guardClick}
             className={({ isActive }) =>
               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
@@ -269,6 +286,7 @@ const Sidebar: React.FC = () => {
 
           <NavLink
             to="/settings"
+            onClick={guardClick}
             className={({ isActive }) =>
               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
