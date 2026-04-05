@@ -14,7 +14,7 @@ import UsernameSvg from '~/components/UsernameSvg'
 import { formatNumber, formatNumberCompact, convertToNumber } from "~/utils";
 import { formatUnits } from "viem";
 import BadgedIcon from '~/assets/images/badged.svg'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import StakingRewardsInfo from '~/components/StakingRewardsInfo'
 import { HiInformationCircle } from 'react-icons/hi'
 
@@ -506,6 +506,9 @@ console.log("BALANCE:", balance)
               >
                 Need more CAW? Click here.
               </a>
+              <Link to="/usernames" className="block mt-2 text-sm text-gray-400 hover:text-gray-300 transition-colors">
+                Username Marketplace &rarr;
+              </Link>
             </div>
           </div>
 
@@ -517,7 +520,7 @@ console.log("BALANCE:", balance)
 
         <div className={`${isCaptive ? '' : 'mt-16'} space-y-4`}>
             {usernameTaken && username && (
-              <div className="text-sm text-red-400 text-center">
+              <div className="text-sm text-red-400 text-left">
                 This username{' '}
                 <a
                   href={`/users/${username}`}
