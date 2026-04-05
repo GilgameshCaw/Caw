@@ -68,7 +68,11 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
       // Retry the action now that Quick Sign is enabled
       if (cont) setTimeout(() => cont(), 100)
     } catch (err: any) {
-      setError(err?.shortMessage || err?.message || 'Failed to activate')
+      console.error('[QuickSign] Activation failed:', err)
+      // Show user-friendly message; raw error already logged by the hook
+      const msg = err?.message || ''
+      const isUserRejection = msg.includes('rejected') || msg.includes('denied') || msg.includes('cancelled') || err?.code === 4001
+      setError(isUserRejection ? 'Signature was cancelled.' : (msg.includes('Please') || msg.includes('try again') ? msg : 'Something went wrong. Please try again.'))
       setEnabled(false)
     } finally {
       setLoading(false)

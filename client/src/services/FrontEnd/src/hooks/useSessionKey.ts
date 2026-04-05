@@ -156,7 +156,8 @@ export function useCreateSession() {
           console.log('[QuickSign] Confirmed:', status.txHash, 'block:', status.blockNumber)
           break
         } else if (status.status === 'failed') {
-          throw new Error(status.error || 'Session registration failed')
+          console.error('[QuickSign] Registration failed:', status.error)
+          throw new Error(status.error || 'Something went wrong. Please try again.')
         }
       } catch (e: any) {
         if (e.message && !e.message.includes('API')) throw e

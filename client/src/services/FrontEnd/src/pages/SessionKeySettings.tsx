@@ -18,7 +18,10 @@ const SessionKeySettings: React.FC = () => {
   const activeToken = useActiveToken()
   const enabled = useSessionKeyStore(s => s.enabled)
   const setEnabled = useSessionKeyStore(s => s.setEnabled)
-  const session = useSessionKeyStore(s => s.getSession())
+  const sessions = useSessionKeyStore(s => s.sessions)
+  const ownerAddr = activeToken?.owner?.toLowerCase()
+  const activeWallet = useSessionKeyStore(s => s.activeWallet)
+  const session = (ownerAddr && sessions[ownerAddr]) || (activeWallet && sessions[activeWallet]) || null
   const createSession = useCreateSession()
   const revokeSession = useRevokeSession()
   const [loading, setLoading] = useState(false)
@@ -52,7 +55,7 @@ const SessionKeySettings: React.FC = () => {
   useEffect(() => {
     if (onChainSpent != null && session) {
       const store = useSessionKeyStore.getState()
-      const currentSession = store.getSession()
+      const currentSession = ownerAddr ? store.getSessionForAddress(ownerAddr) : store.getSession()
       if (currentSession) {
         store.setSession({ ...currentSession, spent: onChainSpent.toString() })
       }
@@ -78,11 +81,11 @@ const SessionKeySettings: React.FC = () => {
     try {
       await createSession((s) => setStatus(s), spendLimit, duration)
     } catch (err: any) {
-      const msg = err?.shortMessage || err?.message || 'Failed to create session'
-      // Don't show "connect wallet" errors — the button handles that state
-      if (!msg.toLowerCase().includes('connect your wallet')) {
-        setError(msg)
-      }
+      console.error('[SessionKey] Create failed:', err)
+      const msg = err?.message || ''
+      if (msg.toLowerCase().includes('connect your wallet')) return
+      const isUserRejection = msg.includes('rejected') || msg.includes('denied') || msg.includes('cancelled') || err?.code === 4001
+      setError(isUserRejection ? 'Signature was cancelled.' : (msg.includes('Please') || msg.includes('try again') ? msg : 'Something went wrong. Please try again.'))
     } finally {
       setLoading(false)
       setStatus('')
@@ -95,7 +98,8 @@ const SessionKeySettings: React.FC = () => {
     try {
       await revokeSession()
     } catch (err: any) {
-      setError(err?.shortMessage || err?.message || 'Failed to revoke session')
+      console.error('[SessionKey] Revoke failed:', err)
+      setError('Something went wrong. Please try again.')
     } finally {
       setLoading(false)
     }

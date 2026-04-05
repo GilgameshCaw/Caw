@@ -326,7 +326,10 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
       setQsComplete(true)
       markComplete('quicksign')
     } catch (err: any) {
-      setQsError(err?.shortMessage || err?.message || 'Failed to activate')
+      console.error('[QuickSign] Onboarding activation failed:', err)
+      const msg = err?.message || ''
+      const isUserRejection = msg.includes('rejected') || msg.includes('denied') || msg.includes('cancelled') || err?.code === 4001
+      setQsError(isUserRejection ? 'Signature was cancelled.' : (msg.includes('Please') || msg.includes('try again') ? msg : 'Something went wrong. Please try again.'))
       setSessionEnabled(false)
     } finally {
       setQsLoading(false)

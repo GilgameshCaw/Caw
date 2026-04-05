@@ -63,7 +63,10 @@ const QuickSignRenewModal: React.FC = () => {
       await createSession((s) => setStatus(s), spendLimit, duration)
       close()
     } catch (err: any) {
-      setError(err?.shortMessage || err?.message || 'Failed to activate')
+      console.error('[QuickSign] Renewal failed:', err)
+      const msg = err?.message || ''
+      const isUserRejection = msg.includes('rejected') || msg.includes('denied') || msg.includes('cancelled') || err?.code === 4001
+      setError(isUserRejection ? 'Signature was cancelled.' : (msg.includes('Please') || msg.includes('try again') ? msg : 'Something went wrong. Please try again.'))
     } finally {
       setLoading(false)
       setStatus('')
