@@ -11,6 +11,8 @@ interface TooltipProps {
   forceDark?: boolean
   /** Additional className for the wrapper */
   className?: string
+  /** When true, suppress the tooltip entirely */
+  disabled?: boolean
 }
 
 const Tooltip: React.FC<TooltipProps> = ({
@@ -19,6 +21,7 @@ const Tooltip: React.FC<TooltipProps> = ({
   position = 'top',
   forceDark,
   className = '',
+  disabled: tooltipDisabled,
 }) => {
   const { isDark: themeDark } = useTheme()
   const isDark = forceDark ?? themeDark
@@ -95,7 +98,7 @@ const Tooltip: React.FC<TooltipProps> = ({
       className={`relative ${className}`}
     >
       {children}
-      {visible && createPortal(
+      {visible && !tooltipDisabled && createPortal(
         <div
           ref={tooltipRef}
           className={`fixed px-3 py-2 text-xs font-medium rounded-lg whitespace-nowrap pointer-events-none z-[9999] ${bgClass}`}

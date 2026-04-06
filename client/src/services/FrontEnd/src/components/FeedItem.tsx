@@ -1033,12 +1033,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           <div className="flex items-center justify-between" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center space-x-6">
               {/* Comments/Replies */}
-              <Tooltip text={
-                  replyPending ? "Processing on-chain" :
-                  item.status === 'PENDING' ? "Cannot reply to pending caw" :
-                  item.status === 'FAILED' ? "Cannot reply to failed caw" :
-                  "Reply"
-                }><button
+              <Tooltip text={replyPending ? "Processing on-chain" : "Reply"} disabled={item.status === 'PENDING' || item.status === 'FAILED'}><button
                 className={`flex items-center space-x-2 transition-colors duration-300 ${
                   (item.status === 'PENDING' || item.status === 'FAILED')
                     ? 'cursor-not-allowed opacity-50'
@@ -1059,12 +1054,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
               {/* Retweets */}
               <div className="relative">
-                <Tooltip text={
-                    recawPending ? "Processing on-chain" :
-                    item.status === 'PENDING' ? "Cannot recaw pending caw" :
-                    item.status === 'FAILED' ? "Cannot recaw failed caw" :
-                    "ReCaw"
-                  }><button
+                <Tooltip text={recawPending ? "Processing on-chain" : "ReCaw"} disabled={item.status === 'PENDING' || item.status === 'FAILED'}><button
                   className={`group flex items-center space-x-2 transition-colors duration-300 ${
                     (item.status === 'PENDING' || item.status === 'FAILED')
                       ? 'cursor-not-allowed opacity-50'
@@ -1139,7 +1129,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               </div>
 
               {/* Likes */}
-              <Tooltip text={item.status === 'PENDING' ? "Cannot like pending caw" : item.status === 'FAILED' ? "Cannot like failed caw" : (likePending || item.likePending) ? "Processing on-chain" : "Like"}><button
+              <Tooltip text={(likePending || item.likePending) ? "Processing on-chain" : "Like"} disabled={item.status === 'PENDING' || item.status === 'FAILED'}><button
                 className={`flex items-center space-x-2 transition-colors duration-300 ${
                   (item.status === 'PENDING' || item.status === 'FAILED')
                     ? 'cursor-not-allowed opacity-50'
@@ -1176,9 +1166,14 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
             <div className="flex items-center space-x-4">
               {/* Bookmark */}
-              <Tooltip text={isBookmarked ? "Remove bookmark" : "Save"}><button
+              <Tooltip text={isBookmarked ? "Remove bookmark" : "Save"} disabled={item.status === 'PENDING' || item.status === 'FAILED'}><button
                 onClick={handleBookmark}
-                className={`flex items-center gap-1 transition-colors duration-300 hover:text-yellow-500 cursor-pointer ${
+                disabled={item.status === 'PENDING' || item.status === 'FAILED'}
+                className={`flex items-center gap-1 transition-colors duration-300 ${
+                  (item.status === 'PENDING' || item.status === 'FAILED')
+                    ? 'opacity-50 cursor-default'
+                    : 'hover:text-yellow-500 cursor-pointer'
+                } ${
                   isBookmarked
                     ? 'text-yellow-500'
                     : isDark ? 'text-gray-400' : 'text-gray-600'
@@ -1194,35 +1189,43 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 )}
               </button></Tooltip>
 
-              {/* Tip - hidden on own posts and pending/failed caws */}
-              {item.status !== 'PENDING' && item.status !== 'FAILED' && (
-                <Tooltip text={tipPending ? 'Processing on-chain' : useItem.totalTipAmount ? `${(useItem.totalTipAmount).toLocaleString()} CAW tipped` : 'Tip'}><button
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setShowTipModal(true)
-                  }}
-                  className={`flex items-center gap-1 transition-colors duration-300 hover:text-yellow-500 cursor-pointer ${
-                    (tipPending || useItem.hasTipped)
-                      ? `text-yellow-500 ${tipPending ? 'opacity-90' : ''}`
-                      : isDark ? 'text-gray-400' : 'text-gray-600'
-                  }`}
-                >
-                  <HiOutlineCurrencyDollar className="w-5 h-5 mb-[5px]" />
-                  {(useItem.tipCount ?? 0) > 0 && (
-                    <span className="text-xs">{useItem.tipCount}</span>
-                  )}
-                </button></Tooltip>
-              )}
+              {/* Tip */}
+              <Tooltip text={tipPending ? 'Processing on-chain' : useItem.totalTipAmount ? `${(useItem.totalTipAmount).toLocaleString()} CAW tipped` : 'Tip'} disabled={item.status === 'PENDING' || item.status === 'FAILED'}><button
+                onClick={(e) => {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setShowTipModal(true)
+                }}
+                disabled={item.status === 'PENDING' || item.status === 'FAILED'}
+                className={`flex items-center gap-1 transition-colors duration-300 ${
+                  (item.status === 'PENDING' || item.status === 'FAILED')
+                    ? 'opacity-50 cursor-default'
+                    : 'hover:text-yellow-500 cursor-pointer'
+                } ${
+                  (tipPending || useItem.hasTipped)
+                    ? `text-yellow-500 ${tipPending ? 'opacity-90' : ''}`
+                    : isDark ? 'text-gray-400' : 'text-gray-600'
+                }`}
+              >
+                <HiOutlineCurrencyDollar className="w-5 h-5 mb-[5px]" />
+                {(useItem.tipCount ?? 0) > 0 && (
+                  <span className="text-xs">{useItem.tipCount}</span>
+                )}
+              </button></Tooltip>
 
               {/* Share */}
-              <Tooltip text="Share"><button
+              <Tooltip text="Share" disabled={item.status === 'PENDING' || item.status === 'FAILED'}><button
                 onClick={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
                   setShowShareModal(true)
                 }}
-                className={`transition-colors duration-300 hover:text-blue-500 cursor-pointer ${
+                disabled={item.status === 'PENDING' || item.status === 'FAILED'}
+                className={`transition-colors duration-300 ${
+                  (item.status === 'PENDING' || item.status === 'FAILED')
+                    ? 'opacity-50 cursor-default'
+                    : 'hover:text-blue-500 cursor-pointer'
+                } ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
               >
