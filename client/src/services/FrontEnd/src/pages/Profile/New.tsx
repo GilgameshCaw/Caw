@@ -324,23 +324,31 @@ console.log("BALANCE:", balance)
     onSuccess:    async (hash) => {
       console.log('minted and deposited!', hash)
       await refetchTokenData?.()
-      const checkForNewToken = () => {
+      const checkForNewToken = async () => {
         const allTokens = useTokenDataStore.getState().allTokens()
         const newToken = allTokens.find((t: any) => t.username.toLowerCase() === username.toLowerCase())
         if (newToken) {
           setMintedTokenId(newToken.tokenId)
           setActiveTokenId(newToken.tokenId)
           setMintSuccess(true)
-          // Record deposit time and amount so the validator knows to wait for the L1→L2 bridge
+          // Record deposit time and amount so the validator knows to wait for the L1→L2 bridge.
+          // Ensure the user record exists first (it may not have been indexed yet).
           try {
-            apiFetch(`/api/users/${username}`, {
+            await apiFetch('/api/users/ensure', {
+              method: 'POST',
+              body: JSON.stringify({ tokenId: newToken.tokenId })
+            })
+            await apiFetch(`/api/users/${username}`, {
               method: 'PATCH',
               body: JSON.stringify({
                 lastStakedAt: new Date().toISOString(),
                 pendingDepositAmount: depositAmountWei.toString(),
               })
-            }).catch((err: any) => console.warn('[New] Failed to save deposit info:', err))
-          } catch {}
+            })
+            console.log('[New] Saved deposit info for', username)
+          } catch (err: any) {
+            console.warn('[New] Failed to save deposit info:', err)
+          }
         } else {
           refetchTokenData?.()
           setTimeout(checkForNewToken, 3000)
