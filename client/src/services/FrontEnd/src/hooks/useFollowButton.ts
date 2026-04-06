@@ -15,6 +15,8 @@ export interface UseFollowButtonParams {
 export interface UseFollowButtonReturn {
   isFollowing: boolean
   isPending: boolean
+  /** True while signing/submitting to server, before handoff */
+  isSigning: boolean
   wrongWallet: boolean
   error: string | null
   handleFollowClick: () => Promise<void>
@@ -39,6 +41,7 @@ export function useFollowButton({
   const hasActiveSession = useHasActiveSession()
   const [isFollowing, setIsFollowing] = useState(initialIsFollowing)
   const [isPending, setPending] = useState(initialIsPending)
+  const [isSigning, setIsSigning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isPolling, setIsPolling] = useState(initialIsPending) // Start polling immediately if mounting in pending state
   const [hasUserAction, setHasUserAction] = useState(false) // Track if user has taken action
@@ -94,6 +97,7 @@ export function useFollowButton({
     const newFollowingState = actionType === 'follow'
     setIsFollowing(newFollowingState)
     setPending(true)
+    setIsSigning(true)
     onFollowStateChange?.(newFollowingState)
 
     // Actually submit the follow action now that we have a token
@@ -103,6 +107,7 @@ export function useFollowButton({
       receiverId: targetUserId
     }).then(() => {
       isSubmittingRef.current = false
+      setIsSigning(false)
       // Start polling for status updates
       setIsPolling(true)
     }).catch((error: any) => {
@@ -124,6 +129,7 @@ export function useFollowButton({
       if (isUserRejection) {
         setIsFollowing(!newFollowingState)
         setPending(false)
+        setIsSigning(false)
         setHasUserAction(false)
         onFollowStateChange?.(!newFollowingState)
       } else if (isServerError) {
@@ -131,10 +137,12 @@ export function useFollowButton({
         setError(errorMsg)
         setIsFollowing(!newFollowingState)
         setPending(false)
+        setIsSigning(false)
         setHasUserAction(false)
         onFollowStateChange?.(!newFollowingState)
       } else {
         // For other errors, start polling in case the record was created
+        setIsSigning(false)
         setIsPolling(true)
       }
     })
@@ -277,6 +285,7 @@ export function useFollowButton({
     const newFollowingState = !isFollowing
     setIsFollowing(newFollowingState)
     setPending(true)
+    setIsSigning(true)
     onFollowStateChange?.(newFollowingState)
 
     try {
@@ -291,12 +300,14 @@ export function useFollowButton({
         // Revert optimistic update
         setIsFollowing(isFollowing)
         setPending(false)
+        setIsSigning(false)
         setHasUserAction(false)
         onFollowStateChange?.(isFollowing)
         return
       }
 
-      // Now that transaction is submitted, start polling for status updates
+      // Server has the action — stop signing state, start polling
+      setIsSigning(false)
       setIsPolling(true)
 
     } catch (error: any) {
@@ -317,6 +328,7 @@ export function useFollowButton({
       if (isUserRejection) {
         setIsFollowing(isFollowing)
         setPending(false)
+        setIsSigning(false)
         setHasUserAction(false) // Allow prop sync again
         setAwaitingConnection(false)
         pendingActionRef.current = null
@@ -326,23 +338,26 @@ export function useFollowButton({
         setError(errorMsg)
         setIsFollowing(isFollowing)
         setPending(false)
+        setIsSigning(false)
         setHasUserAction(false)
         setAwaitingConnection(false)
         pendingActionRef.current = null
         onFollowStateChange?.(isFollowing)
       } else {
         // For non-user-rejection errors, also start polling in case the record was created
+        setIsSigning(false)
         setIsPolling(true)
       }
     }
   }
 
-  const buttonText = isPending ? 'Processing...' : isFollowing ? 'Following' : 'Follow'
+  const buttonText = isSigning ? 'Processing...' : isFollowing ? 'Following' : 'Follow'
   const hoverText = isFollowing ? 'Unfollow' : 'Follow'
 
   return {
     isFollowing,
     isPending,
+    isSigning,
     wrongWallet,
     error,
     handleFollowClick,

@@ -29,6 +29,7 @@ export const FollowButton: React.FC<FollowButtonProps> = ({
   const {
     isFollowing,
     isPending,
+    isSigning,
     wrongWallet,
     error,
     handleFollowClick,
@@ -56,8 +57,9 @@ export const FollowButton: React.FC<FollowButtonProps> = ({
     large: 'px-8 py-2'
   }
 
-  // When pending, show the anticipated result state (following → "Following", unfollowing → "Follow")
+  // When signing, show "Processing..."; when pending (server has it), show anticipated result; otherwise normal
   const displayText = isPending ? buttonText : (isHovered && isFollowing ? hoverText : buttonText)
+
 
   // Determine button styles based on state
   const getButtonStyles = () => {
@@ -92,12 +94,16 @@ export const FollowButton: React.FC<FollowButtonProps> = ({
     </button>
   )
 
-  if (isPending) {
+  if (isPending && !isSigning) {
     return (
       <Tooltip text="Processing on-chain" className="inline-block">
         {button}
       </Tooltip>
     )
+  }
+
+  if (isSigning) {
+    return button
   }
 
   if (wrongWallet) {

@@ -124,6 +124,7 @@ export const Profile: React.FC = () => {
   const {
     isFollowing,
     isPending: followPending,
+    isSigning: followSigning,
     wrongWallet: followWrongWallet,
     handleFollowClick,
     buttonText: followButtonText,
@@ -952,6 +953,19 @@ export const Profile: React.FC = () => {
                               onClick={() => {
                                 setShowOwnProfileMenu(false)
                                 if (profileData?.tokenId !== undefined && profileData?.username) {
+                                  useMarketplaceStore.getState().openViewOffers(profileData.tokenId, profileData.username)
+                                }
+                              }}
+                              className={`w-full px-4 py-3 text-left text-sm transition-colors ${
+                                isDark ? 'hover:bg-white/10 text-yellow-500' : 'hover:bg-gray-100 text-yellow-600'
+                              }`}
+                            >
+                              View Offers
+                            </button>
+                            <button
+                              onClick={() => {
+                                setShowOwnProfileMenu(false)
+                                if (profileData?.tokenId !== undefined && profileData?.username) {
                                   useTransferModalStore.getState().show(profileData.tokenId, profileData.username)
                                 }
                               }}
@@ -969,7 +983,7 @@ export const Profile: React.FC = () => {
                 ) : (
                   <div className="flex flex-col space-y-3">
                     <div className="flex flex-col items-center">
-                      <Tooltip text={followPending ? "Processing on-chain" : ""}>
+                      <Tooltip text="Processing on-chain" disabled={!followPending || followSigning}>
                       <button
                         onClick={() => { if (isCaptive) { showSignIn('Create a profile to follow users.'); return } handleFollowClick() }}
                         disabled={followPending || followWrongWallet}
@@ -1014,6 +1028,25 @@ export const Profile: React.FC = () => {
                           <HiOutlineCurrencyDollar className="w-5 h-5" />
                         )}
                       </button></Tooltip>
+                      {/* Hide offer button if viewing own profile by wallet address */}
+                      {!(address && profileData?.address && address.toLowerCase() === profileData.address.toLowerCase()) && (
+                      <Tooltip text="Offer to buy this profile"><button
+                        onClick={() => {
+                          if (profileData?.tokenId !== undefined && profileData?.username) {
+                            useMarketplaceStore.getState().openMakeOffer(profileData.tokenId, profileData.username)
+                          }
+                        }}
+                        className={`p-2 rounded-full border transition-all duration-200 cursor-pointer hover:bg-yellow-500/10 ${
+                          isDark
+                            ? 'border-white/60 text-white hover:text-yellow-500'
+                            : 'border-black/60 text-black hover:text-yellow-500'
+                        }`}
+                      >
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A2 2 0 013 12V7a4 4 0 014-4z" />
+                        </svg>
+                      </button></Tooltip>
+                      )}
                       <Tooltip text={peerDmEnabled === false ? "This user hasn't enabled DMs yet" : "Send Message"}><button
                         onClick={() => {
                           if (isCaptive) { showSignIn('Create a profile to send messages.'); return }
