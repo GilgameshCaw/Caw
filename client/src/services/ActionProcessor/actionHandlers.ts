@@ -520,8 +520,8 @@ export async function handleFollowAction(
       }
     })
 
-    // Only increment counts if this was not already a successful follow
-    if (existingFollow.action !== 'FOLLOW') {
+    // Increment counts if this was an unfollow being re-followed, or a pending follow being confirmed
+    if (existingFollow.action !== 'FOLLOW' || existingFollow.status === 'PENDING') {
       // Update counts: increment follower's followingCount and following's followerCount
       await tx.user.update({
         where: { tokenId: followerId },
