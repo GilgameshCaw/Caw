@@ -330,6 +330,14 @@ console.log("BALANCE:", balance)
           setMintedTokenId(newToken.tokenId)
           setActiveTokenId(newToken.tokenId)
           setMintSuccess(true)
+          // Record deposit time so the validator knows to wait for the L1→L2 bridge
+          try {
+            fetch(`/api/users/${username}`, {
+              method: 'PATCH',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ lastStakedAt: new Date().toISOString() })
+            }).catch(() => {})
+          } catch {}
         } else {
           refetchTokenData?.()
           setTimeout(checkForNewToken, 3000)
