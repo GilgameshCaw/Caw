@@ -373,6 +373,32 @@ export const validatorService: Service = {
         console.log(`[Validator] Reset ${resetCount.count} stale 'processing' entries back to 'pending'`)
       }
 
+      // Also promote waiting_for_deposit entries back to pending if they've been
+      // waiting long enough for the deposit to have arrived (re-checked every poll cycle)
+      const waitingEntries = await prisma.txQueue.findMany({
+        where: { status: 'waiting_for_deposit' },
+      })
+      if (waitingEntries.length > 0) {
+        const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000)
+        for (const entry of waitingEntries) {
+          // Time out after 10 minutes — if deposit hasn't arrived, fail
+          if (entry.createdAt < tenMinutesAgo) {
+            await prisma.txQueue.update({
+              where: { id: entry.id },
+              data: { status: 'failed', reason: 'Deposit did not arrive in time. Please try again.' }
+            })
+            console.log(`[Validator] TxQueue ${entry.id}: Timed out waiting for deposit — marked failed`)
+          } else {
+            // Promote back to pending so it gets re-simulated
+            await prisma.txQueue.update({
+              where: { id: entry.id },
+              data: { status: 'pending', reason: null }
+            })
+            console.log(`[Validator] TxQueue ${entry.id}: Re-queuing for simulation (waiting for deposit)`)
+          }
+        }
+      }
+
       return prisma.txQueue.findMany({
         where: { status: 'pending' },
         orderBy: { createdAt: 'asc' },
@@ -835,6 +861,27 @@ export const validatorService: Service = {
       }
     }
 
+    /**
+     * Check if a failed action should wait for a pending deposit instead of failing.
+     * Returns 'waiting_for_deposit' if the user has a recent deposit in flight, or 'failed' otherwise.
+     */
+    async function checkDepositWaiting(senderId: number, rejection: string): Promise<{ status: string; reason: string }> {
+      if (!rejection.includes('Insufficient CAW balance')) {
+        return { status: 'failed', reason: rejection }
+      }
+      try {
+        const sender = await prisma.user.findUnique({ where: { tokenId: senderId } })
+        const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000)
+        if (sender?.lastStakedAt && sender.lastStakedAt > tenMinutesAgo) {
+          console.log(`[Validator] Sender ${senderId}: Insufficient balance but deposit pending (lastStakedAt: ${sender.lastStakedAt.toISOString()}) — waiting`)
+          return { status: 'waiting_for_deposit', reason: 'Waiting for deposit to arrive from L1' }
+        }
+      } catch (err: any) {
+        console.warn(`[Validator] Failed to check deposit status for sender ${senderId}:`, err.message)
+      }
+      return { status: 'failed', reason: rejection }
+    }
+
     /** natstat: update each queue entry to done/failed based on simulation + submission */
     async function updateQueueStatuses(
       queueEntries: Array<{ id: number; payload: any }>,
@@ -877,14 +924,21 @@ console.log("succeededKeys", succeededKeys)
           }
         }
 
-        const newStatus = succeededKeys.has(key) || processedByOther
+        let newStatus = succeededKeys.has(key) || processedByOther
           ? 'done'
           : 'failed'
 
         // Get the rejection reason for this specific entry
-        const reason = newStatus === 'failed' && simulationRejections[index]
+        let reason = newStatus === 'failed' && simulationRejections[index]
           ? (cawonceUsed && !processedByOther ? 'Cawonce already used by a different action — please retry' : simulationRejections[index])
           : undefined
+
+        // Check if the failure is due to insufficient balance with a pending deposit
+        if (newStatus === 'failed' && reason) {
+          const depositCheck = await checkDepositWaiting(data.senderId, reason)
+          newStatus = depositCheck.status
+          reason = depositCheck.reason
+        }
 
         console.log("new status", newStatus, reason ? `with reason: ${reason}` : '')
 
@@ -1177,11 +1231,18 @@ console.log("succeededKeys", succeededKeys)
                         (ex?.text ?? '') === (data.text ?? '')
                     }
                   }
+                  let failStatus = 'failed'
+                  let failReason: string | null = processedByOther ? null : (cawonceUsed && !processedByOther ? 'Cawonce already used by a different action — please retry' : (rejection || 'Simulation failed'))
+                  if (!processedByOther && failReason) {
+                    const depositCheck = await checkDepositWaiting(data.senderId, failReason)
+                    failStatus = depositCheck.status
+                    failReason = depositCheck.reason
+                  }
                   return prisma.txQueue.update({
                     where: { id: entry.id },
                     data: {
-                      status: processedByOther ? 'done' : 'failed',
-                      reason: processedByOther ? null : (cawonceUsed && !processedByOther ? 'Cawonce already used by a different action — please retry' : (rejection || 'Simulation failed'))
+                      status: processedByOther ? 'done' : failStatus,
+                      reason: processedByOther ? null : failReason
                     }
                   })
                 }))
