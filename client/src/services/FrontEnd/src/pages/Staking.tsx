@@ -1,6 +1,7 @@
 // src/services/FrontEnd/src/components/CawStakingForm.tsx
 import React, { useEffect, useState, useCallback, useMemo } from "react"
 import { useSignAndSubmitAction } from '~/api/actions'
+import { apiFetch } from '~/api/client'
 import { useSearchParams, useNavigate, useLocation } from "react-router-dom"
 import { CgExternal } from "react-icons/cg"
 import { FormHeader } from "~/components/forms/FormHeader"
@@ -374,9 +375,8 @@ const Staking = () => {
       // Also record stake timestamp in database for persistent LayerZero status check
       if (activeToken?.username) {
         try {
-          await fetch(`/api/users/${activeToken.username}`, {
+          await apiFetch(`/api/users/${activeToken.username}`, {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               lastStakedAt: new Date().toISOString(),
               pendingDepositAmount: parseUnits(amount || '0', 18).toString(),

@@ -1,4 +1,5 @@
 // src/pages/NewProfile.tsx
+import { apiFetch } from '~/api/client'
 import { SubmitButton } from "~/components/buttons/SubmitButton"
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { useReadContract, useAccount, useSwitchChain } from 'wagmi'
@@ -332,14 +333,13 @@ console.log("BALANCE:", balance)
           setMintSuccess(true)
           // Record deposit time and amount so the validator knows to wait for the L1→L2 bridge
           try {
-            fetch(`/api/users/${username}`, {
+            apiFetch(`/api/users/${username}`, {
               method: 'PATCH',
-              headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 lastStakedAt: new Date().toISOString(),
                 pendingDepositAmount: depositAmountWei.toString(),
               })
-            }).catch(() => {})
+            }).catch((err: any) => console.warn('[New] Failed to save deposit info:', err))
           } catch {}
         } else {
           refetchTokenData?.()

@@ -226,9 +226,8 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
       refetchBalance()
       if (activeToken?.username) {
         try {
-          await fetch(`/api/users/${activeToken.username}`, {
+          await apiFetch(`/api/users/${activeToken.username}`, {
             method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               lastStakedAt: new Date().toISOString(),
               pendingDepositAmount: parseUnits(amount || '0', 18).toString(),
