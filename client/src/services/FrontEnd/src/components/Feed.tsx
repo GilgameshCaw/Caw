@@ -59,7 +59,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       pendingPosts.map(p => `${p.user?.tokenId}:${p.content?.trim()}`)
     )
 
-    return items.filter(item => {
+    const filtered = items.filter(item => {
       // Filter out muted content
       if (shouldFilterPost(item, preferences)) return false
       // Filter out blocked users
@@ -71,6 +71,52 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       }
       return true
     })
+
+    // Group thread replies with their parent post and sort by cawonce ascending.
+    // The feed comes in desc order, so a thread's replies appear before the parent.
+    // We collect runs of replies to the same parent, find the parent post if it's
+    // nearby in the array, and reorder so: parent → reply 1 → reply 2 → ...
+
+    // First pass: find all reply runs and their parent IDs
+    const consumed = new Set<number>() // indices consumed into a thread group
+    const result: CawItem[] = []
+    let i = 0
+    while (i < filtered.length) {
+      if (consumed.has(i)) { i++; continue }
+      const item = filtered[i]
+      if (item.parent?.id) {
+        const parentId = item.parent.id
+        const userId = item.user.tokenId
+        // Collect consecutive replies to the same parent by the same user
+        let j = i + 1
+        while (j < filtered.length && filtered[j].parent?.id === parentId && filtered[j].user.tokenId === userId) {
+          j++
+        }
+        if (j - i > 1) {
+          // Look for the parent post in the remaining items (it's usually right after the run)
+          let parentIdx = -1
+          for (let k = j; k < filtered.length && k < j + 5; k++) {
+            if (filtered[k].id === parentId && !consumed.has(k)) {
+              parentIdx = k
+              break
+            }
+          }
+          // Sort replies by cawonce ascending
+          const run = filtered.slice(i, j).sort((a, b) => (a.cawonce ?? 0) - (b.cawonce ?? 0))
+          // If parent found, place it before the replies
+          if (parentIdx >= 0) {
+            consumed.add(parentIdx)
+            result.push(filtered[parentIdx])
+          }
+          result.push(...run)
+          i = j
+          continue
+        }
+      }
+      result.push(item)
+      i++
+    }
+    return result
   }, [items, preferences, blockedUsers, pendingPosts])
 
   // Expose refresh method via ref
@@ -431,18 +477,21 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
 
       {/* Posts with consistent styling across all pages */}
       {filteredItems.map((caw, idx) => {
-        // Hide parent preview if the previous item in the feed is a reply to the same parent
+        // Hide parent preview if the previous item is the parent post itself,
+        // or another reply to the same parent
         const prevItem = idx > 0 ? filteredItems[idx - 1] : null
+        const parentIsAbove = !!(caw.parent?.id && prevItem?.id === caw.parent.id)
         const sameParentAsPrev = !!(
           caw.parent?.id &&
           prevItem?.parent?.id &&
           caw.parent.id === prevItem.parent.id
         )
+        const hidePreview = parentIsAbove || sameParentAsPrev
         return (
         <FeedItem
           key={caw.id}
           item={caw}
-          hideParentPreview={sameParentAsPrev}
+          hideParentPreview={hidePreview}
           onLikeStateChange={handleLikeStateChange}
           onRecawStateChange={handleRecawStateChange}
           onReplyStateChange={handleReplyStateChange}

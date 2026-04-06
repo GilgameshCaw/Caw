@@ -118,8 +118,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   let headline;
   let isRecaw = false;
   let isRecawByCurrentUser = false;
-  // A quote is a post with its own content that references a parent, displayed in the main feed (not as a reply)
-  const isQuote = !!(item.content && item.parent && !isReply);
+  // A quote is a RECAW with content (isQuote=true from API).
+  // A pure recaw is a RECAW with empty content (handled below).
+  // A reply is a CAW with a parent.
+  const isQuote = !!(item.isQuote && !isReply);
   if (item.content === "" && item.parent) {
     // Check if the recaw is by the current user
     const userId = item.user.tokenId;
@@ -1058,7 +1060,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   className={`group flex items-center space-x-2 transition-colors duration-300 ${
                     (item.status === 'PENDING' || item.status === 'FAILED')
                       ? 'cursor-not-allowed opacity-50'
-                      : recawPending ? '' : 'hover:text-green-500 cursor-pointer'
+                      : 'hover:text-green-500 cursor-pointer'
                   } ${
                     (useItem.hasRecawed || isRecawByCurrentUser || recawPending)
                       ? `text-green-500 ${recawPending ? 'opacity-90' : ''}`
@@ -1067,11 +1069,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   onClick={e => {
                     e.preventDefault();
                     e.stopPropagation();
-                    if (item.status !== 'PENDING' && item.status !== 'FAILED' && !recawPending) {
+                    if (item.status !== 'PENDING' && item.status !== 'FAILED') {
                       setShowRecawMenu(show => !show)
                     }
                   }}
-                  disabled={item.status === 'PENDING' || item.status === 'FAILED' || recawPending}
+                  disabled={item.status === 'PENDING' || item.status === 'FAILED'}
                 >
                   {busyRecaw ? (
                     <div className="relative w-5 h-5">

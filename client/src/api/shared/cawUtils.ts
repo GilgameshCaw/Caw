@@ -4,6 +4,7 @@ import { prisma } from '../../prismaClient'
 export interface CawRaw {
   id: number
   content: string
+  action?: string
   createdAt: Date
   user: { id: number; tokenId: number; username: string; displayName?: string; image?: string; avatarUrl?: string }
   _count?: { likes: number; recaws: number }
@@ -31,6 +32,8 @@ export interface CawRaw {
 export interface ShapedCaw {
   id: string
   content: string
+  action?: string
+  isQuote?: boolean
   timestamp: string
   user: { id: number; tokenId: number; username: string; displayName?: string; image?: string; avatarUrl?: string }
   likeCount: number
@@ -85,6 +88,9 @@ export function shapeCaw(raw: CawRaw): ShapedCaw {
     id: raw.id.toString(),
     content: raw.content,
     action: raw.action,
+    // A quote is a RECAW with content. A plain recaw is a RECAW with empty content.
+    // A reply is a CAW with a parent.
+    isQuote: !!(raw.action === 'RECAW' && raw.content && raw.parent),
     timestamp: raw.createdAt.toISOString(),
     user: raw.user,
     likeCount: raw.likeCount,

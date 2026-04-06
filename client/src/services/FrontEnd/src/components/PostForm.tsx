@@ -1227,15 +1227,16 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     setCawonce(effectiveTokenId, startCawonce + chunks.length)
 
     // Post first chunk (with media, parent info, etc.)
+    // Quotes use actionType 'recaw' (with text) so the original author receives funds.
+    // Replies use actionType 'caw' with a parent reference.
     const firstParams: ActionParams = {
-      actionType: 'caw',
+      actionType: quote ? 'recaw' : 'caw',
       senderId: effectiveTokenId,
       text: chunks[0],
       cawonce: threadCawonces[0],
       ...(parentCaw && {
         receiverId: parentCaw.user.tokenId,
         receiverCawonce: parentCaw.cawonce,
-        ...(quote && { isQuote: true }),
       }),
       ...(totalCawCost > 0 && {
         amounts: [totalCawCost]

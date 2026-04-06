@@ -234,8 +234,10 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // Create optimistic pending caw for CAW actions
-    if (data.actionType === 0 || data.actionType === 'caw') { // 0 is the enum value for 'caw'
+    // Create optimistic pending caw for CAW and RECAW actions
+    const isRecaw = data.actionType === 3 || data.actionType === 'recaw'
+    const isRecawQuote = isRecaw && data.text && data.text.trim().length > 0
+    if (data.actionType === 0 || data.actionType === 'caw' || isRecaw) { // 0=caw, 3=recaw (plain or quote)
       try {
         console.log('Creating optimistic pending caw for user:', data.senderId, 'cawonce:', data.cawonce)
 
@@ -281,6 +283,11 @@ router.post('/', async (req, res) => {
           }
         }
 
+        // Check if caw already exists (to know if we need to increment counts)
+        const existingCaw = await prisma.caw.findUnique({
+          where: { userId_cawonce: { userId: data.senderId, cawonce: data.cawonce } }
+        })
+
         // Create the pending caw
         const caw = await prisma.caw.upsert({
           where: {
@@ -298,9 +305,9 @@ router.post('/', async (req, res) => {
             userId: data.senderId,
             cawonce: data.cawonce,
             content: textContent,
-            action: 'CAW',
+            action: isRecaw ? 'RECAW' : 'CAW',
             status: 'PENDING', // Mark as pending
-            originalCawId: originalCawId || null, // Set originalCawId for replies
+            originalCawId: originalCawId || null, // Set originalCawId for replies/quotes
             imageData: imageUrls.length > 0 ? `urls:${imageUrls.join('|||')}` : null,
             hasImage: imageUrls.length > 0,
             videoData: videoUrls.length > 0 ? videoUrls.join('|||') : null,
@@ -311,6 +318,19 @@ router.post('/', async (req, res) => {
         console.log(`Created/Updated pending caw: ID=${caw.id}, userId=${caw.userId}, cawonce=${caw.cawonce}, status=${caw.status}`)
         // Note: Hashtags are processed later when the caw is confirmed (in ActionProcessor)
         // This prevents pending/failed caws from affecting trending hashtags
+
+        // Optimistically increment recawCount on the parent caw for recaws
+        if (isRecaw && originalCawId && !existingCaw) {
+          try {
+            await prisma.caw.update({
+              where: { id: originalCawId },
+              data: { recawCount: { increment: 1 } }
+            })
+            console.log(`Optimistically incremented recawCount for caw: ${originalCawId}`)
+          } catch (err) {
+            console.error('Failed to optimistically increment recawCount:', err)
+          }
+        }
 
         // Clean up old FAILED caws with the same content (retries)
         if (textContent) {
@@ -327,9 +347,13 @@ router.post('/', async (req, res) => {
           }
         }
 
-        // Create pending Reply record if this is a reply (not a quote)
-        if (originalCawId && caw && !isQuote) {
+        // Create pending Reply record if this is a reply (not a quote/recaw)
+        if (originalCawId && caw && !isQuote && !isRecawQuote) {
           try {
+            // Check if reply already exists
+            const existingReply = await prisma.reply.findUnique({
+              where: { userId_cawId_replyCawId: { userId: data.senderId, cawId: originalCawId, replyCawId: caw.id } }
+            })
             await prisma.reply.upsert({
               where: {
                 userId_cawId_replyCawId: {
@@ -346,6 +370,14 @@ router.post('/', async (req, res) => {
                 pending: true
               }
             })
+            // Optimistically increment commentCount if this is a new pending reply
+            if (!existingReply) {
+              await prisma.caw.update({
+                where: { id: originalCawId },
+                data: { commentCount: { increment: 1 } }
+              })
+              console.log(`Optimistically incremented commentCount for caw: ${originalCawId}`)
+            }
             console.log(`Created pending Reply record: userId=${data.senderId}, cawId=${originalCawId}, replyCawId=${caw.id}`)
           } catch (replyErr) {
             console.error('Failed to create pending Reply record:', replyErr)
@@ -383,6 +415,10 @@ router.post('/', async (req, res) => {
 
         if (targetCaw) {
           console.log('Found target caw:', targetCaw.id, 'creating pending like for user:', data.senderId)
+          // Check if like already exists (to know if we need to increment count)
+          const existingLike = await prisma.like.findUnique({
+            where: { userId_cawId: { userId: data.senderId, cawId: targetCaw.id } }
+          })
           // Create pending like (ignore if it already exists)
           const pendingLike = await prisma.like.upsert({
             where: {
@@ -402,6 +438,14 @@ router.post('/', async (req, res) => {
               pending: true
             }
           })
+          // Optimistically increment likeCount if this is a new pending like
+          if (!existingLike) {
+            await prisma.caw.update({
+              where: { id: targetCaw.id },
+              data: { likeCount: { increment: 1 } }
+            })
+            console.log('Optimistically incremented likeCount for caw:', targetCaw.id)
+          }
           console.log('Successfully created/updated pending like:', pendingLike)
         } else {
           console.log('Target caw not found for receiverId:', data.receiverId, 'cawonce:', data.receiverCawonce)

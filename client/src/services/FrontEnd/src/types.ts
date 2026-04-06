@@ -38,6 +38,7 @@ export type CawItem = {
   id: string
   content: string
   action?: string
+  isQuote?: boolean
   timestamp: string
   user: { id: number; tokenId: number; username: string; displayName?: string; image?: string; avatarUrl?: string }
   parent: CawItem

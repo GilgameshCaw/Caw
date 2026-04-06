@@ -162,43 +162,41 @@ router.get('/', async (req, res) => {
         ]
       }
     } else if (filter === 'replies' && targetUserId) {
-      // "profile-replies" mode: caws that are replies by this user
+      // "profile-replies" mode: actual replies by this user (CAW with parent, not RECAW quotes)
+      const repliesCondition = {
+        userId: targetUserId,
+        action: 'CAW',
+        originalCawId: { not: null }
+      }
       if (Array.isArray(statusConditions)) {
         where.AND = [
           { OR: statusConditions },
-          {
-            userId: targetUserId,
-            originalCawId: { not: null }
-          }
+          repliesCondition
         ]
       } else {
         where.AND = [
           statusConditions,
-          {
-            userId: targetUserId,
-            originalCawId: { not: null }
-          }
+          repliesCondition
         ]
       }
     } else if (targetUserId) {
-      // "profile posts" mode: caws they created (excluding replies and recaws)
+      // "profile posts" mode: original posts, quotes, and recaws — excluding replies
+      const postsCondition = {
+        userId: targetUserId,
+        OR: [
+          { action: 'CAW', originalCawId: null },         // Original posts
+          { action: 'RECAW' },                             // Recaws and quotes
+        ]
+      }
       if (Array.isArray(statusConditions)) {
         where.AND = [
           { OR: statusConditions },
-          {
-            userId: targetUserId,
-            action: 'CAW',
-            originalCawId: null  // Exclude replies
-          }
+          postsCondition
         ]
       } else {
         where.AND = [
           statusConditions,
-          {
-            userId: targetUserId,
-            action: 'CAW',
-            originalCawId: null  // Exclude replies
-          }
+          postsCondition
         ]
       }
     } else {
@@ -381,7 +379,7 @@ router.get('/:id', async (req, res) => {
     take: commentLimit + 1,
     skip: commentCursor ? 1 : 0,
     cursor: commentCursor ? { id: commentCursor } : undefined,
-    orderBy: { createdAt: 'asc' },
+    orderBy: [{ createdAt: 'asc' }, { cawonce: 'asc' }],
     include: getCawIncludeConfig({ currentUserId })
   })
 

@@ -135,6 +135,13 @@ export async function handleCawAction(
     // The ContentWithHashtags component will render them as images
   }
 
+  // Check if a pending caw already exists (optimistic counts were already incremented)
+  const existingPendingCaw = await tx.caw.findUnique({
+    where: { userId_cawonce: { userId: authorId, cawonce: action.cawonce } },
+    select: { status: true }
+  })
+  const wasPendingCaw = existingPendingCaw?.status === 'PENDING'
+
   // Use upsert to prevent duplicate CAWs
   const newCaw = await tx.caw.upsert({
     where: {
@@ -199,6 +206,7 @@ export async function handleCawAction(
 
   // Create notification and confirm Reply record if this references a parent caw
   let isReplyNotQuote = false
+  let replyWasPending = false
   if (parentCawId && newCaw) {
     // Check if a Reply record exists — if so, it's a reply; otherwise it's a quote
     const replyRecord = await tx.reply.findFirst({
@@ -207,6 +215,7 @@ export async function handleCawAction(
 
     if (replyRecord) {
       isReplyNotQuote = true
+      replyWasPending = replyRecord.pending
       // It's a reply — confirm pending Reply record and send REPLY notification
       try {
         await tx.reply.updateMany({
@@ -227,14 +236,16 @@ export async function handleCawAction(
         console.error(`Failed to create reply notification for caw ${newCaw.id}:`, err)
       }
     } else {
-      // It's a quote — increment recaw count and send QUOTE notification
-      try {
-        await tx.caw.update({
-          where: { id: parentCawId },
-          data: { recawCount: { increment: 1 } }
-        })
-      } catch (err) {
-        console.error(`Failed to increment recawCount for quote on caw ${parentCawId}:`, err)
+      // It's a quote — increment recaw count (skip if pending, already incremented) and send QUOTE notification
+      if (!wasPendingCaw) {
+        try {
+          await tx.caw.update({
+            where: { id: parentCawId },
+            data: { recawCount: { increment: 1 } }
+          })
+        } catch (err) {
+          console.error(`Failed to increment recawCount for quote on caw ${parentCawId}:`, err)
+        }
       }
       try {
         await NotificationService.createQuoteNotification(parentCawId, newCaw.id, authorId)
@@ -244,14 +255,17 @@ export async function handleCawAction(
     }
   }
 
-  // Increment user's caw count
-  await tx.user.update({
-    where: { tokenId: rawAction.senderId },
-    data: { cawCount: { increment: 1 } }
-  })
+  // Increment user's caw count (skip if confirming a pending caw)
+  if (!wasPendingCaw) {
+    await tx.user.update({
+      where: { tokenId: rawAction.senderId },
+      data: { cawCount: { increment: 1 } }
+    })
+  }
 
   // Only bump comment count for actual replies, not quotes
-  if (parentCawId && isReplyNotQuote) {
+  // Skip if the reply was pending — commentCount was already optimistically incremented
+  if (parentCawId && isReplyNotQuote && !replyWasPending) {
     await tx.caw.update({
       where: { id: parentCawId },
       data: { commentCount: { increment: 1 } }
@@ -300,7 +314,8 @@ export async function handleRecawAction(
       }
     },
     update: {
-      // If RECAW already exists, just update the timestamps
+      // If RECAW already exists, update status to SUCCESS
+      status: 'SUCCESS',
       updatedAt: new Date()
     },
     create: {
@@ -312,18 +327,25 @@ export async function handleRecawAction(
     }
   })
 
-  // Only increment recaw count and send notification if this is a new recaw (not an update)
+  // Increment recaw count only if this is truly new (no existing record)
+  // If it was pending, recawCount was already optimistically incremented by the API
   if (!existingRecaw) {
     await tx.caw.update({
       where: { id: originalCawId },
       data: { recawCount: { increment: 1 } }
     })
 
-    // Create repost notification
+    // Create notification — use quote notification if this recaw has text (it's a quote)
+    const isQuoteRecaw = rawAction.text && rawAction.text.trim().length > 0
     try {
-      await NotificationService.createRepostNotification(originalCawId, userId)
+      if (isQuoteRecaw) {
+        const newCaw = await tx.caw.findUnique({ where: { userId_cawonce: { userId, cawonce: action.cawonce } } })
+        if (newCaw) await NotificationService.createQuoteNotification(originalCawId, newCaw.id, userId)
+      } else {
+        await NotificationService.createRepostNotification(originalCawId, userId)
+      }
     } catch (err) {
-      console.error(`Failed to create repost notification:`, err)
+      console.error(`Failed to create repost/quote notification:`, err)
     }
   }
 }
@@ -366,11 +388,7 @@ export async function handleLikeAction(
         where: { userId_cawId: { userId, cawId: parentCawId } },
         data: { action: 'LIKE', pending: false }
       })
-      // Increment the like count since this is a pending->confirmed transition
-      await tx.caw.update({
-        where: { id: parentCawId },
-        data: { likeCount: { increment: 1 } }
-      })
+      // likeCount was already optimistically incremented when the pending record was created
 
       // Create like notification for pending->confirmed transition
       try {
@@ -795,9 +813,11 @@ export async function handleOtherAction(
     return // Exit early - no Caw record needed for standalone uploads
   }
 
-  // Determine action type: if this has content or images, treat it as a CAW post
+  // Determine action type: preserve RECAW for quotes (recaws with text),
+  // otherwise treat content/images as CAW posts.
   // (profile updates return early above, so we only get here for actual posts)
-  const effectiveActionType = (textContent || imageData) ? 'CAW' : action.actionType
+  const effectiveActionType = action.actionType === 'RECAW' ? 'RECAW'
+    : (textContent || imageData) ? 'CAW' : action.actionType
 
   // Use upsert to prevent duplicate CAWs
   const newCaw = await tx.caw.upsert({
