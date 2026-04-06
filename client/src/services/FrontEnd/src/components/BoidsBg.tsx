@@ -42,10 +42,15 @@ interface Boid {
 
 
 
+const OVERFLOW = 80
+const MOUSE_RADIUS = 120
+const MOUSE_FORCE = 0.8
+
 export default function BoidsBg({ isDark }: { isDark: boolean }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const boidsRef = useRef<Boid[]>([])
   const animRef = useRef<number>(0)
+  const mouseRef = useRef<{ x: number, y: number, active: boolean }>({ x: 0, y: 0, active: false })
 
   const initBoids = useCallback((w: number, h: number) => {
     const boids: Boid[] = []
@@ -74,7 +79,6 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
     const ctx = canvas.getContext('2d')!
     let w = 0, h = 0
 
-    const OVERFLOW = 80
     const resize = () => {
       const dpr = window.devicePixelRatio || 1
       w = canvas.parentElement!.clientWidth + OVERFLOW * 2
@@ -92,6 +96,28 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
 
     resize()
     window.addEventListener('resize', resize)
+
+    const onMouseMove = (e: MouseEvent) => {
+      const rect = canvas.parentElement!.getBoundingClientRect()
+      mouseRef.current.x = e.clientX - rect.left + OVERFLOW
+      mouseRef.current.y = e.clientY - rect.top + OVERFLOW
+      mouseRef.current.active = true
+    }
+    const onMouseLeave = () => { mouseRef.current.active = false }
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length !== 1) return
+      const rect = canvas.parentElement!.getBoundingClientRect()
+      mouseRef.current.x = e.touches[0].clientX - rect.left + OVERFLOW
+      mouseRef.current.y = e.touches[0].clientY - rect.top + OVERFLOW
+      mouseRef.current.active = true
+    }
+    const onTouchEnd = () => { mouseRef.current.active = false }
+
+    const parent = canvas.parentElement!
+    parent.addEventListener('mousemove', onMouseMove)
+    parent.addEventListener('mouseleave', onMouseLeave)
+    parent.addEventListener('touchmove', onTouchMove, { passive: true })
+    parent.addEventListener('touchend', onTouchEnd)
 
     const tick = () => {
       const boids = boidsRef.current
@@ -176,6 +202,19 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
         b.vx += (Math.random() - 0.5) * wanderStrength
         b.vy += (Math.random() - 0.5) * wanderStrength
 
+        // Mouse repulsion
+        if (mouseRef.current.active) {
+          const mdx = b.x - mouseRef.current.x
+          const mdy = b.y - mouseRef.current.y
+          const mDistSq = mdx * mdx + mdy * mdy
+          if (mDistSq < MOUSE_RADIUS * MOUSE_RADIUS && mDistSq > 0) {
+            const mDist = Math.sqrt(mDistSq)
+            const force = MOUSE_FORCE * (1 - mDist / MOUSE_RADIUS)
+            b.vx += (mdx / mDist) * force
+            b.vy += (mdy / mDist) * force
+          }
+        }
+
         // Soft edge avoidance
         if (b.x < EDGE_MARGIN) b.vx += EDGE_TURN
         if (b.x > w - EDGE_MARGIN) b.vx -= EDGE_TURN
@@ -249,6 +288,10 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
     return () => {
       cancelAnimationFrame(animRef.current)
       window.removeEventListener('resize', resize)
+      parent.removeEventListener('mousemove', onMouseMove)
+      parent.removeEventListener('mouseleave', onMouseLeave)
+      parent.removeEventListener('touchmove', onTouchMove)
+      parent.removeEventListener('touchend', onTouchEnd)
     }
   }, [isDark, initBoids])
 
