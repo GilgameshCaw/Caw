@@ -266,6 +266,7 @@ export function useSignAndSubmitAction() {
       let hasSufficientPendingDeposit = false
       try {
         const userRes = await apiFetch(`/api/users/by-token/${activeTokenId}`)
+        console.log(`[StakeCheck] by-token response:`, JSON.stringify(userRes))
         if (userRes?.lastStakedAt) {
           const tenMinutesAgo = Date.now() - 10 * 60 * 1000
           const isRecent = new Date(userRes.lastStakedAt).getTime() > tenMinutesAgo
@@ -278,9 +279,10 @@ export function useSignAndSubmitAction() {
           }
         }
       } catch (err) {
-        console.warn('[StakeCheck] Failed to check pending deposit:', err)
+        console.error('[StakeCheck] Failed to check pending deposit:', err)
       }
 
+      console.log(`[StakeCheck] hasSufficientPendingDeposit: ${hasSufficientPendingDeposit}`)
       if (!hasSufficientPendingDeposit) {
         const requiredAmount = getRequiredStake(stakingKey)
         const actionTypeForModal = getActionTypeForModal(params.actionType)

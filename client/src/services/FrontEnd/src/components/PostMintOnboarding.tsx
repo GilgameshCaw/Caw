@@ -1060,7 +1060,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                       key={user.tokenId}
                       className="rounded-xl p-4 bg-white/5 hover:bg-white/10 transition-colors w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)] md:w-[calc(25%-9px)]"
                     >
-                      <a href={`/users/${user.username}`} target="_blank" rel="noopener noreferrer" className="block text-center">
+                      <a href={`/users/${user.username}`} onClick={(e) => { e.preventDefault(); onComplete?.(); window.location.href = `/users/${user.username}` }} className="block text-center cursor-pointer">
                         <div className="w-14 h-14 rounded-full mx-auto mb-2 overflow-hidden">
                           {(user.avatarUrl || user.image) ? (
                             <img
