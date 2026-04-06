@@ -305,48 +305,57 @@ router.post('/check-cawonces', async (req, res) => {
       return res.status(400).json({ error: 'tokenId, start, and count are required' })
     }
     const safeCount = Math.min(Math.max(count, 1), 50)
-    const end = start + safeCount - 1
-    const range = Array.from({ length: safeCount }, (_, i) => start + i)
+    const searchEnd = start + safeCount + 200 // extended range for finding a contiguous block
 
-    // Check confirmed actions (on-chain)
-    const confirmedActions = await prisma.action.findMany({
-      where: { senderId: tokenId, cawonce: { in: range } },
-      select: { cawonce: true },
-    })
+    // Single set of queries covering the full search range
+    const [confirmedActions, pendingEntries, scheduledEntries] = await Promise.all([
+      prisma.action.findMany({
+        where: { senderId: tokenId, cawonce: { gte: start, lte: searchEnd } },
+        select: { cawonce: true },
+      }),
+      prisma.txQueue.findMany({
+        where: {
+          senderId: tokenId,
+          status: { in: ['pending', 'processing'] },
+        },
+        select: { payload: true },
+      }),
+      prisma.scheduledCaw.findMany({
+        where: {
+          userId: tokenId,
+          status: 'pending',
+          cawonce: { gte: start, lte: searchEnd },
+        },
+        select: { cawonce: true },
+      }),
+    ])
 
-    // Check pending/processing TxQueue entries
-    const pendingEntries = await prisma.txQueue.findMany({
-      where: {
-        senderId: tokenId,
-        status: { in: ['pending', 'processing'] },
-      },
-      select: { payload: true },
-    })
     const pendingCawonces = pendingEntries
       .map(e => (e.payload as any)?.data?.cawonce)
-      .filter((c): c is number => typeof c === 'number' && c >= start && c <= end)
-
-    // Check scheduled posts
-    const scheduledEntries = await prisma.scheduledCaw.findMany({
-      where: {
-        userId: tokenId,
-        status: 'pending',
-        cawonce: { in: range },
-      },
-      select: { cawonce: true },
-    })
+      .filter((c): c is number => typeof c === 'number' && c >= start && c <= searchEnd)
 
     const usedSet = new Set([
       ...confirmedActions.map(a => a.cawonce),
       ...pendingCawonces,
       ...scheduledEntries.map(s => s.cawonce!),
     ])
+
+    // Report which cawonces in the originally requested range are used
+    const range = Array.from({ length: safeCount }, (_, i) => start + i)
     const used = range.filter(c => usedSet.has(c))
 
-    // Find the first contiguous block of `count` available cawonces starting from `start`
+    // Find a starting cawonce where [nextSafe, nextSafe+safeCount-1] are all free
     let nextSafe = start
-    while (usedSet.has(nextSafe) && nextSafe < start + safeCount + 100) {
-      nextSafe++
+    while (nextSafe < searchEnd) {
+      let blockClear = true
+      for (let j = 0; j < safeCount; j++) {
+        if (usedSet.has(nextSafe + j)) {
+          nextSafe = nextSafe + j + 1
+          blockClear = false
+          break
+        }
+      }
+      if (blockClear) break
     }
 
     return res.json({ used, nextSafe })

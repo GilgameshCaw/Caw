@@ -8,7 +8,7 @@ import { useQuickSignRenewStore } from '~/components/modals/QuickSignRenewModal'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { useActionErrorStore } from '~/store/actionErrorStore'
 import { privateKeyToAccount } from 'viem/accounts'
-import { buildTypedData, TYPES } from '~/api/actions'
+import { TYPES, DOMAIN } from '~/api/actions'
 
 // Track retry counts per TxQueue ID to prevent infinite loops
 const cawonceRetries = new Map<number, number>()
@@ -130,19 +130,13 @@ export function useTxQueueMonitor() {
                       return
                     }
 
-                    // Build new typed data with fresh cawonce
-                    const actionTypeMap: Record<number, string> = { 0: 'caw', 1: 'like', 2: 'unlike', 3: 'recaw', 4: 'follow', 5: 'unfollow', 6: 'withdraw', 7: 'other' }
-                    const actionKey = actionTypeMap[originalData.actionType] || 'other'
-                    const { domain, types, primaryType, message } = buildTypedData({
-                      actionType: actionKey as any,
-                      senderId: originalData.senderId,
-                      receiverId: originalData.receiverId,
-                      receiverCawonce: originalData.receiverCawonce,
-                      cawonce: freshCawonce,
-                      recipients: originalData.recipients,
-                      amounts: (originalData.amounts || []).map((a: string) => BigInt(a)),
-                      text: originalData.text,
-                    })
+                    // Re-use the original message but swap in the fresh cawonce.
+                    // Do NOT go through buildTypedData — the original amounts already
+                    // include the validator tip, and buildTypedData would add a second one.
+                    const message = { ...originalData, cawonce: freshCawonce }
+                    const domain = DOMAIN
+                    const types = TYPES
+                    const primaryType = 'ActionData' as const
 
                     // Sign with session key
                     const sessionAccount = privateKeyToAccount(session.privateKey)

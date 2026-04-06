@@ -122,6 +122,35 @@ function getChunkInfo(text: string, includePageIndicators = false, firstChunkRes
     }
   }
 
+  // Determine if media needs its own dedicated chunk (no text, just media).
+  // When this is the case, don't apply lastChunkReserved to any text chunk —
+  // just add an extra chunk at the end for the media.
+  // Note: estimatedTotal already includes the extra chunk from the first pass (line 121).
+  const mediaNeedsOwnChunk = lastChunkReserved > 0 && estimatedTotal > 0 && (() => {
+    // Re-split text without any last-chunk reserve to see if the last text chunk
+    // has room for the media.
+    const boundaries: number[] = [0]
+    let remaining = text
+    let chunkIdx = 0
+    while (remaining.length > 0) {
+      const indicatorLen = includePageIndicators ? `(${chunkIdx + 1}/${estimatedTotal}) `.length : 0
+      const limit = (chunkIdx === 0 ? firstChunkLimit : POST_CHAR_LIMIT) - indicatorLen
+      if (remaining.length <= limit) break
+      let splitAt = remaining.lastIndexOf(' ', limit)
+      if (splitAt <= 0) splitAt = limit
+      remaining = remaining.slice(splitAt).trimStart()
+      boundaries.push(0)
+      chunkIdx++
+    }
+    // remaining.length is the text in the last text chunk
+    const lastIndicatorLen = includePageIndicators ? `(${boundaries.length}/${estimatedTotal}) `.length : 0
+    const lastChunkAvailable = POST_CHAR_LIMIT - lastIndicatorLen
+    return remaining.length + lastChunkReserved > lastChunkAvailable
+  })()
+
+  // If media needs its own chunk, split text WITHOUT the last-chunk reserve,
+  // then append an extra boundary for the media-only chunk.
+
   // Second pass with indicator space and last-chunk reserve
   for (let attempt = 0; attempt < 3; attempt++) {
     const boundaries: number[] = [0]
@@ -131,7 +160,8 @@ function getChunkInfo(text: string, includePageIndicators = false, firstChunkRes
 
     while (remaining.length > 0) {
       const indicatorLen = includePageIndicators ? `(${chunkIndex + 1}/${estimatedTotal}) `.length : 0
-      const available = getLimit(chunkIndex, estimatedTotal, indicatorLen)
+      const available = getLimit(chunkIndex, mediaNeedsOwnChunk ? Infinity : estimatedTotal, indicatorLen)
+      // When mediaNeedsOwnChunk, pass Infinity so getLimit never applies lastChunkReserved
 
       if (remaining.length <= available) break
       let splitAt = remaining.lastIndexOf(' ', available)
@@ -143,6 +173,12 @@ function getChunkInfo(text: string, includePageIndicators = false, firstChunkRes
       boundaries.push(offset)
       remaining = remaining.slice(splitAt).trimStart()
       chunkIndex++
+    }
+
+    if (mediaNeedsOwnChunk) {
+      // Add boundary for the media-only chunk at the end of text
+      boundaries.push(text.length)
+      return { chunkCount: boundaries.length, chunkBoundaries: boundaries }
     }
 
     if (boundaries.length === estimatedTotal || !includePageIndicators) {
@@ -407,11 +443,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   }
 
   const handleTextClick = (e: React.MouseEvent<HTMLTextAreaElement>) => {
-    setCursorPosition((e.target as HTMLTextAreaElement).selectionStart)
+    setCursorPosition((e.target as HTMLTextAreaElement).selectionEnd ?? (e.target as HTMLTextAreaElement).selectionStart)
   }
 
   const handleTextKeyUp = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    setCursorPosition((e.target as HTMLTextAreaElement).selectionStart)
+    setCursorPosition((e.target as HTMLTextAreaElement).selectionEnd ?? (e.target as HTMLTextAreaElement).selectionStart)
   }
 
   // Handle mention selection from autocomplete
@@ -1082,9 +1118,55 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     // Split into thread chunks if text exceeds the limit
     const chunks = splitTextIntoChunks(finalText, includePageIndicators)
 
-    // If media goes at end of thread, append to last chunk
+    // If media goes at end of thread, check if it fits in the last chunk or needs its own
     if (isThreadMode && mediaPosition === 'end' && mediaBlock && chunks.length > 1) {
-      chunks[chunks.length - 1] = chunks[chunks.length - 1] + mediaBlock
+      const lastChunk = chunks[chunks.length - 1]
+      if (lastChunk.length + mediaBlock.length <= POST_CHAR_LIMIT) {
+        // Media fits in the last text chunk
+        chunks[chunks.length - 1] = lastChunk + mediaBlock
+      } else {
+        // Media needs its own chunk
+        const mediaContent = mediaBlock.replace(/^\n/, '') // strip leading newline for standalone chunk
+        const totalWithMedia = chunks.length + 1
+        if (includePageIndicators) {
+          // If adding a chunk crosses a digit boundary (e.g., 9→10), the indicator
+          // grows by 1 char per chunk, which could push existing chunks over 420.
+          // Re-split from scratch in that case to be safe.
+          const oldDigits = String(chunks.length).length
+          const newDigits = String(totalWithMedia).length
+          if (newDigits > oldDigits) {
+            // Re-split text aware of the new total's indicator length
+            chunks.length = 0
+            let remaining = finalText
+            let idx = 0
+            while (remaining.length > 0) {
+              const indicator = `(${idx + 1}/${totalWithMedia}) `
+              const available = POST_CHAR_LIMIT - indicator.length
+              if (remaining.length <= available) {
+                chunks.push(indicator + remaining)
+                break
+              }
+              let splitAt = remaining.lastIndexOf(' ', available)
+              if (splitAt <= 0) splitAt = available
+              chunks.push(indicator + remaining.slice(0, splitAt))
+              remaining = remaining.slice(splitAt).trimStart()
+              idx++
+            }
+          } else {
+            // Same digit count — safe to do simple string replacement
+            for (let i = 0; i < chunks.length; i++) {
+              const oldIndicator = `(${i + 1}/${chunks.length}) `
+              const newIndicator = `(${i + 1}/${totalWithMedia}) `
+              if (chunks[i].startsWith(oldIndicator)) {
+                chunks[i] = newIndicator + chunks[i].slice(oldIndicator.length)
+              }
+            }
+          }
+          chunks.push(`(${totalWithMedia}/${totalWithMedia}) ${mediaContent}`)
+        } else {
+          chunks.push(mediaContent)
+        }
+      }
     }
 
     // Pre-check: verify spending limit can cover all chunks (only when Quick Sign is active)
@@ -1135,11 +1217,21 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       }
     }
 
+    // Pre-allocate cawonces for the entire thread upfront.
+    // This prevents race conditions where other async processes (cawonce sync,
+    // txqueue monitor retries) overwrite the store cawonce mid-thread.
+    const startCawonce = getCawonce()
+    const threadCawonces = chunks.map((_, i) => startCawonce + i)
+    // Immediately bump the store past the entire range so nothing else uses these
+    const setCawonce = useTokenDataStore.getState().setCawonce
+    setCawonce(effectiveTokenId, startCawonce + chunks.length)
+
     // Post first chunk (with media, parent info, etc.)
     const firstParams: ActionParams = {
       actionType: 'caw',
       senderId: effectiveTokenId,
       text: chunks[0],
+      cawonce: threadCawonces[0],
       ...(parentCaw && {
         receiverId: parentCaw.user.tokenId,
         receiverCawonce: parentCaw.cawonce,
@@ -1150,7 +1242,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       })
     }
 
-    let prevCawonce = getCawonce()
     const response = await signAndSubmit(firstParams)
 
     // If signAndSubmit returned null (e.g. insufficient stake modal), don't clear the form
@@ -1173,12 +1264,13 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     }
 
     // Post remaining chunks as replies to the first post
-    const firstPostCawonce = prevCawonce
+    const firstPostCawonce = threadCawonces[0]
     for (let i = 1; i < chunks.length; i++) {
       const replyParams: ActionParams = {
         actionType: 'caw',
         senderId: effectiveTokenId,
         text: chunks[i],
+        cawonce: threadCawonces[i],
         receiverId: effectiveTokenId,
         receiverCawonce: firstPostCawonce,
       }
@@ -1246,10 +1338,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   const { chunkCount, chunkBoundaries } = getChunkInfo(text, includePageIndicators, firstChunkMediaCost, lastChunkMediaCost)
 
   // Figure out which chunk the cursor is in
+  // When media gets its own dedicated last chunk, the cursor should never land there —
+  // cap to the last text chunk so the counter shows remaining chars for actual text.
+  const hasMediaOnlyChunk = mediaPosition === 'end' && chunkCount >= 2 && chunkBoundaries[chunkCount - 1] === text.length
+  const maxCursorChunk = hasMediaOnlyChunk ? chunkCount - 2 : chunkCount - 1
   const currentChunkIndex = (() => {
     if (!isThreadMode) return 0
     for (let i = chunkBoundaries.length - 1; i >= 0; i--) {
-      if (cursorPosition >= chunkBoundaries[i]) return i
+      if (cursorPosition >= chunkBoundaries[i]) return Math.min(i, maxCursorChunk)
     }
     return 0
   })()
@@ -1456,7 +1552,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               </Link>
             ) : (() => {
                 const wrongWallet = !isTokenOwner && !hasActiveSession && activeToken?.tokenId
-                const tooltipText = wrongWallet ? 'Please switch to the correct wallet' : hasPendingUploads ? 'Waiting for upload to confirm...' : isSubmitting ? 'Waiting for signature...' : ''
+                const tooltipText = wrongWallet ? 'Please switch to the correct wallet' : hasPendingUploads ? 'Waiting for upload to confirm...' : isSubmitting ? (isThreadMode ? 'Waiting for signatures...' : 'Waiting for signature...') : ''
                 const isDisabled = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isProcessingOnChain || hasPendingUploads || isSubmitting
                 const btn = (
                   <button
@@ -1858,7 +1954,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             </button>
           ) : (() => {
                 const wrongWallet2 = !isTokenOwner && !hasActiveSession && activeToken?.tokenId
-                const tooltipText2 = wrongWallet2 ? 'Please switch to the correct wallet' : hasNoToken ? '' : hasPendingUploads ? 'Waiting for upload to confirm...' : isSubmitting ? 'Waiting for signature...' : ''
+                const tooltipText2 = wrongWallet2 ? 'Please switch to the correct wallet' : hasNoToken ? '' : hasPendingUploads ? 'Waiting for upload to confirm...' : isSubmitting ? (isThreadMode ? 'Waiting for signatures...' : 'Waiting for signature...') : ''
                 const isDisabled2 = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isProcessingOnChain || hasPendingUploads || isSubmitting
                 const btn2 = (
                   <button

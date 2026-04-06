@@ -360,14 +360,20 @@ export function useSignAndSubmitAction() {
       throw new Error('Token data not loaded. Please refresh and try again.')
     }
 
-    // Bump cawonce BEFORE building the message to avoid conflicts with concurrent submissions.
-    // Use the current value for this action, then immediately increment for the next one.
-    // The local cawonce is synced from chain on page load (useCawonceSync) and stays
-    // ahead of on-chain via local increments — no need to fetch on every action.
-    console.log(`[signAndSubmit] Using cawonce=${currentCawonce} for ${params.actionType}, bumping to ${currentCawonce + 1}`)
-    bumpCawonce(activeTokenId)
+    // Use explicitly provided cawonce if given (e.g., pre-allocated thread cawonces),
+    // otherwise read from the store and bump it for the next caller.
+    // When cawonce is pre-allocated, the caller already bumped the store past the
+    // entire range, so we must NOT bump again here to avoid wasting cawonces.
+    const useCawonce = params.cawonce ?? currentCawonce
+    if (params.cawonce == null) {
+      // Normal path: read from store, bump for next action
+      console.log(`[signAndSubmit] Using cawonce=${useCawonce} for ${params.actionType}, bumping to ${currentCawonce + 1}`)
+      bumpCawonce(activeTokenId)
+    } else {
+      console.log(`[signAndSubmit] Using pre-allocated cawonce=${useCawonce} for ${params.actionType} (store already bumped)`)
+    }
 
-    const { domain, types, primaryType, message } = buildTypedData({...params, cawonce: currentCawonce})
+    const { domain, types, primaryType, message } = buildTypedData({...params, cawonce: useCawonce})
 
     // Check for an active session key that covers this action type.
     // Look up by token owner so Quick Sign works regardless of connected wallet.
