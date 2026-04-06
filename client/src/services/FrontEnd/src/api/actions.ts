@@ -259,10 +259,25 @@ export function useSignAndSubmitAction() {
     const effectiveStake = pendingState.getEffectiveStake(activeToken?.stakedAmount)
     console.log(`[StakeCheck] stakedAmount=${activeToken?.stakedAmount?.toString()}, pendingSpend=${pendingState.pendingSpend.toString()}, effectiveStake=${effectiveStake.toString()}, pendingItems=${Object.keys(pendingState.pendingByTxQueue).length}`)
     if (stakingKey && !hasMinimumStake(effectiveStake, stakingKey)) {
-      const requiredAmount = getRequiredStake(stakingKey)
-      const actionTypeForModal = getActionTypeForModal(params.actionType)
-      useInsufficientStakeStore.getState().show(effectiveStake, requiredAmount, actionTypeForModal)
-      return null // Insufficient stake — no retry callback, user must stake more
+      // Check if the user has a pending deposit (recently staked on L1, bridge in flight).
+      // If so, skip the modal and submit anyway — the validator will hold the action
+      // in waiting_for_deposit status until the deposit arrives on L2.
+      let hasPendingDeposit = false
+      try {
+        const userRes = await apiFetch(`/api/users/by-token/${activeTokenId}`)
+        if (userRes?.lastStakedAt) {
+          const tenMinutesAgo = Date.now() - 10 * 60 * 1000
+          hasPendingDeposit = new Date(userRes.lastStakedAt).getTime() > tenMinutesAgo
+        }
+      } catch { /* ignore — show modal as fallback */ }
+
+      if (!hasPendingDeposit) {
+        const requiredAmount = getRequiredStake(stakingKey)
+        const actionTypeForModal = getActionTypeForModal(params.actionType)
+        useInsufficientStakeStore.getState().show(effectiveStake, requiredAmount, actionTypeForModal)
+        return null // Insufficient stake — no retry callback, user must stake more
+      }
+      console.log(`[Actions] Insufficient stake but deposit pending — submitting anyway (validator will wait)`)
     }
 
     // Check if user is authenticated with this client on-chain (cached after first check)
