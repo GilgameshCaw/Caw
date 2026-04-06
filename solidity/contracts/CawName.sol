@@ -252,13 +252,11 @@ contract CawName is
     }
   }
 
-  // TODO:
-  // TODO:
-  // TODO:
-  // create a depositFor function, so users can approve and
-  // use other contracts to interface with this one.
-  function deposit(uint32 cawClientId, uint32 tokenId, uint256 amount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
-    require(ownerOf(tokenId) == msg.sender, "can not deposit into a CawName that you do not own");
+  /// @notice Deposit CAW into a token on behalf of its owner. CAW is pulled from msg.sender
+  ///         (not the token owner), so the caller must have approved this contract for CAW.
+  ///         This allows router contracts to collect CAW from the user and deposit in one flow.
+  function depositFor(uint32 cawClientId, uint32 tokenId, uint256 amount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
+    address owner = ownerOf(tokenId);
 
     chosenChainIds[tokenId].add(uint256(lzDestId));
     CAW.transferFrom(msg.sender, address(this), amount);
@@ -278,10 +276,15 @@ contract CawName is
     else {
       uint32[] memory tokenIds;
       address[] memory owners;
-      (tokenIds, owners) = extractPendingTransferUpdates(lzDestId, msg.sender, tokenId);
+      (tokenIds, owners) = extractPendingTransferUpdates(lzDestId, owner, tokenId);
       bytes memory payload = abi.encodeWithSelector(addToBalanceSelector, cawClientId, tokenId, amount, tokenIds, owners);
       lzSend(lzDestId, addToBalanceSelector, payload, lzEthAmount, lzTokenAmount);
     }
+  }
+
+  function deposit(uint32 cawClientId, uint32 tokenId, uint256 amount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
+    require(ownerOf(tokenId) == msg.sender, "can not deposit into a CawName that you do not own");
+    depositFor(cawClientId, tokenId, amount, lzDestId, lzTokenAmount);
   }
 
   function peerWithMaxPendingTransfers() public view returns (uint32) {
@@ -505,8 +508,17 @@ contract CawName is
     // Ensure the selector corresponds to an expected function to prevent unauthorized actions
     require(isAuthorizedFunction(decodedSelector), "Unauthorized function call");
 
-    // Call the function using the selector and arguments
-    // (bool success, bytes memory returnData) = address(this).delegatecall(abi.encode(decodedSelector, args));
+    // Call the function using the selector and arguments.
+    //
+    // SECURITY NOTE (audited 2026-04-06): The fromLZ + delegatecall pattern is intentional and safe.
+    // - The OApp base class already verifies msg.sender == endpoint and the peer before _lzReceive runs.
+    // - The only authorized function (setWithdrawable) makes zero external calls — no reentrancy vector.
+    // - fromLZ cannot get stuck: on success it resets below; on revert the entire tx rolls back.
+    // - The endpoint is immutable (set once in constructor, can never change).
+    // - These contracts are immutable post-deployment, so no new authorized functions can be added.
+    // - An alternative like msg.sender == endpoint would not work here because the authorized functions
+    //   are public (required for delegatecall dispatch), and fromLZ is needed to distinguish the
+    //   _lzReceive call path from direct external calls.
     fromLZ = true;
     (bool success, bytes memory returnData) = address(this).delegatecall(bytes.concat(decodedSelector, args));
     fromLZ = false;

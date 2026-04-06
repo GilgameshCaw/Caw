@@ -2271,3 +2271,192 @@ contract("CawNameMinter - mintAndDeposit", function(accounts) {
   });
 });
 
+
+contract("CawName - depositFor", function(accounts) {
+  var localToken, localClientManager, localUriGenerator, localCawNamesL2;
+  var localCawNames, localMinter, localQuoter, localEndpointL1, localEndpointL2;
+
+  before(async function() {
+    this.timeout(60000);
+
+    localEndpointL1 = await MockLayerZeroEndpoint.new(l1);
+    localEndpointL2 = await MockLayerZeroEndpoint.new(l2);
+
+    localToken = await MintableCaw.new();
+    localClientManager = await CawClientManager.new(gilg);
+    localUriGenerator = await CawNameURI.new();
+
+    localCawNamesL2 = await CawNameL2.new(l1, localEndpointL2.address);
+    await localEndpointL1.setDestLzEndpoint(localCawNamesL2.address, localEndpointL2.address);
+
+    localCawNames = await CawName.new(localToken.address, localUriGenerator.address, gilg, localClientManager.address, localEndpointL1.address, l1);
+    await localCawNamesL2.setL1Peer(l1, localCawNames.address, false);
+    await localEndpointL2.setDestLzEndpoint(localCawNames.address, localEndpointL1.address);
+    await localCawNames.setL2Peer(l2, localCawNamesL2.address);
+
+    // Client with fees: mint=1, deposit=1, auth=1, withdraw=1
+    await localClientManager.createClient("Test Client", accounts[0], l2, 1, 1, 1, 1);
+    await localClientManager.setCawName(localCawNames.address);
+
+    localMinter = await CawNameMinter.new(localToken.address, localCawNames.address);
+    await localCawNames.setMinter(localMinter.address);
+
+    localQuoter = await CawNameQuoter.new(localCawNames.address);
+
+    // accounts[1] = token owner, accounts[2] = third party depositor
+    // Give both accounts some CAW
+    var mintAmount = BigInt(100) * 1_000_000_000n * 10n**18n;
+    await localToken.mint(accounts[1], mintAmount.toString());
+    await localToken.mint(accounts[2], mintAmount.toString());
+
+    // Approve minter for accounts[1] to mint username
+    await localToken.approve(localMinter.address, mintAmount.toString(), { from: accounts[1] });
+
+    // Mint a username for accounts[1]
+    var mintQuote = await localQuoter.mintQuote(1, false);
+    await localMinter.mint(1, 'depositfortest', 0, {
+      from: accounts[1],
+      value: (BigInt(mintQuote.nativeFee)).toString(),
+    });
+  });
+
+  it("should allow a third party to deposit CAW on behalf of token owner", async function() {
+    this.timeout(60000);
+
+    var tokenId = await localCawNames.nextId() - 1;
+    var depositAmount = web3.utils.toWei('1000', 'ether');
+
+    // Third party (accounts[2]) approves CawName contract for their CAW
+    await localToken.approve(localCawNames.address, depositAmount, { from: accounts[2] });
+
+    var depositorBalanceBefore = BigInt(await localToken.balanceOf(accounts[2]));
+    var ownerBalanceBefore = BigInt(await localToken.balanceOf(accounts[1]));
+
+    var quote = await localQuoter.depositQuote(1, tokenId, depositAmount, l2, false);
+
+    await localCawNames.depositFor(1, tokenId, depositAmount, l2, 0, {
+      from: accounts[2],
+      value: (BigInt(quote.nativeFee)).toString(),
+    });
+
+    // CAW should come from the depositor (accounts[2]), not the owner
+    var depositorBalanceAfter = BigInt(await localToken.balanceOf(accounts[2]));
+    var ownerBalanceAfter = BigInt(await localToken.balanceOf(accounts[1]));
+
+    expect(depositorBalanceBefore - depositorBalanceAfter).to.equal(BigInt(depositAmount));
+    expect(ownerBalanceAfter).to.equal(ownerBalanceBefore);
+
+    // Token should have balance on L2
+    var l2Balance = BigInt(await localCawNamesL2.cawBalanceOf(tokenId));
+    expect(l2Balance > 0n).to.be.true;
+
+    console.log("depositFor: third party deposit successful");
+  });
+
+  it("should auto-authenticate when depositing via depositFor", async function() {
+    this.timeout(60000);
+
+    // Create a second client
+    await localClientManager.createClient("Client 2", accounts[0], l2, 1, 1, 1, 1);
+    var clientId = 2;
+
+    var tokenId = await localCawNames.nextId() - 1;
+    var depositAmount = web3.utils.toWei('100', 'ether');
+
+    await localToken.approve(localCawNames.address, depositAmount, { from: accounts[2] });
+
+    var isAuthedBefore = await localCawNames.authenticated(clientId, tokenId);
+    expect(isAuthedBefore).to.be.false;
+
+    var quote = await localQuoter.depositQuote(clientId, tokenId, depositAmount, l2, false);
+
+    await localCawNames.depositFor(clientId, tokenId, depositAmount, l2, 0, {
+      from: accounts[2],
+      value: (BigInt(quote.nativeFee)).toString(),
+    });
+
+    var isAuthedAfter = await localCawNames.authenticated(clientId, tokenId);
+    expect(isAuthedAfter).to.be.true;
+
+    console.log("depositFor: auto-authentication works");
+  });
+
+  it("should revert depositFor for non-existent token", async function() {
+    this.timeout(60000);
+
+    var depositAmount = web3.utils.toWei('100', 'ether');
+    await localToken.approve(localCawNames.address, depositAmount, { from: accounts[2] });
+
+    await expectRevert(
+      localCawNames.depositFor(1, 9999, depositAmount, l2, 0, {
+        from: accounts[2],
+        value: web3.utils.toWei('1', 'ether'),
+      }),
+      "ERC721: invalid token ID"
+    );
+
+    console.log("depositFor: revert on non-existent token works");
+  });
+
+  it("should revert depositFor when caller has insufficient CAW allowance", async function() {
+    this.timeout(60000);
+
+    var tokenId = await localCawNames.nextId() - 1;
+    var depositAmount = web3.utils.toWei('1000', 'ether');
+
+    // Don't approve — should fail
+    await expectRevert(
+      localCawNames.depositFor(1, tokenId, depositAmount, l2, 0, {
+        from: accounts[3],
+        value: web3.utils.toWei('1', 'ether'),
+      }),
+      "ERC20: insufficient allowance"
+    );
+
+    console.log("depositFor: revert on insufficient allowance works");
+  });
+
+  it("should allow deposit() to still work (calls depositFor internally)", async function() {
+    this.timeout(60000);
+
+    var tokenId = await localCawNames.nextId() - 1;
+    var depositAmount = web3.utils.toWei('500', 'ether');
+
+    // Owner approves and deposits normally
+    await localToken.approve(localCawNames.address, depositAmount, { from: accounts[1] });
+
+    var ownerBalanceBefore = BigInt(await localToken.balanceOf(accounts[1]));
+
+    var quote = await localQuoter.depositQuote(1, tokenId, depositAmount, l2, false);
+
+    await localCawNames.deposit(1, tokenId, depositAmount, l2, 0, {
+      from: accounts[1],
+      value: (BigInt(quote.nativeFee)).toString(),
+    });
+
+    var ownerBalanceAfter = BigInt(await localToken.balanceOf(accounts[1]));
+    expect(ownerBalanceBefore - ownerBalanceAfter).to.equal(BigInt(depositAmount));
+
+    console.log("deposit() still works via depositFor internally");
+  });
+
+  it("should revert deposit() when called by non-owner", async function() {
+    this.timeout(60000);
+
+    var tokenId = await localCawNames.nextId() - 1;
+    var depositAmount = web3.utils.toWei('100', 'ether');
+
+    await localToken.approve(localCawNames.address, depositAmount, { from: accounts[2] });
+
+    await expectRevert(
+      localCawNames.deposit(1, tokenId, depositAmount, l2, 0, {
+        from: accounts[2],
+        value: web3.utils.toWei('1', 'ether'),
+      }),
+      "can not deposit into a CawName that you do not own"
+    );
+
+    console.log("deposit() still rejects non-owner");
+  });
+});
+
