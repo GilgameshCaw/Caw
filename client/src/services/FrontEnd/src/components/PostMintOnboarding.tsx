@@ -32,6 +32,7 @@ import StakingRewardsInfo from '~/components/StakingRewardsInfo'
 import QuickSignOptions from '~/components/QuickSignOptions'
 import { FollowButton } from '~/components/FollowButton'
 import cawLogo from '~/assets/images/caw-logo.png'
+import BoidsBg from '~/components/BoidsBg'
 import UsernameSvg from '~/components/UsernameSvg'
 import {
   HiOutlineCube,
@@ -629,8 +630,10 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   )
 
   return (
-    <div className="fixed inset-0 z-[100] bg-black overflow-y-auto">
-      <div className="min-h-full flex flex-col pb-[50px]">
+    <div className="fixed inset-0 z-[100] bg-black overflow-y-auto overflow-x-hidden">
+      <BoidsBg isDark={true} />
+      <div className="fixed inset-0 bg-black/80 z-[1] pointer-events-none" />
+      <div className="min-h-full flex flex-col pb-[50px] relative z-[2]">
 
         {/* Stepper — above columns on desktop, inline on mobile */}
         <div className="hidden min-[800px]:block w-full max-w-[840px] mx-auto px-6 pt-10 pb-2">
@@ -721,8 +724,8 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                       </svg>
                       <span className="font-medium">
                         {pendingDepositAmount > 0n
-                          ? `${Number(formatUnits(pendingDepositAmount, 18)).toLocaleString('en-US', { maximumFractionDigits: 0 })} CAW deposit — waiting for confirmation...`
-                          : 'Deposit submitted — waiting for confirmation...'}
+                          ? <>{Number(formatUnits(pendingDepositAmount, 18)).toLocaleString('en-US', { maximumFractionDigits: 0 })} CAW deposit<br/>waiting for confirmation...</>
+                          : <>Deposit submitted<br/>waiting for confirmation...</>}
                       </span>
                     </div>
                     {address && (
