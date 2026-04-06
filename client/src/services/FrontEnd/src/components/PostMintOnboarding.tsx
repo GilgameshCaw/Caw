@@ -229,7 +229,10 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
           await fetch(`/api/users/${activeToken.username}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ lastStakedAt: new Date().toISOString() })
+            body: JSON.stringify({
+              lastStakedAt: new Date().toISOString(),
+              pendingDepositAmount: parseUnits(amount || '0', 18).toString(),
+            })
           })
         } catch {}
       }
@@ -957,12 +960,14 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <QuickSignOptions
-                    spendLimit={qsSpendLimit}
-                    onSpendLimitChange={setQsSpendLimit}
-                    duration={qsDuration}
-                    onDurationChange={setQsDuration}
-                  />
+                  {!setupQsDone && (
+                    <QuickSignOptions
+                      spendLimit={qsSpendLimit}
+                      onSpendLimitChange={setQsSpendLimit}
+                      duration={qsDuration}
+                      onDurationChange={setQsDuration}
+                    />
+                  )}
 
                   {setupError && (
                     <p className="text-red-400 text-sm text-center">{setupError}</p>
@@ -1055,7 +1060,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                       key={user.tokenId}
                       className="rounded-xl p-4 bg-white/5 hover:bg-white/10 transition-colors w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)] md:w-[calc(25%-9px)]"
                     >
-                      <div className="text-center">
+                      <a href={`/users/${user.username}`} target="_blank" rel="noopener noreferrer" className="block text-center">
                         <div className="w-14 h-14 rounded-full mx-auto mb-2 overflow-hidden">
                           {(user.avatarUrl || user.image) ? (
                             <img
@@ -1078,7 +1083,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                         <p className="text-white/30 text-xs mt-1">
                           {formatCount(user.followerCount)} followers{user.likeCount > 0 ? ` · ${formatCount(user.likeCount)} likes` : ''}
                         </p>
-                      </div>
+                      </a>
                       <div className="mt-3 flex justify-center">
                         <FollowButton
                           targetUserId={user.tokenId}

@@ -377,7 +377,10 @@ const Staking = () => {
           await fetch(`/api/users/${activeToken.username}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ lastStakedAt: new Date().toISOString() })
+            body: JSON.stringify({
+              lastStakedAt: new Date().toISOString(),
+              pendingDepositAmount: parseUnits(amount || '0', 18).toString(),
+            })
           })
         } catch (err) {
           console.error('[Staking] Failed to record stake timestamp:', err)

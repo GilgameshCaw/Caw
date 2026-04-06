@@ -262,22 +262,32 @@ export function useSignAndSubmitAction() {
       // Check if the user has a pending deposit (recently staked on L1, bridge in flight).
       // If so, skip the modal and submit anyway — the validator will hold the action
       // in waiting_for_deposit status until the deposit arrives on L2.
-      let hasPendingDeposit = false
+      // Check if the user has a pending deposit that will cover the shortfall
+      let hasSufficientPendingDeposit = false
       try {
         const userRes = await apiFetch(`/api/users/by-token/${activeTokenId}`)
         if (userRes?.lastStakedAt) {
           const tenMinutesAgo = Date.now() - 10 * 60 * 1000
-          hasPendingDeposit = new Date(userRes.lastStakedAt).getTime() > tenMinutesAgo
+          const isRecent = new Date(userRes.lastStakedAt).getTime() > tenMinutesAgo
+          if (isRecent && userRes.pendingDepositAmount) {
+            const pendingWei = BigInt(userRes.pendingDepositAmount)
+            const requiredAmount = getRequiredStake(stakingKey)
+            const futureStake = effectiveStake + pendingWei
+            hasSufficientPendingDeposit = futureStake >= requiredAmount
+            console.log(`[StakeCheck] Pending deposit: ${pendingWei.toString()} wei, future stake: ${futureStake.toString()}, required: ${requiredAmount.toString()}, sufficient: ${hasSufficientPendingDeposit}`)
+          }
         }
-      } catch { /* ignore — show modal as fallback */ }
+      } catch (err) {
+        console.warn('[StakeCheck] Failed to check pending deposit:', err)
+      }
 
-      if (!hasPendingDeposit) {
+      if (!hasSufficientPendingDeposit) {
         const requiredAmount = getRequiredStake(stakingKey)
         const actionTypeForModal = getActionTypeForModal(params.actionType)
         useInsufficientStakeStore.getState().show(effectiveStake, requiredAmount, actionTypeForModal)
-        return null // Insufficient stake — no retry callback, user must stake more
+        return null
       }
-      console.log(`[Actions] Insufficient stake but deposit pending — submitting anyway (validator will wait)`)
+      console.log(`[Actions] Insufficient stake but pending deposit will cover it — submitting (validator will wait)`)
     }
 
     // Check if user is authenticated with this client on-chain (cached after first check)

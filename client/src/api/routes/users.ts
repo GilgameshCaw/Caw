@@ -200,6 +200,9 @@ router.get('/by-token/:tokenId', async (req, res) => {
         displayName: true,
         avatarUrl: true,
         image: true,
+        address: true,
+        lastStakedAt: true,
+        pendingDepositAmount: true,
       }
     })
 
@@ -887,23 +890,24 @@ router.get('/:tokenId/on-chain-images', async (req, res) => {
 
 /**
  * PATCH /api/users/:username
- * Update user fields (currently just lastStakedAt for LayerZero tracking)
+ * Update user fields (lastStakedAt and pendingDepositAmount for LayerZero tracking)
  */
 router.patch('/:username', async (req, res) => {
   try {
     const { username } = req.params
-    const { lastStakedAt } = req.body
+    const { lastStakedAt, pendingDepositAmount } = req.body
 
-    // Only allow updating lastStakedAt for now
-    if (!lastStakedAt) {
-      return res.status(400).json({ error: 'lastStakedAt is required' })
+    if (!lastStakedAt && pendingDepositAmount === undefined) {
+      return res.status(400).json({ error: 'No update fields provided' })
     }
+
+    const data: any = {}
+    if (lastStakedAt) data.lastStakedAt = new Date(lastStakedAt)
+    if (pendingDepositAmount !== undefined) data.pendingDepositAmount = String(pendingDepositAmount)
 
     await prisma.user.update({
       where: { username },
-      data: {
-        lastStakedAt: new Date(lastStakedAt)
-      }
+      data,
     })
 
     return res.json({ success: true })

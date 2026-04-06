@@ -46,6 +46,7 @@ model User {
   website               String?
   onboardingStep        Int            @default(0)
   lastStakedAt          DateTime?
+  pendingDepositAmount  String?           // wei amount as string, pending L1→L2 bridge
   caws                  Caw[]
   followers             Follow[]       @relation("Follower")
   follows               Follow[]       @relation("Following")
@@ -250,6 +251,7 @@ model Notification {
   actorId   Int
   type      NotificationType
   cawId     Int?
+  offerId   Int?             // Links to MarketplaceOffer for OFFER notifications
   groupKey  String?
   isRead    Boolean          @default(false)
   hidden    Boolean          @default(false)
@@ -257,6 +259,7 @@ model Notification {
   updatedAt DateTime         @updatedAt
   actor     User             @relation("NotificationActor", fields: [actorId], references: [tokenId], onDelete: Cascade)
   caw       Caw?             @relation(fields: [cawId], references: [id], onDelete: Cascade)
+  offer     MarketplaceOffer? @relation(fields: [offerId], references: [id], onDelete: Cascade)
   user      User             @relation("NotificationRecipient", fields: [userId], references: [tokenId], onDelete: Cascade)
 
   @@index([userId, isRead, createdAt])
@@ -457,6 +460,7 @@ enum NotificationType {
   QUOTE
   MENTION
   TIP
+  OFFER
 }
 
 enum MessageStatus {
@@ -708,6 +712,34 @@ enum BidStatus {
   OUTBID
   WON
   WITHDRAWN
+}
+
+model MarketplaceOffer {
+  id              Int                  @id @default(autoincrement())
+  offerId         Int                  @unique // on-chain offer ID
+  tokenId         Int
+  offerer         String               // wallet address
+  paymentToken    String               // "ETH", "CAW", "WETH", "USDC", "USDT"
+  paymentAddress  String               // token contract address
+  amount          String               // offer amount in wei
+  expiry          DateTime
+  status          OfferStatus          @default(ACTIVE)
+  username        String
+  txHash          String?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  notifications   Notification[]
+
+  @@index([tokenId, status])
+  @@index([offerer, status])
+  @@index([status, createdAt])
+}
+
+enum OfferStatus {
+  ACTIVE
+  ACCEPTED
+  CANCELLED
+  EXPIRED
 }
 
 model Bookmark {
