@@ -30,6 +30,8 @@ import BugReportModal from '~/components/modals/BugReportModal'
 import LayerZeroStatus from '~/components/LayerZeroStatus'
 import StakingRewardsInfo from '~/components/StakingRewardsInfo'
 import QuickSignOptions from '~/components/QuickSignOptions'
+import QuickSignHowItWorks from '~/components/QuickSignHowItWorks'
+import { HiInformationCircle } from 'react-icons/hi'
 import { FollowButton } from '~/components/FollowButton'
 import cawLogo from '~/assets/images/caw-logo.png'
 import BoidsBg from '~/components/BoidsBg'
@@ -318,13 +320,15 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   const qsDefaultLimit = getDefaultSpendLimit()
   const [qsSpendLimit, setQsSpendLimit] = useState<bigint>(qsDefaultLimit)
   const [qsDuration, setQsDuration] = useState<number>(DEFAULT_SESSION_DURATION)
+  const [qsWalletProtect, setQsWalletProtect] = useState(false)
+  const [showQsInfo, setShowQsInfo] = useState(false)
 
   const handleEnableQuickSign = async () => {
     setQsLoading(true)
     setQsError(null)
     try {
       setSessionEnabled(true)
-      await createSession((s) => setQsStatus(s), qsSpendLimit, qsDuration)
+      await createSession((s) => setQsStatus(s), qsSpendLimit, qsDuration, qsWalletProtect)
       setHasSeenPrompt(true)
       setQsComplete(true)
       markComplete('quicksign')
@@ -381,7 +385,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
       setQsError(null)
       try {
         setSessionEnabled(true)
-        await createSession((s) => setQsStatus(s), qsSpendLimit, qsDuration)
+        await createSession((s) => setQsStatus(s), qsSpendLimit, qsDuration, qsWalletProtect)
         setHasSeenPrompt(true)
         setQsComplete(true)
         markComplete('quicksign')
@@ -595,9 +599,9 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
           >
             <div className={`w-full h-2 rounded-full transition-all duration-300 ${
               done ? 'bg-green-500'
-              : skipped ? 'bg-yellow-500/40'
+              : skipped ? 'bg-[#171202]/85'
               : active ? 'bg-yellow-500'
-              : 'bg-white/10'
+              : 'bg-[#1A1A1A]/85'
             }`} />
             <div className="flex items-center gap-1 whitespace-nowrap">
               <span className={`transition-colors duration-300 ${
@@ -632,7 +636,6 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   return (
     <div className="fixed inset-0 z-[100] bg-black overflow-y-auto overflow-x-hidden">
       <BoidsBg isDark={true} />
-      <div className="fixed inset-0 bg-black/80 z-[1] pointer-events-none" />
       <div className="min-h-full flex flex-col pb-[50px] relative z-[2]">
 
         {/* Stepper — above columns on desktop, inline on mobile */}
@@ -886,13 +889,13 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
               <div className="space-y-3">
                 <div className={`flex items-center gap-3 p-3 rounded-xl border ${
                   setupDmDone
-                    ? 'border-green-500/30 bg-green-500/10'
+                    ? 'border-green-500/30 bg-[#08140A]/85'
                     : setupSubStep === 'dms'
-                    ? 'border-yellow-500/30 bg-yellow-500/10'
-                    : 'border-white/10 bg-white/5'
+                    ? 'border-yellow-500/30 bg-[#171202]/85'
+                    : 'border-[#1A1A1A] bg-[#0D0D0D]/85'
                 }`}>
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-                    setupDmDone ? 'bg-green-500' : 'bg-white/10'
+                    setupDmDone ? 'bg-green-500' : 'bg-[#1A1A1A]/85'
                   }`}>
                     {setupDmDone
                       ? <HiCheck className="w-4 h-4 text-white" />
@@ -909,29 +912,58 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                   </div>
                 </div>
 
-                <div className={`flex items-center gap-3 p-3 rounded-xl border ${
+                <div className={`p-3 rounded-xl border ${
                   setupQsDone
-                    ? 'border-green-500/30 bg-green-500/10'
+                    ? 'border-green-500/30 bg-[#08140A]/85'
                     : setupSubStep === 'quicksign'
-                    ? 'border-yellow-500/30 bg-yellow-500/10'
-                    : 'border-white/10 bg-white/5'
+                    ? 'border-yellow-500/30 bg-[#171202]/85'
+                    : 'border-[#1A1A1A] bg-[#0D0D0D]/85'
                 }`}>
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-                    setupQsDone ? 'bg-green-500' : 'bg-white/10'
-                  }`}>
-                    {setupQsDone
-                      ? <HiCheck className="w-4 h-4 text-white" />
-                      : setupSubStep === 'quicksign'
-                      ? <div className="w-4 h-4 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin" />
-                      : <HiLightningBolt className="w-4 h-4 text-white/50" />
-                    }
+                  <div className="flex items-center gap-3">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                      setupQsDone ? 'bg-green-500' : 'bg-[#1A1A1A]/85'
+                    }`}>
+                      {setupQsDone
+                        ? <HiCheck className="w-4 h-4 text-white" />
+                        : setupSubStep === 'quicksign'
+                        ? <div className="w-4 h-4 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin" />
+                        : <HiLightningBolt className="w-4 h-4 text-white/50" />
+                      }
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-1.5">
+                        <p className={`text-sm font-medium ${setupQsDone ? 'text-green-400' : 'text-white'}`}>
+                          Quick Sign
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => setShowQsInfo(v => !v)}
+                          className="text-white/40 hover:text-white/70 transition-colors cursor-pointer"
+                          aria-label="Learn about Quick Sign"
+                        >
+                          <HiInformationCircle className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <p className="text-xs text-gray-500">Post and interact without wallet popups</p>
+                    </div>
                   </div>
-                  <div className="flex-1">
-                    <p className={`text-sm font-medium ${setupQsDone ? 'text-green-400' : 'text-white'}`}>
-                      Quick Sign
-                    </p>
-                    <p className="text-xs text-gray-500">Post and interact without wallet popups</p>
-                  </div>
+                  {showQsInfo && (
+                    <div className="mt-3">
+                      <QuickSignHowItWorks isDark={true} />
+                    </div>
+                  )}
+                  {!setupQsDone && isConnected && (
+                    <div className="mt-3">
+                      <QuickSignOptions
+                        spendLimit={qsSpendLimit}
+                        onSpendLimitChange={setQsSpendLimit}
+                        duration={qsDuration}
+                        onDurationChange={setQsDuration}
+                        walletProtect={qsWalletProtect}
+                        onWalletProtectChange={setQsWalletProtect}
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -962,15 +994,6 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {!setupQsDone && (
-                    <QuickSignOptions
-                      spendLimit={qsSpendLimit}
-                      onSpendLimitChange={setQsSpendLimit}
-                      duration={qsDuration}
-                      onDurationChange={setQsDuration}
-                    />
-                  )}
-
                   {setupError && (
                     <p className="text-red-400 text-sm text-center">{setupError}</p>
                   )}
@@ -1048,7 +1071,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
               {loadingUsers ? (
                 <div className="flex flex-wrap justify-center gap-3">
                   {[...Array(8)].map((_, i) => (
-                    <div key={i} className="animate-pulse rounded-xl p-4 bg-white/5 w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)] md:w-[calc(25%-9px)]">
+                    <div key={i} className="animate-pulse rounded-xl p-4 bg-[#0D0D0D]/85 w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)] md:w-[calc(25%-9px)]">
                       <div className="w-14 h-14 rounded-full bg-gray-700 mx-auto mb-3" />
                       <div className="h-4 bg-gray-700 rounded w-3/4 mx-auto mb-2" />
                       <div className="h-3 bg-gray-800 rounded w-1/2 mx-auto" />
@@ -1060,7 +1083,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                   {suggestedUsers.slice(0, 12).map(user => (
                     <div
                       key={user.tokenId}
-                      className="rounded-xl p-4 bg-white/5 hover:bg-white/10 transition-colors w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)] md:w-[calc(25%-9px)]"
+                      className="rounded-xl p-4 bg-[#0D0D0D]/85 hover:bg-[#1A1A1A]/85 transition-colors w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)] md:w-[calc(25%-9px)]"
                     >
                       <a href={`/users/${user.username}`} onClick={(e) => { e.preventDefault(); onComplete?.(); window.location.href = `/users/${user.username}` }} className="block text-center cursor-pointer">
                         <div className="w-14 h-14 rounded-full mx-auto mb-2 overflow-hidden">

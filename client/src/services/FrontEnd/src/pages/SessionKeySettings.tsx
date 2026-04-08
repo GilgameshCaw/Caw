@@ -9,6 +9,7 @@ import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { useCreateSession, useRevokeSession, DEFAULT_SPEND_LIMIT, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
 import { HiArrowLeft } from 'react-icons/hi'
 import QuickSignOptions from '~/components/QuickSignOptions'
+import QuickSignHowItWorks from '~/components/QuickSignHowItWorks'
 import { CAW_ACTIONS_ADDRESS } from '~/../../../abi/addresses'
 import { cawActionsAbi } from '~/../../../abi/generated'
 import { chains } from '~/config/chains'
@@ -31,6 +32,7 @@ const SessionKeySettings: React.FC = () => {
   const defaultLimit = cawPrice > 0 ? BigInt(Math.round(5 / cawPrice)) : DEFAULT_SPEND_LIMIT
   const [spendLimit, setSpendLimit] = useState<bigint>(defaultLimit)
   const [duration, setDuration] = useState<number>(DEFAULT_SESSION_DURATION)
+  const [walletProtect, setWalletProtect] = useState(false)
 
   const { address, isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
@@ -79,7 +81,7 @@ const SessionKeySettings: React.FC = () => {
     setLoading(true)
     setError(null)
     try {
-      await createSession((s) => setStatus(s), spendLimit, duration)
+      await createSession((s) => setStatus(s), spendLimit, duration, walletProtect)
     } catch (err: any) {
       console.error('[SessionKey] Create failed:', err)
       const msg = err?.message || ''
@@ -167,21 +169,8 @@ const SessionKeySettings: React.FC = () => {
 
         {/* Security explanation */}
         {enabled && (
-          <div className="mt-4 bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-4 text-sm">
-            <p className="font-medium text-yellow-400">How it works</p>
-            <p className={`mt-2 ${isDark ? 'text-gray-300' : 'text-gray-600'}`} style={{ marginBottom: 10 }}>
-              Quick Sign creates a temporary signing key stored in your browser.
-              It can post, like, repost, and follow on your behalf.
-            </p>
-            <p className={`${isDark ? 'text-gray-300' : 'text-gray-600'}`} style={{ marginBottom: 10 }}>
-              It <strong>cannot withdraw tokens or transfer your name</strong>, but:
-            </p>
-            <ul className={`space-y-1 list-disc list-outside pl-5 ${isDark ? 'text-gray-300' : 'text-gray-600'}`}>
-              <li>Evil browser extensions with permission can access your staked CAW until key expiry or finished spending limit</li>
-              <li>Transferring your name automatically invalidates it</li>
-              <li>The key expires automatically after the chosen duration</li>
-              <li>You can revoke it at any time</li>
-            </ul>
+          <div className="mt-4">
+            <QuickSignHowItWorks isDark={isDark} />
           </div>
         )}
 
@@ -241,6 +230,8 @@ const SessionKeySettings: React.FC = () => {
                         onSpendLimitChange={setSpendLimit}
                         duration={duration}
                         onDurationChange={setDuration}
+                        walletProtect={walletProtect}
+                        onWalletProtectChange={setWalletProtect}
                         themed
                         isDark={isDark}
                       />
