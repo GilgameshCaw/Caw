@@ -249,8 +249,12 @@ export function useFollowButton({
   }, [isPolling, activeTokenId, activeToken?.tokenId, targetUserId, onFollowStateChange, initialIsFollowing])
 
   const handleFollowClick = async () => {
+    console.log('[FollowButton] handleFollowClick', { wrongWallet, isPending, isSigning, targetUserId, activeTokenId, activeTokenOwner: activeToken?.owner, connectedAddress: address, hasActiveSession })
     // Don't do anything if wrong wallet or pending
-    if (wrongWallet || isPending) return
+    if (wrongWallet || isPending) {
+      console.log('[FollowButton] Early return — wrongWallet:', wrongWallet, 'isPending:', isPending)
+      return
+    }
 
     // Clear any previous error
     setError(null)
@@ -289,11 +293,13 @@ export function useFollowButton({
     onFollowStateChange?.(newFollowingState)
 
     try {
+      console.log('[FollowButton] calling signAndSubmit', { actionType: isFollowing ? 'unfollow' : 'follow', senderId: effectiveTokenId, receiverId: targetUserId })
       const result = await signAndSubmit({
         actionType: isFollowing ? 'unfollow' : 'follow',
         senderId: effectiveTokenId,
         receiverId: targetUserId
       })
+      console.log('[FollowButton] signAndSubmit returned', result)
 
       // signAndSubmit returns null if insufficient stake (modal shown automatically)
       if (!result) {
