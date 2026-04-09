@@ -362,11 +362,63 @@ const Staking = () => {
     },
     onSuccess: async (hash) => {
       console.log('[Staking] Stake successful:', hash)
+      const depositWei = parseUnits(amount || '0', 18)
       setAmount("")
       const now = Date.now()
       setRecentStakeTime(now)
       // Persist to localStorage so it survives page refresh
       localStorage.setItem('lastStakeTime', now.toString())
+      // Write (or accumulate into) the pending-deposit hint with the L1 tx
+      // hash so actions.ts forwards it to /api/actions and the validator
+      // holds follow/like actions until the L1→L2 LayerZero message lands.
+      // If a prior pending deposit hint already exists for this token,
+      // ADD this deposit's amount to it — two in-flight deposits should
+      // show as a single combined "+X CAW pending" budget until the first
+      // one lands. We keep the latest txHash so waiting actions at least
+      // have a valid proof to forward (any landed deposit unlocks the hold).
+      if (tokenId && depositWei > 0n) {
+        try {
+          let combinedAmount = depositWei
+          // Read the baseline directly from L2 on-chain (cawBalanceOf), not
+          // from the wagmi store. The store can be stale and would produce
+          // a baseline that doesn't match reality — the clearing rule in
+          // ProfileChooser would then fire incorrectly once wagmi caught up.
+          // Ground truth from L2 ensures "hint cleared" means "a new deposit
+          // of ~hintWei actually landed, measured from real state."
+          const { readOnChainStakeForHint } = await import('~/api/actions')
+          const onChainBaseline = await readOnChainStakeForHint(tokenId)
+          let baselineStakedAtHintTime = onChainBaseline.toString()
+          const existing = localStorage.getItem(`caw:pendingDeposit:${tokenId}`)
+          if (existing) {
+            try {
+              const parsed = JSON.parse(existing) as { amount: string; at: number; stakedAtHintTime?: string }
+              const age = now - (parsed?.at ?? 0)
+              // Only accumulate if the existing hint is still fresh (<30 min);
+              // otherwise treat it as stale and replace.
+              if (parsed?.amount && age < 30 * 60 * 1000) {
+                combinedAmount = BigInt(parsed.amount) + depositWei
+                // Preserve the original stake baseline across accumulations —
+                // ProfileChooser compares the *current* stake against this
+                // baseline to detect when the deposit lands, and it shouldn't
+                // reset just because the user did a second deposit mid-wait.
+                if (parsed.stakedAtHintTime) baselineStakedAtHintTime = parsed.stakedAtHintTime
+              }
+            } catch { /* bad parse — treat as no existing */ }
+          }
+          localStorage.setItem(
+            `caw:pendingDeposit:${tokenId}`,
+            JSON.stringify({
+              amount: combinedAmount.toString(),
+              txHash: hash,
+              at: now,
+              stakedAtHintTime: baselineStakedAtHintTime,
+            })
+          )
+          // Notify same-tab listeners (ProfileChooser) so the badge updates
+          // immediately without waiting for the 15s poll tick.
+          window.dispatchEvent(new CustomEvent('caw:pendingDepositChanged', { detail: { tokenId } }))
+        } catch {}
+      }
       setIsStakePending(false)
       // Refetch on-chain data to reflect updated balances
       refetchTokenData?.()

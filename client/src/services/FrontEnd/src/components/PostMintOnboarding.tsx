@@ -36,11 +36,13 @@ import { FollowButton } from '~/components/FollowButton'
 import cawLogo from '~/assets/images/caw-logo.png'
 import BoidsBg from '~/components/BoidsBg'
 import UsernameSvg from '~/components/UsernameSvg'
+import ProfileEditForm from '~/components/ProfileEditForm'
 import {
   HiOutlineCube,
   HiOutlineLockClosed,
   HiLightningBolt,
   HiOutlineUserGroup,
+  HiOutlineUser,
   HiCheck,
   HiArrowRight,
 } from 'react-icons/hi'
@@ -59,7 +61,7 @@ interface SuggestedUser {
   followPending: boolean
 }
 
-type StepId = 'verify' | 'stake' | 'dms' | 'quicksign' | 'setup' | 'follow'
+type StepId = 'verify' | 'stake' | 'dms' | 'quicksign' | 'setup' | 'profile' | 'follow'
 
 interface StepDef {
   id: StepId
@@ -70,9 +72,10 @@ interface StepDef {
 }
 
 const STEPS: StepDef[] = [
-  { id: 'stake',  label: 'Deposit',  icon: <HiOutlineCube className="w-5 h-5" />,      skipWarning: 'Deposited CAW is needed to post, like, and follow.' },
-  { id: 'setup',  label: 'Set Up', icon: <HiLightningBolt className="w-5 h-5" />,    skipWarning: 'You can set these up later in settings.' },
-  { id: 'follow', label: 'Follow', icon: <HiOutlineUserGroup className="w-5 h-5" />, skipWarning: '' },
+  { id: 'stake',   label: 'Deposit', icon: <HiOutlineCube className="w-5 h-5" />,      skipWarning: 'Deposited CAW is needed to post, like, and follow.' },
+  { id: 'setup',   label: 'Set Up',  icon: <HiLightningBolt className="w-5 h-5" />,    skipWarning: 'You can set these up later in settings.' },
+  { id: 'profile', label: 'Profile', icon: <HiOutlineUser className="w-5 h-5" />,      skipWarning: 'You can set up your profile later.' },
+  { id: 'follow',  label: 'Follow',  icon: <HiOutlineUserGroup className="w-5 h-5" />, skipWarning: '' },
 ]
 
 function CawPriceTicker() {
@@ -221,19 +224,57 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
     disabled: !tokenId || !amount || depositFee === 0n || !isTokenOwner,
     value: depositFee,
     onPending: () => { setIsStakePending(true) },
-    onSuccess: async () => {
+    onSuccess: async (hash) => {
+      const depositWei = parseUnits(amount || '0', 18)
       setIsStakePending(false)
       setStakeTxSubmitted(true)
       setAmount('')
       refetchTokenData?.()
       refetchBalance()
+      // Write (or accumulate into) the pending-deposit hint. Sums with any
+      // existing fresh hint so multiple in-flight deposits combine into a
+      // single "+X CAW pending" budget. See Staking.tsx for full rationale.
+      if (tokenId && depositWei > 0n) {
+        try {
+          const now = Date.now()
+          let combinedAmount = depositWei
+          // Ground-truth baseline from L2 (see Staking.tsx comment).
+          const { readOnChainStakeForHint } = await import('~/api/actions')
+          const onChainBaseline = await readOnChainStakeForHint(tokenId)
+          let baselineStakedAtHintTime = onChainBaseline.toString()
+          const existing = localStorage.getItem(`caw:pendingDeposit:${tokenId}`)
+          if (existing) {
+            try {
+              const parsed = JSON.parse(existing) as { amount: string; at: number; stakedAtHintTime?: string }
+              const age = now - (parsed?.at ?? 0)
+              if (parsed?.amount && age < 30 * 60 * 1000) {
+                combinedAmount = BigInt(parsed.amount) + depositWei
+                if (parsed.stakedAtHintTime) baselineStakedAtHintTime = parsed.stakedAtHintTime
+              }
+            } catch { /* bad parse — treat as no existing */ }
+          }
+          localStorage.setItem(
+            `caw:pendingDeposit:${tokenId}`,
+            JSON.stringify({
+              amount: combinedAmount.toString(),
+              txHash: hash,
+              at: now,
+              stakedAtHintTime: baselineStakedAtHintTime,
+            })
+          )
+          window.dispatchEvent(new CustomEvent('caw:pendingDepositChanged', { detail: { tokenId } }))
+        } catch {}
+      }
+      // Also persist to the DB so ProfileChooser's backend-side "+X CAW pending"
+      // badge renders on other devices/sessions. The user already exists here,
+      // so unlike the fresh-mint path in WelcomePage this PATCH will succeed.
       if (activeToken?.username) {
         try {
           await apiFetch(`/api/users/${activeToken.username}`, {
             method: 'PATCH',
             body: JSON.stringify({
               lastStakedAt: new Date().toISOString(),
-              pendingDepositAmount: parseUnits(amount || '0', 18).toString(),
+              pendingDepositAmount: depositWei.toString(),
             })
           })
         } catch {}
@@ -410,13 +451,41 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
     setSetupBusy(false)
   }
 
+  // ── Step 3: Profile ──
+  const [profileFormData, setProfileFormData] = useState<{
+    displayName?: string | null
+    bio?: string | null
+    location?: string | null
+    website?: string | null
+    avatarUrl?: string | null
+    coverPhotoUrl?: string | null
+  } | null>(null)
+  const fetchingProfileRef = useRef(false)
+
+  useEffect(() => {
+    if (currentStep === 2 && !profileFormData && !fetchingProfileRef.current) {
+      fetchingProfileRef.current = true
+      apiFetch<any>(`/api/users/by-token/${tokenId}`)
+        .then(user => setProfileFormData({
+          displayName: user?.displayName ?? null,
+          bio: user?.bio ?? null,
+          location: user?.location ?? null,
+          website: user?.website ?? null,
+          avatarUrl: user?.avatarUrl ?? null,
+          coverPhotoUrl: user?.coverPhotoUrl ?? null,
+        }))
+        .catch(() => setProfileFormData({}))
+        .finally(() => { fetchingProfileRef.current = false })
+    }
+  }, [currentStep, tokenId])
+
   // ── Step 5: Follow users ──
   const [suggestedUsers, setSuggestedUsers] = useState<SuggestedUser[]>([])
   const [loadingUsers, setLoadingUsers] = useState(false)
   const fetchingUsersRef = useRef(false)
 
   useEffect(() => {
-    if (currentStep === 2 && suggestedUsers.length === 0 && !fetchingUsersRef.current) {
+    if (currentStep === 3 && suggestedUsers.length === 0 && !fetchingUsersRef.current) {
       fetchingUsersRef.current = true
       setLoadingUsers(true)
       apiFetch<{ users: SuggestedUser[] }>('/api/users/top-followed?limit=10')
@@ -473,6 +542,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
       dms:       dmDone,
       quicksign: qsDone,
       setup:     dmDone && qsDone,
+      profile:   false, // no persistent side effect to check
       follow:    false, // no persistent side effect to check
     }
 
@@ -508,6 +578,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
       dms: isDmsComplete,
       quicksign: isQsComplete,
       setup: isDmsComplete && isQsComplete,
+      profile: false,
       follow: false,
     }
     const currentStepId = STEPS[currentStep]?.id
@@ -643,7 +714,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
           {renderStepper()}
         </div>
 
-        <div className={`flex-1 flex flex-col min-[800px]:flex-row min-[800px]:items-start min-[800px]:justify-center ${currentStep === 2 ? 'hidden' : ''}`}>
+        <div className={`flex-1 flex flex-col min-[800px]:flex-row min-[800px]:items-start min-[800px]:justify-center ${currentStep === 3 ? 'hidden' : ''}`}>
 
         {/* Left column — welcome + NFT */}
         <div className="flex items-center justify-center min-[800px]:sticky min-[800px]:top-16 min-[800px]:border-r min-[800px]:border-white/10">
@@ -663,12 +734,11 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
             </b>
             <br/>
           </p>
-          <p className="text-gray-400 text-center text-sm min-[800px]:text-base max-w-sm">
-            <p className="text-lg ">
+          <div className="text-gray-400 text-center text-sm min-[800px]:text-base max-w-sm">
+            <p className="text-lg">
               to the world's first permissionless<br/>social network
             </p>
-            <br/>
-          </p>
+          </div>
           <div className="w-48 h-48 min-[800px]:w-64 min-[800px]:h-64 ">
             <UsernameSvg username={username} />
           </div>
@@ -1023,6 +1093,31 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
             </div>
           )}
 
+          {/* ── Step 3: Set Up Profile ── */}
+          {currentStep === 2 && (
+            <div className="space-y-6">
+              <div className="text-center space-y-3">
+                <div className="w-16 h-16 rounded-full bg-yellow-500/20 flex items-center justify-center mx-auto">
+                  <HiOutlineUser className="w-8 h-8 text-yellow-500" />
+                </div>
+                <h2 className="text-2xl font-bold text-white">Set Up Your Profile</h2>
+                <p className="text-gray-400 text-sm">
+                  Add a picture, bio, and more. Save for free to this provider, or pay CAW to store it on-chain.
+                </p>
+              </div>
+
+              <ProfileEditForm
+                activeToken={activeToken as any}
+                profileData={profileFormData}
+                isDark={true}
+                saveLabel="Save & Continue"
+                onSaved={() => goNext()}
+                onSkip={handleSkip}
+                skipLabel={`Skip — ${step.skipWarning}`}
+              />
+            </div>
+          )}
+
         </div>
         </div>
         </div>
@@ -1030,7 +1125,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
         </div>
 
         {/* ── Step 5: Follow Users (full-width, no two-column) ── */}
-        {currentStep === 2 && (() => {
+        {currentStep === 3 && (() => {
           const stakedAmount = activeToken?.stakedAmount ?? 0n
           const effectiveStake = stakedAmount + (depositPending ? pendingDepositAmount : 0n)
           const MIN_STAKE_FOLLOW = 30000n * 10n**18n

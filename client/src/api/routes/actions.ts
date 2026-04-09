@@ -112,7 +112,21 @@ async function checkSessionKeyOnChain(
  */
 router.post('/', async (req, res) => {
   try {
-    const { data, domain, types, signature, isQuote } = req.body
+    const { data, domain, types, signature, isQuote, pendingDepositTxHash } = req.body
+
+    // Validate pendingDepositTxHash shape if provided. The server does NOT verify
+    // the hash synchronously (that would block the request path on an L1 RPC call).
+    // Instead, presence of this hash on the TxQueue row is a signal to the validator
+    // to hold the action as waiting_for_deposit rather than fail it, and to the
+    // DataCleaner watcher to re-check L2 on each tick until the deposit lands.
+    // Grief is bounded by a per-sender slot limit enforced below.
+    let sanitizedPendingDepositTxHash: string | null = null
+    if (pendingDepositTxHash !== undefined && pendingDepositTxHash !== null) {
+      if (typeof pendingDepositTxHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(pendingDepositTxHash)) {
+        return res.status(400).json({ error: 'Invalid pendingDepositTxHash format' })
+      }
+      sanitizedPendingDepositTxHash = pendingDepositTxHash.toLowerCase()
+    }
 
     // Validate required fields
     if (!data || !signature) {
@@ -616,6 +630,20 @@ router.post('/', async (req, res) => {
       }
     }
 
+    // Per-sender cap on waiting_for_deposit slots. An attacker who knows a sender's
+    // tokenId could spam actions with a fake pendingDepositTxHash to fill the queue
+    // with rows that sit waiting for 20 min. Capping at 10 in-flight waiting rows
+    // per sender limits the blast radius to their own queue (which they already
+    // control anyway — they'd have to sign each action themselves).
+    if (sanitizedPendingDepositTxHash) {
+      const existingWaiting = await prisma.txQueue.count({
+        where: { senderId: data.senderId, status: 'waiting_for_deposit' }
+      })
+      if (existingWaiting >= 10) {
+        return res.status(429).json({ error: 'Too many actions waiting for deposit. Please wait for them to process.' })
+      }
+    }
+
     // Create the transaction queue entry (or return existing if duplicate signature)
     let txQueueEntry
     try {
@@ -623,7 +651,8 @@ router.post('/', async (req, res) => {
         data: {
           senderId: data.senderId,          // ← pull out the on-chain sender
           payload: { data, domain, types, isQuote: isQuote || false },
-          signedTx: signature
+          signedTx: signature,
+          pendingDepositTxHash: sanitizedPendingDepositTxHash
         }
       })
     } catch (err: any) {

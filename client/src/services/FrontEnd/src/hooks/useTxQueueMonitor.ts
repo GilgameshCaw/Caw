@@ -162,10 +162,24 @@ export function useTxQueueMonitor() {
                 })()
               }
             } else if (reason) {
+              // Extract the failing action's type from the payload so the user
+              // sees what specifically failed (e.g. "follow", "like", "post")
+              // instead of a generic "this action". actionType in the payload
+              // is either a string ('follow', 'like', ...) or a numeric code.
+              const payloadActionType = status.payload?.data?.actionType
+              const actionTypeMap: Record<number | string, string> = {
+                0: 'post', 1: 'like', 2: 'unlike', 3: 'repost',
+                4: 'follow', 5: 'unfollow', 6: 'withdraw', 7: 'action',
+                caw: 'post', like: 'like', unlike: 'unlike', recaw: 'repost',
+                follow: 'follow', unfollow: 'unfollow', withdraw: 'withdraw',
+                other: 'action',
+              }
+              const actionLabel = actionTypeMap[payloadActionType] || 'action'
+
               // Map technical errors to user-friendly messages
-              let userMessage = 'Something went wrong while processing your action. Please try again.'
+              let userMessage = `Something went wrong while processing your ${actionLabel}. Please try again.`
               if (reason.includes('insufficient')) {
-                userMessage = 'You don\'t have enough deposited CAW for this action.'
+                userMessage = `You don't have enough deposited CAW for this ${actionLabel}.`
               } else if (reason.includes('not authenticated')) {
                 userMessage = 'Your account needs to be authenticated with this client. Please try reconnecting.'
               } else if (reason.includes('cannot follow yourself')) {
@@ -173,7 +187,7 @@ export function useTxQueueMonitor() {
               } else if (reason.includes('text exceeds')) {
                 userMessage = 'Your post is too long. Please shorten it and try again.'
               }
-              useActionErrorStore.getState().show('Action Failed', userMessage)
+              useActionErrorStore.getState().show(`${actionLabel.charAt(0).toUpperCase() + actionLabel.slice(1)} failed`, userMessage)
             }
           } else if (status.status === 'done') {
             console.log(`[TxQueueMonitor] TxQueue ID ${status.id} succeeded`)

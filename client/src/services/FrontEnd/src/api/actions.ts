@@ -27,6 +27,35 @@ import { API_HOST } from './client'
 // Cache client auth status per tokenId to avoid repeated RPC calls
 const clientAuthCache = new Map<number, boolean>()
 
+/**
+ * Read the current on-chain staked CAW balance for a tokenId directly from
+ * the L2 contract (cawBalanceOf). Used when writing pending-deposit hints
+ * to capture a trustworthy baseline — the wagmi store can be stale, but a
+ * fresh RPC call is ground truth. The clearing rule in ProfileChooser
+ * relies on this baseline to detect "deposit has landed" by measuring the
+ * stake delta, so it must not be wrong.
+ *
+ * Returns 0n on any failure (fresh mints will legitimately return 0 because
+ * the token didn't exist on L2 yet; failures also degrade to 0 which is the
+ * safest default — a too-low baseline means the clearing rule needs the
+ * absolute stake to reach the deposit amount before firing, which is correct).
+ */
+export async function readOnChainStakeForHint(tokenId: number): Promise<bigint> {
+  try {
+    const result = await readContract(wagmiConfig, {
+      address: CAW_NAMES_L2_ADDRESS,
+      abi: cawNameL2Abi,
+      functionName: 'cawBalanceOf',
+      args: [tokenId],
+      chainId: baseSepolia.id,
+    })
+    return BigInt(result?.toString() ?? '0')
+  } catch (err) {
+    console.warn(`[readOnChainStakeForHint] Failed for tokenId=${tokenId}:`, err)
+    return 0n
+  }
+}
+
 /** map human-friendly names to on-chain enum values */
 const ActionTypeMap = {
   caw:      0,
@@ -254,46 +283,101 @@ export function useSignAndSubmitAction() {
                       params.actionType === 'other' ? 'MIN_STAKE_POST' :
                       null
 
-    // Use effective stake (staked - pending) to account for in-flight actions
-    const pendingState = usePendingSpendStore.getState()
-    const effectiveStake = pendingState.getEffectiveStake(activeToken?.stakedAmount)
-    console.log(`[StakeCheck] stakedAmount=${activeToken?.stakedAmount?.toString()}, pendingSpend=${pendingState.pendingSpend.toString()}, effectiveStake=${effectiveStake.toString()}, pendingItems=${Object.keys(pendingState.pendingByTxQueue).length}`)
-    if (stakingKey && !hasMinimumStake(effectiveStake, stakingKey)) {
-      // Check if the user has a pending deposit (recently staked on L1, bridge in flight).
-      // If so, skip the modal and submit anyway — the validator will hold the action
-      // in waiting_for_deposit status until the deposit arrives on L2.
-      // Check if the user has a pending deposit that will cover the shortfall
-      let hasSufficientPendingDeposit = false
-      try {
-        const userRes = await apiFetch(`/api/users/by-token/${activeTokenId}`)
-        console.log(`[StakeCheck] by-token response:`, JSON.stringify(userRes))
-        if (userRes?.lastStakedAt) {
-          const tenMinutesAgo = Date.now() - 10 * 60 * 1000
-          const isRecent = new Date(userRes.lastStakedAt).getTime() > tenMinutesAgo
-          if (isRecent && userRes.pendingDepositAmount) {
-            const pendingWei = BigInt(userRes.pendingDepositAmount)
-            const requiredAmount = getRequiredStake(stakingKey)
-            const futureStake = effectiveStake + pendingWei
-            hasSufficientPendingDeposit = futureStake >= requiredAmount
-            console.log(`[StakeCheck] Pending deposit: ${pendingWei.toString()} wei, future stake: ${futureStake.toString()}, required: ${requiredAmount.toString()}, sufficient: ${hasSufficientPendingDeposit}`)
-          }
-        }
-      } catch (err) {
-        console.error('[StakeCheck] Failed to check pending deposit:', err)
-      }
+    // Budget math:
+    //   budget = onChainStake + pendingDepositAmount - sum(in-flight TxQueue costs)
+    //
+    // The pending deposit is treated as real spendable budget — it's in flight
+    // on L1 and guaranteed to land on L2 unless the tx reverts. The pending
+    // TxQueue spend (actions already queued but not yet confirmed on-chain)
+    // is subtracted so each queued action "consumes" its own slice of the
+    // budget, preventing the user from over-spending. When the action is
+    // either confirmed or failed, the pending-spend store releases the slice.
+    // Trigger a fresh on-chain token data fetch before reading the stake.
+    // Fire-and-forget: we immediately read whatever is currently in the store,
+    // but queue the refetch so subsequent action submissions see updated
+    // values. We do NOT await because that would add visible latency to
+    // every button click. For the mint&deposit-lands case this will self-heal
+    // within one click-cycle if the first attempt is wrong.
+    try { useTokenDataStore.getState().refetchTokenData?.() } catch {}
 
-      console.log(`[StakeCheck] hasSufficientPendingDeposit: ${hasSufficientPendingDeposit}`)
-      if (!hasSufficientPendingDeposit) {
-        const requiredAmount = getRequiredStake(stakingKey)
-        const actionTypeForModal = getActionTypeForModal(params.actionType)
-        useInsufficientStakeStore.getState().show(effectiveStake, requiredAmount, actionTypeForModal)
-        return null
+    // Self-heal any stale pendingSpend entries before reading the store.
+    // getEffectiveStake has stale-cleanup logic that's only triggered when
+    // called. Passing 1n guarantees the sweep runs (it's called for its
+    // side effect, not its return value).
+    usePendingSpendStore.getState().getEffectiveStake(1n)
+
+    const pendingState = usePendingSpendStore.getState()
+
+    // Read the freshest on-chain stake directly from the store rather than
+    // the closure-captured activeToken, because activeToken can be stale after
+    // the pending deposit lands: the Zustand subscription may not re-fire if
+    // the stakedAmount update happens mid-action before this hook re-renders.
+    // Pull the value imperatively so the stake check always uses current state.
+    const freshTokenDataStore = useTokenDataStore.getState()
+    const freshActiveToken = freshTokenDataStore.activeTokenId !== undefined
+      ? Object.values(freshTokenDataStore.tokensByAddress).flat().find(t => t.tokenId === freshTokenDataStore.activeTokenId)
+      : undefined
+    const onChainStake = (freshActiveToken?.stakedAmount ?? activeToken?.stakedAmount) ?? 0n
+
+    // Read pending deposit amount from localStorage (optimistic, written by
+    // New.tsx / Staking.tsx / PostMintOnboarding.tsx on L1 tx success) and
+    // from the backend (authoritative, written by the PATCH paths when the
+    // user exists). Use the larger of the two to avoid double-counting when
+    // both are in sync, but still cover the race window where only one has
+    // updated yet.
+    let localHintWei = 0n
+    try {
+      const hintRaw = localStorage.getItem(`caw:pendingDeposit:${activeTokenId}`)
+      if (hintRaw) {
+        const hint = JSON.parse(hintRaw)
+        const age = Date.now() - (hint?.at ?? 0)
+        if (hint?.amount && age < 30 * 60 * 1000) {
+          try { localHintWei = BigInt(hint.amount) } catch {}
+        }
       }
-      console.log(`[Actions] Insufficient stake but pending deposit will cover it — submitting (validator will wait)`)
+    } catch { /* ignore */ }
+
+    let backendPendingWei = 0n
+    try {
+      const userRes = await apiFetch(`/api/users/by-token/${activeTokenId}`)
+      if (userRes?.pendingDepositAmount) {
+        try { backendPendingWei = BigInt(userRes.pendingDepositAmount) } catch {}
+      }
+    } catch (err) {
+      console.warn('[Actions] Failed to fetch by-token for pending-deposit check:', err)
     }
 
-    // Check if user is authenticated with this client on-chain (cached after first check)
-    if (!clientAuthCache.get(activeTokenId)) {
+    const pendingDepositWei = localHintWei > backendPendingWei ? localHintWei : backendPendingWei
+    const userHasPendingDeposit = pendingDepositWei > 0n
+
+    // Explicit signed math — do NOT route through getEffectiveStake because it
+    // clamps (onChainStake - pendingSpend) to 0 when onChainStake is zero,
+    // which hides the negative overspend and lets pendingSpend fall off the
+    // books. We want: total = onChain + pendingDeposit - pendingSpend, clamped
+    // at zero only after all three are summed.
+    const totalBudgetSigned = onChainStake + pendingDepositWei - pendingState.pendingSpend
+    const effectiveStake = totalBudgetSigned > 0n ? totalBudgetSigned : 0n
+
+    console.log(`[StakeCheck] onChain=${onChainStake.toString()}, pendingDeposit=${pendingDepositWei.toString()}, pendingSpend=${pendingState.pendingSpend.toString()}, effectiveBudget=${effectiveStake.toString()}, pendingItems=${Object.keys(pendingState.pendingByTxQueue).length}`)
+
+    if (stakingKey && !hasMinimumStake(effectiveStake, stakingKey)) {
+      // Budget is insufficient even counting the pending deposit. Show the
+      // insufficient-stake modal with the real remaining budget so the user
+      // sees what they can/can't afford. If they still have budget for a
+      // cheaper action (e.g. a like at 2k CAW instead of a follow at 30k),
+      // the modal's "you have X remaining" messaging lets them pick one.
+      const requiredAmount = getRequiredStake(stakingKey)
+      const actionTypeForModal = getActionTypeForModal(params.actionType)
+      useInsufficientStakeStore.getState().show(effectiveStake, requiredAmount, actionTypeForModal)
+      return null
+    }
+
+    // Check if user is authenticated with this client on-chain (cached after first check).
+    // Skip the modal entirely if we know a deposit is pending: minting through
+    // this client auto-authenticates it, but the L1→L2 LZ message may not have
+    // landed yet. The validator's waiting_for_deposit path will hold the action
+    // until both the deposit and the client auth arrive.
+    if (!clientAuthCache.get(activeTokenId) && !userHasPendingDeposit) {
       try {
         const isAuthed = await readContract(wagmiConfig, {
           address: CAW_NAMES_L2_ADDRESS,
@@ -453,9 +537,35 @@ export function useSignAndSubmitAction() {
         })
       }
 
+      // If there's a pending mint/deposit in localStorage for this sender, forward
+      // the L1 tx hash so the server can park the action in waiting_for_deposit
+      // until the DataCleaner watcher sees the deposit landed on L2. The server
+      // never verifies the hash synchronously — presence alone is a hint, and
+      // grief is bounded by a per-sender waiting-slot cap on the server side.
+      let pendingDepositTxHash: string | undefined
+      try {
+        const hintRaw = localStorage.getItem(`caw:pendingDeposit:${activeTokenId}`)
+        if (hintRaw) {
+          const hint = JSON.parse(hintRaw)
+          if (hint?.txHash && typeof hint.txHash === 'string' && /^0x[0-9a-fA-F]{64}$/.test(hint.txHash)) {
+            // Hard expiry: 30 min stale hint is garbage, ignore and clear it
+            const age = Date.now() - (hint.at ?? 0)
+            if (age < 30 * 60 * 1000) {
+              pendingDepositTxHash = hint.txHash
+            } else {
+              localStorage.removeItem(`caw:pendingDeposit:${activeTokenId}`)
+            }
+          }
+        }
+      } catch { /* ignore */ }
+
       const response = await apiFetch('/api/actions', {
         method: 'POST',
-        body: JSON.stringify({ data: message, domain, types, signature, isQuote: params.isQuote || false })
+        body: JSON.stringify({
+          data: message, domain, types, signature,
+          isQuote: params.isQuote || false,
+          ...(pendingDepositTxHash ? { pendingDepositTxHash } : {}),
+        })
       })
 
       // If the server returned auth data (passive auth), store it immediately

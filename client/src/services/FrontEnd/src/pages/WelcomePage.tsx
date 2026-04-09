@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
-import { useActiveToken, useTokenDataStore } from '~/store/tokenDataStore'
+import { useTokenDataStore } from '~/store/tokenDataStore'
 import { apiFetch } from '~/api/client'
 import PostMintOnboarding from '~/components/PostMintOnboarding'
 import BugReportModal from '~/components/modals/BugReportModal'
@@ -9,7 +9,6 @@ const WelcomePage: React.FC = () => {
   const { username } = useParams<{ username: string }>()
   const navigate = useNavigate()
   const location = useLocation()
-  const activeToken = useActiveToken()
   const tokensByAddress = useTokenDataStore(s => s.tokensByAddress)
   const setActiveTokenId = useTokenDataStore(s => s.setActiveTokenId)
 
@@ -23,14 +22,21 @@ const WelcomePage: React.FC = () => {
   const [showBugReport, setShowBugReport] = useState(false)
   const [loadingMessage, setLoadingMessage] = useState('Loading your profile...')
 
-  // Find the token for this username
+  // Find the token for this username. IMPORTANT: do NOT fall back to
+  // activeToken?.tokenId — right after a fresh mint, activeToken is still the
+  // previously-selected profile, and using it here causes /api/users/ensure
+  // to be called with the WRONG tokenId on the first render (observed as
+  // tokenId=2 or tokenId=11 in logs), producing a 404/500 cascade. Instead,
+  // we wait for tokensByAddress to include the newly-minted token and only
+  // resolve once we find a match by username.
   const tokenId = useMemo(() => {
+    if (!username) return undefined
     const allTokens = Object.values(tokensByAddress).flat()
     const token = allTokens.find(
-      t => t.username?.toLowerCase() === username?.toLowerCase()
+      t => t.username?.toLowerCase() === username.toLowerCase()
     )
-    return token?.tokenId ?? activeToken?.tokenId
-  }, [tokensByAddress, username, activeToken?.tokenId])
+    return token?.tokenId
+  }, [tokensByAddress, username])
 
   // Ensure the active token is set to the user being onboarded
   useEffect(() => {
@@ -71,6 +77,10 @@ const WelcomePage: React.FC = () => {
               ])
               const ensureDuration = Date.now() - ensureStart
               console.log(`[WelcomePage] /api/users/ensure completed in ${ensureDuration}ms`)
+
+              // Pending deposit info is now owned entirely by the client-side
+              // localStorage hint (written in New.tsx) and the server-side
+              // TxQueue.pendingDepositTxHash path. No DB write needed here.
             } else {
               console.warn(`[WelcomePage] Skipping /api/users/ensure - no time remaining`)
             }

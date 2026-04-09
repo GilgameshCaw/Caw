@@ -11,6 +11,7 @@ import { Address } from "viem";
 import { useTheme } from "~/hooks/useTheme";
 import { apiFetch } from "~/api/client";
 import { useHasActiveSession } from '~/hooks/useHasActiveSession';
+import { usePendingSpendStore } from '~/store/pendingSpendStore';
 import cawLogo from '~/assets/images/caw-logo.png';
 
 const ProfileChooser: React.FC = () => {
@@ -18,6 +19,7 @@ const ProfileChooser: React.FC = () => {
   const { openConnectModal } = useConnectModal();
   const hasActiveSession = useHasActiveSession();
   const activeToken = useActiveToken()
+  const pendingSpend = usePendingSpendStore(s => s.pendingSpend)
   const lastAddress = useTokenDataStore(state => state.lastAddress);
   const activeTokenId = useTokenDataStore(state => state.activeTokenId);
   const tokensByAddress = useTokenDataStore(s => s.tokensByAddress);
@@ -37,6 +39,161 @@ const ProfileChooser: React.FC = () => {
     }
     fetchAvatar()
   }, [activeToken?.tokenId])
+
+  // Pending L1→L2 deposit in flight — show "+X CAW pending" alongside staked.
+  // We keep a per-token localStorage hint so the badge can render instantly
+  // on page load (instead of waiting for the /by-token API round-trip), and
+  // we hide it the moment the on-chain stake has caught up, regardless of
+  // whether the backend lazy-clear has run yet.
+  const readPendingHint = (tokenId?: number): bigint | null => {
+    if (!tokenId) return null
+    try {
+      const raw = localStorage.getItem(`caw:pendingDeposit:${tokenId}`)
+      if (!raw) return null
+      const parsed = JSON.parse(raw) as { amount: string; at: number; txHash?: string }
+      // 30-min hard expiry matches the actions.ts hint-forwarding window and
+      // the validator's 25-min waiting_for_deposit safety net.
+      const thirtyMinutesAgo = Date.now() - 30 * 60 * 1000
+      if (parsed.at < thirtyMinutesAgo) return null
+      return BigInt(parsed.amount)
+    } catch { return null }
+  }
+  const clearPendingHint = (tokenId?: number) => {
+    if (!tokenId) return
+    try { localStorage.removeItem(`caw:pendingDeposit:${tokenId}`) } catch {}
+  }
+
+  const [pendingDepositWei, setPendingDepositWei] = useState<bigint | null>(() =>
+    readPendingHint(activeToken?.tokenId)
+  )
+
+  useEffect(() => {
+    // Re-prime from localStorage whenever the active token changes.
+    setPendingDepositWei(readPendingHint(activeToken?.tokenId))
+  }, [activeToken?.tokenId])
+
+  // Listen for pending-deposit writes from other components (New.tsx,
+  // Staking.tsx, PostMintOnboarding.tsx) so the badge updates immediately
+  // instead of waiting for the 15s backend poll. The writers dispatch a
+  // 'caw:pendingDepositChanged' CustomEvent on the window after setting the
+  // localStorage entry.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as { tokenId?: number } | undefined
+      // Update if the event is for the currently-active token (or has no
+      // tokenId, meaning "re-read whatever we have").
+      if (!detail?.tokenId || detail.tokenId === activeToken?.tokenId) {
+        setPendingDepositWei(readPendingHint(activeToken?.tokenId))
+      }
+    }
+    window.addEventListener('caw:pendingDepositChanged', handler)
+    return () => window.removeEventListener('caw:pendingDepositChanged', handler)
+  }, [activeToken?.tokenId])
+
+  // IMPORTANT: The localStorage hint is WRITE-ONCE by New.tsx (at mint/deposit
+  // success) and READ-ONLY everywhere else, including here. It carries the L1
+  // tx hash that actions.ts forwards as pendingDepositTxHash to the server.
+  // Overwriting it here destroys the hash and breaks the validator's hold
+  // mechanism. We only ever clear it (never overwrite) and only when we're
+  // certain the deposit has fully landed AND there are no in-flight waiting
+  // actions that still need the hash. The simplest safe rule: clear it if the
+  // hint is past its 30-minute hard expiry. Cleanup of the "live" case is
+  // handled in Session 2 via a dedicated endpoint that reports when all of
+  // the sender's waiting_for_deposit rows have settled.
+  useEffect(() => {
+    if (!activeToken?.tokenId) return
+    try {
+      const raw = localStorage.getItem(`caw:pendingDeposit:${activeToken.tokenId}`)
+      if (!raw) return
+      const parsed = JSON.parse(raw) as { amount: string; at: number; txHash?: string }
+      if (Date.now() - parsed.at > 30 * 60 * 1000) {
+        clearPendingHint(activeToken.tokenId)
+        setPendingDepositWei(null)
+      }
+    } catch { /* ignore */ }
+  }, [activeToken?.tokenId])
+
+  // Backend display poll. The localStorage hint (written on L1 tx success) is
+  // the primary source for the "+X CAW pending" badge; the backend value is
+  // a fallback for cross-device or post-expiry cases.
+  //
+  // Hint-clearing rule: a hint carries a `stakedAtHintTime` baseline captured
+  // when the deposit was initiated. The deposit has landed once the current
+  // on-chain stake has grown past that baseline by approximately the pending
+  // amount. We use a 5% tolerance to absorb contract-side precision loss in
+  // the L2 cawBalanceOf scaling math. When landed, flush the hint and badge.
+  useEffect(() => {
+    if (!activeToken?.tokenId) return
+    let cancelled = false
+    const check = async () => {
+      try {
+        const data = await apiFetch(`/api/users/by-token/${activeToken.tokenId}`)
+        if (cancelled) return
+
+        // Parse the raw hint (not via readPendingHint — we need stakedAtHintTime)
+        let hintWei: bigint | null = null
+        let hintBaseline: bigint = 0n
+        let hintAgeMs = 0
+        try {
+          const raw = localStorage.getItem(`caw:pendingDeposit:${activeToken.tokenId}`)
+          if (raw) {
+            const parsed = JSON.parse(raw) as { amount: string; at: number; stakedAtHintTime?: string }
+            hintAgeMs = Date.now() - (parsed?.at ?? 0)
+            if (parsed?.amount && hintAgeMs < 30 * 60 * 1000) {
+              try { hintWei = BigInt(parsed.amount) } catch {}
+              try { hintBaseline = BigInt(parsed.stakedAtHintTime ?? '0') } catch {}
+            }
+          }
+        } catch { /* ignore */ }
+
+        // Detect "deposit has landed" by measuring the on-chain stake delta
+        // since the hint was written. The baseline is captured from L2's
+        // cawBalanceOf at hint-write time (ground truth, not wagmi cache),
+        // so stakeDelta represents real new-money arrival. No time-based
+        // minimum — the rule fires as soon as the deposit lands, whether
+        // that's 8 seconds or 3 minutes from now.
+        //
+        // 5% tolerance absorbs contract-side precision loss in the L2
+        // cawBalanceOf scaling math (cawOwnership * rewardMultiplier / precision).
+        const staked = activeToken?.stakedAmount ?? 0n
+        if (hintWei !== null && hintWei > 0n) {
+          const stakeDelta = staked > hintBaseline ? staked - hintBaseline : 0n
+          const requiredDelta = (hintWei * 95n) / 100n
+          if (stakeDelta >= requiredDelta && requiredDelta > 0n) {
+            clearPendingHint(activeToken.tokenId)
+            setPendingDepositWei(null)
+            try { useTokenDataStore.getState().refetchTokenData?.() } catch {}
+            return
+          }
+        }
+        void hintAgeMs
+
+        // Also proactively refetch while a hint is still live — keeps
+        // activeToken.stakedAmount fresh enough that the landing check
+        // fires within one poll cycle of the deposit actually landing.
+        if (hintWei !== null && hintWei > 0n) {
+          try { useTokenDataStore.getState().refetchTokenData?.() } catch {}
+        }
+
+        if (data?.pendingDepositAmount) {
+          try {
+            const backendWei = BigInt(data.pendingDepositAmount)
+            const show = hintWei !== null && hintWei > backendWei ? hintWei : backendWei
+            setPendingDepositWei(show)
+          } catch { /* ignore */ }
+        } else if (hintWei !== null) {
+          setPendingDepositWei(hintWei)
+        } else {
+          setPendingDepositWei(null)
+        }
+      } catch {
+        // Network error — leave whatever we had from the hint
+      }
+    }
+    check()
+    const interval = setInterval(check, 15_000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [activeToken?.tokenId, activeToken?.stakedAmount?.toString()])
 
   const setLastAddress = useTokenDataStore(s => s.setLastAddress)
   const setActiveTokenId = useTokenDataStore(state => state.setActiveTokenId);;
@@ -168,25 +325,64 @@ const ProfileChooser: React.FC = () => {
     <div ref={dropdownRef} className="relative flex flex-col text-left left-[0%]">
       <button
         onClick={toggleDropdown}
-        className="flex items-center p-1 cursor-pointer"
+        className="flex items-center p-1 cursor-pointer w-full min-w-0"
       >
-        <div className="rounded-full overflow-hidden w-[50px] m-3">
+        <div className="rounded-full overflow-hidden w-[50px] h-[50px] m-3 border border-gray-700 flex-shrink-0 aspect-square">
           <img src={avatars[selectedToken.tokenId] || cawLogo} className="w-full h-full object-cover" />
         </div>
-        <div className="text-left">
+        <div className="text-left flex-1 min-w-0 pr-3">
           <div className="m-5">
           </div>
 
-          <div className={`font-bold text-lg transition-all duration-300 ${
-            isDark ? 'text-white' : 'text-black'
-          }`}>
-            {selectedToken.username}
+          <div className="relative overflow-hidden">
+            <div
+              className={`font-bold transition-all duration-300 whitespace-nowrap ${
+                isDark ? 'text-white' : 'text-black'
+              } ${
+                selectedToken.username.length > 16 ? 'text-xs'
+                : selectedToken.username.length > 12 ? 'text-sm'
+                : selectedToken.username.length > 9 ? 'text-base'
+                : 'text-lg'
+              }`}
+            >
+              {selectedToken.username}
+            </div>
+            {/* Fade-to-background gradient on the right to indicate overflow */}
+            <div
+              className={`pointer-events-none absolute inset-y-0 right-0 w-6 ${
+                isDark
+                  ? 'bg-gradient-to-l from-black to-transparent'
+                  : 'bg-gradient-to-l from-white to-transparent'
+              }`}
+            />
           </div>
           <div className={`opacity-40 text-sm transition-all duration-300 ${
             isDark ? 'text-gray-300' : 'text-gray-600'
           }`}>
             {selectedToken.stakedAmount > 0n ? formatUnitsCompact(selectedToken.stakedAmount,18) : "No"} CAW
           </div>
+          {(() => {
+            // Live in-flight CAW meter. Shows the net delta between funds the
+            // user expects to land soon and funds they've committed to actions
+            // that haven't confirmed yet:
+            //   delta = pendingDepositWei - pendingSpend
+            // Examples:
+            //   deposited 38k, no actions → "+38k pending"
+            //   deposited 38k, followed once (31k) → "+7k pending"
+            //   no pending deposit, liked 3 posts (9k) → "-9k pending"
+            //   deposited 38k, followed twice (62k, over budget) → "-24k pending"
+            // Hidden only when the delta is exactly zero.
+            const pendingDep = pendingDepositWei ?? 0n
+            const delta = pendingDep - pendingSpend
+            if (delta === 0n) return null
+            const isPositive = delta > 0n
+            const absValue = isPositive ? delta : -delta
+            return (
+              <div className={`text-2xs ${isPositive ? 'text-yellow-500' : 'text-gray-400'}`}>
+                {isPositive ? '+' : '-'}{formatUnitsCompact(absValue, 18)} CAW pending
+              </div>
+            )
+          })()}
           {notCurrentAddress && (
             <div className="text-2xs text-red-500">
               {isConnected ? "(Wrong Address)" : "not connected"}
@@ -203,7 +399,7 @@ const ProfileChooser: React.FC = () => {
 
       {isDropdownOpen && (
         <ul
-          className={`${window.innerWidth < 1350 ? 'fixed' : 'absolute'} mt-2 shadow-lg rounded-md overflow-hidden z-[9999] transition-all duration-300 ${
+          className={`${window.innerWidth < 1350 ? 'fixed' : 'absolute'} mt-2 shadow-lg rounded-md overflow-y-auto z-[9999] transition-all duration-300 max-h-[95vh] ${
             isDark ? 'bg-black border border-white/20' : 'bg-white border border-gray-200'
           }`}
           style={{
@@ -217,7 +413,7 @@ const ProfileChooser: React.FC = () => {
               isDark ? 'border-gray-700' : 'border-gray-200'
             }`}>
               {/* group header */}
-              <div className={`px-4 py-2 text-xs font-semibold flex space-between transition-all duration-300 hover-parent ${
+              <div className={`sticky top-0 z-10 px-4 py-2 text-xs font-semibold flex space-between transition-all duration-300 hover-parent ${
                 isDark ? 'bg-gray-900 text-white' : 'bg-gray-100 text-black'
               }`}>
                 <div className="">
@@ -248,7 +444,7 @@ const ProfileChooser: React.FC = () => {
                           : 'hover:bg-gray-100 text-black'
                       }`}
                     >
-                      <div className="rounded-full overflow-hidden w-8 h-8 mr-3">
+                      <div className="rounded-full overflow-hidden w-8 h-8 mr-3 border border-gray-700">
                         <img src={avatars[token.tokenId] || cawLogo} alt={token.username} className="w-full h-full object-cover" />
                       </div>
                       <div>
@@ -260,23 +456,25 @@ const ProfileChooser: React.FC = () => {
                     </button>
                   </li>
                 ))}
-                  {normalizedAddress == ownerAddress && (
-                    <li className="text-xs text-center pt-1 pb-3">
-                      <Link to={`/usernames/new`} className="block">
-                        + Create new profile
-                      </Link>
-                    </li>
-                  )}
               </ul>
             </li>
           ))}
-          {!isConnected && (
-            <li className="text-xs text-center pt-1 pb-3">
+          {/* Sticky footer: create new profile / connect wallet */}
+          <li
+            className={`sticky bottom-0 z-10 text-xs text-center py-2 border-t ${
+              isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
+            }`}
+          >
+            {isConnected ? (
+              <Link to={`/usernames/new`} className="block">
+                + Create new profile
+              </Link>
+            ) : (
               <button onClick={() => openConnectModal?.()} className="cursor-pointer">
                 + Connect wallet
               </button>
-            </li>
-          )}
+            )}
+          </li>
         </ul>
 
       )}

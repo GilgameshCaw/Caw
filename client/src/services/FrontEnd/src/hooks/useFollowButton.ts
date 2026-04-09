@@ -50,6 +50,14 @@ export function useFollowButton({
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const pollStartTimeRef = useRef<number | null>(null)
   const isSubmittingRef = useRef(false) // Prevent duplicate submissions
+  // Keep a ref to the latest onFollowStateChange so the polling effect doesn't
+  // have to re-subscribe every time the parent re-renders with a fresh
+  // callback. Prior behavior: the effect re-ran on every parent render,
+  // tearing down and re-creating the 2s interval constantly. Multiplied
+  // across a feed of follow buttons, this produced 200+ req/sec to
+  // /api/users/follow-status.
+  const onFollowStateChangeRef = useRef(onFollowStateChange)
+  useEffect(() => { onFollowStateChangeRef.current = onFollowStateChange }, [onFollowStateChange])
 
   // Check if connected to wrong wallet (skip if session key active)
   const wrongWallet = hasActiveSession ? false : (activeToken && address
@@ -173,7 +181,7 @@ export function useFollowButton({
           pendingActionRef.current = null
           // Revert to original state
           setIsFollowing(initialIsFollowing)
-          onFollowStateChange?.(initialIsFollowing)
+          onFollowStateChangeRef.current?.(initialIsFollowing)
 
           // Clear the interval and stop polling
           if (pollIntervalRef.current) {
@@ -199,14 +207,14 @@ export function useFollowButton({
           setPending(false)
           setIsFollowing(true)
           pendingActionRef.current = null
-          onFollowStateChange?.(true)
+          onFollowStateChangeRef.current?.(true)
           setHasUserAction(false)
         } else if (!isFollowing) {
           // We were trying to unfollow, and server says not following — success
           setPending(false)
           setIsFollowing(false)
           pendingActionRef.current = null
-          onFollowStateChange?.(false)
+          onFollowStateChangeRef.current?.(false)
           setHasUserAction(false)
         } else if (pollStartTimeRef.current && Date.now() - pollStartTimeRef.current < 90_000) {
           // Waiting for a follow — record may not exist yet (on-chain processing can take 20-60s)
@@ -216,7 +224,7 @@ export function useFollowButton({
           setPending(false)
           setIsFollowing(status.isFollowing)
           pendingActionRef.current = null
-          onFollowStateChange?.(status.isFollowing)
+          onFollowStateChangeRef.current?.(status.isFollowing)
           setHasUserAction(false)
         }
 
@@ -246,7 +254,7 @@ export function useFollowButton({
         pollIntervalRef.current = null
       }
     }
-  }, [isPolling, activeTokenId, activeToken?.tokenId, targetUserId, onFollowStateChange, initialIsFollowing])
+  }, [isPolling, activeTokenId, activeToken?.tokenId, targetUserId, initialIsFollowing])
 
   const handleFollowClick = async () => {
     console.log('[FollowButton] handleFollowClick', { wrongWallet, isPending, isSigning, targetUserId, activeTokenId, activeTokenOwner: activeToken?.owner, connectedAddress: address, hasActiveSession })

@@ -1,10 +1,9 @@
 // src/pages/NewProfile.tsx
-import { apiFetch } from '~/api/client'
 import { SubmitButton } from "~/components/buttons/SubmitButton"
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { useReadContract, useAccount, useSwitchChain } from 'wagmi'
 import useAllowance from "~/hooks/useAllowance";
-import { maxUint256, parseUnits, erc20Abi } from "viem";
+import { maxUint256, parseUnits, erc20Abi, formatEther } from "viem";
 import MainLayout from '~/layouts/MainLayout'
 import useContractCall, { UseContractCallReturn } from '~/hooks/useContractCall'
 import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_MINTER_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
@@ -238,15 +237,14 @@ console.log("BALANCE:", balance)
   }, [mintSuccess, mintedTokenId, username, depositEnabled, depositAmountWei])
 
   const { allowance: minterAllowance, refetch: refetchMinterAllowance } = useAllowance(CAW_ADDRESS, CAW_NAMES_MINTER_ADDRESS, useAddress);
-  const { allowance: cawNameAllowance, refetch: refetchCawNameAllowance } = useAllowance(CAW_ADDRESS, CAW_NAMES_ADDRESS, useAddress);
   const refetchTokenData = useTokenDataStore(s => s.refetchTokenData)
 
-  // Minter needs allowance for burn cost; CawName needs allowance for deposit
-  const needsMinterApproval = !minterAllowance || minterAllowance == 0n || cost > minterAllowance;
-  const needsCawNameApproval = depositEnabled && depositAmountWei > 0n && (!cawNameAllowance || cawNameAllowance == 0n || depositAmountWei > cawNameAllowance);
-  const needsApproval = needsMinterApproval || needsCawNameApproval;
+  // Minter needs allowance for burn cost + deposit amount (it pulls both from the user)
+  const minterAllowanceNeeded = cost + (depositEnabled ? depositAmountWei : 0n);
+  const needsMinterApproval = !minterAllowance || minterAllowance == 0n || minterAllowanceNeeded > minterAllowance;
+  const needsApproval = needsMinterApproval;
 
-  // Approve minter for burn
+  // Approve minter for burn + deposit (single approval handles both)
   const { call: approveMinter } = useContractCall({
     abi: erc20Abi,
     address: CAW_ADDRESS,
@@ -255,18 +253,6 @@ console.log("BALANCE:", balance)
     disabled: wrongChain || !needsMinterApproval,
     onPending: () => setIsApprovePending(true),
     onSuccess: () => { setIsApprovePending(false); refetchMinterAllowance() },
-    onError: () => setIsApprovePending(false),
-  });
-
-  // Approve CawName for deposit (only needed when depositing)
-  const { call: approveCawName } = useContractCall({
-    abi: erc20Abi,
-    address: CAW_ADDRESS,
-    functionName: "approve",
-    args: [CAW_NAMES_ADDRESS, maxUint256],
-    disabled: wrongChain || !needsCawNameApproval,
-    onPending: () => setIsApprovePending(true),
-    onSuccess: () => { setIsApprovePending(false); refetchCawNameAllowance() },
     onError: () => setIsApprovePending(false),
   });
 
@@ -284,6 +270,12 @@ console.log("BALANCE:", balance)
     },
     onSuccess:    async (hash) => {
       console.log('minted!', hash)
+
+      // Navigate immediately to the welcome page so the user never sees the home page flash.
+      navigate(`/welcome/${username}`, {
+        replace: true,
+        state: { pendingDeposit: null }
+      })
 
       // Refetch token data from chain, then check for the new token
       await refetchTokenData?.()
@@ -323,6 +315,13 @@ console.log("BALANCE:", balance)
     },
     onSuccess:    async (hash) => {
       console.log('minted and deposited!', hash)
+      // Navigate immediately to the welcome page so the user never sees the home page flash.
+      // The WelcomePage will handle ensure() and onboarding state itself.
+      navigate(`/welcome/${username}`, {
+        replace: true,
+        state: { pendingDeposit: depositAmountWei.toString() }
+      })
+      // Continue updating token data in the background
       await refetchTokenData?.()
       const checkForNewToken = async () => {
         const allTokens = useTokenDataStore.getState().allTokens()
@@ -331,23 +330,31 @@ console.log("BALANCE:", balance)
           setMintedTokenId(newToken.tokenId)
           setActiveTokenId(newToken.tokenId)
           setMintSuccess(true)
-          // Record deposit time and amount so the validator knows to wait for the L1→L2 bridge.
-          // Ensure the user record exists first (it may not have been indexed yet).
-          try {
-            await apiFetch('/api/users/ensure', {
-              method: 'POST',
-              body: JSON.stringify({ tokenId: newToken.tokenId })
-            })
-            await apiFetch(`/api/users/${username}`, {
-              method: 'PATCH',
-              body: JSON.stringify({
-                lastStakedAt: new Date().toISOString(),
-                pendingDepositAmount: depositAmountWei.toString(),
-              })
-            })
-            console.log('[New] Saved deposit info for', username)
-          } catch (err: any) {
-            console.warn('[New] Failed to save deposit info:', err)
+          // Deposit info (lastStakedAt / pendingDepositAmount) is persisted by
+          // WelcomePage after /api/users/ensure so the follow buttons rendered
+          // in the onboarding stepper see it before the user can click them.
+          // Also write a localStorage hint so the profile chooser can render
+          // the "+X CAW pending" badge instantly without waiting for the API.
+          if (depositAmountWei > 0n) {
+            try {
+              // Capture the true L2 baseline from cawBalanceOf. For a fresh
+              // mint this should be 0 (the tokenId didn't exist on L2 yet),
+              // but we call the helper anyway so all three deposit paths
+              // (mint&deposit, stake page, onboarding deposit) follow the
+              // same ground-truth-from-L2 pattern.
+              const { readOnChainStakeForHint } = await import('~/api/actions')
+              const onChainBaseline = await readOnChainStakeForHint(newToken.tokenId)
+              localStorage.setItem(
+                `caw:pendingDeposit:${newToken.tokenId}`,
+                JSON.stringify({
+                  amount: depositAmountWei.toString(),
+                  txHash: hash,
+                  at: Date.now(),
+                  stakedAtHintTime: onChainBaseline.toString(),
+                })
+              )
+              window.dispatchEvent(new CustomEvent('caw:pendingDepositChanged', { detail: { tokenId: newToken.tokenId } }))
+            } catch {}
           }
         } else {
           refetchTokenData?.()
@@ -373,27 +380,19 @@ console.log("BALANCE:", balance)
     isValid,
     needsApproval,
     needsMinterApproval,
-    needsCawNameApproval,
     depositAmountWei: depositAmountWei.toString(),
     minterAllowance: minterAllowance?.toString(),
-    cawNameAllowance: cawNameAllowance?.toString(),
     cost: cost?.toString(),
+    minterAllowanceNeeded: minterAllowanceNeeded.toString(),
   })
 
   const handleSubmit = useCallback(async () => {
-    console.log('[New] handleSubmit called', { wrongChain, needsMinterApproval, needsCawNameApproval })
+    console.log('[New] handleSubmit called', { wrongChain, needsMinterApproval })
     if (wrongChain) {
       handleSwitchChain()
-    } else if (needsMinterApproval || needsCawNameApproval) {
-      // Approve both spenders in sequence with a single button press
-      if (needsMinterApproval) {
-        console.log('[New] approving minter...')
-        await approveMinter();
-      }
-      if (needsCawNameApproval) {
-        console.log('[New] approving cawName...')
-        await approveCawName();
-      }
+    } else if (needsMinterApproval) {
+      console.log('[New] approving minter...')
+      await approveMinter();
     } else {
       console.log('[New] calling mint...', {
         depositEnabled,
@@ -405,7 +404,7 @@ console.log("BALANCE:", balance)
       })
       await mint();
     }
-  }, [wrongChain, needsMinterApproval, needsCawNameApproval, approveMinter, approveCawName, mint, handleSwitchChain]);
+  }, [wrongChain, needsMinterApproval, approveMinter, mint, handleSwitchChain]);
 
   let submitText;
   if (isSwitchingChain) {
@@ -444,7 +443,7 @@ console.log("BALANCE:", balance)
     } else {
       submitText = "Processing..."
     }
-  } else if (needsMinterApproval || needsCawNameApproval)
+  } else if (needsMinterApproval)
     submitText = "Approve CAW"
   else if (usernameTaken)
     submitText = "username taken"
@@ -621,7 +620,7 @@ console.log("BALANCE:", balance)
             </div>
 
             {/* Deposit option */}
-            <div className="border border-white/10 rounded-xl p-4 space-y-3 mt-6">
+            <div className="border border-white/10 bg-[#0D0D0D]/85 rounded-xl p-4 space-y-3 mt-6">
               <label className="flex items-center gap-3 cursor-pointer">
                 <button
                   type="button"
@@ -721,7 +720,7 @@ console.log("BALANCE:", balance)
 
             {gasCostEth != null && (
                 <div className="text-sm text-gray-500 text-center">
-                    est. gas: {gasCostEth.toFixed(4)} ETH
+                    est. gas+fees: {(gasCostEth + Number(formatEther(quote?.nativeFee ?? 0n))).toFixed(4)} ETH
                 </div>
             )}
         </div>

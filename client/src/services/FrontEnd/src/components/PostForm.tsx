@@ -22,40 +22,72 @@ import MentionAutocomplete from './MentionAutocomplete'
 import GifPicker from './GifPicker'
 import HighlightedTextarea from './HighlightedTextarea'
 
-const POST_CHAR_LIMIT = 420
+const POST_CHAR_LIMIT = 420 // bytes — matches the on-chain check `bytes(text).length <= 420`
+
+// Count UTF-8 byte length, matching the on-chain check.
+// JS string.length returns UTF-16 code units, which under-counts ASCII vs bytes for some chars.
+const _textEncoder = new TextEncoder()
+function byteLen(s: string): number {
+  return _textEncoder.encode(s).length
+}
+
+// Find the largest prefix of `s` whose UTF-8 byte length is ≤ maxBytes.
+// Returns the character-index (string offset) of the slice end. Never splits a codepoint.
+function clampToByteLimit(s: string, maxBytes: number): number {
+  if (maxBytes <= 0) return 0
+  let bytes = 0
+  for (let i = 0; i < s.length; ) {
+    const code = s.codePointAt(i)!
+    const charLen = code > 0xFFFF ? 2 : 1 // surrogate pair = 2 UTF-16 units
+    let cpBytes
+    if (code < 0x80) cpBytes = 1
+    else if (code < 0x800) cpBytes = 2
+    else if (code < 0x10000) cpBytes = 3
+    else cpBytes = 4
+    if (bytes + cpBytes > maxBytes) return i
+    bytes += cpBytes
+    i += charLen
+  }
+  return s.length
+}
+
+// Find the last space before (or at) the given character index whose prefix fits within maxBytes.
+// Falls back to the byte-clamped hard split if no space is found.
+function findSplitPoint(s: string, maxBytes: number): number {
+  // First, find the largest character index whose prefix fits in maxBytes
+  const hardLimit = clampToByteLimit(s, maxBytes)
+  if (hardLimit >= s.length) return s.length
+  // Try to find a space at or before hardLimit
+  const spaceAt = s.lastIndexOf(' ', hardLimit)
+  if (spaceAt > 0) return spaceAt
+  return hardLimit
+}
 
 /**
  * Split text into chunks that fit within the character limit.
  * Breaks at word boundaries. Optionally prepends (1/N) page indicators.
  */
 function splitTextIntoChunks(text: string, includePageIndicators: boolean): string[] {
-  if (text.length <= POST_CHAR_LIMIT) return [text]
+  if (byteLen(text) <= POST_CHAR_LIMIT) return [text]
 
   const chunks: string[] = []
   let remaining = text
 
-  // First pass: split by words respecting the limit (without indicators, to count chunks)
+  // First pass: split by words respecting the byte limit (without indicators, to count chunks)
   while (remaining.length > 0) {
-    if (remaining.length <= POST_CHAR_LIMIT) {
+    if (byteLen(remaining) <= POST_CHAR_LIMIT) {
       chunks.push(remaining)
       break
     }
-    // Find last space within the limit
-    let splitAt = remaining.lastIndexOf(' ', POST_CHAR_LIMIT)
-    if (splitAt <= 0) {
-      // No space found — hard break at the limit
-      splitAt = POST_CHAR_LIMIT
-    }
+    const splitAt = findSplitPoint(remaining, POST_CHAR_LIMIT)
     chunks.push(remaining.slice(0, splitAt))
     remaining = remaining.slice(splitAt).trimStart()
   }
 
   if (!includePageIndicators) return chunks
 
-  // Second pass: re-split accounting for indicator prefix length
+  // Second pass: re-split accounting for indicator prefix length (in bytes — indicators are ASCII)
   const totalChunks = chunks.length
-  // Estimate: "(1/3) " = 6 chars for single digits, could be more for 10+
-  // We'll do a proper re-split with the indicator space reserved
   const result: string[] = []
   remaining = text
   // Re-estimate total — iterate to converge
@@ -66,13 +98,12 @@ function splitTextIntoChunks(text: string, includePageIndicators: boolean): stri
     let chunkIndex = 0
     while (remaining.length > 0) {
       const indicator = `(${chunkIndex + 1}/${estimatedTotal}) `
-      const available = POST_CHAR_LIMIT - indicator.length
-      if (remaining.length <= available) {
+      const available = POST_CHAR_LIMIT - indicator.length // indicator is ASCII so byteLen = .length
+      if (byteLen(remaining) <= available) {
         result.push(indicator + remaining)
         break
       }
-      let splitAt = remaining.lastIndexOf(' ', available)
-      if (splitAt <= 0) splitAt = available
+      const splitAt = findSplitPoint(remaining, available)
       result.push(indicator + remaining.slice(0, splitAt))
       remaining = remaining.slice(splitAt).trimStart()
       chunkIndex++
@@ -89,10 +120,13 @@ function splitTextIntoChunks(text: string, includePageIndicators: boolean): stri
  * space for the "(1/N) " prefix in each chunk.
  */
 function getChunkInfo(text: string, includePageIndicators = false, firstChunkReserved = 0, lastChunkReserved = 0): { chunkCount: number; chunkBoundaries: number[] } {
+  // All limits are in BYTES. firstChunkReserved/lastChunkReserved are ASCII media-ref byte budgets,
+  // so they're already byte counts. Boundaries are returned as character (string) indices since
+  // downstream code uses them with text.slice(start, end).
   const firstChunkLimit = POST_CHAR_LIMIT - firstChunkReserved
-  if (text.length <= firstChunkLimit - lastChunkReserved) return { chunkCount: 1, chunkBoundaries: [0] }
+  if (byteLen(text) <= firstChunkLimit - lastChunkReserved) return { chunkCount: 1, chunkBoundaries: [0] }
 
-  // Helper to get the available chars for a given chunk
+  // Helper to get the available bytes for a given chunk
   const getLimit = (chunkIdx: number, total: number, indicatorLen: number) => {
     let limit = chunkIdx === 0 ? firstChunkLimit : POST_CHAR_LIMIT
     // Reserve space in the last chunk for media
@@ -108,48 +142,37 @@ function getChunkInfo(text: string, includePageIndicators = false, firstChunkRes
     let chunkIdx = 0
     while (remaining.length > 0) {
       const limit = chunkIdx === 0 ? firstChunkLimit : POST_CHAR_LIMIT
-      if (remaining.length <= limit) break
-      let splitAt = remaining.lastIndexOf(' ', limit)
-      if (splitAt <= 0) splitAt = limit
+      if (byteLen(remaining) <= limit) break
+      const splitAt = findSplitPoint(remaining, limit)
       remaining = remaining.slice(splitAt).trimStart()
       boundaries.push(0)
       chunkIdx++
     }
     estimatedTotal = boundaries.length
     // Check if last chunk overflows with reserved space
-    if (lastChunkReserved > 0 && remaining.length > POST_CHAR_LIMIT - lastChunkReserved) {
+    if (lastChunkReserved > 0 && byteLen(remaining) > POST_CHAR_LIMIT - lastChunkReserved) {
       estimatedTotal++
     }
   }
 
   // Determine if media needs its own dedicated chunk (no text, just media).
-  // When this is the case, don't apply lastChunkReserved to any text chunk —
-  // just add an extra chunk at the end for the media.
-  // Note: estimatedTotal already includes the extra chunk from the first pass (line 121).
   const mediaNeedsOwnChunk = lastChunkReserved > 0 && estimatedTotal > 0 && (() => {
-    // Re-split text without any last-chunk reserve to see if the last text chunk
-    // has room for the media.
     const boundaries: number[] = [0]
     let remaining = text
     let chunkIdx = 0
     while (remaining.length > 0) {
       const indicatorLen = includePageIndicators ? `(${chunkIdx + 1}/${estimatedTotal}) `.length : 0
       const limit = (chunkIdx === 0 ? firstChunkLimit : POST_CHAR_LIMIT) - indicatorLen
-      if (remaining.length <= limit) break
-      let splitAt = remaining.lastIndexOf(' ', limit)
-      if (splitAt <= 0) splitAt = limit
+      if (byteLen(remaining) <= limit) break
+      const splitAt = findSplitPoint(remaining, limit)
       remaining = remaining.slice(splitAt).trimStart()
       boundaries.push(0)
       chunkIdx++
     }
-    // remaining.length is the text in the last text chunk
     const lastIndicatorLen = includePageIndicators ? `(${boundaries.length}/${estimatedTotal}) `.length : 0
     const lastChunkAvailable = POST_CHAR_LIMIT - lastIndicatorLen
-    return remaining.length + lastChunkReserved > lastChunkAvailable
+    return byteLen(remaining) + lastChunkReserved > lastChunkAvailable
   })()
-
-  // If media needs its own chunk, split text WITHOUT the last-chunk reserve,
-  // then append an extra boundary for the media-only chunk.
 
   // Second pass with indicator space and last-chunk reserve
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -161,11 +184,9 @@ function getChunkInfo(text: string, includePageIndicators = false, firstChunkRes
     while (remaining.length > 0) {
       const indicatorLen = includePageIndicators ? `(${chunkIndex + 1}/${estimatedTotal}) `.length : 0
       const available = getLimit(chunkIndex, mediaNeedsOwnChunk ? Infinity : estimatedTotal, indicatorLen)
-      // When mediaNeedsOwnChunk, pass Infinity so getLimit never applies lastChunkReserved
 
-      if (remaining.length <= available) break
-      let splitAt = remaining.lastIndexOf(' ', available)
-      if (splitAt <= 0) splitAt = available
+      if (byteLen(remaining) <= available) break
+      const splitAt = findSplitPoint(remaining, available)
       offset += splitAt
       const trimmed = remaining.slice(splitAt)
       const trimmedLen = trimmed.length - trimmed.trimStart().length
@@ -176,7 +197,6 @@ function getChunkInfo(text: string, includePageIndicators = false, firstChunkRes
     }
 
     if (mediaNeedsOwnChunk) {
-      // Add boundary for the media-only chunk at the end of text
       boundaries.push(text.length)
       return { chunkCount: boundaries.length, chunkBoundaries: boundaries }
     }
@@ -1121,7 +1141,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     // If media goes at end of thread, check if it fits in the last chunk or needs its own
     if (isThreadMode && mediaPosition === 'end' && mediaBlock && chunks.length > 1) {
       const lastChunk = chunks[chunks.length - 1]
-      if (lastChunk.length + mediaBlock.length <= POST_CHAR_LIMIT) {
+      if (byteLen(lastChunk) + byteLen(mediaBlock) <= POST_CHAR_LIMIT) {
         // Media fits in the last text chunk
         chunks[chunks.length - 1] = lastChunk + mediaBlock
       } else {
@@ -1130,7 +1150,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         const totalWithMedia = chunks.length + 1
         if (includePageIndicators) {
           // If adding a chunk crosses a digit boundary (e.g., 9→10), the indicator
-          // grows by 1 char per chunk, which could push existing chunks over 420.
+          // grows by 1 byte per chunk, which could push existing chunks over 420.
           // Re-split from scratch in that case to be safe.
           const oldDigits = String(chunks.length).length
           const newDigits = String(totalWithMedia).length
@@ -1141,13 +1161,12 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             let idx = 0
             while (remaining.length > 0) {
               const indicator = `(${idx + 1}/${totalWithMedia}) `
-              const available = POST_CHAR_LIMIT - indicator.length
-              if (remaining.length <= available) {
+              const available = POST_CHAR_LIMIT - indicator.length // ASCII indicator
+              if (byteLen(remaining) <= available) {
                 chunks.push(indicator + remaining)
                 break
               }
-              let splitAt = remaining.lastIndexOf(' ', available)
-              if (splitAt <= 0) splitAt = available
+              const splitAt = findSplitPoint(remaining, available)
               chunks.push(indicator + remaining.slice(0, splitAt))
               remaining = remaining.slice(splitAt).trimStart()
               idx++
@@ -1169,25 +1188,76 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       }
     }
 
-    // Pre-check: verify spending limit can cover all chunks (only when Quick Sign is active)
+    // Pre-check: verify the user has enough CAW budget (staked + pending deposit
+    // - in-flight spend) to cover all thread chunks. Without this, a multi-post
+    // thread would pass the single-post stake check on the first chunk and then
+    // start failing partway through when the pending-spend accumulator ate the
+    // remaining budget — stranding the user with a half-posted thread and a
+    // modal mid-stream. Check the whole thread cost up front.
     if (chunks.length > 1) {
+      const { getValidatorTip, CLIENT_ID: _ignored } = await import('~/api/actions')
+      const { usePendingSpendStore } = await import('~/store/pendingSpendStore')
+      const { useInsufficientStakeStore } = await import('~/store/insufficientStakeStore')
+
+      const CAW_COST_PER_POST_WHOLE = 5000n // matches STAKING_REQUIREMENTS.MIN_STAKE_POST
+      const tipWhole = getValidatorTip()
+      const costPerChunkWhole = CAW_COST_PER_POST_WHOLE + tipWhole
+      const totalThreadCostWei = costPerChunkWhole * BigInt(chunks.length) * 10n ** 18n
+
+      // Read the same three inputs actions.ts uses for the single-action budget
+      // check: on-chain stake, pending deposit (local hint + backend), and
+      // in-flight TxQueue spend.
+      const pendingSpend = usePendingSpendStore.getState().pendingSpend
+      const onChainStake = activeToken?.stakedAmount ?? 0n
+
+      let localHintWei = 0n
+      try {
+        const hintRaw = localStorage.getItem(`caw:pendingDeposit:${effectiveTokenId}`)
+        if (hintRaw) {
+          const hint = JSON.parse(hintRaw)
+          const age = Date.now() - (hint?.at ?? 0)
+          if (hint?.amount && age < 30 * 60 * 1000) {
+            try { localHintWei = BigInt(hint.amount) } catch {}
+          }
+        }
+      } catch { /* ignore */ }
+
+      let backendPendingWei = 0n
+      try {
+        const { apiFetch } = await import('~/api/client')
+        const userRes = await apiFetch(`/api/users/by-token/${effectiveTokenId}`)
+        if (userRes?.pendingDepositAmount) {
+          try { backendPendingWei = BigInt(userRes.pendingDepositAmount) } catch {}
+        }
+      } catch { /* ignore */ }
+
+      const pendingDepositWei = localHintWei > backendPendingWei ? localHintWei : backendPendingWei
+      const totalBudgetSigned = onChainStake + pendingDepositWei - pendingSpend
+      const effectiveBudgetWei = totalBudgetSigned > 0n ? totalBudgetSigned : 0n
+
+      if (effectiveBudgetWei < totalThreadCostWei) {
+        // Show the insufficient modal with whole-thread cost so the user sees
+        // why a 20-post thread at 5k+1k each is blocked even though a single
+        // post would have been fine.
+        useInsufficientStakeStore.getState().show(effectiveBudgetWei, totalThreadCostWei, 'post')
+        return
+      }
+
+      // Also keep the Quick Sign session spend-limit pre-check (separate concern
+      // from staked budget — session spend limits protect the wallet, staked
+      // budget protects the on-chain execution).
       const { useSessionKeyStore } = await import('~/store/sessionKeyStore')
-      const { getValidatorTip } = await import('~/api/actions')
       const { useQuickSignRenewStore } = await import('~/components/modals/QuickSignRenewModal')
       const sessionStore = useSessionKeyStore.getState()
-
       if (sessionStore.enabled) {
         const remaining = sessionStore.getRemainingLimit()
-        const CAW_COST_PER_POST = 5000n
-        const tip = getValidatorTip()
-        const costPerChunk = CAW_COST_PER_POST + tip
-        const totalThreadCost = costPerChunk * BigInt(chunks.length)
-
-        if (remaining !== null && totalThreadCost > remaining) {
+        const totalThreadCostWhole = costPerChunkWhole * BigInt(chunks.length)
+        if (remaining !== null && totalThreadCostWhole > remaining) {
           useQuickSignRenewStore.getState().show('spend_limit', () => handleSubmit())
           return
         }
       }
+      void _ignored
     }
 
     // Get the current cawonce BEFORE submitting (signAndSubmit bumps it internally)
@@ -1330,9 +1400,10 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     return mediaCost
   }
 
-  // Thread splitting info
-  const mediaCost = getMediaCharCost()
-  const effectiveTextLength = text.length + mediaCost
+  // Thread splitting info — all length comparisons here are in BYTES (matches the on-chain check).
+  const mediaCost = getMediaCharCost() // already in bytes (media refs are ASCII)
+  const textBytes = byteLen(text)
+  const effectiveTextLength = textBytes + mediaCost
   const isThreadMode = effectiveTextLength > POST_CHAR_LIMIT
   const firstChunkMediaCost = (!isThreadMode || mediaPosition === 'start') ? mediaCost : 0
   const lastChunkMediaCost = (isThreadMode && mediaPosition === 'end') ? mediaCost : 0
@@ -1340,7 +1411,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
 
   // Figure out which chunk the cursor is in
   // When media gets its own dedicated last chunk, the cursor should never land there —
-  // cap to the last text chunk so the counter shows remaining chars for actual text.
+  // cap to the last text chunk so the counter shows remaining bytes for actual text.
   const hasMediaOnlyChunk = mediaPosition === 'end' && chunkCount >= 2 && chunkBoundaries[chunkCount - 1] === text.length
   const maxCursorChunk = hasMediaOnlyChunk ? chunkCount - 2 : chunkCount - 1
   const currentChunkIndex = (() => {
@@ -1351,17 +1422,17 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     return 0
   })()
 
-  // Calculate chars remaining for the current chunk
+  // Calculate bytes remaining for the current chunk
   const calculateCharCount = () => {
     if (!isThreadMode) {
       return POST_CHAR_LIMIT - effectiveTextLength
     }
-    // In thread mode, show remaining chars for the current chunk
+    // In thread mode, show remaining bytes for the current chunk
     const chunkStart = chunkBoundaries[currentChunkIndex]
     const chunkEnd = currentChunkIndex < chunkBoundaries.length - 1
       ? chunkBoundaries[currentChunkIndex + 1]
       : text.length
-    const chunkLen = chunkEnd - chunkStart
+    const chunkLen = byteLen(text.slice(chunkStart, chunkEnd))
     // Add media cost to the chunk that will contain the media
     const isFirstChunk = currentChunkIndex === 0
     const isLastChunk = currentChunkIndex === chunkCount - 1
@@ -1444,11 +1515,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                 </span>
               )}
               {(text.length > 0 || selectedMedia.length > 0) && (
-                <span className={`text-xs font-medium ${
-                  charCount <= 20
-                    ? 'text-yellow-500'
-                    : isDark ? 'text-gray-400' : 'text-gray-500'
-                }`}>
+                <span
+                  title="Bytes remaining"
+                  className={`text-xs font-medium ${
+                    charCount <= 20
+                      ? 'text-yellow-500'
+                      : isDark ? 'text-gray-400' : 'text-gray-500'
+                  }`}
+                >
                   {charCount}
                 </span>
               )}
@@ -1931,11 +2005,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                 </span>
               )}
               {(text.length > 0 || selectedMedia.length > 0) && (
-                <span className={`text-sm font-medium ${
-                  charCount <= 20
-                    ? 'text-yellow-500'
-                    : isDark ? 'text-gray-400' : 'text-gray-500'
-                }`}>
+                <span
+                  title="Bytes remaining"
+                  className={`text-sm font-medium ${
+                    charCount <= 20
+                      ? 'text-yellow-500'
+                      : isDark ? 'text-gray-400' : 'text-gray-500'
+                  }`}
+                >
                   {charCount}
                 </span>
               )}

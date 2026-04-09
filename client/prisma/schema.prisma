@@ -172,14 +172,19 @@ model Block {
 }
 
 model TxQueue {
-  id        Int      @id @default(autoincrement())
-  payload   Json
-  signedTx  String   @unique
-  status    String   @default("pending")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  senderId  Int
-  reason    String?
+  id                   Int      @id @default(autoincrement())
+  payload              Json
+  signedTx             String   @unique
+  status               String   @default("pending")
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+  senderId             Int
+  reason               String?
+  // If non-null, the client claims a pending L1 deposit tx that should credit
+  // this sender's balance once it lands on L2. Presence of this field causes
+  // the validator to mark the row waiting_for_deposit without simulating,
+  // and the DataCleaner watcher to promote it when L2 catches up.
+  pendingDepositTxHash String?
 
   @@index([senderId, status])
 }

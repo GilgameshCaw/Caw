@@ -1,7 +1,9 @@
 import React from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useBalance } from 'wagmi'
-import { useAccount } from 'wagmi'
+import { useReadContract, useAccount } from 'wagmi'
+import { erc20Abi } from 'viem'
+import { CAW_ADDRESS } from '~/../../../abi/addresses'
+import { chains } from '~/config/chains'
 import ModalWrapper from './ModalWrapper'
 
 interface InsufficientStakeModalProps {
@@ -25,17 +27,23 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
   const navigate = useNavigate()
   const { address } = useAccount()
 
-  // Fetch CAW token balance only when modal is open
-  const { data: balanceData } = useBalance({
-    address: address,
-    token: '0xf3b9569f82b18aef890de263b84189bd33ebe452', // CAW token address on Ethereum mainnet
+  // Read CAW ERC-20 balance from the configured L1 chain (mainnet in prod,
+  // Sepolia in dev/testnet). Previously hard-coded to the mainnet CAW token
+  // address, which returned 0 on testnet. Using the same per-env CAW_ADDRESS
+  // + chainId pair that the Staking page uses.
+  const { data: balanceData } = useReadContract({
+    address: CAW_ADDRESS,
+    abi: erc20Abi,
+    chainId: chains.l1.chainId,
+    functionName: 'balanceOf',
+    args: address ? [address] : undefined,
     query: {
-      enabled: isOpen && !!address, // Only fetch when modal is open and address exists
-      refetchInterval: 10000, // Refetch every 10 seconds instead of default 4 seconds
-    }
+      enabled: isOpen && !!address,
+      refetchInterval: 10000,
+    },
   })
 
-  const walletBalance = balanceData?.value || 0n
+  const walletBalance = (balanceData as bigint | undefined) || 0n
   // Check if user has enough CAW in wallet to cover the required stake
   const hasEnoughToBuy = requiredAmount !== undefined && walletBalance >= requiredAmount
   const hasZeroBalance = walletBalance === 0n
@@ -112,18 +120,20 @@ const InsufficientStakeModal: React.FC<InsufficientStakeModalProps> = ({
           </p>
         </div>
 
-        {/* Show staking requirements */}
+        {/* Show remaining budget vs required cost. currentAmount here is the
+            effective budget = onChainStake + pendingDepositAmount - pendingSpend,
+            so it reflects what the user has LEFT after already-queued actions. */}
         {currentAmount !== undefined && requiredAmount !== undefined && (
           <div className="bg-white/5 rounded-lg p-3 mb-3">
             <div className="grid grid-cols-2 gap-2 text-sm">
               <div>
-                <p className="text-gray-400">Deposited:</p>
+                <p className="text-gray-400">Remaining:</p>
                 <p className="text-white font-medium">
                   {(Number(currentAmount) / 1e18).toLocaleString(undefined, { maximumFractionDigits: 2 })} CAW
                 </p>
               </div>
               <div>
-                <p className="text-gray-400">Required:</p>
+                <p className="text-gray-400">This costs:</p>
                 <p className="text-yellow-500 font-medium">
                   {(Number(requiredAmount) / 1e18).toLocaleString(undefined, { maximumFractionDigits: 2 })} CAW
                 </p>

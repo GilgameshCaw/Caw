@@ -1,7 +1,28 @@
 import { PrismaClient } from '@prisma/client'
+import { JsonRpcProvider, WebSocketProvider, Contract } from 'ethers'
 import { dataCleanerLogger as logger } from '../../utils/dataCleanerLogger'
+import { cawNameL2Abi } from '../../abi/generated'
+import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 
 const prisma = new PrismaClient()
+
+// Lazy-initialized L2 read provider for the pending-mint-deposit watcher.
+// Reused across ticks so we don't churn sockets.
+let _l2Provider: JsonRpcProvider | WebSocketProvider | null = null
+let _cawNameL2: Contract | null = null
+
+function getCawNameL2(): Contract {
+  if (_cawNameL2) return _cawNameL2
+  const rpcUrl = process.env.L2_RPC_URL_HTTP || process.env.L2_RPC_URL
+  if (!rpcUrl) throw new Error('[DataCleaner] L2 RPC not configured')
+  _l2Provider = rpcUrl.startsWith('wss://') || rpcUrl.startsWith('ws://')
+    ? new WebSocketProvider(rpcUrl)
+    : new JsonRpcProvider(rpcUrl)
+  _cawNameL2 = new Contract(CAW_NAMES_L2_ADDRESS, cawNameL2Abi as any, _l2Provider)
+  return _cawNameL2
+}
+
+const CAW_CLIENT_ID = Number(process.env.CLIENT_ID || 1)
 
 /**
  * Clean up stale pending likes
@@ -352,7 +373,7 @@ async function cleanupPendingCaws() {
         const action = await prisma.action.findFirst({
           where: {
             senderId: pendingCaw.userId,
-            actionType: 'CAW',
+            actionType: { in: ['CAW', 'RECAW'] },
             cawonce: pendingCaw.cawonce
           }
         })
@@ -389,6 +410,26 @@ async function cleanupPendingCaws() {
               where: { id: pendingCaw.id },
               data: { status: 'FAILED' }
             })
+
+            // If this was a recaw, decrement the parent's recawCount
+            if (pendingCaw.action === 'RECAW' && pendingCaw.originalCawId) {
+              try {
+                const actualRecawCount = await prisma.caw.count({
+                  where: {
+                    originalCawId: pendingCaw.originalCawId,
+                    action: 'RECAW',
+                    status: 'SUCCESS'
+                  }
+                })
+                await prisma.caw.update({
+                  where: { id: pendingCaw.originalCawId },
+                  data: { recawCount: actualRecawCount }
+                })
+                logger.log(` Updated parent caw ${pendingCaw.originalCawId} recawCount to ${actualRecawCount}`)
+              } catch (err) {
+                logger.error(` Failed to update recawCount for parent caw ${pendingCaw.originalCawId}:`, err)
+              }
+            }
 
             // Also clean up any reply records pointing to this caw as a reply
             const replyRecord = await prisma.reply.findFirst({
@@ -456,9 +497,14 @@ async function cleanupFailedTxQueue() {
         }
 
         // Handle different action types
-        if (data.actionType === 0 || data.actionType === 'caw') {
-          // Update the associated caw to FAILED status
-          logger.log(` Marking caw as FAILED for user ${data.senderId}, cawonce ${data.cawonce}`)
+        if (data.actionType === 0 || data.actionType === 'caw' || data.actionType === 3 || data.actionType === 'recaw') {
+          // Update the associated caw/recaw to FAILED status
+          logger.log(` Marking caw/recaw as FAILED for user ${data.senderId}, cawonce ${data.cawonce}`)
+
+          // Find the pending caw before updating (to know if we need to decrement counts)
+          const pendingCaw = await prisma.caw.findFirst({
+            where: { userId: data.senderId, cawonce: data.cawonce, status: 'PENDING' }
+          })
 
           await prisma.caw.updateMany({
             where: {
@@ -470,6 +516,22 @@ async function cleanupFailedTxQueue() {
               status: 'FAILED'
             }
           })
+
+          // Decrement recawCount on parent if this was a pending recaw
+          if (pendingCaw && pendingCaw.action === 'RECAW' && pendingCaw.originalCawId) {
+            try {
+              const actualRecawCount = await prisma.caw.count({
+                where: { originalCawId: pendingCaw.originalCawId, action: 'RECAW', status: 'SUCCESS' }
+              })
+              await prisma.caw.update({
+                where: { id: pendingCaw.originalCawId },
+                data: { recawCount: actualRecawCount }
+              })
+              logger.log(` Updated parent caw ${pendingCaw.originalCawId} recawCount to ${actualRecawCount}`)
+            } catch (err) {
+              logger.error(` Failed to update recawCount:`, err)
+            }
+          }
         } else if (data.actionType === 1 || data.actionType === 'like') {
           // Remove the pending like if it exists
           logger.log(` Removing failed pending like for user ${data.senderId}`)
@@ -674,6 +736,131 @@ async function cleanupPendingFollows() {
 }
 
 /**
+ * Promote waiting_for_deposit TxQueue rows back to 'pending' once the sender's
+ * L1 mint/deposit has actually landed on L2.
+ *
+ * Flow:
+ *   1. Group waiting_for_deposit rows by senderId.
+ *   2. For each unique sender, read authenticated[CLIENT_ID][tokenId] on L2.
+ *   3. If authenticated == true → the L1→L2 bridge has delivered. Promote all
+ *      that sender's waiting rows back to 'pending' and clear pendingDepositTxHash.
+ *      The validator will then simulate them normally — if the user's L2 CAW
+ *      balance covers the cost, they succeed; if not, they fail with a clear
+ *      "insufficient balance" reason (the user asked to spend more than they
+ *      actually deposited, which is their problem, not a race condition).
+ *   4. Rows older than 20 min whose sender is still not authenticated get
+ *      failed with a "deposit did not arrive" reason (L1 tx reverted, LZ
+ *      delivery delayed, etc). The validator has its own 25-min safety-net
+ *      sweep as a second line of defense.
+ *
+ * Cost per tick: one L2 RPC call per unique waiting sender. Typically 0-5 calls.
+ */
+async function cleanupPendingMintDeposits() {
+  try {
+    const waitingRows = await prisma.txQueue.findMany({
+      where: { status: 'waiting_for_deposit' },
+      select: { id: true, senderId: true, createdAt: true, pendingDepositTxHash: true }
+    })
+
+    // Second responsibility: clear User.pendingDepositAmount display hints for
+    // users with a recent lastStakedAt whose L2 auth has landed, even if they
+    // have no waiting_for_deposit rows (e.g. they deposited but didn't queue
+    // any actions). Without this sweep, ProfileChooser's "+X CAW pending"
+    // badge would linger indefinitely, showing alongside the now-updated
+    // staked balance — the "314M AND +314M pending" double-display bug.
+    const usersWithPendingDisplay = await prisma.user.findMany({
+      where: {
+        lastStakedAt: { not: null },
+        pendingDepositAmount: { not: null },
+      },
+      select: { tokenId: true }
+    })
+
+    if (waitingRows.length === 0 && usersWithPendingDisplay.length === 0) return
+
+    logger.log(`[PendingMintDeposit] ${waitingRows.length} waiting rows, ${usersWithPendingDisplay.length} display-only, checking L2...`)
+
+    // Group by sender to minimize RPC calls. Include display-only senders
+    // (users with pendingDepositAmount set but no waiting rows) so we can
+    // clear their display hints on the same pass.
+    const bySender = new Map<number, typeof waitingRows>()
+    for (const row of waitingRows) {
+      const list = bySender.get(row.senderId) ?? []
+      list.push(row)
+      bySender.set(row.senderId, list)
+    }
+    for (const user of usersWithPendingDisplay) {
+      if (!bySender.has(user.tokenId)) {
+        bySender.set(user.tokenId, [])
+      }
+    }
+
+    const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000)
+    let contract: Contract
+    try {
+      contract = getCawNameL2()
+    } catch (err: any) {
+      logger.error(`[PendingMintDeposit] Cannot get L2 contract, skipping pass: ${err.message}`)
+      return
+    }
+
+    for (const [senderId, rows] of bySender) {
+      try {
+        // Read on-chain auth state. CawNameL2.authenticated is a public
+        // mapping (clientId => tokenId => bool), accessed as a getter.
+        const isAuthenticated: boolean = await contract.authenticated(CAW_CLIENT_ID, senderId)
+
+        if (isAuthenticated) {
+          // Auth has landed. Promote all waiting rows for this sender so the
+          // validator can simulate them normally. The promotion is atomic
+          // per sender so a concurrent insert doesn't leave rows orphaned.
+          const promoted = await prisma.txQueue.updateMany({
+            where: {
+              senderId,
+              status: 'waiting_for_deposit'
+            },
+            data: {
+              status: 'pending',
+              pendingDepositTxHash: null,
+              reason: null
+            }
+          })
+          logger.log(`[PendingMintDeposit] Sender ${senderId}: L2 auth confirmed — promoted ${promoted.count} rows`)
+
+          // Clear the User.lastStakedAt/pendingDepositAmount display hints if
+          // they were set (by a future RawEventsGatherer L1 indexer — for now
+          // these are written by the existing PATCH path and reset here for
+          // cleanliness when the deposit fully lands).
+          await prisma.user.updateMany({
+            where: { tokenId: senderId },
+            data: { lastStakedAt: null, pendingDepositAmount: null }
+          }).catch(() => {})
+          continue
+        }
+
+        // Not yet authenticated — check if any rows for this sender have
+        // timed out (>20 min old) and fail just those. Keep newer rows waiting.
+        const staleRows = rows.filter(r => r.createdAt < twentyMinutesAgo)
+        if (staleRows.length > 0) {
+          await prisma.txQueue.updateMany({
+            where: { id: { in: staleRows.map(r => r.id) } },
+            data: {
+              status: 'failed',
+              reason: 'Deposit did not arrive from L1 in time. Please try again.'
+            }
+          })
+          logger.log(`[PendingMintDeposit] Sender ${senderId}: timed out ${staleRows.length} rows (>20 min)`)
+        }
+      } catch (err: any) {
+        logger.error(`[PendingMintDeposit] Sender ${senderId} check failed: ${err.message}`)
+      }
+    }
+  } catch (err: any) {
+    logger.error(`[PendingMintDeposit] Fatal: ${err.message}`)
+  }
+}
+
+/**
  * Main cleanup function that runs all data cleaning tasks
  */
 async function runDataCleanup() {
@@ -696,6 +883,9 @@ async function runDataCleanup() {
 
   // Clean up failed txqueue records and update associated caws
   await cleanupFailedTxQueue()
+
+  // Promote waiting_for_deposit rows once their L1 deposit has landed on L2
+  await cleanupPendingMintDeposits()
 
   logger.log('All cleanup tasks completed')
 }

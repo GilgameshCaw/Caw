@@ -1,10 +1,55 @@
 // src/api/routes/users.ts
 import { Router } from 'express'
+import { Contract, JsonRpcProvider, WebSocketProvider } from 'ethers'
 import { prisma } from '../../prismaClient'
 import { ActionType } from '@prisma/client'
 import { findOrCreateUser, StaleTokenError } from '../../services/UserService'
 import { getBlockedUserIds } from '../shared/blockUtils'
 import { requireAuth } from '../middleware/auth'
+import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
+import { cawNameL2Abi } from '../../abi/generated'
+
+// Lazy-cached L2 read contract for checking on-chain staked balance.
+let _l2ReadContract: Contract | null = null
+function getL2ReadContract(): Contract | null {
+  if (_l2ReadContract) return _l2ReadContract
+  const rpcUrl = process.env.L2_RPC_URL_HTTP || process.env.L2_RPC_URL
+  if (!rpcUrl) return null
+  const provider = rpcUrl.startsWith('wss://') || rpcUrl.startsWith('ws://')
+    ? new WebSocketProvider(rpcUrl)
+    : new JsonRpcProvider(rpcUrl)
+  _l2ReadContract = new Contract(CAW_NAMES_L2_ADDRESS, cawNameL2Abi as any, provider)
+  return _l2ReadContract
+}
+
+/**
+ * Reads the current on-chain staked balance for a tokenId on L2. Returns null on failure.
+ */
+async function readOnChainStake(tokenId: number): Promise<bigint | null> {
+  try {
+    const contract = getL2ReadContract()
+    if (!contract) {
+      console.warn(`[users] readOnChainStake: no L2 RPC configured`)
+      return null
+    }
+    const result = await contract.getTokens([tokenId])
+    // ethers v6 returns a Result (array-like, also indexable by name).
+    const token = result?.[0]
+    if (!token) {
+      console.warn(`[users] readOnChainStake: no token returned for tokenId=${tokenId}`)
+      return null
+    }
+    // Token struct: [tokenId, balance, username, cawBalance, nextCawonce]
+    // Access by index (3) because Result named access can be finicky on nested tuples.
+    const cawBalance = token.cawBalance ?? token[3]
+    const asBigInt = BigInt(cawBalance?.toString() ?? '0')
+    console.log(`[users] readOnChainStake tokenId=${tokenId} cawBalance=${asBigInt}`)
+    return asBigInt
+  } catch (err) {
+    console.warn(`[users] readOnChainStake failed for tokenId=${tokenId}:`, (err as Error).message)
+    return null
+  }
+}
 
 // Validation limits for profile fields (must match ActionProcessor)
 const PROFILE_FIELD_LIMITS: Record<string, number> = {
@@ -221,7 +266,41 @@ router.get('/by-token/:tokenId', async (req, res) => {
       return res.status(404).json({ error: 'User not found' })
     }
 
-    return res.json(user)
+    // Lazy clear pendingDepositAmount: if the L1→L2 deposit has landed on L2
+    // (on-chain staked balance >= pending amount), null the fields so UI and
+    // validator stop treating the user as "waiting for deposit".
+    if (user.pendingDepositAmount) {
+      const pendingWei = (() => {
+        try { return BigInt(user.pendingDepositAmount) } catch { return null }
+      })()
+      if (pendingWei !== null && pendingWei > 0n) {
+        const onChainStake = await readOnChainStake(tokenId)
+        console.log(`[users] by-token tokenId=${tokenId}: pending=${pendingWei} onChainStake=${onChainStake}`)
+        if (onChainStake !== null && onChainStake >= pendingWei) {
+          await prisma.user.update({
+            where: { tokenId },
+            data: { pendingDepositAmount: null, lastStakedAt: null },
+          })
+          user.pendingDepositAmount = null
+          user.lastStakedAt = null
+          console.log(`[users] Cleared pendingDepositAmount for tokenId=${tokenId} — deposit of ${pendingWei} landed (on-chain: ${onChainStake})`)
+        } else {
+          console.log(`[users] Pending deposit still in flight for tokenId=${tokenId} (on-chain ${onChainStake} < pending ${pendingWei})`)
+        }
+      }
+    }
+
+    // Tell the frontend whether this sender has any in-flight waiting_for_deposit
+    // TxQueue rows. The client uses this as the authoritative "deposit has NOT
+    // landed yet" signal for the optimistic localStorage hint: once we report
+    // zero waiting rows AND the user has non-zero on-chain stake, the client
+    // can safely flush the hint. This is the clean replacement for the old
+    // brittle "staked >= pending" comparison which suffered from precision loss.
+    const waitingCount = await prisma.txQueue.count({
+      where: { senderId: tokenId, status: 'waiting_for_deposit' }
+    })
+
+    return res.json({ ...user, waitingForDepositCount: waitingCount })
   } catch (err: any) {
     console.error('GET /api/users/by-token/:tokenId error', err)
     return res.status(500).json({ error: 'Internal server error' })
