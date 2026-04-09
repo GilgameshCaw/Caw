@@ -4,6 +4,17 @@ import { prisma } from '../../prismaClient'
 import { ActionType } from '@prisma/client'
 import { findOrCreateUser, StaleTokenError } from '../../services/UserService'
 import { getBlockedUserIds } from '../shared/blockUtils'
+import { requireAuth } from '../middleware/auth'
+
+// Validation limits for profile fields (must match ActionProcessor)
+const PROFILE_FIELD_LIMITS: Record<string, number> = {
+  displayName: 50,
+  bio: 500,
+  location: 100,
+  website: 200,
+  avatarUrl: 500,
+  coverPhotoUrl: 500,
+}
 
 const router = Router()
 
@@ -462,6 +473,70 @@ router.patch('/onboarding/:username', async (req, res) => {
 })
 
 /**
+ * PATCH /api/users/:tokenId/profile
+ * Off-chain profile update. Saves profile fields directly to the DB without
+ * touching the chain. Requires a valid session that owns the target tokenId.
+ * Sets profileSource to "offchain". On-chain updates (via ActionProcessor)
+ * will always override these.
+ * IMPORTANT: This route must be defined BEFORE /:username to avoid conflicts.
+ */
+router.patch(
+  '/:tokenId/profile',
+  requireAuth({ lookup: async (req) => Number(req.params.tokenId) }),
+  async (req, res) => {
+    try {
+      const tokenId = Number(req.params.tokenId)
+      if (!tokenId || isNaN(tokenId)) {
+        return res.status(400).json({ error: 'Invalid tokenId' })
+      }
+
+      const { displayName, bio, location, website, avatarUrl, coverPhotoUrl } = req.body ?? {}
+
+      const updateData: Record<string, string> = {}
+      const incoming: Record<string, unknown> = {
+        displayName, bio, location, website, avatarUrl, coverPhotoUrl,
+      }
+
+      for (const [field, rawValue] of Object.entries(incoming)) {
+        if (rawValue === undefined) continue
+        if (rawValue !== null && typeof rawValue !== 'string') {
+          return res.status(400).json({ error: `${field} must be a string` })
+        }
+        const trimmed = (rawValue ?? '').toString().trim()
+        const limit = PROFILE_FIELD_LIMITS[field]
+        updateData[field] = limit && trimmed.length > limit ? trimmed.substring(0, limit) : trimmed
+      }
+
+      if (Object.keys(updateData).length === 0) {
+        return res.status(400).json({ error: 'No profile fields provided' })
+      }
+
+      const updated = await prisma.user.update({
+        where: { tokenId },
+        data: { ...updateData, profileSource: 'offchain' },
+        select: {
+          tokenId: true,
+          username: true,
+          displayName: true,
+          bio: true,
+          location: true,
+          website: true,
+          avatarUrl: true,
+          coverPhotoUrl: true,
+          profileSource: true,
+          profileUpdatePending: true,
+        },
+      })
+
+      return res.json({ user: updated })
+    } catch (err: any) {
+      console.error('PATCH /api/users/:tokenId/profile error', err)
+      return res.status(500).json({ error: 'Internal server error' })
+    }
+  }
+)
+
+/**
  * GET /api/users/:username
  * Returns user profile data with accurate counts
  */
@@ -488,6 +563,7 @@ router.get('/:username', async (req, res) => {
         avatarUrl: true,
         coverPhotoUrl: true,
         profileUpdatePending: true,
+        profileSource: true,
         lastStakedAt: true,
         // Counter cache fields
         cawCount: true,
@@ -562,6 +638,38 @@ router.get('/:username', async (req, res) => {
       isBlocked = blockedIds.includes(user.tokenId)
     }
 
+    // Count replies and media posts
+    const mediaConditions = [
+      { hasImage: true },
+      { hasVideo: true },
+      { content: { contains: '.gif', mode: 'insensitive' as const } },
+      { content: { contains: '.jpg', mode: 'insensitive' as const } },
+      { content: { contains: '.jpeg', mode: 'insensitive' as const } },
+      { content: { contains: '.png', mode: 'insensitive' as const } },
+      { content: { contains: '.webp', mode: 'insensitive' as const } },
+      { content: { contains: 'giphy.com', mode: 'insensitive' as const } },
+      { content: { contains: 'imgur.com', mode: 'insensitive' as const } },
+      { content: { contains: 'tenor.com', mode: 'insensitive' as const } },
+    ]
+
+    const [replyCount, mediaCount] = await Promise.all([
+      prisma.caw.count({
+        where: {
+          userId: user.tokenId,
+          action: 'CAW',
+          originalCawId: { not: null },
+          status: 'SUCCESS',
+        }
+      }),
+      prisma.caw.count({
+        where: {
+          userId: user.tokenId,
+          status: 'SUCCESS',
+          OR: mediaConditions,
+        }
+      }),
+    ])
+
     // Compute actual follow counts from the follow table (cached counters can drift)
     const [actualFollowerCount, actualFollowingCount] = await Promise.all([
       prisma.follow.count({
@@ -582,10 +690,12 @@ router.get('/:username', async (req, res) => {
 
     const response = {
       ...user,
-      cawCount: Math.max(0, user.cawCount),
+      cawCount: Math.max(0, user.cawCount - replyCount),
       followerCount: actualFollowerCount,
       followingCount: actualFollowingCount,
       likeCount,
+      replyCount,
+      mediaCount,
       isFollowing,
       followPending,
       hasTipped,

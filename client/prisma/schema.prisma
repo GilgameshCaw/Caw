@@ -43,10 +43,12 @@ model User {
   displayName           String?
   location              String?
   profileUpdatePending  Boolean        @default(false)
+  profileSource         String         @default("onchain") // "onchain" or "offchain"
   website               String?
   onboardingStep        Int            @default(0)
   lastStakedAt          DateTime?
   pendingDepositAmount  String?           // wei amount as string, pending L1→L2 bridge
+  lastViewedOffersAt    DateTime?         // When the user last viewed the My Offers tab
   caws                  Caw[]
   followers             Follow[]       @relation("Follower")
   follows               Follow[]       @relation("Following")

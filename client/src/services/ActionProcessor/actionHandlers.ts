@@ -682,7 +682,8 @@ export async function handleOtherAction(
         where: { tokenId: authorId },
         data: {
           ...updateData,
-          profileUpdatePending: false
+          profileUpdatePending: false,
+          profileSource: 'onchain'
         }
       })
 

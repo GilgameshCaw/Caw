@@ -11,7 +11,7 @@ import { HiPencil, HiX, HiCamera, HiGlobe, HiLink, HiLocationMarker, HiOutlineMa
 import { apiFetch } from '~/api/client'
 import { useDmIdentity } from '~/hooks/useDmIdentity'
 import { useDmClient } from '~/hooks/useDm'
-import { useAccount, useSwitchChain, useChainId } from 'wagmi'
+import { useAccount, useSwitchChain, useChainId, useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
 import { chains } from '~/config/chains'
 import { useSignAndSubmitAction } from '~/api/actions'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
@@ -22,7 +22,9 @@ import { useFollowButton } from '~/hooks/useFollowButton'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import TipModal from '~/components/modals/TipModal'
 import { useTransferModalStore } from '~/store/transferModalStore'
-import { useMarketplaceStore, MarketplaceListing } from '~/store/marketplaceStore'
+import { useMarketplaceStore, MarketplaceListing, MarketplaceOffer } from '~/store/marketplaceStore'
+import { CAW_NAME_MARKETPLACE_ADDRESS } from '~/../../../abi/addresses'
+import { cawNameMarketplaceAbi } from '~/../../../abi/generated'
 import Tooltip from '~/components/Tooltip'
 import { useSignInModalStore } from '~/store/signInModalStore'
 
@@ -50,10 +52,13 @@ type ProfileData = {
   avatarUrl?: string
   coverPhotoUrl?: string
   profileUpdatePending?: boolean
+  profileSource?: 'onchain' | 'offchain'
   cawCount: number
   followerCount: number
   followingCount: number
   likeCount: number
+  replyCount: number
+  mediaCount: number
   isFollowing?: boolean
   followPending?: boolean
   hasTipped?: boolean
@@ -457,6 +462,62 @@ export const Profile: React.FC = () => {
     calculateUpdateCost()
   }, [formData, avatarUrl, coverUrl, profileData])
 
+  const [isSavingOffChain, setIsSavingOffChain] = useState(false)
+  const [saveOnChain, setSaveOnChain] = useState(false)
+  const providerDomain = typeof window !== 'undefined' ? window.location.hostname : ''
+
+  // Handle off-chain profile update — saves to DB only, scoped to this provider
+  const handleOffChainUpdate = async () => {
+    if (!activeToken) {
+      setProfileError('Please select a token')
+      return
+    }
+
+    const changes: Record<string, string> = {}
+    if (formData.displayName !== (profileData?.displayName || '')) changes.displayName = formData.displayName
+    if (formData.description !== (profileData?.bio || '')) changes.bio = formData.description
+    if (formData.location !== (profileData?.location || '')) changes.location = formData.location
+    if (formData.website !== (profileData?.website || '')) changes.website = formData.website
+    if (avatarUrl) changes.avatarUrl = avatarUrl
+    if (coverUrl) changes.coverPhotoUrl = coverUrl
+
+    if (Object.keys(changes).length === 0) {
+      setProfileError('No changes to save')
+      return
+    }
+
+    setProfileError(null)
+    setIsSavingOffChain(true)
+    try {
+      const res = await apiFetch<{ user: ProfileData }>(
+        `/api/users/${activeToken.tokenId}/profile`,
+        { method: 'PATCH', body: JSON.stringify(changes) }
+      )
+
+      setProfileData(prev => prev ? {
+        ...prev,
+        ...res.user,
+        profileSource: 'offchain',
+      } : prev)
+
+      // Update avatar in global store so ProfileChooser reflects immediately
+      if (res.user?.avatarUrl !== undefined && activeToken?.tokenId) {
+        setAvatar(activeToken.tokenId, res.user.avatarUrl || null)
+      }
+
+      setIsEditModalOpen(false)
+      setAvatarPreview(undefined)
+      setCoverPreview(undefined)
+      setAvatarUrl(undefined)
+      setCoverUrl(undefined)
+    } catch (err: any) {
+      console.error('Failed to save off-chain profile:', err)
+      setProfileError(err?.message?.split('\n')[0]?.slice(0, 120) || 'Failed to save profile')
+    } finally {
+      setIsSavingOffChain(false)
+    }
+  }
+
   // Handle profile update submission
   const handleProfileUpdate = async () => {
     // If wallet not connected, open connect modal
@@ -688,14 +749,16 @@ export const Profile: React.FC = () => {
         {/* Profile Picture - Positioned within max-w-2xl bounds */}
         <div className="max-w-2xl mx-auto relative">
           <div className="absolute -top-20 left-6">
-            <div className={`w-40 h-40 rounded-full border-4 transition-all duration-300 ${
-              isDark ? 'border-black bg-gray-700' : 'border-white bg-gray-300'
+            <div className={`w-40 h-40 rounded-full border-4 overflow-hidden transition-all duration-300 ${
+              isDark ? 'border-black bg-black' : 'border-white bg-gray-200'
             }`}>
-              <img
-                src={profileData?.avatarUrl || profileData?.image || "/images/logo.jpeg"}
-                alt={`${profileData?.username || displayUsername} avatar`}
-                className="w-full h-full object-cover rounded-full"
-              />
+              {profileData && (
+                <img
+                  src={profileData.avatarUrl || profileData.image || "/images/logo.jpeg"}
+                  alt={`${profileData.username || displayUsername} avatar`}
+                  className="w-full h-full object-cover rounded-full"
+                />
+              )}
             </div>
           </div>
         </div>
@@ -1276,17 +1339,29 @@ export const Profile: React.FC = () => {
                         }
                       }}
                     >
-                      <div className="w-full h-full flex items-center justify-center overflow-hidden rounded-full">
+                      <div className="relative w-full h-full flex items-center justify-center overflow-hidden rounded-full">
                         {avatarPreview ? (
-                          <img 
-                            src={avatarPreview} 
-                            alt="Avatar preview" 
+                          <img
+                            src={avatarPreview}
+                            alt="Avatar preview"
                             className="w-full h-full object-cover"
                           />
                         ) : (
-                          <HiCamera className={`w-6 h-6 transition-colors duration-300 ${
-                            isDark ? 'text-gray-400' : 'text-gray-500'
-                          }`} />
+                          <>
+                            {profileData?.avatarUrl && (
+                              <>
+                                <img
+                                  src={profileData.avatarUrl}
+                                  alt=""
+                                  className="absolute inset-0 w-full h-full object-cover"
+                                />
+                                <div className="absolute inset-0 bg-black/50" />
+                              </>
+                            )}
+                            <HiCamera className={`relative w-6 h-6 transition-colors duration-300 ${
+                              profileData?.avatarUrl ? 'text-white' : (isDark ? 'text-gray-400' : 'text-gray-500')
+                            }`} />
+                          </>
                         )}
                       </div>
                     </button>
@@ -1332,22 +1407,34 @@ export const Profile: React.FC = () => {
                     >
                       <div className="absolute inset-0 flex items-center justify-center overflow-hidden rounded-lg">
                         {coverPreview ? (
-                          <img 
-                            src={coverPreview} 
-                            alt="Cover preview" 
+                          <img
+                            src={coverPreview}
+                            alt="Cover preview"
                             className="w-full h-full object-cover"
                           />
                         ) : (
-                          <div className="text-center">
-                            <HiCamera className={`w-6 h-6 mx-auto mb-1 transition-colors duration-300 ${
-                              isDark ? 'text-gray-400' : 'text-gray-500'
-                            }`} />
-                            <p className={`text-xs transition-colors duration-300 ${
-                              isDark ? 'text-gray-400' : 'text-gray-500'
-                            }`}>
-                              Click or drag to upload
-                            </p>
-                          </div>
+                          <>
+                            {profileData?.coverPhotoUrl && (
+                              <>
+                                <img
+                                  src={profileData.coverPhotoUrl}
+                                  alt=""
+                                  className="absolute inset-0 w-full h-full object-cover"
+                                />
+                                <div className="absolute inset-0 bg-black/50" />
+                              </>
+                            )}
+                            <div className="relative text-center">
+                              <HiCamera className={`w-6 h-6 mx-auto mb-1 transition-colors duration-300 ${
+                                profileData?.coverPhotoUrl ? 'text-white' : (isDark ? 'text-gray-400' : 'text-gray-500')
+                              }`} />
+                              <p className={`text-xs transition-colors duration-300 ${
+                                profileData?.coverPhotoUrl ? 'text-white/90' : (isDark ? 'text-gray-400' : 'text-gray-500')
+                              }`}>
+                                Click or drag to upload
+                              </p>
+                            </div>
+                          </>
                         )}
                       </div>
                     </button>
@@ -1509,8 +1596,31 @@ export const Profile: React.FC = () => {
 
             {/* Modal Footer */}
             <div className="p-6 border-t border-white/10">
-              <div className="flex justify-end">
-                <div className="inline-flex flex-col items-center">
+              <div className="flex items-center justify-between gap-4">
+                {/* On-chain toggle */}
+                <label className="flex flex-col items-center cursor-pointer select-none">
+                  <span className={`mb-1 text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                    On-chain
+                  </span>
+                  <input
+                    type="checkbox"
+                    checked={saveOnChain}
+                    onChange={() => setSaveOnChain(v => !v)}
+                    className="sr-only"
+                  />
+                  <div className={`relative w-11 h-[22px] flex items-center rounded-full border ${
+                    isDark ? 'border-gray-500' : 'border-gray-400'
+                  }`}>
+                    <div className={`absolute inset-0 rounded-full transition-colors duration-200 ${
+                      saveOnChain ? 'bg-yellow-500' : 'bg-gray-300 dark:bg-gray-600'
+                    }`} />
+                    <div className={`absolute w-[18px] h-[18px] bg-white rounded-full shadow-md transform transition-all duration-200 ${
+                      saveOnChain ? 'translate-x-[22px]' : 'translate-x-0.5'
+                    }`} />
+                  </div>
+                </label>
+
+                <div className="inline-flex flex-col items-end">
                   <div className="flex space-x-3">
                     <button
                       onClick={() => { setIsEditModalOpen(false); setProfileError(null) }}
@@ -1523,43 +1633,49 @@ export const Profile: React.FC = () => {
                       Cancel
                     </button>
                     <button
-                      onClick={handleProfileUpdate}
-                      disabled={isSaving || isUploading || isSwitchingChain || (isConnected && activeToken && address?.toLowerCase() !== activeToken.address?.toLowerCase()) || (isConnected && activeToken && isOnCorrectChain && updateCost === 0)}
+                      onClick={saveOnChain ? handleProfileUpdate : handleOffChainUpdate}
+                      disabled={isSaving || isSavingOffChain || isUploading || updateCost === 0 || (saveOnChain && (isSwitchingChain || (isConnected && activeToken && address?.toLowerCase() !== activeToken.address?.toLowerCase())))}
                       className={`px-6 py-2 rounded-full font-medium transition-all duration-300 ${
-                        isSaving || isUploading || isSwitchingChain || (isConnected && activeToken && address?.toLowerCase() !== activeToken.address?.toLowerCase()) || (isConnected && activeToken && isOnCorrectChain && updateCost === 0)
+                        isSaving || isSavingOffChain || isUploading || updateCost === 0 || (saveOnChain && (isSwitchingChain || (isConnected && activeToken && address?.toLowerCase() !== activeToken.address?.toLowerCase())))
                           ? 'bg-gray-500 cursor-not-allowed'
                           : 'bg-yellow-500 hover:bg-yellow-600 cursor-pointer'
                       } text-black`}
                     >
-                      {isSaving ? (
-                        <span>Updating...</span>
-                      ) : isSwitchingChain ? (
+                      {isSaving || isSavingOffChain ? (
+                        <span>Saving...</span>
+                      ) : saveOnChain && isSwitchingChain ? (
                         <span>Switching...</span>
-                      ) : !isConnected ? (
+                      ) : saveOnChain && !isConnected ? (
                         <span>Connect Wallet</span>
-                      ) : !isOnCorrectChain ? (
+                      ) : saveOnChain && !isOnCorrectChain ? (
                         <span>Switch to Base Sepolia</span>
-                      ) : activeToken && address?.toLowerCase() !== activeToken.address?.toLowerCase() ? (
+                      ) : saveOnChain && activeToken && address?.toLowerCase() !== activeToken.address?.toLowerCase() ? (
                         <span>Wrong Address</span>
                       ) : (
                         <span>
-                          Save Changes {updateCost > 0 && `(${updateCost.toLocaleString()} CAW)`}
+                          Save Changes {saveOnChain && updateCost > 0 && `(${updateCost.toLocaleString()} CAW)`}
                         </span>
                       )}
                     </button>
                   </div>
-                  {updateCost > 0 && (
-                    <div className="mt-2 self-end mr-[11px]">
+                  <div className="mt-2 self-end mr-[11px]">
+                    {saveOnChain ? (
                       <button
                         onClick={() => setShowCostExplanation(true)}
                         className={`text-xs cursor-pointer ${
                           isDark ? 'text-yellow-500/70 hover:text-yellow-500' : 'text-yellow-700/70 hover:text-yellow-700'
                         }`}
                       >
-                        Why does this cost CAW?
+                        On chain profile updates cost CAW. Why?
                       </button>
-                    </div>
-                  )}
+                    ) : (
+                      <div className={`text-xs text-center ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                        <div>Off chain profile updates are free,</div>
+                        <div>but they are only visible through this provider</div>
+                        <div>({providerDomain})</div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
               {/* Error message */}
