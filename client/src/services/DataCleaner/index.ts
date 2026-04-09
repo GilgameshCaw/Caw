@@ -806,14 +806,29 @@ async function cleanupPendingMintDeposits() {
 
     for (const [senderId, rows] of bySender) {
       try {
-        // Read on-chain auth state. CawNameL2.authenticated is a public
-        // mapping (clientId => tokenId => bool), accessed as a getter.
-        const isAuthenticated: boolean = await contract.authenticated(CAW_CLIENT_ID, senderId)
+        // Read BOTH on-chain signals. Auth and balance can land at slightly
+        // different times on L2 even for mintAndDeposit (LZ delivery order
+        // isn't guaranteed within the same bundle), so promoting purely on
+        // auth was causing a subtle bug: the validator would simulate a row
+        // with auth=true but balance=0 and fail it with "Insufficient CAW
+        // balance" — a transient condition that looked like a terminal
+        // failure. Waiting for both signals eliminates that race.
+        const [isAuthenticated, cawBalanceRaw]: [boolean, any] = await Promise.all([
+          contract.authenticated(CAW_CLIENT_ID, senderId),
+          contract.cawBalanceOf(senderId),
+        ])
+        const cawBalance = BigInt(cawBalanceRaw?.toString() ?? '0')
 
-        if (isAuthenticated) {
-          // Auth has landed. Promote all waiting rows for this sender so the
-          // validator can simulate them normally. The promotion is atomic
-          // per sender so a concurrent insert doesn't leave rows orphaned.
+        // "Deposit has landed" means auth is true AND the token has a
+        // non-zero L2 CAW balance. We don't compare against the specific
+        // deposit amount here because multi-deposit scenarios make that
+        // brittle — as long as there's SOME balance on L2, the validator
+        // can simulate normally. If the user queued more than they can
+        // afford, simulation will fail with a legitimate insufficient
+        // balance error (not a race-condition one).
+        if (isAuthenticated && cawBalance > 0n) {
+          // Both signals present. Promote all waiting rows for this sender
+          // so the validator can simulate them normally.
           const promoted = await prisma.txQueue.updateMany({
             where: {
               senderId,
@@ -825,7 +840,7 @@ async function cleanupPendingMintDeposits() {
               reason: null
             }
           })
-          logger.log(`[PendingMintDeposit] Sender ${senderId}: L2 auth confirmed — promoted ${promoted.count} rows`)
+          logger.log(`[PendingMintDeposit] Sender ${senderId}: L2 auth + balance confirmed (${cawBalance}) — promoted ${promoted.count} rows`)
 
           // Clear the User.lastStakedAt/pendingDepositAmount display hints if
           // they were set (by a future RawEventsGatherer L1 indexer — for now
@@ -838,8 +853,12 @@ async function cleanupPendingMintDeposits() {
           continue
         }
 
-        // Not yet authenticated — check if any rows for this sender have
-        // timed out (>20 min old) and fail just those. Keep newer rows waiting.
+        if (isAuthenticated && cawBalance === 0n) {
+          logger.log(`[PendingMintDeposit] Sender ${senderId}: auth landed but balance still 0 — holding`)
+        }
+
+        // Not fully ready — check if any rows for this sender have timed
+        // out (>20 min old) and fail just those. Keep newer rows waiting.
         const staleRows = rows.filter(r => r.createdAt < twentyMinutesAgo)
         if (staleRows.length > 0) {
           await prisma.txQueue.updateMany({
