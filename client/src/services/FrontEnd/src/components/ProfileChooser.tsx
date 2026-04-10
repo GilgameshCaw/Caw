@@ -12,6 +12,7 @@ import { useTheme } from "~/hooks/useTheme";
 import { apiFetch } from "~/api/client";
 import { useHasActiveSession } from '~/hooks/useHasActiveSession';
 import { usePendingSpendStore } from '~/store/pendingSpendStore';
+import { useUserByUsername } from '~/hooks/useUserData';
 import cawLogo from '~/assets/images/caw-logo.png';
 
 const ProfileChooser: React.FC = () => {
@@ -28,17 +29,13 @@ const ProfileChooser: React.FC = () => {
   const avatars = useTokenDataStore(s => s.avatarsByTokenId)
   const setAvatar = useTokenDataStore(s => s.setAvatar)
 
-  // Fetch avatar for the active token on mount and when it changes
+  // Fetch avatar for the active token via shared query
+  const { data: activeUserData } = useUserByUsername(activeToken?.username)
   useEffect(() => {
-    if (!activeToken) return
-    const fetchAvatar = async () => {
-      try {
-        const data = await apiFetch(`/api/users/${activeToken.username}`)
-        setAvatar(activeToken.tokenId, data.avatarUrl || null)
-      } catch {}
+    if (activeToken && activeUserData) {
+      setAvatar(activeToken.tokenId, activeUserData.avatarUrl || null)
     }
-    fetchAvatar()
-  }, [activeToken?.tokenId])
+  }, [activeToken?.tokenId, activeUserData?.avatarUrl])
 
   // Pending L1→L2 deposit in flight — show "+X CAW pending" alongside staked.
   // We keep a per-token localStorage hint so the badge can render instantly

@@ -6,7 +6,7 @@ import React, { useState, useRef, useEffect } from "react";
 import { useTheme } from '~/hooks/useTheme';
 import { useSearchParams } from 'react-router-dom';
 import { useTokenDataStore } from '~/store/tokenDataStore';
-import { apiFetch } from '~/api/client';
+import { useUserByUsername } from '~/hooks/useUserData';
 
 type MainTab = 'following' | 'foryou'
 
@@ -33,17 +33,16 @@ export const Main: React.FC = () => {
   )
 
   // If no explicit tab param, check following count and default to 'foryou' if 0
+  const { data: userData } = useUserByUsername(
+    !tabParam && !defaultResolved ? activeToken?.username : undefined
+  )
   useEffect(() => {
-    if (tabParam || defaultResolved || !activeToken?.username) return
-    apiFetch<{ followingCount: number }>(`/api/users/${activeToken.username}`)
-      .then(response => {
-        if (response.followingCount === 0) {
-          setActiveTab('foryou')
-        }
-        setDefaultResolved(true)
-      })
-      .catch(() => setDefaultResolved(true))
-  }, [tabParam, defaultResolved, activeToken?.username])
+    if (tabParam || defaultResolved || !userData) return
+    if (userData.followingCount === 0) {
+      setActiveTab('foryou')
+    }
+    setDefaultResolved(true)
+  }, [tabParam, defaultResolved, userData])
 
   // Sync URL when tab changes
   useEffect(() => {

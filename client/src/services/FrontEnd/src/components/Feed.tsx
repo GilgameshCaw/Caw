@@ -12,6 +12,8 @@ import { setFeedRefreshCallback, setFeedItemUpdateCallback, setFeedRefreshVisibl
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import SuggestedUsers from './SuggestedUsers'
 import { useHostVerification } from '~/hooks/useHostVerification'
+import { useUserByUsername } from '~/hooks/useUserData'
+import { useQueryClient } from '@tanstack/react-query'
 
 type Props = {
   filter: 'For you' | 'Following' | 'profile' | 'profile-likes' | 'profile-replies' | 'profile-media' | string
@@ -31,6 +33,7 @@ export interface FeedRef {
 }
 
 const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title }, ref) => {
+  const qc = useQueryClient()
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const activeToken = useTokenDataStore(s => {
     const tokens = Object.values(s.tokensByAddress).flat()
@@ -309,25 +312,17 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   }, [filter, activeTokenId, apiEndpoint, username])
 
   // Fetch following count for current user when on Following or For You tab
+  const needsFollowingCount = (filter === 'Following' || filter === 'For you') && !!activeToken?.username
+  const { data: feedUserData } = useUserByUsername(needsFollowingCount ? activeToken?.username : undefined)
   useEffect(() => {
-    if ((filter !== 'Following' && filter !== 'For you') || !activeToken?.username) {
+    if (!needsFollowingCount) {
       setFollowingCount(null)
       return
     }
-
-    const fetchFollowingCount = async () => {
-      try {
-        const response = await apiFetch<{ followingCount: number }>(
-          `/api/users/${activeToken.username}`
-        )
-        setFollowingCount(response.followingCount)
-      } catch (err) {
-        setFollowingCount(null)
-      }
+    if (feedUserData) {
+      setFollowingCount(feedUserData.followingCount)
     }
-
-    fetchFollowingCount()
-  }, [filter, activeToken?.username])
+  }, [needsFollowingCount, feedUserData])
 
   // infinite‐scroll: when near bottom, load more
   useEffect(() => {
@@ -408,9 +403,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   // Just update the following count; the feed will refresh naturally.
   const handleFollowChange = useCallback(() => {
     if (activeToken?.username) {
-      apiFetch<{ followingCount: number }>(`/api/users/${activeToken.username}`)
-        .then(response => setFollowingCount(response.followingCount))
-        .catch(err => console.error('Failed to refetch following count:', err))
+      qc.invalidateQueries({ queryKey: ['user', activeToken.username] })
     }
   }, [activeToken?.username])
 
