@@ -81,27 +81,57 @@ export const CLIENT_ID = Number(import.meta.env.VITE_CLIENT_ID) || 1
  * Per-chain tip: Additional tip per replication chain to cover LZ fees.
  */
 let BASE_VALIDATOR_TIP = BigInt(import.meta.env.VITE_VALIDATOR_TIP || "1000")
+/** Priority tip threshold — actions at/above this get fast-lane processing. */
+let PRIORITY_TIP = BASE_VALIDATOR_TIP * 3n
 
 /** Additional tip per replication chain (to cover share of LZ fees) */
 const TIP_PER_REPLICATION_CHAIN = BigInt(import.meta.env.VITE_TIP_PER_CHAIN || "500") // 500 CAW per chain
 
 // Fetch live tip config from server on startup
-apiFetch<{ baseTip: string }>('/api/validator-analytics/tip-config')
+apiFetch<{ baseTip: string; priorityTip: string }>('/api/validator-analytics/tip-config')
   .then(cfg => {
     BASE_VALIDATOR_TIP = BigInt(cfg.baseTip)
-    console.log(`[Actions] Loaded validator base tip: ${BASE_VALIDATOR_TIP} CAW`)
+    PRIORITY_TIP = BigInt(cfg.priorityTip)
+    console.log(`[Actions] Loaded tip config: base=${BASE_VALIDATOR_TIP} CAW, priority=${PRIORITY_TIP} CAW`)
   })
   .catch(() => {
-    console.warn('[Actions] Could not fetch tip config, using default:', BASE_VALIDATOR_TIP.toString())
+    console.warn('[Actions] Could not fetch tip config, using defaults:', BASE_VALIDATOR_TIP.toString())
   })
 
 /**
- * Calculate the validator tip based on replication chain count
- * This compensates the validator for the LayerZero fees they pay for replication
+ * Calculate the validator tip based on replication chain count.
+ * This compensates the validator for the LayerZero fees they pay for replication.
+ *
+ * If a `ceiling` is provided (whole CAW tokens), the returned tip is capped at that value.
+ * A ceiling of 0n means "no tip" (opt-out — the user explicitly chose not to tip).
+ * Used by Quick Sign to enforce the per-session tip ceiling the user agreed to at activation.
  */
-export function getValidatorTip(): bigint {
+export function getValidatorTip(ceiling?: bigint): bigint {
   const chainCount = useClientConfigStore.getState().getReplicationChainCount()
-  return BASE_VALIDATOR_TIP + (TIP_PER_REPLICATION_CHAIN * BigInt(chainCount))
+  const market = BASE_VALIDATOR_TIP + (TIP_PER_REPLICATION_CHAIN * BigInt(chainCount))
+  if (ceiling === undefined) return market
+  if (ceiling === 0n) return 0n // explicit opt-out
+  return market < ceiling ? market : ceiling
+}
+
+/** Get the current market tip without any ceiling applied. Used by UI to show "current rate". */
+export function getCurrentMarketTip(): bigint {
+  return getValidatorTip()
+}
+
+/** Get all three tip tiers for the Quick Sign speed picker.
+ *  Returns { cheap, standard, fast } as whole CAW token amounts.
+ *  - cheap: the minimum tip the validator accepts (base tip)
+ *  - standard: midpoint between cheap and fast — balanced speed/cost
+ *  - fast: the priority threshold — skip the batch wait entirely
+ */
+export function getTipTiers(): { cheap: bigint; standard: bigint; fast: bigint } {
+  const chainCount = useClientConfigStore.getState().getReplicationChainCount()
+  const chainCost = TIP_PER_REPLICATION_CHAIN * BigInt(chainCount)
+  const cheap = BASE_VALIDATOR_TIP + chainCost
+  const fast = PRIORITY_TIP + chainCost
+  const standard = (cheap + fast) / 2n
+  return { cheap, standard, fast }
 }
 
 /**
@@ -163,8 +193,12 @@ export type ActionParams = {
 
 /**
  * natstat: build the EIP-712 payload, mapping string→enum and inlining CLIENT_ID
+ *
+ * @param tipOverride Optional explicit tip (whole CAW tokens) to use instead of the current
+ *                    market rate. Used by Quick Sign to enforce per-session tip ceilings.
+ *                    Pass `0n` for explicit no-tip (opt-out).
  */
-export function buildTypedData(params: ActionParams) {
+export function buildTypedData(params: ActionParams, tipOverride?: bigint) {
   const code = ActionTypeMap[params.actionType]
   if (code === undefined) {
     throw new Error(`Unknown actionType "${params.actionType}"`)
@@ -176,7 +210,7 @@ export function buildTypedData(params: ActionParams) {
   // (the amount already includes the tip plus any additional costs)
   // For all other cases, add the validator tip (dynamic based on replication chains)
   if (params.actionType !== 'other' || amounts.length === 0) {
-    amounts.push(getValidatorTip());
+    amounts.push(tipOverride !== undefined ? tipOverride : getValidatorTip());
   }
 
 
@@ -258,17 +292,27 @@ export function useSignAndSubmitAction() {
         // User chose "Sign Manually" — consume the flag and proceed with wallet signing
         useQuickSignPromptStore.setState({ skipOnce: false })
       } else {
-        // Return a promise that resolves when the modal callback completes.
-        // This way the caller sees the actual response, not null.
+        // Return a promise that resolves when the modal callback completes,
+        // or rejects with a user-rejection error if the modal is dismissed
+        // without the user choosing an action (so callers like useFollowButton
+        // can reset their UI state).
         return new Promise((resolve, reject) => {
-          promptStore.show(async () => {
-            try {
-              const result = await requestAndSubmit(params)
-              resolve(result)
-            } catch (err) {
+          promptStore.show(
+            async () => {
+              try {
+                const result = await requestAndSubmit(params)
+                resolve(result)
+              } catch (err) {
+                reject(err)
+              }
+            },
+            () => {
+              // Modal dismissed — treat as user cancellation
+              const err = new Error('User dismissed Quick Sign prompt')
+              ;(err as any).code = 'ACTION_REJECTED'
               reject(err)
             }
-          })
+          )
         })
       }
     }
@@ -457,8 +501,6 @@ export function useSignAndSubmitAction() {
       console.log(`[signAndSubmit] Using pre-allocated cawonce=${useCawonce} for ${params.actionType} (store already bumped)`)
     }
 
-    const { domain, types, primaryType, message } = buildTypedData({...params, cawonce: useCawonce})
-
     // Check for an active session key that covers this action type.
     // Look up by token owner so Quick Sign works regardless of connected wallet.
     const actionCode = ActionTypeMap[params.actionType]
@@ -486,6 +528,20 @@ export function useSignAndSubmitAction() {
       actionCode !== 6 && // exclude WITHDRAW
       (activeSession.scopeBitmap & (1 << actionCode)) !== 0
 
+    // Determine the effective tip for THIS action.
+    // - If signing with a session key and the session has a tipCeiling, cap the tip at it.
+    //   A ceiling of 0 means "no tip" (opt-out — explicit user choice at session activation).
+    // - Otherwise (manual signing) use the current market tip.
+    let effectiveTip: bigint
+    if (canUseSession && activeSession.tipCeiling !== undefined) {
+      const ceiling = BigInt(activeSession.tipCeiling || '0')
+      effectiveTip = getValidatorTip(ceiling)
+    } else {
+      effectiveTip = getValidatorTip()
+    }
+
+    const { domain, types, primaryType, message } = buildTypedData({...params, cawonce: useCawonce}, effectiveTip)
+
     // Fixed protocol costs per action type (whole CAW tokens) — must match CawActions.sol
     const ACTION_COSTS: Record<string, bigint> = {
       caw: 5000n, like: 2000n, recaw: 4000n, follow: 30000n,
@@ -497,7 +553,7 @@ export function useSignAndSubmitAction() {
       const limit = BigInt(activeSession.spendLimit || '0')
       if (limit > 0n) {
         const spent = BigInt(rawSession?.spent || '0')
-        const tip = getValidatorTip()
+        const tip = effectiveTip
         const protocolCost = ACTION_COSTS[params.actionType] || 0n
         const totalCost = protocolCost + tip
         const remaining = limit - spent
@@ -581,13 +637,34 @@ export function useSignAndSubmitAction() {
         }
       }
 
-      // Record pending spend so subsequent actions see reduced effective stake
+      // Record pending spend so subsequent actions see reduced effective stake.
+      // Use the effective tip we actually signed with (respects per-session ceiling), not the
+      // current market tip — otherwise the pending counter would mis-estimate.
       if (response.txQueueId) {
         const actionCostWei: Record<string, bigint> = {
           caw: 5000n, like: 2000n, recaw: 4000n, follow: 30000n,
           unlike: 0n, unfollow: 0n, other: 0n, withdraw: 0n,
         }
-        const costWholeTokens = (actionCostWei[params.actionType] || 0n) + getValidatorTip()
+        // For withdrawals and "other" actions (tips, image uploads), the real
+        // cost is in the amounts array, not the fixed protocol fee. Withdrawals
+        // carry the withdrawal amount in amounts[0]. Tips carry [tipAmount,
+        // validatorTip] where both are already in whole CAW tokens. Image
+        // uploads carry the CAW cost in amounts[0]. We sum all amounts as
+        // the spend; for tip actions buildTypedData already includes the
+        // validator tip in the amounts, so we DON'T add effectiveTip again
+        // for 'other' actions — it would double-count.
+        let extraAmountsWhole = 0n
+        if ((params.actionType === 'withdraw' || params.actionType === 'other') &&
+            params.amounts && params.amounts.length > 0) {
+          for (const amt of params.amounts) {
+            try { extraAmountsWhole += BigInt(amt as any) } catch {}
+          }
+        }
+        // For 'other' actions, amounts already include the validator tip
+        // (buildTypedData doesn't add tip for 'other'). So skip adding
+        // effectiveTip again to avoid double-counting.
+        const tipForCalc = params.actionType === 'other' ? 0n : effectiveTip
+        const costWholeTokens = (actionCostWei[params.actionType] || 0n) + extraAmountsWhole + tipForCalc
         const costWei = costWholeTokens * 10n**18n
         if (costWei > 0n) {
           usePendingSpendStore.getState().addPendingSpend(response.txQueueId, costWei)

@@ -8,7 +8,8 @@ import { useVerifyWallet } from '~/hooks/useVerifyWallet'
 import { useAuthStore } from '~/store/authStore'
 import { useDmClient } from '~/hooks/useDm'
 import { useDmIdentity } from '~/hooks/useDmIdentity'
-import { useCreateSession, getDefaultSpendLimit, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
+import { useCreateSession, getDefaultSpendLimit, getDefaultTipCeiling, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
+import { getTipTiers } from '~/api/actions'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import { useInsufficientStakeStore } from '~/store/insufficientStakeStore'
@@ -361,6 +362,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   const qsDefaultLimit = getDefaultSpendLimit()
   const [qsSpendLimit, setQsSpendLimit] = useState<bigint>(qsDefaultLimit)
   const [qsDuration, setQsDuration] = useState<number>(DEFAULT_SESSION_DURATION)
+  const [qsTipCeiling, setQsTipCeiling] = useState<bigint>(() => getDefaultTipCeiling(getTipTiers().standard))
   const [qsWalletProtect, setQsWalletProtect] = useState(false)
   const [showQsInfo, setShowQsInfo] = useState(false)
 
@@ -369,7 +371,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
     setQsError(null)
     try {
       setSessionEnabled(true)
-      await createSession((s) => setQsStatus(s), qsSpendLimit, qsDuration, qsWalletProtect)
+      await createSession((s) => setQsStatus(s), qsSpendLimit, qsDuration, qsWalletProtect, qsTipCeiling)
       setHasSeenPrompt(true)
       setQsComplete(true)
       markComplete('quicksign')
@@ -426,7 +428,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
       setQsError(null)
       try {
         setSessionEnabled(true)
-        await createSession((s) => setQsStatus(s), qsSpendLimit, qsDuration, qsWalletProtect)
+        await createSession((s) => setQsStatus(s), qsSpendLimit, qsDuration, qsWalletProtect, qsTipCeiling)
         setHasSeenPrompt(true)
         setQsComplete(true)
         markComplete('quicksign')
@@ -717,8 +719,8 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
         <div className={`flex-1 flex flex-col min-[800px]:flex-row min-[800px]:items-start min-[800px]:justify-center ${currentStep === 3 ? 'hidden' : ''}`}>
 
         {/* Left column — welcome + NFT */}
-        <div className="flex items-center justify-center min-[800px]:sticky min-[800px]:top-16 min-[800px]:border-r min-[800px]:border-white/10">
-        <div className="flex flex-col items-center px-6 py-4 w-full max-w-[400px]" style={{ paddingTop: 15 }}>
+        <div className="flex items-center justify-center min-[800px]:sticky min-[800px]:top-16">
+        <div className="flex flex-col items-center px-6 py-4 w-full max-w-[400px] bg-white/[0.04] border border-white/10 rounded-2xl backdrop-blur-sm mb-5" style={{ paddingTop: 15 }}>
           <h1
             className="text-4xl min-[800px]:text-5xl mb-3"
             style={{
@@ -734,7 +736,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
             </b>
             <br/>
           </p>
-          <div className="text-gray-400 text-center text-sm min-[800px]:text-base max-w-sm">
+          <div className="text-gray-400 text-center text-sm min-[800px]:text-base max-w-sm mb-[10px]">
             <p className="text-lg">
               to the world's first permissionless<br/>social network
             </p>
@@ -766,14 +768,14 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
         </div>
 
         {/* Right column — step content */}
-        <div className="flex items-start justify-center px-6 py-2 min-[800px]:py-8">
+        <div className="flex items-start justify-center px-6">
         <div className="w-full max-w-[400px]">
 
           <div className="space-y-6">
 
           {/* ── Step 1: Stake CAW ── */}
           {currentStep === 0 && (
-            <div className="space-y-6">
+            <div className="space-y-6 max-w-md mx-auto bg-white/[0.04] border border-white/10 rounded-2xl py-6 px-[15px] backdrop-blur-sm">
               <div className="text-center space-y-3">
                 <div className="w-16 h-16 rounded-full bg-yellow-500/20 flex items-center justify-center mx-auto">
                   <HiOutlineCube className="w-8 h-8 text-yellow-500" />
@@ -944,7 +946,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
 
           {/* ── Step 2: Combined Setup (DMs + Quick Sign) ── */}
           {currentStep === 1 && (
-            <div className="space-y-6">
+            <div className="space-y-6 max-w-md mx-auto bg-white/[0.04] border border-white/10 rounded-2xl py-6 px-[15px] backdrop-blur-sm">
               <div className="text-center space-y-3">
                 <div className="w-16 h-16 rounded-full bg-yellow-500/20 flex items-center justify-center mx-auto">
                   <HiLightningBolt className="w-8 h-8 text-yellow-500" />
@@ -1029,6 +1031,8 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                         onSpendLimitChange={setQsSpendLimit}
                         duration={qsDuration}
                         onDurationChange={setQsDuration}
+                        tipCeiling={qsTipCeiling}
+                        onTipCeilingChange={setQsTipCeiling}
                         walletProtect={qsWalletProtect}
                         onWalletProtectChange={setQsWalletProtect}
                       />
@@ -1095,15 +1099,9 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
 
           {/* ── Step 3: Set Up Profile ── */}
           {currentStep === 2 && (
-            <div className="space-y-6">
-              <div className="text-center space-y-3">
-                <div className="w-16 h-16 rounded-full bg-yellow-500/20 flex items-center justify-center mx-auto">
-                  <HiOutlineUser className="w-8 h-8 text-yellow-500" />
-                </div>
+            <div className="space-y-4 max-w-md mx-auto bg-white/[0.04] border border-white/10 rounded-2xl py-6 px-[15px] backdrop-blur-sm">
+              <div className="text-center space-y-2">
                 <h2 className="text-2xl font-bold text-white">Set Up Your Profile</h2>
-                <p className="text-gray-400 text-sm">
-                  Add a picture, bio, and more. Save for free to this provider, or pay CAW to store it on-chain.
-                </p>
               </div>
 
               <ProfileEditForm
@@ -1114,6 +1112,10 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                 onSaved={() => goNext()}
                 onSkip={handleSkip}
                 skipLabel={`Skip — ${step.skipWarning}`}
+                scrollFieldsMaxHeight="max-h-[50vh]"
+                compactFields
+                hideAvatarCaption
+                skipAsLink
               />
             </div>
           )}
@@ -1134,8 +1136,8 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
           const followDisabled = !hasEnoughStake
 
           return (
-          <div className="flex-1 flex flex-col items-center px-6 py-8">
-            <div className="w-full max-w-3xl space-y-6">
+          <div className="flex-1 flex flex-col items-center px-6 pb-8">
+            <div className="w-full max-w-3xl space-y-6 bg-white/[0.04] border border-white/10 rounded-2xl py-6 px-[15px] backdrop-blur-sm">
               <div className="text-center space-y-3">
                 <div className="w-16 h-16 rounded-full bg-yellow-500/20 flex items-center justify-center mx-auto">
                   <HiOutlineUserGroup className="w-8 h-8 text-yellow-500" />
@@ -1175,13 +1177,13 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                 </div>
               ) : suggestedUsers.length > 0 ? (
                 <div className="flex flex-wrap justify-center gap-3">
-                  {suggestedUsers.slice(0, 12).map(user => (
+                  {suggestedUsers.slice(0, 8).map(user => (
                     <div
                       key={user.tokenId}
-                      className="rounded-xl p-4 bg-[#0D0D0D]/85 hover:bg-[#1A1A1A]/85 transition-colors w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)] md:w-[calc(25%-9px)]"
+                      className="rounded-xl p-4 bg-[#0D0D0D]/85 hover:bg-[#1A1A1A]/85 border border-white/10 transition-colors w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)] md:w-[calc(25%-9px)]"
                     >
                       <a href={`/users/${user.username}`} onClick={(e) => { e.preventDefault(); onComplete?.(); window.location.href = `/users/${user.username}` }} className="block text-center cursor-pointer">
-                        <div className="w-14 h-14 rounded-full mx-auto mb-2 overflow-hidden">
+                        <div className="w-14 h-14 rounded-full mx-auto mb-2 overflow-hidden border border-white/20">
                           {(user.avatarUrl || user.image) ? (
                             <img
                               src={user.avatarUrl || user.image || ''}

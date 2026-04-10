@@ -1,6 +1,6 @@
 // src/services/FrontEnd/src/components/CawStakingForm.tsx
 import React, { useEffect, useState, useCallback, useMemo } from "react"
-import { useSignAndSubmitAction } from '~/api/actions'
+import { useSignAndSubmitAction, getValidatorTip } from '~/api/actions'
 import { apiFetch } from '~/api/client'
 import { useSearchParams, useNavigate, useLocation } from "react-router-dom"
 import { CgExternal } from "react-icons/cg"
@@ -17,7 +17,7 @@ import { useConnectModal } from "@rainbow-me/rainbowkit"
 import { useActiveToken, useTokenDataStore, usePriceStore } from "~/store/tokenDataStore"
 import { cawNameAbi, cawNameL2Abi, cawNameQuoterAbi } from "~/../../../abi/generated"
 import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_L2_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from "~/../../../abi/addresses"
-import { maxUint256, parseUnits, formatUnits, erc20Abi } from "viem";
+import { maxUint256, parseUnits, formatUnits, formatEther, erc20Abi } from "viem";
 import MainLayout from '~/layouts/MainLayout'
 import { chains } from '~/config/chains'
 import { useTheme } from '~/hooks/useTheme'
@@ -192,7 +192,12 @@ const Staking = () => {
         setAllWithdrawals(data.withdrawals)
         // Filter to show pending and recently completed (within last 10 seconds)
         const now = Date.now()
-        const filtered = data.withdrawals.filter((w: WithdrawalRequest) => {
+        const filtered = data.withdrawals.filter((w: WithdrawalRequest & { txQueueStatus?: string | null }) => {
+          // Treat a failed underlying TxQueue as an immediately-failed withdrawal,
+          // even if WithdrawalRequest.status lags behind. Prevents "stuck pending"
+          // rows from showing up after the action was rejected (e.g. insufficient
+          // CAW balance when the validator tip pushes the request over the stake).
+          if (w.txQueueStatus === 'failed') return false
           if (w.status === 'pending') return true
           if (w.status === 'completed' && w.completedAt) {
             const completedTime = new Date(w.completedAt).getTime()
@@ -271,6 +276,7 @@ const Staking = () => {
 
   // Dollar-based preset buttons, converted to CAW at current price
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
+  const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
   const DOLLAR_PRESETS = [10, 25, 50, 100]
   const dollarToCaw = (dollars: number) => cawPrice > 0 ? Math.round(dollars / cawPrice) : 0
 
@@ -291,6 +297,7 @@ const Staking = () => {
     if (!activeToken) {
       return {
         stakedAmount: 0,
+        maxWithdrawAmount: 0,
         withdrawable: 0,
         walletBalance: 0,
         actions: 0,
@@ -312,8 +319,14 @@ const Staking = () => {
     const withdrawable = activeToken.withdrawable ? Number(formatUnits(activeToken.withdrawable, 18)) : 0
     const walletBalance = activeToken.ownerBalance ? Number(formatUnits(activeToken.ownerBalance, 18)) : 0
 
+    // The validator tip (whole CAW) is added to the withdraw action amount on-chain,
+    // so the maximum withdrawable in one unstake request is stakedAmount - tip, floored.
+    const validatorTipCaw = Number(getValidatorTip())
+    const maxWithdrawAmount = Math.max(0, Math.floor(stakedAmount - validatorTipCaw))
+
     return {
       stakedAmount,
+      maxWithdrawAmount,
       withdrawable,
       walletBalance,
       actions: activeToken.cawonce || 0, // Using cawonce as action count
@@ -697,6 +710,15 @@ const Staking = () => {
           : "Deposit CAW"}
       </button>
 
+      {stake.gasCostEth != null && (() => {
+        const totalEth = stake.gasCostEth + Number(formatEther(depositFee))
+        return (
+          <div className="text-sm text-gray-500 text-center mt-2">
+            est. gas+fees: {totalEth.toFixed(4)} ETH{ethPrice > 0 && ` (~$${(totalEth * ethPrice).toFixed(2)})`}
+          </div>
+        )
+      })()}
+
       <div className="text-center mt-4">
         <a
           href="https://app.uniswap.org/#/swap?inputCurrency=ETH&outputCurrency=0xf3b9569F82B18aEf890De263B84189bd33EBe452"
@@ -771,6 +793,14 @@ const Staking = () => {
                 ? 'Switch Network'
                 : 'Complete Withdrawal'}
             </button>
+            {withdraw.gasCostEth != null && (() => {
+              const totalEth = withdraw.gasCostEth + Number(formatEther(withdrawFee))
+              return (
+                <div className="text-sm text-gray-500 text-center mt-2">
+                  est. gas+fees: {totalEth.toFixed(4)} ETH{ethPrice > 0 && ` (~$${(totalEth * ethPrice).toFixed(2)})`}
+                </div>
+              )
+            })()}
           </div>
         </div>
       )}
@@ -865,7 +895,7 @@ const Staking = () => {
           />
           <div className="absolute right-4 top-1/2 transform -translate-y-1/2 flex items-center gap-2">
             <button
-              onClick={() => setAmount(mockData.stakedAmount.toString())}
+              onClick={() => setAmount(mockData.maxWithdrawAmount.toString())}
               className={`px-3 py-1 text-xs font-semibold rounded-full transition-all duration-300 cursor-pointer ${
               isDark ? 'bg-yellow-500/20 text-yellow-500 hover:bg-yellow-500/30' : 'bg-yellow-500/20 text-yellow-600 hover:bg-yellow-500/30'
             }`}>
@@ -875,7 +905,7 @@ const Staking = () => {
         </div>
         <div className="flex items-center justify-between px-2">
           <button
-            onClick={() => setAmount(mockData.stakedAmount.toString())}
+            onClick={() => setAmount(mockData.maxWithdrawAmount.toString())}
             className={`text-xs transition-colors duration-300 cursor-pointer hover:underline ${
               isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-black'
             }`}
@@ -891,11 +921,11 @@ const Staking = () => {
         className={`w-full py-3 px-4 rounded-full font-semibold transition-all duration-300 cursor-pointer ${
           !isConnected || isMainnet
             ? 'bg-yellow-500 hover:bg-yellow-600 text-black'
-            : (!isTokenOwner && !isMainnet) || (!amount || parseFloat(amount) <= 0 || parseFloat(amount) > mockData.stakedAmount)
+            : (!isTokenOwner && !isMainnet) || (!amount || parseFloat(amount) <= 0 || parseFloat(amount) > mockData.maxWithdrawAmount)
             ? (isDark ? 'bg-gray-700 text-gray-400' : 'bg-gray-300 text-gray-600')
             : 'bg-yellow-500 hover:bg-yellow-600 text-black'
         }`}
-        disabled={isConnected && !isMainnet && ((!isTokenOwner) || (!amount || parseFloat(amount) <= 0 || parseFloat(amount) > mockData.stakedAmount))}
+        disabled={isConnected && !isMainnet && ((!isTokenOwner) || (!amount || parseFloat(amount) <= 0 || parseFloat(amount) > mockData.maxWithdrawAmount))}
       >
         {isSwitchingNetwork
           ? 'Switching...'
@@ -907,7 +937,7 @@ const Staking = () => {
           ? 'Switch Network'
           : !amount || parseFloat(amount) <= 0
           ? "Enter Amount"
-          : parseFloat(amount || "0") > mockData.stakedAmount
+          : parseFloat(amount || "0") > mockData.maxWithdrawAmount
           ? "Insufficient Staked"
           : "Unstake"}
       </button>

@@ -60,18 +60,21 @@ export const NewProfile: React.FC = () => {
   const useAddress = address || activeToken?.owner;
   const setActiveTokenId = useTokenDataStore(state => state.setActiveTokenId);
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
+  const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
 
   // Dollar presets for staking — converted to CAW amounts
   const DOLLAR_PRESETS = [10, 25, 50, 100]
   const dollarToCaw = (dollars: number) => cawPrice > 0 ? Math.round(dollars / cawPrice) : 0
 
-  // Set default deposit to $25 worth of CAW once price loads
+  // Set default deposit to $25 worth of CAW once price loads — but only if the
+  // user hasn't typed anything yet. Otherwise a late-arriving price (e.g. after
+  // wallet connect triggers a refetch) would clobber their entered amount.
   useEffect(() => {
-    if (!depositDefaultSet && cawPrice > 0) {
+    if (!depositDefaultSet && cawPrice > 0 && !depositAmount) {
       setDepositAmount(String(dollarToCaw(25)))
       setDepositDefaultSet(true)
     }
-  }, [cawPrice, depositDefaultSet])
+  }, [cawPrice, depositDefaultSet, depositAmount])
 
   // Typewriter animation for captive users
   const isCaptive = !activeToken?.username
@@ -271,12 +274,6 @@ console.log("BALANCE:", balance)
     onSuccess:    async (hash) => {
       console.log('minted!', hash)
 
-      // Navigate immediately to the welcome page so the user never sees the home page flash.
-      navigate(`/welcome/${username}`, {
-        replace: true,
-        state: { pendingDeposit: null }
-      })
-
       // Refetch token data from chain, then check for the new token
       await refetchTokenData?.()
 
@@ -315,13 +312,7 @@ console.log("BALANCE:", balance)
     },
     onSuccess:    async (hash) => {
       console.log('minted and deposited!', hash)
-      // Navigate immediately to the welcome page so the user never sees the home page flash.
-      // The WelcomePage will handle ensure() and onboarding state itself.
-      navigate(`/welcome/${username}`, {
-        replace: true,
-        state: { pendingDeposit: depositAmountWei.toString() }
-      })
-      // Continue updating token data in the background
+      // Refetch token data from chain, then check for the new token
       await refetchTokenData?.()
       const checkForNewToken = async () => {
         const allTokens = useTokenDataStore.getState().allTokens()
@@ -657,12 +648,24 @@ console.log("BALANCE:", balance)
                     <input
                       type="text"
                       inputMode="numeric"
-                      value={depositAmount ? Number(depositAmount).toLocaleString() : ''}
-                      onChange={e => setDepositAmount(e.target.value.replace(/[^0-9]/g, ''))}
+                      value={depositAmount ? depositAmount.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''}
+                      onChange={e => { setDepositAmount(e.target.value.replace(/[^0-9]/g, '')); setDepositDefaultSet(true) }}
                       placeholder="Amount to deposit"
                       className="w-full px-4 py-2.5 bg-black border border-white/20 rounded-full text-white placeholder-white/30 focus:outline-none focus:border-white/30 text-sm"
                     />
                     <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm">CAW</span>
+                  </div>
+                  <div className="flex justify-between items-center text-xs text-gray-500 px-1">
+                    <span>
+                      {depositAmountWei > 0n && cawPrice > 0
+                        ? `~$${(convertToNumber(depositAmountWei, 18) * cawPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                        : ''}
+                    </span>
+                    <span>
+                      {balance !== undefined
+                        ? `Available: ${formatNumber(convertToNumber(balance, 18), 0)} CAW`
+                        : ''}
+                    </span>
                   </div>
                   <div className="flex gap-2">
                     {DOLLAR_PRESETS.map(dollars => {
@@ -718,11 +721,14 @@ console.log("BALANCE:", balance)
                 {submitText}
             </SubmitButton>
 
-            {gasCostEth != null && (
-                <div className="text-sm text-gray-500 text-center">
-                    est. gas+fees: {(gasCostEth + Number(formatEther(quote?.nativeFee ?? 0n))).toFixed(4)} ETH
-                </div>
-            )}
+            {gasCostEth != null && (() => {
+                const totalEth = gasCostEth + Number(formatEther(quote?.nativeFee ?? 0n))
+                return (
+                    <div className="text-sm text-gray-500 text-center">
+                        est. gas+fees: {totalEth.toFixed(4)} ETH{ethPrice > 0 && ` (~$${(totalEth * ethPrice).toFixed(2)})`}
+                    </div>
+                )
+            })()}
         </div>
           </div>
         </div>

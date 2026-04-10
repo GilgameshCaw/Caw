@@ -118,7 +118,11 @@ router.get('/top-followed', async (req, res) => {
     const currentUserId = Number(req.header('x-user-id')) || undefined
 
     // Get users ordered by follower count, falling back to caw count
+    // Only include users who have posted at least once
     const users = await prisma.user.findMany({
+      where: {
+        cawCount: { gt: 0 },
+      },
       select: {
         tokenId: true,
         username: true,
@@ -646,6 +650,7 @@ router.get('/:username', async (req, res) => {
         lastStakedAt: true,
         // Counter cache fields
         cawCount: true,
+        recawCount: true,
         followerCount: true,
         followingCount: true,
       }
@@ -769,7 +774,8 @@ router.get('/:username', async (req, res) => {
 
     const response = {
       ...user,
-      cawCount: Math.max(0, user.cawCount - replyCount),
+      cawCount: Math.max(0, user.cawCount - replyCount) + (user.recawCount || 0),
+      recawCount: user.recawCount || 0,
       followerCount: actualFollowerCount,
       followingCount: actualFollowingCount,
       likeCount,

@@ -359,7 +359,7 @@ const ProfileChooser: React.FC = () => {
           <div className={`opacity-40 text-sm transition-all duration-300 ${
             isDark ? 'text-gray-300' : 'text-gray-600'
           }`}>
-            {selectedToken.stakedAmount > 0n ? formatUnitsCompact(selectedToken.stakedAmount,18) : "No"} CAW
+            {selectedToken.stakedAmount > 0n ? formatUnitsCompact((selectedToken.stakedAmount / 10n**18n) * 10n**18n, 18) : "No"} CAW
           </div>
           {(() => {
             // Live in-flight CAW meter. Shows the net delta between funds the
@@ -450,7 +450,7 @@ const ProfileChooser: React.FC = () => {
                       <div>
                         <div className="font-bold">{token.username}</div>
                         <div className="text-xs text-gray-400">
-                          {token.stakedAmount > 0n ? convertToText(token.stakedAmount) : "No"} CAW staked
+                          {token.stakedAmount > 0n ? convertToText((token.stakedAmount / 10n**18n) * 10n**18n) : "No"} CAW staked
                         </div>
                       </div>
                     </button>
