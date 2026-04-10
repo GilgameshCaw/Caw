@@ -31,6 +31,7 @@ model User {
   createdAt             DateTime       @default(now())
   updatedAt             DateTime       @updatedAt
   cawCount              Int            @default(0)
+  recawCount            Int            @default(0)  // recaws + quotes by this user
   followerCount         Int            @default(0)
   followingCount        Int            @default(0)
   image                 String?
@@ -66,6 +67,7 @@ model User {
   bookmarks             Bookmark[]
 
   @@index([address])
+  @@index([cawCount, followerCount])
 }
 
 model Caw {
@@ -253,21 +255,25 @@ model ScheduledCaw {
 }
 
 model Notification {
-  id        Int              @id @default(autoincrement())
-  userId    Int
-  actorId   Int
-  type      NotificationType
-  cawId     Int?
-  offerId   Int?             // Links to MarketplaceOffer for OFFER notifications
-  groupKey  String?
-  isRead    Boolean          @default(false)
-  hidden    Boolean          @default(false)
-  createdAt DateTime         @default(now())
-  updatedAt DateTime         @updatedAt
-  actor     User             @relation("NotificationActor", fields: [actorId], references: [tokenId], onDelete: Cascade)
-  caw       Caw?             @relation(fields: [cawId], references: [id], onDelete: Cascade)
-  offer     MarketplaceOffer? @relation(fields: [offerId], references: [id], onDelete: Cascade)
-  user      User             @relation("NotificationRecipient", fields: [userId], references: [tokenId], onDelete: Cascade)
+  id            Int              @id @default(autoincrement())
+  userId        Int
+  actorId       Int
+  type          NotificationType
+  cawId         Int?
+  offerId       Int?             // Links to MarketplaceOffer for OFFER notifications
+  groupKey      String?
+  isRead        Boolean          @default(false)
+  hidden        Boolean          @default(false)
+  // For ACTION_FAILED: the original failed action payload, sufficient to
+  // reconstruct and retry the action. For other notification types, null.
+  // Shape: { actionType, receiverId?, receiverCawonce?, text?, recipients?, amounts?, originalTxQueueId, reason }
+  actionPayload Json?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+  actor         User             @relation("NotificationActor", fields: [actorId], references: [tokenId], onDelete: Cascade)
+  caw           Caw?             @relation(fields: [cawId], references: [id], onDelete: Cascade)
+  offer         MarketplaceOffer? @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  user          User             @relation("NotificationRecipient", fields: [userId], references: [tokenId], onDelete: Cascade)
 
   @@index([userId, isRead, createdAt])
   @@index([userId, hidden, createdAt])
@@ -468,6 +474,9 @@ enum NotificationType {
   MENTION
   TIP
   OFFER
+  OUTBID
+  AUCTION_WON
+  ACTION_FAILED
 }
 
 enum MessageStatus {
@@ -539,6 +548,8 @@ enum ReportReason {
   SPAM
   HARASSMENT
   INAPPROPRIATE
+  EXPLICIT
+  ILLEGAL_HARMFUL
   MISINFORMATION
   OTHER
 }

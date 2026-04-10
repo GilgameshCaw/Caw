@@ -6,8 +6,8 @@ import { usePendingSpendStore } from '~/store/pendingSpendStore'
 import { apiFetch } from '~/api/client'
 import { useQuickSignRenewStore } from '~/components/modals/QuickSignRenewModal'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
-import { useActionErrorStore } from '~/store/actionErrorStore'
 import { privateKeyToAccount } from 'viem/accounts'
+import { useAutoRetryStore } from '~/store/autoRetryStore'
 import { TYPES, DOMAIN } from '~/api/actions'
 
 // Track retry counts per TxQueue ID to prevent infinite loops
@@ -98,13 +98,22 @@ export function useTxQueueMonitor() {
               if (retryCount >= MAX_CAWONCE_RETRIES) {
                 console.warn(`[TxQueueMonitor] Cawonce retry limit reached for TxQueue ${status.id}`)
                 cawonceRetries.delete(status.id)
-                useActionErrorStore.getState().show('Action Failed', 'Something went wrong. Please try again.')
+                // Failure is recorded server-side as an ACTION_FAILED
+                // notification — no modal needed here.
               } else {
                 cawonceRetries.set(status.id, retryCount + 1)
                 console.log(`[TxQueueMonitor] Cawonce collision for TxQueue ${status.id}, auto-retrying (attempt ${retryCount + 1})`)
 
+                // Flip the "retrying" flag BEFORE kicking off the async work so
+                // the Notifications UI can swap its Retry button for a
+                // "Retrying…" state immediately. The flag keyed by the original
+                // TxQueue ID matches the ACTION_FAILED notification's
+                // actionPayload.originalTxQueueId.
+                useAutoRetryStore.getState().startRetry(status.id)
+
                 // Async retry — fetch fresh cawonce, re-sign with session key, resubmit
                 ;(async () => {
+                  let retrySucceeded = false
                   try {
                     const senderId = status.senderId
                     const originalData = status.payload?.data
@@ -156,39 +165,42 @@ export function useTxQueueMonitor() {
 
                     console.log(`[TxQueueMonitor] Auto-retried TxQueue ${status.id} with cawonce ${freshCawonce}`)
                     cawonceRetries.delete(status.id)
+                    retrySucceeded = true
+
+                    // Hide the ACTION_FAILED notification the server created
+                    // for this original TxQueue row — from the user's
+                    // perspective the action didn't really fail. Best-effort:
+                    // any error here is non-fatal (worst case the user sees
+                    // a stale notification with a working manual Retry).
+                    try {
+                      await apiFetch('/api/notifications/hide-by-original-tx', {
+                        method: 'POST',
+                        body: JSON.stringify({ userId: senderId, txQueueId: status.id }),
+                      })
+                    } catch (hideErr) {
+                      console.warn(`[TxQueueMonitor] Failed to hide notification for retried tx ${status.id}:`, hideErr)
+                    }
                   } catch (err) {
                     console.warn(`[TxQueueMonitor] Auto-retry failed for TxQueue ${status.id}:`, err)
+                  } finally {
+                    // Always clear the flag — on success the notification is
+                    // already hidden server-side; on failure the original
+                    // notification stays visible and the manual Retry button
+                    // returns. `retrySucceeded` is informational only.
+                    useAutoRetryStore.getState().endRetry(status.id)
+                    void retrySucceeded
                   }
                 })()
               }
-            } else if (reason) {
-              // Extract the failing action's type from the payload so the user
-              // sees what specifically failed (e.g. "follow", "like", "post")
-              // instead of a generic "this action". actionType in the payload
-              // is either a string ('follow', 'like', ...) or a numeric code.
-              const payloadActionType = status.payload?.data?.actionType
-              const actionTypeMap: Record<number | string, string> = {
-                0: 'post', 1: 'like', 2: 'unlike', 3: 'repost',
-                4: 'follow', 5: 'unfollow', 6: 'withdraw', 7: 'action',
-                caw: 'post', like: 'like', unlike: 'unlike', recaw: 'repost',
-                follow: 'follow', unfollow: 'unfollow', withdraw: 'withdraw',
-                other: 'action',
-              }
-              const actionLabel = actionTypeMap[payloadActionType] || 'action'
-
-              // Map technical errors to user-friendly messages
-              let userMessage = `Something went wrong while processing your ${actionLabel}. Please try again.`
-              if (reason.includes('insufficient')) {
-                userMessage = `You don't have enough deposited CAW for this ${actionLabel}.`
-              } else if (reason.includes('not authenticated')) {
-                userMessage = 'Your account needs to be authenticated with this client. Please try reconnecting.'
-              } else if (reason.includes('cannot follow yourself')) {
-                userMessage = 'You can\'t follow your own account.'
-              } else if (reason.includes('text exceeds')) {
-                userMessage = 'Your post is too long. Please shorten it and try again.'
-              }
-              useActionErrorStore.getState().show(`${actionLabel.charAt(0).toUpperCase() + actionLabel.slice(1)} failed`, userMessage)
             }
+            // Previously a generic "Action Failed" modal was shown here for
+            // terminal failures. That's been replaced by ACTION_FAILED
+            // notifications created server-side by the validator — they're
+            // durable (survive reloads), retryable (Session B), and don't
+            // interrupt the user mid-action. The modal path is intentionally
+            // removed; falling through to this point means the failure is
+            // already recorded as a notification that the user will see
+            // the next time they open the notifications panel.
           } else if (status.status === 'done') {
             console.log(`[TxQueueMonitor] TxQueue ID ${status.id} succeeded`)
             const wasPendingPost = pendingPosts.some(p => p.txQueueId === status.id)

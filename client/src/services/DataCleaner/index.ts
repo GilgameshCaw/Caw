@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client'
 import { JsonRpcProvider, WebSocketProvider, Contract } from 'ethers'
 import { dataCleanerLogger as logger } from '../../utils/dataCleanerLogger'
+import { markTxQueueFailed } from '../../utils/txQueueFailure'
 import { cawNameL2Abi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 
@@ -759,7 +760,7 @@ async function cleanupPendingMintDeposits() {
   try {
     const waitingRows = await prisma.txQueue.findMany({
       where: { status: 'waiting_for_deposit' },
-      select: { id: true, senderId: true, createdAt: true, pendingDepositTxHash: true }
+      select: { id: true, senderId: true, createdAt: true, pendingDepositTxHash: true, payload: true }
     })
 
     // Second responsibility: clear User.pendingDepositAmount display hints for
@@ -858,16 +859,21 @@ async function cleanupPendingMintDeposits() {
         }
 
         // Not fully ready — check if any rows for this sender have timed
-        // out (>20 min old) and fail just those. Keep newer rows waiting.
+        // out (>20 min old) and fail just those via the shared choke point
+        // so a notification is created alongside the DB update. Keep newer
+        // rows waiting.
         const staleRows = rows.filter(r => r.createdAt < twentyMinutesAgo)
         if (staleRows.length > 0) {
-          await prisma.txQueue.updateMany({
-            where: { id: { in: staleRows.map(r => r.id) } },
-            data: {
-              status: 'failed',
-              reason: 'Deposit did not arrive from L1 in time. Please try again.'
-            }
-          })
+          for (const row of staleRows) {
+            const actionData = (row.payload as any)?.data ?? {}
+            await markTxQueueFailed(
+              prisma,
+              row.id,
+              'Deposit did not arrive from L1 in time. Please try again.',
+              row.senderId,
+              actionData
+            )
+          }
           logger.log(`[PendingMintDeposit] Sender ${senderId}: timed out ${staleRows.length} rows (>20 min)`)
         }
       } catch (err: any) {

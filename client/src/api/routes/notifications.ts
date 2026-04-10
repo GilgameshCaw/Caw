@@ -66,9 +66,66 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
             content: true,
             createdAt: true
           }
+        },
+        offer: {
+          select: {
+            id: true,
+            offerId: true,
+            tokenId: true,
+            offerer: true,
+            amount: true,
+            paymentToken: true,
+            username: true,
+            expiry: true,
+            status: true
+          }
         }
       }
     })
+
+    // For ACTION_FAILED notifications, batch-fetch context the client needs
+    // to render a human-readable description:
+    //   - receiver usernames → "Following @alice failed"
+    //   - target caws (for like / recaw / reply) → a snippet + author
+    // Two queries total for the whole page regardless of how many failures.
+    const receiverIds = new Set<number>()
+    const targetCawKeys = new Set<string>()  // key = `${userId}:${cawonce}`
+    for (const n of notifications) {
+      if ((n as any).type === 'ACTION_FAILED') {
+        const p = (n as any).actionPayload
+        if (p?.receiverId != null) receiverIds.add(p.receiverId)
+        if (p?.receiverId != null && p?.receiverCawonce != null) {
+          targetCawKeys.add(`${p.receiverId}:${p.receiverCawonce}`)
+        }
+      }
+    }
+    const receiverUsernames = new Map<number, string>()
+    if (receiverIds.size > 0) {
+      const users = await prisma.user.findMany({
+        where: { tokenId: { in: Array.from(receiverIds) } },
+        select: { tokenId: true, username: true }
+      })
+      for (const u of users) receiverUsernames.set(u.tokenId, u.username)
+    }
+    const targetCaws = new Map<string, { content: string; username: string }>()
+    if (targetCawKeys.size > 0) {
+      // Build an OR query across (userId, cawonce) pairs. Prisma doesn't
+      // support compound IN, so we use an OR list — typically 1-10 items.
+      const orConditions = Array.from(targetCawKeys).map(key => {
+        const [userIdStr, cawonceStr] = key.split(':')
+        return { userId: Number(userIdStr), cawonce: Number(cawonceStr) }
+      })
+      const caws = await prisma.caw.findMany({
+        where: { OR: orConditions },
+        select: { userId: true, cawonce: true, content: true, user: { select: { username: true } } }
+      })
+      for (const c of caws) {
+        targetCaws.set(`${c.userId}:${c.cawonce}`, {
+          content: c.content,
+          username: c.user.username,
+        })
+      }
+    }
 
     // Group similar notifications (likes and reposts on same caw)
     const groupedNotifications: any[] = []
@@ -109,12 +166,36 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
           })
         }
       } else {
-        // Don't group - add as individual notification
+        // Don't group - add as individual notification.
+        // For ACTION_FAILED notifications, enrich the payload with the target
+        // user's username and (for like / recaw / quote / reply) the target
+        // caw's content + author. Lets the frontend render "Following @alice
+        // failed" or "Like on @bob's caw 'text...' failed" without a lookup.
+        let actionPayload: any = (notification as any).actionPayload ?? null
+        if ((notification as any).type === 'ACTION_FAILED' && actionPayload) {
+          const enriched = { ...actionPayload }
+          if (actionPayload.receiverId != null) {
+            const uname = receiverUsernames.get(actionPayload.receiverId)
+            if (uname) enriched.receiverUsername = uname
+          }
+          if (actionPayload.receiverId != null && actionPayload.receiverCawonce != null) {
+            const target = targetCaws.get(`${actionPayload.receiverId}:${actionPayload.receiverCawonce}`)
+            if (target) {
+              enriched.targetCaw = {
+                content: target.content.slice(0, 140),
+                authorUsername: target.username,
+              }
+            }
+          }
+          actionPayload = enriched
+        }
         groupedNotifications.push({
           id: notification.id,
           type: notification.type,
           actor: notification.actor,
           caw: notification.caw,
+          offer: (notification as any).offer || null,
+          actionPayload,
           isRead: notification.isRead,
           createdAt: notification.createdAt,
           notificationIds: [notification.id]
@@ -244,6 +325,66 @@ router.patch('/:id/hide', requireAuth({ field: 'userId' }), async (req, res) => 
   } catch (error) {
     console.error('PATCH /api/notifications/:id/hide error:', error)
     return res.status(500).json({ error: 'Failed to hide notification' })
+  }
+})
+
+/**
+ * POST /api/notifications/hide-by-original-tx
+ *
+ * Hide any ACTION_FAILED notifications whose actionPayload.originalTxQueueId
+ * matches the provided txQueueId, scoped to the authenticated user.
+ *
+ * Called by the frontend's useTxQueueMonitor auto-retry path after a
+ * successful cawonce-collision retry: the original notification becomes
+ * obsolete because the action effectively succeeded, and we don't want the
+ * user to see a "failed" notification for something that worked.
+ *
+ * Safe even if no matching notification exists — returns count: 0.
+ */
+router.post('/hide-by-original-tx', requireAuth({ field: 'userId' }), async (req, res) => {
+  try {
+    const { userId, txQueueId } = req.body
+
+    if (!userId || txQueueId == null) {
+      return res.status(400).json({ error: 'userId and txQueueId are required' })
+    }
+
+    const userTokenId = Number(userId)
+    const targetTxQueueId = Number(txQueueId)
+    if (!Number.isFinite(userTokenId) || !Number.isFinite(targetTxQueueId)) {
+      return res.status(400).json({ error: 'Invalid userId or txQueueId' })
+    }
+
+    // Prisma's JSON filtering varies by provider — for Postgres we can use
+    // `path` filtering. Find matches first so we can return a count, then
+    // update them in bulk.
+    const matches = await prisma.notification.findMany({
+      where: {
+        userId: userTokenId,
+        type: 'ACTION_FAILED',
+        hidden: false,
+        actionPayload: {
+          path: ['originalTxQueueId'],
+          equals: targetTxQueueId,
+        } as any,
+      },
+      select: { id: true },
+    })
+
+    if (matches.length === 0) {
+      return res.json({ success: true, count: 0 })
+    }
+
+    await prisma.notification.updateMany({
+      where: { id: { in: matches.map(m => m.id) } },
+      data: { hidden: true },
+    })
+
+    return res.json({ success: true, count: matches.length, ids: matches.map(m => m.id) })
+
+  } catch (error: any) {
+    console.error('POST /api/notifications/hide-by-original-tx error:', error)
+    return res.status(500).json({ error: 'Failed to hide notifications' })
   }
 })
 

@@ -9,6 +9,19 @@ import { cawActionsAbi } from '../../abi/generated'
 import { CAW_ACTIONS_ADDRESS, CAW_ADDRESS, WETH_ADDRESS } from '../../abi/addresses'
 import { WebSocketProvider, JsonRpcProvider, Contract, Wallet } from 'ethers'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
+import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
+
+// Thin wrapper so this service's existing callers don't need to pass prisma
+// on every invocation. Shared helper lives in utils/txQueueFailure so it can
+// be reused from DataCleaner (which uses its own PrismaClient instance).
+async function markTxQueueFailed(
+  txQueueId: number,
+  reason: string,
+  senderId: number,
+  actionData: any
+): Promise<void> {
+  return sharedMarkTxQueueFailed(prisma as any, txQueueId, reason, senderId, actionData)
+}
 
 /** Build { CAW: 3, LIKE: 2, ... } breakdown from submitted actions (which have actionType) */
 function buildActionBreakdown(actions: any[]): Record<string, number> {
@@ -20,6 +33,7 @@ function buildActionBreakdown(actions: any[]): Record<string, number> {
   }
   return breakdown
 }
+
 
 // Uniswap V2 Router ABI (minimal for getAmountsOut) - fallback if cache is stale
 const UNISWAP_V2_ROUTER_ABI = [
@@ -69,10 +83,17 @@ const DEFAULT_VALIDATOR_TIP = BigInt(process.env.VALIDATOR_BASE_TIP || "1000") /
 /** Live settings loaded from DB, refreshed each poll cycle */
 const liveSettings = {
   validatorBaseTip: DEFAULT_VALIDATOR_TIP,
+  /** Tip at or above which an action gets priority processing (next poll cycle, no batch wait).
+   *  Actions between baseTip and priorityTip are processed on the normal batch cadence. */
+  priorityTip: DEFAULT_VALIDATOR_TIP * 3n,
   checkInterval: 10_000,
   minActionsPerBatch: 1,
-  maxWaitTime: 60_000,
+  maxWaitTime: 10_000,    // 10s default — users shouldn't wait long for standard-tip posts
   replicationInterval: 60_000,
+  /** If true, this validator processes actions with a zero tip (public-goods mode).
+   *  If false (default), zero-tip actions are rejected and must be processed by a validator
+   *  that opts in. Allows users to set "No tip" in Quick Sign for free-but-slow processing. */
+  acceptZeroTip: false,
 }
 
 /** Load settings from ValidatorSetting table, falling back to defaults */
@@ -81,10 +102,12 @@ async function refreshSettings(configCheckInterval?: number) {
     const rows = await prisma.validatorSetting.findMany()
     const map = new Map(rows.map(r => [r.key, r.value]))
     if (map.has('validatorBaseTip'))    liveSettings.validatorBaseTip = BigInt(map.get('validatorBaseTip')!)
+    if (map.has('priorityTip'))        liveSettings.priorityTip = BigInt(map.get('priorityTip')!) || DEFAULT_VALIDATOR_TIP * 3n
     if (map.has('checkInterval'))       liveSettings.checkInterval = Number(map.get('checkInterval')!) || configCheckInterval || 10_000
     if (map.has('minActionsPerBatch'))  liveSettings.minActionsPerBatch = Number(map.get('minActionsPerBatch')!) || 1
-    if (map.has('maxWaitTime'))         liveSettings.maxWaitTime = Number(map.get('maxWaitTime')!) || 60_000
+    if (map.has('maxWaitTime'))         liveSettings.maxWaitTime = Number(map.get('maxWaitTime')!) || 10_000
     if (map.has('replicationInterval')) liveSettings.replicationInterval = Number(map.get('replicationInterval')!) || 60_000
+    if (map.has('acceptZeroTip'))       liveSettings.acceptZeroTip = map.get('acceptZeroTip') === 'true'
   } catch (e: any) {
     console.error('[Validator] Failed to refresh settings from DB:', e.message)
   }
@@ -96,6 +119,17 @@ async function refreshSettings(configCheckInterval?: number) {
  */
 function calculateMinimumTip(): bigint {
   return liveSettings.validatorBaseTip
+}
+
+/**
+ * Check if an action's tip qualifies for priority processing (skip batch wait).
+ * @param action The action data (tip is last element of amounts array)
+ */
+function isPriorityAction(action: any): boolean {
+  const amounts = action.amounts || []
+  if (amounts.length === 0) return false
+  const tip = BigInt(amounts[amounts.length - 1] || '0')
+  return tip >= liveSettings.priorityTip
 }
 
 /**
@@ -112,6 +146,10 @@ async function validateActionTip(
   // Get the tip from the action's amounts array (last element is the tip)
   const amounts = action.amounts || []
   if (amounts.length === 0) {
+    // No amounts at all — only acceptable if this validator opts into zero-tip processing.
+    if (liveSettings.acceptZeroTip) {
+      return { valid: true }
+    }
     return {
       valid: false,
       reason: `No tip provided. Required: ${requiredTip.toString()} CAW`,
@@ -121,6 +159,13 @@ async function validateActionTip(
   }
 
   const providedTip = BigInt(amounts[amounts.length - 1] || '0')
+
+  // Zero-tip path: opt-in only (public-goods validators).
+  // Users who picked "No tip" in Quick Sign sign actions with tip=0; only validators that
+  // opted into acceptZeroTip will process them.
+  if (providedTip === 0n && liveSettings.acceptZeroTip) {
+    return { valid: true }
+  }
 
   if (providedTip < requiredTip) {
     console.log(`[Validator] Insufficient tip for action:`)
@@ -384,18 +429,24 @@ export const validatorService: Service = {
       //     waiting row older than 25 minutes as a last-resort safety net in case
       //     the watcher is down.
       const twentyFiveMinutesAgo = new Date(Date.now() - 25 * 60 * 1000)
-      const staleWaiting = await prisma.txQueue.updateMany({
+      const staleWaitingRows = await prisma.txQueue.findMany({
         where: {
           status: 'waiting_for_deposit',
           createdAt: { lt: twentyFiveMinutesAgo }
         },
-        data: {
-          status: 'failed',
-          reason: 'Deposit did not arrive in time. Please try again.'
-        }
+        select: { id: true, senderId: true, payload: true }
       })
-      if (staleWaiting.count > 0) {
-        console.log(`[Validator] Safety net: failed ${staleWaiting.count} waiting_for_deposit rows older than 25 min`)
+      if (staleWaitingRows.length > 0) {
+        console.log(`[Validator] Safety net: failing ${staleWaitingRows.length} waiting_for_deposit rows older than 25 min`)
+        for (const row of staleWaitingRows) {
+          const data = (row.payload as any)?.data ?? {}
+          await markTxQueueFailed(
+            row.id,
+            'Deposit did not arrive in time. Please try again.',
+            row.senderId,
+            data
+          )
+        }
       }
 
       // Pre-simulation hold: any pending row carrying a pendingDepositTxHash gets
@@ -938,7 +989,7 @@ console.log("succeededKeys", succeededKeys)
 
         // Get the rejection reason for this specific entry
         let reason = newStatus === 'failed' && simulationRejections[index]
-          ? (cawonceUsed && !processedByOther ? 'Cawonce already used by a different action — please retry' : simulationRejections[index])
+          ? (cawonceUsed && !processedByOther ? 'Cawonce already used' : simulationRejections[index])
           : undefined
 
         // Check if the failure is due to insufficient balance with a pending deposit
@@ -950,36 +1001,21 @@ console.log("succeededKeys", succeededKeys)
 
         console.log("new status", newStatus, reason ? `with reason: ${reason}` : '')
 
-        // Update TxQueue status
-        await prisma.txQueue.update({
-          where: { id: entry.id },
-          data:  {
-            status: newStatus,
-            ...(reason ? { reason } : {})
-          }
-        })
+        if (newStatus === 'failed' && reason) {
+          await markTxQueueFailed(entry.id, reason, data.senderId, data)
+        } else {
+          // 'done' path (or non-terminal states like waiting_for_deposit).
+          // No notification needed — the helper is only for terminal failures.
+          await prisma.txQueue.update({
+            where: { id: entry.id },
+            data: { status: newStatus, ...(reason ? { reason } : {}) }
+          })
+        }
 
-        // If the TxQueue entry failed and it's a CAW or RECAW action, mark the Caw as failed
-        if (newStatus === 'failed' && (data.actionType === 0 || data.actionType === 'caw' || data.actionType === 3 || data.actionType === 'recaw')) {
-          try {
-            await prisma.caw.update({
-              where: {
-                userId_cawonce: {
-                  userId: data.senderId,
-                  cawonce: data.cawonce
-                }
-              },
-              data: {
-                status: 'FAILED',
-                reason: reason || 'Transaction failed'
-              }
-            })
-            console.log(`Marked caw as FAILED for user ${data.senderId} cawonce ${data.cawonce}: ${reason}`)
-          } catch (cawUpdateErr) {
-            console.error('Failed to update caw status to FAILED:', cawUpdateErr)
-            // Continue even if caw update fails (might not exist)
-          }
-        } else if (newStatus === 'done' && (data.actionType === 0 || data.actionType === 'caw' || data.actionType === 3 || data.actionType === 'recaw')) {
+        // Failure cleanup (Caw FAILED, Follow FAILED, Like delete, etc) now
+        // lives in markTxQueueFailed -> cleanupOptimisticRows. We only need
+        // to handle the success-side transition below.
+        if (newStatus === 'done' && (data.actionType === 0 || data.actionType === 'caw' || data.actionType === 3 || data.actionType === 'recaw')) {
           // If succeeded, mark as SUCCESS
           // Note: Hashtags are processed by ActionProcessor when it receives the on-chain event
           try {
@@ -1117,15 +1153,27 @@ console.log("succeededKeys", succeededKeys)
         const entries = await fetchPendingQueue()
         if (!entries.length) return
 
+        // Priority lane: if any queued action has a tip >= priorityTip, skip the batch wait
+        // and process immediately. This rewards users who tip generously with faster inclusion.
+        const hasPriority = entries.some(e => {
+          const action = (e.payload as any)?.data
+          return action && isPriorityAction(action)
+        })
+
         // Batch accumulation: wait for more actions unless the oldest has been waiting too long
+        // OR a priority action is in the queue
         const { minActionsPerBatch, maxWaitTime } = liveSettings
-        if (entries.length < minActionsPerBatch) {
+        if (!hasPriority && entries.length < minActionsPerBatch) {
           const oldestAge = Date.now() - new Date(entries[0].createdAt).getTime()
           if (oldestAge < maxWaitTime) {
             console.log(`[Validator] Waiting for more actions: ${entries.length}/${minActionsPerBatch} (oldest: ${Math.round(oldestAge / 1000)}s / ${Math.round(maxWaitTime / 1000)}s max)`)
             return
           }
           console.log(`[Validator] Max wait time reached (${Math.round(oldestAge / 1000)}s), submitting ${entries.length} action(s)`)
+        }
+
+        if (hasPriority) {
+          console.log(`[Validator] Priority action detected — skipping batch wait, processing immediately`)
         }
 
         console.log(`\n========== [Validator] NEW POLL CYCLE ==========`)
@@ -1240,19 +1288,26 @@ console.log("succeededKeys", succeededKeys)
                     }
                   }
                   let failStatus = 'failed'
-                  let failReason: string | null = processedByOther ? null : (cawonceUsed && !processedByOther ? 'Cawonce already used by a different action — please retry' : (rejection || 'Simulation failed'))
+                  let failReason: string | null = processedByOther ? null : (cawonceUsed && !processedByOther ? 'Cawonce already used' : (rejection || 'Simulation failed'))
                   if (!processedByOther && failReason) {
                     const depositCheck = await checkDepositWaiting(data.senderId, failReason)
                     failStatus = depositCheck.status
                     failReason = depositCheck.reason
                   }
-                  return prisma.txQueue.update({
-                    where: { id: entry.id },
-                    data: {
-                      status: processedByOther ? 'done' : failStatus,
-                      reason: processedByOther ? null : failReason
-                    }
-                  })
+                  if (processedByOther) {
+                    await prisma.txQueue.update({
+                      where: { id: entry.id },
+                      data: { status: 'done', reason: null }
+                    })
+                  } else if (failStatus === 'failed' && failReason) {
+                    await markTxQueueFailed(entry.id, failReason, data.senderId, data)
+                  } else {
+                    // waiting_for_deposit path
+                    await prisma.txQueue.update({
+                      where: { id: entry.id },
+                      data: { status: failStatus, reason: failReason }
+                    })
+                  }
                 }))
                 continue
               }
@@ -1305,21 +1360,21 @@ console.log("succeededKeys", succeededKeys)
                 const data = (entry.payload as any).data
                 const key = `${data.senderId}-${data.cawonce}`
                 const succeeded = finalizedKeys.has(key)
-                await prisma.txQueue.update({
-                  where: { id: entry.id },
-                  data: {
-                    status: succeeded ? 'done' : 'failed',
-                    reason: succeeded ? null : (simResult.rejectionMessages?.[idx] || 'Transaction failed')
-                  }
-                })
+                if (succeeded) {
+                  await prisma.txQueue.update({
+                    where: { id: entry.id },
+                    data: { status: 'done', reason: null }
+                  })
+                } else {
+                  const failReason = simResult.rejectionMessages?.[idx] || 'Transaction failed'
+                  await markTxQueueFailed(entry.id, failReason, data.senderId, data)
+                }
               }))
             } catch (err: any) {
               console.error(`[Validator] Client ${clientId} batch failed:`, err.message)
-              await Promise.all(subBatchEntries.map(entry => {
-                return prisma.txQueue.update({
-                  where: { id: entry.id },
-                  data: { status: 'failed', reason: err.message }
-                })
+              await Promise.all(subBatchEntries.map(async (entry) => {
+                const data = (entry.payload as any).data
+                await markTxQueueFailed(entry.id, err.message, data.senderId, data)
               }))
             }
           }
@@ -1347,15 +1402,10 @@ console.log("succeededKeys", succeededKeys)
       // Check if simulateActions returned undefined (error case)
       if (!simulationResult) {
         console.error("[Validator] Simulation returned undefined, marking all as failed")
-        // Mark ALL entries as failed, not just pass empty arrays
-        await Promise.all(validatedEntries.map(entry => {
-          return prisma.txQueue.update({
-            where: { id: entry.id },
-            data: {
-              status: 'failed',
-              reason: 'Simulation failed - internal error'
-            }
-          })
+        const reason = 'Simulation failed - internal error'
+        await Promise.all(validatedEntries.map(async (entry) => {
+          const data = (entry.payload as any).data
+          await markTxQueueFailed(entry.id, reason, data.senderId, data)
         }))
         return
       }
@@ -1405,17 +1455,21 @@ console.log("succeededKeys", succeededKeys)
                 console.log(`[Validator] TxQueue ${entry.id}: Cawonce ${data.cawonce} used by DIFFERENT action — marking failed`)
                 console.log(`  existing: type=${ex?.actionType} receiver=${ex?.receiverId} text="${(ex?.text ?? '').slice(0, 40)}"`)
                 console.log(`  new:      type=${data.actionType} receiver=${data.receiverId} text="${(data.text ?? '').slice(0, 40)}"`)
-                await prisma.txQueue.update({
-                  where: { id: entry.id },
-                  data: { status: 'failed', reason: 'Cawonce already used by a different action — please retry' }
-                })
+                await markTxQueueFailed(
+                  entry.id,
+                  'Cawonce already used',
+                  data.senderId,
+                  data
+                )
               }
             } else {
               console.log(`[Validator] TxQueue ${entry.id}: No Action found for senderId=${data.senderId} cawonce=${data.cawonce} — cawonce conflict, marking failed`)
-              await prisma.txQueue.update({
-                where: { id: entry.id },
-                data: { status: 'failed', reason: 'Cawonce conflict — a different action used this cawonce. Please retry.' }
-              })
+              await markTxQueueFailed(
+                entry.id,
+                'Cawonce conflict — a different action used this cawonce. Please retry.',
+                data.senderId,
+                data
+              )
             }
           }))
           return
@@ -1449,61 +1503,12 @@ console.log("succeededKeys", succeededKeys)
             const data = (entry.payload as any).data
 
             // Mark Caw as FAILED if this is a caw or recaw action
-            if (data.actionType === 0 || data.actionType === 'caw' || data.actionType === 3 || data.actionType === 'recaw') {
-              try {
-                console.log(`[Validator] Marking Caw as FAILED for user ${data.senderId} cawonce ${data.cawonce}: ${rejectionMessages[index] || 'Simulation rejected'}`)
-                await prisma.caw.updateMany({
-                  where: {
-                    userId: data.senderId,
-                    cawonce: data.cawonce,
-                    status: 'PENDING'
-                  },
-                  data: {
-                    status: 'FAILED',
-                    reason: rejectionMessages[index] || 'Simulation rejected'
-                  }
-                })
-              } catch (cawErr) {
-                console.error('[Validator] Failed to mark caw as FAILED:', cawErr)
-              }
-            }
+            // Caw / Follow / Like / Tip row cleanup is now handled inside
+            // markTxQueueFailed -> cleanupOptimisticRows. No per-site cleanup
+            // needed here.
 
-            // Mark Follow as FAILED if this is a follow action
-            if (data.actionType === 4 || data.actionType === 'follow' || data.actionType === 5 || data.actionType === 'unfollow') {
-              try {
-                console.log(`[Validator] Marking Follow as FAILED:`)
-                console.log(`  - Follower ID: ${data.senderId}`)
-                console.log(`  - Following ID: ${data.receiverId}`)
-                console.log(`  - Reason: ${rejectionMessages[index] || 'Simulation rejected - unknown reason'}`)
-
-                const result = await prisma.follow.updateMany({
-                  where: {
-                    followerId: data.senderId,
-                    followingId: data.receiverId,
-                    status: 'PENDING'
-                  },
-                  data: {
-                    status: 'FAILED'
-                  }
-                })
-
-                console.log(`  - Updated ${result.count} Follow record(s)`)
-
-                if (result.count === 0) {
-                  console.log(`[Validator] WARNING: No PENDING follow record found to mark as FAILED for ${data.senderId} -> ${data.receiverId}`)
-                }
-              } catch (followErr) {
-                console.error('[Validator] Failed to mark follow as FAILED:', followErr)
-              }
-            }
-
-            return prisma.txQueue.update({
-              where: { id: entry.id },
-              data: {
-                status: 'failed',
-                reason: rejectionMessages[index] || 'Simulation rejected - unknown reason'
-              }
-            })
+            const reason = rejectionMessages[index] || 'Simulation rejected - unknown reason'
+            await markTxQueueFailed(entry.id, reason, data.senderId, data)
           }))
         }
         return
@@ -1732,25 +1737,16 @@ console.log("succeededKeys", succeededKeys)
           }
         }
 
-        // Only set reason if status is failed
-        const updateData: any = {
-          status: succeeded ? 'done' : 'failed'
-        }
-
-        // Only add reason field if transaction failed AND we have a reason
-        if (!succeeded && reason) {
-          updateData.reason = reason
-        } else if (succeeded && reason === null) {
-          // Clear any existing reason for successful transactions
-          updateData.reason = null
-        }
-
         console.log(`[Validator] TxQueue #${entry.id} (${getActionType(data.actionType)} from ${data.senderId}): ${succeeded ? 'SUCCESS' : 'FAILED'} ${reason ? `- ${reason}` : ''}`)
 
-        return prisma.txQueue.update({
-          where: { id: entry.id },
-          data: updateData
-        })
+        if (succeeded) {
+          await prisma.txQueue.update({
+            where: { id: entry.id },
+            data: { status: 'done', reason: null }
+          })
+        } else {
+          await markTxQueueFailed(entry.id, reason || 'Transaction failed', data.senderId, data)
+        }
       }))
       console.log("[Validator] ========== TXQUEUE UPDATE COMPLETE ==========\n")
 

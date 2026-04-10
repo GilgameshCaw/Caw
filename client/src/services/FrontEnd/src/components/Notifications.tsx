@@ -3,7 +3,9 @@ import { useNavigate } from 'react-router-dom'
 import { apiFetch } from '~/api/client'
 import { useVerifyWalletStore } from '~/store/verifyWalletStore'
 import { useTheme } from '~/hooks/useTheme'
-import { useActiveToken } from '~/store/tokenDataStore'
+import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
+import { useMarketplaceStore } from '~/store/marketplaceStore'
+import { formatEther, formatUnits } from 'viem'
 import {
   HiHeart,
   HiUserAdd,
@@ -12,10 +14,13 @@ import {
   HiAtSymbol,
   HiBell,
   HiCheck,
-  HiCurrencyDollar
+  HiCurrencyDollar,
+  HiTag
 } from 'react-icons/hi'
 import Tooltip from '~/components/Tooltip'
 import { useNotificationUnreadStore } from '~/store/notificationUnreadStore'
+import { useSignAndSubmitAction, type ActionTypeKey } from '~/api/actions'
+import { useAutoRetryStore } from '~/store/autoRetryStore'
 
 interface Actor {
   tokenId: number
@@ -26,7 +31,7 @@ interface Actor {
 
 interface Notification {
   id: number
-  type: 'FOLLOW' | 'LIKE' | 'REPLY' | 'REPOST' | 'QUOTE' | 'MENTION' | 'TIP'
+  type: 'FOLLOW' | 'LIKE' | 'REPLY' | 'REPOST' | 'QUOTE' | 'MENTION' | 'TIP' | 'OFFER' | 'OUTBID' | 'AUCTION_WON' | 'ACTION_FAILED'
   actor: Actor
   additionalActors?: Actor[]
   caw?: {
@@ -34,6 +39,45 @@ interface Notification {
     content: string
     createdAt: string
   }
+  offer?: {
+    id: number
+    offerId: number
+    tokenId: number
+    offerer: string
+    amount: string
+    paymentToken: string
+    username: string
+    expiry: string
+    status: string
+  }
+  // Populated for ACTION_FAILED notifications — carries enough of the
+  // original action payload for the retry UI to reconstruct params.
+  // receiverUsername and targetCaw are enriched server-side in the
+  // notifications route so the UI can render human-readable labels
+  // without extra client lookups.
+  actionPayload?: {
+    actionType: number
+    receiverId: number | null
+    receiverCawonce: number | null
+    text: string | null
+    recipients: number[] | null
+    amounts: (string | number)[] | null
+    originalTxQueueId: number
+    reason: string
+    receiverUsername?: string
+    targetCaw?: {
+      content: string
+      authorUsername: string
+    }
+    // Marketplace auction notifications (OUTBID / AUCTION_WON)
+    listingId?: number
+    username?: string
+    tokenId?: number
+    newBidAmount?: string
+    previousBidAmount?: string
+    winningBid?: string
+    paymentToken?: string
+  } | null
   isRead: boolean
   createdAt: string
   count?: number
@@ -97,11 +141,24 @@ const Notifications: React.FC = () => {
   const navigate = useNavigate()
   const { isDark } = useTheme()
   const activeToken = useActiveToken()
+  const signAndSubmit = useSignAndSubmitAction()
+  const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
+  const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
   const [activeTab, setActiveTab] = useState<TabType>('all')
   const [notifications, setNotifications] = useState<Notification[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [unreadCount, setUnreadCount] = useState(0)
+  // Tracks which ACTION_FAILED notifications are mid-manual-retry so the
+  // button can show a spinner state and block double-taps. Keyed by
+  // notification.id.
+  const [retrying, setRetrying] = useState<Set<number>>(new Set())
+  // Subscription to the auto-retry store (cawonce-collision recovery run by
+  // useTxQueueMonitor). When a notification's originalTxQueueId is in this
+  // set, the button shows "Retrying…" and disables manual retry. The monitor
+  // also calls the hide-by-original-tx endpoint on success, so this state is
+  // normally short-lived — the notification disappears from the list.
+  const autoRetryingTxIds = useAutoRetryStore(s => s.retryingTxIds)
   const setGlobalUnreadCount = useNotificationUnreadStore(s => s.setUnreadCount)
   const [hasMore, setHasMore] = useState(false)
   const [offset, setOffset] = useState(0)
@@ -217,12 +274,109 @@ const Notifications: React.FC = () => {
         return <HiAtSymbol className="w-5 h-5 text-orange-500" />
       case 'TIP':
         return <HiCurrencyDollar className="w-5 h-5 text-yellow-500" />
+      case 'OFFER':
+        return <HiTag className="w-5 h-5 text-yellow-500" />
+      case 'OUTBID':
+        return <HiTag className="w-5 h-5 text-orange-500" />
+      case 'AUCTION_WON':
+        return <HiTag className="w-5 h-5 text-green-500" />
+      case 'ACTION_FAILED':
+        return <HiBell className="w-5 h-5 text-red-400" />
       default:
         return <HiBell className="w-5 h-5 text-gray-500" />
     }
   }
 
-  const getNotificationText = (notification: Notification) => {
+  // Human-readable label for a failed action given its payload actionType.
+  // Numeric codes from ActionTypeMap in api/actions.ts:
+  // 0=caw, 1=like, 2=unlike, 3=recaw, 4=follow, 5=unfollow, 6=withdraw, 7=other
+  //
+  // Returns a structured piece with a `title` (the headline) and optional
+  // `snippet` (the content the user tried to post, or a quote of the target
+  // caw they tried to interact with). The render layer can style these
+  // differently — title bold, snippet italic and muted.
+  const describeFailedAction = (payload: NonNullable<Notification['actionPayload']>): { title: string; snippet?: string; snippetLabel?: string } => {
+    const { actionType, text, receiverUsername, targetCaw } = payload
+    const userTextTrim = text?.trim() ?? ''
+    const userSnippet = userTextTrim
+      ? (userTextTrim.length > 140 ? userTextTrim.slice(0, 140) + '…' : userTextTrim)
+      : ''
+    const targetSnippet = targetCaw
+      ? `@${targetCaw.authorUsername}: "${targetCaw.content.length > 100 ? targetCaw.content.slice(0, 100) + '…' : targetCaw.content}"`
+      : ''
+
+    switch (actionType) {
+      case 0: // caw (post or reply)
+        if (payload.receiverId != null) {
+          return {
+            title: targetCaw ? `Reply to @${targetCaw.authorUsername} failed` : 'Reply failed',
+            snippet: userSnippet || undefined,
+            snippetLabel: userSnippet ? 'You tried to post' : undefined,
+          }
+        }
+        return {
+          title: 'Post failed',
+          snippet: userSnippet || undefined,
+          snippetLabel: userSnippet ? 'You tried to post' : undefined,
+        }
+      case 1: // like
+        return {
+          title: targetCaw ? `Like on @${targetCaw.authorUsername}'s caw failed` : 'Like failed',
+          snippet: targetSnippet ? `"${targetCaw!.content.length > 100 ? targetCaw!.content.slice(0, 100) + '…' : targetCaw!.content}"` : undefined,
+        }
+      case 3: {
+        // recaw (plain) vs quote (has text)
+        const isQuote = userTextTrim.length > 0
+        if (isQuote) {
+          return {
+            title: targetCaw ? `Quote of @${targetCaw.authorUsername}'s caw failed` : 'Quote failed',
+            snippet: userSnippet || undefined,
+            snippetLabel: 'You tried to post',
+          }
+        }
+        return {
+          title: targetCaw ? `Recaw of @${targetCaw.authorUsername}'s caw failed` : 'Recaw failed',
+          snippet: targetCaw ? `"${targetCaw.content.length > 100 ? targetCaw.content.slice(0, 100) + '…' : targetCaw.content}"` : undefined,
+        }
+      }
+      case 4: // follow
+        return {
+          title: receiverUsername ? `Following @${receiverUsername} failed` : 'Follow failed',
+        }
+      case 7: // other — tip, image upload, profile update
+        if (text?.startsWith('tip:')) {
+          return {
+            title: receiverUsername ? `Tip to @${receiverUsername} failed` : 'Tip failed',
+          }
+        }
+        if (text?.startsWith('image64:')) return { title: 'Image upload failed' }
+        if (text?.startsWith('p:') || text?.startsWith('profile-update:')) return { title: 'Profile update failed' }
+        return { title: 'Action failed' }
+      default:
+        return { title: 'Action failed' }
+    }
+  }
+
+  // Human-readable reason from the raw validator error text. Keep the user
+  // out of on-chain implementation details and lean on plainspoken language
+  // for anything they don't need to understand to take a useful next step.
+  const describeFailedReason = (raw: string): string => {
+    const lower = (raw || '').toLowerCase()
+    if (lower.includes('insufficient')) return "You don't have enough deposited CAW for this action."
+    if (lower.includes('not authenticated')) return 'Account not yet authenticated with this client.'
+    if (lower.includes('cawonce') || lower.includes('conflict')) {
+      return 'Something went wrong while processing this action on-chain.'
+    }
+    if (lower.includes('deposit did not arrive')) return 'Your pending deposit did not arrive from L1 in time.'
+    if (lower.includes('text exceeds')) return 'The post text was too long.'
+    if (lower.includes('cannot follow yourself')) return "You can't follow your own account."
+    if (lower.includes('simulation') || lower.includes('internal error') || lower.includes('rpc')) {
+      return 'Something went wrong while processing this action on-chain.'
+    }
+    return raw || 'Something went wrong.'
+  }
+
+  const getNotificationText = (notification: Notification): React.ReactNode => {
     const { type, actor, additionalActors, count = 1 } = notification
 
     let text = ''
@@ -237,6 +391,28 @@ const Notifications: React.FC = () => {
     }
 
     switch (type) {
+      case 'ACTION_FAILED': {
+        const payload = notification.actionPayload
+        if (!payload) return 'An action failed. Please try again.'
+        const { title, snippet, snippetLabel } = describeFailedAction(payload)
+        const reason = describeFailedReason(payload.reason)
+        return (
+          <>
+            <span>{title}</span>
+            <span className={`block text-xs mt-0.5 font-normal ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
+              {reason}
+            </span>
+            {snippet && (
+              <span className={`block text-xs mt-1.5 italic font-normal border-l-2 pl-2 ${
+                isDark ? 'text-white/70 border-white/20' : 'text-gray-700 border-gray-300'
+              }`}>
+                {snippetLabel && <span className="not-italic opacity-60">{snippetLabel}: </span>}
+                "{snippet}"
+              </span>
+            )}
+          </>
+        )
+      }
       case 'FOLLOW':
         return `${text} followed you`
       case 'LIKE':
@@ -251,17 +427,148 @@ const Notifications: React.FC = () => {
         return `${text} mentioned you`
       case 'TIP':
         return notification.caw ? `${text} tipped your caw` : `${text} tipped you`
+      case 'OFFER': {
+        // Build USD display
+        let offerUsd = ''
+        if (notification.offer) {
+          const token = notification.offer.paymentToken
+          const decimals = (token === 'USDC' || token === 'USDT') ? 6 : 18
+          const num = parseFloat(decimals === 18 ? formatEther(BigInt(notification.offer.amount)) : formatUnits(BigInt(notification.offer.amount), decimals))
+          let rate = 0
+          if (token === 'USDC' || token === 'USDT') rate = 1
+          else if (token === 'ETH' || token === 'WETH') rate = ethPrice
+          else if (token === 'CAW') rate = cawPrice
+          if (rate > 0) {
+            const usd = num * rate
+            offerUsd = ` for $${usd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+          }
+        }
+        // Show actor username if they have one, otherwise fall back to address with etherscan link
+        const addr = notification.offer?.offerer
+        if (actor.username && actor.username !== `#${actor.tokenId}`) {
+          return `${text} made an offer on your profile${offerUsd}`
+        }
+        if (addr) {
+          const addrDisplay = `${addr.slice(0, 6)}...${addr.slice(-4)}`
+          return (
+            <>
+              <a
+                href={`https://etherscan.io/address/${addr}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-yellow-500 hover:underline"
+                onClick={e => e.stopPropagation()}
+              >
+                {addrDisplay}
+              </a>
+              {` made an offer on your profile${offerUsd}`}
+            </>
+          )
+        }
+        return `${text} made an offer on your profile${offerUsd}`
+      }
+      case 'OUTBID': {
+        const payload = notification.actionPayload
+        const username = payload?.username ?? 'a profile'
+        return `You've been outbid on @${username}`
+      }
+      case 'AUCTION_WON': {
+        const payload = notification.actionPayload
+        const username = payload?.username ?? 'a profile'
+        return `You won the auction for @${username}! Settle it to claim the username.`
+      }
       default:
         return text
+    }
+  }
+
+  // Retry a failed action from its notification. Reconstructs the action
+  // params from the stored actionPayload, then re-submits via the normal
+  // signAndSubmit pipeline — which allocates a fresh cawonce, re-signs,
+  // and queues the new action. On success we hide the notification so the
+  // list stays clean; on failure a new ACTION_FAILED notification will be
+  // created server-side for the new attempt, so the user has a history.
+  const handleRetryFailedAction = async (notification: Notification, e: React.MouseEvent) => {
+    e.stopPropagation()
+    const payload = notification.actionPayload
+    if (!payload || !activeToken?.tokenId) return
+    if (retrying.has(notification.id)) return
+
+    // Map the numeric actionType back to the string key signAndSubmit expects.
+    // Matches the ActionTypeMap in api/actions.ts.
+    const codeToKey: Record<number, ActionTypeKey> = {
+      0: 'caw',
+      1: 'like',
+      2: 'unlike',
+      3: 'recaw',
+      4: 'follow',
+      5: 'unfollow',
+      6: 'withdraw',
+      7: 'other',
+    }
+    const actionTypeKey = codeToKey[payload.actionType]
+    if (!actionTypeKey) {
+      console.warn('[Notifications] Cannot retry unknown action type', payload.actionType)
+      return
+    }
+
+    setRetrying(prev => new Set(prev).add(notification.id))
+    try {
+      // Build ActionParams. Do NOT pass cawonce — signAndSubmit will allocate
+      // a fresh one from the store, which is exactly what we want since the
+      // original cawonce is the reason some of these failed in the first
+      // place. amounts are passed through as-is so tip/withdraw semantics are
+      // preserved.
+      const result = await signAndSubmit({
+        actionType: actionTypeKey,
+        senderId: activeToken.tokenId,
+        ...(payload.receiverId != null ? { receiverId: payload.receiverId } : {}),
+        ...(payload.receiverCawonce != null ? { receiverCawonce: payload.receiverCawonce } : {}),
+        ...(payload.text != null ? { text: payload.text } : {}),
+        ...(payload.recipients != null ? { recipients: payload.recipients } : {}),
+        ...(payload.amounts != null ? { amounts: payload.amounts.map(a => BigInt(a)) as any } : {}),
+      })
+      if (result) {
+        // Hide the old failed notification so the list reflects the retry.
+        hideNotification(notification.id)
+      }
+    } catch (err: any) {
+      console.error('[Notifications] Retry failed:', err)
+    } finally {
+      setRetrying(prev => {
+        const next = new Set(prev)
+        next.delete(notification.id)
+        return next
+      })
     }
   }
 
   const handleNotificationClick = (notification: Notification) => {
     if (notification.type === 'FOLLOW') {
       navigate(`/users/${notification.actor.username}`)
+    } else if (notification.type === 'OFFER') {
+      // Open view offers modal for this token
+      if (notification.offer) {
+        useMarketplaceStore.getState().openViewOffers(notification.offer.tokenId, notification.offer.username)
+      }
+    } else if (notification.type === 'OUTBID' || notification.type === 'AUCTION_WON') {
+      navigate('/usernames')
     } else if (notification.type === 'TIP' && !notification.caw) {
       // Direct tip - navigate to tipper's profile
       navigate(`/users/${notification.actor.username}`)
+    } else if (notification.type === 'ACTION_FAILED') {
+      // Navigate to the target of the failed action so the user has context.
+      // For a failed follow: the target user's profile (by tokenId — the
+      // profile route supports both username and numeric id). For a failed
+      // like / recaw / reply: the target user's profile, since we don't
+      // easily have the target caw's DB id at this layer. For a plain post
+      // or tip: no context navigation. The retry button below is the main
+      // affordance — navigation here is a nice-to-have orientation aid.
+      const payload = notification.actionPayload
+      if (!payload) return
+      if (payload.receiverId != null && payload.receiverId !== activeToken?.tokenId) {
+        navigate(`/users/${payload.receiverId}`)
+      }
     } else if (notification.caw) {
       navigate(`/caws/${notification.caw.id}`)
     }
@@ -323,17 +630,17 @@ const Notifications: React.FC = () => {
       </div>
 
       {/* Tabs */}
-      <div className={`flex space-x-1 mb-6 border-b ${isDark ? 'border-white/20' : 'border-gray-200'}`}>
+      <div className={`flex border-b mb-3 ${isDark ? 'border-white/20' : 'border-gray-300'}`}>
         <button
           onClick={() => setActiveTab('all')}
-          className={`px-4 py-3 transition-all ${
+          className={`py-4 px-8 flex-1 text-center font-medium text-lg transition-all duration-200 cursor-pointer ${
             activeTab === 'all'
               ? isDark
-                ? 'border-b-2 border-blue-500 text-white'
-                : 'border-b-2 border-blue-500 text-gray-900'
+                ? 'border-b-2 border-white text-white'
+                : 'border-b-2 border-black text-black'
               : isDark
-                ? 'text-white/60 hover:text-white'
-                : 'text-gray-600 hover:text-gray-900'
+                ? 'text-gray-400 hover:text-white hover:bg-white/5'
+                : 'text-gray-600 hover:text-black hover:bg-gray-100'
           }`}
         >
           All
@@ -345,14 +652,14 @@ const Notifications: React.FC = () => {
         </button>
         <button
           onClick={() => setActiveTab('mentions')}
-          className={`px-4 py-3 transition-all flex items-center space-x-2 ${
+          className={`py-4 px-8 flex-1 text-center font-medium text-lg transition-all duration-200 cursor-pointer flex items-center justify-center space-x-2 ${
             activeTab === 'mentions'
               ? isDark
-                ? 'border-b-2 border-blue-500 text-white'
-                : 'border-b-2 border-blue-500 text-gray-900'
+                ? 'border-b-2 border-white text-white'
+                : 'border-b-2 border-black text-black'
               : isDark
-                ? 'text-white/60 hover:text-white'
-                : 'text-gray-600 hover:text-gray-900'
+                ? 'text-gray-400 hover:text-white hover:bg-white/5'
+                : 'text-gray-600 hover:text-black hover:bg-gray-100'
           }`}
         >
           <HiAtSymbol className="w-4 h-4" />
@@ -381,7 +688,7 @@ const Notifications: React.FC = () => {
               </p>
               <button
                 onClick={() => useVerifyWalletStore.getState().show()}
-                className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+                className="px-4 py-2 rounded-lg bg-yellow-500 text-black text-sm font-medium hover:bg-yellow-400 cursor-pointer"
               >
                 Verify Wallet
               </button>
@@ -444,6 +751,30 @@ const Notifications: React.FC = () => {
                     </p>
                   </Tooltip>
                 </div>
+                {notification.type === 'ACTION_FAILED' && notification.actionPayload && (() => {
+                  // Manual retry in progress (user tapped the button on this
+                  // notification) OR auto-retry in progress (useTxQueueMonitor
+                  // is recovering from a cawonce collision on the original
+                  // TxQueue row). Both paths disable the button and show the
+                  // "Retrying…" label.
+                  const origTxId = notification.actionPayload.originalTxQueueId
+                  const isAutoRetrying = origTxId != null && autoRetryingTxIds.has(origTxId)
+                  const isManualRetrying = retrying.has(notification.id)
+                  const isBusy = isAutoRetrying || isManualRetrying
+                  return (
+                    <button
+                      onClick={(e) => handleRetryFailedAction(notification, e)}
+                      disabled={isBusy}
+                      className={`flex-shrink-0 self-start mt-1 px-3 py-1 text-xs font-semibold rounded-full transition ${
+                        isBusy
+                          ? 'bg-gray-600 text-white/50 cursor-not-allowed'
+                          : 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
+                      }`}
+                    >
+                      {isBusy ? 'Retrying…' : 'Retry'}
+                    </button>
+                  )
+                })()}
                 <button
                   onClick={(e) => {
                     e.stopPropagation()
