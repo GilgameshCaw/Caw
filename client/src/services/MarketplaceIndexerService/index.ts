@@ -23,6 +23,9 @@ const MARKETPLACE_ABI = [
   'event BidWithdrawn(uint256 indexed listingId, address bidder, uint256 amount)',
   'event ListingCancelled(uint256 indexed listingId)',
   'event AuctionSettled(uint256 indexed listingId, address winner, uint256 price)',
+  'event OfferCreated(uint256 indexed offerId, uint32 indexed tokenId, address offerer, address paymentToken, uint256 amount, uint64 expiry)',
+  'event OfferAccepted(uint256 indexed offerId, uint32 indexed tokenId, address seller, address buyer, uint256 price, address paymentToken)',
+  'event OfferCancelled(uint256 indexed offerId)',
   // Read functions
   'function listings(uint256) view returns (uint32 tokenId, address seller, address paymentToken, uint8 listingType, uint256 startPrice, uint256 endPrice, uint64 startTime, uint64 endTime, uint256 highestBid, address highestBidder, bool active)',
 ]
@@ -103,20 +106,26 @@ export const marketplaceIndexerService: Service = {
           const bidWithdrawnFilter = marketplace.filters.BidWithdrawn()
           const cancelledFilter = marketplace.filters.ListingCancelled()
           const settledFilter = marketplace.filters.AuctionSettled()
+          const offerCreatedFilter = marketplace.filters.OfferCreated()
+          const offerAcceptedFilter = marketplace.filters.OfferAccepted()
+          const offerCancelledFilter = marketplace.filters.OfferCancelled()
 
           console.log(`[MarketplaceIndexer] Polling blocks ${fromBlock}–${toBlock}`)
 
-          const [listed, sales, bids, bidWithdrawals, cancelled, settled] = await Promise.all([
+          const [listed, sales, bids, bidWithdrawals, cancelled, settled, offersCreated, offersAccepted, offersCancelled] = await Promise.all([
             marketplace.queryFilter(listedFilter, fromBlock, toBlock),
             marketplace.queryFilter(saleFilter, fromBlock, toBlock),
             marketplace.queryFilter(bidFilter, fromBlock, toBlock),
             marketplace.queryFilter(bidWithdrawnFilter, fromBlock, toBlock),
             marketplace.queryFilter(cancelledFilter, fromBlock, toBlock),
             marketplace.queryFilter(settledFilter, fromBlock, toBlock),
+            marketplace.queryFilter(offerCreatedFilter, fromBlock, toBlock),
+            marketplace.queryFilter(offerAcceptedFilter, fromBlock, toBlock),
+            marketplace.queryFilter(offerCancelledFilter, fromBlock, toBlock),
           ])
 
-          if (listed.length || sales.length || bids.length || cancelled.length || settled.length) {
-            console.log(`[MarketplaceIndexer] Found events: ${listed.length} listed, ${sales.length} sales, ${bids.length} bids, ${cancelled.length} cancelled, ${settled.length} settled`)
+          if (listed.length || sales.length || bids.length || cancelled.length || settled.length || offersCreated.length || offersAccepted.length || offersCancelled.length) {
+            console.log(`[MarketplaceIndexer] Found events: ${listed.length} listed, ${sales.length} sales, ${bids.length} bids, ${cancelled.length} cancelled, ${settled.length} settled, ${offersCreated.length} offers created, ${offersAccepted.length} offers accepted, ${offersCancelled.length} offers cancelled`)
           }
 
           // Process Listed events
@@ -206,6 +215,8 @@ export const marketplaceIndexerService: Service = {
 
             const listing = await prisma.marketplaceListing.findUnique({ where: { listingId } })
             if (listing) {
+              const previousBidder = listing.highestBidder
+
               // Mark previous highest bid as outbid
               await prisma.marketplaceBid.updateMany({
                 where: { listingId: listing.id, status: 'ACTIVE' },
@@ -229,6 +240,41 @@ export const marketplaceIndexerService: Service = {
                   highestBidder: bidder,
                 },
               })
+
+              // Notify the previous highest bidder that they've been outbid
+              if (previousBidder && previousBidder.toLowerCase() !== bidder.toLowerCase()) {
+                try {
+                  // Find any profile owned by the outbid wallet
+                  const outbidUser = await prisma.user.findFirst({
+                    where: { address: { equals: previousBidder, mode: 'insensitive' } },
+                    select: { tokenId: true },
+                  })
+                  // Find any profile owned by the new bidder (for actorId)
+                  const newBidderUser = await prisma.user.findFirst({
+                    where: { address: { equals: bidder, mode: 'insensitive' } },
+                    select: { tokenId: true },
+                  })
+                  if (outbidUser) {
+                    await prisma.notification.create({
+                      data: {
+                        userId: outbidUser.tokenId,
+                        actorId: newBidderUser?.tokenId ?? outbidUser.tokenId,
+                        type: 'OUTBID',
+                        actionPayload: {
+                          listingId: listing.listingId,
+                          username: listing.username,
+                          tokenId: listing.tokenId,
+                          newBidAmount: amount,
+                          previousBidAmount: listing.highestBid,
+                        },
+                      },
+                    })
+                    console.log(`[Marketplace] Sent OUTBID notification to tokenId=${outbidUser.tokenId} for listing ${listing.listingId}`)
+                  }
+                } catch (err) {
+                  console.warn('[Marketplace] Failed to create OUTBID notification:', err)
+                }
+              }
             }
           }
 
@@ -293,8 +339,101 @@ export const marketplaceIndexerService: Service = {
                   txHash: ev.transactionHash,
                 },
               })
+
+              // Notify the auction winner
+              try {
+                const winnerUser = await prisma.user.findFirst({
+                  where: { address: { equals: winner, mode: 'insensitive' } },
+                  select: { tokenId: true },
+                })
+                // Find seller's profile for actorId
+                const sellerUser = await prisma.user.findFirst({
+                  where: { address: { equals: listing.seller, mode: 'insensitive' } },
+                  select: { tokenId: true },
+                })
+                if (winnerUser) {
+                  await prisma.notification.create({
+                    data: {
+                      userId: winnerUser.tokenId,
+                      actorId: sellerUser?.tokenId ?? winnerUser.tokenId,
+                      type: 'AUCTION_WON',
+                      actionPayload: {
+                        listingId: listing.listingId,
+                        username: listing.username,
+                        tokenId: listing.tokenId,
+                        winningBid: price,
+                        paymentToken: listing.paymentToken,
+                      },
+                    },
+                  })
+                  console.log(`[Marketplace] Sent AUCTION_WON notification to tokenId=${winnerUser.tokenId} for listing ${listing.listingId}`)
+                }
+              } catch (err) {
+                console.warn('[Marketplace] Failed to create AUCTION_WON notification:', err)
+              }
             }
           }
+
+          // Process OfferCreated events
+          for (const event of offersCreated) {
+            const ev = event as ethers.EventLog
+            const args = ev.args
+            const onChainOfferId = Number(args[0])
+            const tokenId = Number(args[1])
+            const offerer = args[2].toLowerCase()
+            const paymentToken = args[3]
+            const amount = args[4].toString()
+            const expiry = Number(args[5])
+
+            const user = await prisma.user.findUnique({ where: { tokenId } })
+            const username = user?.username || `#${tokenId}`
+
+            await prisma.marketplaceOffer.upsert({
+              where: { offerId: onChainOfferId },
+              update: { status: 'ACTIVE' },
+              create: {
+                offerId: onChainOfferId,
+                tokenId,
+                offerer,
+                paymentToken: getPaymentLabel(paymentToken),
+                paymentAddress: paymentToken.toLowerCase(),
+                amount,
+                expiry: new Date(expiry * 1000),
+                username,
+                txHash: ev.transactionHash,
+              },
+            })
+            // Notification is created via the authenticated POST /api/marketplace/offers/notify endpoint
+          }
+
+          // Process OfferAccepted events
+          for (const event of offersAccepted) {
+            const ev = event as ethers.EventLog
+            const onChainOfferId = Number(ev.args[0])
+            await prisma.marketplaceOffer.updateMany({
+              where: { offerId: onChainOfferId, status: 'ACTIVE' },
+              data: { status: 'ACCEPTED' },
+            })
+          }
+
+          // Process OfferCancelled events
+          for (const event of offersCancelled) {
+            const ev = event as ethers.EventLog
+            const onChainOfferId = Number(ev.args[0])
+            await prisma.marketplaceOffer.updateMany({
+              where: { offerId: onChainOfferId, status: 'ACTIVE' },
+              data: { status: 'CANCELLED' },
+            })
+          }
+
+          // Mark expired offers
+          await prisma.marketplaceOffer.updateMany({
+            where: {
+              status: 'ACTIVE',
+              expiry: { lt: new Date() },
+            },
+            data: { status: 'EXPIRED' },
+          })
 
           // Check for CawName transfers that invalidate listings
           const transferFilter = cawName.filters.Transfer()
