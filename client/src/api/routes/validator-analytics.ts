@@ -12,11 +12,13 @@ const router = Router()
 router.get('/tip-config', async (_req, res) => {
   try {
     const rows = await prisma.validatorSetting.findMany({
-      where: { key: { in: ['validatorBaseTip'] } }
+      where: { key: { in: ['validatorBaseTip', 'priorityTip'] } }
     })
     const map = new Map(rows.map(r => [r.key, r.value]))
+    const baseTip = map.get('validatorBaseTip') || process.env.VALIDATOR_BASE_TIP || '1000'
     res.json({
-      baseTip: map.get('validatorBaseTip') || process.env.VALIDATOR_BASE_TIP || '1000',
+      baseTip,
+      priorityTip: map.get('priorityTip') || String(BigInt(baseTip) * 3n),
     })
   } catch (err: any) {
     res.status(500).json({ error: 'Internal server error' })

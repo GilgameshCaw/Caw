@@ -7,7 +7,7 @@
     "prisma:reset": "prisma db push --force-reset",
     "prisma:migrate": "prisma migrate dev",
     "test": "tsc --noEmit && mocha --import=tsx tests/**/*.test.ts",
-    "redis": "redis-server --port 6379",
+    "redis": "redis-server --port 6379 --appendonly yes",
     "elasticsearch": "pkill -f elasticsearch 2>/dev/null; sleep 1; ~/elasticsearch/bin/elasticsearch",
     "postgres": "pg_ctl -D /usr/local/var/postgres start || postgres -D /usr/local/var/postgres",
     "api": "npm run prisma:push && mkdir -p logs && (node -r ./file-polyfill.js -r tsx/cjs programs/start.ts 2>&1 | tee -a \"logs/caw-client-$(date +%Y-%m-%d).log\")",

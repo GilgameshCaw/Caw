@@ -327,16 +327,23 @@ export async function handleRecawAction(
     }
   })
 
-  // Increment recaw count only if this is truly new (no existing record)
-  // If it was pending, recawCount was already optimistically incremented by the API
+  // Increment counts only if this is truly new (no existing record).
+  // If it was pending, counts were already optimistically incremented by the API.
   if (!existingRecaw) {
+    // Quotes (recaw with text) count as caws; plain recaws get their own counter
+    const isQuoteRecaw = rawAction.text && rawAction.text.trim().length > 0
+    await tx.user.update({
+      where: { tokenId: action.senderId },
+      data: isQuoteRecaw
+        ? { cawCount: { increment: 1 } }
+        : { recawCount: { increment: 1 } }
+    })
+
+    // Increment recaw count on the original caw
     await tx.caw.update({
       where: { id: originalCawId },
       data: { recawCount: { increment: 1 } }
     })
-
-    // Create notification — use quote notification if this recaw has text (it's a quote)
-    const isQuoteRecaw = rawAction.text && rawAction.text.trim().length > 0
     try {
       if (isQuoteRecaw) {
         const newCaw = await tx.caw.findUnique({ where: { userId_cawonce: { userId, cawonce: action.cawonce } } })

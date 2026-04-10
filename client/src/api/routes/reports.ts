@@ -25,7 +25,7 @@ router.post('/', requireAuth({ field: 'reporterId' }), async (req, res) => {
       })
     }
 
-    // Check if this post has already been reported by this user (if reporterId provided)
+    // If user already reported this post, update their existing report
     if (reporterId) {
       const existingReport = await prisma.report.findFirst({
         where: {
@@ -35,7 +35,23 @@ router.post('/', requireAuth({ field: 'reporterId' }), async (req, res) => {
       })
 
       if (existingReport) {
-        return res.status(409).json({ error: 'You have already reported this post' })
+        const updated = await prisma.report.update({
+          where: { id: existingReport.id },
+          data: {
+            reason: reason as ReportReason,
+            details: details || null,
+            status: ReportStatus.PENDING,
+            reviewedAt: null,
+            reviewedBy: null,
+            resolution: null,
+          }
+        })
+
+        return res.status(200).json({
+          success: true,
+          reportId: updated.id,
+          message: 'Report updated'
+        })
       }
     }
 
@@ -68,11 +84,14 @@ router.post('/', requireAuth({ field: 'reporterId' }), async (req, res) => {
  */
 router.get('/', requireAdmin, async (req, res) => {
   try {
-    const { status, limit = 50, offset = 0 } = req.query
+    const { status, reason, limit = 50, offset = 0 } = req.query
 
     const where: any = {}
     if (status && Object.values(ReportStatus).includes(status as ReportStatus)) {
       where.status = status as ReportStatus
+    }
+    if (reason && Object.values(ReportReason).includes(reason as ReportReason)) {
+      where.reason = reason as ReportReason
     }
 
     const reports = await prisma.report.findMany({
