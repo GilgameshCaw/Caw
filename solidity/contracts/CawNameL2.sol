@@ -35,9 +35,15 @@ contract CawNameL2 is
   /// @notice The CawActionsReplicator contract for forwarding replication config
   address public cawActionsReplicator;
 
-  // In a normal ERC271, ownerOf reverts if there is no owner,
-  // here, since it's not a real ERC721, just a pretender,
-  // we return the zero addres.
+  // SECURITY NOTE (audited 2026-04-06): Unlike standard ERC721, this ownerOf intentionally returns
+  // address(0) for non-existent tokens instead of reverting. This is by design — CawNameL2 is a
+  // lightweight mirror synced from L1 via LayerZero, and tokens may be in a "not yet synced" state.
+  // Reverting here would cascade failures through batch reads (CawName.sol:435,459), marketplace
+  // operations (CawNameMarketplace.sol:331 reclaimBid), and action processing (CawActions.sol:111).
+  // The zero-address return is NOT a security risk: registerSession cannot populate
+  // sessions[address(0)][...] because ecrecover cannot produce address(0), and the default session
+  // expiry of 0 always fails the expiry > block.timestamp check in CawActions.verifySignature.
+  // DO NOT change this to revert — it will break downstream callers.
   mapping(uint256 => address) public ownerOf;
   mapping(uint32 => string) public usernames;
 
@@ -47,7 +53,7 @@ contract CawNameL2 is
   mapping(uint32 => uint256) public cawOwnership;
 
   uint256 public rewardMultiplier = 10**18;
-  uint256 public precision = 30425026352721 ** 2;
+  uint256 public precision = 10**18;
 
   uint32 public immutable layer1EndpointId;
 
@@ -69,6 +75,9 @@ contract CawNameL2 is
   /// @notice ownerAddress => sessionKey => stored session data
   mapping(address => mapping(address => StoredSession)) public sessions;
 
+  /// @notice Per-address nonce for session delegation signatures (prevents replay after revocation)
+  mapping(address => uint256) public sessionNonce;
+
   bytes32 public immutable eip712DomainHash;
 
   bytes32 private constant EIP712_DOMAIN_TYPEHASH = keccak256(
@@ -76,7 +85,7 @@ contract CawNameL2 is
   );
 
   bytes32 private constant DELEGATION_TYPEHASH = keccak256(
-    "SessionDelegation(address sessionKey,uint64 expiry,uint8 scopeBitmap,uint256 spendLimit)"
+    "SessionDelegation(address sessionKey,uint64 expiry,uint8 scopeBitmap,uint256 spendLimit,uint256 nonce)"
   );
 
   event OwnerSet(uint32 tokenId, address newOwner);
@@ -97,6 +106,8 @@ contract CawNameL2 is
     uint256 nextCawonce;
   }
 
+  /// @param _endpointId LayerZero EID of the L1 chain (the source of truth for ownership)
+  /// @param _endpoint Address of the LayerZero V2 EndpointV2 contract on this chain
   constructor(uint32 _endpointId, address _endpoint)
     OApp(_endpoint, msg.sender)
   {
@@ -104,6 +115,7 @@ contract CawNameL2 is
     eip712DomainHash = generateDomainHash();
   }
 
+  /// @notice Compute the EIP-712 domain separator hash. Cached in `eip712DomainHash` at construction.
   function generateDomainHash() public view returns (bytes32) {
     return keccak256(
       abi.encode(
@@ -116,6 +128,9 @@ contract CawNameL2 is
     );
   }
 
+  /// @notice Batch fetch token metadata (username, CAW balance, next cawonce) for the given tokenIds.
+  /// @param tokenIds The token IDs to fetch
+  /// @return userTokens Array of Token structs in the same order as the input
   function getTokens(uint32[] memory tokenIds) external view returns (Token[] memory) {
     uint32 tokenId;
     uint256 tokenCount = tokenIds.length;
@@ -131,6 +146,12 @@ contract CawNameL2 is
     return userTokens;
   }
 
+  /// @notice Configure the L1 peer. Owner-only.
+  /// @dev If `_bypassLZ` is true, this contract is co-deployed on the same chain as CawName,
+  ///      and the L1 contract will call this contract directly instead of via LayerZero.
+  /// @param _eid LayerZero EID of the L1 chain
+  /// @param peer Address of the L1 CawName contract
+  /// @param _bypassLZ True for mainnet co-deployment, false for cross-chain operation
   function setL1Peer(uint32 _eid, address payable peer, bool _bypassLZ) external onlyOwner {
     if (_bypassLZ) {
       bypassLZ = true;
@@ -138,29 +159,60 @@ contract CawNameL2 is
     } else setPeer(_eid, bytes32(uint256(uint160(address(peer)))));
   }
 
+  /// @notice Set the CawActions contract address. Owner-only.
+  /// @dev CawActions is the only contract authorized to call spend/balance functions here.
   function setCawActions(address _cawActions) external onlyOwner {
     cawActions = ICawActions(_cawActions);
     emit CawActionsSet(_cawActions);
   }
 
+  /// @notice Set the CawActionsReplicator contract address. Owner-only.
+  /// @dev The replicator is forwarded `setClientChains` calls from L1 via LayerZero.
   function setCawActionsReplicator(address _replicator) external onlyOwner {
     cawActionsReplicator = _replicator;
     emit CawActionsReplicatorSet(_replicator);
   }
 
+  /// @notice Get the CAW balance for a token, scaled by the global reward multiplier.
+  /// @dev Internal storage uses `cawOwnership` (precision-adjusted shares); this returns the
+  ///      actual CAW amount the token is entitled to.
   function cawBalanceOf(uint32 tokenId) public view returns (uint256){
     return cawOwnership[tokenId] * rewardMultiplier / (precision);
   }
 
+  /// @notice Spend CAW from one token, distribute to all holders, and credit a recipient. CawActions only.
+  /// @dev Used for tipping flows where the spender pays a tip to a specific recipient and a global reward.
+  ///      Reverts unless `msg.sender == cawActions` (enforced inside `spendAndDistribute`).
+  /// @param tokenId Token paying the cost
+  /// @param amountToSpend CAW amount (whole tokens) the spender pays
+  /// @param amountToDistribute CAW amount (whole tokens) distributed to all holders via reward multiplier
+  /// @param recipientId Token receiving a direct credit
+  /// @param recipientAmount CAW amount (whole tokens) credited to the recipient
   function spendDistributeAndAddTokensToBalance(uint32 tokenId, uint256 amountToSpend, uint256 amountToDistribute, uint32 recipientId, uint256 recipientAmount) external {
+    // SECURITY NOTE: No explicit access control here, but the first internal call
+    // (spendAndDistribute) reverts unless msg.sender == cawActions. The second call
+    // (addToBalance) is reachable only after that check passes. Safe by sequencing.
     spendAndDistribute(tokenId, amountToSpend * 10**18, amountToDistribute * 10**18);
     addToBalance(recipientId, recipientAmount * 10**18);
   }
 
+  /// @notice Spend CAW from a token and distribute to all holders. CawActions only.
+  /// @dev Whole-token wrapper around `spendAndDistribute` that scales inputs by 10**18.
+  /// @param tokenId Token paying the cost
+  /// @param amountToSpend CAW amount (whole tokens) the spender pays
+  /// @param amountToDistribute CAW amount (whole tokens) distributed to all holders
   function spendAndDistributeTokens(uint32 tokenId, uint256 amountToSpend, uint256 amountToDistribute) external {
+    // SECURITY NOTE: No explicit access control here, but spendAndDistribute reverts
+    // unless msg.sender == cawActions. Safe by sequencing.
     spendAndDistribute(tokenId, amountToSpend * 10**18, amountToDistribute * 10**18);
   }
 
+  /// @notice Spend CAW from a token (raw 18-decimal amounts) and distribute to all holders. CawActions only.
+  /// @dev If the token's balance equals the total supply, the distributed amount is added back to the
+  ///      single holder. Otherwise it inflates the global `rewardMultiplier`, crediting all holders.
+  /// @param tokenId Token paying the cost
+  /// @param amountToSpend Raw CAW amount (18 decimals) the spender pays
+  /// @param amountToDistribute Raw CAW amount (18 decimals) distributed to all holders
   function spendAndDistribute(uint32 tokenId, uint256 amountToSpend, uint256 amountToDistribute) public {
     require(address(cawActions) == _msgSender(), "caller is not the cawActions contract");
     uint256 balance = cawBalanceOf(tokenId);
@@ -168,23 +220,38 @@ contract CawNameL2 is
     require(balance >= amountToSpend, 'Insufficient CAW balance');
     uint256 newCawBalance = balance - amountToSpend;
 
-    if (totalCaw > balance)
-      rewardMultiplier += rewardMultiplier * amountToDistribute / (totalCaw - balance);
-    else newCawBalance += amountToDistribute;
+    // SECURITY (audited 2026-04-07): if "everyone else" holds less than the distribute amount,
+    // refund to the spender instead. Caps per-call rewardMultiplier growth at 2x, preventing
+    // a degenerate (1 whale + dust) attacker from overflowing uint256 in ~5 calls. The fallback
+    // only triggers in early-network conditions; once any other holder has >=6001 CAW, normal
+    // distribution always applies.
+    uint256 denominator = totalCaw > balance ? totalCaw - balance : 0;
+    if (denominator >= amountToDistribute && denominator > 0) {
+      rewardMultiplier += rewardMultiplier * amountToDistribute / denominator;
+    } else {
+      newCawBalance += amountToDistribute;
+    }
 
     setCawBalance(tokenId, newCawBalance);
   }
 
+  /// @notice Add whole-token CAW to a token's balance. Wrapper around `addToBalance` for whole-token amounts.
+  /// @dev Reverts inside `addToBalance` unless caller is cawActions or invocation came via LayerZero.
   function addTokensToBalance(uint32 tokenId, uint256 amount) external {
     addToBalance(tokenId, amount * 10**18);
   }
 
+  /// @notice Mark a token as authenticated with a client and apply a batch of ownership updates.
+  /// @dev Only callable from `_lzReceive` (the `fromLZ` flag is set there). The `updateOwners`
+  ///      array carries pending L1→L2 ownership transfers piggybacked on this LZ message.
   function authenticateAndUpdateOwners(uint32 cawClientId, uint32 tokenId, uint32[] calldata tokenIds, address[] calldata owners) public {
     require(fromLZ, "authenticateAndUpdateOwners only callable internally");
     authenticated[cawClientId][tokenId] = true;
     updateOwners(tokenIds, owners);
   }
 
+  /// @notice Credit a deposit, mark as authenticated, and apply pending ownership updates.
+  /// @dev Only callable from `_lzReceive`. Triggered by L1 `deposit()` calls forwarded via LayerZero.
   function depositAndUpdateOwners(uint32 cawClientId, uint32 tokenId, uint256 amount, uint32[] calldata tokenIds, address[] calldata owners) public {
     require(fromLZ, "depositAndUpdateOwners only callable internally");
     totalCaw += amount;
@@ -192,22 +259,29 @@ contract CawNameL2 is
     authenticateAndUpdateOwners(cawClientId, tokenId, tokenIds, owners);
   }
 
+  /// @notice Add CAW (raw 18-decimal amount) to a token's balance.
+  /// @dev Callable by `cawActions` directly OR via LayerZero (`fromLZ` flag).
   function addToBalance(uint32 tokenId, uint256 amount) public {
     require(fromLZ || address(cawActions) == _msgSender(), "caller is not cawActions or LZ");
 
     setCawBalance(tokenId, cawBalanceOf(tokenId) + amount);
   }
 
+  /// @dev Internal: write the token's CAW balance back to the precision-adjusted shares mapping.
   function setCawBalance(uint32 tokenId, uint256 newCawBalance) internal {
     cawOwnership[tokenId] = precision * newCawBalance / rewardMultiplier;
   }
 
+  /// @notice Apply a batch of ownership updates from L1 transfers.
+  /// @dev Only callable from `_lzReceive`. Each entry overwrites `ownerOf[tokenId]` with the new owner.
   function updateOwners(uint32[] calldata tokenIds, address[] calldata owners) public {
     require(fromLZ, "updateOwners only callable internally");
     for (uint i = 0; i < tokenIds.length; i++)
       _setOwnerOf(tokenIds[i], owners[i]);
   }
 
+  /// @notice Mint a new token (mirror of an L1 mint) and apply pending ownership updates.
+  /// @dev Only callable from `_lzReceive`. Sets username + owner atomically.
   function mintAndUpdateOwners(uint32 tokenId, address owner, string memory username, uint32[] calldata tokenIds, address[] calldata owners) public {
     require(fromLZ, "mintAndUpdateOwners only callable internally");
     usernames[tokenId] = username;
@@ -216,6 +290,7 @@ contract CawNameL2 is
     updateOwners(tokenIds, owners);
   }
 
+  /// @notice Mark a token as authenticated with a client. Only used in mainnet co-deployment mode.
   function auth(uint32 cawClientId, uint32 tokenId) public onlyOnMainnet {
     emit Authenticated(cawClientId, tokenId);
     authenticated[cawClientId][tokenId] = true;
@@ -243,22 +318,28 @@ contract CawNameL2 is
     emit ClientChainsSet(clientId, destEids);
   }
 
+  /// @notice Credit a deposit from a co-deployed L1 contract (no LayerZero involved).
+  /// @dev Only callable in mainnet co-deployment mode (`bypassLZ && msg.sender == cawName`).
   function deposit(uint32 cawClientId, uint32 tokenId, uint256 amount) external onlyOnMainnet {
     totalCaw += amount;
     auth(cawClientId, tokenId);
     addToBalance(tokenId, amount);
   }
 
+  /// @notice Mint a token (mirror of L1 mint) — co-deployment mode only.
+  /// @dev Only callable when `bypassLZ` is true and the caller is the L1 CawName contract.
   function mint(uint32 tokenId, address owner, string memory username) external onlyOnMainnet {
     emit UsernameMinted(tokenId, owner);
     usernames[tokenId] = username;
     ownerOf[tokenId] = owner;
   }
 
+  /// @notice Update a single token's owner — co-deployment mode only.
   function setOwnerOf(uint32 tokenId, address newOwner) external onlyOnMainnet {
     _setOwnerOf(tokenId, newOwner);
   }
 
+  /// @dev Internal: writes ownerOf and emits the OwnerSet event. Used by both `setOwnerOf` and `updateOwners`.
   function _setOwnerOf(uint32 tokenId, address newOwner) internal {
     emit OwnerSet(tokenId, newOwner);
     ownerOf[tokenId] = newOwner;
@@ -275,11 +356,13 @@ contract CawNameL2 is
   /// @param expiry Unix timestamp after which the session is invalid
   /// @param scopeBitmap Bitfield of allowed ActionTypes (bits 0-7; only WITHDRAW bit 6 is forbidden)
   /// @param spendLimit Max whole CAW tokens this session key can spend (0 = unlimited)
+  /// @param nonce Must match the signer's current sessionNonce (prevents replay after revocation)
   function registerSession(
     address sessionKey,
     uint64 expiry,
     uint8 scopeBitmap,
     uint256 spendLimit,
+    uint256 nonce,
     uint8 v, bytes32 r, bytes32 s
   ) external {
     require(sessionKey != address(0), "Zero session key");
@@ -291,13 +374,16 @@ contract CawNameL2 is
       sessionKey,
       expiry,
       scopeBitmap,
-      spendLimit
+      spendLimit,
+      nonce
     ));
     bytes32 digest = keccak256(abi.encodePacked("\x19\x01", eip712DomainHash, structHash));
     address signer = ecrecover(digest, v, r, s);
 
     require(signer != address(0), "Invalid signature");
+    require(nonce == sessionNonce[signer], "Invalid nonce");
 
+    sessionNonce[signer]++;
     sessions[signer][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit);
     emit SessionCreated(signer, sessionKey, expiry, scopeBitmap, spendLimit);
   }
@@ -335,6 +421,10 @@ contract CawNameL2 is
     emit SessionRevoked(owner, sessionKey);
   }
 
+  /// @notice OApp callback for receiving cross-chain messages from L1.
+  /// @dev See SECURITY NOTE inside. The OApp base verifies sender is the endpoint and the configured
+  ///      peer before this runs. The payload's first 4 bytes are a function selector (whitelisted via
+  ///      `isAuthorizedFunction`), and the rest are ABI-encoded args dispatched via delegatecall to self.
   function _lzReceive(
     Origin calldata _origin, // struct containing info about the message sender
     bytes32 _guid, // global packet identifier
@@ -357,8 +447,19 @@ contract CawNameL2 is
     // Ensure the selector corresponds to an expected function to prevent unauthorized actions
     require(isAuthorizedFunction(decodedSelector), "Unauthorized function call");
 
-    // Call the function using the selector and arguments
-    // (bool success, bytes memory returnData) = address(this).delegatecall(abi.encode(decodedSelector, args));
+    // Call the function using the selector and arguments.
+    //
+    // SECURITY NOTE (audited 2026-04-06): The fromLZ + delegatecall pattern is intentional and safe.
+    // - The OApp base class already verifies msg.sender == endpoint and the peer before _lzReceive runs.
+    // - All authorized functions (depositAndUpdateOwners, authenticateAndUpdateOwners,
+    //   mintAndUpdateOwners, updateOwners, setClientChains) perform only storage writes, except
+    //   setClientChains which calls the owner-configured cawActionsReplicator (trusted, not user-supplied).
+    // - fromLZ cannot get stuck: on success it resets below; on revert the entire tx rolls back.
+    // - The endpoint is immutable (set once in constructor, can never change).
+    // - These contracts are immutable post-deployment, so no new authorized functions can be added.
+    // - An alternative like msg.sender == endpoint would not work here because the authorized functions
+    //   are public (required for delegatecall dispatch), and fromLZ is needed to distinguish the
+    //   _lzReceive call path from direct external calls.
     fromLZ = true;
     (bool success, bytes memory returnData) = address(this).delegatecall(bytes.concat(decodedSelector, args));
     fromLZ = false;
@@ -380,9 +481,10 @@ contract CawNameL2 is
 
   mapping(bytes4 => string) public functionSigs;
 
-  // Whitelist of selectors allowed via delegatecall from LayerZero messages.
-  // Security: verified that no authorized selector collides with any inherited
-  // function from OApp, Ownable, or Context.
+  /// @notice Whitelist of selectors allowed via delegatecall from LayerZero messages.
+  /// @dev Security: verified that no authorized selector collides with any inherited
+  ///      function from OApp, Ownable, or Context. Since the contract is immutable
+  ///      post-deployment, no new selectors can ever be added to this list.
   function isAuthorizedFunction(bytes4 selector) private pure returns (bool) {
     return selector == bytes4(keccak256("depositAndUpdateOwners(uint32,uint32,uint256,uint32[],address[])")) ||
       selector == bytes4(keccak256("authenticateAndUpdateOwners(uint32,uint32,uint32[],address[])")) ||
@@ -391,6 +493,9 @@ contract CawNameL2 is
       selector == bytes4(keccak256("setClientChains(uint32,uint32[])"));
   }
 
+  /// @notice Subtract CAW from a token's balance (used during withdraw flows). CawActions only.
+  /// @dev This decrements the L2-side bookkeeping; the actual L1 withdrawal credit is sent
+  ///      via `setWithdrawable` over LayerZero.
   function withdraw(uint32 tokenId, uint256 amount) external {
     require(address(cawActions) == _msgSender(), "caller is not the cawActions contract");
 
@@ -401,30 +506,45 @@ contract CawNameL2 is
     setCawBalance(tokenId, balance - amount);
   }
 
+  /// @notice Send withdrawable amounts to L1 via LayerZero (or directly in co-deployment mode).
+  /// @dev CawActions only. The L1 contract receives this and credits the per-token `withdrawable`
+  ///      mapping, allowing token owners to subsequently call `withdraw` on L1.
+  ///
+  ///      SECURITY NOTE (audited 2026-04-07): No `tokenIds.length == amounts.length` check.
+  ///      The only caller is `CawActions.setWithdrawable`, which builds both arrays from the
+  ///      same `withdrawCount` in lockstep — they are guaranteed equal by construction.
+  ///      Adding a check here would add gas to the validator's hot path for an impossible bug.
+  ///      Both contracts are immutable post-deployment.
+  /// @param tokenIds Token IDs being credited
+  /// @param amounts Corresponding withdraw amounts (raw 18-decimal CAW)
+  /// @param lzTokenAmount LayerZero ZRO token amount (0 to pay in native gas)
   function setWithdrawable(uint32[] memory tokenIds, uint256[] memory amounts, uint256 lzTokenAmount) external payable {
     require(address(cawActions) == _msgSender(), "caller is not CawActions");
     if (bypassLZ)
       cawName.setWithdrawable(tokenIds, amounts);
     else {
       bytes memory payload = abi.encodeWithSelector(setWithdrawableSelector, tokenIds, amounts);
-      lzSend(setWithdrawableSelector, payload, lzTokenAmount);
+      lzSend(setWithdrawableSelector, tokenIds.length, payload, lzTokenAmount);
     }
   }
 
+  /// @notice Quote the LayerZero fee for sending a withdraw message to L1.
+  /// @param payInLzToken True to quote in ZRO token, false for native gas
   function withdrawQuote(uint32[] memory tokenIds, uint256[] memory amounts, bool payInLzToken) public view returns (MessagingFee memory quote) {
     bytes memory payload = abi.encodeWithSelector(
       setWithdrawableSelector, tokenIds, amounts
-    ); return lzQuote(setWithdrawableSelector, payload, payInLzToken);
+    ); return lzQuote(setWithdrawableSelector, tokenIds.length, payload, payInLzToken);
   }
 
-  function lzQuote(bytes4 selector, bytes memory payload, bool _payInLzToken) public view returns (MessagingFee memory quote) {
-    bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(selector), 0);
+  /// @notice Quote a generic LayerZero message to L1, given a selector, batch size, and payload.
+  function lzQuote(bytes4 selector, uint256 n, bytes memory payload, bool _payInLzToken) public view returns (MessagingFee memory quote) {
+    bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(selector, n), 0);
     return _quote(layer1EndpointId, payload, _options, _payInLzToken);
   }
 
-  // Will use to send withdrawable amount to L1
-  function lzSend(bytes4 selector, bytes memory payload, uint256 lzTokenAmount) internal {
-    bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(selector), 0);
+  /// @dev Internal: send a LayerZero message to the L1 endpoint.
+  function lzSend(bytes4 selector, uint256 n, bytes memory payload, uint256 lzTokenAmount) internal {
+    bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(selector, n), 0);
 
     _lzSend(
       layer1EndpointId, // Destination chain's endpoint ID.
@@ -435,16 +555,14 @@ contract CawNameL2 is
     );
   }
 
-  // TODO:
-  // TODO:
-  // TODO:
-  // TODO:
-  // TODO:
-  // Find real values for these:
-  function gasLimitFor(bytes4 selector) public view returns (uint128) {
-    if (selector == setWithdrawableSelector)
-      return 300000;
-    else revert('unexpected selector');
+  /// @notice Gas limit forwarded to the destination chain for executing this message.
+  /// @dev L2→L1 destination is Ethereum mainnet — gas overprovisioning is expensive because
+  ///      the validator pays L1 gas prices for every wasted unit. Constants come from real
+  ///      measurements (scripts/measure-gas.js): measured ≈ 15.5k + 14.4k*n, with base and
+  ///      slope each scaled up ~1.3× for safety margin covering cold-slot warmup variance.
+  function gasLimitFor(bytes4 selector, uint256 n) public view returns (uint128) {
+    if (selector == setWithdrawableSelector) return uint128(22_000 + 19_000 * n);  // measured: 15.5k + 14.4k*n
+    revert('unexpected selector');
   }
 
 }

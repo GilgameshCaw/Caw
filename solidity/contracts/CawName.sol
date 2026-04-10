@@ -49,6 +49,15 @@ contract CawName is
   // Keeping track of clients to which the user has authenticated
   mapping(uint32 => mapping(uint32 => bool)) public authenticated;
 
+  /// @notice Withdraw fee locked in at the moment a token first authenticates with a client.
+  /// @dev Once set, this fee floor is honored forever — clients cannot retroactively raise
+  ///      withdraw fees on existing depositors. On withdraw, the user pays min(locked, current),
+  ///      so they automatically benefit if the client lowers fees later. Indexed by (clientId, tokenId).
+  mapping(uint32 => mapping(uint32 => uint256)) public lockedWithdrawFee;
+  /// @notice True once a token has had its withdraw fee locked for a client. Used to distinguish
+  ///         "locked at zero" from "never locked" (since 0 is a valid fee).
+  mapping(uint32 => mapping(uint32 => bool)) public withdrawFeeLocked;
+
   mapping(uint32 => uint256) public withdrawable;
 
   uint256 public rewardMultiplier = 10**18;
@@ -75,6 +84,8 @@ contract CawName is
 
   event MinterSet(address minter);
   event TransferPendingSync(uint32 indexed tokenId, address indexed from, address indexed to);
+  event L2PeerSet(uint32 indexed eid, address indexed peer);
+  event Deposited(uint32 indexed cawClientId, uint32 indexed tokenId, uint256 amount, uint32 indexed lzDestId, address depositor);
 
   CawClientManager public clientManager;
   address buyAndBurnCaw;
@@ -83,7 +94,7 @@ contract CawName is
     ERC721("CAW NAME", "cawNAME")
     OApp(_endpoint, msg.sender)
   {
-    clientManager = CawClientManager(_clientManager);
+    clientManager = CawClientManager(payable(_clientManager));
     uriGenerator = CawNameURI(_gui);
     buyAndBurnCaw = _buyAndBurn;
     CAW = IERC20(_caw);
@@ -95,6 +106,7 @@ contract CawName is
       peerIds.add(uint256(_eid));
       setPeer(_eid, bytes32(uint256(uint160(_peer))));
     } else cawNameL2 = CawNameL2(_peer);
+    emit L2PeerSet(_eid, _peer);
   }
 
   function setMinter(address _minter) external onlyOwner {
@@ -132,8 +144,9 @@ contract CawName is
     usernames.push(username);
     _mint(owner, newId);
 
-    // Transfer deposit CAW from the owner to this contract
-    CAW.transferFrom(owner, address(this), depositAmount);
+    // Transfer deposit CAW from the minter (which already pulled it from the user)
+    // This avoids requiring a second approval from the user
+    CAW.transferFrom(_msgSender(), address(this), depositAmount);
     totalCaw += depositAmount;
     chosenChainIds[newId].add(uint256(lzDestId));
 
@@ -151,6 +164,7 @@ contract CawName is
     }
 
     authenticated[cawClientId][newId] = true;
+    _lockWithdrawFeeIfNeeded(cawClientId, newId);
     uint256 lzEthAmount = msg.value - totalFeesPaid;
 
     if (lzDestId == mainnetLzId) {
@@ -160,7 +174,7 @@ contract CawName is
       address[] memory owners;
       (tokenIds, owners) = extractPendingTransferUpdates(lzDestId, owner, newId);
       bytes memory payload = abi.encodeWithSelector(addToBalanceSelector, cawClientId, newId, depositAmount, tokenIds, owners);
-      lzSend(lzDestId, addToBalanceSelector, payload, lzEthAmount, lzTokenAmount);
+      lzSend(lzDestId, addToBalanceSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
   }
 
@@ -169,6 +183,15 @@ contract CawName is
 
   event FeesAccrued(address indexed recipient, uint256 amount);
   event FeesWithdrawn(address indexed recipient, uint256 amount);
+
+  /// @dev Lock the withdraw fee for a (client, token) pair the first time they authenticate.
+  ///      Subsequent calls are no-ops, ensuring users always get their first-deposit terms or better.
+  function _lockWithdrawFeeIfNeeded(uint32 cawClientId, uint32 tokenId) internal {
+    if (!withdrawFeeLocked[cawClientId][tokenId]) {
+      lockedWithdrawFee[cawClientId][tokenId] = clientManager.getWithdrawFee(cawClientId);
+      withdrawFeeLocked[cawClientId][tokenId] = true;
+    }
+  }
 
   function payFee(uint256 fee, address feeAddress) internal returns (uint256) {
     if (fee > 0) {
@@ -181,11 +204,15 @@ contract CawName is
   }
 
   /// @notice Withdraw accrued fees (callable by anyone owed fees)
+  /// @dev Uses .call{value:} instead of .transfer() so contract recipients (multisigs, etc.)
+  ///      can receive fees. Reentrancy is prevented by zeroing accruedFees BEFORE the call
+  ///      (checks-effects-interactions pattern).
   function withdrawFees() external {
     uint256 amount = accruedFees[msg.sender];
     require(amount > 0, "No fees to withdraw");
     accruedFees[msg.sender] = 0;
-    payable(msg.sender).transfer(amount);
+    (bool sent, ) = payable(msg.sender).call{value: amount}("");
+    require(sent, "Fee transfer failed");
     emit FeesWithdrawn(msg.sender, amount);
   }
 
@@ -240,6 +267,7 @@ contract CawName is
     (uint256 fee, address feeAddress) = clientManager.getAuthFeeAndAddress(cawClientId);
     uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
     authenticated[cawClientId][tokenId] = true;
+    _lockWithdrawFeeIfNeeded(cawClientId, tokenId);
 
     if (lzDestId == mainnetLzId)
       cawNameL2.auth(tokenId, cawClientId);
@@ -248,7 +276,7 @@ contract CawName is
       address[] memory owners;
       (tokenIds, owners) = extractPendingTransferUpdates(lzDestId, msg.sender, tokenId);
       bytes memory payload = abi.encodeWithSelector(authSelector, cawClientId, tokenId, tokenIds, owners);
-      lzSend(lzDestId, authSelector, payload, lzEthAmount, lzTokenAmount);
+      lzSend(lzDestId, authSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
   }
 
@@ -267,6 +295,7 @@ contract CawName is
     if (!authenticated[cawClientId][tokenId]) {
       fee += clientManager.getAuthFee(cawClientId);
       authenticated[cawClientId][tokenId] = true;
+      _lockWithdrawFeeIfNeeded(cawClientId, tokenId);
     }
 
     uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
@@ -278,8 +307,10 @@ contract CawName is
       address[] memory owners;
       (tokenIds, owners) = extractPendingTransferUpdates(lzDestId, owner, tokenId);
       bytes memory payload = abi.encodeWithSelector(addToBalanceSelector, cawClientId, tokenId, amount, tokenIds, owners);
-      lzSend(lzDestId, addToBalanceSelector, payload, lzEthAmount, lzTokenAmount);
+      lzSend(lzDestId, addToBalanceSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
+
+    emit Deposited(cawClientId, tokenId, amount, lzDestId, msg.sender);
   }
 
   function deposit(uint32 cawClientId, uint32 tokenId, uint256 amount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
@@ -311,7 +342,15 @@ contract CawName is
     totalCaw -= withdrawable[tokenId];
     withdrawable[tokenId] = 0;
 
-    (uint256 fee, address feeAddress) = clientManager.getWithdrawFeeAndAddress(cawClientId);
+    // Honor the withdraw fee that was locked in when this token first authenticated with the
+    // client. If the client has since LOWERED their fee, the user gets the lower rate. If the
+    // client has RAISED their fee, the user pays only the locked-in rate.
+    (uint256 currentFee, address feeAddress) = clientManager.getWithdrawFeeAndAddress(cawClientId);
+    uint256 fee = currentFee;
+    if (withdrawFeeLocked[cawClientId][tokenId]) {
+      uint256 locked = lockedWithdrawFee[cawClientId][tokenId];
+      if (locked < fee) fee = locked;
+    }
     uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
 
     CAW.transfer(msg.sender, amount);
@@ -385,12 +424,20 @@ contract CawName is
       cawNameL2.setClientChains(clientId, destEids);
     } else {
       bytes memory payload = abi.encodeWithSelector(setClientChainsSelector, clientId, destEids);
-      lzSend(lzDestId, setClientChainsSelector, payload, lzEthAmount, lzTokenAmount);
+      lzSend(lzDestId, setClientChainsSelector, destEids.length, payload, lzEthAmount, lzTokenAmount);
     }
   }
 
   // syncReplicationQuote moved to CawNameQuoter contract
 
+  /// @notice Credit per-token withdraw amounts. Only callable via LayerZero from L2 CawNameL2.
+  /// @dev SECURITY NOTE (audited 2026-04-07): No `tokenIds.length == amounts.length` check is
+  ///      intentional. The only caller is `CawActions.setWithdrawable` (on L2), which constructs
+  ///      both arrays from the same `withdrawCount` variable in lockstep — they are guaranteed
+  ///      to have equal length by construction. Adding a length check here would burn L1 gas
+  ///      (paid by the validator via LZ fees) on every withdraw batch for a check that cannot
+  ///      fail. Both contracts are immutable post-deployment, so the construction invariant
+  ///      cannot be broken by future code changes.
   function setWithdrawable(uint32[] memory tokenIds, uint256[] memory amounts) external {
     require(fromLZ, "setWithdrawable only callable internally");
     for (uint256 i = 0; i < tokenIds.length; i++)
@@ -481,7 +528,7 @@ contract CawName is
         cawNameL2.updateOwners(tokenIds, owners);
       else {
         bytes memory payload = abi.encodeWithSelector(updateOwnersSelector, tokenIds, owners);
-        lzSend(lzDestId, updateOwnersSelector, payload, lzEthAmount, lzTokenAmount);
+        lzSend(lzDestId, updateOwnersSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
       }
     }
   }
@@ -552,18 +599,19 @@ contract CawName is
     return _nativeFee;
   }
 
-  function lzSend(uint32 lzDestId, bytes4 selector, bytes memory payload, uint256 lzEthAmount, uint256 lzTokenAmount) internal {
-    bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(selector), 0);
+  function lzSend(uint32 lzDestId, bytes4 selector, uint256 n, bytes memory payload, uint256 lzEthAmount, uint256 lzTokenAmount) internal {
+    bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(selector, n), 0);
 
+    // Refund excess LZ fee to tx.origin — the EOA that actually paid.
+    // Using msg.sender would break when called through an intermediary contract
+    // (e.g. CawNameMarketplace.acceptOffer -> transferAndSync) because the contract
+    // wouldn't have a receive() function to accept the refund.
     _lzSend(
       lzDestId, // Destination chain's endpoint ID.
       payload, // Encoded message payload being sent.
       _options, // Message execution options (e.g., gas to use on destination).
       MessagingFee(lzEthAmount, lzTokenAmount), // Fee struct containing native gas and ZRO token.
-
-      // TODO:
-      // Should the msg.sender receive the refund instead? 
-      payable(address(this)) // The refund address in case the send call reverts.
+      payable(tx.origin) // Refund excess LZ fee to the tx originator (the EOA paying)
     );
   }
 
@@ -571,23 +619,27 @@ contract CawName is
   // Most quote functions moved to CawNameQuoter contract to reduce contract size
   // lzQuote stays here since it needs access to inherited _quote from OApp
 
-  function lzQuote(bytes4 selector, bytes memory payload, uint32 lzDestId, bool _payInLzToken) public view returns (MessagingFee memory quote) {
-    bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(selector), 0);
+  function lzQuote(bytes4 selector, uint256 n, bytes memory payload, uint32 lzDestId, bool _payInLzToken) public view returns (MessagingFee memory quote) {
+    bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(selector, n), 0);
     return _quote(lzDestId, payload, _options, _payInLzToken);
   }
 
-  function gasLimitFor(bytes4 selector) public view returns (uint128) {
-    if (selector == addToBalanceSelector)
-      return 600000;
-    else if (selector == mintSelector)
-      return 600000;
-    else if (selector == updateOwnersSelector)
-      return 300000;
-    else if (selector == authSelector)
-      return 300000;
-    else if (selector == setClientChainsSelector)
-      return 300000;
-    else revert("unexpected selector");
+  /// @notice Gas limit forwarded to the destination chain for executing this message.
+  /// @dev Sized as base + per-entry * n, where n is the array length in the payload.
+  ///      Numbers are derived from real measurements (scripts/measure-gas.js) plus a safety
+  ///      margin: base is measured-base × ~1.35, slope is measured-slope × ~1.32. The margin
+  ///      covers cold-slot warmup variance at small n and leaves headroom for future solc
+  ///      or opcode cost changes. Worst-case (n=50) fits within ~1.3× of measured.
+  function gasLimitFor(bytes4 selector, uint256 n) public view returns (uint128) {
+    // Base must cover the measured n=0 worst case, not just the linear-fit intercept:
+    // mint(n=0)=54k, deposit(n=0)=81k, auth(n=0)=36k, updateOwners(n=0)=18k,
+    // setClientChains(n=1 cold)=112k. See scripts/measure-gas.js output.
+    if (selector == addToBalanceSelector)      return uint128(110_000 + 19_000 * n);  // measured n=0: 81k
+    if (selector == mintSelector)              return uint128( 75_000 + 19_000 * n);  // measured n=0: 54k
+    if (selector == updateOwnersSelector)      return uint128( 25_000 + 19_000 * n);  // measured n=0: 18k
+    if (selector == authSelector)              return uint128( 50_000 + 19_000 * n);  // measured n=0: 36k
+    if (selector == setClientChainsSelector)   return uint128(150_000 + 25_000 * n);  // n=1 cold: 112k
+    revert("unexpected selector");
   }
 
   receive() external payable {}

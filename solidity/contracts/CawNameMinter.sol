@@ -34,7 +34,9 @@ contract CawNameMinter is Context {
   }
 
   /// @notice Mint a username and deposit CAW in one transaction.
-  /// @dev The user must approve both the Minter (for burn) and CawName (for deposit) for CAW spending.
+  /// @dev The user only needs to approve the Minter for the full amount (burn + deposit).
+  ///      The Minter pulls all CAW from the user, burns the burn portion, and forwards
+  ///      the deposit portion to CawName.
   /// @param clientId The client ID to authenticate with
   /// @param username The username to mint
   /// @param depositAmount The amount of CAW to deposit (in wei)
@@ -47,15 +49,22 @@ contract CawNameMinter is Context {
 
     uint256 totalCawNeeded = burnAmount + depositAmount;
     require(CAW.balanceOf(_msgSender()) >= totalCawNeeded, "You do not have enough CAW");
-    require(CAW.allowance(_msgSender(), address(this)) >= burnAmount, "You must approve spending of your CAW for username burn");
+    require(CAW.allowance(_msgSender(), address(this)) >= totalCawNeeded, "You must approve spending of your CAW");
 
     // Burn CAW for the username
     CAW.transferFrom(_msgSender(), address(0xdEAD000000000000000042069420694206942069), burnAmount);
 
+    // Pull the deposit portion from the user into this contract,
+    // then approve CawName to transferFrom this contract during mintAndDeposit.
+    if (depositAmount > 0) {
+      CAW.transferFrom(_msgSender(), address(this), depositAmount);
+      CAW.approve(address(CawName), depositAmount);
+    }
+
     uint32 newId = CawName.nextId();
     idByUsername[username] = newId;
 
-    // Mint + deposit in one call (CawName pulls depositAmount from the user via transferFrom)
+    // Mint + deposit in one call (CawName pulls depositAmount from this contract)
     CawName.mintAndDeposit{value: msg.value}(clientId, msg.sender, username, newId, depositAmount, lzDestId, lzTokenAmount);
   }
 
@@ -63,7 +72,7 @@ contract CawNameMinter is Context {
     bytes memory input = bytes(_input);
     if (input.length == 0 || input.length > 255) return false;
 
-    for (uint8 i = 0; i < input.length; i++) {
+    for (uint256 i = 0; i < input.length; i++) {
       uint8 char = uint8(input[i]);
       if (
         (char < 48 || char > 57) && // not a number

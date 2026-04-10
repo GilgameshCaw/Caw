@@ -9,6 +9,8 @@ import { CawClientManager } from "./CawClientManager.sol";
 interface ICawNameForQuoter {
   function clientManager() external view returns (CawClientManager);
   function authenticated(uint32 clientId, uint32 tokenId) external view returns (bool);
+  function withdrawFeeLocked(uint32 clientId, uint32 tokenId) external view returns (bool);
+  function lockedWithdrawFee(uint32 clientId, uint32 tokenId) external view returns (uint256);
   function pendingTransferUpdates(uint32 lzDestId, address newOwner, uint32 tokenId) external view returns (uint32[] memory, address[] memory);
   function pendingTransferUpdates(uint32 lzDestId) external view returns (uint32[] memory, address[] memory);
   function peerWithMaxPendingTransfers() external view returns (uint32);
@@ -17,7 +19,7 @@ interface ICawNameForQuoter {
   function updateOwnersSelector() external view returns (bytes4);
   function authSelector() external view returns (bytes4);
   function setClientChainsSelector() external view returns (bytes4);
-  function lzQuote(bytes4 selector, bytes memory payload, uint32 lzDestId, bool _payInLzToken) external view returns (MessagingFee memory quote);
+  function lzQuote(bytes4 selector, uint256 n, bytes memory payload, uint32 lzDestId, bool _payInLzToken) external view returns (MessagingFee memory quote);
 }
 
 /**
@@ -42,7 +44,7 @@ contract CawNameQuoter {
       cawName.authSelector(), clientId, tokenId, tokenIds, owners
     );
 
-    quote = cawName.lzQuote(cawName.authSelector(), payload, lzDestId, payInLzToken);
+    quote = cawName.lzQuote(cawName.authSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
     quote.nativeFee += cawName.clientManager().getAuthFee(clientId) * 2;
     return quote;
   }
@@ -55,7 +57,7 @@ contract CawNameQuoter {
       cawName.addToBalanceSelector(), clientId, tokenId, amount, tokenIds, owners
     );
 
-    quote = cawName.lzQuote(cawName.addToBalanceSelector(), payload, lzDestId, payInLzToken);
+    quote = cawName.lzQuote(cawName.addToBalanceSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
     quote.nativeFee += cawName.clientManager().getDepositFee(clientId) * 2;
 
     if (!cawName.authenticated(clientId, tokenId))
@@ -80,7 +82,7 @@ contract CawNameQuoter {
       cawName.addToBalanceSelector(), clientId, uint32(0), depositAmount, tokenIds, owners
     );
 
-    quote = cawName.lzQuote(cawName.addToBalanceSelector(), payload, lzDestId, payInLzToken);
+    quote = cawName.lzQuote(cawName.addToBalanceSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
     // Mint fee + deposit fee + auth fee (new user always needs auth)
     quote.nativeFee += cawName.clientManager().getMintFee(clientId) * 2;
     quote.nativeFee += cawName.clientManager().getDepositFee(clientId) * 2;
@@ -94,6 +96,19 @@ contract CawNameQuoter {
     return quote;
   }
 
+  /// @notice Returns the effective withdraw fee for a specific token, accounting for the locked-in
+  ///         rate if one exists. Use this for accurate quotes — `withdrawQuote(clientId)` returns
+  ///         the current client fee without considering the lock.
+  /// @return The lower of (current client fee, locked-in fee for this token), in wei
+  function effectiveWithdrawFee(uint32 clientId, uint32 tokenId) public view returns (uint256) {
+    uint256 current = cawName.clientManager().getWithdrawFee(clientId);
+    if (cawName.withdrawFeeLocked(clientId, tokenId)) {
+      uint256 locked = cawName.lockedWithdrawFee(clientId, tokenId);
+      if (locked < current) return locked;
+    }
+    return current;
+  }
+
   function updateOwnerQuote(bool payInLzToken) public view returns (MessagingFee memory quote) {
     uint32[] memory tokenIds; address[] memory owners;
     uint32 lzDestId = cawName.peerWithMaxPendingTransfers();
@@ -103,7 +118,7 @@ contract CawNameQuoter {
     bytes memory payload = abi.encodeWithSelector(
       cawName.updateOwnersSelector(), tokenIds, owners
     );
-    return cawName.lzQuote(cawName.updateOwnersSelector(), payload, lzDestId, payInLzToken);
+    return cawName.lzQuote(cawName.updateOwnersSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
   }
 
   /**
@@ -125,12 +140,12 @@ contract CawNameQuoter {
     bytes memory payload = abi.encodeWithSelector(
       cawName.updateOwnersSelector(), tokenIds, owners
     );
-    return cawName.lzQuote(cawName.updateOwnersSelector(), payload, lzDestId, payInLzToken);
+    return cawName.lzQuote(cawName.updateOwnersSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
   }
 
   function syncReplicationQuote(uint32 clientId, uint32[] calldata destEids, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
     bytes memory payload = abi.encodeWithSelector(cawName.setClientChainsSelector(), clientId, destEids);
-    return cawName.lzQuote(cawName.setClientChainsSelector(), payload, lzDestId, payInLzToken);
+    return cawName.lzQuote(cawName.setClientChainsSelector(), destEids.length, payload, lzDestId, payInLzToken);
   }
 
 }
