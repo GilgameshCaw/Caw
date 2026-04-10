@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { API_HOST } from '~/api/client'
 
 /**
@@ -6,32 +6,16 @@ import { API_HOST } from '~/api/client'
  * Uses the public /api/dm/identity/:userId endpoint — no auth needed.
  */
 export function useDmIdentity(userId?: number) {
-  const [hasIdentity, setHasIdentity] = useState<boolean | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-
-  useEffect(() => {
-    if (!userId) {
-      setHasIdentity(null)
-      return
-    }
-
-    let cancelled = false
-    setIsLoading(true)
-
-    fetch(`${API_HOST}/api/dm/identity/${userId}`)
-      .then(r => r.json())
-      .then(data => {
-        if (!cancelled) setHasIdentity(!!data.hasIdentity)
-      })
-      .catch(() => {
-        if (!cancelled) setHasIdentity(null)
-      })
-      .finally(() => {
-        if (!cancelled) setIsLoading(false)
-      })
-
-    return () => { cancelled = true }
-  }, [userId])
+  const { data: hasIdentity = null, isLoading } = useQuery<boolean | null>({
+    queryKey: ['dmIdentity', userId],
+    queryFn: async () => {
+      const res = await fetch(`${API_HOST}/api/dm/identity/${userId}`)
+      const data = await res.json()
+      return !!data.hasIdentity
+    },
+    enabled: !!userId,
+    staleTime: 60 * 1000, // 1 minute
+  })
 
   return { hasIdentity, isLoading }
 }

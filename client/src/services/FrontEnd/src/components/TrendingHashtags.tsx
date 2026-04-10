@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react'
+import React from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { useTheme } from '~/hooks/useTheme'
 import { formatLargeNumber } from '~/utils/numberFormat'
@@ -11,31 +12,18 @@ interface TrendingHashtag {
 const TrendingHashtags: React.FC = () => {
   const { isDark } = useTheme()
   const navigate = useNavigate()
-  const [trendingHashtags, setTrendingHashtags] = useState<TrendingHashtag[]>([])
-  const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    const fetchTrendingHashtags = async () => {
-      try {
-        const response = await fetch('/api/hashtags/trending?limit=7')
-        if (response.ok) {
-          const data = await response.json()
-          setTrendingHashtags(data.hashtags || [])
-        }
-      } catch (error) {
-        console.error('Failed to fetch trending hashtags:', error)
-        // Don't show mock data, just show empty state
-        setTrendingHashtags([])
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    fetchTrendingHashtags()
-    // Refresh every 5 minutes
-    const interval = setInterval(fetchTrendingHashtags, 5 * 60 * 1000)
-    return () => clearInterval(interval)
-  }, [])
+  const { data: trendingHashtags = [], isLoading: loading } = useQuery<TrendingHashtag[]>({
+    queryKey: ['trendingHashtags'],
+    queryFn: async () => {
+      const response = await fetch('/api/hashtags/trending?limit=7')
+      if (!response.ok) return []
+      const data = await response.json()
+      return data.hashtags || []
+    },
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: 5 * 60 * 1000,
+  })
 
   const handleHashtagClick = (hashtag: string) => {
     navigate(`/hashtags/${hashtag}`)
@@ -61,7 +49,7 @@ const TrendingHashtags: React.FC = () => {
 
   return (
     <div className="space-y-4">
-      {trendingHashtags.map((item, index) => (
+      {trendingHashtags.map((item) => (
         <button
           key={item.name}
           onClick={() => handleHashtagClick(item.name)}
