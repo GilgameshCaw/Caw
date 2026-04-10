@@ -3,7 +3,6 @@ import { useTheme } from '~/hooks/useTheme'
 import { apiFetch } from '~/api/client'
 import { useSearchParams, Link } from 'react-router-dom'
 
-const ADMIN_TOKEN_KEY = 'caw_admin_token'
 const PAGE_SIZE = 50
 
 interface ModelMeta {
@@ -51,13 +50,6 @@ const DatabaseAdmin: React.FC = () => {
   const { isDark } = useTheme()
   const [searchParams, setSearchParams] = useSearchParams()
 
-  // Auth
-  const [password, setPassword] = useState('')
-  const [token, setToken] = useState(() => localStorage.getItem(ADMIN_TOKEN_KEY) || '')
-  const [authenticated, setAuthenticated] = useState(() => !!localStorage.getItem(ADMIN_TOKEN_KEY))
-  const [authError, setAuthError] = useState('')
-  const [authLoading, setAuthLoading] = useState(false)
-
   // Models
   const [models, setModels] = useState<ModelMeta[]>([])
   const [activeModel, setActiveModelState] = useState<string>(searchParams.get('model') || '')
@@ -82,35 +74,38 @@ const DatabaseAdmin: React.FC = () => {
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState('')
 
-  const adminFetch = useCallback(async (path: string, init?: RequestInit) => {
-    return apiFetch(path, {
-      ...init,
-      headers: {
-        ...(init?.headers as Record<string, string> || {}),
-        'Authorization': `Bearer ${token}`
-      }
-    })
-  }, [token])
+  // Go back from detail to list view
+  const closeDetail = useCallback(() => {
+    setDetailRecord(null)
+    setDetailId(null)
+  }, [])
 
-  const login = async () => {
-    setAuthLoading(true)
-    setAuthError('')
-    try {
-      const data = await apiFetch('/api/bug-reports/login', {
-        method: 'POST',
-        body: JSON.stringify({ password })
-      })
-      localStorage.setItem(ADMIN_TOKEN_KEY, data.token)
-      setToken(data.token)
-      setAuthenticated(true)
-    } catch {
-      setAuthError('Invalid password')
-    } finally {
-      setAuthLoading(false)
+  // Escape key goes back to list view
+  useEffect(() => {
+    if (!detailRecord) return
+    const onKeyDown = (e: KeyboardEvent) => {
+      // Don't intercept if user is typing in an input/textarea
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      if (e.key === 'Escape') closeDetail()
     }
-  }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [detailRecord, closeDetail])
 
-  // Sync URL params
+  // Sync all state to URL params
+  useEffect(() => {
+    const params: Record<string, string> = {}
+    if (activeModel) params.model = activeModel
+    if (offset) params.offset = String(offset)
+    if (sortField) params.sort = sortField
+    if (sortOrder !== 'desc') params.order = sortOrder
+    if (search) params.search = search
+    if (filterField) params.filterField = filterField
+    if (filterValue) params.filterValue = filterValue
+    if (detailId) params.detail = detailId
+    setSearchParams(params, { replace: true })
+  }, [activeModel, offset, sortField, sortOrder, search, filterField, filterValue, detailId, setSearchParams])
+
   const setActiveModel = useCallback((model: string) => {
     setActiveModelState(model)
     setOffset(0)
@@ -118,33 +113,24 @@ const DatabaseAdmin: React.FC = () => {
     setSearchInput('')
     setFilterField('')
     setFilterValue('')
-    setDetailRecord(null)
-    setDetailId(null)
-    setSearchParams({ model }, { replace: true })
-  }, [setSearchParams])
+    closeDetail()
+  }, [closeDetail])
 
-  // Fetch models list
+  // Fetch models list — AdminGate guarantees we're authenticated
   useEffect(() => {
-    if (!authenticated || !token) return
-    adminFetch('/api/admin/db/models')
+    apiFetch('/api/admin/db/models')
       .then(data => {
         setModels(data.models)
-        // If no model selected, pick first one
         if (!activeModel && data.models.length > 0) {
           setActiveModelState(data.models[0].name)
-          setSearchParams({ model: data.models[0].name }, { replace: true })
         }
       })
-      .catch(() => {
-        localStorage.removeItem(ADMIN_TOKEN_KEY)
-        setAuthenticated(false)
-        setToken('')
-      })
-  }, [authenticated, token]) // eslint-disable-line react-hooks/exhaustive-deps
+      .catch(() => { /* AdminGate will catch 401s on next navigation */ })
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch records
   const fetchRecords = useCallback(async () => {
-    if (!authenticated || !token || !activeModel) return
+    if (!activeModel) return
     setLoading(true)
     setError('')
     const meta = models.find(m => m.name === activeModel)
@@ -162,29 +148,23 @@ const DatabaseAdmin: React.FC = () => {
     }
 
     try {
-      const data = await adminFetch(`/api/admin/db/${activeModel}?${params}`)
+      const data = await apiFetch(`/api/admin/db/${activeModel}?${params}`)
       setRecords(data.records)
       setTotal(data.total)
     } catch (err: any) {
-      if (err?.message?.includes('401') || err?.message?.includes('Unauthorized')) {
-        localStorage.removeItem(ADMIN_TOKEN_KEY)
-        setAuthenticated(false)
-        setToken('')
-      } else {
-        setError(err.message || 'Failed to load data')
-      }
+      setError(err.message || 'Failed to load data')
     } finally {
       setLoading(false)
     }
-  }, [authenticated, token, activeModel, offset, sortField, sortOrder, search, filterField, filterValue, models, adminFetch])
+  }, [activeModel, offset, sortField, sortOrder, search, filterField, filterValue, models])
 
   useEffect(() => { fetchRecords() }, [fetchRecords])
 
   // Fetch detail
   const fetchDetail = useCallback(async (id: string) => {
-    if (!authenticated || !token || !activeModel) return
+    if (!activeModel) return
     try {
-      const data = await adminFetch(`/api/admin/db/${activeModel}/${id}`)
+      const data = await apiFetch(`/api/admin/db/${activeModel}/${id}`)
       setDetailRecord(data.record)
       setDetailId(id)
       // Initialize edit fields
@@ -198,7 +178,7 @@ const DatabaseAdmin: React.FC = () => {
     } catch (err: any) {
       setError(err.message || 'Failed to load record')
     }
-  }, [authenticated, token, activeModel, adminFetch])
+  }, [activeModel])
 
   // Save edits
   const saveRecord = async () => {
@@ -232,7 +212,7 @@ const DatabaseAdmin: React.FC = () => {
         return
       }
 
-      const data = await adminFetch(`/api/admin/db/${activeModel}/${detailId}`, {
+      const data = await apiFetch(`/api/admin/db/${activeModel}/${detailId}`, {
         method: 'PATCH',
         body: JSON.stringify(updates),
       })
@@ -251,9 +231,8 @@ const DatabaseAdmin: React.FC = () => {
     if (!detailId || !activeModel) return
     if (!confirm('Are you sure you want to delete this record?')) return
     try {
-      await adminFetch(`/api/admin/db/${activeModel}/${detailId}`, { method: 'DELETE' })
-      setDetailRecord(null)
-      setDetailId(null)
+      await apiFetch(`/api/admin/db/${activeModel}/${detailId}`, { method: 'DELETE' })
+      closeDetail()
       fetchRecords()
     } catch (err: any) {
       setSaveMsg(`Delete failed: ${err.message}`)
@@ -284,33 +263,6 @@ const DatabaseAdmin: React.FC = () => {
     ? 'bg-black border-white/20 text-white placeholder-white/30'
     : 'bg-white border-gray-300 text-gray-900 placeholder-gray-400'
 
-  // Login gate
-  if (!authenticated) {
-    return (
-      <div className={`min-h-screen flex items-center justify-center ${bg}`}>
-        <div className={`p-8 rounded-2xl border max-w-sm w-full ${card}`}>
-          <h1 className={`text-xl font-bold mb-4 ${text}`}>Database Admin</h1>
-          <input
-            type="password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && login()}
-            placeholder="Admin password"
-            className={`w-full px-3 py-2 rounded-lg border text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50 ${input}`}
-          />
-          {authError && <p className="text-red-500 text-xs mb-2">{authError}</p>}
-          <button
-            onClick={login}
-            disabled={authLoading}
-            className="w-full py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-          >
-            {authLoading ? 'Logging in...' : 'Login'}
-          </button>
-        </div>
-      </div>
-    )
-  }
-
   // Detail view
   if (detailRecord && detailId) {
     const idField = activeModel === 'validatorSetting' || activeModel === 'chainData' ? 'key' : 'id'
@@ -320,7 +272,7 @@ const DatabaseAdmin: React.FC = () => {
           {/* Header */}
           <div className="flex items-center gap-3 mb-4">
             <button
-              onClick={() => { setDetailRecord(null); setDetailId(null) }}
+              onClick={closeDetail}
               className={`flex items-center gap-1.5 text-sm font-medium transition-colors ${
                 isDark ? 'text-white/70 hover:text-white' : 'text-gray-500 hover:text-gray-900'
               }`}

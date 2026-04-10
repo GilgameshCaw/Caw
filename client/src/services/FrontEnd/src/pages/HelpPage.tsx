@@ -135,7 +135,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
       rel="noopener noreferrer"
       className={`flex items-start gap-4 p-4 rounded-xl transition-colors ${
         isDark
-          ? 'bg-white/5 hover:bg-white/10'
+          ? 'bg-[#0D0D0D]/85 hover:bg-[#1A1A1A]/85'
           : 'bg-gray-50 hover:bg-gray-100'
       }`}
     >
@@ -390,7 +390,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
               <div
                 key={index}
                 className={`rounded-lg overflow-hidden ${
-                  isDark ? 'bg-white/5' : 'bg-gray-50'
+                  isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50'
                 }`}
               >
                 <button
@@ -421,7 +421,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
         {/* History Section */}
         {activeSection === 'history' && (
           <div className="space-y-6">
-            <div className={`p-6 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+            <div className={`p-6 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50'}`}>
               <h2 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 The Origins of CAW
               </h2>
@@ -459,7 +459,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
         {/* Manifesto Section */}
         {activeSection === 'manifesto' && (
           <div className="space-y-6">
-            <div className={`p-6 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+            <div className={`p-6 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50'}`}>
               <p className={`text-xs mb-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
                 Pulled verbatim from the decoded <Link to="/help/history" className={`underline ${isDark ? 'text-yellow-500/60 hover:text-yellow-500' : 'text-yellow-700/60 hover:text-yellow-700'}`}>cryptographic scavenger hunt</Link>
               </p>
@@ -631,7 +631,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
         {/* Getting Started Section */}
         {activeSection === 'gettingstarted' && (
           <div className="space-y-4">
-            <div className={`p-5 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+            <div className={`p-5 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50'}`}>
               <div className="flex items-start gap-4">
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
                   isDark ? 'bg-yellow-500/20 text-yellow-500' : 'bg-yellow-100 text-yellow-700'
@@ -650,7 +650,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
               </div>
             </div>
 
-            <div className={`p-5 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+            <div className={`p-5 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50'}`}>
               <div className="flex items-start gap-4">
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
                   isDark ? 'bg-yellow-500/20 text-yellow-500' : 'bg-yellow-100 text-yellow-700'
@@ -669,7 +669,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
               </div>
             </div>
 
-            <div className={`p-5 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+            <div className={`p-5 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50'}`}>
               <div className="flex items-start gap-4">
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
                   isDark ? 'bg-yellow-500/20 text-yellow-500' : 'bg-yellow-100 text-yellow-700'
@@ -688,7 +688,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
               </div>
             </div>
 
-            <div className={`p-5 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+            <div className={`p-5 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50'}`}>
               <div className="flex items-start gap-4">
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
                   isDark ? 'bg-yellow-500/20 text-yellow-500' : 'bg-yellow-100 text-yellow-700'
@@ -708,7 +708,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
             </div>
 
             <div className={`mt-6 p-4 rounded-lg border ${
-              isDark ? 'border-white/10 bg-white/5' : 'border-gray-200 bg-gray-50'
+              isDark ? 'border-white/10 bg-[#0D0D0D]/85' : 'border-gray-200 bg-gray-50'
             }`}>
               <h4 className={`font-semibold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 CAW Spent on the Platform
@@ -727,7 +727,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
         {activeSection === 'developers' && (
           <div className="space-y-6">
             {/* Architecture Overview */}
-            <div className={`p-6 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+            <div className={`p-6 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50'}`}>
               <h2 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 Understanding CAW Architecture
               </h2>
@@ -776,7 +776,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
             </div>
 
             {/* Frontend Hosting */}
-            <div className={`p-6 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+            <div className={`p-6 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50'}`}>
               <h2 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 Hosting a Frontend
               </h2>
@@ -845,7 +845,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
             </div>
 
             {/* Validator Hosting */}
-            <div className={`p-6 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+            <div className={`p-6 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50'}`}>
               <h2 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 Running a Validator
               </h2>
@@ -999,7 +999,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                 Network Information
               </h2>
 
-              <div className={`p-4 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+              <div className={`p-4 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50'}`}>
                 <div className="space-y-4">
                   <div>
                     <h4 className={`text-sm font-medium mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>
@@ -1050,7 +1050,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
 
             {/* Disclaimer */}
             <div className={`p-4 rounded-lg text-sm ${
-              isDark ? 'bg-white/5 text-white/50' : 'bg-gray-50 text-gray-500'
+              isDark ? 'bg-[#0D0D0D]/85 text-white/50' : 'bg-gray-50 text-gray-500'
             }`}>
               <p>
                 CAW has no official socials, partner projects, or further releases beyond what was described in the manifesto.
@@ -1071,7 +1071,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
               target="_blank"
               rel="noopener noreferrer"
               className={`flex items-center gap-2 p-3 rounded-lg transition-colors ${
-                isDark ? 'bg-white/5 hover:bg-white/10 text-white' : 'bg-gray-50 hover:bg-gray-100 text-gray-900'
+                isDark ? 'bg-[#0D0D0D]/85 hover:bg-[#1A1A1A]/85 text-white' : 'bg-gray-50 hover:bg-gray-100 text-gray-900'
               }`}
             >
               <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
@@ -1084,7 +1084,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
               target="_blank"
               rel="noopener noreferrer"
               className={`flex items-center gap-2 p-3 rounded-lg transition-colors ${
-                isDark ? 'bg-white/5 hover:bg-white/10 text-white' : 'bg-gray-50 hover:bg-gray-100 text-gray-900'
+                isDark ? 'bg-[#0D0D0D]/85 hover:bg-[#1A1A1A]/85 text-white' : 'bg-gray-50 hover:bg-gray-100 text-gray-900'
               }`}
             >
               <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">

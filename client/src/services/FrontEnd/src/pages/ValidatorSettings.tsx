@@ -3,18 +3,19 @@ import { useTheme } from '~/hooks/useTheme'
 import { apiFetch } from '~/api/client'
 import { Link } from 'react-router-dom'
 
-const ADMIN_TOKEN_KEY = 'caw_admin_token'
-
 interface SettingField {
   key: string
   label: string
   description: string
-  default: number
+  default: number | boolean
+  kind?: 'number' | 'boolean'
 }
 
 const SETTINGS_FIELDS: SettingField[] = [
   { key: 'validatorBaseTip', label: 'Base Validator Tip (CAW)', default: 1000,
-    description: 'Minimum CAW tip required per action. Users must include at least this amount as a validator fee. Higher values increase revenue but may discourage usage.' },
+    description: 'Minimum CAW tip required per action. Actions below this are rejected. This is the "Cheap" tier in the Quick Sign speed picker.' },
+  { key: 'priorityTip', label: 'Priority Tip (CAW)', default: 3000,
+    description: 'Tip threshold for priority processing. Actions at or above this value skip the batch wait and get processed on the next poll cycle (~2s instead of ~10s). This is the "Fast" tier in Quick Sign. Default is 3× the base tip.' },
   { key: 'checkInterval', label: 'Poll Interval (ms)', default: 10000,
     description: 'How often the validator checks for new pending actions in the queue. Lower values mean faster processing but more RPC calls.' },
   { key: 'minActionsPerBatch', label: 'Min Actions Per Batch', default: 1,
@@ -22,18 +23,13 @@ const SETTINGS_FIELDS: SettingField[] = [
   { key: 'maxWaitTime', label: 'Max Wait Time (ms)', default: 60000,
     description: 'Maximum time an action can sit in the queue before being force-submitted, even if the batch is smaller than the minimum. Prevents users from waiting too long during low activity.' },
   { key: 'replicationInterval', label: 'Replication Interval (ms)', default: 60000,
-    description: 'How often the background replication loop checks for completed 256-action checkpoints that need to be archived to other chains via LayerZero.' }
+    description: 'How often the background replication loop checks for completed 256-action checkpoints that need to be archived to other chains via LayerZero.' },
+  { key: 'acceptZeroTip', label: 'Accept Zero-Tip Actions', default: false, kind: 'boolean',
+    description: 'If enabled, this validator processes actions that include no tip at all (public-goods mode). Users who choose "No tip" in Quick Sign rely on validators that opt into this. You will pay LayerZero fees out of pocket for these actions — only enable if you want to subsidize free posting.' },
 ]
 
 const ValidatorSettings: React.FC = () => {
   const { isDark } = useTheme()
-
-  // Auth state — persist in localStorage
-  const [password, setPassword] = useState('')
-  const [token, setToken] = useState(() => localStorage.getItem(ADMIN_TOKEN_KEY) || '')
-  const [authenticated, setAuthenticated] = useState(() => !!localStorage.getItem(ADMIN_TOKEN_KEY))
-  const [authError, setAuthError] = useState('')
-  const [authLoading, setAuthLoading] = useState(false)
 
   // Settings state
   const [values, setValues] = useState<Record<string, string>>({})
@@ -42,41 +38,11 @@ const ValidatorSettings: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const adminFetch = useCallback(async (path: string, init?: RequestInit) => {
-    return apiFetch(path, {
-      ...init,
-      headers: {
-        ...(init?.headers as Record<string, string> || {}),
-        'Authorization': `Bearer ${token}`
-      }
-    })
-  }, [token])
-
-  const login = async () => {
-    setAuthLoading(true)
-    setAuthError('')
-    try {
-      const data = await apiFetch('/api/bug-reports/login', {
-        method: 'POST',
-        body: JSON.stringify({ password })
-      })
-      localStorage.setItem(ADMIN_TOKEN_KEY, data.token)
-      setToken(data.token)
-      setAuthenticated(true)
-      setPassword('')
-    } catch {
-      setAuthError('Invalid password')
-    } finally {
-      setAuthLoading(false)
-    }
-  }
-
   const fetchSettings = useCallback(async () => {
-    if (!authenticated || !token) return
     setLoading(true)
     setError('')
     try {
-      const data = await adminFetch('/api/validator-analytics/settings')
+      const data = await apiFetch('/api/validator-analytics/settings') as Record<string, any>
       const vals: Record<string, string> = {}
       for (const field of SETTINGS_FIELDS) {
         vals[field.key] = data[field.key] !== undefined ? String(data[field.key]) : String(field.default)
@@ -84,13 +50,10 @@ const ValidatorSettings: React.FC = () => {
       setValues(vals)
     } catch {
       setError('Failed to load settings')
-      localStorage.removeItem(ADMIN_TOKEN_KEY)
-      setAuthenticated(false)
-      setToken('')
     } finally {
       setLoading(false)
     }
-  }, [authenticated, token, adminFetch])
+  }, [])
 
   useEffect(() => {
     fetchSettings()
@@ -100,7 +63,7 @@ const ValidatorSettings: React.FC = () => {
     setSaving(prev => ({ ...prev, [key]: true }))
     setSaved(prev => ({ ...prev, [key]: false }))
     try {
-      await adminFetch('/api/validator-analytics/settings', {
+      await apiFetch('/api/validator-analytics/settings', {
         method: 'PATCH',
         body: JSON.stringify({ key, value: values[key] })
       })
@@ -114,41 +77,6 @@ const ValidatorSettings: React.FC = () => {
   }
 
   const cardClass = `rounded-xl border p-4 ${isDark ? 'border-white/10 bg-white/5' : 'border-gray-200 bg-white'}`
-
-  // Login gate
-  if (!authenticated) {
-    return (
-      <div className={`min-h-screen flex items-center justify-center ${isDark ? 'bg-black' : 'bg-gray-50'}`}>
-        <div className={`p-8 rounded-2xl border max-w-sm w-full ${
-          isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
-        }`}>
-          <h1 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-            Validator Settings
-          </h1>
-          <input
-            type="password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && login()}
-            placeholder="Admin password"
-            className={`w-full px-3 py-2 rounded-lg border text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50 ${
-              isDark
-                ? 'bg-white/5 border-white/10 text-white placeholder-white/30'
-                : 'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400'
-            }`}
-          />
-          {authError && <p className="text-red-500 text-xs mb-3">{authError}</p>}
-          <button
-            onClick={login}
-            disabled={authLoading}
-            className="w-full px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm cursor-pointer disabled:opacity-50"
-          >
-            {authLoading ? 'Logging in...' : 'Login'}
-          </button>
-        </div>
-      </div>
-    )
-  }
 
   return (
     <div className={`min-h-screen p-6 ${isDark ? 'bg-black text-white' : 'bg-gray-50 text-gray-900'}`}>
@@ -180,16 +108,30 @@ const ValidatorSettings: React.FC = () => {
                 {field.description}
               </p>
               <div className="flex items-center gap-3">
-                <input
-                  type="number"
-                  value={values[field.key] ?? String(field.default)}
-                  onChange={e => setValues(prev => ({ ...prev, [field.key]: e.target.value }))}
-                  className={`flex-1 px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 ${
-                    isDark
-                      ? 'bg-white/5 border-white/10 text-white'
-                      : 'bg-gray-50 border-gray-200 text-gray-900'
-                  }`}
-                />
+                {field.kind === 'boolean' ? (
+                  <label className="flex items-center gap-2 cursor-pointer flex-1">
+                    <input
+                      type="checkbox"
+                      checked={values[field.key] === 'true'}
+                      onChange={e => setValues(prev => ({ ...prev, [field.key]: e.target.checked ? 'true' : 'false' }))}
+                      className="w-4 h-4 cursor-pointer"
+                    />
+                    <span className={`text-sm ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
+                      {values[field.key] === 'true' ? 'Enabled' : 'Disabled'}
+                    </span>
+                  </label>
+                ) : (
+                  <input
+                    type="number"
+                    value={values[field.key] ?? String(field.default)}
+                    onChange={e => setValues(prev => ({ ...prev, [field.key]: e.target.value }))}
+                    className={`flex-1 px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 ${
+                      isDark
+                        ? 'bg-white/5 border-white/10 text-white'
+                        : 'bg-gray-50 border-gray-200 text-gray-900'
+                    }`}
+                  />
+                )}
                 <button
                   onClick={() => saveSetting(field.key)}
                   disabled={saving[field.key]}
@@ -203,7 +145,7 @@ const ValidatorSettings: React.FC = () => {
                 </button>
               </div>
               <p className={`text-xs mt-1 ${isDark ? 'text-white/20' : 'text-gray-400'}`}>
-                Default: {field.default}
+                Default: {String(field.default)}
               </p>
             </div>
           ))}

@@ -41,8 +41,6 @@ const ACTION_TYPE_STYLE: Record<string, { label: string; color: string }> = {
   OTHER:    { label: 'O', color: 'bg-gray-500/20 text-gray-400' },
 }
 
-const ADMIN_TOKEN_KEY = 'caw_admin_token'
-
 interface Prices { ethUsd: number; cawUsd: number }
 
 interface Summary {
@@ -125,13 +123,6 @@ const ValidatorAnalytics: React.FC = () => {
   const { isDark } = useTheme()
   const [searchParams, setSearchParams] = useSearchParams()
 
-  // Auth state — persist token in localStorage
-  const [password, setPassword] = useState('')
-  const [token, setToken] = useState(() => localStorage.getItem(ADMIN_TOKEN_KEY) || '')
-  const [authenticated, setAuthenticated] = useState(() => !!localStorage.getItem(ADMIN_TOKEN_KEY))
-  const [authError, setAuthError] = useState('')
-  const [authLoading, setAuthLoading] = useState(false)
-
   // Data state — initialize from URL params for persistence across refreshes
   const validRanges: TimeRange[] = ['24h', '7d', '30d', '90d', 'custom']
   const initialRange = validRanges.includes(searchParams.get('range') as TimeRange)
@@ -181,37 +172,7 @@ const ValidatorAnalytics: React.FC = () => {
 
   const PAGE_SIZE = 50
 
-  const adminFetch = useCallback(async (path: string, init?: RequestInit) => {
-    return apiFetch(path, {
-      ...init,
-      headers: {
-        ...(init?.headers as Record<string, string> || {}),
-        'Authorization': `Bearer ${token}`
-      }
-    })
-  }, [token])
-
-  const login = async () => {
-    setAuthLoading(true)
-    setAuthError('')
-    try {
-      const data = await apiFetch('/api/bug-reports/login', {
-        method: 'POST',
-        body: JSON.stringify({ password })
-      })
-      localStorage.setItem(ADMIN_TOKEN_KEY, data.token)
-      setToken(data.token)
-      setAuthenticated(true)
-      setPassword('')
-    } catch {
-      setAuthError('Invalid password')
-    } finally {
-      setAuthLoading(false)
-    }
-  }
-
   const fetchData = useCallback(async () => {
-    if (!authenticated || !token) return
     setLoading(true)
     setError('')
     const { from, to } = getRange(timeRange, customFrom, customTo)
@@ -220,10 +181,10 @@ const ValidatorAnalytics: React.FC = () => {
     const chartInterval = timeRange === '24h' ? 'hour' : timeRange === '7d' ? '6hour' : 'day'
     try {
       const [summaryData, txData, repData, chartRes] = await Promise.all([
-        adminFetch(`/api/validator-analytics/summary?${params}`),
-        adminFetch(`/api/validator-analytics/transactions?${params}&limit=${PAGE_SIZE}&offset=${txOffset}`),
-        adminFetch(`/api/validator-analytics/replication?${params}&limit=${PAGE_SIZE}&offset=${repOffset}`),
-        adminFetch(`/api/validator-analytics/chart?${params}&interval=${chartInterval}&tz=${encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone)}`)
+        apiFetch(`/api/validator-analytics/summary?${params}`),
+        apiFetch(`/api/validator-analytics/transactions?${params}&limit=${PAGE_SIZE}&offset=${txOffset}`),
+        apiFetch(`/api/validator-analytics/replication?${params}&limit=${PAGE_SIZE}&offset=${repOffset}`),
+        apiFetch(`/api/validator-analytics/chart?${params}&interval=${chartInterval}&tz=${encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone)}`)
       ])
       // Map API response to frontend interface
       setSummary({
@@ -350,13 +311,10 @@ const ValidatorAnalytics: React.FC = () => {
       }
     } catch {
       setError('Failed to load data')
-      localStorage.removeItem(ADMIN_TOKEN_KEY)
-      setAuthenticated(false)
-      setToken('')
     } finally {
       setLoading(false)
     }
-  }, [authenticated, token, timeRange, customFrom, customTo, txOffset, repOffset, adminFetch])
+  }, [timeRange, customFrom, customTo, txOffset, repOffset])
 
   useEffect(() => {
     fetchData()
@@ -364,15 +322,14 @@ const ValidatorAnalytics: React.FC = () => {
 
   // If page loads with a day in the URL, fetch hourly data for it
   useEffect(() => {
-    if (selectedDay && authenticated && token) {
+    if (selectedDay) {
       fetchHourlyData(selectedDay)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authenticated, token]) // Only on initial auth, not on every selectedDay change
+  }, []) // Only on mount
 
   // Fetch hourly chart data for a selected day
   const fetchHourlyData = useCallback(async (dateKey: string) => {
-    if (!authenticated || !token) return
     setHourlyLoading(true)
     // Use local timezone boundaries for the selected day
     const [year, month, day] = dateKey.split('-').map(Number)
@@ -384,8 +341,8 @@ const ValidatorAnalytics: React.FC = () => {
     try {
       const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
       const [chartRes, txData] = await Promise.all([
-        adminFetch(`/api/validator-analytics/chart?${params}&interval=hour&tz=${encodeURIComponent(tz)}`),
-        adminFetch(`/api/validator-analytics/transactions?${params}&limit=${PAGE_SIZE}&offset=0`),
+        apiFetch(`/api/validator-analytics/chart?${params}&interval=hour&tz=${encodeURIComponent(tz)}`),
+        apiFetch(`/api/validator-analytics/transactions?${params}&limit=${PAGE_SIZE}&offset=0`),
       ])
       // Build 24-hour padded chart using local hours
       const emptyPoint: Omit<ChartPoint, 'date'> = { profit: 0, txCount: 0, actionCount: 0, ethCost: 0, tipEth: 0, actionBreakdown: {} }
@@ -440,7 +397,7 @@ const ValidatorAnalytics: React.FC = () => {
     } finally {
       setHourlyLoading(false)
     }
-  }, [authenticated, token, adminFetch])
+  }, [])
 
   const handleBarClick = (i: number) => {
     const point = chartData[i]
@@ -460,41 +417,6 @@ const ValidatorAnalytics: React.FC = () => {
   const labelClass = `text-xs ${isDark ? 'text-white/40' : 'text-gray-400'}`
   const valueClass = `text-lg font-bold ${isDark ? 'text-white' : 'text-gray-900'}`
   const subClass = `text-xs mt-1 ${isDark ? 'text-white/30' : 'text-gray-400'}`
-
-  // Login gate
-  if (!authenticated) {
-    return (
-      <div className={`min-h-screen flex items-center justify-center ${isDark ? 'bg-black' : 'bg-gray-50'}`}>
-        <div className={`p-8 rounded-2xl border max-w-sm w-full ${
-          isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
-        }`}>
-          <h1 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-            Validator Analytics
-          </h1>
-          <input
-            type="password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && login()}
-            placeholder="Admin password"
-            className={`w-full px-3 py-2 rounded-lg border text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50 ${
-              isDark
-                ? 'bg-white/5 border-white/10 text-white placeholder-white/30'
-                : 'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400'
-            }`}
-          />
-          {authError && <p className="text-red-500 text-xs mb-3">{authError}</p>}
-          <button
-            onClick={login}
-            disabled={authLoading}
-            className="w-full px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm cursor-pointer disabled:opacity-50"
-          >
-            {authLoading ? 'Logging in...' : 'Login'}
-          </button>
-        </div>
-      </div>
-    )
-  }
 
   const maxProfit = chartData.length > 0
     ? Math.max(...chartData.map(p => Math.abs(p.profit)), 0.000001)
@@ -826,6 +748,7 @@ const ValidatorAnalytics: React.FC = () => {
                   <th className="text-right p-2">Actions</th>
                   <th className="text-left p-2">Breakdown</th>
                   <th className="text-right p-2">Gas</th>
+                  <th className="text-right p-2">Gas/Action</th>
                   <th className="text-right p-2">Tip</th>
                   <th className="text-right p-2">Profit</th>
                   <th className="text-right p-2">Wait</th>
@@ -886,6 +809,11 @@ const ValidatorAnalytics: React.FC = () => {
                       <td className="p-2 text-right font-mono" title={`${fmtEth(tx.gasEth)} ETH`}>
                         {weiToUsd(tx.gasEth, p.ethUsd)}
                       </td>
+                      <td className="p-2 text-right font-mono" title={tx.actions > 0 ? `${fmtEth((BigInt(tx.gasEth || '0') / BigInt(tx.actions)).toString())} ETH/action` : ''}>
+                        {tx.actions > 0
+                          ? weiToUsd((BigInt(tx.gasEth || '0') / BigInt(tx.actions)).toString(), p.ethUsd)
+                          : '—'}
+                      </td>
                       <td className="p-2 text-right font-mono" title={`${fmtCaw(tx.tipCaw)} CAW`}>
                         {cawToUsd(tx.tipCaw, p.cawUsd)}
                       </td>
@@ -909,7 +837,7 @@ const ValidatorAnalytics: React.FC = () => {
                 })}
                 {transactions.length === 0 && (
                   <tr>
-                    <td colSpan={10} className={`p-4 text-center ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
+                    <td colSpan={11} className={`p-4 text-center ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
                       No transactions found
                     </td>
                   </tr>

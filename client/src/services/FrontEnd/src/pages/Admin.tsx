@@ -1,9 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useTheme } from '~/hooks/useTheme'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { apiFetch } from '~/api/client'
-
-const ADMIN_TOKEN_KEY = 'caw_admin_token'
 
 interface Stats {
   totalUsers: number
@@ -89,12 +87,7 @@ const adminPages = [
 
 const Admin: React.FC = () => {
   const { isDark } = useTheme()
-
-  const [password, setPassword] = useState('')
-  const [, setToken] = useState(() => localStorage.getItem(ADMIN_TOKEN_KEY) || '')
-  const [authenticated, setAuthenticated] = useState(() => !!localStorage.getItem(ADMIN_TOKEN_KEY))
-  const [authError, setAuthError] = useState('')
-  const [authLoading, setAuthLoading] = useState(false)
+  const navigate = useNavigate()
   const [stats, setStats] = useState<Stats | null>(null)
 
   const bg = isDark ? 'bg-black' : 'bg-gray-50'
@@ -102,52 +95,27 @@ const Admin: React.FC = () => {
   const text = isDark ? 'text-white' : 'text-gray-900'
   const muted = isDark ? 'text-white/50' : 'text-gray-500'
   const hover = isDark ? 'hover:bg-white/5 hover:border-white/20' : 'hover:bg-gray-50 hover:border-gray-300'
-  const input = isDark
-    ? 'bg-black border-white/20 text-white placeholder-white/30'
-    : 'bg-white border-gray-300 text-gray-900 placeholder-gray-400'
 
-  const adminFetch = useCallback(async (path: string) => {
-    const token = localStorage.getItem(ADMIN_TOKEN_KEY) || ''
-    return apiFetch(path, {
-      headers: { 'Authorization': `Bearer ${token}` }
-    })
-  }, [])
-
-  const login = async () => {
-    setAuthLoading(true)
-    setAuthError('')
+  const logout = async () => {
     try {
-      const data = await apiFetch('/api/bug-reports/login', {
-        method: 'POST',
-        body: JSON.stringify({ password })
-      })
-      localStorage.setItem(ADMIN_TOKEN_KEY, data.token)
-      setToken(data.token)
-      setAuthenticated(true)
+      await apiFetch('/api/bug-reports/logout', { method: 'POST' })
     } catch {
-      setAuthError('Invalid password')
-    } finally {
-      setAuthLoading(false)
+      // ignore — we're logging out anyway
     }
+    // Force AdminGate to re-check and show the login form
+    navigate(0)
   }
 
-  const logout = () => {
-    localStorage.removeItem(ADMIN_TOKEN_KEY)
-    setToken('')
-    setAuthenticated(false)
-  }
-
-  // Fetch stats on auth
+  // Fetch stats on mount — AdminGate guarantees we're authenticated
   useEffect(() => {
-    if (!authenticated) return
     const fetchStats = async () => {
       try {
         const [publicStats, txPending, txFailed, reports, bugs] = await Promise.all([
           apiFetch('/api/stats'),
-          adminFetch('/api/admin/db/txQueue?limit=1&filter=' + encodeURIComponent(JSON.stringify({ status: 'pending' }))),
-          adminFetch('/api/admin/db/txQueue?limit=1&filter=' + encodeURIComponent(JSON.stringify({ status: 'failed' }))),
-          adminFetch('/api/admin/db/report?limit=1&filter=' + encodeURIComponent(JSON.stringify({ status: 'PENDING' }))),
-          adminFetch('/api/admin/db/bugReport?limit=1&filter=' + encodeURIComponent(JSON.stringify({ status: 'PENDING' }))),
+          apiFetch('/api/admin/db/txQueue?limit=1&filter=' + encodeURIComponent(JSON.stringify({ status: 'pending' }))),
+          apiFetch('/api/admin/db/txQueue?limit=1&filter=' + encodeURIComponent(JSON.stringify({ status: 'failed' }))),
+          apiFetch('/api/admin/db/report?limit=1&filter=' + encodeURIComponent(JSON.stringify({ status: 'PENDING' }))),
+          apiFetch('/api/admin/db/bugReport?limit=1&filter=' + encodeURIComponent(JSON.stringify({ status: 'PENDING' }))),
         ])
         setStats({
           ...publicStats,
@@ -161,33 +129,7 @@ const Admin: React.FC = () => {
       }
     }
     fetchStats()
-  }, [authenticated, adminFetch])
-
-  if (!authenticated) {
-    return (
-      <div className={`min-h-screen flex items-center justify-center ${bg}`}>
-        <div className={`p-8 rounded-2xl border max-w-sm w-full ${card}`}>
-          <h1 className={`text-xl font-bold mb-4 ${text}`}>Admin</h1>
-          <input
-            type="password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && login()}
-            placeholder="Admin password"
-            className={`w-full px-3 py-2 rounded-lg border text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50 ${input}`}
-          />
-          {authError && <p className="text-red-500 text-xs mb-2">{authError}</p>}
-          <button
-            onClick={login}
-            disabled={authLoading}
-            className="w-full py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-          >
-            {authLoading ? 'Logging in...' : 'Login'}
-          </button>
-        </div>
-      </div>
-    )
-  }
+  }, [])
 
   const statCards = stats ? [
     { label: 'Users', value: stats.totalUsers.toLocaleString() },

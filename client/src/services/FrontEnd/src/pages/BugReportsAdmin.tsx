@@ -27,59 +27,24 @@ const STATUS_COLORS: Record<string, string> = {
 
 const BugReportsAdmin: React.FC = () => {
   const { isDark } = useTheme()
-  const [password, setPassword] = useState('')
-  const [token, setToken] = useState('')
-  const [authenticated, setAuthenticated] = useState(false)
   const [reports, setReports] = useState<BugReport[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [, setError] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [expandedId, setExpandedId] = useState<number | null>(null)
 
-  const adminFetch = async (path: string, init?: RequestInit) => {
-    return apiFetch(path, {
-      ...init,
-      headers: {
-        ...(init?.headers as Record<string, string> || {}),
-        'Authorization': `Bearer ${token}`
-      }
-    })
-  }
-
-  const login = async () => {
-    setLoading(true)
-    setError('')
-    try {
-      const data = await apiFetch('/api/bug-reports/login', {
-        method: 'POST',
-        body: JSON.stringify({ password })
-      })
-      setToken(data.token)
-      setAuthenticated(true)
-      setPassword('')
-    } catch {
-      setError('Invalid password')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const fetchReports = async (authToken?: string) => {
+  const fetchReports = async () => {
     setLoading(true)
     setError('')
     try {
       const params = new URLSearchParams()
       if (statusFilter) params.set('status', statusFilter)
-      const data = await apiFetch(`/api/bug-reports?${params}`, {
-        headers: { 'Authorization': `Bearer ${authToken || token}` }
-      })
+      const data = await apiFetch(`/api/bug-reports?${params}`)
       setReports(data.reports)
       setTotal(data.total)
     } catch {
       setError('Failed to load reports')
-      setAuthenticated(false)
-      setToken('')
     } finally {
       setLoading(false)
     }
@@ -87,7 +52,7 @@ const BugReportsAdmin: React.FC = () => {
 
   const updateStatus = async (id: number, status: string, resolution?: string) => {
     try {
-      await adminFetch(`/api/bug-reports/${id}`, {
+      await apiFetch(`/api/bug-reports/${id}`, {
         method: 'PATCH',
         body: JSON.stringify({ status, resolution })
       })
@@ -97,46 +62,12 @@ const BugReportsAdmin: React.FC = () => {
     }
   }
 
-  // Fetch reports after login and when filter changes
   useEffect(() => {
-    if (authenticated && token) fetchReports()
-  }, [authenticated, statusFilter])
+    fetchReports()
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statusFilter])
 
   const formatDate = (d: string) => new Date(d).toLocaleString()
-
-  if (!authenticated) {
-    return (
-      <div className={`min-h-screen flex items-center justify-center ${isDark ? 'bg-black' : 'bg-gray-50'}`}>
-        <div className={`p-8 rounded-2xl border max-w-sm w-full ${
-          isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
-        }`}>
-          <h1 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-            Bug Reports Admin
-          </h1>
-          <input
-            type="password"
-            value={password}
-            onChange={e => setPassword(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && login()}
-            placeholder="Admin password"
-            className={`w-full px-3 py-2 rounded-lg border text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50 ${
-              isDark
-                ? 'bg-white/5 border-white/10 text-white placeholder-white/30'
-                : 'bg-gray-50 border-gray-200 text-gray-900 placeholder-gray-400'
-            }`}
-          />
-          {error && <p className="text-red-500 text-xs mb-3">{error}</p>}
-          <button
-            onClick={login}
-            disabled={loading}
-            className="w-full px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors text-sm cursor-pointer disabled:opacity-50"
-          >
-            {loading ? 'Logging in...' : 'Login'}
-          </button>
-        </div>
-      </div>
-    )
-  }
 
   return (
     <div className={`min-h-screen p-6 ${isDark ? 'bg-black text-white' : 'bg-gray-50 text-gray-900'}`}>
