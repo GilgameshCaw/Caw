@@ -27,6 +27,7 @@ import { CAW_NAME_MARKETPLACE_ADDRESS } from '~/../../../abi/addresses'
 import { cawNameMarketplaceAbi } from '~/../../../abi/generated'
 import Tooltip from '~/components/Tooltip'
 import { useSignInModalStore } from '~/store/signInModalStore'
+import ProfileEditForm from '~/components/ProfileEditForm'
 
 type ProfileTab = 'posts' | 'likes' | 'replies' | 'media'
 
@@ -74,6 +75,11 @@ export const Profile: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ProfileTab>(
     tabParam && VALID_TABS.includes(tabParam) ? tabParam : 'posts'
   )
+
+  // Scroll to top when navigating to a different profile
+  useEffect(() => {
+    window.scrollTo(0, 0)
+  }, [username])
 
   // Sync URL when tab changes
   useEffect(() => {
@@ -158,7 +164,13 @@ export const Profile: React.FC = () => {
   const [tipPending, setTipPending] = useState(false)
   const [hasTipped, setHasTipped] = useState(false)
   const [activeListing, setActiveListing] = useState<MarketplaceListing | null>(null)
+  const [myOffers, setMyOffers] = useState<MarketplaceOffer[]>([])
   const [addressCopied, setAddressCopied] = useState(false)
+
+  // Cancel offer hooks
+  const { writeContract: writeCancelOffer, data: cancelOfferHash, isPending: isCancellingOffer, error: cancelOfferError, reset: resetCancelOffer } = useWriteContract()
+  const { isLoading: isCancelConfirming, isSuccess: isCancelSuccess } = useWaitForTransactionReceipt({ hash: cancelOfferHash })
+  const [cancellingOfferId, setCancellingOfferId] = useState<number | null>(null)
 
   // Fetch active marketplace listing for this profile
   useEffect(() => {
@@ -167,6 +179,33 @@ export const Profile: React.FC = () => {
       .then(data => setActiveListing(data))
       .catch(() => setActiveListing(null))
   }, [profileData?.tokenId])
+
+  // Fetch my active offers on this profile
+  useEffect(() => {
+    if (!profileData?.tokenId || !address) { setMyOffers([]); return }
+    apiFetch<{ offers: MarketplaceOffer[]; total: number }>(`/api/marketplace/offers/token/${profileData.tokenId}`)
+      .then(data => {
+        const mine = data.offers.filter(o => o.offerer.toLowerCase() === address.toLowerCase())
+        setMyOffers(mine)
+      })
+      .catch(() => setMyOffers([]))
+  }, [profileData?.tokenId, address])
+
+  // Handle cancel offer success
+  useEffect(() => {
+    if (!isCancelSuccess || cancellingOfferId === null) return
+    // Optimistically update API
+    const offer = myOffers.find(o => o.offerId === cancellingOfferId)
+    if (offer) {
+      apiFetch(`/api/marketplace/offers/${offer.offerId}/cancelled`, {
+        method: 'POST',
+        body: JSON.stringify({ txHash: cancelOfferHash }),
+      }).catch(() => {})
+    }
+    setMyOffers(prev => prev.filter(o => o.offerId !== cancellingOfferId))
+    setCancellingOfferId(null)
+    resetCancelOffer()
+  }, [isCancelSuccess])
 
   // Server-backed blocking
   const { blockUser, unblockUser, isBlocked: checkIsBlocked } = useBlockedUsersStore()
@@ -684,12 +723,13 @@ export const Profile: React.FC = () => {
     return count.toString()
   }
 
-  // define our four tabs
+  // define our four tabs with counts
+  const tabCount = (n: number | undefined) => n ? ` (${formatStat(n)})` : ''
   const profileTabs: TabItem<ProfileTab>[] = [
-    { id: 'posts',   label: 'Posts'   },
-    { id: 'replies', label: 'Replies' },
-    { id: 'media',   label: 'Media'   },
-    { id: 'likes',   label: 'Likes'   },
+    { id: 'posts',   label: `Posts${tabCount(profileData?.cawCount)}`     },
+    { id: 'replies', label: `Replies${tabCount(profileData?.replyCount)}` },
+    { id: 'media',   label: `Media${tabCount(profileData?.mediaCount)}`   },
+    { id: 'likes',   label: `Likes${tabCount(profileData?.likeCount)}`    },
   ]
 
   // If this user is blocked, show blocked state (even if they're selected as active account)
@@ -838,6 +878,49 @@ export const Profile: React.FC = () => {
                     For Sale
                   </button>
                 )}
+
+                {/* Active offer banner — shown when the viewer has an offer on this profile */}
+                {myOffers.map(offer => {
+                  const isCancelling = cancellingOfferId === offer.offerId && (isCancellingOffer || isCancelConfirming)
+                  return (
+                    <div
+                      key={offer.offerId}
+                      className={`mt-2 inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium ${
+                        isDark
+                          ? 'bg-blue-500/15 text-blue-400'
+                          : 'bg-blue-50 text-blue-700'
+                      }`}
+                    >
+                      <span>Your offer: {offer.paymentToken === 'ETH' || offer.paymentToken === 'WETH'
+                        ? `${parseFloat((Number(BigInt(offer.amount)) / 1e18).toFixed(6))} ${offer.paymentToken}`
+                        : `${offer.amount} ${offer.paymentToken}`
+                      }</span>
+                      <button
+                        onClick={() => {
+                          if (!isConnected) { openConnectModal?.(); return }
+                          if (currentChainId !== chains.l1.chainId) { switchChain({ chainId: chains.l1.chainId }); return }
+                          if (cancelOfferError) resetCancelOffer()
+                          setCancellingOfferId(offer.offerId)
+                          writeCancelOffer({
+                            address: CAW_NAME_MARKETPLACE_ADDRESS,
+                            abi: cawNameMarketplaceAbi,
+                            functionName: 'cancelOffer',
+                            args: [BigInt(offer.offerId)],
+                            chainId: chains.l1.chainId,
+                          })
+                        }}
+                        disabled={isCancelling}
+                        className={`px-2 py-0.5 rounded text-xs font-medium transition cursor-pointer disabled:opacity-50 ${
+                          isDark
+                            ? 'bg-white/10 hover:bg-white/20 text-white'
+                            : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
+                        }`}
+                      >
+                        {isCancelling ? 'Cancelling...' : 'Cancel'}
+                      </button>
+                    </div>
+                  )
+                })}
               </div>
 
               {/* Stats - Alineadas horizontalmente */}
@@ -1222,7 +1305,7 @@ export const Profile: React.FC = () => {
         </div>
 
         {/* Posts Feed - Same format as other pages */}
-        <div className="w-full">
+        <div className="w-full px-4">
           <Feed
             filter={TAB_TO_FILTER[activeTab]}
             username={profileData?.username || displayUsername}
@@ -1242,21 +1325,6 @@ export const Profile: React.FC = () => {
             }`}
             onClick={(e) => e.stopPropagation()}
           >
-            {/* Hidden file inputs */}
-            <input
-              id="avatar-upload"
-              type="file"
-              accept="image/*"
-              onChange={(e) => handleImageSelect('avatar', e)}
-              className="hidden"
-            />
-            <input
-              id="cover-upload"
-              type="file"
-              accept="image/*"
-              onChange={(e) => handleImageSelect('cover', e)}
-              className="hidden"
-            />
             {/* Modal Header */}
             <div className="flex items-center justify-between p-6 border-b border-white/10">
               <div className="flex items-center gap-3">
@@ -1285,405 +1353,19 @@ export const Profile: React.FC = () => {
             </div>
 
             {/* Modal Content */}
-            <div className="p-6 space-y-6">
-              {/* Images Section - Avatar and Cover Photo in same row */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <label className={`text-sm font-medium transition-colors duration-300 ${
-                    isDark ? 'text-gray-300' : 'text-gray-700'
-                  }`}>
-                    Profile Picture
-                  </label>
-                  <label className={`text-sm font-medium transition-colors duration-300 ${
-                    isDark ? 'text-gray-300' : 'text-gray-700'
-                  }`}>
-                    Cover Photo
-                  </label>
-                </div>
-                
-                <div className="flex items-center space-x-6">
-                  {/* Avatar Section */}
-                  <div className="flex flex-col items-center">
-                    <button
-                      type="button"
-                      className={`w-20 h-20 rounded-full border-2 border-dashed transition-all duration-300 hover:border-yellow-500 hover:bg-yellow-500/10 cursor-pointer ${
-                        isDark ? 'border-gray-600 bg-gray-800/50' : 'border-gray-300 bg-gray-50'
-                      }`}
-                      onClick={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        triggerFileInput('avatar')
-                      }}
-                      onDragOver={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        e.currentTarget.classList.add('border-yellow-500', 'bg-yellow-500/10')
-                      }}
-                      onDragLeave={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        e.currentTarget.classList.remove('border-yellow-500', 'bg-yellow-500/10')
-                      }}
-                      onDrop={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        e.currentTarget.classList.remove('border-yellow-500', 'bg-yellow-500/10')
-
-                        const file = e.dataTransfer.files[0]
-                        if (file && file.type.startsWith('image/')) {
-                          const input = document.getElementById('avatar-upload') as HTMLInputElement
-                          const dt = new DataTransfer()
-                          dt.items.add(file)
-                          input.files = dt.files
-                          handleImageSelect('avatar', { target: input } as any)
-                        }
-                      }}
-                    >
-                      <div className="relative w-full h-full flex items-center justify-center overflow-hidden rounded-full">
-                        {avatarPreview ? (
-                          <img
-                            src={avatarPreview}
-                            alt="Avatar preview"
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <>
-                            {profileData?.avatarUrl && (
-                              <>
-                                <img
-                                  src={profileData.avatarUrl}
-                                  alt=""
-                                  className="absolute inset-0 w-full h-full object-cover"
-                                />
-                                <div className="absolute inset-0 bg-black/50" />
-                              </>
-                            )}
-                            <HiCamera className={`relative w-6 h-6 transition-colors duration-300 ${
-                              profileData?.avatarUrl ? 'text-white' : (isDark ? 'text-gray-400' : 'text-gray-500')
-                            }`} />
-                          </>
-                        )}
-                      </div>
-                    </button>
-                    <p className={`text-xs mt-2 transition-colors duration-300 ${
-                      isDark ? 'text-gray-400' : 'text-gray-500'
-                    }`}>
-                      Click to upload
-                    </p>
-                  </div>
-
-                  {/* Cover Photo Section */}
-                  <div className="flex-1">
-                    <button 
-                      type="button"
-                      className={`relative h-20 w-full rounded-lg border-2 border-dashed transition-all duration-300 hover:border-yellow-500 hover:bg-yellow-500/10 cursor-pointer ${
-                        isDark ? 'border-gray-600 bg-gray-800/50' : 'border-gray-300 bg-gray-50'
-                      }`}
-                      onClick={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        triggerFileInput('cover')
-                      }}
-                      onDragOver={(e) => {
-                        e.preventDefault()
-                        e.currentTarget.classList.add('border-yellow-500', 'bg-yellow-500/10')
-                      }}
-                      onDragLeave={(e) => {
-                        e.preventDefault()
-                        e.currentTarget.classList.remove('border-yellow-500', 'bg-yellow-500/10')
-                      }}
-                      onDrop={(e) => {
-                        e.preventDefault()
-                        e.currentTarget.classList.remove('border-yellow-500', 'bg-yellow-500/10')
-                        const file = e.dataTransfer.files?.[0]
-                        if (file && file.type.startsWith('image/')) {
-                          const input = document.getElementById('cover-upload') as HTMLInputElement
-                          const dt = new DataTransfer()
-                          dt.items.add(file)
-                          input.files = dt.files
-                          handleImageSelect('cover', { target: input } as any)
-                        }
-                      }}
-                    >
-                      <div className="absolute inset-0 flex items-center justify-center overflow-hidden rounded-lg">
-                        {coverPreview ? (
-                          <img
-                            src={coverPreview}
-                            alt="Cover preview"
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <>
-                            {profileData?.coverPhotoUrl && (
-                              <>
-                                <img
-                                  src={profileData.coverPhotoUrl}
-                                  alt=""
-                                  className="absolute inset-0 w-full h-full object-cover"
-                                />
-                                <div className="absolute inset-0 bg-black/50" />
-                              </>
-                            )}
-                            <div className="relative text-center">
-                              <HiCamera className={`w-6 h-6 mx-auto mb-1 transition-colors duration-300 ${
-                                profileData?.coverPhotoUrl ? 'text-white' : (isDark ? 'text-gray-400' : 'text-gray-500')
-                              }`} />
-                              <p className={`text-xs transition-colors duration-300 ${
-                                profileData?.coverPhotoUrl ? 'text-white/90' : (isDark ? 'text-gray-400' : 'text-gray-500')
-                              }`}>
-                                Click or drag to upload
-                              </p>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    </button>
-                  </div>
-                </div>
-                
-                {/* Clear Images Buttons */}
-                {(avatarPreview || coverPreview) && (
-                  <div className="flex space-x-4 mt-4">
-                    {avatarPreview && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.preventDefault()
-                          e.stopPropagation()
-                          setAvatarPreview(undefined)
-                        }}
-                        className={`px-3 py-1 text-xs rounded-full transition-all duration-300 ${
-                          isDark 
-                            ? 'bg-red-600/20 text-red-400 hover:bg-red-600/30' 
-                            : 'bg-red-100 text-red-600 hover:bg-red-200'
-                        }`}
-                      >
-                        Clear Avatar
-                      </button>
-                    )}
-                    {coverPreview && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.preventDefault()
-                          e.stopPropagation()
-                          setCoverPreview(undefined)
-                        }}
-                        className={`px-3 py-1 text-xs rounded-full transition-all duration-300 ${
-                          isDark 
-                            ? 'bg-red-600/20 text-red-400 hover:bg-red-600/30' 
-                            : 'bg-red-100 text-red-600 hover:bg-red-200'
-                        }`}
-                      >
-                        Clear Cover
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Username Field - DISABLED: Username is minted on L1 and cannot be changed */}
-              <div className="space-y-2">
-                <label className={`text-sm font-medium transition-colors duration-300 ${
-                  isDark ? 'text-gray-300' : 'text-gray-700'
-                }`}>
-                  Username
-                </label>
-                <input
-                  type="text"
-                  value={`@${profileData?.username || displayUsername}`}
-                  disabled
-                  className={`w-full px-4 py-3 rounded-full border transition-all duration-300 ${
-                    isDark
-                      ? 'bg-gray-800 border-gray-600 text-gray-400 cursor-not-allowed'
-                      : 'bg-gray-100 border-gray-300 text-gray-500 cursor-not-allowed'
-                  }`}
-                />
-              </div>
-
-              {/* Display Name Field - EDITABLE */}
-              <div className="space-y-2">
-                <label className={`text-sm font-medium transition-colors duration-300 ${
-                  isDark ? 'text-gray-300' : 'text-gray-700'
-                }`}>
-                  Display Name
-                </label>
-                <input
-                  type="text"
-                  value={formData.displayName}
-                  onChange={(e) => setFormData({...formData, displayName: e.target.value})}
-                  placeholder="Enter your display name"
-                  maxLength={50}
-                  className={`w-full px-4 py-3 rounded-full border transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-gray-500/30 ${
-                    isDark
-                      ? 'bg-black border-gray-600 text-white placeholder-gray-400 focus:bg-transparent'
-                      : 'bg-white border-gray-300 text-black placeholder-gray-500 focus:bg-transparent'
-                  }`}
-                />
-              </div>
-
-              {/* Description Field - EDITABLE: Connect to backend for save/load */}
-              <div className="space-y-2">
-                <label className={`text-sm font-medium transition-colors duration-300 ${
-                  isDark ? 'text-gray-300' : 'text-gray-700'
-                }`}>
-                  Description
-                </label>
-                <textarea
-                  value={formData.description}
-                  onChange={(e) => setFormData({...formData, description: e.target.value})}
-                  placeholder="Tell us about yourself"
-                  rows={4}
-                  className={`w-full px-4 py-3 rounded-xl border transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-gray-500/30 resize-none ${
-                    isDark 
-                      ? 'bg-black border-gray-600 text-white placeholder-gray-400 focus:bg-transparent' 
-                      : 'bg-white border-gray-300 text-black placeholder-gray-500 focus:bg-transparent'
-                  }`}
-                />
-              </div>
-
-              {/* Location Field - EDITABLE: Connect to backend for save/load */}
-              <div className="space-y-2">
-                <label className={`text-sm font-medium transition-colors duration-300 ${
-                  isDark ? 'text-gray-300' : 'text-gray-700'
-                }`}>
-                  Location
-                </label>
-                <div className="relative">
-                  <HiLocationMarker className={`absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 transition-colors duration-300 ${
-                    isDark ? 'text-gray-400' : 'text-gray-500'
-                  }`} />
-                  <input
-                    type="text"
-                    value={formData.location}
-                    onChange={(e) => setFormData({...formData, location: e.target.value})}
-                    placeholder="Enter your location"
-                    className={`w-full pl-10 pr-4 py-3 rounded-full border transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-gray-500/30 ${
-                      isDark 
-                        ? 'bg-black border-gray-600 text-white placeholder-gray-400 focus:bg-transparent' 
-                        : 'bg-white border-gray-300 text-black placeholder-gray-500 focus:bg-transparent'
-                    }`}
-                  />
-                </div>
-              </div>
-
-              {/* Website Field - EDITABLE: Connect to backend for save/load */}
-              <div className="space-y-2">
-                <label className={`text-sm font-medium transition-colors duration-300 ${
-                  isDark ? 'text-gray-300' : 'text-gray-700'
-                }`}>
-                  Website
-                </label>
-                <div className="relative">
-                  <HiLink className={`absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 transition-colors duration-300 ${
-                    isDark ? 'text-gray-400' : 'text-gray-500'
-                  }`} />
-                  <input
-                    type="url"
-                    value={formData.website}
-                    onChange={(e) => setFormData({...formData, website: e.target.value})}
-                    placeholder="https://yourwebsite.com"
-                    className={`w-full pl-10 pr-4 py-3 rounded-full border transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-gray-500/30 ${
-                      isDark 
-                        ? 'bg-black border-gray-600 text-white placeholder-gray-400 focus:bg-transparent' 
-                        : 'bg-white border-gray-300 text-black placeholder-gray-500 focus:bg-transparent'
-                    }`}
-                  />
-                </div>
-              </div>
-
-            </div>
-
-            {/* Modal Footer */}
-            <div className="p-6 border-t border-white/10">
-              <div className="flex items-center justify-between gap-4">
-                {/* On-chain toggle */}
-                <label className="flex flex-col items-center cursor-pointer select-none">
-                  <span className={`mb-1 text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                    On-chain
-                  </span>
-                  <input
-                    type="checkbox"
-                    checked={saveOnChain}
-                    onChange={() => setSaveOnChain(v => !v)}
-                    className="sr-only"
-                  />
-                  <div className={`relative w-11 h-[22px] flex items-center rounded-full border ${
-                    isDark ? 'border-gray-500' : 'border-gray-400'
-                  }`}>
-                    <div className={`absolute inset-0 rounded-full transition-colors duration-200 ${
-                      saveOnChain ? 'bg-yellow-500' : 'bg-gray-300 dark:bg-gray-600'
-                    }`} />
-                    <div className={`absolute w-[18px] h-[18px] bg-white rounded-full shadow-md transform transition-all duration-200 ${
-                      saveOnChain ? 'translate-x-[22px]' : 'translate-x-0.5'
-                    }`} />
-                  </div>
-                </label>
-
-                <div className="inline-flex flex-col items-end">
-                  <div className="flex space-x-3">
-                    <button
-                      onClick={() => { setIsEditModalOpen(false); setProfileError(null) }}
-                      className={`px-6 py-2 rounded-full font-medium transition-all duration-300 cursor-pointer ${
-                        isDark
-                          ? 'border border-gray-600 text-gray-300 hover:bg-gray-800'
-                          : 'border border-gray-300 text-gray-600 hover:bg-gray-50'
-                      }`}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={saveOnChain ? handleProfileUpdate : handleOffChainUpdate}
-                      disabled={isSaving || isSavingOffChain || isUploading || updateCost === 0 || (saveOnChain && (isSwitchingChain || (isConnected && activeToken && address?.toLowerCase() !== activeToken.address?.toLowerCase())))}
-                      className={`px-6 py-2 rounded-full font-medium transition-all duration-300 ${
-                        isSaving || isSavingOffChain || isUploading || updateCost === 0 || (saveOnChain && (isSwitchingChain || (isConnected && activeToken && address?.toLowerCase() !== activeToken.address?.toLowerCase())))
-                          ? 'bg-gray-500 cursor-not-allowed'
-                          : 'bg-yellow-500 hover:bg-yellow-600 cursor-pointer'
-                      } text-black`}
-                    >
-                      {isSaving || isSavingOffChain ? (
-                        <span>Saving...</span>
-                      ) : saveOnChain && isSwitchingChain ? (
-                        <span>Switching...</span>
-                      ) : saveOnChain && !isConnected ? (
-                        <span>Connect Wallet</span>
-                      ) : saveOnChain && !isOnCorrectChain ? (
-                        <span>Switch to Base Sepolia</span>
-                      ) : saveOnChain && activeToken && address?.toLowerCase() !== activeToken.address?.toLowerCase() ? (
-                        <span>Wrong Address</span>
-                      ) : (
-                        <span>
-                          Save Changes {saveOnChain && updateCost > 0 && `(${updateCost.toLocaleString()} CAW)`}
-                        </span>
-                      )}
-                    </button>
-                  </div>
-                  <div className="mt-2 self-end mr-[11px]">
-                    {saveOnChain ? (
-                      <button
-                        onClick={() => setShowCostExplanation(true)}
-                        className={`text-xs cursor-pointer ${
-                          isDark ? 'text-yellow-500/70 hover:text-yellow-500' : 'text-yellow-700/70 hover:text-yellow-700'
-                        }`}
-                      >
-                        On chain profile updates cost CAW. Why?
-                      </button>
-                    ) : (
-                      <div className={`text-xs text-center ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
-                        <div>Off chain profile updates are free,</div>
-                        <div>but they are only visible through this provider</div>
-                        <div>({providerDomain})</div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-              {/* Error message */}
-              {profileError && (
-                <div className={`mt-3 p-2 rounded-lg text-sm ${isDark ? 'bg-red-500/10 text-red-400' : 'bg-red-50 text-red-600'}`}>
-                  {profileError}
-                </div>
-              )}
+            <div className="p-6">
+              <ProfileEditForm
+                activeToken={activeToken as any}
+                profileData={profileData}
+                isDark={isDark}
+                onSaved={(updated) => {
+                  setProfileData(prev => prev ? { ...prev, ...updated, profileSource: updated?.profileSource ?? prev.profileSource } : prev)
+                  if (updated?.profileUpdatePending) setLocalProfileUpdatePending(true)
+                  setIsEditModalOpen(false)
+                }}
+                onSkip={() => { setIsEditModalOpen(false); setProfileError(null) }}
+                skipLabel="Cancel"
+              />
             </div>
           </div>
         </div>
@@ -1784,7 +1466,10 @@ export const Profile: React.FC = () => {
           recipientUsername={profileData.username}
           onClose={() => setShowTipModal(false)}
           onTipSubmitted={() => {
-            setTipPending(true)
+            // Optimistically mark as tipped — the action is already queued
+            // server-side, so show the tipped state immediately rather than
+            // polling for on-chain confirmation.
+            setHasTipped(true)
           }}
         />
       )}
