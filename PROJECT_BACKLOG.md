@@ -83,17 +83,10 @@ This document tracks outstanding TODOs, security considerations, and planned fea
     - 0% fee, consistent with marketplace philosophy
   - **Status**: Not started
 
-- [ ] **English auction safety: reclaimBid for transferred NFTs** (CawNameMarketplace.sol)
-  - **Problem**: If seller transfers their NFT while an English auction has bids, `settleAuction` reverts because `safeTransferFrom(seller, ...)` fails. The highest bidder's escrowed funds are stuck.
-  - **Solution**: Add `reclaimBid(listingId)` function
-    - Callable by the highest bidder (or anyone)
-    - Checks: listing is active, auction ended, seller no longer owns the tokenId
-    - Refunds the highest bidder's escrowed funds
-    - Marks listing as cancelled
-    - Also refund any outbid bidders via existing `pendingReturns` pattern
-  - **Design choice**: Seller keeps their NFT until settlement — better UX than locking NFT in escrow at listing time. The `reclaimBid` is a safety valve for the edge case where seller transfers away.
-  - **Frontend**: Show "Reclaim Bid" button if auction ended and seller no longer owns NFT
-  - **Status**: Not started — requires contract redeploy
+- [x] **English auction safety: reclaimBid for transferred NFTs** (CawNameMarketplace.sol:324)
+  - `reclaimBid(listingId)` implemented — callable by anyone if seller no longer owns NFT
+  - **Frontend**: Still needs "Reclaim Bid" button UI (see BACKLOG.md UX section)
+  - **Status**: Contract done, frontend UX pending
 
 ### Refactoring
 
@@ -101,10 +94,9 @@ This document tracks outstanding TODOs, security considerations, and planned fea
   - Comment: "TODO: this one not used"
   - Either implement or remove
 
-- [ ] **depositFor function** (CawName.sol:191-195)
-  - Comment: "create a depositFor function, so users can approve and use other contracts to interface with this one"
-  - Would enable better UX with approval + deposit in one transaction
-  - Status: Planned feature
+- [x] **depositFor function** (CawName.sol:286)
+  - Permissionless `depositFor(clientId, tokenId, amount, lzDestId, lzTokenAmount)` implemented
+  - Status: Done
 
 - [ ] **LayerZero refund address** (CawName.sol:464-466)
   - Comment: "Should the msg.sender receive the refund instead?"
@@ -123,6 +115,17 @@ This document tracks outstanding TODOs, security considerations, and planned fea
 - [ ] **DM editing and deletion**
   - Allow users to edit and delete their own direct messages
   - See detailed design notes below in [DM Edit/Delete Design Notes](#dm-editdelete-design-notes)
+
+- [ ] **Reported content moderation (explicit / removed)** — IN PROGRESS
+  - Admin can mark any post as `EXPLICIT` or `REMOVED` from the /admin/reports page
+  - **Done so far**: Report modal sub-options for Explicit vs Illegal/Harmful, reason filtering in admin dashboard, success confirmation screen, duplicate reports update instead of 409
+  - **Still needed**:
+    - Add `moderation` field (enum: NONE, EXPLICIT, REMOVED) to Caw model + migration
+    - Admin API endpoint `PATCH /api/caws/:id/moderation` (requireAdmin)
+    - shapeCaw/getCawIncludeConfig: pass moderation field through, blank content for REMOVED posts server-side
+    - FeedItem: EXPLICIT posts show blurred overlay with click-to-reveal gate; REMOVED posts show stub ("This caw was removed from this domain. It still exists on chain through the CAW protocol.") with no action buttons
+    - Propagation: explicit/removed status applies to quoted/recawed parent posts automatically via nested includes
+    - Admin buttons on report rows: "Mark Explicit", "Remove Post", "Clear Moderation"
 
 - [ ] **Shadow banning**
   - Frontend-level content filtering for users flagged by admins/reports
@@ -215,6 +218,17 @@ This document tracks outstanding TODOs, security considerations, and planned fea
   - Test with production XMTP network
   - Add rate limiting
   - Add message persistence/caching
+
+### API & Worker Efficiency
+
+- [ ] **Minimize redundant RPC and DB calls across services**
+  - Audit API routes and worker services (ActionProcessor, RawEventsGatherer, ValidatorService, ChainSyncService, DataCleaner) for redundant chain reads, duplicate DB queries, and unnecessary polling
+  - Batch RPC calls where possible (multicall, batch getLogs)
+  - Add caching layers (Redis) for frequently-read chain data that doesn't change often (token metadata, client configs, gas prices)
+  - Deduplicate overlapping work between services (e.g. multiple services reading the same contract state independently)
+  - Profile DB query patterns — look for N+1 queries, missing indexes, over-fetching in Prisma includes
+  - Consider debouncing/throttling event re-processing on reorgs
+  - **Status**: Not started
 
 ### Infrastructure
 
@@ -410,4 +424,4 @@ model MessageDeletion {
 
 ---
 
-*Last updated: 2026-03-13*
+*Last updated: 2026-04-10*
