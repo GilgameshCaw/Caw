@@ -224,7 +224,7 @@ const PlaceBidModal: React.FC = () => {
             </div>
             <h2 className={`text-xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>Bid Placed!</h2>
             <p className={`text-sm mb-6 ${themeTextMuted(isDark)}`}>
-              Your bid on <span className="font-semibold">@{listing.username}</span> has been submitted. If you win, you'll need to settle the auction after it ends.
+              Your bid on <span className="font-semibold">@{listing.username}</span> has been submitted.<br />If you win, you'll need to settle the auction after it ends.
             </p>
             <button
               onClick={handleClose}

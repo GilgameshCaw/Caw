@@ -53,6 +53,21 @@ export interface MarketplaceSale {
   createdAt: string
 }
 
+export interface MarketplaceOffer {
+  id: number
+  offerId: number
+  tokenId: number
+  offerer: string
+  paymentToken: string
+  paymentAddress: string
+  amount: string
+  expiry: string
+  status: string
+  username: string
+  txHash: string | null
+  createdAt: string
+}
+
 interface MarketplaceFilters {
   listingType: ListingType
   paymentToken: PaymentToken
@@ -77,6 +92,14 @@ interface MarketplaceStore {
   bidModal: { isOpen: boolean; listing: MarketplaceListing | null }
   openBidModal: (listing: MarketplaceListing) => void
   closeBidModal: () => void
+  // Make offer modal
+  makeOfferModal: { isOpen: boolean; tokenId: number | null; username: string | null }
+  openMakeOffer: (tokenId: number, username: string) => void
+  closeMakeOffer: () => void
+  // View offers modal
+  viewOffersModal: { isOpen: boolean; tokenId: number | null; username: string | null }
+  openViewOffers: (tokenId: number, username: string) => void
+  closeViewOffers: () => void
   // Refresh trigger — increment to force re-fetch in components
   refreshCounter: number
   triggerRefresh: () => void
@@ -112,6 +135,22 @@ export const useMarketplaceStore = create<MarketplaceStore>((set) => ({
   bidModal: { isOpen: false, listing: null },
   openBidModal: (listing) => set({ bidModal: { isOpen: true, listing } }),
   closeBidModal: () => set({ bidModal: { isOpen: false, listing: null } }),
+
+  makeOfferModal: { isOpen: false, tokenId: null, username: null },
+  openMakeOffer: (tokenId, username) => set({
+    makeOfferModal: { isOpen: true, tokenId, username },
+  }),
+  closeMakeOffer: () => set({
+    makeOfferModal: { isOpen: false, tokenId: null, username: null },
+  }),
+
+  viewOffersModal: { isOpen: false, tokenId: null, username: null },
+  openViewOffers: (tokenId, username) => set({
+    viewOffersModal: { isOpen: true, tokenId, username },
+  }),
+  closeViewOffers: () => set({
+    viewOffersModal: { isOpen: false, tokenId: null, username: null },
+  }),
 
   refreshCounter: 0,
   triggerRefresh: () => set(s => ({ refreshCounter: s.refreshCounter + 1 })),

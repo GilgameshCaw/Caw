@@ -221,6 +221,11 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
                 {usdDisplay}
               </div>
             )}
+            {isWinner && !isAuctionEnded && (
+              <div className="text-xs text-yellow-500 font-medium">
+                ★ you are top bidder
+              </div>
+            )}
             {listing.listingType === 'ENGLISH_AUCTION' && (listing._count?.bids ?? 0) > 0 && (
               <button
                 onClick={(e) => {
