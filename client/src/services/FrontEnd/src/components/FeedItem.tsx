@@ -703,7 +703,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               {/* Avatar */}
               <Link
                 to={`/users/${useItem.user.username}`}
-                className="w-10 h-10 rounded-full cursor-pointer overflow-hidden"
+                className="w-10 h-10 rounded-full cursor-pointer overflow-hidden border border-gray-700"
               >
                 <img
                   src={useItem.user.avatarUrl || useItem.user.image || "/images/logo.jpeg"}
@@ -1014,7 +1014,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 <img
                   src={item.parent.user.avatarUrl || item.parent.user.image || '/images/logo.jpeg'}
                   alt=""
-                  className="w-5 h-5 rounded-full object-cover"
+                  className="w-5 h-5 rounded-full object-cover border border-gray-700"
                 />
                 <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
                   {item.parent.user.displayName || item.parent.user.username}

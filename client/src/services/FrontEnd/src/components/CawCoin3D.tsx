@@ -2,9 +2,11 @@ import { useRef, useEffect, useMemo } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { SVGLoader } from 'three/examples/jsm/loaders/SVGLoader.js'
+import { Line2 } from 'three/examples/jsm/lines/Line2.js'
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
+import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
 
 const DEPTH = 30
-const BORDER_COLOR = '#ebc046'
 const FACE_COLOR = '#1a1a1a'
 
 // SVG path from the single-bird CAW logo
@@ -33,7 +35,7 @@ function useExtrudedCrow() {
     const extrudeSettings: THREE.ExtrudeGeometryOptions = {
       depth: DEPTH,
       bevelEnabled: true,
-      bevelThickness: 0.05,
+      bevelThickness: 0.025,
       bevelSize: 0.03,
       bevelOffset: 0,
       bevelSegments: 6,
@@ -63,18 +65,19 @@ function useExtrudedCrow() {
     const offsetY = (rawBB.min.y + rawBB.max.y) / 2
     rawGeo.dispose()
 
-    const outlinePositions: number[] = []
-    for (let face = 0; face < 2; face++) {
-      const z = face === 0 ? frontZ : backZ
-      for (let i = 0; i < points.length; i++) {
-        const a = points[i]
-        const b = points[(i + 1) % points.length]
-        outlinePositions.push(
-          (a.x - offsetX) * s, -(a.y - offsetY) * s, z,
-          (b.x - offsetX) * s, -(b.y - offsetY) * s, z,
-        )
+    // Build closed loop positions for front and back face outlines
+    const faceLoopPositions = (z: number) => {
+      const pos: number[] = []
+      for (let i = 0; i <= points.length; i++) {
+        const p = points[i % points.length]
+        pos.push((p.x - offsetX) * s, -(p.y - offsetY) * s, z)
       }
+      return pos
     }
+    const frontLineGeo = new LineGeometry()
+    frontLineGeo.setPositions(faceLoopPositions(frontZ))
+    const backLineGeo = new LineGeometry()
+    backLineGeo.setPositions(faceLoopPositions(backZ))
 
     // Key landmark points from the SVG path (in SVG coords):
     // Beak tip: (177.62, 0)
@@ -94,20 +97,23 @@ function useExtrudedCrow() {
       { x: 211.2, y: 187.93 },    // tail right
     ]
 
-    const connectPositions: number[] = []
+    // Build connecting lines as individual LineGeometry segments
+    const connectGeos: LineGeometry[] = []
     for (const lm of landmarks) {
       const x = (lm.x - offsetX) * s
       const y = -(lm.y - offsetY) * s
-      connectPositions.push(x, y, frontZ, x, y, backZ)
+      const g = new LineGeometry()
+      g.setPositions([x, y, frontZ, x, y, backZ])
+      connectGeos.push(g)
     }
 
-    const connectGeo = new THREE.BufferGeometry()
-    connectGeo.setAttribute('position', new THREE.Float32BufferAttribute(connectPositions, 3))
+    const lineMat = new LineMaterial({
+      color: 0xebc046,
+      linewidth: 1.2,
+      resolution: new THREE.Vector2(window.innerWidth, window.innerHeight),
+    })
 
-    const outlineGeo = new THREE.BufferGeometry()
-    outlineGeo.setAttribute('position', new THREE.Float32BufferAttribute(outlinePositions, 3))
-
-    return { mesh: geo, outline: outlineGeo, connects: connectGeo }
+    return { mesh: geo, frontLine: frontLineGeo, backLine: backLineGeo, connectGeos, lineMat }
   }, [crowShape])
 }
 
@@ -116,7 +122,7 @@ function CrowMesh() {
   const result = useExtrudedCrow()
 
   const dragging = useRef(false)
-  const velocity = useRef({ x: 0, y: 0.024 })
+  const velocity = useRef({ x: 0, y: 0.025 })
   const lastDrag = useRef({ x: 0, y: 0 })
   const rotationRef = useRef({ x: 0, y: 0 })
   const mousePos = useRef({ x: 0, y: 0 })
@@ -196,7 +202,7 @@ function CrowMesh() {
 
       const speed = Math.abs(velocity.current.x) + Math.abs(velocity.current.y)
       if (speed < 0.01) {
-        velocity.current.y += (0.024 - velocity.current.y) * 0.005
+        velocity.current.y += (0.025 - velocity.current.y) * 0.005
       }
 
       // Slowly re-orient so beak points up (x rotation → nearest multiple of 2π)
@@ -226,14 +232,13 @@ function CrowMesh() {
           roughness={0.6}
         />
       </mesh>
-      {/* Gold outline on front and back faces only */}
-      <lineSegments geometry={result.outline}>
-        <lineBasicMaterial color={BORDER_COLOR} linewidth={1} />
-      </lineSegments>
+      {/* Gold outline on front and back faces */}
+      <primitive object={new Line2(result.frontLine, result.lineMat)} />
+      <primitive object={new Line2(result.backLine, result.lineMat)} />
       {/* Connecting lines at key points */}
-      <lineSegments geometry={result.connects}>
-        <lineBasicMaterial color={BORDER_COLOR} linewidth={1} />
-      </lineSegments>
+      {result.connectGeos.map((g, i) => (
+        <primitive key={i} object={new Line2(g, result.lineMat)} />
+      ))}
     </group>
   )
 }
@@ -243,16 +248,14 @@ export default function CawCoin3D({ className }: { className?: string }) {
     <div className={className} style={{ cursor: 'grab' }}>
       <Canvas
         camera={{ position: [0, 0, 5], fov: 45 }}
-        gl={{ alpha: true, antialias: true }}
+        gl={{ alpha: true, antialias: true, powerPreference: 'low-power' }}
+        dpr={[1, 1.5]}
         style={{ background: 'transparent' }}
       >
         <ambientLight intensity={0.5} />
-        <directionalLight position={[4, 4, 6]} intensity={2.0} />
-        <directionalLight position={[-3, -1, -4]} intensity={0.6} />
-        <spotLight position={[0, 5, 5]} angle={0.4} penumbra={0.5} intensity={1.5} color="#fff5e0" />
-        <pointLight position={[0, 0, 4]} intensity={0.8} color={BORDER_COLOR} />
-        <directionalLight position={[5, -3, 2]} intensity={0.8} color="#ffe8b0" />
-        <pointLight position={[-4, 2, 3]} intensity={0.6} color="#ffffff" />
+        <directionalLight position={[4, 3, 6]} intensity={1.8} color="#ebc046" />
+        <directionalLight position={[-4, 2, 5]} intensity={1.2} color="#c0c0c0" />
+        <directionalLight position={[0, -3, 5]} intensity={0.8} color="#d4d4d4" />
         <CrowMesh />
       </Canvas>
     </div>

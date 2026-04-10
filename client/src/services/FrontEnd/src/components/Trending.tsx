@@ -4,7 +4,7 @@ import TrendingHashtags from './TrendingHashtags'
 import { useTheme } from '~/hooks/useTheme'
 
 const Trending: React.FC = () => {
-  const { isDark } = useTheme()
+  const { isDark, toggle } = useTheme()
 
   return (
     <>
@@ -54,6 +54,16 @@ const Trending: React.FC = () => {
           >
             FAQ
           </Link>
+          <span className={`${isDark ? 'text-gray-600' : 'text-gray-400'}`}>-</span>
+          <button
+            onClick={toggle}
+            className={`transition-colors duration-200 cursor-pointer ${
+              isDark ? 'text-gray-400 hover:text-yellow-400' : 'text-gray-500 hover:text-yellow-500'
+            }`}
+            title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {isDark ? '\u2600\uFE0F' : '\uD83C\uDF19'}
+          </button>
         </div>
       </div>
     </>

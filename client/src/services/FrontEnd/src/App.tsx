@@ -14,14 +14,18 @@ import TransferNFTModal from '~/components/modals/TransferNFTModal'
 import CreateListingModal from '~/components/modals/CreateListingModal'
 import BuyModal from '~/components/modals/BuyModal'
 import PlaceBidModal from '~/components/modals/PlaceBidModal'
+import MakeOfferModal from '~/components/modals/MakeOfferModal'
+import ViewOffersModal from '~/components/modals/ViewOffersModal'
 import SyncTransferModal from '~/components/modals/SyncTransferModal'
 import OnboardingGuard from '~/components/OnboardingGuard'
 import QuickSignRenewModal from '~/components/modals/QuickSignRenewModal'
 import QuickSignModal from '~/components/modals/QuickSignModal'
+import QuickSignUnlock from '~/components/QuickSignUnlock'
 import ClientAuthModal from '~/components/modals/ClientAuthModal'
 import { useSessionSpendSync } from '~/hooks/useSessionSpendSync'
 import { useDmUnreadSync } from '~/hooks/useDmUnreadSync'
 import { useNotificationUnreadSync } from '~/hooks/useNotificationUnreadSync'
+import { useOffersUnreadSync } from '~/hooks/useOffersUnreadSync'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import { useActionErrorStore } from '~/store/actionErrorStore'
@@ -36,6 +40,7 @@ function App() {
   useSessionSpendSync(); // Sync on-chain session spending on load
   useDmUnreadSync(); // Fetch DM unread count for sidebar badge
   useNotificationUnreadSync(); // Fetch notification unread count for sidebar badge
+  useOffersUnreadSync(); // Fetch received offers count for sidebar badge
 
   // Fetch blocked users from server on init
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
@@ -76,11 +81,14 @@ function App() {
       <SignInModal />
       <QuickSignRenewModal />
       <QuickSignModal />
+      <QuickSignUnlock />
       <ClientAuthModal />
       <TransferNFTModal />
       <CreateListingModal />
       <BuyModal />
       <PlaceBidModal />
+      <MakeOfferModal />
+      <ViewOffersModal />
       <SyncTransferModal />
 
       {/* Global action error modal */}

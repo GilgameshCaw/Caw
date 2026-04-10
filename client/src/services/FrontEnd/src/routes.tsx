@@ -29,6 +29,7 @@ import WelcomePage from "./pages/WelcomePage";
 import Marketplace from "./pages/Marketplace";
 import CaptiveSplash from "./pages/CaptiveSplash";
 import AuthGate from "./components/AuthGate";
+import AdminGate from "./components/AdminGate";
 import { Navigate } from "react-router-dom";
 
 
@@ -186,27 +187,27 @@ export default [
   },
   {
     path: "/admin",
-    component: <Admin />,
+    component: <AdminGate><Admin /></AdminGate>,
   },
   {
     path: "/admin/bugs",
-    component: <BugReportsAdmin />,
+    component: <AdminGate><BugReportsAdmin /></AdminGate>,
   },
   {
     path: "/admin/reports",
-    component: <ReportsAdmin />,
+    component: <AdminGate><ReportsAdmin /></AdminGate>,
   },
   {
     path: "/admin/validator",
-    component: <ValidatorAnalytics />,
+    component: <AdminGate><ValidatorAnalytics /></AdminGate>,
   },
   {
     path: "/admin/validator/settings",
-    component: <ValidatorSettings />,
+    component: <AdminGate><ValidatorSettings /></AdminGate>,
   },
   {
     path: "/admin/database",
-    component: <DatabaseAdmin />,
+    component: <AdminGate><DatabaseAdmin /></AdminGate>,
   },
   {
     path: "/welcome/:username",

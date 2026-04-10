@@ -21,7 +21,7 @@ const LayerZeroStatus: React.FC<LayerZeroStatusProps> = ({
 
   return (
     <div className={`p-3 rounded-lg border transition-all duration-300 ${
-      dark ? 'bg-blue-500/10 border-blue-500/30' : 'bg-blue-50 border-blue-200'
+      dark ? 'bg-[#070D19]/85 border-blue-500/30' : 'bg-blue-50 border-blue-200'
     }`}>
       <div className="flex items-start gap-2">
         <div className="flex-1">

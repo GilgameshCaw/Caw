@@ -93,6 +93,7 @@ export async function apiFetch<T = any>(
       const startTime = Date.now()
       const url = `${host}${path}`
       const res = await fetch(url, {
+        credentials: 'include', // admin HttpOnly cookie needs this; session-token header is unaffected
         ...init,
         headers,
       })

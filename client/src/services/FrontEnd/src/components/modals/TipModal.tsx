@@ -68,7 +68,7 @@ const TipModal: React.FC<TipModalProps> = ({
   const handleSubmit = async () => {
     if (!isValid) return
 
-    if (!isConnected) {
+    if (!isConnected && !hasActiveSession) {
       openConnectModal?.()
       return
     }

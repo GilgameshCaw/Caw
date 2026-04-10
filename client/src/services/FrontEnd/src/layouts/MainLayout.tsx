@@ -6,13 +6,15 @@ import SearchBar from "~/components/SearchBar";
 import BugReportModal from "~/components/modals/BugReportModal";
 import { useTheme } from "~/hooks/useTheme";
 import Tooltip from "~/components/Tooltip";
-import { useState } from "react";
+import { useState, lazy, Suspense } from "react";
 import { HiOutlineMenu, HiOutlineX } from "react-icons/hi";
 import { Link, useLocation } from "react-router-dom";
 import { useActiveToken } from "~/store/tokenDataStore";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { useAccount } from "wagmi";
 import cawLogo from '~/assets/images/caw-logo.png';
+
+const BoidsBg = lazy(() => import('~/components/BoidsBg'))
 
 interface MainLayoutProps {
   children: React.ReactNode;
@@ -29,7 +31,7 @@ const MainLayout = ({ children }: MainLayoutProps) => {
 
   // Captive mode: no username and on a public page like /help/*
   const isCaptive = !activeToken?.username
-  const hideSidebars = isCaptive && (location.pathname.startsWith('/help') || location.pathname.startsWith('/usernames'))
+  const hideSidebars = isCaptive && (location.pathname.startsWith('/help') || location.pathname.startsWith('/usernames') || location.pathname.startsWith('/faucet'))
 
   return (
     <div className={`min-h-screen w-full max-w-[1050px] flex m-auto transition-colors duration-300 ${
@@ -94,8 +96,13 @@ const MainLayout = ({ children }: MainLayoutProps) => {
       {/* Main Content */}
       <main className={`flex-1 min-w-0 transition-colors duration-300 flex flex-col ${
         isDark ? 'bg-black text-white' : 'bg-white text-black'
-      } ${hideSidebars ? 'pt-0' : isMobileMenuOpen ? 'md:pt-0 pt-16' : 'pt-16 md:pt-0'}`}>
-        <div className={`flex-1 min-h-0 ${hideSidebars ? 'pb-24' : ''}`}>
+      } ${hideSidebars ? 'pt-0 relative overflow-hidden' : isMobileMenuOpen ? 'md:pt-0 pt-16' : 'pt-16 md:pt-0'}`}>
+        {hideSidebars && (
+          <Suspense fallback={null}>
+            <BoidsBg isDark={isDark} />
+          </Suspense>
+        )}
+        <div className={`flex-1 min-h-0 ${hideSidebars ? 'pb-24 relative z-10' : ''}`}>
           {children}
         </div>
       </main>
@@ -123,8 +130,8 @@ const MainLayout = ({ children }: MainLayoutProps) => {
 
       {/* Captive banner — fixed bottom bar for unauthenticated users on public pages */}
       {hideSidebars && (
-        <div className={`fixed bottom-0 left-0 right-0 z-50 border-t backdrop-blur-md ${
-          isDark ? 'bg-black/90 border-white/10' : 'bg-white/90 border-gray-200'
+        <div className={`fixed bottom-0 left-0 right-0 z-50 border-t backdrop-blur-[2px] ${
+          isDark ? 'bg-black/10 border-white/10' : 'bg-white/10 border-gray-200'
         }`}>
           <div className="max-w-3xl mx-auto flex items-center justify-between px-5 py-3">
             <Link to="/welcome" className="flex items-center gap-2.5">

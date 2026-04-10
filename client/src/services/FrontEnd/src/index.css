@@ -38,7 +38,7 @@
   --color-base-100: #222222;
   --color-base-200: #171717;
   --color-base-300: #000000;
-  --color-black: #000000;
+  --color-black: #0a0a0a;
   --color-white: #ffffff;
   --color-gray: #919aae;
 
@@ -64,7 +64,9 @@
   font-size: 15px;
   font-optical-sizing: auto;
   color: #ffffff;
-  background: #000000;
+  background: #000;
+  background-image: linear-gradient(to right, #000 0%, #0a0a0a 15%, #0a0a0a 85%, #000 100%);
+  background-attachment: fixed;
 }
 
 /* .banner-bg { */

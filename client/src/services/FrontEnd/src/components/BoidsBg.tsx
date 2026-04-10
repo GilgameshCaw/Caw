@@ -7,13 +7,11 @@ const BIRD_PATH = new Path2D(
 // The SVG viewBox is 355.2 x 190.29
 const SVG_W = 355.2
 const SVG_H = 190.29
-const SVG_CX = SVG_W / 2
-const SVG_CY = SVG_H / 2
 
 const BOID_COUNT = 1000
 const BOID_SCALE = 0.06
-const MAX_SPEED = 0.35
-const MIN_SPEED = 0.1
+const MAX_SPEED = 0.7
+const MIN_SPEED = 0.25
 const EDGE_MARGIN = 60
 const EDGE_TURN = 0.15
 
@@ -65,7 +63,7 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
         bright: Math.random() < 0.01 ? (Math.random() < 0.5 ? 'gold' : 'white') : 'none',
         heading: angle + Math.PI / 2,
         sepMult: 0.5 + Math.random(), // multiplier for separation radius
-        opacity: 0.04 + Math.random() * 0.02, // 4%–6%, centered on 5%
+        opacity: 0.07 + Math.random() * 0.03,
         gradFlip: Math.random() < 0.5,
       })
     }
@@ -81,8 +79,8 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1
-      w = canvas.parentElement!.clientWidth + OVERFLOW * 2
-      h = canvas.parentElement!.clientHeight + OVERFLOW * 2
+      w = window.innerWidth + OVERFLOW * 2
+      h = window.innerHeight + OVERFLOW * 2
       canvas.width = w * dpr
       canvas.height = h * dpr
       canvas.style.width = `${w}px`
@@ -97,65 +95,167 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
     resize()
     window.addEventListener('resize', resize)
 
+    // Pre-render bird sprites onto offscreen canvases for performance
+    const SPRITE_PAD = 10
+    const spriteW = Math.ceil(SVG_W * BOID_SCALE) + SPRITE_PAD * 2
+    const spriteH = Math.ceil(SVG_H * BOID_SCALE) + SPRITE_PAD * 2
+
+    function renderSprite(fillFn: (sctx: CanvasRenderingContext2D) => void): HTMLCanvasElement {
+      const c = document.createElement('canvas')
+      c.width = spriteW
+      c.height = spriteH
+      const sctx = c.getContext('2d')!
+      sctx.translate(SPRITE_PAD, SPRITE_PAD)
+      sctx.scale(BOID_SCALE, BOID_SCALE)
+      fillFn(sctx)
+      sctx.fill(BIRD_PATH)
+      return c
+    }
+
+    // Dim bird sprites (one per unique opacity — batch into a few buckets)
+    const DIM_BUCKETS = 5
+    const dimSpritesDark: HTMLCanvasElement[] = []
+    const dimSpritesLight: HTMLCanvasElement[] = []
+    for (let i = 0; i < DIM_BUCKETS; i++) {
+      const opacity = 0.07 + (i / (DIM_BUCKETS - 1)) * 0.03
+      dimSpritesDark.push(renderSprite(sctx => {
+        const grad = sctx.createLinearGradient(0, 0, SVG_W, SVG_H)
+        const hi = `rgba(255,255,255,${(opacity * 1.3).toFixed(4)})`
+        const lo = `rgba(255,255,255,${(opacity * 0.7).toFixed(4)})`
+        grad.addColorStop(0, hi)
+        grad.addColorStop(0.5, lo)
+        grad.addColorStop(1, hi)
+        sctx.fillStyle = grad
+      }))
+      dimSpritesLight.push(renderSprite(sctx => {
+        const grad = sctx.createLinearGradient(0, 0, SVG_W, SVG_H)
+        const hi = `rgba(0,0,0,${(opacity * 1.3).toFixed(4)})`
+        const lo = `rgba(0,0,0,${(opacity * 0.7).toFixed(4)})`
+        grad.addColorStop(0, hi)
+        grad.addColorStop(0.5, lo)
+        grad.addColorStop(1, hi)
+        sctx.fillStyle = grad
+      }))
+    }
+
+    // Gold sprites (two variants for gradFlip)
+    const goldSprites = [false, true].map(flip => renderSprite(sctx => {
+      const grad = sctx.createLinearGradient(0, 0, SVG_W, SVG_H)
+      const edgeHi = 'rgba(255,230,120,0.75)'
+      const centerHi = 'rgba(255,230,120,0.50)'
+      const lo = 'rgba(200,160,40,0.45)'
+      grad.addColorStop(0, flip ? lo : edgeHi)
+      grad.addColorStop(0.5, flip ? centerHi : lo)
+      grad.addColorStop(1, flip ? lo : edgeHi)
+      sctx.fillStyle = grad
+    }))
+
+    // White sprites (two variants for gradFlip)
+    const whiteSprites = [false, true].map(flip => renderSprite(sctx => {
+      const grad = sctx.createLinearGradient(0, 0, SVG_W, SVG_H)
+      const whi = 'rgba(255,255,255,0.65)', wlo = 'rgba(200,200,210,0.35)'
+      grad.addColorStop(0, flip ? wlo : whi)
+      grad.addColorStop(0.5, flip ? whi : wlo)
+      grad.addColorStop(1, flip ? wlo : whi)
+      sctx.fillStyle = grad
+    }))
+
     const onMouseMove = (e: MouseEvent) => {
-      const rect = canvas.parentElement!.getBoundingClientRect()
-      mouseRef.current.x = e.clientX - rect.left + OVERFLOW
-      mouseRef.current.y = e.clientY - rect.top + OVERFLOW
+      mouseRef.current.x = e.clientX + OVERFLOW
+      mouseRef.current.y = e.clientY + OVERFLOW
       mouseRef.current.active = true
     }
     const onMouseLeave = () => { mouseRef.current.active = false }
     const onTouchMove = (e: TouchEvent) => {
       if (e.touches.length !== 1) return
-      const rect = canvas.parentElement!.getBoundingClientRect()
-      mouseRef.current.x = e.touches[0].clientX - rect.left + OVERFLOW
-      mouseRef.current.y = e.touches[0].clientY - rect.top + OVERFLOW
+      mouseRef.current.x = e.touches[0].clientX + OVERFLOW
+      mouseRef.current.y = e.touches[0].clientY + OVERFLOW
       mouseRef.current.active = true
     }
     const onTouchEnd = () => { mouseRef.current.active = false }
 
-    const parent = canvas.parentElement!
-    parent.addEventListener('mousemove', onMouseMove)
-    parent.addEventListener('mouseleave', onMouseLeave)
-    parent.addEventListener('touchmove', onTouchMove, { passive: true })
-    parent.addEventListener('touchend', onTouchEnd)
+    window.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseleave', onMouseLeave)
+    window.addEventListener('touchmove', onTouchMove, { passive: true })
+    window.addEventListener('touchend', onTouchEnd)
+
+    // FPS counter (temporary)
+    let frameCount = 0
+    let lastFpsTime = performance.now()
+    let currentFps = 0
+    let simHalf = 0 // alternate which half of boids we simulate
 
     const tick = () => {
+      // FPS tracking
+      frameCount++
+      const now = performance.now()
+      if (now - lastFpsTime >= 1000) {
+        currentFps = frameCount
+        frameCount = 0
+        lastFpsTime = now
+      }
+
       const boids = boidsRef.current
       const { separationRadius, alignmentRadius, cohesionRadius, separationWeight, alignmentWeight, cohesionWeight, wanderStrength } = config
       ctx.clearRect(0, 0, w, h)
 
-      // Spatial grid for O(n) neighbor lookups
+      // Spatial grid for O(n) neighbor lookups — flat array with counts to avoid allocations
       const cellSize = Math.max(separationRadius, alignmentRadius, cohesionRadius)
       const cols = Math.ceil(w / cellSize) + 1
       const rows = Math.ceil(h / cellSize) + 1
-      const grid: number[][] = new Array(cols * rows)
-      for (let i = 0; i < grid.length; i++) grid[i] = []
+      const totalCells = cols * rows
+      // Bucket sort: first pass counts, second pass fills
+      const cellCounts = new Int32Array(totalCells)
+      const cellStarts = new Int32Array(totalCells)
+      const sortedIndices = new Int32Array(boids.length)
 
       for (let i = 0; i < boids.length; i++) {
         const b = boids[i]
-        const col = Math.max(0, Math.min(cols - 1, Math.floor(b.x / cellSize)))
-        const row = Math.max(0, Math.min(rows - 1, Math.floor(b.y / cellSize)))
-        grid[row * cols + col].push(i)
+        const col = Math.max(0, Math.min(cols - 1, (b.x / cellSize) | 0))
+        const row = Math.max(0, Math.min(rows - 1, (b.y / cellSize) | 0))
+        cellCounts[row * cols + col]++
+      }
+      // Prefix sum for start offsets
+      let offset = 0
+      for (let i = 0; i < totalCells; i++) {
+        cellStarts[i] = offset
+        offset += cellCounts[i]
+        cellCounts[i] = 0 // reset for second pass
+      }
+      // Fill sorted indices
+      for (let i = 0; i < boids.length; i++) {
+        const b = boids[i]
+        const col = Math.max(0, Math.min(cols - 1, (b.x / cellSize) | 0))
+        const row = Math.max(0, Math.min(rows - 1, (b.y / cellSize) | 0))
+        const cell = row * cols + col
+        sortedIndices[cellStarts[cell] + cellCounts[cell]] = i
+        cellCounts[cell]++
       }
 
-      // Update boids
-      for (let i = 0; i < boids.length; i++) {
+      // Update boids — alternate halves each frame to stay under 16ms
+      const simStart = simHalf * Math.ceil(boids.length / 2)
+      const simEnd = Math.min(simStart + Math.ceil(boids.length / 2), boids.length)
+      simHalf = 1 - simHalf
+
+      for (let i = simStart; i < simEnd; i++) {
         const b = boids[i]
         let sepX = 0, sepY = 0
         let alignX = 0, alignY = 0, alignCount = 0
         let cohX = 0, cohY = 0, cohCount = 0
 
-        const col = Math.max(0, Math.min(cols - 1, Math.floor(b.x / cellSize)))
-        const row = Math.max(0, Math.min(rows - 1, Math.floor(b.y / cellSize)))
+        const col = Math.max(0, Math.min(cols - 1, (b.x / cellSize) | 0))
+        const row = Math.max(0, Math.min(rows - 1, (b.y / cellSize) | 0))
 
         // Check neighboring cells
         for (let dr = -1; dr <= 1; dr++) {
           for (let dc = -1; dc <= 1; dc++) {
             const nr = row + dr, nc = col + dc
             if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue
-            const cell = grid[nr * cols + nc]
-            for (let k = 0; k < cell.length; k++) {
-              const j = cell[k]
+            const cellIdx = nr * cols + nc
+            const start = cellStarts[cellIdx]
+            const count = cellCounts[cellIdx]
+            for (let k = 0; k < count; k++) {
+              const j = sortedIndices[start + k]
               if (j === i) continue
               const o = boids[j]
               const dx = o.x - b.x
@@ -238,7 +338,7 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
         b.y += b.vy
       }
 
-      // Draw boids
+      // Draw boids using pre-rendered sprites
       for (const b of boids) {
         // Smoothly lerp heading toward velocity direction
         const targetAngle = Math.atan2(b.vy, b.vx) + Math.PI / 2
@@ -247,38 +347,27 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
         while (delta < -Math.PI) delta += Math.PI * 2
         b.heading += delta * 0.03
 
+        let sprite: HTMLCanvasElement
+        if (b.bright === 'gold') {
+          sprite = goldSprites[b.gradFlip ? 1 : 0]
+        } else if (b.bright === 'white') {
+          sprite = whiteSprites[b.gradFlip ? 1 : 0]
+        } else {
+          const bucket = Math.min(DIM_BUCKETS - 1, Math.max(0, Math.round((b.opacity - 0.04) / 0.02 * (DIM_BUCKETS - 1))))
+          sprite = isDark ? dimSpritesDark[bucket] : dimSpritesLight[bucket]
+        }
+
         ctx.save()
         ctx.translate(b.x, b.y)
         ctx.rotate(b.heading)
-        ctx.scale(BOID_SCALE, BOID_SCALE)
-        ctx.translate(-SVG_CX, -SVG_CY)
-
-        if (b.bright === 'gold') {
-          // Symmetric linear gold gradient — edges match, bright center
-          const grad = ctx.createLinearGradient(0, 0, SVG_W, SVG_H)
-          const edgeHi = 'rgba(255,230,120,0.75)'
-          const centerHi = 'rgba(255,230,120,0.50)'
-          const lo = 'rgba(200,160,40,0.45)'
-          grad.addColorStop(0, b.gradFlip ? lo : edgeHi)
-          grad.addColorStop(0.5, b.gradFlip ? centerHi : lo)
-          grad.addColorStop(1, b.gradFlip ? lo : edgeHi)
-          ctx.fillStyle = grad
-        } else if (b.bright === 'white') {
-          // Symmetric linear silver gradient — bright edges, dimmer center
-          const grad = ctx.createLinearGradient(0, 0, SVG_W, SVG_H)
-          const whi = 'rgba(255,255,255,0.65)', wlo = 'rgba(200,200,210,0.35)'
-          grad.addColorStop(0, b.gradFlip ? wlo : whi)
-          grad.addColorStop(0.5, b.gradFlip ? whi : wlo)
-          grad.addColorStop(1, b.gradFlip ? wlo : whi)
-          ctx.fillStyle = grad
-        } else {
-          const c = isDark ? '255,255,255' : '0,0,0'
-          ctx.fillStyle = `rgba(${c},${b.opacity})`
-        }
-
-        ctx.fill(BIRD_PATH)
+        ctx.drawImage(sprite, -spriteW / 2, -spriteH / 2)
         ctx.restore()
       }
+
+      // FPS display (temporary)
+      ctx.fillStyle = 'rgba(255,255,0,0.8)'
+      ctx.font = '14px monospace'
+      ctx.fillText(`${currentFps} fps / ${boids.length} boids`, OVERFLOW + 10, OVERFLOW + 20)
 
       animRef.current = requestAnimationFrame(tick)
     }
@@ -288,17 +377,17 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
     return () => {
       cancelAnimationFrame(animRef.current)
       window.removeEventListener('resize', resize)
-      parent.removeEventListener('mousemove', onMouseMove)
-      parent.removeEventListener('mouseleave', onMouseLeave)
-      parent.removeEventListener('touchmove', onTouchMove)
-      parent.removeEventListener('touchend', onTouchEnd)
+      window.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseleave', onMouseLeave)
+      window.removeEventListener('touchmove', onTouchMove)
+      window.removeEventListener('touchend', onTouchEnd)
     }
   }, [isDark, initBoids])
 
   return (
     <canvas
       ref={canvasRef}
-      className="absolute pointer-events-none"
+      className="fixed pointer-events-none"
       style={{ zIndex: 0, top: -80, left: -80, right: -80, bottom: -80 }}
     />
   )

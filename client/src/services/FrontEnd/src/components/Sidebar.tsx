@@ -8,6 +8,7 @@ import { useTheme } from "~/hooks/useTheme";
 import { useDmIdentity } from "~/hooks/useDmIdentity";
 import { useDmUnreadStore } from "~/store/dmUnreadStore";
 import { useNotificationUnreadStore } from "~/store/notificationUnreadStore";
+import { useOffersUnreadStore } from "~/store/offersUnreadStore";
 
 
 import { 
@@ -103,6 +104,7 @@ const Sidebar: React.FC = () => {
   const { hasIdentity: dmEnabled } = useDmIdentity(activeToken?.tokenId)
   const dmUnreadCount = useDmUnreadStore(s => s.totalUnread)
   const notifUnreadCount = useNotificationUnreadStore(s => s.unreadCount)
+  const offersUnreadCount = useOffersUnreadStore(s => s.unreadCount)
   const navigate = useNavigate()
   const location = useLocation()
   const showSignIn = useSignInModalStore(s => s.show)
@@ -269,7 +271,14 @@ const Sidebar: React.FC = () => {
               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
           >
-            <HiOutlineColorSwatch className="w-7 h-7 sm:w-7 sm:h-7" />
+            <div className="relative">
+              <HiOutlineColorSwatch className="w-7 h-7 sm:w-7 sm:h-7" />
+              {offersUnreadCount > 0 && (
+                <span className={`absolute -top-2 -right-2 min-w-[18px] h-[18px] flex items-center justify-center text-[11px] font-bold rounded-full bg-yellow-500 text-black px-1 border-2 ${isDark ? 'border-black' : 'border-white'}`}>
+                  {offersUnreadCount > 99 ? '99+' : offersUnreadCount}
+                </span>
+              )}
+            </div>
             <span className="font-medium text-lg sm:text-lg">Usernames</span>
           </NavLink>
 
@@ -297,7 +306,7 @@ const Sidebar: React.FC = () => {
         </nav>
       </div>
 
-      <div className="px-3 -mt-4 pb-0 sm:px-4 sm:py-4 sm:absolute sm:bottom-0 w-full">
+      <div className="pl-3 pr-0 -mt-4 pb-0 sm:pl-4 sm:pr-0 sm:py-4 sm:absolute sm:bottom-0 w-full">
         <ProfileChooser/>
       </div>
     </div>
