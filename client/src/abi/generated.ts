@@ -1154,6 +1154,19 @@ export const cawClientManagerAbi = [
     anonymous: false,
     inputs: [
       {
+        name: 'cawName',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'CawNameSet',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
         name: 'clientId',
         internalType: 'uint32',
         type: 'uint32',
@@ -1673,6 +1686,19 @@ export const cawClientManagerAbi = [
     type: 'function',
     inputs: [
       { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'withdrawFee', internalType: 'uint256', type: 'uint256' },
+      { name: 'depositFee', internalType: 'uint256', type: 'uint256' },
+      { name: 'authFee', internalType: 'uint256', type: 'uint256' },
+      { name: 'mintFee', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'setFees',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
       { name: 'fee', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'setMintFee',
@@ -1710,6 +1736,7 @@ export const cawClientManagerAbi = [
     outputs: [],
     stateMutability: 'nonpayable',
   },
+  { type: 'receive', stateMutability: 'payable' },
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1810,6 +1837,43 @@ export const cawNameAbi = [
     anonymous: false,
     inputs: [
       {
+        name: 'cawClientId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      {
+        name: 'tokenId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      {
+        name: 'amount',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'lzDestId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      {
+        name: 'depositor',
+        internalType: 'address',
+        type: 'address',
+        indexed: false,
+      },
+    ],
+    name: 'Deposited',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
         name: 'recipient',
         internalType: 'address',
         type: 'address',
@@ -1842,6 +1906,15 @@ export const cawNameAbi = [
       },
     ],
     name: 'FeesWithdrawn',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: true },
+      { name: 'peer', internalType: 'address', type: 'address', indexed: true },
+    ],
+    name: 'L2PeerSet',
   },
   {
     type: 'event',
@@ -2038,6 +2111,19 @@ export const cawNameAbi = [
   },
   {
     type: 'function',
+    inputs: [
+      { name: 'cawClientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+      { name: 'amount', internalType: 'uint256', type: 'uint256' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+      { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'depositFor',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
     inputs: [],
     name: 'endpoint',
     outputs: [
@@ -2051,7 +2137,10 @@ export const cawNameAbi = [
   },
   {
     type: 'function',
-    inputs: [{ name: 'selector', internalType: 'bytes4', type: 'bytes4' }],
+    inputs: [
+      { name: 'selector', internalType: 'bytes4', type: 'bytes4' },
+      { name: 'n', internalType: 'uint256', type: 'uint256' },
+    ],
     name: 'gasLimitFor',
     outputs: [{ name: '', internalType: 'uint128', type: 'uint128' }],
     stateMutability: 'view',
@@ -2106,7 +2195,18 @@ export const cawNameAbi = [
   {
     type: 'function',
     inputs: [
+      { name: '', internalType: 'uint32', type: 'uint32' },
+      { name: '', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'lockedWithdrawFee',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
       { name: 'selector', internalType: 'bytes4', type: 'bytes4' },
+      { name: 'n', internalType: 'uint256', type: 'uint256' },
       { name: 'payload', internalType: 'bytes', type: 'bytes' },
       { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
       { name: '_payInLzToken', internalType: 'bool', type: 'bool' },
@@ -2614,6 +2714,16 @@ export const cawNameAbi = [
   },
   {
     type: 'function',
+    inputs: [
+      { name: '', internalType: 'uint32', type: 'uint32' },
+      { name: '', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'withdrawFeeLocked',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     inputs: [],
     name: 'withdrawFees',
     outputs: [],
@@ -3031,7 +3141,10 @@ export const cawNameL2Abi = [
   },
   {
     type: 'function',
-    inputs: [{ name: 'selector', internalType: 'bytes4', type: 'bytes4' }],
+    inputs: [
+      { name: 'selector', internalType: 'bytes4', type: 'bytes4' },
+      { name: 'n', internalType: 'uint256', type: 'uint256' },
+    ],
     name: 'gasLimitFor',
     outputs: [{ name: '', internalType: 'uint128', type: 'uint128' }],
     stateMutability: 'view',
@@ -3094,6 +3207,7 @@ export const cawNameL2Abi = [
     type: 'function',
     inputs: [
       { name: 'selector', internalType: 'bytes4', type: 'bytes4' },
+      { name: 'n', internalType: 'uint256', type: 'uint256' },
       { name: 'payload', internalType: 'bytes', type: 'bytes' },
       { name: '_payInLzToken', internalType: 'bool', type: 'bool' },
     ],
@@ -3212,6 +3326,7 @@ export const cawNameL2Abi = [
       { name: 'expiry', internalType: 'uint64', type: 'uint64' },
       { name: 'scopeBitmap', internalType: 'uint8', type: 'uint8' },
       { name: 'spendLimit', internalType: 'uint256', type: 'uint256' },
+      { name: 'nonce', internalType: 'uint256', type: 'uint256' },
       { name: 'v', internalType: 'uint8', type: 'uint8' },
       { name: 'r', internalType: 'bytes32', type: 'bytes32' },
       { name: 's', internalType: 'bytes32', type: 'bytes32' },
@@ -3251,6 +3366,13 @@ export const cawNameL2Abi = [
     type: 'function',
     inputs: [],
     name: 'rewardMultiplier',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'address', type: 'address' }],
+    name: 'sessionNonce',
     outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
     stateMutability: 'view',
   },
@@ -4150,6 +4272,16 @@ export const cawNameQuoterAbi = [
     type: 'function',
     inputs: [
       { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'effectiveWithdrawFee',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
       { name: 'depositAmount', internalType: 'uint256', type: 'uint256' },
       { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
       { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
@@ -4504,7 +4636,18 @@ export const iCawNameForQuoterAbi = [
   {
     type: 'function',
     inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'lockedWithdrawFee',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
       { name: 'selector', internalType: 'bytes4', type: 'bytes4' },
+      { name: 'n', internalType: 'uint256', type: 'uint256' },
       { name: 'payload', internalType: 'bytes', type: 'bytes' },
       { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
       { name: '_payInLzToken', internalType: 'bool', type: 'bool' },
@@ -4573,6 +4716,16 @@ export const iCawNameForQuoterAbi = [
     inputs: [],
     name: 'updateOwnersSelector',
     outputs: [{ name: '', internalType: 'bytes4', type: 'bytes4' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+    ],
+    name: 'withdrawFeeLocked',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
     stateMutability: 'view',
   },
 ] as const
