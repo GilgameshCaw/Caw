@@ -17,6 +17,7 @@ import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import Tooltip from '~/components/Tooltip'
 import { apiFetch } from '~/api/client'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { HiCalendar, HiClock, HiX, HiPhotograph } from 'react-icons/hi'
 import MentionAutocomplete from './MentionAutocomplete'
 import GifPicker from './GifPicker'
@@ -250,6 +251,7 @@ interface PostFormProps {
 }
 
 const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
+  const postFormQc = useQueryClient()
 
   const { isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
@@ -575,25 +577,24 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   }
 
   // Fetch library counts (for showing icon and badge)
-  const fetchLibraryCounts = async () => {
-    const effectiveTokenId = activeTokenId || activeToken?.tokenId
-    if (!effectiveTokenId) return
+  const effectiveTokenId = activeTokenId || activeToken?.tokenId
+  const { data: libraryCounts } = useQuery({
+    queryKey: ['libraryUnpostedCount', effectiveTokenId],
+    queryFn: () => apiFetch<{ unpostedCount: number; totalCount: number }>(
+      `/api/on-chain-images/unposted-count/${effectiveTokenId}`
+    ),
+    enabled: !!effectiveTokenId,
+  })
 
-    try {
-      const response = await apiFetch<{ unpostedCount: number; totalCount: number }>(
-        `/api/on-chain-images/unposted-count/${effectiveTokenId}`
-      )
-      setLibraryUnpostedCount(response.unpostedCount || 0)
-      setLibraryTotalCount(response.totalCount || 0)
-    } catch (error) {
-      // Ignore library count fetch errors
-    }
-  }
-
-  // Fetch counts on mount and when activeTokenId changes
   useEffect(() => {
-    fetchLibraryCounts()
-    // Also fetch library images for duplicate detection when toggling on-chain
+    if (libraryCounts) {
+      setLibraryUnpostedCount(libraryCounts.unpostedCount || 0)
+      setLibraryTotalCount(libraryCounts.totalCount || 0)
+    }
+  }, [libraryCounts])
+
+  // Fetch library images for duplicate detection when toggling on-chain
+  useEffect(() => {
     fetchImageLibrary()
   }, [activeTokenId, activeToken?.tokenId])
 
@@ -629,7 +630,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
 
       // Also refresh counts on initial load
       if (!isLoadingMore) {
-        fetchLibraryCounts()
+        postFormQc.invalidateQueries({ queryKey: ['libraryUnpostedCount', effectiveTokenId] })
       }
     } catch (error) {
       if (!isLoadingMore) {
@@ -681,7 +682,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         body: JSON.stringify({ imageRefs })
       })
       // Refresh counts after posting
-      fetchLibraryCounts()
+      postFormQc.invalidateQueries({ queryKey: ['libraryUnpostedCount', effectiveTokenId] })
     } catch (error) {
       // Ignore errors
     }
