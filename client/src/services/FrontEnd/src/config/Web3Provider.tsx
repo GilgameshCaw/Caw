@@ -6,14 +6,12 @@ import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 const rpcs = {
   HARDHAT: "ws://127.0.0.1:8545",
   // Using environment variables for RPC URLs
-  ALCHEMY_MAINNET: import.meta.env.VITE_ALCHEMY_API_KEY 
+  ALCHEMY_MAINNET: import.meta.env.VITE_ALCHEMY_API_KEY
     ? `https://eth-mainnet.g.alchemy.com/v2/${import.meta.env.VITE_ALCHEMY_API_KEY}`
     : "https://mainnet.infura.io/v3/xxx",
   SEPOLIA: "https://ethereum-sepolia-rpc.publicnode.com",
   BASE_SEPOLIA: "https://base-sepolia-rpc.publicnode.com"
 };
-
-const queryClient = new QueryClient();
 
 export const wagmiConfig = getDefaultConfig({
   appName: "CAW",
@@ -29,9 +27,10 @@ export const wagmiConfig = getDefaultConfig({
 
 interface Web3ProviderProps {
   children: React.ReactNode;
+  queryClient: QueryClient;
 }
 
-export default function Web3Provider({ children }: Web3ProviderProps) {
+export default function Web3Provider({ children, queryClient }: Web3ProviderProps) {
   return (
     <WagmiProvider config={wagmiConfig}>
       <QueryClientProvider client={queryClient}>
