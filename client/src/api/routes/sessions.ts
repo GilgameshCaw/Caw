@@ -22,6 +22,7 @@ const DELEGATION_TYPES = {
     { name: 'expiry',         type: 'uint64'   },
     { name: 'scopeBitmap',    type: 'uint8'    },
     { name: 'spendLimit',     type: 'uint256'  },
+    { name: 'nonce',          type: 'uint256'  },
   ],
 }
 
@@ -95,13 +96,14 @@ async function processSessionRequest(
     console.log(`[Sessions] Using contract at: ${CAW_NAMES_L2_ADDRESS}`)
     console.log(`[Sessions] Scope bitmap: ${delegation.scopeBitmap} (0x${Number(delegation.scopeBitmap).toString(16)})`)
     const sig = ethers.Signature.from(signature)
-    const { sessionKey, expiry, scopeBitmap, spendLimit } = delegation
+    const { sessionKey, expiry, scopeBitmap, spendLimit, nonce } = delegation
 
     const tx = await cawNameL2.registerSession(
       sessionKey,
       BigInt(expiry),
       Number(scopeBitmap),
       BigInt(spendLimit),
+      BigInt(nonce),
       sig.v,
       sig.r,
       sig.s,
@@ -179,8 +181,8 @@ router.post('/', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Missing required fields: delegation and signature' })
     }
 
-    const { sessionKey, expiry, scopeBitmap, spendLimit } = delegation
-    if (!sessionKey || !expiry || scopeBitmap === undefined || spendLimit === undefined) {
+    const { sessionKey, expiry, scopeBitmap, spendLimit, nonce } = delegation
+    if (!sessionKey || !expiry || scopeBitmap === undefined || spendLimit === undefined || nonce === undefined) {
       return res.status(400).json({ error: 'Missing delegation fields' })
     }
 
@@ -204,6 +206,7 @@ router.post('/', async (req: any, res: any) => {
       expiry:        BigInt(expiry),
       scopeBitmap:   Number(scopeBitmap),
       spendLimit:    BigInt(spendLimit),
+      nonce:         BigInt(nonce),
     }
     const domain = { ...SESSION_DOMAIN, chainId: Number(process.env.L2_CHAIN_ID || 84532) }
 

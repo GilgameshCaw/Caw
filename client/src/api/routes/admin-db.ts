@@ -215,6 +215,13 @@ const MODEL_META: Record<string, ModelMeta> = {
     writable: false,
     label: 'Marketplace Sales',
   },
+  marketplaceOffer: {
+    defaultSort: 'createdAt',
+    searchFields: ['offerer', 'username', 'status'],
+    listFields: ['id', 'offerId', 'tokenId', 'offerer', 'username', 'amount', 'paymentToken', 'status', 'expiry', 'createdAt'],
+    writable: false,
+    label: 'Marketplace Offers',
+  },
   bookmark: {
     defaultSort: 'createdAt',
     searchFields: [],

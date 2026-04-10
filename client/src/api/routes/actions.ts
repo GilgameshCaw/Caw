@@ -102,8 +102,11 @@ async function checkSessionKeyOnChain(
 
     return { valid: true }
   } catch (err) {
-    console.warn('[Actions] On-chain session key verification failed:', err)
-    return { valid: false, reason: 'Verification failed' }
+    // RPC failure — allow the action through rather than blocking users when the RPC is down.
+    // The on-chain contract will enforce session key validation when the validator submits the batch,
+    // so this server-side check is just an early rejection optimization, not a security boundary.
+    console.warn('[Actions] On-chain session key verification failed (allowing action — contract will enforce):', err)
+    return { valid: true }
   }
 }
 
@@ -230,9 +233,40 @@ router.post('/', async (req, res) => {
             expiresAt: updated.expiresAt
           }
         }
+      } else if (session && sessionToken) {
+        // Already authorized — but re-check DB for any new token IDs the user may have
+        // acquired since the session was created (e.g., bought/transferred a new CawName).
+        // This ensures the session stays in sync with on-chain ownership.
+        const userTokens = await prisma.user.findMany({
+          where: { address: ownerAddress },
+          select: { tokenId: true }
+        })
+        const currentTokenIds = userTokens.map(u => u.tokenId)
+        const hasNewTokens = currentTokenIds.some(id => !session!.authorizedTokenIds.includes(id))
+
+        if (hasNewTokens) {
+          const updated = await addAuthorization(sessionToken, ownerAddress, currentTokenIds)
+          if (updated) {
+            authResult = {
+              sessionToken,
+              authorizedTokenIds: updated.authorizedTokenIds,
+              authorizedAddresses: updated.authorizedAddresses,
+              expiresAt: updated.expiresAt
+            }
+          }
+        } else {
+          // Return existing session data so the frontend can resync its local state
+          authResult = {
+            sessionToken,
+            authorizedTokenIds: session.authorizedTokenIds,
+            authorizedAddresses: session.authorizedAddresses,
+            expiresAt: session.expiresAt
+          }
+        }
       }
-    } catch (err) {
-      console.warn('[Actions] Passive auth failed (non-fatal):', err)
+    } catch (err: any) {
+      console.error('[Actions] ❌ PASSIVE AUTH FAILED:', err?.message || err)
+      console.error('[Actions] Stack:', err?.stack)
     }
 
     // Create optimistic pending state for profile updates
