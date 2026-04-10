@@ -26,26 +26,81 @@ if (!ADMIN_PASSWORD) {
 }
 const adminTokens = new Map<string, number>() // token -> expiry timestamp
 const ADMIN_TOKEN_TTL = 24 * 60 * 60 * 1000 // 24 hours
+export const ADMIN_COOKIE_NAME = 'caw_admin'
 
 export function generateAdminToken(): string {
   return randomBytes(32).toString('hex')
 }
 
-export function loginAdmin(password: string): string | null {
+/**
+ * Verify the password and create a session. Returns the token (for cookie) and its expiry.
+ */
+export function loginAdmin(password: string): { token: string; expiresAt: number } | null {
   if (!ADMIN_PASSWORD || password !== ADMIN_PASSWORD) return null
   const token = generateAdminToken()
-  adminTokens.set(token, Date.now() + ADMIN_TOKEN_TTL)
-  return token
+  const expiresAt = Date.now() + ADMIN_TOKEN_TTL
+  adminTokens.set(token, expiresAt)
+  return { token, expiresAt }
+}
+
+export function revokeAdminToken(token: string | undefined): void {
+  if (token) adminTokens.delete(token)
+}
+
+/**
+ * Build the Set-Cookie options string used for admin auth.
+ * HttpOnly so JS can't read it (XSS can't exfiltrate).
+ * SameSite=Strict defeats CSRF.
+ * Secure in production.
+ */
+export function adminCookieOptions() {
+  const isProd = process.env.NODE_ENV === 'production'
+  return {
+    httpOnly: true,
+    sameSite: 'strict' as const,
+    secure: isProd,
+    path: '/',
+    maxAge: ADMIN_TOKEN_TTL,
+  }
+}
+
+/**
+ * Manually parse a single named cookie from the Cookie header — avoids adding cookie-parser as a dep.
+ */
+function readCookie(req: Request, name: string): string | undefined {
+  const raw = req.headers.cookie
+  if (!raw) return undefined
+  for (const part of raw.split(';')) {
+    const idx = part.indexOf('=')
+    if (idx === -1) continue
+    const k = part.slice(0, idx).trim()
+    if (k === name) return decodeURIComponent(part.slice(idx + 1).trim())
+  }
+  return undefined
+}
+
+/**
+ * Extract the admin token from either the HttpOnly cookie (preferred) or
+ * the legacy Authorization: Bearer header (kept temporarily so in-flight
+ * admin sessions created before this change don't all get kicked out).
+ *
+ * TODO: drop the Bearer fallback once the old localStorage tokens have aged out (24h TTL).
+ */
+export function extractAdminToken(req: Request): string | undefined {
+  const cookieToken = readCookie(req, ADMIN_COOKIE_NAME)
+  if (cookieToken) return cookieToken
+  const authHeader = req.headers.authorization
+  if (authHeader?.startsWith('Bearer ')) return authHeader.slice(7)
+  return undefined
 }
 
 export function requireAdmin(req: Request, res: Response, next: NextFunction): void {
-  const authHeader = req.headers.authorization
-  if (!authHeader?.startsWith('Bearer ')) {
+  const token = extractAdminToken(req)
+  if (!token) {
     res.status(401).json({ error: 'Unauthorized' })
     return
   }
 
-  const token = authHeader.slice(7)
   const expiry = adminTokens.get(token)
   if (!expiry || Date.now() > expiry) {
     adminTokens.delete(token)
