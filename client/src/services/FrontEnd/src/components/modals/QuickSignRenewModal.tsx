@@ -5,7 +5,8 @@ import ModalWrapper from './ModalWrapper'
 import { useTheme } from '~/hooks/useTheme'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { useActiveToken } from '~/store/tokenDataStore'
-import { useCreateSession, getDefaultSpendLimit, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
+import { useCreateSession, getDefaultSpendLimit, getDefaultTipCeiling, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
+import { getTipTiers } from '~/api/actions'
 import { HiLightningBolt } from 'react-icons/hi'
 import QuickSignOptions from '~/components/QuickSignOptions'
 import Tooltip from '~/components/Tooltip'
@@ -46,6 +47,8 @@ const QuickSignRenewModal: React.FC = () => {
   const [error, setError] = useState<string | null>(null)
   const [spendLimit, setSpendLimit] = useState<bigint>(() => getDefaultSpendLimit())
   const [duration, setDuration] = useState<number>(DEFAULT_SESSION_DURATION)
+  const [tipCeiling, setTipCeiling] = useState<bigint>(() => getDefaultTipCeiling(getTipTiers().standard))
+  const [walletProtect, setWalletProtect] = useState(false)
 
   const wrongWallet = isConnected && activeToken && address
     ? activeToken.address.toLowerCase() !== address.toLowerCase()
@@ -60,7 +63,7 @@ const QuickSignRenewModal: React.FC = () => {
     setError(null)
     try {
       setEnabled(true)
-      await createSession((s) => setStatus(s), spendLimit, duration)
+      await createSession((s) => setStatus(s), spendLimit, duration, walletProtect, tipCeiling)
       close()
     } catch (err: any) {
       console.error('[QuickSign] Renewal failed:', err)
@@ -147,6 +150,10 @@ const QuickSignRenewModal: React.FC = () => {
             onSpendLimitChange={setSpendLimit}
             duration={duration}
             onDurationChange={setDuration}
+            tipCeiling={tipCeiling}
+            onTipCeilingChange={setTipCeiling}
+            walletProtect={walletProtect}
+            onWalletProtectChange={setWalletProtect}
             themed
             isDark={isDark}
           />

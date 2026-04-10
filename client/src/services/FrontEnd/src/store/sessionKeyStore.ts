@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { getDecryptedKey, clearDecryptedKey } from '~/services/sessionKeyEncryption'
 
 export interface SessionKeyEntry {
   privateKey: `0x${string}`
@@ -9,6 +10,13 @@ export interface SessionKeyEntry {
   scopeBitmap: number   // uint8 — bits 0-5 for CAW..UNFOLLOW
   spendLimit?: string   // whole CAW tokens as string (for JSON serialization), 0 = unlimited
   spent?: string        // whole CAW tokens spent so far (tracked locally)
+  /** Max validator tip per action (whole CAW tokens, string for JSON). 0 = no tip (opt-out).
+   *  Locked at session activation to prevent validators from extracting more than the user agreed to. */
+  tipCeiling?: string
+  /** If true, privateKey in localStorage is encrypted ciphertext — real key is in memory only */
+  encrypted?: boolean
+  /** The encrypted ciphertext (stored in localStorage when encrypted=true) */
+  encryptedKey?: string
 }
 
 interface SessionKeyState {
@@ -33,14 +41,23 @@ interface SessionKeyState {
   getActiveSession: () => SessionKeyEntry | null
   /** Get active (enabled + non-expired) session for a specific wallet address */
   getActiveSessionForAddress: (address: string) => SessionKeyEntry | null
+  /** Check if the active session is encrypted and needs unlocking */
+  needsUnlock: () => boolean
   recordSpend: (amount: bigint) => boolean
   getRemainingLimit: () => bigint | null
 }
 
-/** Helper: get the session for the current wallet from state */
+/** Helper: get the session for the current wallet from state, resolving decrypted keys from memory */
 function sessionForWallet(state: { sessions: Record<string, SessionKeyEntry>; activeWallet: string | null }): SessionKeyEntry | null {
   if (!state.activeWallet) return null
-  return state.sessions[state.activeWallet] || null
+  const session = state.sessions[state.activeWallet] || null
+  if (!session) return null
+  if (session.encrypted) {
+    const decryptedKey = getDecryptedKey(state.activeWallet)
+    if (!decryptedKey) return { ...session, privateKey: '' as `0x${string}` } // key locked
+    return { ...session, privateKey: decryptedKey as `0x${string}` }
+  }
+  return session
 }
 
 /**
@@ -82,6 +99,7 @@ export const useSessionKeyStore = create<SessionKeyState>()(
       clearSession: () => {
         const wallet = get().activeWallet
         if (wallet) {
+          clearDecryptedKey(wallet)
           set(state => {
             const rest = { ...state.sessions }
             delete rest[wallet]
@@ -107,16 +125,32 @@ export const useSessionKeyStore = create<SessionKeyState>()(
           state.clearSession()
           return null
         }
+        // If encrypted and not yet unlocked, return null (needs unlock first)
+        if (session.encrypted && !session.privateKey) return null
         return session
       },
 
       getActiveSessionForAddress: (address: string) => {
         const state = get()
         if (!state.enabled) return null
-        const session = state.sessions[address.toLowerCase()] || null
-        if (!session) return null
-        if (session.expiry < Date.now() / 1000) return null
-        return session
+        const raw = state.sessions[address.toLowerCase()] || null
+        if (!raw) return null
+        if (raw.expiry < Date.now() / 1000) return null
+        if (raw.encrypted) {
+          const decryptedKey = getDecryptedKey(address)
+          if (!decryptedKey) return null // needs unlock
+          return { ...raw, privateKey: decryptedKey as `0x${string}` }
+        }
+        return raw
+      },
+
+      needsUnlock: () => {
+        const state = get()
+        if (!state.enabled || !state.activeWallet) return false
+        const raw = state.sessions[state.activeWallet]
+        if (!raw || !raw.encrypted) return false
+        if (raw.expiry < Date.now() / 1000) return false
+        return !getDecryptedKey(state.activeWallet)
       },
 
       recordSpend: (amount: bigint) => {

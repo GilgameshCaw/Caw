@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useReadContract, useAccount, useConnections, useSwitchChain } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
@@ -6,7 +6,8 @@ import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
-import { useCreateSession, useRevokeSession, DEFAULT_SPEND_LIMIT, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
+import { useCreateSession, useRevokeSession, getDefaultTipCeiling, DEFAULT_SPEND_LIMIT, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
+import { getTipTiers } from '~/api/actions'
 import { HiArrowLeft } from 'react-icons/hi'
 import QuickSignOptions from '~/components/QuickSignOptions'
 import QuickSignHowItWorks from '~/components/QuickSignHowItWorks'
@@ -29,10 +30,29 @@ const SessionKeySettings: React.FC = () => {
   const [status, setStatus] = useState('')
   const [error, setError] = useState<string | null>(null)
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
-  const defaultLimit = cawPrice > 0 ? BigInt(Math.round(5 / cawPrice)) : DEFAULT_SPEND_LIMIT
+  // Default to $10 worth of CAW. If price isn't loaded yet, fall back to a placeholder
+  // and reactively update once the price arrives (see useEffect below).
+  const defaultLimit = cawPrice > 0 ? BigInt(Math.round(10 / cawPrice)) : DEFAULT_SPEND_LIMIT
   const [spendLimit, setSpendLimit] = useState<bigint>(defaultLimit)
+  const [spendLimitTouched, setSpendLimitTouched] = useState(false)
   const [duration, setDuration] = useState<number>(DEFAULT_SESSION_DURATION)
+  const [tipCeiling, setTipCeiling] = useState<bigint>(() => getDefaultTipCeiling(getTipTiers().standard))
   const [walletProtect, setWalletProtect] = useState(false)
+
+  // When CAW price loads (or changes), update the spend limit to ~$10 unless the user has
+  // already manually picked a value.
+  useEffect(() => {
+    if (spendLimitTouched) return
+    if (cawPrice > 0) {
+      setSpendLimit(BigInt(Math.round(10 / cawPrice)))
+    }
+  }, [cawPrice, spendLimitTouched])
+
+  // Wrap onSpendLimitChange so we mark "touched" when the user picks a preset
+  const handleSpendLimitChange = useCallback((v: bigint) => {
+    setSpendLimitTouched(true)
+    setSpendLimit(v)
+  }, [])
 
   const { address, isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
@@ -81,7 +101,7 @@ const SessionKeySettings: React.FC = () => {
     setLoading(true)
     setError(null)
     try {
-      await createSession((s) => setStatus(s), spendLimit, duration, walletProtect)
+      await createSession((s) => setStatus(s), spendLimit, duration, walletProtect, tipCeiling)
     } catch (err: any) {
       console.error('[SessionKey] Create failed:', err)
       const msg = err?.message || ''
@@ -126,6 +146,17 @@ const SessionKeySettings: React.FC = () => {
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M CAW`
     if (n >= 1_000) return `${(n / 1_000).toFixed(n % 1_000 === 0 ? 0 : 1)}K CAW`
     return `${n.toLocaleString()} CAW`
+  }
+
+  /** Convert a whole-CAW amount to a dollar string. Returns null if price is unknown or amount is 0. */
+  const cawToUsd = (cawAmount?: string | bigint): string | null => {
+    if (!cawAmount || cawPrice <= 0) return null
+    const n = typeof cawAmount === 'bigint' ? Number(cawAmount) : Number(cawAmount)
+    if (n === 0) return null
+    const usd = n * cawPrice
+    if (usd >= 1) return `$${usd.toFixed(2)}`
+    if (usd >= 0.01) return `$${usd.toFixed(2)}`
+    return `$${usd.toFixed(5)}` // tip-sized: show 5 decimals
   }
 
   return (
@@ -193,6 +224,14 @@ const SessionKeySettings: React.FC = () => {
                     <p className={`text-sm mt-1 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
                       Spend limit: {formatSpendLimit(session!.spendLimit)}
                       {session!.spendLimit && Number(session!.spendLimit) > 0 && (() => {
+                        const usd = cawToUsd(session!.spendLimit)
+                        return usd ? (
+                          <span className={`ml-1 ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
+                            (≈ {usd})
+                          </span>
+                        ) : null
+                      })()}
+                      {session!.spendLimit && Number(session!.spendLimit) > 0 && (() => {
                         const limit = BigInt(session!.spendLimit || '0')
                         const spent = onChainSpent != null ? BigInt(onChainSpent) : BigInt(session!.spent || '0')
                         const remaining = limit - spent
@@ -202,6 +241,28 @@ const SessionKeySettings: React.FC = () => {
                           </span>
                         )
                       })()}
+                    </p>
+                    {/* Validator tip cap */}
+                    <p className={`text-sm mt-1 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+                      Validator tip cap: {(() => {
+                        if (session!.tipCeiling === undefined) return <span className="italic">none (legacy session)</span>
+                        const ceiling = BigInt(session!.tipCeiling || '0')
+                        if (ceiling === 0n) return <span className="text-yellow-500">no tip (opt-out)</span>
+                        const usd = cawToUsd(session!.tipCeiling)
+                        return (
+                          <>
+                            {formatSpendLimit(session!.tipCeiling)}
+                            {usd && <span className={`ml-1 ${isDark ? 'text-white/30' : 'text-gray-400'}`}>(≈ {usd}/action)</span>}
+                          </>
+                        )
+                      })()}
+                    </p>
+                    {/* Wallet-protected indicator */}
+                    <p className={`text-sm mt-1 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+                      {session!.encrypted
+                        ? <>Wallet unlock: <span className="text-white">required each session</span></>
+                        : <>Wallet unlock: <span className={isDark ? 'text-white/70' : 'text-gray-700'}>not required</span></>
+                      }
                     </p>
                     <p className={`text-xs mt-1 font-mono ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
                       Key: {session!.address.slice(0, 8)}...{session!.address.slice(-6)}
@@ -227,9 +288,11 @@ const SessionKeySettings: React.FC = () => {
                     <div className="mb-5">
                       <QuickSignOptions
                         spendLimit={spendLimit}
-                        onSpendLimitChange={setSpendLimit}
+                        onSpendLimitChange={handleSpendLimitChange}
                         duration={duration}
                         onDurationChange={setDuration}
+                        tipCeiling={tipCeiling}
+                        onTipCeilingChange={setTipCeiling}
                         walletProtect={walletProtect}
                         onWalletProtectChange={setWalletProtect}
                         themed

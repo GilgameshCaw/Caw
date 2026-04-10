@@ -1,12 +1,14 @@
 import { useCallback, useEffect } from 'react'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
-import { useSignTypedData, useSwitchChain, useChainId, useAccount } from 'wagmi'
+import { useSignTypedData, useSignMessage, useSwitchChain, useChainId, useAccount } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { baseSepolia } from 'wagmi/chains'
 import { apiFetch } from '~/api/client'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { CAW_NAMES_L2_ADDRESS } from '~/../../../abi/addresses'
+import { cawNameL2Abi } from '~/../../../abi/generated'
 import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
+import { encryptPrivateKey, getEncryptionSignMessage, setDecryptedKey } from '~/services/sessionKeyEncryption'
 
 export const DEFAULT_SESSION_DURATION = 30 * 24 * 60 * 60 // 1 month
 
@@ -39,6 +41,12 @@ export function getDefaultSpendLimit(): bigint {
 // Legacy export for any direct references
 export const DEFAULT_SPEND_LIMIT = FALLBACK_SPEND_LIMIT
 
+/** Get the default tip ceiling: the "Standard" tier (midpoint between base and priority).
+ *  Callers should pass `getTipTiers().standard` from `~/api/actions`. */
+export function getDefaultTipCeiling(standardTierTip: bigint): bigint {
+  return standardTierTip
+}
+
 export const SPEND_LIMIT_OPTIONS = [
   { label: '10M',  value: BigInt(10_000_000) },
   { label: '50M',  value: BigInt(50_000_000) },
@@ -60,18 +68,20 @@ const DELEGATION_TYPES = {
     { name: 'expiry',         type: 'uint64'   },
     { name: 'scopeBitmap',    type: 'uint8'    },
     { name: 'spendLimit',     type: 'uint256'  },
+    { name: 'nonce',          type: 'uint256'  },
   ],
 } as const
 
 export function useCreateSession() {
   const { signTypedDataAsync } = useSignTypedData()
+  const { signMessageAsync } = useSignMessage()
   const { switchChainAsync } = useSwitchChain()
   const { isConnected, address: connectedAddress } = useAccount()
   const { openConnectModal } = useConnectModal()
   const chainId = useChainId()
   const setSession = useSessionKeyStore(s => s.setSession)
 
-  return useCallback(async (onProgress?: (status: string) => void, spendLimit: bigint = DEFAULT_SPEND_LIMIT, durationSeconds: number = DEFAULT_SESSION_DURATION) => {
+  return useCallback(async (onProgress?: (status: string) => void, spendLimit: bigint = DEFAULT_SPEND_LIMIT, durationSeconds: number = DEFAULT_SESSION_DURATION, encryptWithWallet: boolean = false, tipCeiling: bigint = 0n) => {
     if (!isConnected) {
       openConnectModal?.()
       return null as any // User will retry after connecting
@@ -85,6 +95,16 @@ export function useCreateSession() {
 
     onProgress?.('Generating session key...')
 
+    // Fetch the signer's current session nonce from L2 contract
+    const { createPublicClient, http } = await import('viem')
+    const l2Client = createPublicClient({ chain: baseSepolia, transport: http() })
+    const nonce = await l2Client.readContract({
+      address: CAW_NAMES_L2_ADDRESS,
+      abi: cawNameL2Abi,
+      functionName: 'sessionNonce',
+      args: [connectedAddress!],
+    }) as bigint
+
     const expiry = Math.floor(Date.now() / 1000) + durationSeconds
 
     // Generate ephemeral keypair
@@ -96,6 +116,7 @@ export function useCreateSession() {
       expiry:        BigInt(expiry),
       scopeBitmap:   DEFAULT_SCOPE,
       spendLimit,
+      nonce,
     }
 
     console.log('[QuickSign] domain:', SESSION_DOMAIN)
@@ -130,6 +151,7 @@ export function useCreateSession() {
           expiry:        expiry.toString(),
           scopeBitmap:   DEFAULT_SCOPE,
           spendLimit:    spendLimit.toString(),
+          nonce:         nonce.toString(),
         },
         signature,
       }),
@@ -166,17 +188,40 @@ export function useCreateSession() {
     }
 
     // Store session locally after confirmation
-    setSession({
-      privateKey,
-      address: sessionAccount.address,
-      ownerAddress: connectedAddress?.toLowerCase(),
-      expiry,
-      scopeBitmap: DEFAULT_SCOPE,
-      spendLimit: spendLimit.toString(),
-    })
+    if (encryptWithWallet && connectedAddress) {
+      onProgress?.('Encrypting session key...')
+      // Sign a deterministic message to derive the encryption key
+      const walletSig = await signMessageAsync({ message: getEncryptionSignMessage() })
+      const encryptedKey = await encryptPrivateKey(privateKey, walletSig)
+
+      // Store decrypted key in memory + broadcast to other tabs
+      setDecryptedKey(connectedAddress, privateKey)
+
+      setSession({
+        privateKey: '0xencrypted' as `0x${string}`, // placeholder — real key is in memory
+        address: sessionAccount.address,
+        ownerAddress: connectedAddress?.toLowerCase(),
+        expiry,
+        scopeBitmap: DEFAULT_SCOPE,
+        spendLimit: spendLimit.toString(),
+        tipCeiling: tipCeiling.toString(),
+        encrypted: true,
+        encryptedKey,
+      })
+    } else {
+      setSession({
+        privateKey,
+        address: sessionAccount.address,
+        ownerAddress: connectedAddress?.toLowerCase(),
+        expiry,
+        scopeBitmap: DEFAULT_SCOPE,
+        spendLimit: spendLimit.toString(),
+        tipCeiling: tipCeiling.toString(),
+      })
+    }
 
     return { address: sessionAccount.address, expiry }
-  }, [isConnected, connectedAddress, openConnectModal, chainId, signTypedDataAsync, switchChainAsync, setSession])
+  }, [isConnected, connectedAddress, openConnectModal, chainId, signTypedDataAsync, signMessageAsync, switchChainAsync, setSession])
 }
 
 export function useRevokeSession() {

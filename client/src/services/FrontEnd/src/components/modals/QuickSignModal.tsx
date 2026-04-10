@@ -4,7 +4,8 @@ import ModalWrapper from './ModalWrapper'
 import { useTheme } from '~/hooks/useTheme'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { usePriceStore } from '~/store/tokenDataStore'
-import { useCreateSession, getDefaultSpendLimit, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
+import { useCreateSession, getDefaultSpendLimit, getDefaultTipCeiling, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
+import { getTipTiers } from '~/api/actions'
 import { HiLightningBolt } from 'react-icons/hi'
 import QuickSignOptions from '~/components/QuickSignOptions'
 
@@ -12,18 +13,27 @@ interface QuickSignPromptState {
   isOpen: boolean
   /** Callback to continue the action after the user decides */
   onContinue: (() => Promise<any> | void) | null
+  /** Called when the modal is dismissed without the user choosing an action */
+  onDismiss: (() => void) | null
   /** Skip the prompt for the next action (set after "Sign Manually") */
   skipOnce: boolean
-  show: (onContinue?: () => Promise<any> | void) => void
+  show: (onContinue?: () => Promise<any> | void, onDismiss?: () => void) => void
   close: () => void
 }
 
-export const useQuickSignPromptStore = create<QuickSignPromptState>((set) => ({
+export const useQuickSignPromptStore = create<QuickSignPromptState>((set, get) => ({
   isOpen: false,
   onContinue: null,
+  onDismiss: null,
   skipOnce: false,
-  show: (onContinue) => set({ isOpen: true, onContinue: onContinue || null }),
-  close: () => set({ isOpen: false, onContinue: null }),
+  show: (onContinue, onDismiss) => set({ isOpen: true, onContinue: onContinue || null, onDismiss: onDismiss || null }),
+  close: () => {
+    const { onDismiss } = get()
+    set({ isOpen: false, onContinue: null, onDismiss: null })
+    // If neither "Enable Quick Sign" nor "Sign Manually" was chosen,
+    // fire onDismiss so the caller's promise can settle and reset UI state.
+    if (onDismiss) onDismiss()
+  },
 }))
 
 interface QuickSignModalProps {
@@ -45,13 +55,17 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
   const [error, setError] = useState<string | null>(null)
   const [spendLimit, setSpendLimit] = useState<bigint>(() => getDefaultSpendLimit())
   const [duration, setDuration] = useState<number>(DEFAULT_SESSION_DURATION)
+  const [tipCeiling, setTipCeiling] = useState<bigint>(() => getDefaultTipCeiling(getTipTiers().standard))
   const [dontShowAgain, setDontShowAgain] = useState(false)
+  const [walletProtect, setWalletProtect] = useState(false)
 
   // Reset state when modal opens
   useEffect(() => {
     if (isOpen) {
       setError(null)
       if (cawPrice > 0) setSpendLimit(BigInt(Math.round(5 / cawPrice)))
+      // Re-fetch market tip in case it changed since the component mounted
+      setTipCeiling(getDefaultTipCeiling(getTipTiers().standard))
     }
   }, [isOpen, cawPrice])
 
@@ -60,10 +74,12 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
     setError(null)
     try {
       setEnabled(true)
-      await createSession((s) => setStatus(s), spendLimit, duration)
+      await createSession((s) => setStatus(s), spendLimit, duration, walletProtect, tipCeiling)
       // Don't set hasSeenPrompt here — enabling Quick Sign is the "happy path".
       // The prompt naturally won't show while Quick Sign is active.
       const cont = prompt.onContinue
+      // Clear onDismiss before closing — this is a deliberate action, not a dismiss
+      useQuickSignPromptStore.setState({ onDismiss: null })
       onClose()
       // Retry the action now that Quick Sign is enabled
       if (cont) setTimeout(() => cont(), 100)
@@ -85,14 +101,15 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
     if (dontShowAgain) setHasSeenPrompt(true)
     const cont = prompt.onContinue
     // Set skipOnce so the retry doesn't re-trigger the prompt
-    useQuickSignPromptStore.setState({ skipOnce: true })
+    // Clear onDismiss before closing — this is a deliberate action, not a dismiss
+    useQuickSignPromptStore.setState({ skipOnce: true, onDismiss: null })
     onClose()
     // Continue with manual wallet signing
     if (cont) setTimeout(() => cont(), 100)
   }
 
   return (
-    <ModalWrapper isOpen={isOpen} onClose={onClose} usePortal maxWidth="max-w-[540px]">
+    <ModalWrapper isOpen={isOpen} onClose={onClose} usePortal maxWidth="max-w-[600px]">
       <div className="p-6">
         <div className="flex items-center gap-3 mb-4">
           <div className="p-2 rounded-full bg-yellow-500/20">
@@ -126,13 +143,17 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
             onSpendLimitChange={setSpendLimit}
             duration={duration}
             onDurationChange={setDuration}
+            tipCeiling={tipCeiling}
+            onTipCeilingChange={setTipCeiling}
+            walletProtect={walletProtect}
+            onWalletProtectChange={setWalletProtect}
             themed
             isDark={isDark}
           />
         </div>
 
         {error && (
-          <div className="mb-4 p-3 rounded-lg bg-red-900/20 border border-red-700/50 text-sm text-red-400">
+          <div className="mb-4 p-3 rounded-lg bg-red-900/20 border border-red-700/50 text-sm text-red-400 text-center">
             {error}
           </div>
         )}

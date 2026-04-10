@@ -3,6 +3,7 @@ import { HiPencil } from 'react-icons/hi'
 import {
   SESSION_DURATION_OPTIONS,
 } from '~/hooks/useSessionKey'
+import { getCurrentMarketTip, getTipTiers } from '~/api/actions'
 import { usePriceStore } from '~/store/tokenDataStore'
 
 /** Dollar-denominated spend limit presets */
@@ -16,6 +17,12 @@ const DOLLAR_PRESETS = [
 function fmtUsd(amount: number): string {
   const rounded = Math.round(amount * 100) / 100
   return rounded === Math.floor(rounded) ? `$${Math.round(rounded)}` : `$${rounded.toFixed(2)}`
+}
+
+/** Format small USD amounts with 5 decimal places (used for per-action tips which are fractions of a cent). */
+function fmtUsdSmall(amount: number): string {
+  if (amount === 0) return '$0'
+  return `$${amount.toFixed(5)}`
 }
 
 function formatSpendLimit(value: bigint): string {
@@ -36,6 +43,11 @@ interface QuickSignOptionsProps {
   onSpendLimitChange: (v: bigint) => void
   duration: number
   onDurationChange: (v: number) => void
+  /** Tip ceiling (whole CAW tokens). 0n = "No tip" (opt-out). */
+  tipCeiling?: bigint
+  onTipCeilingChange?: (v: bigint) => void
+  walletProtect?: boolean
+  onWalletProtectChange?: (v: boolean) => void
   /** Use dark-mode-aware styling (for settings page / modal). Default: false (onboarding always-dark). */
   themed?: boolean
   isDark?: boolean
@@ -46,6 +58,10 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
   onSpendLimitChange,
   duration,
   onDurationChange,
+  tipCeiling,
+  onTipCeilingChange,
+  walletProtect = false,
+  onWalletProtectChange,
   themed = false,
   isDark = true,
 }) => {
@@ -60,6 +76,15 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
       caw: BigInt(Math.round(p.usd / cawPrice)),
     }))
   }, [cawPrice])
+
+  // Tip tiers from the validator's config. These MUST be before the early return (Rules of Hooks).
+  const currentMarketTip = useMemo(() => getCurrentMarketTip(), [])
+  const tiers = useMemo(() => getTipTiers(), [])
+  const tipPresets = useMemo(() => [
+    { label: 'Cheap',     caw: tiers.cheap,    speed: 'slower posts'   },
+    { label: 'Standard',  caw: tiers.standard, speed: 'balanced'       },
+    { label: 'Fast',      caw: tiers.fast,     speed: 'fastest posts'  },
+  ], [tiers])
 
   // Check which dollar preset matches the current spend limit (if any)
   const matchedPreset = dollarOptions?.find(o => spendLimit === o.caw)
@@ -87,17 +112,66 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
     return 'bg-white/10 text-white hover:bg-white/20'
   }
 
+  const walletProtectCheckbox = onWalletProtectChange ? (
+    <div className="mt-3">
+      <label className="flex items-center gap-2 cursor-pointer">
+        <button
+          type="button"
+          role="checkbox"
+          aria-checked={walletProtect}
+          onClick={() => onWalletProtectChange(!walletProtect)}
+          className={`w-4 h-4 rounded flex-shrink-0 flex items-center justify-center transition-colors duration-150 ${
+            walletProtect
+              ? 'bg-yellow-500'
+              : themed && !isDark ? 'bg-gray-200 border border-gray-300' : 'bg-black border border-white/30'
+          }`}
+        >
+          {walletProtect && (
+            <svg className="w-3 h-3 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          )}
+        </button>
+        <span className={`text-sm ${themed ? (isDark ? 'text-gray-300' : 'text-gray-600') : 'text-gray-300'}`}>
+          Require wallet unlock each session
+        </span>
+      </label>
+      {walletProtect && (
+        <p className={`text-xs mt-1 ml-6 ${mutedLightClass}`}>
+          Your signing key will be encrypted. You'll sign once when you open the app to unlock it.
+        </p>
+      )}
+      {!walletProtect && spendLimit === 0n && (
+        <p className="text-xs mt-1 ml-6 text-red-400">
+          No spending limit means a compromised session key could drain all of your deposited CAW.
+        </p>
+      )}
+    </div>
+  ) : null
+
+  // Display the tip ceiling as a dollar amount when CAW price is known.
+  // Tips are tiny (often fractions of a cent), so we use 4 decimal places
+  // to avoid showing "$0" for non-zero values.
+  // Defined here (above the early return) so the collapsed one-liner can use it.
+  const formatTipCaw = (caw: bigint): string => {
+    if (caw === 0n) return 'no tip'
+    if (cawPrice > 0) return fmtUsdSmall(Number(caw) * cawPrice)
+    return `${formatSpendLimit(caw)} CAW`
+  }
+
+  const isNoTip = tipCeiling === 0n
+  const matchedTipPreset = tipPresets.find(p => tipCeiling !== undefined && tipCeiling === p.caw)
+
   if (!expanded) {
     return (
       <div>
         <button
           type="button"
           onClick={() => setExpanded(true)}
-          className={`w-full flex items-center justify-center gap-2 px-3 rounded-lg text-center transition-colors cursor-pointer ${
-            themed
-              ? isDark ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-50 hover:bg-gray-100'
-              : 'bg-white/5 hover:bg-white/10'
+          className={`w-full flex items-center justify-center gap-2 px-3 rounded-lg text-center transition-colors cursor-pointer border ${
+            themed && !isDark ? 'bg-gray-50 hover:bg-gray-100 border-gray-200' : ''
           }`}
+          style={!themed || isDark ? { backgroundColor: 'rgba(20, 20, 20, 0.85)', borderColor: '#1A1A1A' } : undefined}
         >
           <span className={`text-sm ${mutedClass} p-2`}>
             Enable for <strong className="text-white">{formatDuration(duration)}</strong> with a security limit of <strong className={spendLimit === 0n ? 'text-red-400' : 'text-white'}>
@@ -107,7 +181,8 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
                   ? fmtUsd(Number(spendLimit) * cawPrice)
                   : `${formatSpendLimit(spendLimit)} CAW`
               }
-            </strong> from your deposits
+            </strong> from your deposits.<br className="hidden sm:block" />
+            Validator tips capped at <strong className={isNoTip ? 'text-yellow-500' : 'text-white'}>{tipCeiling !== undefined ? formatTipCaw(tipCeiling) : '—'}</strong> per action and <strong className="text-white">{walletProtect ? 'unlock required' : 'no unlock per-session'}</strong>
           </span>
           <HiPencil className={`w-4.5 h-4.5 flex-shrink-0 ${themed ? (isDark ? 'text-white' : 'text-gray-600') : 'text-white'}`} />
         </button>
@@ -115,8 +190,15 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
     )
   }
 
+  const handleNoLimit = () => {
+    onSpendLimitChange(BigInt(0))
+    if (onWalletProtectChange) onWalletProtectChange(true)
+  }
+
   return (
-    <div className="space-y-4 mt-6">
+    <div className={`space-y-4 mt-4 p-4 rounded-xl border ${
+      themed && !isDark ? 'bg-gray-50 border-gray-200' : ''
+    }`} style={!themed || isDark ? { backgroundColor: 'rgba(20, 20, 20, 0.85)', borderColor: '#1A1A1A' } : undefined}>
       {/* Spending limit */}
       <div>
         <p className={labelClass}>Spending limit</p>
@@ -136,7 +218,7 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
               ))}
               <button
                 type="button"
-                onClick={() => onSpendLimitChange(BigInt(0))}
+                onClick={handleNoLimit}
                 className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all cursor-pointer ${btnClass(spendLimit === 0n)}`}
               >
                 No limit
@@ -157,7 +239,7 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
               ))}
               <button
                 type="button"
-                onClick={() => onSpendLimitChange(BigInt(0))}
+                onClick={handleNoLimit}
                 className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all cursor-pointer ${btnClass(spendLimit === 0n)}`}
               >
                 No limit
@@ -171,24 +253,20 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
             {dollarOptions && matchedPreset ? '' : cawPrice > 0 ? ` ≈ ${fmtUsd(Number(spendLimit) * cawPrice)}` : ''}
           </p>
         )}
-        {spendLimit === 0n && (
-          <p className="text-xs text-red-400 mt-1 text-left">
-            No spending limit means a compromised<br/>session key could drain your deposited CAW.
-          </p>
-        )}
       </div>
 
       {/* Session duration */}
       <div>
         <p className={labelClass}>Session duration</p>
         <p className={descClass}>The key expires automatically after this period.</p>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-1">
           {SESSION_DURATION_OPTIONS.map(opt => (
             <button
               key={opt.label}
               type="button"
               onClick={() => onDurationChange(opt.value)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all cursor-pointer ${btnClass(duration === opt.value)}`}
+              className={`rounded-lg text-sm font-medium transition-all cursor-pointer ${btnClass(duration === opt.value)}`}
+              style={{ padding: '5px 8px' }}
             >
               {opt.label}
             </button>
@@ -196,7 +274,54 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
         </div>
       </div>
 
-      <p className={`text-xs text-left ${mutedLightClass} mb-6`}>
+      {/* Tip speed — determines how quickly validators process your actions */}
+      {onTipCeilingChange && (
+        <div>
+          <p className={labelClass}>Tip speed</p>
+          <p className={descClass}>
+            The CAW Protocol is made possible by validators who pay LayerZero fees to
+            publish your actions on-chain. Your tip rewards them — higher tips get
+            faster processing.
+          </p>
+          <div className="flex flex-wrap gap-1">
+            {tipPresets.map(p => (
+              <button
+                key={p.label}
+                type="button"
+                onClick={() => onTipCeilingChange(p.caw)}
+                className={`rounded-lg text-sm font-medium transition-all cursor-pointer ${btnClass(matchedTipPreset?.label === p.label)}`}
+                style={{ padding: '5px 8px' }}
+                title={p.speed}
+              >
+                {p.label} ({formatSpendLimit(p.caw)})
+              </button>
+            ))}
+            <button
+              type="button"
+              onClick={() => onTipCeilingChange(0n)}
+              className={`rounded-lg text-sm font-medium transition-all cursor-pointer ${btnClass(isNoTip)}`}
+              style={{ padding: '5px 8px' }}
+            >
+              No tip
+            </button>
+          </div>
+          {isNoTip && (
+            <p className="text-xs text-red-400 mt-1.5 text-left">
+              Your posts will be extremely slow, and may not get included at all.
+              Most validators reject zero-tip actions.
+            </p>
+          )}
+          {!isNoTip && tipCeiling !== undefined && tipCeiling > 0n && (
+            <p className={`text-xs mt-1.5 text-left ${mutedLightClass}`}>
+              {matchedTipPreset?.speed} — ≈ {formatTipCaw(tipCeiling)} per action
+            </p>
+          )}
+        </div>
+      )}
+
+      {walletProtectCheckbox}
+
+      <p className={`text-xs text-left ${mutedLightClass} mt-4 mb-1`}>
         You can change these settings anytime in Settings.
       </p>
 
