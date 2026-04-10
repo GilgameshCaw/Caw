@@ -138,6 +138,10 @@ contract CawActions is Ownable {
 
     if (numRecipients == 0 && numAmounts == 0) return 0;
 
+    // Validate that validatorId corresponds to a real token before crediting it.
+    // This prevents accidentally locking validator fees in a non-existent token.
+    require(cawName.ownerOf(validatorId) != address(0), "Invalid validatorId");
+
     bool isWithdrawal = action.actionType == ActionType.WITHDRAW;
     uint256 startIndex = isWithdrawal ? 1 : 0;
 

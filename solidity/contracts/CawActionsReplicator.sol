@@ -211,6 +211,14 @@ contract CawActionsReplicator is OApp {
    *      so the caller can retry — no silent failures since replication is decoupled
    *      from action processing.
    */
+  /// @dev Internal: send a replication message to the destination chain via LayerZero.
+  ///
+  /// SECURITY NOTE (audited 2026-04-07): Refund address is `tx.origin` rather than the
+  /// LayerZero-standard `msg.sender`. This is intentional for our deployment model:
+  /// `replicateBatch` is called directly by our validator EOA (not via a wrapper contract),
+  /// so `tx.origin == msg.sender` in practice. Using `tx.origin` ensures that even if
+  /// someone wraps `replicateBatch` in a contract, the original caller (the entity who
+  /// actually paid the ETH) receives any LZ fee refund.
   function _replicateToDestination(
     uint32 clientId,
     uint32 destEid,

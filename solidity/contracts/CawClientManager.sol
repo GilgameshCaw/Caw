@@ -58,6 +58,7 @@ contract CawClientManager {
   event ClientReplicationAdded(uint32 indexed clientId, uint32 indexed eid, address target);
   event ClientReplicationRemoved(uint32 indexed clientId, uint32 indexed eid);
   event ClientReplicationEnabledChanged(uint32 indexed clientId, bool enabled);
+  event CawNameSet(address indexed cawName);
 
   // ============================================
   // INSTANCE REGISTRY
@@ -94,6 +95,7 @@ contract CawClientManager {
   function setCawName(address _cawName) external onlyOwner {
     require(address(cawName) == address(0), "CawName already set");
     cawName = ICawName(_cawName);
+    emit CawNameSet(_cawName);
   }
 
   /**
@@ -164,6 +166,7 @@ contract CawClientManager {
   function createClient(string calldata name, address feeAddress, uint32 storageChainEid, uint256 withdrawFee, uint256 depositFee, uint256 authFee, uint256 mintFee) public {
     require(storageChainEid > 0, "Storage chain required");
     require(bytes(name).length > 0, "Name required");
+    require(feeAddress != address(0), "Fee address required");
     clients[nextClientId] = CawClient({
       id: nextClientId,
       storageChainEid: storageChainEid,
@@ -218,6 +221,23 @@ contract CawClientManager {
 
   function setMintFee(uint32 clientId, uint256 fee) public onlyClientOwner(clientId) {
     clients[clientId].mintFee = fee;
+  }
+
+  /**
+   * @dev Set all four fees in a single call. Useful for periodic price-pegged adjustments.
+   *      Only callable by the client owner.
+   * @param clientId The ID of the client.
+   * @param withdrawFee New withdraw fee
+   * @param depositFee New deposit fee
+   * @param authFee New auth fee
+   * @param mintFee New mint fee
+   */
+  function setFees(uint32 clientId, uint256 withdrawFee, uint256 depositFee, uint256 authFee, uint256 mintFee) public onlyClientOwner(clientId) {
+    CawClient storage client = clients[clientId];
+    client.withdrawFee = withdrawFee;
+    client.depositFee = depositFee;
+    client.authFee = authFee;
+    client.mintFee = mintFee;
   }
 
   function setFeeAddress(uint32 clientId, address feeAddress) public onlyClientOwner(clientId) {
@@ -394,4 +414,11 @@ contract CawClientManager {
   function getStorageChainEid(uint32 clientId) public view returns (uint32) {
     return clients[clientId].storageChainEid;
   }
+
+  /// @notice Accept ETH refunds from LayerZero. When `addReplication`/`removeReplication` forwards
+  /// `msg.value` to `CawName.syncReplicationInternal`, the LZ refund address ends up being this
+  /// contract (since CawName uses `payable(msg.sender)` for refunds, and msg.sender at the LZ
+  /// boundary is this contract). Without `receive()`, the LZ excess-fee refund would revert the
+  /// entire add/remove flow.
+  receive() external payable {}
 }
