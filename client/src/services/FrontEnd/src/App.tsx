@@ -2,8 +2,6 @@ import { BrowserRouter, Route, Routes } from "react-router";
 import { useCawonceSync } from '~/hooks/useCawonce'
 import { useSessionKeyWalletGuard } from '~/hooks/useSessionKey'
 import { useTxQueueMonitor } from '~/hooks/useTxQueueMonitor'
-import { useClientConfig } from '~/store/clientConfigStore'
-import { CLIENT_ID } from '~/api/actions'
 import { useAccount } from "wagmi"
 import routes from "./routes";
 import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
@@ -36,7 +34,6 @@ function App() {
   useCawonceSync();
   useTxQueueMonitor();
   useSessionKeyWalletGuard();
-  useClientConfig(CLIENT_ID); // Fetch client config on init for dynamic tip calculation
   useSessionSpendSync(); // Sync on-chain session spending on load
   useDmUnreadSync(); // Fetch DM unread count for sidebar badge
   useNotificationUnreadSync(); // Fetch notification unread count for sidebar badge

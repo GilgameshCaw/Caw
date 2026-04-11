@@ -6,7 +6,6 @@ import { useSignTypedData, useAccount, useSwitchChain } from 'wagmi'
 import { readContract } from '@wagmi/core'
 import type { TypedDataDomain, TypedDataField } from '@ethersproject/abstract-signer'
 import { useActiveToken, useTokenDataStore } from "~/store/tokenDataStore";
-import { useClientConfigStore } from "~/store/clientConfigStore";
 import { CAW_ACTIONS_ADDRESS, CAW_NAMES_L2_ADDRESS } from '~/../../../abi/addresses'
 import { cawActionsAbi, cawNameL2Abi } from '~/../../../abi/generated'
 import { wagmiConfig } from '~/config/Web3Provider'
@@ -78,14 +77,10 @@ export const CLIENT_ID = Number(import.meta.env.VITE_CLIENT_ID) || 1
  *
  * Base tip is fetched from the server (set via admin settings page).
  * Falls back to VITE_VALIDATOR_TIP env var, then 1000.
- * Per-chain tip: Additional tip per replication chain to cover LZ fees.
  */
 let BASE_VALIDATOR_TIP = BigInt(import.meta.env.VITE_VALIDATOR_TIP || "1000")
 /** Priority tip threshold — actions at/above this get fast-lane processing. */
 let PRIORITY_TIP = BASE_VALIDATOR_TIP * 3n
-
-/** Additional tip per replication chain (to cover share of LZ fees) */
-const TIP_PER_REPLICATION_CHAIN = BigInt(import.meta.env.VITE_TIP_PER_CHAIN || "500") // 500 CAW per chain
 
 // Fetch live tip config from server on startup
 apiFetch<{ baseTip: string; priorityTip: string }>('/api/validator-analytics/tip-config')
@@ -99,39 +94,34 @@ apiFetch<{ baseTip: string; priorityTip: string }>('/api/validator-analytics/tip
   })
 
 /**
- * Calculate the validator tip based on replication chain count.
- * This compensates the validator for the LayerZero fees they pay for replication.
+ * Calculate the validator tip.
  *
  * If a `ceiling` is provided (whole CAW tokens), the returned tip is capped at that value.
  * A ceiling of 0n means "no tip" (opt-out — the user explicitly chose not to tip).
  * Used by Quick Sign to enforce the per-session tip ceiling the user agreed to at activation.
  */
 export function getValidatorTip(ceiling?: bigint): bigint {
-  const chainCount = useClientConfigStore.getState().getReplicationChainCount()
-  const market = BASE_VALIDATOR_TIP + (TIP_PER_REPLICATION_CHAIN * BigInt(chainCount))
-  if (ceiling === undefined) return market
+  if (ceiling === undefined) return BASE_VALIDATOR_TIP
   if (ceiling === 0n) return 0n // explicit opt-out
-  return market < ceiling ? market : ceiling
+  return BASE_VALIDATOR_TIP < ceiling ? BASE_VALIDATOR_TIP : ceiling
 }
 
 /** Get the current market tip without any ceiling applied. Used by UI to show "current rate". */
 export function getCurrentMarketTip(): bigint {
-  return getValidatorTip()
+  return BASE_VALIDATOR_TIP
 }
 
 /** Get all three tip tiers for the Quick Sign speed picker.
- *  Returns { cheap, standard, fast } as whole CAW token amounts.
- *  - cheap: the minimum tip the validator accepts (base tip)
- *  - standard: midpoint between cheap and fast — balanced speed/cost
+ *  Returns { slow, standard, fast } as whole CAW token amounts.
+ *  - slow: the minimum tip the validator accepts (base tip)
+ *  - standard: midpoint between slow and fast — balanced speed/cost
  *  - fast: the priority threshold — skip the batch wait entirely
  */
-export function getTipTiers(): { cheap: bigint; standard: bigint; fast: bigint } {
-  const chainCount = useClientConfigStore.getState().getReplicationChainCount()
-  const chainCost = TIP_PER_REPLICATION_CHAIN * BigInt(chainCount)
-  const cheap = BASE_VALIDATOR_TIP + chainCost
-  const fast = PRIORITY_TIP + chainCost
-  const standard = (cheap + fast) / 2n
-  return { cheap, standard, fast }
+export function getTipTiers(): { slow: bigint; standard: bigint; fast: bigint } {
+  const slow = BASE_VALIDATOR_TIP
+  const fast = PRIORITY_TIP
+  const standard = (slow + fast) / 2n
+  return { slow, standard, fast }
 }
 
 /**

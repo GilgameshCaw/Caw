@@ -22,7 +22,6 @@ import giphyRouter from './routes/giphy'
 import statsRouter from './routes/stats'
 import shorturlRouter from './routes/shorturl'
 import onChainImagesRouter from './routes/on-chain-images'
-import clientsRouter from './routes/clients'
 import reportsRouter from './routes/reports'
 import tipsRouter from './routes/tips'
 import bugReportsRouter from './routes/bugReports'
@@ -148,7 +147,7 @@ function createApp() {
   app.post('/api/shorturl', shorturlCreateLimiter, shorturlCreateLimiterAuth)
 
   // Marketplace sold: rate limit to prevent spam (5 per minute per IP)
-  app.use('/api/marketplace/listings', rateLimit({
+  app.post('/api/marketplace/listings/:id/sold', rateLimit({
     windowMs: 60 * 1000,
     max: 5,
     standardHeaders: true,
@@ -176,7 +175,6 @@ function createApp() {
   app.use('/api/stats', statsRouter)
   app.use('/api/shorturl', shorturlRouter)
   app.use('/api/on-chain-images', onChainImagesRouter)
-  app.use('/api/clients', clientsRouter)
   app.use('/api/reports', reportsRouter)
   app.use('/api/tips', tipsRouter)
   app.use('/api/bug-reports', bugReportsRouter)
