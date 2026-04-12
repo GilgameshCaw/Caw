@@ -1896,14 +1896,17 @@ console.log("succeededKeys", succeededKeys)
               // the transactionHash for each ActionsProcessed event) and decode it.
               const startPos = (checkpointId - 1) * 256
 
-              // Find Action records for this client in the checkpoint range, ordered by id
-              // (auto-increment, which preserves on-chain processing order since RawEventsGatherer
-              // processes events in blockNumber+logIndex order and ActionProcessor inserts sequentially)
+              // Find Action records for this client in the checkpoint range.
+              // Order by rawEventId (NOT Action.id) to match on-chain processing order.
+              // RawEvent IDs are assigned sequentially by blockNumber+logIndex in the
+              // gatherer, so they reflect the exact order actions were processed on-chain.
+              // Action.id can differ because ActionProcessor may insert rows out of
+              // logIndex order within the same transaction batch.
               const actionsInRange = await prisma.action.findMany({
                 where: {
                   data: { path: ['clientId'], equals: client.id }
                 },
-                orderBy: { id: 'asc' },
+                orderBy: { rawEventId: 'asc' },
                 include: { rawEvent: { select: { transactionHash: true } } },
                 skip: startPos,
                 take: 256,
