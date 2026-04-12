@@ -1892,48 +1892,41 @@ console.log("succeededKeys", succeededKeys)
               console.log(`[Replication] Client ${client.id} → chain ${destEid}: checkpoint ${checkpointId}/${total} needs replication`)
 
               // Reconstruct the 256 actions + signatures from on-chain data.
-              // We read processActions tx calldata from the RawEvent table (which stores
-              // the transactionHash for each ActionsProcessed event) and decode it.
+              //
+              // The hash chain is built by CawActions._processAction in the exact
+              // order actions appear in the calldata arrays. Within a block, multiple
+              // processActions txs are ordered by transactionIndex. Within a tx,
+              // actions are ordered by their position in the calldata array.
+              //
+              // DB logIndex and rawEventId are NOT reliable for this ordering because
+              // safeProcessActions makes external self-calls per action (producing
+              // low logIndex events) before emitting the batch ActionsProcessed event.
               const startPos = (checkpointId - 1) * 256
 
-              // Fetch ALL actions for this client, sort by (blockNumber, logIndex) to
-              // match on-chain processing order, then slice the checkpoint window.
-              // We can't use Prisma skip/take because it only orders by one nested
-              // field (blockNumber) and within-block ordering is arbitrary — skip
-              // could grab the wrong rows from a boundary block.
-              const allClientActions = await prisma.action.findMany({
-                where: {
-                  data: { path: ['clientId'], equals: client.id }
-                },
-                include: { rawEvent: { select: { transactionHash: true, blockNumber: true, logIndex: true } } },
+              // Get unique tx hashes from DB actions for this client
+              const dbActions = await prisma.action.findMany({
+                where: { data: { path: ['clientId'], equals: client.id } },
+                include: { rawEvent: { select: { transactionHash: true, blockNumber: true } } },
               })
-              // Sort by (blockNumber, logIndex) — this is the exact order the contract
-              // processed actions and built the hash chain
-              allClientActions.sort((a, b) => {
-                const aBlock = Number(a.rawEvent?.blockNumber ?? 0)
-                const bBlock = Number(b.rawEvent?.blockNumber ?? 0)
-                if (aBlock !== bBlock) return aBlock - bBlock
-                return (a.rawEvent?.logIndex ?? 0) - (b.rawEvent?.logIndex ?? 0)
-              })
-              const actionsInRange = allClientActions.slice(startPos, startPos + 256)
+              const txHashes = Array.from(new Set(
+                dbActions.map(a => a.rawEvent?.transactionHash).filter(Boolean) as string[]
+              ))
 
-              if (actionsInRange.length !== 256) {
-                console.log(`[Replication] Only ${actionsInRange.length}/256 actions indexed for checkpoint ${checkpointId}, skipping`)
+              if (txHashes.length === 0) {
+                console.log(`[Replication] No tx hashes found for client ${client.id}, skipping`)
                 continue
               }
 
-              // Cache decoded tx calldata per txHash. A single processActions tx can contain
-              // multiple actions (potentially across different clients, and potentially
-              // straddling the 256-action checkpoint boundary), so we must match each DB row
-              // to its SPECIFIC action in the calldata — not just merge everything.
-              type DecodedEntry = { action: any; v: number; r: string; s: string }
-              const txCache = new Map<string, Map<string, DecodedEntry>>() // txHash → (senderId:cawonce → entry)
-              const uniqueTxHashes = Array.from(new Set(
-                actionsInRange.map(a => a.rawEvent?.transactionHash).filter(Boolean) as string[]
-              ))
-
+              // Decode each tx's calldata and build a flat ordered list of actions
+              // sorted by (blockNumber, transactionIndex, calldataPosition)
+              type OrderedEntry = {
+                blockNumber: number; txIndex: number; calldataPos: number
+                action: any; v: number; r: string; s: string
+              }
+              const orderedEntries: OrderedEntry[] = []
               let fetchFailed = false
-              for (const txHash of uniqueTxHashes) {
+
+              for (const txHash of txHashes) {
                 const tx = await provider.getTransaction(txHash)
                 if (!tx) {
                   console.error(`[Replication] Could not fetch tx ${txHash}`)
@@ -1942,71 +1935,45 @@ console.log("succeededKeys", succeededKeys)
                 }
 
                 const decoded = iface.decodeFunctionData('processActions', tx.data)
-                const multiData = decoded[1] // The MultiActionData struct
-                const txActions = multiData.actions
-                const txV = multiData.v
-                const txR = multiData.r
-                const txS = multiData.s
+                const multiData = decoded[1]
 
-                // Index entries by (senderId, cawonce) — unique per action
-                const entriesByKey = new Map<string, DecodedEntry>()
-                for (let i = 0; i < txActions.length; i++) {
-                  const a = txActions[i]
-                  // Only index entries for this client — keeps the map tight
+                for (let i = 0; i < multiData.actions.length; i++) {
+                  const a = multiData.actions[i]
                   if (Number(a.clientId) !== client.id) continue
-                  const key = `${Number(a.senderId)}:${Number(a.cawonce)}`
-                  entriesByKey.set(key, {
+                  orderedEntries.push({
+                    blockNumber: tx.blockNumber!,
+                    txIndex: tx.index!,
+                    calldataPos: i,
                     action: a,
-                    v: Number(txV[i]),
-                    r: txR[i],
-                    s: txS[i],
+                    v: Number(multiData.v[i]),
+                    r: multiData.r[i],
+                    s: multiData.s[i],
                   })
                 }
-                txCache.set(txHash, entriesByKey)
               }
 
               if (fetchFailed) continue
 
-              // Walk DB rows in order, pulling the matching calldata entry for each.
-              // This guarantees exactly 256 actions in the correct on-chain order.
-              const allActions: any[] = []
-              const allV: number[] = []
-              const allR: string[] = []
-              const allS: string[] = []
-              let reconstructionOk = true
+              // Sort by (blockNumber, transactionIndex, calldataPosition) — this is
+              // the exact order the contract built the hash chain
+              orderedEntries.sort((a, b) => {
+                if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber
+                if (a.txIndex !== b.txIndex) return a.txIndex - b.txIndex
+                return a.calldataPos - b.calldataPos
+              })
 
-              for (const row of actionsInRange) {
-                const txHash = row.rawEvent?.transactionHash
-                if (!txHash) {
-                  console.error(`[Replication] Action row ${row.id} missing rawEvent.transactionHash, skipping checkpoint`)
-                  reconstructionOk = false
-                  break
-                }
-                const entriesByKey = txCache.get(txHash)
-                if (!entriesByKey) {
-                  console.error(`[Replication] Missing decoded tx ${txHash} for action row ${row.id}`)
-                  reconstructionOk = false
-                  break
-                }
-                const key = `${row.senderId}:${row.cawonce}`
-                const entry = entriesByKey.get(key)
-                if (!entry) {
-                  console.error(`[Replication] No calldata match for action row ${row.id} (key ${key}) in tx ${txHash}`)
-                  reconstructionOk = false
-                  break
-                }
-                allActions.push(entry.action)
-                allV.push(entry.v)
-                allR.push(entry.r)
-                allS.push(entry.s)
-              }
+              // Slice the checkpoint window
+              const checkpoint = orderedEntries.slice(startPos, startPos + 256)
 
-              if (!reconstructionOk) continue
-
-              if (allActions.length !== 256) {
-                console.log(`[Replication] Reconstructed ${allActions.length}/256 actions from calldata, skipping`)
+              if (checkpoint.length !== 256) {
+                console.log(`[Replication] Only ${checkpoint.length}/256 actions reconstructed for checkpoint ${checkpointId}, skipping`)
                 continue
               }
+
+              const allActions = checkpoint.map(e => e.action)
+              const allV = checkpoint.map(e => e.v)
+              const allR = checkpoint.map(e => e.r)
+              const allS = checkpoint.map(e => e.s)
 
               // Pre-flight hash chain verification: recompute keccak256(prev, r) locally
               // and compare to the on-chain checkpoint hash. This catches ordering bugs
