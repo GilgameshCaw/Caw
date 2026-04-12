@@ -57,10 +57,15 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const [replyPending, setReplyPending] = useState(item.replyPending || false)
   const [tipPending, setTipPending] = useState(item.tipPending || false)
 
-  // Optimistic count adjustments (added when pending, removed on failure)
+  // Optimistic count adjustments (added when pending, removed on failure).
+  // We also track the "base" server count at the moment the optimistic adj was applied,
+  // so we can detect when the server has caught up and stop adding the adjustment.
   const [likeCountAdj, setLikeCountAdj] = useState(0)
   const [recawCountAdj, setRecawCountAdj] = useState(0)
   const [replyCountAdj, setReplyCountAdj] = useState(0)
+  const [likeCountBase, setLikeCountBase] = useState<number | null>(null)
+  const [recawCountBase, setRecawCountBase] = useState<number | null>(null)
+  const [replyCountBase, setReplyCountBase] = useState<number | null>(null)
 
   // Polling for pending items is handled centrally by Feed.tsx (unified polling interval).
   // No per-item polling hooks needed here — avoids 5 timers × N items = cascading jank.
@@ -136,6 +141,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     isRecawByCurrentUser = !!isCurrentUser;
   }
 
+  // Compute effective count adjustments: if the server count has moved past
+  // the base snapshot (taken when the optimistic adj was applied), the server
+  // has caught up and we should stop adding the adjustment to avoid double-counting.
+  const effectiveReplyAdj = (replyCountAdj !== 0 && replyCountBase !== null && useItem.commentCount > replyCountBase) ? 0 : replyCountAdj
+  const effectiveRecawAdj = (recawCountAdj !== 0 && recawCountBase !== null && useItem.recawCount > recawCountBase) ? 0 : recawCountAdj
+  const effectiveLikeAdj = (likeCountAdj !== 0 && likeCountBase !== null && useItem.likeCount > likeCountBase) ? 0 : likeCountAdj
+
   // Auto-trigger like after wallet connection
   useEffect(() => {
     // Skip if no pending action, not connected, or already submitting
@@ -199,17 +211,17 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   // Sync local pending states with item from polling — reset adjustments when server confirms
   useEffect(() => {
     setLikePending(item.likePending || false)
-    if (!item.likePending) setLikeCountAdj(0)
+    if (!item.likePending) { setLikeCountAdj(0); setLikeCountBase(null) }
   }, [item.likePending])
 
   useEffect(() => {
     setRecawPending(item.recawPending || false)
-    if (!item.recawPending) setRecawCountAdj(0)
+    if (!item.recawPending) { setRecawCountAdj(0); setRecawCountBase(null) }
   }, [item.recawPending])
 
   useEffect(() => {
     setReplyPending(item.replyPending || false)
-    if (!item.replyPending) setReplyCountAdj(0)
+    if (!item.replyPending) { setReplyCountAdj(0); setReplyCountBase(null) }
   }, [item.replyPending])
 
   // Sync local tipPending state with item.tipPending from polling
@@ -316,12 +328,14 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       } else {
         setLikeCountAdj(-1)
       }
+      setLikeCountBase(useItem.likeCount)
       setLikePending(true)
       if (onLikeStateChange) onLikeStateChange(useItem.id, true)
     } catch (err) {
       console.error('Like failed', err)
       setLikePending(false)
       setLikeCountAdj(0)
+      setLikeCountBase(null)
       if (tempLikeId) useOptimisticLikesStore.getState().removeOptimisticLike(tempLikeId)
       if (onLikeStateChange) onLikeStateChange(useItem.id, false)
     } finally {
@@ -443,6 +457,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       // Set pending state and increment count optimistically
       setRecawPending(true)
       setRecawCountAdj(1)
+      setRecawCountBase(useItem.recawCount)
 
       if (onRecawStateChange) {
         onRecawStateChange(useItem.id, true)
@@ -451,6 +466,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       console.error('Recaw failed', err)
       setRecawPending(false)
       setRecawCountAdj(0)
+      setRecawCountBase(null)
     } finally {
       setBusyRecaw(false)
     }
@@ -471,6 +487,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     openModal('comment', item, () => {
       setReplyPending(true)
       setReplyCountAdj(1)
+      setReplyCountBase(useItem.commentCount)
       if (onReplyStateChange) {
         onReplyStateChange(useItem.id, true)
       }
@@ -1050,7 +1067,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               >
                 <HiOutlineChat className="w-5 h-5" />
                 <span className={`text-sm ${(useItem.hasReplied || replyPending) ? 'text-blue-500' : ''}`}>
-                  {formatEngagementCount(useItem.commentCount + replyCountAdj)}
+                  {formatEngagementCount(useItem.commentCount + effectiveReplyAdj)}
                 </span>
               </button></Tooltip>
 
@@ -1087,7 +1104,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   )}
                   <span className={`text-sm transition-colors duration-300 ${
                     (useItem.hasRecawed || isRecawByCurrentUser) ? 'text-green-500' : ''
-                  }`}>{formatEngagementCount(useItem.recawCount + recawCountAdj)}</span>
+                  }`}>{formatEngagementCount(useItem.recawCount + effectiveRecawAdj)}</span>
                 </button></Tooltip>
 
                 {showRecawMenu && (
@@ -1152,7 +1169,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 ) : (
                   <HiOutlineHeart className={`w-5 h-5 ${(useItem.hasLiked || likePending || item.likePending) ? 'fill-current' : ''}`} />
                 )}
-                <span className="text-sm">{formatEngagementCount(useItem.likeCount + likeCountAdj)}</span>
+                <span className="text-sm">{formatEngagementCount(useItem.likeCount + effectiveLikeAdj)}</span>
               </button></Tooltip>
 
               {/* Views */}

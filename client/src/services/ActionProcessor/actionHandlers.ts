@@ -7,34 +7,6 @@ import { elasticsearchService } from '../ElasticsearchService'
 import type { PrismaTransactionClient } from './types'
 
 /**
- * Calculate on-chain storage cost in CAW tokens
- * Matches the frontend calculation in imageUtils.ts
- */
-function calculateOnChainCost(sizeInBytes: number): number {
-  const MIN_CAW_COST = 500
-
-  // Gas calculation for L1 data posting
-  const l1GasPerByte = 16
-  const l1DataGas = sizeInBytes * l1GasPerByte
-
-  // L2 execution gas
-  const l2ExecutionGas = sizeInBytes * 3
-
-  const totalGas = l1DataGas + l2ExecutionGas
-
-  // Cost conversion (weighted average gas price in gwei)
-  const effectiveGasPrice = 8
-  const cawPerGwei = 0.03
-
-  const baseCost = Math.ceil(totalGas * effectiveGasPrice * cawPerGwei)
-
-  // Add 150% markup for validator compensation
-  const totalCost = Math.ceil(baseCost * 2.5)
-
-  return Math.max(MIN_CAW_COST, totalCost)
-}
-
-/**
  * Helper function to find a caw by cawonce and user
  */
 export async function findCawId(cawonce: number, userOnChain: number): Promise<number> {
@@ -49,7 +21,7 @@ export async function findCawId(cawonce: number, userOnChain: number): Promise<n
 
 /**
  * Handle CAW action - create new caw, process hashtags, update counts
- * May include off-chain image URLs in the text or on-chain image references [img:X:Y]
+ * May include off-chain image URLs in the text
  */
 export async function handleCawAction(
   tx: PrismaTransactionClient,
@@ -88,51 +60,6 @@ export async function handleCawAction(
   // Clean up any extra newlines left behind
   if (imageUrls.length > 0 || videoUrls.length > 0) {
     textContent = textContent.replace(/\n{3,}/g, '\n\n').trim()
-  }
-
-  // Handle [img:userId:cawonce] references (on-chain library images)
-  const imgRefPattern = /\[img:(\d+):(\d+)\]/g
-  const imgRefs = textContent?.match(imgRefPattern) || []
-  let onChainImageData: string[] = []
-
-  if (imgRefs.length > 0) {
-    console.log(`[handleCawAction] Found ${imgRefs.length} on-chain image references`)
-    // Look up each image reference from the database
-    for (const ref of imgRefs) {
-      const match = ref.match(/\[img:(\d+):(\d+)\]/)
-      if (match) {
-        const imageRef = `img:${match[1]}:${match[2]}`
-        try {
-          const onChainImage = await prisma.onChainImage.findUnique({
-            where: { imageRef }
-          })
-          if (onChainImage?.base64Data) {
-            // Remove any data URL prefix if present
-            const base64Only = onChainImage.base64Data.includes(',')
-              ? onChainImage.base64Data.split(',')[1]
-              : onChainImage.base64Data
-            onChainImageData.push(base64Only)
-
-            // Mark this image as posted (used in a caw) if not already
-            if (!onChainImage.postedAt) {
-              await prisma.onChainImage.update({
-                where: { imageRef },
-                data: { postedAt: new Date() }
-              })
-              console.log(`[handleCawAction] Marked image ${imageRef} as posted`)
-            }
-
-            console.log(`[handleCawAction] Resolved image reference ${imageRef}`)
-          } else {
-            console.warn(`[handleCawAction] Image reference not found: ${imageRef}`)
-          }
-        } catch (err) {
-          console.error(`[handleCawAction] Failed to look up image ${imageRef}:`, err)
-        }
-      }
-    }
-    // Note: We keep the [img:X:Y] references in textContent for frontend rendering
-    // The ContentWithHashtags component will render them as images
   }
 
   // Check if a pending caw already exists (optimistic counts were already incremented)
@@ -702,124 +629,8 @@ export async function handleOtherAction(
     }
   }
 
-  // Extract image data if present (can be multiple images)
-  // Track NEW images (from image64: format) separately from referenced images
-  let newImageDataArray: string[] = []  // Images uploaded in THIS action (need OnChainImage records)
-  let referencedImageDataArray: string[] = []  // Images from [img:X:Y] references (already in DB)
   let textContent = rawAction.text
-
-  if (rawAction.text?.includes('image64:')) {
-    const lines = rawAction.text.split('\n')
-    const imageLines: string[] = []
-    const textLines: string[] = []
-
-    let foundImages = false
-    for (const line of lines) {
-      if (line.startsWith('image64:')) {
-        imageLines.push(line.replace('image64:', ''))
-        foundImages = true
-      } else if (foundImages && line === '') {
-        // Empty line after images, rest is text content
-        continue
-      } else {
-        textLines.push(line)
-      }
-    }
-
-    newImageDataArray = imageLines
-    textContent = textLines.join('\n').trim()
-  }
-
-  // Handle [img:userId:cawonce] references (library images)
-  const imgRefPattern = /\[img:(\d+):(\d+)\]/g
-  const imgRefs = textContent?.match(imgRefPattern) || []
-
-  if (imgRefs.length > 0) {
-    // Look up each image reference from the database
-    for (const ref of imgRefs) {
-      const match = ref.match(/\[img:(\d+):(\d+)\]/)
-      if (match) {
-        const imageRef = `img:${match[1]}:${match[2]}`
-        try {
-          const onChainImage = await prisma.onChainImage.findUnique({
-            where: { imageRef }
-          })
-          if (onChainImage?.base64Data) {
-            // Remove any data URL prefix if present
-            const base64Only = onChainImage.base64Data.includes(',')
-              ? onChainImage.base64Data.split(',')[1]
-              : onChainImage.base64Data
-            referencedImageDataArray.push(base64Only)
-
-            // Mark this image as posted (used in a caw) if not already
-            if (!onChainImage.postedAt) {
-              await prisma.onChainImage.update({
-                where: { imageRef },
-                data: { postedAt: new Date() }
-              })
-              console.log(`[ActionProcessor] Marked image ${imageRef} as posted`)
-            }
-
-            console.log(`[ActionProcessor] Resolved image reference ${imageRef}`)
-          } else {
-            console.warn(`[ActionProcessor] Image reference not found: ${imageRef}`)
-          }
-        } catch (err) {
-          console.error(`[ActionProcessor] Failed to look up image ${imageRef}:`, err)
-        }
-      }
-    }
-    // Remove the [img:X:Y] references from the text content
-    textContent = textContent?.replace(imgRefPattern, '').trim() || ''
-  }
-
-  // Combine all image data for storage in the caw
-  const imageDataArray = [...newImageDataArray, ...referencedImageDataArray]
-
-  // Join all images with a delimiter for storage
-  const imageData = imageDataArray.length > 0 ? imageDataArray.join('|||') : null
-
-  // Check if this is a STANDALONE image upload (actionType=OTHER and text starts with image64:)
-  // These should NOT create a Caw record, only OnChainImage records
-  const isStandaloneImageUpload = action.actionType === 'OTHER' && rawAction.text?.startsWith('image64:')
-
-  if (isStandaloneImageUpload) {
-    console.log(`[ActionProcessor] Standalone image upload - creating ${newImageDataArray.length} OnChainImage records only (no Caw)`)
-
-    // Create OnChainImage records for each image
-    for (let i = 0; i < newImageDataArray.length; i++) {
-      const base64Data = newImageDataArray[i]
-      const imageRef = `img:${authorId}:${action.cawonce}`
-
-      // Calculate cawCost matching the frontend calculation
-      const estimatedOriginalSize = Math.ceil((base64Data.length * 3) / 4)
-      const cawCost = calculateOnChainCost(estimatedOriginalSize)
-
-      try {
-        await prisma.onChainImage.upsert({
-          where: { imageRef },
-          update: {
-            status: 'SUCCESS',
-            cawCost
-          },
-          create: {
-            userId: authorId,
-            imageRef,
-            cawonce: action.cawonce,
-            base64Data,
-            cawCost,
-            status: 'SUCCESS'
-            // Note: postedAt is NOT set - image is uploaded but not yet used in a post
-          }
-        })
-        console.log(`[ActionProcessor] Created OnChainImage: ${imageRef}, cawCost: ${cawCost}`)
-      } catch (imgErr) {
-        console.error(`[ActionProcessor] Failed to create OnChainImage ${imageRef}:`, imgErr)
-      }
-    }
-
-    return // Exit early - no Caw record needed for standalone uploads
-  }
+  const imageData = null
 
   // Determine action type: preserve RECAW for quotes (recaws with text),
   // otherwise treat content/images as CAW posts.
@@ -845,7 +656,7 @@ export async function handleOtherAction(
       content: textContent,
       action: effectiveActionType as any,
       originalCawId: parentCawId,
-      imageData: imageData, // Store base64 image data (multiple images separated by |||)
+      imageData: imageData,
       hasImage: !!imageData
     }
   })
@@ -869,46 +680,6 @@ export async function handleOtherAction(
       await elasticsearchService.indexCaw(cawWithUser)
     }
   })
-
-  // Create OnChainImage records ONLY for NEW images (from image64: format)
-  // Referenced images [img:X:Y] already have records in the database
-  if (newImageDataArray.length > 0) {
-    console.log(`Creating OnChainImage records for ${newImageDataArray.length} new images in caw ${newCaw.id}`)
-
-    for (let i = 0; i < newImageDataArray.length; i++) {
-      const base64Data = newImageDataArray[i]
-      // imageRef uses THIS action's authorId and cawonce
-      const imageRef = `img:${authorId}:${action.cawonce}`
-
-      // Calculate cawCost matching the frontend calculation
-      // Convert base64 length to approximate original bytes
-      const estimatedOriginalSize = Math.ceil((base64Data.length * 3) / 4)
-      const cawCost = calculateOnChainCost(estimatedOriginalSize)
-
-      try {
-        await prisma.onChainImage.upsert({
-          where: { imageRef },
-          update: {
-            status: 'SUCCESS',
-            // Update cawCost if it was set wrong before
-            cawCost
-          },
-          create: {
-            userId: authorId,
-            imageRef,
-            cawonce: action.cawonce,
-            base64Data,
-            cawCost,
-            status: 'SUCCESS',
-            postedAt: new Date() // Mark as posted since it came from a caw
-          }
-        })
-        console.log(`[ActionProcessor] Created OnChainImage: ${imageRef}, cawCost: ${cawCost}`)
-      } catch (imgErr) {
-        console.error(`[ActionProcessor] Failed to create OnChainImage ${imageRef}:`, imgErr)
-      }
-    }
-  }
 
   // Update counts same as regular caw
   await tx.user.update({

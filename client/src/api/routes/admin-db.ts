@@ -117,13 +117,6 @@ const MODEL_META: Record<string, ModelMeta> = {
     writable: true,
     label: 'Withdrawals',
   },
-  onChainImage: {
-    defaultSort: 'createdAt',
-    searchFields: ['imageRef', 'status'],
-    listFields: ['id', 'userId', 'imageRef', 'status', 'cawCost', 'cawonce', 'createdAt'],
-    writable: true,
-    label: 'On-Chain Images',
-  },
   tip: {
     defaultSort: 'createdAt',
     searchFields: [],

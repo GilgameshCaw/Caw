@@ -349,7 +349,6 @@ const Notifications: React.FC = () => {
             title: receiverUsername ? `Tip to @${receiverUsername} failed` : 'Tip failed',
           }
         }
-        if (text?.startsWith('image64:')) return { title: 'Image upload failed' }
         if (text?.startsWith('p:') || text?.startsWith('profile-update:')) return { title: 'Profile update failed' }
         return { title: 'Action failed' }
       default:
@@ -517,8 +516,15 @@ const Notifications: React.FC = () => {
       // Build ActionParams. Do NOT pass cawonce — signAndSubmit will allocate
       // a fresh one from the store, which is exactly what we want since the
       // original cawonce is the reason some of these failed in the first
-      // place. amounts are passed through as-is so tip/withdraw semantics are
-      // preserved.
+      // place.
+      // Do NOT pass amounts for standard actions — buildTypedData adds the
+      // validator tip automatically, and the original amounts already included
+      // it, so passing them through would double the tip and cause a
+      // "recipients/amounts mismatch" error. Only pass amounts for 'other'
+      // and 'withdraw' where they carry user-specified values (tips to other
+      // users, withdrawal amounts); buildTypedData skips adding a tip for
+      // 'other' actions that already have amounts.
+      const hasUserAmounts = actionTypeKey === 'other' || actionTypeKey === 'withdraw'
       const result = await signAndSubmit({
         actionType: actionTypeKey,
         senderId: activeToken.tokenId,
@@ -526,7 +532,7 @@ const Notifications: React.FC = () => {
         ...(payload.receiverCawonce != null ? { receiverCawonce: payload.receiverCawonce } : {}),
         ...(payload.text != null ? { text: payload.text } : {}),
         ...(payload.recipients != null ? { recipients: payload.recipients } : {}),
-        ...(payload.amounts != null ? { amounts: payload.amounts.map(a => BigInt(a)) as any } : {}),
+        ...(hasUserAmounts && payload.amounts != null ? { amounts: payload.amounts.map(a => BigInt(a)) as any } : {}),
       })
       if (result) {
         // Hide the old failed notification so the list reflects the retry.

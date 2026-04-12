@@ -1,7 +1,6 @@
 import { Router } from 'express'
 import { ethers, JsonRpcProvider, WebSocketProvider, Contract } from 'ethers'
 import { prisma } from '../../prismaClient'
-import { CawStatus } from '@prisma/client'
 import { findOrCreateUser } from '../../services/UserService'
 import { getSession, addAuthorization, createSession } from '../sessionStore'
 import { cawNameL2Abi } from '../../abi/generated'
@@ -136,8 +135,7 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields: data and signature' })
     }
 
-    // Limit payload size — on-chain images use a separate flow (OnChainImage model),
-    // so action text shouldn't need more than ~100KB (base64 image + metadata overhead)
+    // Limit payload size — action text shouldn't need more than ~100KB
     const bodySize = JSON.stringify(req.body).length
     if (bodySize > 100 * 1024) {
       return res.status(413).json({ error: 'Payload too large (max 100KB)' })
@@ -284,7 +282,6 @@ router.post('/', async (req, res) => {
 
     // Create optimistic pending caw for CAW and RECAW actions
     const isRecaw = data.actionType === 3 || data.actionType === 'recaw'
-    const isRecawQuote = isRecaw && data.text && data.text.trim().length > 0
     if (data.actionType === 0 || data.actionType === 'caw' || isRecaw) { // 0=caw, 3=recaw (plain or quote)
       try {
         console.log('Creating optimistic pending caw for user:', data.senderId, 'cawonce:', data.cawonce)
@@ -396,7 +393,7 @@ router.post('/', async (req, res) => {
         }
 
         // Create pending Reply record if this is a reply (not a quote/recaw)
-        if (originalCawId && caw && !isQuote && !isRecawQuote) {
+        if (originalCawId && caw && !isQuote && !isRecaw) {
           try {
             // Check if reply already exists
             const existingReply = await prisma.reply.findUnique({
@@ -701,34 +698,6 @@ router.post('/', async (req, res) => {
       throw err
     }
     console.log(`Created TxQueue entry ${txQueueEntry.id} for action type ${data.actionType}, senderId ${data.senderId}, cawonce ${data.cawonce}`)
-
-    // Create pending OnChainImage if this is an image upload action
-    if ((data.actionType === 7 || data.actionType === 'other') && data.text?.startsWith('image64:')) {
-      try {
-        const base64Data = data.text.replace('image64:', '')
-        const imageRef = `img:${data.senderId}:${data.cawonce}`
-        const cawCost = data.amounts?.[0] ? Number(data.amounts[0]) : 0
-
-        await prisma.onChainImage.upsert({
-          where: { imageRef },
-          update: {
-            txQueueId: txQueueEntry.id
-          },
-          create: {
-            userId: data.senderId,
-            txQueueId: txQueueEntry.id,
-            imageRef,
-            cawonce: data.cawonce,
-            base64Data,
-            cawCost,
-            status: CawStatus.PENDING
-          }
-        })
-        console.log(`Created pending OnChainImage: imageRef=${imageRef}, txQueueId=${txQueueEntry.id}, cawCost=${cawCost}`)
-      } catch (imgErr) {
-        console.error('Failed to create pending OnChainImage:', imgErr)
-      }
-    }
 
     // Verify pending caw was created if this is a CAW action
     if (data.actionType === 0 || data.actionType === 'caw') {

@@ -1,5 +1,4 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { createPortal } from 'react-dom'
 import { Link } from 'react-router-dom'
 import { useSignAndSubmitAction, buildTypedData, TYPES, DOMAIN } from '../api/actions'
 import { useTokenDataStore, useActiveToken } from "~/store/tokenDataStore";
@@ -11,14 +10,11 @@ import type { CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
 import { BsWallet } from 'react-icons/bs'
 import MediaUpload from './MediaUpload'
-import type { MediaType, StorageType } from './MediaUpload'
-import { calculateOnChainCost } from '~/utils/imageUtils'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import Tooltip from '~/components/Tooltip'
 import { apiFetch } from '~/api/client'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { HiCalendar, HiClock, HiX, HiPhotograph } from 'react-icons/hi'
+import { HiCalendar, HiClock } from 'react-icons/hi'
 import MentionAutocomplete from './MentionAutocomplete'
 import GifPicker from './GifPicker'
 import HighlightedTextarea from './HighlightedTextarea'
@@ -251,8 +247,6 @@ interface PostFormProps {
 }
 
 const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
-  const postFormQc = useQueryClient()
-
   const { isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
   const hasActiveSession = useHasActiveSession();
@@ -278,22 +272,12 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   const [scheduledDate, setScheduledDate] = useState('')
   const [scheduledTime, setScheduledTime] = useState('')
   const [isScheduling, setIsScheduling] = useState(false)
-  const [isProcessingOnChain, setIsProcessingOnChain] = useState(false)
   const [showMediaUpload, setShowMediaUpload] = useState(false)
   const [showMediaOverlay, setShowMediaOverlay] = useState(false)
   const [showScheduledSuccessModal, setShowScheduledSuccessModal] = useState(false)
   const [scheduledSuccessTime, setScheduledSuccessTime] = useState<Date | null>(null)
   const [includePageIndicators, setIncludePageIndicators] = useState(true)
   const [mediaPosition, setMediaPosition] = useState<'start' | 'end'>('start')
-  const [showImageLibrary, setShowImageLibrary] = useState(false)
-  const [libraryImages, setLibraryImages] = useState<any[]>([])
-  const [libraryNextCursor, setLibraryNextCursor] = useState<number | undefined>(undefined)
-  const [libraryHasMore, setLibraryHasMore] = useState(false)
-  const [isLoadingMoreLibrary, setIsLoadingMoreLibrary] = useState(false)
-  const libraryScrollRef = useRef<HTMLDivElement>(null)
-  const [isLoadingLibrary, setIsLoadingLibrary] = useState(false)
-  const [libraryUnpostedCount, setLibraryUnpostedCount] = useState(0)
-  const [libraryTotalCount, setLibraryTotalCount] = useState(0)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const activeTokenId = useTokenDataStore(state => state.activeTokenId);
   const activeToken = useActiveToken();
@@ -315,58 +299,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   const hasNoToken = !activeToken?.tokenId;
   const canPost = !hasNoToken && (hasActiveSession || (isTokenOwner && !wrongChain && isConnected));
 
-  const handleMediaSelected = async (media: any[]) => {
-    // Check if any image was just toggled to on-chain (compare with current state)
-    const updatedMedia = await Promise.all(media.map(async (item, index) => {
-      const prevItem = selectedMedia[index]
-
-      // Check if this image was just changed to on-chain and doesn't have an uploadedRef yet
-      if (
-        item.type === 'image' &&
-        item.storageType === 'on-chain' &&
-        !item.uploadedRef &&
-        item.file &&
-        prevItem?.storageType !== 'on-chain'
-      ) {
-        // Read the file as base64 and check against library
-        try {
-          const base64 = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader()
-            reader.onload = () => resolve(reader.result as string)
-            reader.onerror = reject
-            reader.readAsDataURL(item.file)
-          })
-
-          const imageData = base64.split(',')[1] // Remove data:image/...;base64, prefix
-
-          // Check if this image already exists in user's library
-          const existingImage = libraryImages.find(img => {
-            const existingBase64 = img.base64Data.includes(',')
-              ? img.base64Data.split(',')[1]
-              : img.base64Data
-            return existingBase64 === imageData
-          })
-
-          if (existingImage) {
-            return {
-              ...item,
-              uploadedRef: existingImage.imageRef,
-              uploadStatus: 'success' as const,
-              isFromLibrary: true,
-              preview: existingImage.base64Data.startsWith('data:')
-                ? existingImage.base64Data
-                : `data:image/jpeg;base64,${existingImage.base64Data}`
-            }
-          }
-        } catch (error) {
-          // Ignore duplicate check errors
-        }
-      }
-
-      return item
-    }))
-
-    setSelectedMedia(updatedMedia)
+  const handleMediaSelected = (media: any[]) => {
+    setSelectedMedia(media)
   }
 
   const handleMediaRemoved = (index?: number) => {
@@ -576,358 +510,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     }
   }
 
-  // Fetch library counts (for showing icon and badge)
-  const effectiveTokenId = activeTokenId || activeToken?.tokenId
-  const { data: libraryCounts } = useQuery({
-    queryKey: ['libraryUnpostedCount', effectiveTokenId],
-    queryFn: () => apiFetch<{ unpostedCount: number; totalCount: number }>(
-      `/api/on-chain-images/unposted-count/${effectiveTokenId}`
-    ),
-    enabled: !!effectiveTokenId,
-  })
-
-  useEffect(() => {
-    if (libraryCounts) {
-      setLibraryUnpostedCount(libraryCounts.unpostedCount || 0)
-      setLibraryTotalCount(libraryCounts.totalCount || 0)
-    }
-  }, [libraryCounts])
-
-  // Fetch library images for duplicate detection when toggling on-chain
-  useEffect(() => {
-    fetchImageLibrary()
-  }, [activeTokenId, activeToken?.tokenId])
-
-  // Fetch on-chain images from the user's library (only SUCCESS status)
-  const fetchImageLibrary = async (cursor?: number) => {
-    const effectiveTokenId = activeTokenId || activeToken?.tokenId
-    if (!effectiveTokenId) return
-
-    const isLoadingMore = cursor !== undefined
-    if (isLoadingMore) {
-      setIsLoadingMoreLibrary(true)
-    } else {
-      setIsLoadingLibrary(true)
-    }
-
-    try {
-      const url = cursor
-        ? `/api/on-chain-images?userId=${effectiveTokenId}&status=SUCCESS&cursor=${cursor}`
-        : `/api/on-chain-images?userId=${effectiveTokenId}&status=SUCCESS`
-
-      const response = await apiFetch<{ items: any[]; nextCursor?: number; hasMore: boolean }>(url)
-
-      if (isLoadingMore) {
-        // Append to existing images
-        setLibraryImages(prev => [...prev, ...(response.items || [])])
-      } else {
-        // Replace images
-        setLibraryImages(response.items || [])
-      }
-
-      setLibraryNextCursor(response.nextCursor)
-      setLibraryHasMore(response.hasMore)
-
-      // Also refresh counts on initial load
-      if (!isLoadingMore) {
-        postFormQc.invalidateQueries({ queryKey: ['libraryUnpostedCount', effectiveTokenId] })
-      }
-    } catch (error) {
-      if (!isLoadingMore) {
-        setLibraryImages([])
-      }
-    } finally {
-      if (isLoadingMore) {
-        setIsLoadingMoreLibrary(false)
-      } else {
-        setIsLoadingLibrary(false)
-      }
-    }
-  }
-
-  // Handle scroll in library modal to load more
-  const handleLibraryScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    const target = e.target as HTMLDivElement
-    const scrolledToBottom = target.scrollHeight - target.scrollTop <= target.clientHeight + 50
-
-    if (scrolledToBottom && libraryHasMore && !isLoadingMoreLibrary && libraryNextCursor) {
-      fetchImageLibrary(libraryNextCursor)
-    }
-  }
-
-  // Ignore an image (dismiss "not posted" badge)
-  const handleIgnoreImage = async (imageId: number) => {
-    try {
-      await apiFetch(`/api/on-chain-images/${imageId}/ignore`, {
-        method: 'PATCH',
-        body: JSON.stringify({ ignored: true })
-      })
-      // Update local state
-      setLibraryImages(prev => prev.map(img =>
-        img.id === imageId ? { ...img, ignored: true } : img
-      ))
-      // Update counts
-      setLibraryUnpostedCount(prev => Math.max(0, prev - 1))
-    } catch (error) {
-      // Ignore errors
-    }
-  }
-
-  // Mark images as posted after successful submission
-  const markImagesAsPosted = async (imageRefs: string[]) => {
-    if (imageRefs.length === 0) return
-    try {
-      await apiFetch('/api/on-chain-images/mark-posted', {
-        method: 'PATCH',
-        body: JSON.stringify({ imageRefs })
-      })
-      // Refresh counts after posting
-      postFormQc.invalidateQueries({ queryKey: ['libraryUnpostedCount', effectiveTokenId] })
-    } catch (error) {
-      // Ignore errors
-    }
-  }
-
-  // Open image library modal
-  const handleOpenImageLibrary = () => {
-    setShowImageLibrary(true)
-    fetchImageLibrary()
-  }
-
-  // Select an image from the library to add to the post
-  const handleSelectLibraryImage = (image: any) => {
-    // Add the library image to selectedMedia with the uploadedRef already set
-    // This will be picked up by the submit logic and added to the final text
-    const libraryMedia = {
-      type: 'image',
-      storageType: 'on-chain',
-      uploadedRef: image.imageRef, // e.g., "img:5:33"
-      preview: image.base64Data.startsWith('data:')
-        ? image.base64Data
-        : `data:image/jpeg;base64,${image.base64Data}`,
-      isFromLibrary: true, // Flag to identify library images
-      uploadStatus: 'success' // Already uploaded
-    }
-    setSelectedMedia(prev => [...prev, libraryMedia])
-    setShowImageLibrary(false)
-  }
-
-  // Poll OnChainImage status for pending uploads
-  const pollImageStatus = async (txQueueId: number, mediaIndex: number, imageRef: string) => {
-    const maxAttempts = 60 // Poll for up to 3 minutes (60 * 3 seconds)
-    let attempts = 0
-
-    const poll = async () => {
-      try {
-        // Poll the OnChainImage status endpoint
-        const response = await apiFetch<{ id: number; imageRef: string; status: string; reason?: string }>(
-          `/api/on-chain-images/status?txId=${txQueueId}`
-        )
-
-        if (response.status === 'SUCCESS') {
-          // Update media to show success
-          setSelectedMedia(prev => prev.map((m, i) =>
-            i === mediaIndex ? { ...m, uploadStatus: 'success', uploadedRef: imageRef } : m
-          ))
-          // Increment library counts so the on-chain image icon becomes visible
-          setLibraryTotalCount(prev => prev + 1)
-          setLibraryUnpostedCount(prev => prev + 1)
-          return
-        } else if (response.status === 'FAILED') {
-          // Update media to show failure
-          setSelectedMedia(prev => prev.map((m, i) =>
-            i === mediaIndex ? { ...m, uploadStatus: 'failed', uploadedRef: undefined, failureReason: response.reason } : m
-          ))
-          return
-        }
-
-        // Still pending, poll again
-        attempts++
-        if (attempts < maxAttempts) {
-          setTimeout(poll, 3000) // Poll every 3 seconds
-        }
-      } catch (error: any) {
-        // If 404, the record might not exist yet, keep polling
-        if (error?.status === 404) {
-          attempts++
-          if (attempts < maxAttempts) {
-            setTimeout(poll, 3000) // Poll every 3 seconds
-          }
-          return
-        }
-        // On error, keep polling
-        attempts++
-        if (attempts < maxAttempts) {
-          setTimeout(poll, 3000) // Poll every 3 seconds
-        }
-      }
-    }
-
-    poll()
-  }
-
-  // Upload on-chain images to blockchain (signs and submits each image)
-  const handleUploadOnChain = async () => {
-    const onChainImages = selectedMedia.filter(m => m.type === 'image' && m.storageType === 'on-chain' && !m.uploadedRef && m.uploadStatus !== 'pending')
-
-    if (onChainImages.length === 0) return
-
-    const effectiveTokenId = activeTokenId || activeToken?.tokenId
-    if (!effectiveTokenId) return
-
-    // Fetch latest library images to check for duplicates
-    let currentLibraryImages = libraryImages
-    if (currentLibraryImages.length === 0) {
-      try {
-        const response = await apiFetch<{ items: any[] }>(
-          `/api/on-chain-images?userId=${effectiveTokenId}&status=SUCCESS`
-        )
-        currentLibraryImages = response.items || []
-        setLibraryImages(currentLibraryImages)
-      } catch (error) {
-        // Ignore errors
-      }
-    }
-
-    setIsProcessingOnChain(true)
-
-    try {
-      // Process images sequentially (not in parallel) to ensure each gets a unique cawonce
-      // When using Promise.all, all images would read the same stale cawonce value
-
-      // Get indices of images that need to be uploaded
-      const indicesToProcess = selectedMedia
-        .map((media, index) => ({ media, index }))
-        .filter(({ media }) =>
-          media.type === 'image' &&
-          media.storageType === 'on-chain' &&
-          !media.uploadedRef &&
-          media.uploadStatus !== 'pending'
-        )
-        .map(({ index }) => index)
-
-      for (const index of indicesToProcess) {
-        // Read current state fresh each iteration
-        const currentMedia = selectedMedia[index]
-
-        // Read file as base64
-        const base64 = await new Promise<string>((resolve) => {
-          const reader = new FileReader()
-          reader.onloadend = () => resolve(reader.result as string)
-          reader.readAsDataURL(currentMedia.file)
-        })
-
-        const imageData = base64.split(',')[1] // Remove data:image/...;base64, prefix
-
-        // Check if this image already exists in user's library (compare base64)
-        const existingImage = currentLibraryImages.find(img => {
-          const existingBase64 = img.base64Data.includes(',')
-            ? img.base64Data.split(',')[1]
-            : img.base64Data
-          return existingBase64 === imageData
-        })
-
-        if (existingImage) {
-          // Update the media with the existing reference - no need to upload again
-          setSelectedMedia(prev => prev.map((m, i) =>
-            i === index ? {
-              ...m,
-              uploadedRef: existingImage.imageRef,
-              uploadStatus: 'success' as const,
-              isFromLibrary: true,
-              preview: existingImage.base64Data.startsWith('data:')
-                ? existingImage.base64Data
-                : `data:image/jpeg;base64,${existingImage.base64Data}`
-            } : m
-          ))
-          continue
-        }
-
-        // Calculate cost from base64 length to match backend exactly
-        const estimatedOriginalSize = Math.ceil((imageData.length * 3) / 4)
-        const cawCost = calculateOnChainCost(estimatedOriginalSize)
-
-        // Capture the cawonce BEFORE signing - read fresh from store each time
-        // activeToken is a stale hook value, so we must read from getState() directly
-        // The store uses tokensByAddress: Record<Address, TokenData[]>, not tokens
-        const preSignState = useTokenDataStore.getState()
-        const allTokens = Object.values(preSignState.tokensByAddress).flat()
-        const preSignToken = allTokens.find(t => t.tokenId === effectiveTokenId)
-        const cawonceForThisImage = preSignToken?.cawonce ?? 0
-        const imageRef = `img:${effectiveTokenId}:${cawonceForThisImage}`
-
-        // Sign and submit the image as an OTHER action
-        let response
-        try {
-          response = await signAndSubmit({
-            actionType: 'other',
-            senderId: effectiveTokenId,
-            text: `image64:${imageData}`,
-            amounts: [BigInt(cawCost)]
-          })
-        } catch (signError: any) {
-          // User rejected signature or other error - skip this image but continue with others
-          continue
-        }
-
-        if (!response) continue
-
-        // Note: signAndSubmit already bumps cawonce internally, so the next loop iteration
-        // will read the updated cawonce from the store
-
-        // OnChainImage record is now created server-side by POST /api/actions
-        if (response.txQueueId) {
-          // Start polling for image status
-          pollImageStatus(response.txQueueId, index, imageRef)
-        }
-
-        // Update state immediately after each image is processed
-        setSelectedMedia(prev => prev.map((m, i) =>
-          i === index ? {
-            ...m,
-            processedBase64: imageData,
-            processedCost: cawCost,
-            uploadStatus: 'pending' as const,
-            txQueueId: response.txQueueId,
-            pendingImageRef: imageRef // Store ref for when tx succeeds
-          } : m
-        ))
-      }
-    } catch (error) {
-      // Ignore errors
-    } finally {
-      setIsProcessingOnChain(false)
-    }
-  }
-
-  // Check if there are on-chain images that need to be uploaded (includes failed ones for retry)
-  const hasUnuploadedOnChainImages = selectedMedia.some(
-    m => m.type === 'image' && m.storageType === 'on-chain' && !m.uploadedRef && m.uploadStatus !== 'pending'
-  )
-
-  // Check if there are pending uploads (tx submitted but not confirmed)
-  const hasPendingUploads = selectedMedia.some(
-    m => m.type === 'image' && m.uploadStatus === 'pending'
-  )
-
-  // Check if there are failed uploads
-  const hasFailedUploads = selectedMedia.some(
-    m => m.type === 'image' && m.uploadStatus === 'failed'
-  )
-
-  // Retry failed uploads - clears failed state and re-triggers upload
-  const handleRetryFailedUploads = async () => {
-    // Clear failed state first
-    setSelectedMedia(prev => prev.map(m =>
-      m.uploadStatus === 'failed'
-        ? { ...m, uploadStatus: undefined, txQueueId: undefined, processedCost: undefined }
-        : m
-    ))
-    // Wait a tick for state to update, then trigger upload
-    setTimeout(() => {
-      handleUploadOnChain()
-    }, 100)
-  }
 
   const handleSubmit = async () => {
     // Get effective token ID with fallback
@@ -944,22 +526,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       try {
         const scheduledAt = new Date(`${scheduledDate}T${scheduledTime}`)
 
-        // Prepare image data if any
-        let imageData = null
-        const images = selectedMedia.filter(m => m.type === 'image')
-        if (images.length > 0) {
-          // For scheduled posts, only support on-chain images
-          const onChainImages = images.filter(img => img.storageType === 'on-chain')
-          if (onChainImages.length > 0) {
-            imageData = onChainImages.map(img => img.content).join('|||')
-          }
-        }
-
-        // Build the post content (same as regular posts)
+        // Build the post content
         let finalText = text
-        if (imageData) {
-          finalText = text + '\n' + imageData.split('|||').map((img: string) => `image64:${img}`).join('\n')
-        }
 
         // Handle GIFs (already have URLs from Giphy)
         const gifs = selectedMedia.filter(m => m.type === 'gif')
@@ -999,7 +567,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           body: JSON.stringify({
             content: text,
             scheduledAt: scheduledAt.toISOString(),
-            imageData,
             // Include signed action data for later processing
             signedAction: {
               data: message,
@@ -1046,7 +613,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     // Separate media by type for uploading
     const offChainImages = selectedMedia
       .map((m, i) => ({ media: m, index: i }))
-      .filter(({ media }) => media.type === 'image' && media.storageType !== 'on-chain')
+      .filter(({ media }) => media.type === 'image')
     const videos = selectedMedia
       .map((m, i) => ({ media: m, index: i }))
       .filter(({ media }) => media.type === 'video')
@@ -1095,15 +662,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     selectedMedia.forEach((media, index) => {
       let url: string | undefined
       if (media.type === 'image') {
-        if (media.storageType === 'on-chain') {
-          // On-chain image - use the uploadedRef
-          if ((media as any).uploadedRef) {
-            url = `[${(media as any).uploadedRef}]`
-          }
-        } else {
-          // Off-chain image - use the uploaded URL
-          url = uploadedUrls.get(index)
-        }
+        url = uploadedUrls.get(index)
       } else if (media.type === 'video') {
         // Video - use the uploaded URL (already has video: prefix)
         url = uploadedUrls.get(index)
@@ -1128,7 +687,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       }
     }
 
-    // Shorten any URLs in the text (including GIF URLs, but not on-chain refs)
+    // Shorten any URLs in the text (including GIF URLs)
     finalText = await shortenUrlsInText(finalText)
 
     // effectiveTokenId is already defined at the start of handleSubmit
@@ -1364,14 +923,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       }
     }
 
-    // Mark any library images (from on-chain library) as posted
-    const libraryImageRefs = selectedMedia
-      .filter(m => m.type === 'image' && m.storageType === 'on-chain' && m.uploadedRef && m.isFromLibrary)
-      .map(m => m.uploadedRef)
-    if (libraryImageRefs.length > 0) {
-      markImagesAsPosted(libraryImageRefs)
-    }
-
     // Reset form
     setText('')
     setSelectedMedia([])
@@ -1388,14 +939,10 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   // Calculate total media URL character cost
   const getMediaCharCost = () => {
     let mediaCost = 0
-    const offChainImages = selectedMedia.filter(m => m.type === 'image' && m.storageType !== 'on-chain')
+    const images = selectedMedia.filter(m => m.type === 'image')
     const videos = selectedMedia.filter(m => m.type === 'video')
     const gifs = selectedMedia.filter(m => m.type === 'gif')
-    const onChainWithRef = selectedMedia.filter(m => m.type === 'image' && m.storageType === 'on-chain' && m.uploadedRef)
-    onChainWithRef.forEach(img => {
-      mediaCost += `[${img.uploadedRef}] `.length
-    })
-    mediaCost += offChainImages.length * 80
+    mediaCost += images.length * 80
     mediaCost += videos.length * 90
     mediaCost += gifs.length * 100
     return mediaCost
@@ -1569,25 +1116,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                 GIF
               </button>
 
-              {/* Image Library (On-Chain) - only show if user has uploaded images */}
-              {libraryTotalCount > 0 && (
-                <div className="relative">
-                  <button
-                    onClick={handleOpenImageLibrary}
-                    className={`p-1 rounded-full transition-all duration-200 cursor-pointer hover:bg-yellow-400/10`}
-                    title="Previously uploaded on-chain images"
-                  >
-                    <img src="/icons/on-chain-images.svg" alt="On-chain images" className="w-[27px] h-[27px] min-w-[27px] opacity-85 hover:opacity-100 transition-opacity translate-y-[3px]" />
-                  </button>
-                  {/* Unposted badge */}
-                  {libraryUnpostedCount > 0 && (
-                    <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] px-0.5 flex items-center justify-center bg-red-500 text-white text-[9px] font-bold rounded-full">
-                      {libraryUnpostedCount}
-                    </span>
-                  )}
-                </div>
-              )}
-
               {/* Emoji Picker */}
               <button
                 onClick={() => setShowEmojiPicker(!showEmojiPicker)}
@@ -1628,15 +1156,15 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               </Link>
             ) : (() => {
                 const wrongWallet = !isTokenOwner && !hasActiveSession && activeToken?.tokenId
-                const tooltipText = wrongWallet ? 'Please switch to the correct wallet' : hasPendingUploads ? 'Waiting for upload to confirm...' : isSubmitting ? (isThreadMode ? 'Waiting for signatures...' : 'Waiting for signature...') : ''
-                const isDisabled = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isProcessingOnChain || hasPendingUploads || isSubmitting
+                const tooltipText = wrongWallet ? 'Please switch to the correct wallet' : isSubmitting ? (isThreadMode ? 'Waiting for signatures...' : 'Waiting for signature...') : ''
+                const isDisabled = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isSubmitting
                 const btn = (
                   <button
                     className="px-3 py-1.5 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer"
                     disabled={isDisabled}
-                    onClick={hasFailedUploads ? handleRetryFailedUploads : hasUnuploadedOnChainImages ? handleUploadOnChain : handleSubmit}
+                    onClick={handleSubmit}
                   >
-                    {wrongWallet ? 'Wrong Wallet' : isSubmitting ? 'Signing...' : isProcessingOnChain ? 'Uploading...' : hasPendingUploads ? 'Pending...' : hasFailedUploads ? 'Retry' : hasUnuploadedOnChainImages ? 'Upload' : isThreadMode ? `Thread (${chunkCount})` : replyTo ? 'Reply' : 'Post'}
+                    {wrongWallet ? 'Wrong Wallet' : isSubmitting ? 'Signing...' : isThreadMode ? `Thread (${chunkCount})` : replyTo ? 'Reply' : 'Post'}
                   </button>
                 )
                 return tooltipText ? <Tooltip text={tooltipText}>{btn}</Tooltip> : btn
@@ -1698,7 +1226,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               onMediaSelected={handleMediaSelected}
               onMediaRemoved={handleMediaRemoved}
               selectedMedia={selectedMedia}
-              isProcessingOnChain={isProcessingOnChain}
+
               className=""
             />
           </div>
@@ -1795,25 +1323,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               onMediaSelected={handleMediaSelected}
               onMediaRemoved={handleMediaRemoved}
               selectedMedia={selectedMedia}
-              isProcessingOnChain={isProcessingOnChain}
+
               className=""
             />
-          </div>
-        )}
-
-        {/* On-chain info message */}
-        {selectedMedia.some(m => m.type === 'image' && m.storageType === 'on-chain') && (
-          <div className={`mt-3 p-3 rounded-lg flex items-start gap-2 ${
-            isDark ? 'bg-yellow-500/10 border border-yellow-500/30' : 'bg-yellow-50 border border-yellow-200'
-          }`}>
-            <svg className="w-4 h-4 mt-0.5 flex-shrink-0 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <p className={`text-xs ${isDark ? 'text-yellow-200' : 'text-yellow-800'}`}>
-              On-chain images are stored permanently on the blockchain and will live forever.
-              <br/>
-              This costs CAW tokens to upload.
-            </p>
           </div>
         )}
 
@@ -1940,25 +1452,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               <span className="text-base font-medium">GIF</span>
             </button>
 
-            {/* Image Library (On-Chain) - only show if user has uploaded images */}
-            {libraryTotalCount > 0 && (
-              <div className="relative">
-                <button
-                  onClick={handleOpenImageLibrary}
-                  className={`p-2 rounded-full transition-all duration-200 cursor-pointer hover:bg-yellow-400/10`}
-                  title="Previously uploaded on-chain images"
-                >
-                  <img src="/icons/on-chain-images.svg" alt="On-chain images" className="w-[27px] h-[27px] min-w-[27px] opacity-85 hover:opacity-100 transition-opacity translate-y-[3px]" />
-                </button>
-                {/* Unposted badge */}
-                {libraryUnpostedCount > 0 && (
-                  <span className="absolute -top-0.5 -right-0.5 min-w-[14px] h-[14px] px-0.5 flex items-center justify-center bg-red-500 text-white text-[9px] font-bold rounded-full">
-                    {libraryUnpostedCount}
-                  </span>
-                )}
-              </div>
-            )}
-
             {/* Emoji Picker */}
             <button
               onClick={() => setShowEmojiPicker(!showEmojiPicker)}
@@ -2033,15 +1526,15 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             </button>
           ) : (() => {
                 const wrongWallet2 = !isTokenOwner && !hasActiveSession && activeToken?.tokenId
-                const tooltipText2 = wrongWallet2 ? 'Please switch to the correct wallet' : hasNoToken ? '' : hasPendingUploads ? 'Waiting for upload to confirm...' : isSubmitting ? (isThreadMode ? 'Waiting for signatures...' : 'Waiting for signature...') : ''
-                const isDisabled2 = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isProcessingOnChain || hasPendingUploads || isSubmitting
+                const tooltipText2 = wrongWallet2 ? 'Please switch to the correct wallet' : hasNoToken ? '' : isSubmitting ? (isThreadMode ? 'Waiting for signatures...' : 'Waiting for signature...') : ''
+                const isDisabled2 = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isSubmitting
                 const btn2 = (
                   <button
                     className="px-5 py-2 bg-yellow-500 text-black font-semibold text-base rounded-full hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer"
                     disabled={isDisabled2}
-                    onClick={hasFailedUploads ? handleRetryFailedUploads : hasUnuploadedOnChainImages ? handleUploadOnChain : handleSubmit}
+                    onClick={handleSubmit}
                   >
-                    {wrongWallet2 ? 'Wrong Wallet' : hasNoToken ? 'Create Account' : isSubmitting ? 'Signing...' : isProcessingOnChain ? 'Uploading...' : hasPendingUploads ? 'Pending...' : hasFailedUploads ? 'Retry' : hasUnuploadedOnChainImages ? 'Upload' : isThreadMode ? `Thread (${chunkCount})` : replyTo ? 'Reply' : 'Post'}
+                    {wrongWallet2 ? 'Wrong Wallet' : hasNoToken ? 'Create Account' : isSubmitting ? 'Signing...' : isThreadMode ? `Thread (${chunkCount})` : replyTo ? 'Reply' : 'Post'}
                   </button>
                 )
                 return tooltipText2 ? <Tooltip text={tooltipText2}>{btn2}</Tooltip> : btn2
@@ -2088,128 +1581,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           </div>
         )}
       </div>
-
-      {/* Image Library Modal */}
-      {showImageLibrary && createPortal(
-        <>
-          {/* Backdrop */}
-          <div
-            className="fixed inset-0 bg-black/60 z-[80]"
-            onClick={() => setShowImageLibrary(false)}
-          />
-
-          {/* Modal */}
-          <div className="fixed z-[90] top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-full max-w-md mx-4 rounded-xl shadow-2xl border bg-black border-yellow-500/30">
-            {/* Header */}
-            <div className="flex items-center justify-between px-4 py-3">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-full bg-yellow-500/20">
-                  <img src="/icons/on-chain-images.svg" alt="On-chain images" className="w-5 h-5" />
-                </div>
-                <h3 className="text-lg font-semibold text-white">
-                  On-Chain Images
-                </h3>
-              </div>
-              <button
-                onClick={() => setShowImageLibrary(false)}
-                className="p-1 rounded-full transition-colors text-white/60 hover:text-white hover:bg-white/10"
-              >
-                <HiX className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Content */}
-            <div className="px-4 pb-4">
-              <p className="text-sm mb-4 text-white/70">
-                Select a previously uploaded on-chain image to include in your post.
-              </p>
-
-              <div
-                ref={libraryScrollRef}
-                onScroll={handleLibraryScroll}
-                className="max-h-64 overflow-y-auto rounded-lg border border-yellow-500/20 bg-black/50 p-2">
-                {isLoadingLibrary ? (
-                  <div className="flex items-center justify-center py-8">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yellow-500"></div>
-                  </div>
-                ) : libraryImages.length === 0 ? (
-                  <div className="text-center py-8 text-white/50">
-                    <HiPhotograph className="mx-auto h-10 w-10 mb-3 opacity-50" />
-                    <p className="text-sm">No on-chain images found</p>
-                    <p className="text-xs mt-1 text-white/40">Upload images with "On-Chain" enabled to see them here</p>
-                  </div>
-                ) : (
-                  <>
-                    <div className="grid grid-cols-3 gap-2">
-                      {libraryImages.map((image) => {
-                        const isUnposted = !image.postedAt && !image.ignored
-                        return (
-                          <div key={image.imageRef} className="relative">
-                            <button
-                              onClick={() => handleSelectLibraryImage(image)}
-                              className="relative aspect-square rounded-lg overflow-hidden border-2 border-transparent hover:border-yellow-500 transition-all hover:scale-105 group w-full"
-                            >
-                              <img
-                                src={image.base64Data.startsWith('data:') ? image.base64Data : `data:image/jpeg;base64,${image.base64Data}`}
-                                alt="On-chain image"
-                                className="w-full h-full object-cover"
-                              />
-                              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center">
-                                <span className="opacity-0 group-hover:opacity-100 text-white text-xs font-medium bg-yellow-500 px-2 py-1 rounded transition-opacity">
-                                  Select
-                                </span>
-                              </div>
-                            </button>
-                            {/* Not Posted badge with dismiss X - bottom center */}
-                            {isUnposted && (
-                              <div className="absolute bottom-2.5 left-1/2 -translate-x-1/2">
-                                <span className="bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded inline-flex items-center gap-1 whitespace-nowrap">
-                                  Not Posted
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      handleIgnoreImage(image.id)
-                                    }}
-                                    className="hover:bg-red-600 rounded-sm transition-colors"
-                                    title="Dismiss"
-                                  >
-                                    <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
-                                    </svg>
-                                  </button>
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                        )
-                      })}
-                    </div>
-                    {/* Loading more indicator */}
-                    {isLoadingMoreLibrary && (
-                      <div className="flex items-center justify-center py-3">
-                        <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-yellow-500"></div>
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-
-              <p className="text-xs mt-3 text-white/40">
-                These images are stored permanently on the blockchain.
-              </p>
-
-              {/* Close button */}
-              <button
-                onClick={() => setShowImageLibrary(false)}
-                className="w-full mt-4 py-2.5 px-4 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition-colors"
-              >
-                Close
-              </button>
-            </div>
-          </div>
-        </>,
-        document.body
-      )}
 
       {/* Scheduled Post Success Modal */}
       {showScheduledSuccessModal && (

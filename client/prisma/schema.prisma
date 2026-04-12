@@ -59,7 +59,6 @@ model User {
   notificationsReceived Notification[] @relation("NotificationRecipient")
   scheduledCaws         ScheduledCaw[]
   dmIdentity            DmIdentity?
-  onChainImages         OnChainImage[]
   tipsSent              Tip[]          @relation("TipsSent")
   tipsReceived          Tip[]          @relation("TipsReceived")
   blocksGiven           Block[]        @relation("BlocksGiven")
@@ -401,29 +400,6 @@ model ShortUrl {
 
   @@index([code])
   @@index([originalUrl])
-}
-
-model OnChainImage {
-  id          Int       @id @default(autoincrement())
-  userId      Int
-  txQueueId   Int?
-  imageRef    String    @unique // Format: img:senderId:cawonce
-  cawonce     Int
-  base64Data  String    @db.Text // The actual image data
-  status      CawStatus @default(PENDING)
-  cawCost     Int       // CAW tokens paid for upload
-  reason      String?   // Failure reason if status is FAILED
-  postedAt    DateTime? // When this image was first used in a post
-  ignored     Boolean   @default(false) // User dismissed the "not posted" badge
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
-  user        User      @relation(fields: [userId], references: [tokenId], onDelete: Cascade)
-
-  @@unique([userId, cawonce])
-  @@index([userId, status])
-  @@index([userId, postedAt, ignored])
-  @@index([status])
-  @@index([createdAt])
 }
 
 model Tip {

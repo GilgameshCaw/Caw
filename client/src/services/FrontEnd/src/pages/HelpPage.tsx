@@ -200,10 +200,6 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
       answer: "Every action you take on CAW is automatically archived to multiple blockchain networks via LayerZero cross-chain messaging. Even if one network were to censor your content, the data remains permanently accessible on archive chains like Arbitrum."
     },
     {
-      question: "What happens to on-chain images?",
-      answer: "Images stored on-chain are included in the archive. The cost of storing images includes both the L2 storage fee and the cross-chain archiving fee, ensuring your visual content is preserved across networks."
-    },
-    {
       question: "What happens if the storage chain goes away?",
       answer: "Your data is automatically archived to multiple blockchain networks via LayerZero cross-chain messaging. Even if one storage chain were to go offline or censor content, the data remains permanently accessible on other archive chains like Arbitrum. As long as at least one archive chain remains accessible, your complete history of actions can be reconstructed from the blockchain events."
     }

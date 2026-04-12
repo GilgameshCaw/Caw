@@ -7,45 +7,11 @@ import { useCachedFetch } from '~/hooks/useCachedFetch'
 
 // Caches
 const shortUrlCache = new Map<string, string | null>()
-const onChainImageCache = new Map<string, string | null>()
 
 // Shared loading skeleton
 const MediaSkeleton = () => (
   <div className="my-2 max-w-full h-48 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse" />
 )
-
-// Component to render on-chain images
-const OnChainImage: React.FC<{
-  imageRef: string
-  onError: (ref: string) => void
-  imageErrors: Set<string>
-}> = ({ imageRef, onError, imageErrors }) => {
-  const { url: imageData, loading } = useCachedFetch(
-    imageRef,
-    onChainImageCache,
-    `/api/on-chain-images/ref/${imageRef}`,
-    (data: { base64Data: string }) => {
-      const base64 = data.base64Data
-      return base64.startsWith('data:') ? base64 : `data:image/jpeg;base64,${base64}`
-    }
-  )
-
-  if (loading) return <MediaSkeleton />
-  if (!imageData || imageErrors.has(imageRef)) return null
-
-  return (
-    <div className="my-2 max-w-full">
-      <img
-        src={imageData}
-        alt="On-chain image"
-        className="max-w-full max-h-96 rounded-lg object-contain"
-        loading="lazy"
-        onError={() => onError(imageRef)}
-        onClick={(e) => e.stopPropagation()}
-      />
-    </div>
-  )
-}
 
 // Component to render short URL images
 const ShortUrlImage: React.FC<{
@@ -120,9 +86,6 @@ const IMAGE_URL_REGEX = /https?:\/\/[^\s]+\.(?:gif|jpg|jpeg|png|webp)(?:\?[^\s]*
 // Regex to match short URLs - both relative (/s/code) and absolute (https://domain.com/s/code)
 // Supports optional file extensions like .gif, .jpg, etc.
 const SHORT_URL_REGEX = /^(?:https?:\/\/[^\/]+)?\/s\/([a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)?)$/
-
-// Regex to match on-chain image references [img:userId:cawonce]
-const ON_CHAIN_IMAGE_REGEX = /\[img:(\d+):(\d+)\]/g
 
 /**
  * Component that renders text content with clickable hashtags and embedded images/GIFs
@@ -234,10 +197,8 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
   const parseContent = (text: string) => {
     // Extract all media in a single pass to preserve order
     // Each match includes its position so we can sort by original order
-    const mediaMatches: { type: 'onchain' | 'image' | 'shortImage' | 'shortVideo'; data: string; code?: string; position: number }[] = []
+    const mediaMatches: { type: 'image' | 'shortImage' | 'shortVideo'; data: string; code?: string; position: number }[] = []
 
-    // Pattern for on-chain images [img:userId:cawonce]
-    const onChainPattern = /\[img:(\d+):(\d+)\]/g
     // Pattern for short URLs with extensions (e.g., /s/abc123.png, /s/abc123.mov)
     const shortUrlWithExtPattern = /(?:https?:\/\/[^\s]+)?\/s\/([a-zA-Z0-9]+\.(gif|jpg|jpeg|png|webp|mp4|webm|mov))/g
     // Pattern for direct image URLs
@@ -245,15 +206,6 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
 
     // Find all matches with their positions
     let match: RegExpExecArray | null
-
-    // On-chain images
-    while ((match = onChainPattern.exec(text)) !== null) {
-      mediaMatches.push({
-        type: 'onchain',
-        data: `img:${match[1]}:${match[2]}`,
-        position: match.index
-      })
-    }
 
     // Short URLs with media extensions (images and videos)
     while ((match = shortUrlWithExtPattern.exec(text)) !== null) {
@@ -283,7 +235,6 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
 
     // Remove all media from text
     let processedText = text
-      .replace(onChainPattern, '')
       .replace(shortUrlWithExtPattern, '')
       .replace(imageUrlPattern, (match) => match.includes('/s/') ? match : '')
 
@@ -341,16 +292,7 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
 
     // Render all media in order (sorted by original position in text)
     mediaMatches.forEach((media, idx) => {
-      if (media.type === 'onchain') {
-        result.push(
-          <OnChainImage
-            key={`onchain-${idx}-${media.data}`}
-            imageRef={media.data}
-            onError={handleImageError}
-            imageErrors={imageErrors}
-          />
-        )
-      } else if (media.type === 'shortImage' && media.code) {
+      if (media.type === 'shortImage' && media.code) {
         result.push(
           <ShortUrlImage
             key={`shortimg-${idx}`}

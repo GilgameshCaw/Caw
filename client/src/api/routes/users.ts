@@ -1046,53 +1046,6 @@ router.get('/search/:query', async (req, res) => {
 })
 
 /**
- * GET /api/users/:tokenId/on-chain-images
- * Get all on-chain images uploaded by a user
- */
-router.get('/:tokenId/on-chain-images', async (req, res) => {
-  try {
-    const tokenId = Number(req.params.tokenId)
-
-    if (!tokenId || isNaN(tokenId)) {
-      return res.status(400).json({ error: 'Valid tokenId is required' })
-    }
-
-    // Find all OTHER actions from this user that contain image64 data
-    const actions = await prisma.action.findMany({
-      where: {
-        senderId: tokenId,
-        actionType: ActionType.OTHER
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 50 // Limit to most recent 50
-    })
-
-    // Extract images from actions
-    const images = actions
-      .map(action => {
-        const data = action.data as any
-        const text = data?.text || ''
-        const match = text.match(/image64:([^\n]+)/)
-        if (!match) return null
-
-        return {
-          ref: `img:${action.senderId}:${action.cawonce}`,
-          senderId: action.senderId,
-          cawonce: action.cawonce,
-          base64: match[1],
-          createdAt: action.createdAt
-        }
-      })
-      .filter(Boolean)
-
-    return res.json({ images })
-  } catch (err: any) {
-    console.error('GET /api/users/:tokenId/on-chain-images error', err)
-    return res.status(500).json({ error: 'Internal server error' })
-  }
-})
-
-/**
  * PATCH /api/users/:username
  * Update user fields (lastStakedAt and pendingDepositAmount for LayerZero tracking)
  */

@@ -21,7 +21,6 @@ export const SUPPORTED_FORMATS = ['image/jpeg', 'image/jpg', 'image/png', 'image
 
 // Size limits
 export const SIZE_LIMITS = {
-  ON_CHAIN_MAX: 50 * 1024, // 50KB for on-chain storage
   OFF_CHAIN_MAX: 10 * 1024 * 1024, // 10MB for off-chain storage
 }
 
@@ -170,102 +169,6 @@ export async function createImageFile(file: File): Promise<ImageFile> {
 }
 
 /**
- * Calculate archive cost for cross-chain replication
- * LayerZero message fees for archiving data to censorship-resistant chains
- */
-export function calculateArchiveCost(sizeInBytes: number, archiveChainCount: number = 1): number {
-  if (archiveChainCount === 0) return 0
-
-  // LayerZero costs are primarily based on:
-  // - Base fee per message (~0.0001 ETH on testnet, ~0.0005 ETH on mainnet)
-  // - DVN (Data Verification Network) fees
-  // - Executor gas on destination chain
-  //
-  // The archive contract only emits events, so execution gas is minimal (~50k gas)
-  // Main cost is the cross-chain messaging fee
-
-  const BASE_LZ_FEE_GWEI = 500000 // ~0.0005 ETH base fee per chain
-  const GAS_PER_BYTE = 16 // Calldata cost on destination
-  const ARCHIVE_GAS_LIMIT = 50000 // Gas for event emission
-
-  // Calculate per-chain cost
-  const dataGas = sizeInBytes * GAS_PER_BYTE
-  const totalGasPerChain = ARCHIVE_GAS_LIMIT + Math.min(dataGas, 100000) // Cap data gas contribution
-
-  // Cost in gwei (destination chain gas + LZ overhead)
-  const gasPrice = 5 // Conservative average gwei
-  const executionCost = totalGasPerChain * gasPrice
-  const perChainCostGwei = BASE_LZ_FEE_GWEI + executionCost
-
-  // Convert to CAW (1 gwei = 0.03 CAW at assumed rates)
-  const cawPerGwei = 0.03
-  const perChainCostCaw = Math.ceil(perChainCostGwei * cawPerGwei)
-
-  // Total cost for all archive chains
-  const totalArchiveCost = perChainCostCaw * archiveChainCount
-
-  // Add 50% buffer for fee volatility
-  return Math.ceil(totalArchiveCost * 1.5)
-}
-
-/**
- * Calculate on-chain storage cost in CAW tokens
- * Based on Base chain gas costs for data storage
- *
- * @param sizeInBytes - Size of data to store
- * @param archiveChainCount - Number of archive chains (0 to disable archive cost)
- */
-export function calculateOnChainCost(sizeInBytes: number, archiveChainCount: number = 1): number {
-  // Base chain storage costs (2025 data):
-  // - Each non-zero calldata byte costs 16 gas (post EIP-2028)
-  // - Base64 encoded images are mostly non-zero bytes
-  // - Base chain has both L2 execution cost and L1 data posting cost
-  // - L1 data fee is the primary cost component (~10 gwei per byte on Base)
-  // - Validator needs compensation for gas + operational costs
-
-  const MIN_CAW_COST = 500 // Minimum 500 CAW for any on-chain storage
-
-  // Gas calculation for L1 data posting (primary cost on Base L2)
-  const l1GasPerByte = 16 // Gas per non-zero byte for L1 calldata
-  const l1DataGas = sizeInBytes * l1GasPerByte
-
-  // L2 execution gas (smaller component but still relevant)
-  const l2ExecutionGas = sizeInBytes * 3 // Approximate L2 processing per byte
-
-  // Total gas consumption
-  const totalGas = l1DataGas + l2ExecutionGas
-
-  // Cost conversion
-  // Base chain typical gas price: 0.036 gwei for L2, ~10 gwei weighted for L1 data
-  // Using weighted average since L1 data dominates the cost
-  const effectiveGasPrice = 8 // Weighted average in gwei
-
-  // CAW token economics (assumed rates - should be fetched live in production)
-  // If 1 ETH = 30,000,000 CAW
-  // Then 1 gwei = 0.03 CAW
-  const cawPerGwei = 0.03
-
-  // Calculate base cost
-  const baseCost = Math.ceil(totalGas * effectiveGasPrice * cawPerGwei)
-
-  // Add 150% markup for validator compensation
-  // This covers: gas volatility (can spike 2-3x), operational costs, and profit margin
-  // Better to overestimate than have transactions fail - unused CAW is not charged
-  const l2Cost = Math.ceil(baseCost * 2.5)
-
-  // Add archive costs for cross-chain replication
-  const archiveCost = calculateArchiveCost(sizeInBytes, archiveChainCount)
-
-  // Total cost = L2 storage + archive replication
-  const totalCost = l2Cost + archiveCost
-
-  // For small images, ensure minimum viable compensation
-  // For a 10KB image: ~2400 CAW (L2) + ~750 CAW (archive) = ~3150 CAW
-  // For a 50KB image: ~12000 CAW (L2) + ~1000 CAW (archive) = ~13000 CAW
-  return Math.max(MIN_CAW_COST, totalCost)
-}
-
-/**
  * Get optimal compression settings for target size
  */
 export function getOptimalCompression(currentSize: number, targetSize: number): ImageUploadOptions {
@@ -282,29 +185,3 @@ export function getOptimalCompression(currentSize: number, targetSize: number): 
   }
 }
 
-/**
- * Auto-compress image to fit on-chain storage limit
- */
-export async function optimizeForOnChain(file: File): Promise<{ success: boolean; file?: File; base64?: string; error?: string }> {
-  if (file.size <= SIZE_LIMITS.ON_CHAIN_MAX) {
-    const base64 = await fileToBase64(file)
-    return { success: true, file, base64 }
-  }
-
-  const options = getOptimalCompression(file.size, SIZE_LIMITS.ON_CHAIN_MAX)
-
-  try {
-    const compressed = await compressImage(file, options)
-
-    if (compressed.file.size <= SIZE_LIMITS.ON_CHAIN_MAX) {
-      return { success: true, file: compressed.file, base64: compressed.base64 }
-    } else {
-      return {
-        success: false,
-        error: `Image too large for on-chain storage. Even after compression, size is ${Math.round(compressed.file.size / 1024)}KB (limit: ${SIZE_LIMITS.ON_CHAIN_MAX / 1024}KB)`
-      }
-    }
-  } catch (error) {
-    return { success: false, error: 'Failed to compress image' }
-  }
-}
