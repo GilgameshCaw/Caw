@@ -601,7 +601,7 @@ const LINKING_STEPS = [
       const LZ_ENDPOINT = CHAINS[chainKey].lzEndpoint;
       const replicator = state.addresses.CawActionsReplicator_L2;
       const destEid = CHAINS[chainConfig.env + 'L2b'].lzEid;
-      const MAX_MESSAGE_SIZE = 200000; // 200KB — fits worst-case 256 actions with 420-char text
+      const MAX_MESSAGE_SIZE = 300000; // 300KB — fits worst-case 256 actions with 420-char text + recipients arrays
       const EXECUTOR_CONFIG_TYPE = 1;
 
       const endpointAbi = [

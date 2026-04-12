@@ -135,6 +135,10 @@ contract CawActions is Ownable {
     uint256 numRecipients = action.recipients.length;
     uint256 numAmounts = action.amounts.length;
 
+    // Bound array sizes to keep replication payload predictable.
+    // 10 recipients is generous for any current use case (tips, multi-send).
+    require(numRecipients <= 10, "Too many recipients");
+
     if (numAmounts != numRecipients)
       require(numAmounts == numRecipients + 1, "Amounts and recipients mismatch");
 

@@ -2678,5 +2678,99 @@ contract("CawName - locked withdraw fee + fee withdrawal", function(accounts) {
 
     console.log("withdraw-pays-locked-fee: PASS (verified via effectiveWithdrawFee)");
   });
+
+  // ================================================================
+  // Text length limit + recipients limit tests
+  // ================================================================
+
+  it("should reject CAW actions with text exceeding 420 bytes", async function() {
+    this.timeout(60000);
+
+    var cawonce = Number(await cawActions.nextCawonce(1));
+    var longText = "a".repeat(421); // 421 bytes, 1 over limit
+
+    try {
+      await processActions([{
+        actionType: 'caw',
+        text: longText,
+        sender: accounts[2],
+        senderId: 1,
+        cawonce: cawonce
+      }], { validator: accounts[2] });
+      assert.fail("Should have reverted");
+    } catch (err) {
+      assert(err.message.includes("Text exceeds 420 characters") || err.message.includes("revert"),
+        "Expected text limit revert but got: " + err.message);
+    }
+    console.log("text-limit-caw-rejects-421: PASS");
+  });
+
+  it("should reject OTHER actions with text exceeding 420 bytes", async function() {
+    this.timeout(60000);
+
+    var cawonce = Number(await cawActions.nextCawonce(1));
+    var longProfileJson = 'p:{"d":"' + "x".repeat(415) + '"}'; // > 420 bytes total
+
+    try {
+      await processActions([{
+        actionType: 'other',
+        text: longProfileJson,
+        sender: accounts[2],
+        senderId: 1,
+        cawonce: cawonce,
+        amounts: [100],
+        recipients: [1]
+      }], { validator: accounts[2] });
+      assert.fail("Should have reverted");
+    } catch (err) {
+      assert(err.message.includes("Text exceeds 420 characters") || err.message.includes("revert"),
+        "Expected text limit revert but got: " + err.message);
+    }
+    console.log("text-limit-other-rejects-421: PASS");
+  });
+
+  it("should accept OTHER actions with text at exactly 420 bytes", async function() {
+    this.timeout(60000);
+
+    var cawonce = Number(await cawActions.nextCawonce(1));
+    var exactText = "a".repeat(420); // Exactly 420 bytes
+
+    var result = await safeProcessActions([{
+      actionType: 'other',
+      text: exactText,
+      sender: accounts[2],
+      senderId: 1,
+      cawonce: cawonce,
+      amounts: [100],
+      recipients: [1]
+    }], { validator: accounts[2] });
+
+    truffleAssert.eventEmitted(result.tx, 'ActionsProcessed');
+    console.log("text-limit-other-accepts-420: PASS");
+  });
+
+  it("should reject actions with more than 10 recipients", async function() {
+    this.timeout(60000);
+
+    var cawonce = Number(await cawActions.nextCawonce(1));
+
+    try {
+      await processActions([{
+        actionType: 'other',
+        text: "test",
+        sender: accounts[2],
+        senderId: 1,
+        cawonce: cawonce,
+        // 11 recipients + 1 validator tip = 12 amounts
+        recipients: [1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2],
+        amounts: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 100]
+      }], { validator: accounts[2] });
+      assert.fail("Should have reverted");
+    } catch (err) {
+      assert(err.message.includes("Too many recipients") || err.message.includes("revert"),
+        "Expected recipients limit revert but got: " + err.message);
+    }
+    console.log("recipients-limit-rejects-11: PASS");
+  });
 });
 

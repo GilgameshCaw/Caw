@@ -7,7 +7,7 @@ import { prisma }  from '../../prismaClient'
 import getActionType from '../../abi/getActionType'
 import { cawActionsAbi } from '../../abi/generated'
 import { CAW_ACTIONS_ADDRESS, CAW_ACTIONS_REPLICATOR_L2_ADDRESS, CAW_ADDRESS, WETH_ADDRESS } from '../../abi/addresses'
-import { WebSocketProvider, JsonRpcProvider, Contract, Wallet } from 'ethers'
+import { WebSocketProvider, JsonRpcProvider, Contract, Wallet, keccak256, solidityPacked } from 'ethers'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
 
@@ -2000,10 +2000,45 @@ console.log("succeededKeys", succeededKeys)
                 continue
               }
 
-              // Get LZ fee quote
-              const avgTextLength = Math.ceil(allActions.reduce((sum: number, a: any) => sum + (a.text?.length || 0), 0) / 256)
-              const fee = await replicatorView.quoteReplicateBatch(destEid, avgTextLength, false)
-              const nativeFee = BigInt(fee.nativeFee) * 110n / 100n // 10% buffer
+              // Pre-flight hash chain verification: recompute keccak256(prev, r) locally
+              // and compare to the on-chain checkpoint hash. This catches ordering bugs
+              // before wasting gas on a revert.
+              const hashCheckAbi = ['function clientHashAtCheckpoint(uint32,uint256) view returns (bytes32)']
+              const actionsView = new Contract(CAW_ACTIONS_ADDRESS, hashCheckAbi, provider)
+              const prevHash = checkpointId === 1
+                ? '0x' + '00'.repeat(32)
+                : await actionsView.clientHashAtCheckpoint(client.id, checkpointId - 1)
+              const expectedHash = await actionsView.clientHashAtCheckpoint(client.id, checkpointId)
+
+              let computedHash = prevHash
+              for (let i = 0; i < 256; i++) {
+                computedHash = keccak256(solidityPacked(['bytes32', 'bytes32'], [computedHash, allR[i]]))
+              }
+
+              if (computedHash !== expectedHash) {
+                console.error(`[Replication] Hash chain mismatch! Computed ${computedHash} but on-chain is ${expectedHash}. Action ordering may be wrong.`)
+                continue
+              }
+              console.log(`[Replication] Hash chain verified for checkpoint ${checkpointId}`)
+
+              // Get LZ fee quote — if the payload exceeds LZ's maxMessageSize,
+              // log a warning and skip this checkpoint instead of blocking all
+              // future checkpoints. The LZ_MessageLib_InvalidMessageSize error
+              // selector is 0xc667af3e.
+              let nativeFee: bigint
+              try {
+                const avgTextLength = Math.ceil(allActions.reduce((sum: number, a: any) => sum + (a.text?.length || 0), 0) / 256)
+                const fee = await replicatorView.quoteReplicateBatch(destEid, avgTextLength, false)
+                nativeFee = BigInt(fee.nativeFee) * 110n / 100n // 10% buffer
+              } catch (quoteErr: any) {
+                const errData = quoteErr?.data || quoteErr?.error?.data || ''
+                if (typeof errData === 'string' && errData.startsWith('0xc667af3e')) {
+                  console.error(`[Replication] Checkpoint ${checkpointId} payload exceeds LZ message size limit — skipping (will retry if limit is raised)`)
+                } else {
+                  console.error(`[Replication] Fee quote failed for checkpoint ${checkpointId}:`, quoteErr.message)
+                }
+                continue
+              }
 
               console.log(`[Replication] Submitting checkpoint ${checkpointId} for client ${client.id} → chain ${destEid} (fee: ${nativeFee} wei)`)
 

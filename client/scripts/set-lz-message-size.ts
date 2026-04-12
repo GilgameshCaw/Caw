@@ -34,7 +34,7 @@ const endpointAbi = [
 ]
 
 async function main() {
-  const maxMessageSize = parseInt(process.argv[2]) || 200_000
+  const maxMessageSize = parseInt(process.argv[2]) || 300_000
   const rpcUrl = process.env.L2_RPC_URL_HTTP
   const privateKey = process.env.VALIDATOR_PRIVATE_KEY
 
