@@ -590,6 +590,79 @@ const LINKING_STEPS = [
       } catch { return false; }
     },
   },
+  // Bump LZ maxMessageSize on replicators so 256-action batches can be sent.
+  // Default is 10KB but a full checkpoint with text can be ~120KB.
+  {
+    name: 'Set LZ maxMessageSize on CawActionsReplicator_L2 → L2b',
+    chain: 'L2',
+    phase: 5,
+    custom: async (state, deployer, chainConfig) => {
+      const chainKey = deployer.getChainKey('L2');
+      const LZ_ENDPOINT = CHAINS[chainKey].lzEndpoint;
+      const replicator = state.addresses.CawActionsReplicator_L2;
+      const destEid = CHAINS[chainConfig.env + 'L2b'].lzEid;
+      const MAX_MESSAGE_SIZE = 200000; // 200KB — fits worst-case 256 actions with 420-char text
+      const EXECUTOR_CONFIG_TYPE = 1;
+
+      const endpointAbi = [
+        'function getSendLibrary(address,uint32) view returns (address)',
+        'function getConfig(address,address,uint32,uint32) view returns (bytes)',
+        'function setConfig(address,address,tuple(uint32 eid,uint32 configType,bytes config)[]) external',
+      ];
+      const wallet = deployer.wallets[chainKey];
+      const endpoint = new ethers.Contract(LZ_ENDPOINT, endpointAbi, wallet);
+      const sendLib = await endpoint.getSendLibrary(replicator, destEid);
+
+      // Check current config
+      const currentBytes = await endpoint.getConfig(replicator, sendLib, destEid, EXECUTOR_CONFIG_TYPE);
+      const [currentMax, executor] = ethers.AbiCoder.defaultAbiCoder().decode(['uint32', 'address'], currentBytes);
+      if (Number(currentMax) >= MAX_MESSAGE_SIZE) {
+        console.log(`   Already ${currentMax} >= ${MAX_MESSAGE_SIZE}, skipping`);
+        return;
+      }
+
+      const newConfig = ethers.AbiCoder.defaultAbiCoder().encode(['uint32', 'address'], [MAX_MESSAGE_SIZE, executor]);
+      const tx = await endpoint.setConfig(replicator, sendLib, [{ eid: destEid, configType: EXECUTOR_CONFIG_TYPE, config: newConfig }]);
+      await tx.wait();
+      console.log(`   Set maxMessageSize to ${MAX_MESSAGE_SIZE} on L2 replicator → L2b`);
+    },
+    condition: (state) => state.addresses.CawActionsReplicator_L2,
+  },
+  {
+    name: 'Set LZ maxMessageSize on CawActionsReplicator_L2b → L2',
+    chain: 'L2b',
+    phase: 5,
+    custom: async (state, deployer, chainConfig) => {
+      const chainKey = deployer.getChainKey('L2b');
+      const LZ_ENDPOINT = CHAINS[chainKey].lzEndpoint;
+      const replicator = state.addresses.CawActionsReplicator_L2b;
+      const destEid = CHAINS[chainConfig.env + 'L2'].lzEid;
+      const MAX_MESSAGE_SIZE = 200000;
+      const EXECUTOR_CONFIG_TYPE = 1;
+
+      const endpointAbi = [
+        'function getSendLibrary(address,uint32) view returns (address)',
+        'function getConfig(address,address,uint32,uint32) view returns (bytes)',
+        'function setConfig(address,address,tuple(uint32 eid,uint32 configType,bytes config)[]) external',
+      ];
+      const wallet = deployer.wallets[chainKey];
+      const endpoint = new ethers.Contract(LZ_ENDPOINT, endpointAbi, wallet);
+      const sendLib = await endpoint.getSendLibrary(replicator, destEid);
+
+      const currentBytes = await endpoint.getConfig(replicator, sendLib, destEid, EXECUTOR_CONFIG_TYPE);
+      const [currentMax, executor] = ethers.AbiCoder.defaultAbiCoder().decode(['uint32', 'address'], currentBytes);
+      if (Number(currentMax) >= MAX_MESSAGE_SIZE) {
+        console.log(`   Already ${currentMax} >= ${MAX_MESSAGE_SIZE}, skipping`);
+        return;
+      }
+
+      const newConfig = ethers.AbiCoder.defaultAbiCoder().encode(['uint32', 'address'], [MAX_MESSAGE_SIZE, executor]);
+      const tx = await endpoint.setConfig(replicator, sendLib, [{ eid: destEid, configType: EXECUTOR_CONFIG_TYPE, config: newConfig }]);
+      await tx.wait();
+      console.log(`   Set maxMessageSize to ${MAX_MESSAGE_SIZE} on L2b replicator → L2`);
+    },
+    condition: (state) => state.addresses.CawActionsReplicator_L2b,
+  },
   // Add replication for client 1 on L2 (syncs to L2 via LZ — client replicates to L2b's archive)
   {
     name: 'Add replication for client 1 on L2 (archive to L2b)',
@@ -919,13 +992,23 @@ class MultiChainDeployer {
       }
     }
 
+    const chainConfig = { env: this.env, ...CHAINS[chainKey] };
+
+    // Support fully custom steps (e.g. multi-contract operations like LZ config)
+    if (step.custom) {
+      console.log(`\n${step.name}...`);
+      await step.custom(this.state, this, chainConfig);
+      console.log(`   Done`);
+      if (step.onSuccess) { step.onSuccess(this.state); this.saveState(); }
+      return;
+    }
+
     const contract = this.getContract(step.contract);
     if (!contract) {
       console.warn(`  Contract ${step.contract} not available, skipping "${step.name}"`);
       return;
     }
 
-    const chainConfig = { env: this.env, ...CHAINS[chainKey] };
     const args = step.args(this.state, chainConfig);
 
     // Support async overrides (e.g. for payable calls that need fee quoting)
