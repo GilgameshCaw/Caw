@@ -5,6 +5,7 @@ import { parseEther, parseUnits } from 'viem'
 import ModalWrapper from './ModalWrapper'
 import ModalHeader from './ModalHeader'
 import { useTheme } from '~/hooks/useTheme'
+import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { themeTextSecondary, themeTextMuted, themeBgSubtle, themeSecondaryButton, themeInput, themeBorder } from '~/utils/theme'
 import { useMarketplaceStore } from '~/store/marketplaceStore'
 import { usePriceStore, useTokenDataStore } from '~/store/tokenDataStore'
@@ -56,6 +57,7 @@ const CreateListingModal: React.FC = () => {
   const { openConnectModal } = useConnectModal()
   const chainId = useChainId()
   const { switchChain, isPending: isSwitchingChain } = useSwitchChain()
+  const ensureWallet = useEnsureWallet()
   const tokensByAddress = useTokenDataStore(s => s.tokensByAddress)
   const tokenOwner = useMemo(() => {
     for (const [addr, tokens] of Object.entries(tokensByAddress)) {
@@ -188,44 +190,43 @@ const CreateListingModal: React.FC = () => {
   }
 
   const handleApprove = () => {
-    if (!isConnected) { openConnectModal?.(); return }
-    if (needsChainSwitch) { switchChain({ chainId: chains.l1.chainId }); return }
-
-    writeApprove({
-      address: CAW_NAMES_ADDRESS,
-      abi: cawNameAbi,
-      functionName: 'setApprovalForAll',
-      args: [CAW_NAME_MARKETPLACE_ADDRESS, true],
-      chainId: chains.l1.chainId,
+    ensureWallet({ chainId: chains.l1.chainId }, async () => {
+      writeApprove({
+        address: CAW_NAMES_ADDRESS,
+        abi: cawNameAbi,
+        functionName: 'setApprovalForAll',
+        args: [CAW_NAME_MARKETPLACE_ADDRESS, true],
+        chainId: chains.l1.chainId,
+      })
     })
   }
 
   const handleCreateListing = () => {
-    if (!isConnected) { openConnectModal?.(); return }
-    if (needsChainSwitch) { switchChain({ chainId: chains.l1.chainId }); return }
-    if (tokenId === null) return
+    ensureWallet({ chainId: chains.l1.chainId }, async () => {
+      if (tokenId === null) return
 
-    const duration = BigInt(parseInt(durationHours) * 3600)
-    let startPriceWei: bigint
-    let endPriceWei: bigint
+      const duration = BigInt(parseInt(durationHours) * 3600)
+      let startPriceWei: bigint
+      let endPriceWei: bigint
 
-    const selectedToken = PAYMENT_OPTIONS.find(o => o.value === paymentToken)
-    const decimals = selectedToken?.decimals ?? 18
+      const selectedToken = PAYMENT_OPTIONS.find(o => o.value === paymentToken)
+      const decimals = selectedToken?.decimals ?? 18
 
-    if (paymentToken === '0x0000000000000000000000000000000000000000') {
-      startPriceWei = parseEther(startPrice)
-      endPriceWei = listingType === 1 ? parseEther(endPrice) : 0n
-    } else {
-      startPriceWei = parseUnits(startPrice, decimals)
-      endPriceWei = listingType === 1 ? parseUnits(endPrice, decimals) : 0n
-    }
+      if (paymentToken === '0x0000000000000000000000000000000000000000') {
+        startPriceWei = parseEther(startPrice)
+        endPriceWei = listingType === 1 ? parseEther(endPrice) : 0n
+      } else {
+        startPriceWei = parseUnits(startPrice, decimals)
+        endPriceWei = listingType === 1 ? parseUnits(endPrice, decimals) : 0n
+      }
 
-    writeListing({
-      address: CAW_NAME_MARKETPLACE_ADDRESS,
-      abi: cawNameMarketplaceAbi,
-      functionName: 'createListing',
-      args: [tokenId, listingType, paymentToken as `0x${string}`, startPriceWei, endPriceWei, duration],
-      chainId: chains.l1.chainId,
+      writeListing({
+        address: CAW_NAME_MARKETPLACE_ADDRESS,
+        abi: cawNameMarketplaceAbi,
+        functionName: 'createListing',
+        args: [tokenId, listingType, paymentToken as `0x${string}`, startPriceWei, endPriceWei, duration],
+        chainId: chains.l1.chainId,
+      })
     })
   }
 

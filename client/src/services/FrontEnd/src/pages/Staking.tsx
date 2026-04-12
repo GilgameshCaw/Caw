@@ -27,6 +27,7 @@ import QuickSignModal from '~/components/modals/QuickSignModal'
 import LayerZeroStatus from '~/components/LayerZeroStatus'
 import StakingRewardsInfo from '~/components/StakingRewardsInfo'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
+import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 
 type StakingTab = 'stake' | 'unstake' | 'info'
 
@@ -45,6 +46,7 @@ interface WithdrawalRequest {
 
 const Staking = () => {
   const { isDark } = useTheme()
+  const ensureWallet = useEnsureWallet()
   const navigate = useNavigate()
   const location = useLocation()
 
@@ -490,108 +492,50 @@ const Staking = () => {
   // Handle stake button click
   const handleStake = useCallback(async () => {
     console.log('[Staking] handleStake called', { isConnected, amount, wrongChainForStake, needsApproval })
-
-    // If not connected, open wallet connect modal
-    if (!isConnected) {
-      console.log('[Staking] Opening connect modal')
-      openConnectModal?.()
-      return
-    }
-
-    if (wrongChainForStake) {
-      console.log('[Staking] Switching to L1 network')
-      setIsSwitchingNetwork(true)
-      try {
-        await switchChain({ chainId: chains.l1.chainId })
-      } catch (err) {
-        console.error('[Staking] Network switch failed:', err)
-        setIsSwitchingNetwork(false)
+    await ensureWallet({ chainId: chains.l1.chainId }, async () => {
+      if (needsApproval) {
+        console.log('[Staking] Approving CAW tokens')
+        setIsApprovePending(true)
+        await approve.call()
+      } else {
+        console.log('[Staking] Depositing CAW')
+        setIsStakePending(true)
+        await stake.call()
       }
-      return
-    }
-
-    if (needsApproval) {
-      console.log('[Staking] Approving CAW tokens')
-      setIsApprovePending(true)
-      await approve.call()
-    } else {
-      console.log('[Staking] Depositing CAW')
-      setIsStakePending(true)
-      await stake.call()
-    }
-  }, [isConnected, wrongChainForStake, needsApproval, approve, stake, amount, switchChain, openConnectModal])
+    })
+  }, [isConnected, wrongChainForStake, needsApproval, approve, stake, amount, ensureWallet])
 
   // Handle withdraw button click (for pending withdrawals)
   const handleWithdraw = useCallback(async () => {
     if (!activeToken) return
     console.log('[Staking] handleWithdraw called', { isConnected, isMainnet })
-
-    // If not connected, open wallet connect modal
-    if (!isConnected) {
-      console.log('[Staking] Opening connect modal')
-      openConnectModal?.()
-      return
-    }
-
-    if (!isMainnet) {
-      console.log('[Staking] Switching to L1 network')
-      setIsSwitchingNetwork(true)
-      try {
-        await switchChain({ chainId: chains.l1.chainId })
-      } catch (err) {
-        console.error('[Staking] Network switch failed:', err)
-        setIsSwitchingNetwork(false)
-      }
-      return
-    }
-
-    console.log('[Staking] Executing withdraw')
-    await withdraw.call()
-  }, [activeToken, isConnected, isMainnet, withdraw, switchChain, openConnectModal])
+    await ensureWallet({ chainId: chains.l1.chainId }, async () => {
+      console.log('[Staking] Executing withdraw')
+      await withdraw.call()
+    })
+  }, [activeToken, isConnected, isMainnet, withdraw, ensureWallet])
 
   // Handle unstake initialization (on L2)
   const handleUnstakeInit = useCallback(async () => {
     if (!activeToken) return
     console.log('[Staking] handleUnstakeInit called', { isConnected, amount, isMainnet })
-
-    // If not connected, open wallet connect modal
-    if (!isConnected) {
-      console.log('[Staking] Opening connect modal')
-      openConnectModal?.()
-      return
-    }
-
-    if (isMainnet) {
-      console.log('[Staking] Switching to L2 network')
-      setIsSwitchingNetwork(true)
+    await ensureWallet({ chainId: chains.l2.chainId }, async () => {
       try {
-        await switchChain({ chainId: chains.l2.chainId })
+        console.log('[Staking] Submitting withdraw action to L2')
+        await signAndSubmit({
+          senderId: activeToken.tokenId,
+          actionType: 'withdraw',
+          recipients: [activeToken.tokenId],
+          amounts: [BigInt(Math.floor(parseFloat(amount)))],
+        })
+        setAmount("")
+        console.log('[Staking] Refreshing pending withdrawals')
+        await fetchPendingWithdrawals()
       } catch (err) {
-        console.error('[Staking] Network switch failed:', err)
-        setIsSwitchingNetwork(false)
+        console.error('[Staking] Withdraw init failed', err)
       }
-      return
-    }
-
-    try {
-      console.log('[Staking] Submitting withdraw action to L2')
-      // Note: amounts in action struct are uint64, so we use whole CAW units (not wei)
-      // The contract will handle the conversion to wei internally
-      await signAndSubmit({
-        senderId: activeToken.tokenId,
-        actionType: 'withdraw',
-        recipients: [activeToken.tokenId],
-        amounts: [BigInt(Math.floor(parseFloat(amount)))],
-      })
-      setAmount("")
-
-      // Refresh pending withdrawals after submission
-      console.log('[Staking] Refreshing pending withdrawals')
-      await fetchPendingWithdrawals()
-    } catch (err) {
-      console.error('[Staking] Withdraw init failed', err)
-    }
-  }, [activeToken, isConnected, amount, isMainnet, signAndSubmit, switchChain, fetchPendingWithdrawals, openConnectModal])
+    })
+  }, [activeToken, isConnected, amount, isMainnet, signAndSubmit, fetchPendingWithdrawals, ensureWallet])
 
   const renderStakePanel = () => (
     <div className="space-y-6">

@@ -723,7 +723,7 @@ const MessagesPage: React.FC = () => {
   return (
     <MainLayout>
       <div
-        className="max-w-2xl mx-auto pt-4 pb-0 bg-black flex flex-col relative h-full"
+        className={`max-w-2xl mx-auto pt-4 pb-0 flex flex-col relative h-full ${isDark ? 'bg-black' : 'bg-white'}`}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -737,7 +737,7 @@ const MessagesPage: React.FC = () => {
           </div>
         )}
         {/* Messages Header */}
-        <div className={`mb-6 flex-shrink-0 mx-3 sm:mx-6 ${currentView === 'chat' ? 'fixed md:sticky top-0 left-0 right-0 z-30 bg-black p-4 md:p-0' : ''}`}>
+        <div className={`mb-6 flex-shrink-0 mx-3 sm:mx-6 ${currentView === 'chat' ? `fixed md:sticky top-0 left-0 right-0 z-30 p-4 md:p-0 ${isDark ? 'bg-black' : 'bg-white'}` : ''}`}>
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
               {currentView === 'chat' && (
@@ -1523,7 +1523,7 @@ const MessagesPage: React.FC = () => {
             {showGifPicker && !gifPreview && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setShowGifPicker(false)} />
-                <div className="fixed bottom-16 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] md:w-[500px] md:max-w-[80vw] md:bottom-20 z-50 rounded-xl border border-white/10 shadow-2xl max-h-[60vh] overflow-auto bg-black">
+                <div className={`fixed bottom-16 left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] md:w-[500px] md:max-w-[80vw] md:bottom-20 z-50 rounded-xl border shadow-2xl max-h-[60vh] overflow-auto ${isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'}`}>
                   <GifPicker
                     onSelect={(gif) => {
                       setGifPreview({ url: gif.url, preview: gif.preview })
@@ -1536,7 +1536,7 @@ const MessagesPage: React.FC = () => {
             )}
 
             {/* Bottom bar — anchored to bottom, doesn't scroll with messages */}
-            <div className="flex-shrink-0 fixed md:sticky bottom-0 left-0 right-0 z-20 bg-black">
+            <div className={`flex-shrink-0 fixed md:sticky bottom-0 left-0 right-0 z-20 ${isDark ? 'bg-black' : 'bg-white'}`}>
 
               {/* Unlock banner — replaces input when keys need derivation */}
               {needsKeyDerivation && !identityLoading ? (

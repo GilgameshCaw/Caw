@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { HiCamera, HiLink, HiLocationMarker } from 'react-icons/hi'
 import { useAccount, useSwitchChain, useChainId } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
+import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { apiFetch, getAuthHeaders } from '~/api/client'
 import { useSignAndSubmitAction } from '~/api/actions'
 import { useTokenDataStore } from '~/store/tokenDataStore'
@@ -61,6 +62,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
   const { switchChain, isPending: isSwitchingChain } = useSwitchChain()
   const currentChainId = useChainId()
   const { openConnectModal } = useConnectModal()
+  const ensureWallet = useEnsureWallet()
   const signAndSubmit = useSignAndSubmitAction()
   const setAvatar = useTokenDataStore(s => s.setAvatar)
 
@@ -244,23 +246,12 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
   }
 
   const handleOnChainUpdate = async () => {
-    if (!isConnected) {
-      openConnectModal?.()
-      return
-    }
-    if (!isOnCorrectChain) {
-      try {
-        await switchChain({ chainId: chains.l2.chainId })
-      } catch (err) {
-        console.error('Failed to switch chain:', err)
-      }
-      return
-    }
     if (!activeToken) {
       setProfileError('Please select a token')
       return
     }
 
+    await ensureWallet({ chainId: chains.l2.chainId }, async () => {
     setProfileError(null)
     setIsSaving(true)
 
@@ -344,6 +335,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
     } finally {
       setIsSaving(false)
     }
+    })
   }
 
   const wrongWallet = !!(isConnected && activeToken && address?.toLowerCase() !== activeToken.address?.toLowerCase())

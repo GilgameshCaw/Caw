@@ -5,6 +5,7 @@ import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { formatEther, formatUnits } from 'viem'
 import ModalWrapper from './ModalWrapper'
 import { useTheme } from '~/hooks/useTheme'
+import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { themeTextMuted, themeBgSubtle, themeBorder } from '~/utils/theme'
 import { useMarketplaceStore, MarketplaceOffer } from '~/store/marketplaceStore'
 import { usePriceStore, useTokenDataStore } from '~/store/tokenDataStore'
@@ -12,6 +13,7 @@ import { chains } from '~/config/chains'
 import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
 import { cawNameMarketplaceAbi, cawNameAbi, cawNameQuoterAbi } from '~/../../../abi/generated'
 import UsernameSvg from '~/components/UsernameSvg'
+import LiveCountdown from '~/components/marketplace/LiveCountdown'
 import { apiFetch } from '~/api/client'
 import { wagmiConfig } from '~/config/Web3Provider'
 
@@ -25,16 +27,6 @@ function fmtPrice(raw: string, token: string): string {
   return num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })
 }
 
-function formatTimeLeft(expiry: string): string {
-  const diff = new Date(expiry).getTime() - Date.now()
-  if (diff <= 0) return 'Expired'
-  const days = Math.floor(diff / 86400000)
-  const hours = Math.floor((diff % 86400000) / 3600000)
-  if (days > 0) return `${days}d ${hours}h left`
-  const mins = Math.floor((diff % 3600000) / 60000)
-  if (hours > 0) return `${hours}h ${mins}m left`
-  return `${mins}m left`
-}
 
 const ViewOffersModal: React.FC = () => {
   const { isDark } = useTheme()
@@ -47,6 +39,7 @@ const ViewOffersModal: React.FC = () => {
   const { openConnectModal } = useConnectModal()
   const chainId = useChainId()
   const { switchChain, isPending: isSwitchingChain } = useSwitchChain()
+  const ensureWallet = useEnsureWallet()
   const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
 
@@ -175,31 +168,29 @@ const ViewOffersModal: React.FC = () => {
   }, [isActionSuccess])
 
   const handleApproveNFT = () => {
-    if (!isConnected) { openConnectModal?.(); return }
-    if (needsChainSwitch) { switchChain({ chainId: chains.l1.chainId }); return }
-
-    writeApprove({
-      address: CAW_NAMES_ADDRESS,
-      abi: cawNameAbi,
-      functionName: 'setApprovalForAll',
-      args: [CAW_NAME_MARKETPLACE_ADDRESS, true],
-      chainId: chains.l1.chainId,
+    ensureWallet({ chainId: chains.l1.chainId }, async () => {
+      writeApprove({
+        address: CAW_NAMES_ADDRESS,
+        abi: cawNameAbi,
+        functionName: 'setApprovalForAll',
+        args: [CAW_NAME_MARKETPLACE_ADDRESS, true],
+        chainId: chains.l1.chainId,
+      })
     })
   }
 
   const handleAcceptOffer = (offer: MarketplaceOffer) => {
-    if (!isConnected) { openConnectModal?.(); return }
-    if (needsChainSwitch) { switchChain({ chainId: chains.l1.chainId }); return }
-
-    setActionOfferId(offer.offerId)
-    setActionType('accept')
-    writeAction({
-      address: CAW_NAME_MARKETPLACE_ADDRESS,
-      abi: cawNameMarketplaceAbi,
-      functionName: 'acceptOffer',
-      args: [BigInt(offer.offerId)],
-      value: lzFee,
-      chainId: chains.l1.chainId,
+    ensureWallet({ chainId: chains.l1.chainId }, async () => {
+      setActionOfferId(offer.offerId)
+      setActionType('accept')
+      writeAction({
+        address: CAW_NAME_MARKETPLACE_ADDRESS,
+        abi: cawNameMarketplaceAbi,
+        functionName: 'acceptOffer',
+        args: [BigInt(offer.offerId)],
+        value: lzFee,
+        chainId: chains.l1.chainId,
+      })
     })
   }
 
@@ -310,8 +301,8 @@ const ViewOffersModal: React.FC = () => {
                       <div className={`text-xs mt-1 ${themeTextMuted(isDark)}`}>
                         from {offer.offerer.slice(0, 6)}...{offer.offerer.slice(-4)}
                       </div>
-                      <div className={`text-xs mt-0.5 ${themeTextMuted(isDark)}`}>
-                        {formatTimeLeft(offer.expiry)}
+                      <div className="mt-0.5">
+                        <LiveCountdown endTime={offer.expiry} />
                       </div>
                     </div>
 
@@ -319,17 +310,17 @@ const ViewOffersModal: React.FC = () => {
                       {/* Accept offer */}
                       <button
                         onClick={() => {
-                          if (!isConnected) { openConnectModal?.(); return }
-                          if (needsChainSwitch) { switchChain({ chainId: chains.l1.chainId }); return }
-                          if (actionError) resetAction()
-                          if (!isApproved) {
-                            setPendingAcceptAfterApprove(offer)
-                            setActionOfferId(offer.offerId)
-                            setActionType('accept')
-                            handleApproveNFT()
-                            return
-                          }
-                          handleAcceptOffer(offer)
+                          ensureWallet({ chainId: chains.l1.chainId }, async () => {
+                            if (actionError) resetAction()
+                            if (!isApproved) {
+                              setPendingAcceptAfterApprove(offer)
+                              setActionOfferId(offer.offerId)
+                              setActionType('accept')
+                              handleApproveNFT()
+                              return
+                            }
+                            handleAcceptOffer(offer)
+                          })
                         }}
                         disabled={isActing || isSwitchingChain || isApproving || isApproveConfirming}
                         className="px-3 py-1.5 rounded-lg text-xs font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50"

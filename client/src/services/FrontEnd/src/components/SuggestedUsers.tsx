@@ -111,9 +111,9 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
                 isDark ? 'bg-white/5' : 'bg-gray-100'
               }`}
             >
-              <div className="w-16 h-16 rounded-full bg-gray-600 mx-auto mb-3" />
-              <div className="h-4 bg-gray-600 rounded w-3/4 mx-auto mb-2" />
-              <div className="h-3 bg-gray-700 rounded w-1/2 mx-auto" />
+              <div className={`w-16 h-16 rounded-full mx-auto mb-3 ${isDark ? 'bg-gray-600' : 'bg-gray-300'}`} />
+              <div className={`h-4 rounded w-3/4 mx-auto mb-2 ${isDark ? 'bg-gray-600' : 'bg-gray-300'}`} />
+              <div className={`h-3 rounded w-1/2 mx-auto ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`} />
             </div>
           ))}
         </div>

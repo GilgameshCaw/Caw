@@ -386,7 +386,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
               <div
                 key={index}
                 className={`rounded-lg overflow-hidden ${
-                  isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50'
+                  isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50 shadow-xl'
                 }`}
               >
                 <button
@@ -417,7 +417,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
         {/* History Section */}
         {activeSection === 'history' && (
           <div className="space-y-6">
-            <div className={`p-6 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50'}`}>
+            <div className={`p-6 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50 shadow-xl'}`}>
               <h2 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 The Origins of CAW
               </h2>
@@ -455,7 +455,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
         {/* Manifesto Section */}
         {activeSection === 'manifesto' && (
           <div className="space-y-6">
-            <div className={`p-6 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50'}`}>
+            <div className={`p-6 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50 shadow-xl'}`}>
               <p className={`text-xs mb-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
                 Pulled verbatim from the decoded <Link to="/help/history" className={`underline ${isDark ? 'text-yellow-500/60 hover:text-yellow-500' : 'text-yellow-700/60 hover:text-yellow-700'}`}>cryptographic scavenger hunt</Link>
               </p>
@@ -627,7 +627,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
         {/* Getting Started Section */}
         {activeSection === 'gettingstarted' && (
           <div className="space-y-4">
-            <div className={`p-5 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50'}`}>
+            <div className={`p-5 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50 shadow-xl'}`}>
               <div className="flex items-start gap-4">
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
                   isDark ? 'bg-yellow-500/20 text-yellow-500' : 'bg-yellow-100 text-yellow-700'
@@ -646,7 +646,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
               </div>
             </div>
 
-            <div className={`p-5 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50'}`}>
+            <div className={`p-5 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50 shadow-xl'}`}>
               <div className="flex items-start gap-4">
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
                   isDark ? 'bg-yellow-500/20 text-yellow-500' : 'bg-yellow-100 text-yellow-700'
@@ -665,7 +665,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
               </div>
             </div>
 
-            <div className={`p-5 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50'}`}>
+            <div className={`p-5 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50 shadow-xl'}`}>
               <div className="flex items-start gap-4">
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
                   isDark ? 'bg-yellow-500/20 text-yellow-500' : 'bg-yellow-100 text-yellow-700'
@@ -684,7 +684,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
               </div>
             </div>
 
-            <div className={`p-5 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50'}`}>
+            <div className={`p-5 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50 shadow-xl'}`}>
               <div className="flex items-start gap-4">
                 <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
                   isDark ? 'bg-yellow-500/20 text-yellow-500' : 'bg-yellow-100 text-yellow-700'
@@ -704,7 +704,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
             </div>
 
             <div className={`mt-6 p-4 rounded-lg border ${
-              isDark ? 'border-white/10 bg-[#0D0D0D]/85' : 'border-gray-200 bg-gray-50'
+              isDark ? 'border-white/10 bg-[#0D0D0D]/85' : 'border-gray-200 bg-gray-50 shadow-xl'
             }`}>
               <h4 className={`font-semibold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 CAW Spent on the Platform
@@ -723,7 +723,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
         {activeSection === 'developers' && (
           <div className="space-y-6">
             {/* Architecture Overview */}
-            <div className={`p-6 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50'}`}>
+            <div className={`p-6 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50 shadow-xl'}`}>
               <h2 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 Understanding CAW Architecture
               </h2>
@@ -772,7 +772,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
             </div>
 
             {/* Frontend Hosting */}
-            <div className={`p-6 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50'}`}>
+            <div className={`p-6 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50 shadow-xl'}`}>
               <h2 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 Hosting a Frontend
               </h2>
@@ -841,7 +841,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
             </div>
 
             {/* Validator Hosting */}
-            <div className={`p-6 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50'}`}>
+            <div className={`p-6 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50 shadow-xl'}`}>
               <h2 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 Running a Validator
               </h2>
@@ -995,7 +995,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                 Network Information
               </h2>
 
-              <div className={`p-4 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50'}`}>
+              <div className={`p-4 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50 shadow-xl'}`}>
                 <div className="space-y-4">
                   <div>
                     <h4 className={`text-sm font-medium mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>

@@ -4,6 +4,7 @@ import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { formatEther, formatUnits, parseEther, parseUnits, erc20Abi, maxUint256 } from 'viem'
 import ModalWrapper from './ModalWrapper'
 import { useTheme } from '~/hooks/useTheme'
+import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { themeTextMuted, themeBgSubtle } from '~/utils/theme'
 import { useMarketplaceStore } from '~/store/marketplaceStore'
 import { usePriceStore, useActiveToken } from '~/store/tokenDataStore'
@@ -41,6 +42,7 @@ const MakeOfferModal: React.FC = () => {
   const { openConnectModal } = useConnectModal()
   const chainId = useChainId()
   const { switchChain, isPending: isSwitchingChain } = useSwitchChain()
+  const ensureWallet = useEnsureWallet()
   const activeToken = useActiveToken()
   const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
@@ -136,41 +138,40 @@ const MakeOfferModal: React.FC = () => {
   }, [amount, selectedToken, ethPrice, cawPrice])
 
   const handleApprove = () => {
-    if (!isConnected) { openConnectModal?.(); return }
-    if (needsChainSwitch) { switchChain({ chainId: chains.l1.chainId }); return }
-
-    writeApprove({
-      address: selectedToken.value as `0x${string}`,
-      abi: erc20Abi,
-      functionName: 'approve',
-      args: [CAW_NAME_MARKETPLACE_ADDRESS, maxUint256],
-      chainId: chains.l1.chainId,
+    ensureWallet({ chainId: chains.l1.chainId }, async () => {
+      writeApprove({
+        address: selectedToken.value as `0x${string}`,
+        abi: erc20Abi,
+        functionName: 'approve',
+        args: [CAW_NAME_MARKETPLACE_ADDRESS, maxUint256],
+        chainId: chains.l1.chainId,
+      })
     })
   }
 
   const handleSubmitOffer = () => {
-    if (!isConnected) { openConnectModal?.(); return }
-    if (needsChainSwitch) { switchChain({ chainId: chains.l1.chainId }); return }
-    if (tokenId === null || amountWei === 0n) return
+    ensureWallet({ chainId: chains.l1.chainId }, async () => {
+      if (tokenId === null || amountWei === 0n) return
 
-    if (isEth) {
-      writeOffer({
-        address: CAW_NAME_MARKETPLACE_ADDRESS,
-        abi: cawNameMarketplaceAbi,
-        functionName: 'createOfferETH',
-        args: [tokenId, BigInt(duration.seconds)],
-        value: amountWei,
-        chainId: chains.l1.chainId,
-      })
-    } else {
-      writeOffer({
-        address: CAW_NAME_MARKETPLACE_ADDRESS,
-        abi: cawNameMarketplaceAbi,
-        functionName: 'createOfferERC20',
-        args: [tokenId, selectedToken.value as `0x${string}`, amountWei, BigInt(duration.seconds)],
-        chainId: chains.l1.chainId,
-      })
-    }
+      if (isEth) {
+        writeOffer({
+          address: CAW_NAME_MARKETPLACE_ADDRESS,
+          abi: cawNameMarketplaceAbi,
+          functionName: 'createOfferETH',
+          args: [tokenId, BigInt(duration.seconds)],
+          value: amountWei,
+          chainId: chains.l1.chainId,
+        })
+      } else {
+        writeOffer({
+          address: CAW_NAME_MARKETPLACE_ADDRESS,
+          abi: cawNameMarketplaceAbi,
+          functionName: 'createOfferERC20',
+          args: [tokenId, selectedToken.value as `0x${string}`, amountWei, BigInt(duration.seconds)],
+          chainId: chains.l1.chainId,
+        })
+      }
+    })
   }
 
   const handleClose = () => {
@@ -192,7 +193,7 @@ const MakeOfferModal: React.FC = () => {
   }
 
   return (
-    <ModalWrapper isOpen={isOpen} onClose={handleClose} maxWidth="max-w-[480px]" usePortal zIndex={9999}>
+    <ModalWrapper isOpen={isOpen} onClose={handleClose} maxWidth={isSuccess ? 'max-w-[420px]' : 'max-w-[480px]'} usePortal zIndex={9999}>
       <div className="p-6">
         {isSuccess ? (
           <div className="text-center py-6">

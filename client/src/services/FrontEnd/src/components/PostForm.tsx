@@ -279,6 +279,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   const [includePageIndicators, setIncludePageIndicators] = useState(true)
   const [mediaPosition, setMediaPosition] = useState<'start' | 'end'>('start')
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [signingProgress, setSigningProgress] = useState<{ current: number; total: number } | null>(null)
   const activeTokenId = useTokenDataStore(state => state.activeTokenId);
   const activeToken = useActiveToken();
   const avatars = useTokenDataStore(s => s.avatarsByTokenId);
@@ -873,6 +874,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       })
     }
 
+    if (chunks.length > 1) setSigningProgress({ current: 1, total: chunks.length })
     const response = await signAndSubmit(firstParams)
 
     // If signAndSubmit returned null (e.g. insufficient stake modal), don't clear the form
@@ -906,6 +908,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         receiverCawonce: firstPostCawonce,
       }
 
+      setSigningProgress({ current: i + 1, total: chunks.length })
       const replyResponse = await signAndSubmit(replyParams)
       if (!replyResponse) break // User cancelled or error
 
@@ -933,6 +936,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       // Ignore errors (user may have rejected signature)
     } finally {
       setIsSubmitting(false)
+      setSigningProgress(null)
     }
   }
 
@@ -1164,7 +1168,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                     disabled={isDisabled}
                     onClick={handleSubmit}
                   >
-                    {wrongWallet ? 'Wrong Wallet' : isSubmitting ? 'Signing...' : isThreadMode ? `Thread (${chunkCount})` : replyTo ? 'Reply' : 'Post'}
+                    {wrongWallet ? 'Wrong Wallet' : signingProgress ? `Signing ${signingProgress.current}/${signingProgress.total}...` : isSubmitting ? 'Signing...' : isThreadMode ? `Thread (${chunkCount})` : replyTo ? 'Reply' : 'Post'}
                   </button>
                 )
                 return tooltipText ? <Tooltip text={tooltipText}>{btn}</Tooltip> : btn
@@ -1534,7 +1538,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                     disabled={isDisabled2}
                     onClick={handleSubmit}
                   >
-                    {wrongWallet2 ? 'Wrong Wallet' : hasNoToken ? 'Create Account' : isSubmitting ? 'Signing...' : isThreadMode ? `Thread (${chunkCount})` : replyTo ? 'Reply' : 'Post'}
+                    {wrongWallet2 ? 'Wrong Wallet' : hasNoToken ? 'Create Account' : signingProgress ? `Signing ${signingProgress.current}/${signingProgress.total}...` : isSubmitting ? 'Signing...' : isThreadMode ? `Thread (${chunkCount})` : replyTo ? 'Reply' : 'Post'}
                   </button>
                 )
                 return tooltipText2 ? <Tooltip text={tooltipText2}>{btn2}</Tooltip> : btn2

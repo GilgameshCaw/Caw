@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import Tooltip from '~/components/Tooltip'
 import { useAccount, useConnections, useSwitchChain, useReadContract } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
+import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { maxUint256, parseUnits, formatUnits, erc20Abi } from 'viem'
 import { useActiveToken, useTokenDataStore, usePriceStore } from '~/store/tokenDataStore'
 import { useVerifyWallet } from '~/hooks/useVerifyWallet'
@@ -145,6 +146,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   const connections = useConnections()
   const { switchChain } = useSwitchChain()
   const { openConnectModal } = useConnectModal()
+  const ensureWallet = useEnsureWallet()
   const [amount, setAmount] = useState<string>('')
   const [depositFee, setDepositFee] = useState<bigint>(0n)
   const [isStakePending, setIsStakePending] = useState(false)
@@ -285,21 +287,17 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   })
 
   const handleStake = useCallback(async () => {
-    if (!isConnected) { openConnectModal?.(); return }
-    if (wrongChainForStake) {
-      try { await switchChain({ chainId: chains.l1.chainId }) } catch {}
-      return
-    }
-    // Capture staked amount before tx so we can detect the L2 update
-    setStakedAmountBefore(activeToken?.stakedAmount ?? 0n)
-    if (needsApproval) {
-      setIsApprovePending(true)
-      await approve.call()
-    } else {
-      setIsStakePending(true)
-      await stake.call()
-    }
-  }, [isConnected, wrongChainForStake, needsApproval, approve, stake, switchChain, openConnectModal])
+    await ensureWallet({ chainId: chains.l1.chainId }, async () => {
+      setStakedAmountBefore(activeToken?.stakedAmount ?? 0n)
+      if (needsApproval) {
+        setIsApprovePending(true)
+        await approve.call()
+      } else {
+        setIsStakePending(true)
+        await stake.call()
+      }
+    })
+  }, [needsApproval, approve, stake, ensureWallet, activeToken?.stakedAmount])
 
   // Poll for L2 stake arrival after tx submitted
   useEffect(() => {
@@ -741,7 +739,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
               to the world's first permissionless<br/>social network
             </p>
           </div>
-          <div className="w-48 h-48 min-[800px]:w-64 min-[800px]:h-64 ">
+          <div className="w-48 h-48 min-[800px]:w-64 min-[800px]:h-64 shadow-xl rounded-2xl overflow-hidden">
             <UsernameSvg username={username} />
           </div>
           {activeToken?.stakedAmount != null && activeToken.stakedAmount > 0n && (
@@ -1108,7 +1106,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                 activeToken={activeToken as any}
                 profileData={profileFormData}
                 isDark={true}
-                saveLabel="Save & Continue"
+                saveLabel="Save"
                 onSaved={() => goNext()}
                 onSkip={handleSkip}
                 skipLabel={`Skip — ${step.skipWarning}`}

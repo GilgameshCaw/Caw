@@ -49,7 +49,7 @@ export default function CaptiveSplash() {
         <Suspense fallback={
           <div className="my-1 w-64 h-64 md:w-80 md:h-72" />
         }>
-          <CawCoin3D className="my-1 w-64 h-64 md:w-80 md:h-72" />
+          <CawCoin3D className="my-1 w-64 h-64 md:w-80 md:h-72" isDark={isDark} />
         </Suspense>
 
         {/* Tagline */}

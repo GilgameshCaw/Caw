@@ -7,7 +7,8 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js'
 
 const DEPTH = 30
-const FACE_COLOR = '#1a1a1a'
+const FACE_COLOR_DARK = '#1a1a1a'
+const FACE_COLOR_LIGHT = '#c0c0c8'
 
 // SVG path from the single-bird CAW logo
 const CROW_SVG_PATH = 'M355.2,118.75l-117.46-9.88s-24.86,1.13-40.66,23.15l14.12,55.91c-26.07,3.29-46.32,2.92-67.39.24l14.31-56.15s-13-24-50.76-22.57c-5.73.21-107.36,9.59-107.36,9.59L57.08,39.04l44-4.17s17.51-2.82,31.62,2.26c8.28,2.92,16.05,7.15,23,12.52L177.62,0l21,49.56c4.05-1.93,7.94-4.2,11.62-6.78,15.58-10.45,42.21-8.28,42.21-8.28l44.75,3.66,58,80.59Z'
@@ -117,7 +118,7 @@ function useExtrudedCrow() {
   }, [crowShape])
 }
 
-function CrowMesh() {
+function CrowMesh({ isDark }: { isDark: boolean }) {
   const meshRef = useRef<THREE.Group>(null)
   const result = useExtrudedCrow()
 
@@ -226,11 +227,23 @@ function CrowMesh() {
     <group ref={meshRef}>
       {/* Main black shape */}
       <mesh geometry={result.mesh}>
-        <meshStandardMaterial
-          color={FACE_COLOR}
-          metalness={0.3}
-          roughness={0.6}
-        />
+        {isDark ? (
+          <meshStandardMaterial
+            color={FACE_COLOR_DARK}
+            metalness={0.3}
+            roughness={0.6}
+          />
+        ) : (
+          <meshPhysicalMaterial
+            color="#e8ddd0"
+            roughness={1}
+            metalness={0}
+            sheen={1}
+            sheenRoughness={0.8}
+            sheenColor="#f5e6d0"
+            clearcoat={0}
+          />
+        )}
       </mesh>
       {/* Gold outline on front and back faces */}
       <primitive object={new Line2(result.frontLine, result.lineMat)} />
@@ -243,7 +256,7 @@ function CrowMesh() {
   )
 }
 
-export default function CawCoin3D({ className }: { className?: string }) {
+export default function CawCoin3D({ className, isDark = true }: { className?: string; isDark?: boolean }) {
   return (
     <div className={className} style={{ cursor: 'grab' }}>
       <Canvas
@@ -256,7 +269,7 @@ export default function CawCoin3D({ className }: { className?: string }) {
         <directionalLight position={[4, 3, 6]} intensity={1.8} color="#ebc046" />
         <directionalLight position={[-4, 2, 5]} intensity={1.2} color="#c0c0c0" />
         <directionalLight position={[0, -3, 5]} intensity={0.8} color="#d4d4d4" />
-        <CrowMesh />
+        <CrowMesh isDark={isDark} />
       </Canvas>
     </div>
   )

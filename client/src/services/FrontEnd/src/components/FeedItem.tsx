@@ -670,7 +670,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   return (
     <>
       <div onClick={handleCardClick} className="block">
-        <div className={`p-4 transition-all duration-300 hover:bg-gray-500/5 cursor-pointer border-b ${
+        <div className={`p-4 transition-all duration-300 feed-item-hover cursor-pointer border-b ${
           isDark ? 'border-gray-800' : 'border-gray-200'
         } ${
           (item.status === 'PENDING' || item.status === 'FAILED') ? 'opacity-60' : ''
@@ -744,7 +744,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     </Link>
                     {item.status === 'PENDING' && (
                       <span className="relative group">
-                        <span className="px-2 py-0.5 text-xs bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 rounded-full cursor-help">
+                        <span className="px-2 py-0.5 text-xs bg-gray-200 text-gray-500 dark:bg-yellow-500/20 dark:text-yellow-400 rounded-full cursor-help">
                           Pending
                         </span>
                         <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 z-50 bg-white text-black dark:bg-white dark:text-black">

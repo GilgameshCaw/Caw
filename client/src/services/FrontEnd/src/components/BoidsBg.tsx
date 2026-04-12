@@ -157,10 +157,11 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
       sctx.fillStyle = grad
     }))
 
-    // White sprites (two variants for gradFlip)
+    // White/black bright sprites (two variants for gradFlip)
     const whiteSprites = [false, true].map(flip => renderSprite(sctx => {
       const grad = sctx.createLinearGradient(0, 0, SVG_W, SVG_H)
-      const whi = 'rgba(255,255,255,0.65)', wlo = 'rgba(200,200,210,0.35)'
+      const whi = isDark ? 'rgba(255,255,255,0.65)' : 'rgba(0,0,0,0.65)'
+      const wlo = isDark ? 'rgba(200,200,210,0.35)' : 'rgba(30,30,20,0.35)'
       grad.addColorStop(0, flip ? wlo : whi)
       grad.addColorStop(0.5, flip ? whi : wlo)
       grad.addColorStop(1, flip ? wlo : whi)

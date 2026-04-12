@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { useWriteContract, useWaitForTransactionReceipt, useChainId, useSwitchChain, useAccount } from 'wagmi'
 import { readContract } from '@wagmi/core'
 import { useTheme } from '~/hooks/useTheme'
+import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { themeTextSecondary, themeTextMuted, themeBorder } from '~/utils/theme'
 import { MarketplaceListing, MarketplaceBid, useMarketplaceStore } from '~/store/marketplaceStore'
 import { formatEther, formatUnits } from 'viem'
@@ -74,6 +75,7 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
   const { isLoading: isCancelConfirming, isSuccess: isCancelSuccess } = useWaitForTransactionReceipt({ hash: cancelHash })
   const chainId = useChainId()
   const { switchChain } = useSwitchChain()
+  const ensureWallet = useEnsureWallet()
 
   useEffect(() => {
     if (isCancelSuccess) {
@@ -83,16 +85,14 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
   }, [isCancelSuccess])
 
   const handleCancel = () => {
-    if (chainId !== chains.l1.chainId) {
-      switchChain({ chainId: chains.l1.chainId })
-      return
-    }
-    writeCancel({
-      address: CAW_NAME_MARKETPLACE_ADDRESS,
-      abi: cawNameMarketplaceAbi,
-      functionName: 'cancelListing',
-      args: [BigInt(listing.listingId)],
-      chainId: chains.l1.chainId,
+    ensureWallet({ chainId: chains.l1.chainId }, async () => {
+      writeCancel({
+        address: CAW_NAME_MARKETPLACE_ADDRESS,
+        abi: cawNameMarketplaceAbi,
+        functionName: 'cancelListing',
+        args: [BigInt(listing.listingId)],
+        chainId: chains.l1.chainId,
+      })
     })
   }
 
@@ -127,17 +127,15 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
 
   const handleSettle = (e: React.MouseEvent) => {
     e.stopPropagation()
-    if (chainId !== chains.l1.chainId) {
-      switchChain({ chainId: chains.l1.chainId })
-      return
-    }
-    writeSettle({
-      address: CAW_NAME_MARKETPLACE_ADDRESS,
-      abi: cawNameMarketplaceAbi,
-      functionName: 'settleAuction',
-      args: [BigInt(listing.listingId)],
-      value: settleLzFee,
-      chainId: chains.l1.chainId,
+    ensureWallet({ chainId: chains.l1.chainId }, async () => {
+      writeSettle({
+        address: CAW_NAME_MARKETPLACE_ADDRESS,
+        abi: cawNameMarketplaceAbi,
+        functionName: 'settleAuction',
+        args: [BigInt(listing.listingId)],
+        value: settleLzFee,
+        chainId: chains.l1.chainId,
+      })
     })
   }
 

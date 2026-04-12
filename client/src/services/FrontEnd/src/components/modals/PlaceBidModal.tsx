@@ -4,6 +4,7 @@ import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { parseEther, parseUnits, formatEther, formatUnits, erc20Abi, maxUint256 } from 'viem'
 import ModalWrapper from './ModalWrapper'
 import { useTheme } from '~/hooks/useTheme'
+import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { themeTextSecondary, themeTextMuted, themeBgSubtle, themeInput, themeBorder } from '~/utils/theme'
 import { useMarketplaceStore, MarketplaceListing, MarketplaceBid } from '~/store/marketplaceStore'
 import { apiFetch } from '~/api/client'
@@ -48,6 +49,7 @@ const PlaceBidModal: React.FC = () => {
   const { openConnectModal } = useConnectModal()
   const chainId = useChainId()
   const { switchChain, isPending: isSwitchingChain } = useSwitchChain()
+  const ensureWallet = useEnsureWallet()
   const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
 
@@ -158,42 +160,42 @@ const PlaceBidModal: React.FC = () => {
   }
 
   const handleApprove = () => {
-    if (!isConnected) { openConnectModal?.(); return }
-    if (needsChainSwitch) { switchChain({ chainId: chains.l1.chainId }); return }
-    if (!listing) return
+    ensureWallet({ chainId: chains.l1.chainId }, async () => {
+      if (!listing) return
 
-    writeApprove({
-      address: listing.paymentAddress as `0x${string}`,
-      abi: erc20Abi,
-      functionName: 'approve',
-      args: [CAW_NAME_MARKETPLACE_ADDRESS, maxUint256],
-      chainId: chains.l1.chainId,
+      writeApprove({
+        address: listing.paymentAddress as `0x${string}`,
+        abi: erc20Abi,
+        functionName: 'approve',
+        args: [CAW_NAME_MARKETPLACE_ADDRESS, maxUint256],
+        chainId: chains.l1.chainId,
+      })
     })
   }
 
   const handleBid = () => {
-    if (!isConnected) { openConnectModal?.(); return }
-    if (needsChainSwitch) { switchChain({ chainId: chains.l1.chainId }); return }
-    if (!listing || !bidAmount) return
+    ensureWallet({ chainId: chains.l1.chainId }, async () => {
+      if (!listing || !bidAmount) return
 
-    if (isEth) {
-      writeBid({
-        address: CAW_NAME_MARKETPLACE_ADDRESS,
-        abi: cawNameMarketplaceAbi,
-        functionName: 'placeBid',
-        args: [BigInt(listing.listingId)],
-        value: bidWei,
-        chainId: chains.l1.chainId,
-      })
-    } else {
-      writeBid({
-        address: CAW_NAME_MARKETPLACE_ADDRESS,
-        abi: cawNameMarketplaceAbi,
-        functionName: 'placeBidWithToken',
-        args: [BigInt(listing.listingId), bidWei],
-        chainId: chains.l1.chainId,
-      })
-    }
+      if (isEth) {
+        writeBid({
+          address: CAW_NAME_MARKETPLACE_ADDRESS,
+          abi: cawNameMarketplaceAbi,
+          functionName: 'placeBid',
+          args: [BigInt(listing.listingId)],
+          value: bidWei,
+          chainId: chains.l1.chainId,
+        })
+      } else {
+        writeBid({
+          address: CAW_NAME_MARKETPLACE_ADDRESS,
+          abi: cawNameMarketplaceAbi,
+          functionName: 'placeBidWithToken',
+          args: [BigInt(listing.listingId), bidWei],
+          chainId: chains.l1.chainId,
+        })
+      }
+    })
   }
 
   if (!listing) return null

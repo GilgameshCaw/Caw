@@ -88,6 +88,65 @@
 /*   background-size: contain; */
 /* } */
 
+/* Feed item hover — gradient fade on edges */
+.feed-item-hover {
+  position: relative;
+  border-bottom: none !important;
+}
+.feed-item-hover::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+.feed-item-hover:hover::before {
+  opacity: 1;
+}
+:root.dark .feed-item-hover::before {
+  background: linear-gradient(to right,
+    transparent 0%,
+    rgba(255,255,255,0.03) 5%,
+    rgba(255,255,255,0.03) 95%,
+    transparent 100%
+  );
+}
+:root:not(.dark) .feed-item-hover::before {
+  background: linear-gradient(to right,
+    transparent 0%,
+    rgba(0,0,0,0.03) 5%,
+    rgba(0,0,0,0.03) 95%,
+    transparent 100%
+  );
+}
+/* Feed divider — gradient that fades at edges */
+.feed-item-hover::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  pointer-events: none;
+}
+:root.dark .feed-item-hover::after {
+  background: linear-gradient(to right,
+    transparent 0%,
+    rgb(31, 41, 55) 5%,
+    rgb(31, 41, 55) 95%,
+    transparent 100%
+  );
+}
+:root:not(.dark) .feed-item-hover::after {
+  background: linear-gradient(to right,
+    transparent 0%,
+    rgb(229, 231, 235) 5%,
+    rgb(229, 231, 235) 95%,
+    transparent 100%
+  );
+}
+
 /* Light mode: subtle shadow on primary action buttons and username cards */
 :root:not(.dark) button.bg-yellow-500,
 :root:not(.dark) a.bg-yellow-500,

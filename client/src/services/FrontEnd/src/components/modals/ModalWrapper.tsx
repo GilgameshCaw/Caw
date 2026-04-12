@@ -39,7 +39,7 @@ const ModalWrapper: React.FC<ModalWrapperProps> = ({
   className = '',
   zIndex = 50,
   usePortal = true,
-  backdropClass = 'bg-black/70'
+  backdropClass
 }) => {
   const { isDark } = useTheme()
   const modalRef = useRef<HTMLDivElement>(null)
@@ -78,9 +78,11 @@ const ModalWrapper: React.FC<ModalWrapperProps> = ({
 
   if (!isOpen) return null
 
+  const effectiveBackdrop = backdropClass ?? (isDark ? 'bg-black/70' : 'bg-black/40')
+
   const modalContent = (
     <div
-      className={`fixed inset-0 ${backdropClass} flex items-center justify-center p-4`}
+      className={`fixed inset-0 ${effectiveBackdrop} flex items-center justify-center p-4`}
       style={{ zIndex }}
       onClick={handleBackdropClick}
     >

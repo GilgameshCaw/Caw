@@ -4,6 +4,7 @@ import { useConnectModal } from '@rainbow-me/rainbowkit'
 import ModalWrapper from './ModalWrapper'
 import { useClientAuthStore } from '~/store/clientAuthStore'
 import { useTheme } from '~/hooks/useTheme'
+import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { CLIENT_ID } from '~/api/actions'
 import { cawNameAbi, cawNameQuoterAbi } from '~/../../../abi/generated'
 import { CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
@@ -17,6 +18,7 @@ const ClientAuthModal: React.FC = () => {
   const { openConnectModal } = useConnectModal()
   const chainId = useChainId()
   const { switchChain } = useSwitchChain()
+  const ensureWallet = useEnsureWallet()
   const { writeContractAsync } = useWriteContract()
   const [isPending, setIsPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -36,45 +38,37 @@ const ClientAuthModal: React.FC = () => {
   const totalFee = authQuote?.nativeFee ? BigInt(authQuote.nativeFee) : 0n
 
   const handleAuth = async () => {
-    if (!isConnected) {
-      openConnectModal?.()
-      return
-    }
+    await ensureWallet({ chainId: chains.l1.chainId }, async () => {
+      if (!tokenId) return
 
-    if (wrongChain) {
-      switchChain({ chainId: chains.l1.chainId })
-      return
-    }
+      setIsPending(true)
+      setError(null)
 
-    if (!tokenId) return
+      try {
+        await writeContractAsync({
+          address: CAW_NAMES_ADDRESS,
+          abi: cawNameAbi,
+          functionName: 'authenticate',
+          args: [CLIENT_ID, tokenId, chains.l2.layerZero, 0n],
+          value: totalFee,
+          chainId: chains.l1.chainId,
+        })
 
-    setIsPending(true)
-    setError(null)
-
-    try {
-      await writeContractAsync({
-        address: CAW_NAMES_ADDRESS,
-        abi: cawNameAbi,
-        functionName: 'authenticate',
-        args: [CLIENT_ID, tokenId, chains.l2.layerZero, 0n],
-        value: totalFee,
-        chainId: chains.l1.chainId,
-      })
-
-      close()
-      // Give LayerZero a moment to relay, then retry
-      if (onSuccess) {
-        setTimeout(onSuccess, 3000)
+        close()
+        // Give LayerZero a moment to relay, then retry
+        if (onSuccess) {
+          setTimeout(onSuccess, 3000)
+        }
+      } catch (err: any) {
+        if (err?.name === 'UserRejectedRequestError' || err?.code === 4001) {
+          setError('Transaction rejected')
+        } else {
+          setError(err?.shortMessage || err?.message || 'Transaction failed')
+        }
+      } finally {
+        setIsPending(false)
       }
-    } catch (err: any) {
-      if (err?.name === 'UserRejectedRequestError' || err?.code === 4001) {
-        setError('Transaction rejected')
-      } else {
-        setError(err?.shortMessage || err?.message || 'Transaction failed')
-      }
-    } finally {
-      setIsPending(false)
-    }
+    })
   }
 
   return (
