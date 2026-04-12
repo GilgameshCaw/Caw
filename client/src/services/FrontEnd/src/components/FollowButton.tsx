@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useFollowButton } from '~/hooks/useFollowButton'
+import { useTheme } from '~/hooks/useTheme'
 import Tooltip from '~/components/Tooltip'
 
 interface FollowButtonProps {
@@ -25,6 +26,7 @@ export const FollowButton: React.FC<FollowButtonProps> = ({
   disabled = false
 }) => {
   const [isHovered, setIsHovered] = useState(false)
+  const { isDark } = useTheme()
 
   const {
     isFollowing,
@@ -66,15 +68,23 @@ export const FollowButton: React.FC<FollowButtonProps> = ({
     if (isFollowing || (isPending && !isFollowing)) {
       // "Following" state (or pending follow that will become "Following")
       if (isHovered && !isPending) {
-        return 'border-2 border-white bg-black text-white'
+        return isDark
+          ? 'border-2 border-white bg-black text-white'
+          : 'border-2 border-gray-800 bg-white text-gray-900'
       }
-      return 'border-2 border-white bg-white text-black'
+      return isDark
+        ? 'border-2 border-white bg-white text-black'
+        : 'border-2 border-gray-800 bg-gray-800 text-white'
     } else {
       // "Follow" state (or pending unfollow that will become "Follow")
       if (isHovered && !isPending) {
-        return 'border-2 border-white bg-white text-black'
+        return isDark
+          ? 'border-2 border-white bg-white text-black'
+          : 'border-2 border-gray-800 bg-gray-800 text-white'
       }
-      return 'border-2 border-white text-white bg-transparent'
+      return isDark
+        ? 'border-2 border-white text-white bg-transparent'
+        : 'border-2 border-gray-800 text-gray-800 bg-transparent'
     }
   }
 

@@ -154,7 +154,7 @@ const Marketplace: React.FC = () => {
 
 const StatCard: React.FC<{ label: string; value: string; isDark: boolean }> = ({ label, value, isDark }) => (
   <div className={`px-1 py-6 rounded-lg border transition-all duration-300 flex flex-col items-center justify-between ${
-    isDark ? 'border-white/20 bg-black' : 'border-gray-300 bg-white'
+    isDark ? 'border-white/20 bg-black' : 'border-gray-200 bg-gray-50 shadow-xl'
   }`}>
     <div className={`text-3xl font-bold transition-colors duration-300 text-center flex-1 flex items-center ${
       isDark ? 'text-white' : 'text-black'

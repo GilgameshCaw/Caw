@@ -17,6 +17,7 @@ import BadgedIcon from '~/assets/images/badged.svg'
 import { useNavigate, Link } from 'react-router-dom'
 import StakingRewardsInfo from '~/components/StakingRewardsInfo'
 import { HiInformationCircle } from 'react-icons/hi'
+import { useTheme } from '~/hooks/useTheme'
 
 const CLIENT_ID = Number(import.meta.env.VITE_CLIENT_ID)
 
@@ -33,6 +34,7 @@ const COST_SCHEDULE: Record<number, bigint> = {
 const DEFAULT_COST = 1_000_000n  // 8+ chars
 
 export const NewProfile: React.FC = () => {
+  const { isDark } = useTheme()
   const { switchChain } = useSwitchChain();
   const [isSwitchingChain, setIsSwitchingChain] = useState(false);
   const handleSwitchChain = async () => {
@@ -446,7 +448,7 @@ console.log("BALANCE:", balance)
       <MainLayout>
         <div className="max-w-xl mx-auto p-6 space-y-4 mt-8">
           <div className="text-center space-y-6">
-            <h1 className="text-4xl font-bold text-white">Creating your new profile...</h1>
+            <h1 className={`text-4xl font-bold ${isDark ? 'text-white' : 'text-black'}`}>Creating your new profile...</h1>
             <p className="text-gray-400 text-sm">Your username will be created as a tradeable and transferable NFT, and will live forever on the Ethereum Blockchain</p>
 
             {/* Show the username SVG with loader overlay */}
@@ -554,7 +556,11 @@ console.log("BALANCE:", balance)
                     pattern="[A-Za-z0-9]*"
                     onChange={e => { stopTypewriter(); setUsername(e.target.value.toLowerCase().replace(/[^a-z0-9]/g, '')); }}
                     onFocus={stopTypewriter}
-                    className="w-full pl-10 pr-12 py-3 bg-black border border-white/20 rounded-full text-white placeholder-white/50 focus:outline-none focus:border-white/30 focus:bg-black transition-all duration-300"
+                    className={`w-full pl-10 pr-12 py-3 rounded-full focus:outline-none transition-all duration-300 ${
+                      isDark
+                        ? 'bg-black border border-white/20 text-white placeholder-white/50 focus:border-white/30 focus:bg-black'
+                        : 'bg-gray-100 border border-gray-300 text-black placeholder-gray-400 focus:border-gray-400 focus:bg-white'
+                    }`}
                     placeholder="Enter your username"
                 />
                 <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
@@ -601,17 +607,19 @@ console.log("BALANCE:", balance)
             <div className="flex justify-between items-center text-sm">
                 {useAddress ? (
                   <div className="text-gray-400">
-                    Balance: <span className="font-mono text-white">{formatNumberCompact(convertToNumber(balance))} CAW</span>
+                    Balance: <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>{formatNumberCompact(convertToNumber(balance))} CAW</span>
                   </div>
                 ) : <div />}
                 <div className="text-gray-400">
-                    Cost: <span className="font-mono text-white">{formatNumberCompact(convertToNumber(cost, 18))} CAW</span>
+                    Cost: <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>{formatNumberCompact(convertToNumber(cost, 18))} CAW</span>
                     {costInDollars != null && <span className="text-gray-500 ml-1">(~${costInDollars < 0.01 ? '<0.01' : costInDollars.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})</span>}
                 </div>
             </div>
 
             {/* Deposit option */}
-            <div className="border border-white/10 bg-[#0D0D0D]/85 rounded-xl p-4 space-y-3 mt-6">
+            <div className={`border rounded-xl p-4 space-y-3 mt-6 ${
+              isDark ? 'border-white/10 bg-[#0D0D0D]/85' : 'border-gray-200 bg-gray-50'
+            }`}>
               <label className="flex items-center gap-3 cursor-pointer">
                 <button
                   type="button"
@@ -626,7 +634,7 @@ console.log("BALANCE:", balance)
                 </button>
                 <div>
                   <div className="flex items-center gap-1.5">
-                  <span className="text-white text-sm font-medium">{username ? `Deposit CAW as @${username}` : 'Deposit CAW'}</span>
+                  <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{username ? `Deposit CAW as @${username}` : 'Deposit CAW'}</span>
                   <div className="relative group">
                     <HiInformationCircle className="w-4 h-4 text-gray-400 cursor-help" />
                     <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-[min(450px,100vw)] bg-gray-900 rounded-lg shadow-lg">
@@ -651,7 +659,11 @@ console.log("BALANCE:", balance)
                       value={depositAmount ? depositAmount.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''}
                       onChange={e => { setDepositAmount(e.target.value.replace(/[^0-9]/g, '')); setDepositDefaultSet(true) }}
                       placeholder="Amount to deposit"
-                      className="w-full px-4 py-2.5 bg-black border border-white/20 rounded-full text-white placeholder-white/30 focus:outline-none focus:border-white/30 text-sm"
+                      className={`w-full px-4 py-2.5 rounded-full focus:outline-none text-sm ${
+                        isDark
+                          ? 'bg-black border border-white/20 text-white placeholder-white/30 focus:border-white/30'
+                          : 'bg-white border border-gray-300 text-black placeholder-gray-400 focus:border-gray-400'
+                      }`}
                     />
                     <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm">CAW</span>
                   </div>
@@ -705,7 +717,7 @@ console.log("BALANCE:", balance)
                   </div>
                   {depositAmountWei > 0n && (
                     <div className="text-xs text-gray-500 text-center">
-                      Total CAW needed: <span className="text-white font-mono">{formatNumber(convertToNumber(totalCawNeeded, 18), 0)}</span>
+                      Total CAW needed: <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>{formatNumber(convertToNumber(totalCawNeeded, 18), 0)}</span>
                       {cawPrice > 0 && <span className="text-gray-500 ml-1">(~${(convertToNumber(totalCawNeeded, 18) * cawPrice).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})</span>}
                     </div>
                   )}

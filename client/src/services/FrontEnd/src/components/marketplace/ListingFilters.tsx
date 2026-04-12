@@ -34,7 +34,7 @@ const ListingFilters: React.FC = () => {
   const selectClass = `px-3 py-2 rounded-lg text-sm border outline-none transition cursor-pointer ${themeInput(isDark)} ${themeBorder(isDark)}`
 
   return (
-    <div className={`flex flex-wrap gap-3 p-4 rounded-xl ${themeBgSubtle(isDark)} ${themeBorder(isDark)} border`}>
+    <div className={`flex flex-wrap gap-3 p-4 rounded-xl ${themeBgSubtle(isDark)} ${themeBorder(isDark)} border ${isDark ? '' : 'shadow-xl'}`}>
       <div className="flex flex-col gap-1">
         <label className={`text-xs font-medium ${themeTextSecondary(isDark)}`}>Type</label>
         <select

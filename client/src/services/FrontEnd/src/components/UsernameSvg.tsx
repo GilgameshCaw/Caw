@@ -62,6 +62,7 @@ const UsernameSvg: React.FC<UsernameSvgProps> = ({ username, textOpacity }) => {
       height="100%"
       viewBox="0 0 270 270"
       fill="none"
+      className="username-card"
     >
       <defs>
         <filter

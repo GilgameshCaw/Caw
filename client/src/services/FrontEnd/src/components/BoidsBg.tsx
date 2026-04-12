@@ -66,7 +66,7 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
         y: Math.random() * h,
         vx: Math.cos(angle) * speed,
         vy: Math.sin(angle) * speed,
-        bright: Math.random() < 0.01 ? (Math.random() < 0.5 ? 'gold' : 'white') : 'none',
+        bright: i < 5 ? 'gold' : i < 10 ? 'white' : 'none',
         heading: angle + Math.PI / 2,
         sepMult: 0.5 + Math.random(), // multiplier for separation radius
         opacity: 0.07 + Math.random() * 0.03,

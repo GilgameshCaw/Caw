@@ -35,7 +35,7 @@ const MainLayout = ({ children }: MainLayoutProps) => {
 
   return (
     <div className={`min-h-screen w-full max-w-[1050px] flex m-auto transition-colors duration-300 ${
-      isDark ? 'bg-black' : 'bg-white'
+      isDark ? 'bg-black' : 'bg-white shadow-[0_0_40px_rgba(0,0,0,0.08)]'
     }`}>
       {/* Mobile Header */}
       {!hideSidebars && (

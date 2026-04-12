@@ -158,7 +158,7 @@ const SearchBar: React.FC = () => {
           className={`w-full rounded-full py-3 pl-12 pr-10 transition-all duration-300 focus:outline-none ${
             isDark
               ? 'bg-black border-yellow-500/30 text-white placeholder-white/50 focus:border-yellow-500/50 focus:bg-black'
-              : 'bg-gray-100 border-gray-300 text-black placeholder-gray-500 focus:border-gray-400 focus:bg-gray-200'
+              : 'bg-gray-100 border-gray-300 text-black placeholder-gray-500 focus:border-gray-400 focus:bg-gray-200 shadow-xl'
           } border`}
         />
         {query && (

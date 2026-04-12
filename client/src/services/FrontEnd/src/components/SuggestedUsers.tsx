@@ -130,7 +130,9 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
   }
 
   return (
-    <div className="py-6">
+    <div className={`py-6 px-4 rounded-xl border transition-all duration-300 ${
+      isDark ? 'bg-black border-yellow-500/30' : 'bg-gray-100 border-gray-200 shadow-xl'
+    }`}>
       <h2 className={`text-lg font-semibold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
         Suggested users to follow
       </h2>
@@ -143,7 +145,7 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
               className={`relative rounded-xl p-4 shrink-0 transition-all duration-700 ease-in-out ${
                 isDark
                   ? 'bg-white/5 hover:bg-white/10'
-                  : 'bg-gray-50 hover:bg-gray-100'
+                  : 'bg-white hover:bg-gray-50 shadow-lg border border-gray-200'
               }`}
               style={{
                 width: isFadingOut ? '0%' : '33%',

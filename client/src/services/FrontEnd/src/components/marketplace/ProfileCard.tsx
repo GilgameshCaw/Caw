@@ -38,7 +38,7 @@ const ProfileCard: React.FC<Props> = ({ username, stats: externalStats, children
 
   return (
     <div className={`rounded-xl border overflow-hidden ${
-      isDark ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200'
+      isDark ? 'bg-white/5 border-white/10' : 'bg-white border-gray-200 shadow-xl'
     }`}>
       <div className={`flex flex-col items-center justify-center pt-4 pb-2 px-4 ${isDark ? 'bg-white/[0.02]' : 'bg-gray-50'}`}>
         <div className="w-full max-w-[200px]">

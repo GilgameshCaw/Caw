@@ -72,7 +72,8 @@
 :root:not(.dark) {
   color: #111;
   background: #e5e7eb;
-  background-image: linear-gradient(to right, #d1d5db 0%, #e5e7eb 15%, #e5e7eb 85%, #d1d5db 100%);
+  background-image: linear-gradient(to right, #e5e7eb 0%, #d1d5db 15%, #d1d5db 85%, #e5e7eb 100%);
+  background-attachment: fixed;
 }
 
 /* .banner-bg { */
@@ -86,6 +87,16 @@
 /*   background-repeat: repeat; */
 /*   background-size: contain; */
 /* } */
+
+/* Light mode: subtle shadow on primary action buttons and username cards */
+:root:not(.dark) button.bg-yellow-500,
+:root:not(.dark) a.bg-yellow-500,
+:root:not(.dark) .username-card {
+  box-shadow: 1px 1px 1px 1px #000a;
+}
+.username-card {
+  border-radius: 20px;
+}
 
 @layer base {
   input[type="range"] {

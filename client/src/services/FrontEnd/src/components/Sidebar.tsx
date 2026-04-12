@@ -123,7 +123,7 @@ const Sidebar: React.FC = () => {
     if (isActive) {
       return isDark
         ? 'bg-white/10 text-white'
-        : 'bg-gray-200 text-black'
+        : 'bg-gray-100 text-black shadow-xl border border-gray-200'
     } else {
       return isDark
         ? 'text-gray-300 hover:text-white hover:bg-white/10'
@@ -156,7 +156,9 @@ const Sidebar: React.FC = () => {
                 color: '#ebc046',
                 letterSpacing: '5px',
                 marginLeft: '10px',
-                textShadow: '0 1px 2px rgba(0, 0, 0, 0.6), 0 0 4px rgba(0, 0, 0, 0.3)',
+                textShadow: isDark
+                  ? '0 1px 2px rgba(0, 0, 0, 0.6), 0 0 4px rgba(0, 0, 0, 0.3)'
+                  : 'rgb(0 0 0) 0px 1px 1px, rgb(240 177 0) 0px 0px 3px',
               }}
             >
               CAW

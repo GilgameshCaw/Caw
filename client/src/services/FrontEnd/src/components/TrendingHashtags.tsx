@@ -33,7 +33,7 @@ const TrendingHashtags: React.FC = () => {
     return (
       <div className="space-y-4 animate-pulse">
         {[...Array(7)].map((_, i) => (
-          <div key={i} className="h-12 bg-gray-800 rounded-lg"></div>
+          <div key={i} className={`h-12 rounded-lg ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
         ))}
       </div>
     )
