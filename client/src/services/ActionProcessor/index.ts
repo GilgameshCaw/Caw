@@ -22,13 +22,22 @@ export const actionProcessorService: Service = {
     return res.success ? [] : res.error.errors.map(e => new Error(e.message))
   },
 
-  start(_cfg) {
+  start(_cfg, ctx) {
     const { redisUrl } = Config.parse(_cfg)
     const redis = new Redis(redisUrl)
     let stopRequested = false
 
+    // ActionProcessor is event-driven (Redis pub/sub). We heartbeat on each
+    // message processed AND via a periodic idle ping so the watchdog knows
+    // we're still listening during quiet periods.
+    ctx.declareLoop('listen', 2 * 60_000) // Any quiet period over 2 min is suspicious
+    const idleHeartbeat = setInterval(() => {
+      if (!stopRequested) ctx.heartbeat('listen')
+    }, 30_000)
+
     const started = (async () => {
       await prisma.$connect()
+      ctx.heartbeat('listen') // Mark alive after connect
 
       // Resume from last processed action's rawEventId instead of reprocessing everything on restart
       const lastAction = await prisma.action.findFirst({
@@ -58,6 +67,7 @@ export const actionProcessorService: Service = {
           }
           lastId = raw.id
         }
+        ctx.heartbeat('listen')
       }
 
       // now subscribe to the same "raws" channel your Gatherer is publishing
@@ -90,6 +100,7 @@ export const actionProcessorService: Service = {
       started,
       async stop() {
         stopRequested = true
+        clearInterval(idleHeartbeat)
         await prisma.$disconnect()
       },
       stats: async () => `actions: ${await prisma.action.count()}`

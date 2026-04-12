@@ -24,7 +24,7 @@ export const frontEndService: Service = {
     return res.success ? [] : res.error.errors.map(e => new Error(e.message))
   },
 
-  start(configParam: unknown) {
+  start(configParam: unknown, ctx) {
     const { dir, cmd, args } = Config.parse(configParam)
     const cwd = path.resolve(process.cwd(), dir)
     let proc: ChildProcess
@@ -37,9 +37,19 @@ export const frontEndService: Service = {
       })
     })()
 
+    // Heartbeat as long as the child process is alive. If it exits, the
+    // heartbeat stops ticking and the watchdog restarts the service.
+    ctx.declareLoop('child', 2 * 60_000)
+    const heartbeatTimer = setInterval(() => {
+      if (proc && !proc.killed) {
+        ctx.heartbeat('child')
+      }
+    }, 30_000)
+
     return {
       started,
       async stop() {
+        clearInterval(heartbeatTimer)
         if (proc && !proc.killed) {
           proc.kill('SIGINT')
         }

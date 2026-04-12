@@ -1,6 +1,6 @@
 import process from 'node:process';
 import {z} from 'zod';
-import {type Service} from './Service';
+import {type Service, type HeartbeatContext} from './Service';
 import { rawEventsGathererService } from './services/RawEventsGatherer';
 import { actionProcessorService } from './services/ActionProcessor';
 import { validatorService } from './services/ValidatorService';
@@ -125,6 +125,19 @@ export default function runServices(fullConfig: RunServicesConfig) {
   });
 }
 
+// Default time a loop can go without a heartbeat before the watchdog
+// declares it dead and restarts the service. Individual loops can
+// override this by calling ctx.declareLoop(name, timeoutMs).
+const DEFAULT_HEARTBEAT_TIMEOUT_MS = 5 * 60_000; // 5 minutes
+
+// How often the watchdog checks heartbeats.
+const HEARTBEAT_CHECK_INTERVAL_MS = 30_000;
+
+type LoopState = {
+  lastHeartbeat: number;
+  timeoutMs: number;
+};
+
 function runInstance(instance: InstanceReady): {stop(): Promise<void>} {
   let stopService = async () => {};
   let alive = true;
@@ -134,10 +147,34 @@ function runInstance(instance: InstanceReady): {stop(): Promise<void>} {
       let startResult: ReturnType<Service['start']> | undefined;
       let retryDelay = 1000;
 
+      // Per-loop heartbeat tracking. Reset on every (re)start so a fresh
+      // service doesn't get tripped up by stale timestamps from the last
+      // incarnation.
+      const loops = new Map<string, LoopState>();
+      const ctx: HeartbeatContext = {
+        heartbeat(loopName = 'main') {
+          const existing = loops.get(loopName);
+          if (existing) {
+            existing.lastHeartbeat = Date.now();
+          } else {
+            loops.set(loopName, {
+              lastHeartbeat: Date.now(),
+              timeoutMs: DEFAULT_HEARTBEAT_TIMEOUT_MS,
+            });
+          }
+        },
+        declareLoop(loopName, timeoutMs) {
+          loops.set(loopName, {
+            lastHeartbeat: Date.now(),
+            timeoutMs,
+          });
+        },
+      };
+
       // Phase 1: Start the service (retry until it starts)
       while (alive) {
         try {
-          startResult = instance.service.start(instance.config);
+          startResult = instance.service.start(instance.config, ctx);
           stopService = async () => startResult!.stop();
 
           await startResult.started;
@@ -162,21 +199,58 @@ function runInstance(instance: InstanceReady): {stop(): Promise<void>} {
 
       console.log(`Instance ${instance.instance} started`);
 
-      // Phase 2: Monitor the service via stats — restart if it crashes
+      // Phase 2: Monitor via heartbeats AND stats — restart on either signal
+      let crashReason: Error | undefined;
       try {
-        await delay(Math.random() * 60_000);
+        // Grace period on first start so services have time to run their
+        // first loop iteration before we expect heartbeats.
+        await delay(HEARTBEAT_CHECK_INTERVAL_MS);
 
+        let statsCountdown = 0; // Count ticks until we log stats
         while (alive) {
+          // Check every declared loop for staleness
+          const now = Date.now();
+          const loopEntries = Array.from(loops.entries());
+          for (const [loopName, state] of loopEntries) {
+            const age = now - state.lastHeartbeat;
+            if (age > state.timeoutMs) {
+              throw new Error(
+                `heartbeat stale for loop '${loopName}': ${Math.round(age / 1000)}s > ${Math.round(state.timeoutMs / 1000)}s`,
+              );
+            }
+          }
+
+          // Still call stats() — gives a free liveness signal AND useful log output.
+          // If stats() throws, treat it as a crash too.
           const stats = await startResult.stats();
-          console.log(`stats for ${instance.instance}:`, stats);
-          await delay(59_000 + 2000 * Math.random());
+
+          // Log stats less often than we check heartbeats, to avoid log spam
+          if (statsCountdown <= 0) {
+            const loopSummary = Array.from(loops.entries())
+              .map(([name, s]) => `${name}=${Math.round((now - s.lastHeartbeat) / 1000)}s`)
+              .join(', ');
+            console.log(
+              `stats for ${instance.instance}:`,
+              stats,
+              loopSummary ? `[loops: ${loopSummary}]` : '[no heartbeats yet]',
+            );
+            statsCountdown = 2; // Log every ~60s if check interval is 30s
+          } else {
+            statsCountdown--;
+          }
+
+          await delay(HEARTBEAT_CHECK_INTERVAL_MS);
         }
       } catch (error) {
+        crashReason = error instanceof Error ? error : new Error(String(error));
         if (!alive) break;
         console.error(
           `[runServices] ${instance.instance} crashed, restarting in 5s...`,
-          error,
+          crashReason.message,
         );
+        if (crashReason.stack) {
+          console.error(crashReason.stack);
+        }
 
         // Stop the dead service before restarting
         try { await startResult.stop(); } catch { /* ignore cleanup errors */ }

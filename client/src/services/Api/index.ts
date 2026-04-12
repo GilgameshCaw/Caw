@@ -21,7 +21,7 @@ export const apiService: Service = {
       : res.error.errors.map(e => new Error(e.message))
   },
 
-  start(cfg: unknown) {
+  start(cfg: unknown, ctx) {
     const { port, allowedOrigins, shortUrlDomain } = Config.parse(cfg)
 
     // inject allowedOrigins into process.env so server picks it up
@@ -36,9 +36,19 @@ export const apiService: Service = {
 
     const server = startApi(port)
 
+    // Heartbeat as long as the HTTP server is still listening. If the server
+    // crashes or closes, this stops ticking and the watchdog restarts us.
+    ctx.declareLoop('listening', 2 * 60_000)
+    const heartbeatTimer = setInterval(() => {
+      if ((server as any).listening) {
+        ctx.heartbeat('listening')
+      }
+    }, 30_000)
+
     return {
       started: Promise.resolve(),
       async stop() {
+        clearInterval(heartbeatTimer)
         await stopApi(server)
       },
       stats: async () => `listening on port ${port}`

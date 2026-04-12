@@ -29,8 +29,9 @@ export const rawEventsGathererService: Service = {
       : result.error.errors.map(e => new Error(`ZodError: ${e.message}`))
   },
 
-  start(configParam: unknown) {
+  start(configParam: unknown, ctx: import('../../Service').HeartbeatContext) {
     const cfg = Config.parse(configParam)
+    ctx.declareLoop('poll', 90_000) // 3× the 15s poll interval + buffer
     // Prefer environment variable for RPC URL (never commit API keys to config)
     const rpcUrl = process.env.L2_RPC_URL || cfg.rpcUrl
     const { chainId, redisUrl } = cfg
@@ -100,7 +101,8 @@ export const rawEventsGathererService: Service = {
         rawEventsProvider: {
           getLastProcessedEvent: getLast,
           storeEvent:            storeAndPublish
-        }
+        },
+        onTick: () => ctx.heartbeat('poll'),
       })
 
       stopListener = listener.stop

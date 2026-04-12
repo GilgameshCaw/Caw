@@ -25,7 +25,10 @@ export const instanceRegistryService: Service = {
     return result.success ? [] : result.error.errors.map(e => new Error(e.message))
   },
 
-  start(rawCfg) {
+  // InstanceRegistry is a one-shot service — registers on startup and then
+  // idles. It doesn't declare any heartbeat loops, so the watchdog only
+  // monitors it via stats() (which is fine — there's nothing to watch).
+  start(rawCfg, _ctx) {
     const cfg = InstanceRegistryConfig.parse(rawCfg)
     const l1RpcUrl = process.env.L1_RPC_URL || cfg.l1RpcUrl
     const clientId = Number(process.env.CLIENT_ID || cfg.clientId)

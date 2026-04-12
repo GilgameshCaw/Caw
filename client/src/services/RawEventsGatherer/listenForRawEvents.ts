@@ -60,6 +60,8 @@ export default async function listenForRawEvents(
       } | null>
       storeEvent(e: RawEventInput): Promise<void>
     }
+    /** Optional callback to signal liveness — called at the end of each successful poll */
+    onTick?: () => void
   }
 ): Promise<{ stop(): void }> {
   let wsProvider: WebSocketProvider | null = null
@@ -274,6 +276,8 @@ export default async function listenForRawEvents(
         }
         lastSyncedBlock = currentBlock
       }
+      // Heartbeat: successful poll (even if there were no new events)
+      config.onTick?.()
     } catch (err) {
       console.error('[RawEventsGatherer] Polling error:', err)
       // Don't update lastSyncedBlock on error, will retry next interval

@@ -919,18 +919,24 @@ async function runDataCleanup() {
  * Start the background worker
  * Runs every 5 minutes to clean up stale data
  */
-function startDataCleanerWorker() {
+function startDataCleanerWorker(heartbeat?: () => void) {
   const date = new Date().toISOString().split('T')[0]
   console.log(`[DataCleaner] Starting background worker... Logs will be written to logs/data-cleaner-${date}.log`)
   logger.log('Starting background worker...')
 
+  const runAndBeat = async () => {
+    try {
+      await runDataCleanup()
+    } finally {
+      heartbeat?.()
+    }
+  }
+
   // Run immediately on startup
-  runDataCleanup()
+  runAndBeat()
 
   // Then run every 1 minute for more responsive cleanup
-  setInterval(() => {
-    runDataCleanup()
-  }, 1 * 60 * 1000) // 1 minute
+  setInterval(runAndBeat, 1 * 60 * 1000) // 1 minute
 }
 
 // Export for use as a service
@@ -942,8 +948,9 @@ export const dataCleanerService = {
     return []
   },
 
-  start(cfg: unknown) {
-    startDataCleanerWorker()
+  start(_cfg: unknown, ctx: import('../../Service').HeartbeatContext) {
+    ctx.declareLoop('cleanup', 5 * 60_000) // 5× 1-minute interval
+    startDataCleanerWorker(() => ctx.heartbeat('cleanup'))
 
     return {
       started: Promise.resolve(),

@@ -88,14 +88,14 @@ function initializeProviders(config: ChainSyncConfig) {
 
   if (!l1Provider && config.l1RpcUrl) {
     // Convert WSS/WS URLs to HTTPS/HTTP — JsonRpcProvider only supports HTTP
-    const l1Url = config.l1RpcUrl.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:')
+    const l1Url = config.l1RpcUrl.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace('/ws/', '/')
     console.log('[ChainSync] L1 provider URL:', l1Url.slice(0, 40) + '...')
     l1Provider = new JsonRpcProvider(l1Url)
     clientManager = new Contract(CLIENT_MANAGER_ADDRESS, cawClientManagerAbi, l1Provider)
   }
 
   if (!l2Provider && config.l2RpcUrl) {
-    const l2Url = config.l2RpcUrl.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:')
+    const l2Url = config.l2RpcUrl.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace('/ws/', '/')
     console.log('[ChainSync] L2 provider URL:', l2Url.slice(0, 40) + '...')
     l2Provider = new JsonRpcProvider(l2Url)
   }
@@ -547,16 +547,18 @@ function registerTask(task: SyncTask) {
   syncTasks.set(task.name, task)
 }
 
-function startTask(task: SyncTask) {
+function startTask(task: SyncTask, heartbeat: (loopName?: string) => void) {
+  const loopName = `ChainSync:${task.name}`
+
   // Run immediately
-  task.sync().catch(err => {
+  task.sync().then(() => heartbeat(loopName)).catch(err => {
     console.error(`[ChainSync:${task.name}] Initial sync failed:`, err.message)
   })
 
   // Then run on interval
   task.timerId = setInterval(() => {
     task.lastRun = Date.now()
-    task.sync().catch(err => {
+    task.sync().then(() => heartbeat(loopName)).catch(err => {
       console.error(`[ChainSync:${task.name}] Sync failed:`, err.message)
     })
   }, task.interval)
@@ -580,14 +582,14 @@ export const chainSyncService = {
     return []
   },
 
-  start(cfg: ChainSyncConfig) {
+  start(cfg: ChainSyncConfig, ctx: import('../../Service').HeartbeatContext) {
     console.log('[ChainSync] Starting service...')
 
     // Resolve env vars — config.json may contain "${VAR}" literals
     const mainnetRpc = process.env.ETH_MAINNET_RPC_URL || cfg.ethMainnetRpcUrl || ''
     const resolvedCfg: ChainSyncConfig = {
-      // Use mainnet RPC for L1 client data — prices and CAW token are on mainnet
-      l1RpcUrl: mainnetRpc || process.env.L1_RPC_URL || cfg.l1RpcUrl,
+      // L1 RPC is Sepolia (where CawClientManager lives) — NOT mainnet
+      l1RpcUrl: process.env.L1_RPC_URL || cfg.l1RpcUrl,
       l2RpcUrl: process.env.L2_RPC_URL_HTTP || process.env.L2_RPC_URL || cfg.l2RpcUrl,
       ethMainnetRpcUrl: mainnetRpc,
     }
@@ -615,6 +617,7 @@ export const chainSyncService = {
       interval: 30 * 60 * 1000, // 30 minutes
       sync: syncAllClients
     })
+    ctx.declareLoop('ChainSync:Clients', 90 * 60_000) // 3× interval
 
     // Only register price sync if we have mainnet RPC
     if (resolvedCfg.ethMainnetRpcUrl) {
@@ -623,10 +626,11 @@ export const chainSyncService = {
         interval: 5 * 60 * 1000, // 5 minutes
         sync: syncPrices
       })
+      ctx.declareLoop('ChainSync:Prices', 15 * 60_000) // 3× interval
     }
 
     // Start all tasks
-    syncTasks.forEach(task => startTask(task))
+    syncTasks.forEach(task => startTask(task, ctx.heartbeat))
 
     return {
       started: Promise.resolve(),

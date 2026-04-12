@@ -177,22 +177,25 @@ async function updateTrendingScores() {
 /**
  * Start the view tracker background worker
  */
-function startViewTrackerWorker() {
+function startViewTrackerWorker(heartbeat?: (loopName: string) => void) {
   console.log('[ViewTracker] Starting background worker...')
 
+  const syncAndBeat = async () => {
+    try { await syncViewsToDatabase() } finally { heartbeat?.('sync-views') }
+  }
+  const trendAndBeat = async () => {
+    try { await updateTrendingScores() } finally { heartbeat?.('trending') }
+  }
+
   // Sync views to database every 30 seconds
-  setInterval(() => {
-    syncViewsToDatabase()
-  }, 30 * 1000)
+  setInterval(syncAndBeat, 30 * 1000)
 
   // Update trending scores every 5 minutes
-  setInterval(() => {
-    updateTrendingScores()
-  }, 5 * 60 * 1000)
+  setInterval(trendAndBeat, 5 * 60 * 1000)
 
   // Run initial sync
-  syncViewsToDatabase()
-  updateTrendingScores()
+  syncAndBeat()
+  trendAndBeat()
 }
 
 // Export for use as a service
@@ -203,8 +206,10 @@ export const viewTrackerService = {
     return []
   },
 
-  start(cfg: unknown) {
-    startViewTrackerWorker()
+  start(_cfg: unknown, ctx: import('../../Service').HeartbeatContext) {
+    ctx.declareLoop('sync-views', 3 * 60_000) // 6× 30s interval
+    ctx.declareLoop('trending', 15 * 60_000) // 3× 5min interval
+    startViewTrackerWorker((name) => ctx.heartbeat(name))
 
     return {
       started: Promise.resolve(),

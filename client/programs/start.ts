@@ -25,34 +25,39 @@ logger.log('CAW API Server Starting...')
 logger.log('Configuration loaded from config.json')
 
 // Add process-level error handlers to prevent crashes
-// This prevents the entire server from crashing when a single service fails
+// This prevents the entire server from crashing when a single service fails.
+// The service-level watchdog (runServices.ts) is responsible for restarting
+// individual services whose heartbeats go stale — these handlers just keep
+// the process alive and capture as much context as possible for debugging.
 process.on('uncaughtException', (error: any) => {
+  const ts = new Date().toISOString()
   console.error('==========================================')
-  console.error('[Server] Uncaught Exception Handler Called!')
-  console.error('[Server] Error:', error.message || error)
-  console.error('==========================================')
-  logger.log(`Uncaught Exception: ${error.message || JSON.stringify(error)}`)
-
-  // Log the stack trace
-  if (error.stack) {
-    console.error('[Server] Stack:', error.stack)
+  console.error(`[Server ${ts}] UNCAUGHT EXCEPTION`)
+  console.error(`[Server] Message: ${error?.message || error}`)
+  if (error?.stack) {
+    console.error(`[Server] Stack:\n${error.stack}`)
   }
-
-  // ALWAYS continue - never let the process crash from uncaught exceptions
-  // The individual services have their own retry/recovery logic
-  console.log('[Server] Continuing despite uncaught exception - API server remains running')
-  logger.log('Uncaught exception handled - API server continuing')
+  console.error('==========================================')
+  logger.log(`Uncaught Exception: ${error?.message || JSON.stringify(error)}`)
+  if (error?.stack) logger.log(`Stack: ${error.stack}`)
+  console.log('[Server] Continuing — watchdog will restart any stalled services')
 })
 
 console.log('[Server] Uncaught exception handler registered')
 
-process.on('unhandledRejection', (reason, promise) => {
+process.on('unhandledRejection', (reason: any, _promise) => {
+  const ts = new Date().toISOString()
   const reasonStr = reason instanceof Error ? reason.message : String(reason)
-  console.error('[Server] Unhandled Rejection:', reasonStr)
+  console.error('==========================================')
+  console.error(`[Server ${ts}] UNHANDLED REJECTION`)
+  console.error(`[Server] Reason: ${reasonStr}`)
+  if (reason instanceof Error && reason.stack) {
+    console.error(`[Server] Stack:\n${reason.stack}`)
+  }
+  console.error('==========================================')
   logger.log(`Unhandled Rejection: ${reasonStr}`)
-
-  // Don't crash on unhandled rejections either
-  console.log('[Server] Continuing despite unhandled rejection...')
+  if (reason instanceof Error && reason.stack) logger.log(`Stack: ${reason.stack}`)
+  console.log('[Server] Continuing — watchdog will restart any stalled services')
 })
 
 runServices(config)

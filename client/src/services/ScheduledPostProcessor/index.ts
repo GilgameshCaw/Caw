@@ -226,18 +226,24 @@ async function processDueScheduledPosts() {
  * Start the background worker
  * Runs every minute to check for due scheduled posts
  */
-function startScheduledPostWorker() {
+function startScheduledPostWorker(heartbeat?: () => void) {
   const date = new Date().toISOString().split('T')[0]
   console.log(`[ScheduledPostProcessor] Starting background worker... Logs will be written to logs/scheduled-posts-${date}.log`)
   logger.log('Starting background worker...')
 
+  const runAndBeat = async () => {
+    try {
+      await processDueScheduledPosts()
+    } finally {
+      heartbeat?.()
+    }
+  }
+
   // Run immediately on startup
-  processDueScheduledPosts()
+  runAndBeat()
 
   // Then run every minute
-  setInterval(() => {
-    processDueScheduledPosts()
-  }, 60 * 1000) // 1 minute
+  setInterval(runAndBeat, 60 * 1000) // 1 minute
 }
 
 // Export for use as a service
@@ -249,8 +255,9 @@ export const scheduledPostProcessorService = {
     return []
   },
 
-  start(cfg: unknown) {
-    startScheduledPostWorker()
+  start(_cfg: unknown, ctx: import('../../Service').HeartbeatContext) {
+    ctx.declareLoop('scheduled-posts', 5 * 60_000) // 5× 1-minute interval
+    startScheduledPostWorker(() => ctx.heartbeat('scheduled-posts'))
 
     return {
       started: Promise.resolve(),

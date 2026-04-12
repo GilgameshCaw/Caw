@@ -62,8 +62,9 @@ export const marketplaceIndexerService: Service = {
       : result.error.errors.map(e => new Error(`ZodError: ${e.message}`))
   },
 
-  start(configParam: unknown) {
+  start(configParam: unknown, ctx: import('../../Service').HeartbeatContext) {
     const cfg = Config.parse(configParam)
+    ctx.declareLoop('poll', Math.max((cfg as any).pollIntervalMs * 3, 120_000))
     const rpcUrl = (process.env.L1_RPC_URL || cfg.l1RpcUrl || '').replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace('/ws/', '/')
     const marketplaceAddress = cfg.marketplaceAddress || CAW_NAME_MARKETPLACE_ADDRESS
     const cawNameAddress = cfg.cawNameAddress || CAW_NAMES_ADDRESS
@@ -479,6 +480,7 @@ export const marketplaceIndexerService: Service = {
         } catch (err) {
           console.error('[MarketplaceIndexer] Poll error:', err)
         } finally {
+          ctx.heartbeat('poll')
           if (alive) {
             pollTimer = setTimeout(poll, pollIntervalMs)
           }

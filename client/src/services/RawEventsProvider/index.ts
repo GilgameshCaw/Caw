@@ -14,7 +14,7 @@ export const rawEventsProviderService: Service = {
     return errors;
   },
 
-  start(config: RawEventsProviderConfig) {
+  start(config: RawEventsProviderConfig, _ctx: import('../../Service').HeartbeatContext) {
     const rawEventRepository = getRepository(RawEvent);
 
     const api = {
