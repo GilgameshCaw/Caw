@@ -1896,29 +1896,26 @@ console.log("succeededKeys", succeededKeys)
               // the transactionHash for each ActionsProcessed event) and decode it.
               const startPos = (checkpointId - 1) * 256
 
-              // Find Action records for this client in the checkpoint range.
-              // Order by (blockNumber, logIndex) on the RawEvent to match on-chain
-              // processing order exactly. Neither Action.id nor rawEventId is reliable
-              // because the gatherer may interleave different event types within a block
-              // (transfer events at low logIndexes vs ActionsProcessed at higher ones).
-              const actionsInRange = await prisma.action.findMany({
+              // Fetch ALL actions for this client, sort by (blockNumber, logIndex) to
+              // match on-chain processing order, then slice the checkpoint window.
+              // We can't use Prisma skip/take because it only orders by one nested
+              // field (blockNumber) and within-block ordering is arbitrary — skip
+              // could grab the wrong rows from a boundary block.
+              const allClientActions = await prisma.action.findMany({
                 where: {
                   data: { path: ['clientId'], equals: client.id }
                 },
-                orderBy: {
-                  rawEvent: { blockNumber: 'asc' }
-                },
                 include: { rawEvent: { select: { transactionHash: true, blockNumber: true, logIndex: true } } },
-                skip: startPos,
-                take: 256,
               })
-              // Prisma can only order by one nested field — sort by (blockNumber, logIndex) in JS
-              actionsInRange.sort((a, b) => {
+              // Sort by (blockNumber, logIndex) — this is the exact order the contract
+              // processed actions and built the hash chain
+              allClientActions.sort((a, b) => {
                 const aBlock = Number(a.rawEvent?.blockNumber ?? 0)
                 const bBlock = Number(b.rawEvent?.blockNumber ?? 0)
                 if (aBlock !== bBlock) return aBlock - bBlock
                 return (a.rawEvent?.logIndex ?? 0) - (b.rawEvent?.logIndex ?? 0)
               })
+              const actionsInRange = allClientActions.slice(startPos, startPos + 256)
 
               if (actionsInRange.length !== 256) {
                 console.log(`[Replication] Only ${actionsInRange.length}/256 actions indexed for checkpoint ${checkpointId}, skipping`)
