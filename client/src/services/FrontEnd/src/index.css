@@ -69,6 +69,12 @@
   background-attachment: fixed;
 }
 
+:root:not(.dark) {
+  color: #111;
+  background: #e5e7eb;
+  background-image: linear-gradient(to right, #d1d5db 0%, #e5e7eb 15%, #e5e7eb 85%, #d1d5db 100%);
+}
+
 /* .banner-bg { */
 /*   background-image: url(./assets/images/banner-bg1.png), url(./assets/images/banner-bg2.svg); */
 /*   background-repeat: no-repeat; */

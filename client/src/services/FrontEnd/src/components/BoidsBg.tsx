@@ -8,7 +8,12 @@ const BIRD_PATH = new Path2D(
 const SVG_W = 355.2
 const SVG_H = 190.29
 
-const BOID_COUNT = 1000
+function getBoidCount(): number {
+  const area = window.innerWidth * window.innerHeight
+  // ~1000 at 1920x1080, scale linearly with screen area, min 150
+  return Math.max(150, Math.round(area / 2073))
+}
+
 const BOID_SCALE = 0.06
 const MAX_SPEED = 0.7
 const MIN_SPEED = 0.25
@@ -51,8 +56,9 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
   const mouseRef = useRef<{ x: number, y: number, active: boolean }>({ x: 0, y: 0, active: false })
 
   const initBoids = useCallback((w: number, h: number) => {
+    const count = getBoidCount()
     const boids: Boid[] = []
-    for (let i = 0; i < BOID_COUNT; i++) {
+    for (let i = 0; i < count; i++) {
       const angle = Math.random() * Math.PI * 2
       const speed = MIN_SPEED + Math.random() * (MAX_SPEED - MIN_SPEED)
       boids.push({
@@ -87,7 +93,8 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
       canvas.style.height = `${h}px`
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
-      if (boidsRef.current.length === 0) {
+      const targetCount = getBoidCount()
+      if (boidsRef.current.length === 0 || Math.abs(boidsRef.current.length - targetCount) > targetCount * 0.3) {
         initBoids(w, h)
       }
     }

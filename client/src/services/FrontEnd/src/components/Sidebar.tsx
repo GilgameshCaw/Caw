@@ -123,7 +123,7 @@ const Sidebar: React.FC = () => {
     if (isActive) {
       return isDark
         ? 'bg-white/10 text-white'
-        : 'bg-gray-800 text-white'
+        : 'bg-gray-200 text-black'
     } else {
       return isDark
         ? 'text-gray-300 hover:text-white hover:bg-white/10'
@@ -137,7 +137,7 @@ const Sidebar: React.FC = () => {
         ? 'bg-black border-white/20' 
         : 'bg-white border-gray-300'
     }`}>
-      <div className="flex flex-col h-full sm:flex-1">
+      <div className="flex flex-col sm:flex-1 sm:min-h-0">
         {/* Logo Section - Hidden on mobile */}
         <div className="hidden sm:block p-4 pl-0">
           <NavLink
@@ -166,7 +166,7 @@ const Sidebar: React.FC = () => {
         </div>
 
         {/* Navigation */}
-        <nav className="px-2 py-2 pt-20 sm:px-4 sm:py-4 sm:pr-2 sm:pl-2 sm:pt-4 space-y-1 sm:flex-1">
+        <nav className="px-2 py-2 pt-20 sm:px-4 sm:py-4 sm:pr-2 sm:pl-2 sm:pt-4 space-y-1 sm:flex-1 sm:overflow-y-auto sm:min-h-0">
           <NavLink
           to="/home"
           onClick={guardClick}
@@ -306,7 +306,7 @@ const Sidebar: React.FC = () => {
         </nav>
       </div>
 
-      <div className="pl-3 pr-0 -mt-4 pb-0 sm:pl-4 sm:pr-0 sm:py-4 sm:absolute sm:bottom-0 w-full">
+      <div className="pl-3 pr-0 -mt-4 pb-0 sm:pl-4 sm:pr-0 sm:py-4 w-full shrink-0">
         <ProfileChooser/>
       </div>
     </div>
