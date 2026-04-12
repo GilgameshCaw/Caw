@@ -201,7 +201,7 @@ const ListingsTab: React.FC = () => {
           {listings.map(l => <ListingCard key={l.id} listing={l} />)}
         </div>
       ) : !loading ? (
-        <div className={`text-center py-16 ${themeBgSubtle(isDark)} rounded-xl`}>
+        <div className={`text-center py-16 ${themeBgSubtle(isDark)} rounded-xl ${isDark ? '' : 'shadow-inner'}`}>
           <p className={`text-lg ${themeTextMuted(isDark)}`}>No listings found</p>
           <p className={`text-sm mt-1 ${themeTextMuted(isDark)}`}>Try adjusting your filters</p>
         </div>

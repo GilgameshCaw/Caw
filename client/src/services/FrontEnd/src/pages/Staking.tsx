@@ -595,8 +595,8 @@ const Staking = () => {
             placeholder="0.0"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            className={`w-full px-4 py-3 pr-20 rounded-full border transition-all duration-300 bg-black ${
-              isDark ? 'border-white/20 text-white' : 'border-gray-300 text-black'
+            className={`w-full px-4 py-3 pr-20 rounded-full border transition-all duration-300 ${
+              isDark ? 'bg-black border-white/20 text-white' : 'bg-gray-100 border-gray-300 text-black'
             } focus:outline-none focus:ring-0`}
           />
           <div className="absolute right-4 top-1/2 transform -translate-y-1/2 flex items-center gap-2">
@@ -833,8 +833,8 @@ const Staking = () => {
             placeholder="0.0"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
-            className={`w-full px-4 py-3 pr-20 rounded-full border transition-all duration-300 bg-black ${
-              isDark ? 'border-white/20 text-white' : 'border-gray-300 text-black'
+            className={`w-full px-4 py-3 pr-20 rounded-full border transition-all duration-300 ${
+              isDark ? 'bg-black border-white/20 text-white' : 'bg-gray-100 border-gray-300 text-black'
             } focus:outline-none focus:ring-0`}
           />
           <div className="absolute right-4 top-1/2 transform -translate-y-1/2 flex items-center gap-2">
@@ -904,8 +904,8 @@ const Staking = () => {
       </div>
 
       {/* Requirements */}
-      <div className={`p-4 rounded-lg border transition-all duration-300 bg-black ${
-        isDark ? 'border-white/20' : 'border-gray-300'
+      <div className={`p-4 rounded-lg border transition-all duration-300 ${
+        isDark ? 'bg-black border-white/20' : 'bg-gray-50 border-gray-200 shadow-xl'
       }`}>
         <div className="flex items-start space-x-3">
           <div className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors duration-300 ${
@@ -931,8 +931,8 @@ const Staking = () => {
       </div>
 
       {/* Reward Distribution */}
-      <div className={`p-4 rounded-lg border transition-all duration-300 bg-black ${
-        isDark ? 'border-white/20' : 'border-gray-300'
+      <div className={`p-4 rounded-lg border transition-all duration-300 ${
+        isDark ? 'bg-black border-white/20' : 'bg-gray-50 border-gray-200 shadow-xl'
       }`}>
         <div className="flex items-start space-x-3">
           <div className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors duration-300 ${
@@ -958,8 +958,8 @@ const Staking = () => {
       </div>
 
       {/* Real-time Rewards */}
-      <div className={`p-4 rounded-lg border transition-all duration-300 bg-black ${
-        isDark ? 'border-white/20' : 'border-gray-300'
+      <div className={`p-4 rounded-lg border transition-all duration-300 ${
+        isDark ? 'bg-black border-white/20' : 'bg-gray-50 border-gray-200 shadow-xl'
       }`}>
         <div className="flex items-start space-x-3">
           <div className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors duration-300 ${
@@ -988,7 +988,7 @@ const Staking = () => {
 
   return (
     <MainLayout>
-      <div className="max-w-2xl mx-auto px-6 py-4 bg-black">
+      <div className={`max-w-2xl mx-auto px-6 py-4 ${isDark ? 'bg-black' : 'bg-white'}`}>
         {/* Header */}
         <div className="mb-8">
           <h1 className={`text-3xl font-bold mb-6 transition-colors duration-300 ${
@@ -1024,7 +1024,7 @@ const Staking = () => {
             Portfolio Overview
           </h3>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 bg-black flex flex-col items-center justify-between ${
+            <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 flex flex-col items-center justify-between ${isDark ? 'bg-black' : 'bg-gray-50 shadow-xl'} ${
               isDark ? 'border-white/20' : 'border-gray-300'
             }`} style={{ paddingTop: '10px' }}>
               <div className={`text-3xl font-bold transition-colors duration-300 text-center flex-1 flex items-center ${
@@ -1039,7 +1039,7 @@ const Staking = () => {
               </div>
             </div>
 
-            <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 bg-black flex flex-col items-center justify-between relative ${
+            <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 flex flex-col items-center justify-between ${isDark ? 'bg-black' : 'bg-gray-50 shadow-xl'} relative ${
               isDark ? 'border-white/20' : 'border-gray-300'
             }`} style={{ paddingTop: '10px' }}>
               {/* Question mark icon in top right */}
@@ -1060,7 +1060,7 @@ const Staking = () => {
               </div>
             </div>
 
-            <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 bg-black flex flex-col items-center justify-between ${
+            <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 flex flex-col items-center justify-between ${isDark ? 'bg-black' : 'bg-gray-50 shadow-xl'} ${
               isDark ? 'border-white/20' : 'border-gray-300'
             }`} style={{ paddingTop: '10px' }}>
               <div className={`text-3xl font-bold transition-colors duration-300 text-center flex-1 flex items-center ${
@@ -1075,7 +1075,7 @@ const Staking = () => {
               </div>
             </div>
 
-            <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 bg-black flex flex-col items-center justify-between ${
+            <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 flex flex-col items-center justify-between ${isDark ? 'bg-black' : 'bg-gray-50 shadow-xl'} ${
               isDark ? 'border-white/20' : 'border-gray-300'
             }`} style={{ paddingTop: '10px' }}>
               <div className={`text-3xl font-bold transition-colors duration-300 text-center flex-1 flex items-center ${
