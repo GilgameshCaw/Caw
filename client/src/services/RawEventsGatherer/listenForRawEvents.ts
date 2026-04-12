@@ -210,22 +210,37 @@ export default async function listenForRawEvents(
       // Monitor WebSocket connection health
       wsProvider.websocket.on('close', () => {
         if (!isStopped) {
-          console.log('[RawEventsGatherer] WebSocket connection closed, will reconnect...')
           scheduleReconnect()
         }
       })
 
       wsProvider.websocket.on('error', (err: any) => {
-        console.error('[RawEventsGatherer] WebSocket error:', err)
+        // Suppress noisy stack traces for common RPC errors (rate limit, auth)
+        const msg = err?.message || String(err)
+        if (msg.includes('401') || msg.includes('429') || msg.includes('Too Many')) {
+          if (wsConsecutiveErrors === 0) {
+            console.warn(`[RawEventsGatherer] WebSocket error: ${msg.includes('401') ? 'Auth failed (401)' : 'Rate limited (429)'} — will retry`)
+          }
+        } else if (wsConsecutiveErrors === 0) {
+          console.error(`[RawEventsGatherer] WebSocket error: ${msg.slice(0, 150)}`)
+        }
+        wsConsecutiveErrors++
         scheduleReconnect()
       })
 
+      wsConsecutiveErrors = 0
       console.log('[RawEventsGatherer] WebSocket connection established')
-    } catch (err) {
-      console.error('[RawEventsGatherer] Failed to setup WebSocket:', err)
+    } catch (err: any) {
+      const msg = err?.message || String(err)
+      if (wsConsecutiveErrors === 0) {
+        console.error(`[RawEventsGatherer] Failed to setup WebSocket: ${msg.slice(0, 150)}`)
+      }
+      wsConsecutiveErrors++
       scheduleReconnect()
     }
   }
+
+  let wsConsecutiveErrors = 0
 
   function scheduleReconnect() {
     if (isReconnecting || isStopped) return
@@ -241,13 +256,18 @@ export default async function listenForRawEvents(
     wsProvider = null
     wsContract = null
 
-    // Reconnect after 5 seconds
+    // Back off more aggressively after repeated failures
+    const delay = Math.min(5000 * Math.pow(1.5, Math.min(wsConsecutiveErrors, 8)), 60000)
+    if (wsConsecutiveErrors > 0 && wsConsecutiveErrors % 10 === 0) {
+      console.log(`[RawEventsGatherer] WebSocket reconnect attempt ${wsConsecutiveErrors}, next retry in ${Math.round(delay / 1000)}s`)
+    }
+
     setTimeout(async () => {
       isReconnecting = false
       if (!isStopped) {
         await setupWebSocket()
       }
-    }, 5000)
+    }, delay)
   }
 
   // Initial WebSocket setup

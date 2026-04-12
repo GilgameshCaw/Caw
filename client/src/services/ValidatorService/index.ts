@@ -1848,6 +1848,24 @@ console.log("succeededKeys", succeededKeys)
      * All data comes from on-chain: reads ActionsProcessed events to get actions,
      * decodes processActions calldata from the transactions to extract signatures.
      */
+    function formatRpcError(err: any): string {
+      // Extract the most useful info from ethers error blobs
+      const msg = err.message || String(err)
+      if (msg.includes('Too Many Requests') || msg.includes('429')) {
+        const method = err.info?.payload?.method || 'unknown'
+        return `RPC rate limited (429) on ${method}`
+      }
+      if (msg.includes('401') || msg.includes('Unauthorized')) {
+        return 'RPC auth failed (401) — check API key'
+      }
+      if (msg.includes('internal error')) {
+        const method = err.info?.payload?.method || err.error?.message || 'unknown'
+        return `RPC internal error on ${method}`
+      }
+      // Truncate long ethers messages
+      return msg.length > 200 ? msg.slice(0, 200) + '...' : msg
+    }
+
     async function replicationLoop() {
       const replicatorAddress = CAW_ACTIONS_REPLICATOR_L2_ADDRESS
 
@@ -1866,6 +1884,7 @@ console.log("succeededKeys", succeededKeys)
         // for the bulk data fetching the reconstruction needs.
         const httpRpcUrl = (process.env.L2_RPC_URL_HTTP || l2RpcUrl)
           .replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace('/ws/', '/')
+        console.log(`[Replication] Using HTTP RPC: ${httpRpcUrl.slice(0, 50)}...`)
         const httpProvider = new JsonRpcProvider(httpRpcUrl)
         const httpWallet = new Wallet(privateKey!, httpProvider)
 
@@ -2049,12 +2068,12 @@ console.log("succeededKeys", succeededKeys)
                 } catch (e: any) { console.error('[Analytics] Failed to record replication:', e.message) }
               }
             } catch (err: any) {
-              console.error(`[Replication] Failed for client ${client.id} → chain ${destEid}:`, err.message)
+              console.error(`[Replication] Failed for client ${client.id} → chain ${destEid}: ${formatRpcError(err)}`)
             }
           }
         }
       } catch (err: any) {
-        console.error('[Replication] Loop error:', err.message)
+        console.error(`[Replication] Loop error: ${formatRpcError(err)}`)
       }
     }
 
@@ -2103,9 +2122,12 @@ console.log("succeededKeys", succeededKeys)
     refreshSettings(checkInterval).catch(err => {
       console.error('[Validator] refreshSettings failed, continuing with defaults:', err.message)
     }).then(() => {
+      const httpRpcUrlForLog = (process.env.L2_RPC_URL_HTTP || l2RpcUrl)
+        .replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace('/ws/', '/')
       console.log(`[Validator] Starting validator service with:`);
-      console.log(`  - L2 RPC URL: ${l2RpcUrl}`);
-      console.log(`  - ETH Mainnet RPC URL: ${ethMainnetRpcUrl}`);
+      console.log(`  - L2 WS RPC: ${l2RpcUrl.slice(0, 50)}...`);
+      console.log(`  - L2 HTTP RPC: ${httpRpcUrlForLog.slice(0, 50)}...`);
+      console.log(`  - L1 RPC (mainnet): ${ethMainnetRpcUrl?.slice(0, 50) || 'NOT SET'}...`);
       console.log(`  - Validator ID: ${validatorId}`);
       console.log(`  - Check Interval: ${liveSettings.checkInterval}ms`);
       console.log(`  - Base Tip: ${liveSettings.validatorBaseTip} CAW`);
