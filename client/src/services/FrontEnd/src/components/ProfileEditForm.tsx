@@ -104,9 +104,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
     }, 10)
   }
 
-  const handleImageSelect = async (type: 'avatar' | 'cover', event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0]
-    if (!file) return
+  const processImageFile = async (type: 'avatar' | 'cover', file: File) => {
     if (!file.type.startsWith('image/')) {
       setProfileError('Please select a valid image file')
       return
@@ -151,24 +149,58 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
     }
   }
 
-  // Calculate cost
-  useEffect(() => {
-    const changedData: any = {}
-    if (formData.displayName !== (profileData?.displayName || '')) changedData.n = formData.displayName
-    if (formData.description !== (profileData?.bio || '')) changedData.d = formData.description
-    if (formData.location !== (profileData?.location || '')) changedData.l = formData.location
-    if (formData.website !== (profileData?.website || '')) changedData.w = formData.website
-    if (avatarUrl) changedData.a = avatarUrl
-    if (coverUrl) changedData.c = coverUrl
+  const handleImageSelect = async (type: 'avatar' | 'cover', event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    await processImageFile(type, file)
+  }
 
-    if (Object.keys(changedData).length === 0) {
+  const handleImageDrop = async (type: 'avatar' | 'cover', event: React.DragEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const file = event.dataTransfer.files?.[0]
+    if (!file) return
+    await processImageFile(type, file)
+  }
+
+  // Calculate cost and character budget
+  const MAX_ACTION_TEXT = 420
+
+  // Build the action text and compute how many chars the bio can still use.
+  // We construct the JSON with and without the bio to find the overhead.
+  const changedData: any = {}
+  if (formData.displayName !== (profileData?.displayName || '')) changedData.n = formData.displayName
+  if (formData.description !== (profileData?.bio || '')) changedData.d = formData.description
+  if (formData.location !== (profileData?.location || '')) changedData.l = formData.location
+  if (formData.website !== (profileData?.website || '')) changedData.w = formData.website
+  if (avatarUrl) changedData.a = avatarUrl
+  if (coverUrl) changedData.c = coverUrl
+
+  const hasChanges = Object.keys(changedData).length > 0
+  const actionText = hasChanges ? `p:${JSON.stringify(changedData)}` : ''
+  const actionTextLength = actionText.length
+  const overLimit = actionTextLength > MAX_ACTION_TEXT
+
+  // Compute remaining chars available for bio: build JSON without bio,
+  // then subtract that from the limit.
+  const withoutBio = { ...changedData }
+  delete withoutBio.d
+  const overheadWithoutBio = Object.keys(withoutBio).length > 0
+    ? `p:${JSON.stringify(withoutBio)}`.length
+    // If bio is the only change, overhead is just `p:{"d":""}` = 10 chars
+    : 10
+  // When other fields exist, adding bio means ,"d":"..." = 6 extra chars of JSON overhead
+  const bioJsonOverhead = Object.keys(withoutBio).length > 0 ? 6 : 0
+  const bioCharsRemaining = MAX_ACTION_TEXT - overheadWithoutBio - bioJsonOverhead
+
+  useEffect(() => {
+    if (!hasChanges) {
       setUpdateCost(0)
       return
     }
-    const actionText = `p:${JSON.stringify(changedData)}`
-    const cost = 100 + Math.ceil(actionText.length * 10)
+    const cost = 100 + Math.ceil(actionTextLength * 10)
     setUpdateCost(cost)
-  }, [formData, avatarUrl, coverUrl, profileData])
+  }, [hasChanges, actionTextLength])
 
   const handleOffChainUpdate = async () => {
     if (!activeToken) {
@@ -250,13 +282,10 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
       const actionText = `p:${JSON.stringify(profileUpdateData)}`
       const { getValidatorTip } = await import('~/api/actions')
       const totalCost = BigInt(updateCost) + getValidatorTip()
-      const totalCostWei = totalCost * 10n ** 18n
-      if (!activeToken.stakedAmount || activeToken.stakedAmount < totalCostWei) {
-        setShowInsufficientStake(true)
-        setIsSaving(false)
-        return
-      }
 
+      // Don't pre-check stakedAmount here — signAndSubmit accounts for
+      // pending deposits and in-flight spends, and will show the
+      // InsufficientStakeModal itself if the effective budget is too low.
       await signAndSubmit({
         actionType: 'other',
         senderId: activeToken.tokenId,
@@ -264,6 +293,28 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
         amounts: [totalCost],
       })
 
+      // Optimistically update the avatar in the global store so it shows
+      // immediately across the app (profile page, nav, etc.) without
+      // waiting for the on-chain action to confirm.
+      if (avatarUrl && activeToken.tokenId) {
+        setAvatar(activeToken.tokenId, avatarUrl)
+      }
+
+      // Also persist changes off-chain so the server returns them immediately
+      // on subsequent fetches (don't wait for on-chain confirmation).
+      const offChainChanges: Record<string, string> = {}
+      if (formData.displayName !== (profileData?.displayName || '')) offChainChanges.displayName = formData.displayName
+      if (formData.description !== (profileData?.bio || '')) offChainChanges.bio = formData.description
+      if (formData.location !== (profileData?.location || '')) offChainChanges.location = formData.location
+      if (formData.website !== (profileData?.website || '')) offChainChanges.website = formData.website
+      if (avatarUrl) offChainChanges.avatarUrl = avatarUrl
+      if (coverUrl) offChainChanges.coverPhotoUrl = coverUrl
+      if (Object.keys(offChainChanges).length > 0) {
+        apiFetch(`/api/users/${activeToken.tokenId}/profile`, {
+          method: 'PATCH',
+          body: JSON.stringify(offChainChanges),
+        }).catch(err => console.warn('Off-chain profile sync failed (non-fatal):', err))
+      }
       setAvatarPreview(undefined)
       setCoverPreview(undefined)
       setAvatarUrl(undefined)
@@ -298,7 +349,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
   const wrongWallet = !!(isConnected && activeToken && address?.toLowerCase() !== activeToken.address?.toLowerCase())
   const saveDisabled =
     isSaving || isSavingOffChain || isUploading || updateCost === 0 ||
-    (saveOnChain && (isSwitchingChain || wrongWallet))
+    (saveOnChain && (isSwitchingChain || wrongWallet || overLimit))
 
   return (
     <div className="flex flex-col">
@@ -328,13 +379,27 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
 
         <div className="flex items-center space-x-6">
           {/* Avatar */}
-          <div className="flex flex-col items-center">
+          <div className="flex flex-col items-center ml-[7px]">
             <button
               type="button"
               className={`w-20 h-20 rounded-full border-2 border-dashed transition-all duration-300 hover:border-yellow-500 hover:bg-yellow-500/10 cursor-pointer ${
                 isDark ? 'border-gray-600 bg-gray-800/50' : 'border-gray-300 bg-gray-50'
               }`}
               onClick={(e) => { e.preventDefault(); e.stopPropagation(); triggerFileInput('avatar') }}
+              onDragOver={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                e.currentTarget.classList.add('border-yellow-500', 'bg-yellow-500/10')
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                e.currentTarget.classList.remove('border-yellow-500', 'bg-yellow-500/10')
+              }}
+              onDrop={(e) => {
+                e.currentTarget.classList.remove('border-yellow-500', 'bg-yellow-500/10')
+                handleImageDrop('avatar', e)
+              }}
             >
               <div className="relative w-full h-full flex items-center justify-center overflow-hidden rounded-full">
                 {avatarPreview ? (
@@ -367,6 +432,20 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
                 isDark ? 'border-gray-600 bg-gray-800/50' : 'border-gray-300 bg-gray-50'
               }`}
               onClick={(e) => { e.preventDefault(); e.stopPropagation(); triggerFileInput('cover') }}
+              onDragOver={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                e.currentTarget.classList.add('border-yellow-500', 'bg-yellow-500/10')
+              }}
+              onDragLeave={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                e.currentTarget.classList.remove('border-yellow-500', 'bg-yellow-500/10')
+              }}
+              onDrop={(e) => {
+                e.currentTarget.classList.remove('border-yellow-500', 'bg-yellow-500/10')
+                handleImageDrop('cover', e)
+              }}
             >
               <div className="absolute inset-0 flex items-center justify-center overflow-hidden rounded-lg">
                 {coverPreview ? (
@@ -397,7 +476,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
         </div>
 
         {(avatarPreview || coverPreview) && (
-          <div className="flex space-x-4 mt-4">
+          <div className="flex space-x-4 mt-2">
             {avatarPreview && (
               <button
                 type="button"
@@ -441,7 +520,20 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
 
       {/* Description */}
       <div className="space-y-2">
-        <label className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Description</label>
+        <div className="flex justify-between items-center">
+          <label className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Description</label>
+          {saveOnChain && (
+            <span className={`text-xs ${
+              formData.description.length > bioCharsRemaining
+                ? 'text-red-500 font-medium'
+                : formData.description.length > bioCharsRemaining * 0.9
+                  ? 'text-yellow-500'
+                  : isDark ? 'text-gray-500' : 'text-gray-400'
+            }`}>
+              {bioCharsRemaining - formData.description.length} chars remaining
+            </span>
+          )}
+        </div>
         <textarea
           value={formData.description}
           onChange={(e) => setFormData({ ...formData, description: e.target.value })}
@@ -449,7 +541,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
           rows={4}
           className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-gray-500/30 resize-none ${
             isDark ? 'bg-black border-gray-600 text-white placeholder-gray-400' : 'bg-white border-gray-300 text-black placeholder-gray-500'
-          }`}
+          } ${overLimit && saveOnChain ? 'border-red-500' : ''}`}
         />
       </div>
 
@@ -579,6 +671,11 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
               Off chain profile updates are only visible through this provider
             </div>
           )
+        )}
+        {saveOnChain && overLimit && (
+          <div className={`mt-3 p-2 rounded-lg text-sm ${isDark ? 'bg-red-500/10 text-red-400' : 'bg-red-50 text-red-600'}`}>
+            Profile update exceeds 420 character limit ({actionTextLength}/420). Shorten your bio or submit fewer fields.
+          </div>
         )}
         {profileError && (
           <div className={`mt-3 p-2 rounded-lg text-sm ${isDark ? 'bg-red-500/10 text-red-400' : 'bg-red-50 text-red-600'}`}>

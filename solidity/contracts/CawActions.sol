@@ -79,10 +79,12 @@ contract CawActions is Ownable {
 
     (address signer, bool isSessionKey) = verifySignature(v, r, s, action);
 
+    // Enforce text length limit on ALL action types (profile updates, tips, etc.)
+    require(bytes(action.text).length <= 420, "Text exceeds 420 characters");
+
     // Fixed protocol costs per action type (in whole CAW tokens)
     uint256 actionCost;
     if (action.actionType == ActionType.CAW) {
-      require(bytes(action.text).length <= 420, "Text exceeds 420 characters");
       cawName.spendAndDistributeTokens(action.senderId, 5000, 5000);
       actionCost = 5000;
     } else if (action.actionType == ActionType.LIKE) {
