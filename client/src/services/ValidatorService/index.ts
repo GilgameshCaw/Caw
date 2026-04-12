@@ -6,7 +6,7 @@ import { Service } from '../../Service'
 import { prisma }  from '../../prismaClient'
 import getActionType from '../../abi/getActionType'
 import { cawActionsAbi } from '../../abi/generated'
-import { CAW_ACTIONS_ADDRESS, CAW_ADDRESS, WETH_ADDRESS } from '../../abi/addresses'
+import { CAW_ACTIONS_ADDRESS, CAW_ACTIONS_REPLICATOR_L2_ADDRESS, CAW_ADDRESS, WETH_ADDRESS } from '../../abi/addresses'
 import { WebSocketProvider, JsonRpcProvider, Contract, Wallet } from 'ethers'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
@@ -273,7 +273,7 @@ export const validatorService: Service = {
       : result.error.errors.map(e => new Error(e.message))
   },
 
-  start(rawCfg) {
+  start(rawCfg, ctx) {
     const cfg = ValidatorConfig.parse(rawCfg)
     // Prefer environment variable for RPC URL (never commit API keys to config)
     const l2RpcUrl = process.env.L2_RPC_URL || cfg.l2RpcUrl
@@ -1102,46 +1102,6 @@ console.log("succeededKeys", succeededKeys)
         return { valid: true }
       }
 
-      // Parse the text to check for base64 images
-      const imageMatches = text.match(/image64:([^\n]+)/g)
-      if (!imageMatches || imageMatches.length === 0) {
-        return { valid: true }
-      }
-
-      // Calculate required CAW for all images (L2 storage cost only — replication is handled separately)
-      let totalRequiredCaw = 0
-      for (const match of imageMatches) {
-        const base64Data = match.replace('image64:', '')
-        const originalSize = Math.ceil((base64Data.length * 3) / 4)
-
-        const MIN_CAW_COST = 500
-        const l1GasPerByte = 16
-        const l1DataGas = originalSize * l1GasPerByte
-        const l2ExecutionGas = originalSize * 3
-        const totalGas = l1DataGas + l2ExecutionGas
-        const effectiveGasPrice = 8
-        const cawPerGwei = 0.03
-        const baseCost = Math.ceil(totalGas * effectiveGasPrice * cawPerGwei)
-        const l2Cost = Math.ceil(baseCost * 2.5)
-
-        totalRequiredCaw += Math.max(MIN_CAW_COST, l2Cost)
-      }
-
-      const amounts = action.amounts || []
-      const providedCaw = amounts.length > 0 ? Number(amounts[0]) : 0
-
-      console.log(`[Validator] Image upload validation:`)
-      console.log(`  - Image count: ${imageMatches.length}`)
-      console.log(`  - Total data size: ${imageMatches.reduce((sum: number, m: string) => sum + m.replace('image64:', '').length, 0)} chars`)
-      console.log(`  - Provided CAW: ${providedCaw}`)
-      console.log(`  - Required CAW: ${totalRequiredCaw}`)
-
-      if (providedCaw < totalRequiredCaw) {
-        console.log(`[Validator] ❌ Insufficient CAW for image storage: provided ${providedCaw}, required ${totalRequiredCaw}`)
-        return { valid: false, requiredCaw: totalRequiredCaw, underpriced: true }
-      }
-
-      console.log(`[Validator] ✅ Image upload CAW check passed`)
       return { valid: true }
     }
 
@@ -1466,7 +1426,7 @@ console.log("succeededKeys", succeededKeys)
               console.log(`[Validator] TxQueue ${entry.id}: No Action found for senderId=${data.senderId} cawonce=${data.cawonce} — cawonce conflict, marking failed`)
               await markTxQueueFailed(
                 entry.id,
-                'Cawonce conflict — a different action used this cawonce. Please retry.',
+                'Cawonce already used',
                 data.senderId,
                 data
               )
@@ -1870,64 +1830,6 @@ console.log("succeededKeys", succeededKeys)
           }
         }
 
-        // Check if this is an OTHER action (actionType: 7) - could be on-chain image
-        if (data.actionType === 7 || getActionType(data.actionType).toString() === 'OTHER') {
-          const text = data.text || ''
-          // Check if this is an on-chain image upload (has image64: content)
-          if (text.includes('image64:')) {
-            const imageRef = `img:${data.senderId}:${data.cawonce}`
-
-            // Extract base64 data from text for creating record if it doesn't exist
-            const imageMatch = text.match(/image64:([^\n]+)/)
-            const base64Data = imageMatch ? imageMatch[1] : ''
-            // Calculate cawCost from the data size (same formula as frontend)
-            const cawCost = base64Data ? Math.ceil(base64Data.length / 1000) : 0
-
-            if (succeeded) {
-              // Upsert on-chain image as SUCCESS (creates if doesn't exist)
-              try {
-                await prisma.onChainImage.upsert({
-                  where: { imageRef },
-                  update: { status: 'SUCCESS' },
-                  create: {
-                    userId: data.senderId,
-                    imageRef,
-                    cawonce: data.cawonce,
-                    base64Data,
-                    cawCost,
-                    status: 'SUCCESS'
-                  }
-                })
-                console.log(`[ValidatorService] Upserted OnChainImage as SUCCESS: ${imageRef}`)
-              } catch (imageUpdateErr: any) {
-                console.error('[ValidatorService] Failed to upsert OnChainImage status to SUCCESS:', imageUpdateErr)
-              }
-            } else {
-              // Upsert on-chain image as FAILED
-              try {
-                await prisma.onChainImage.upsert({
-                  where: { imageRef },
-                  update: {
-                    status: 'FAILED',
-                    reason: reason || 'Transaction failed'
-                  },
-                  create: {
-                    userId: data.senderId,
-                    imageRef,
-                    cawonce: data.cawonce,
-                    base64Data,
-                    cawCost,
-                    status: 'FAILED',
-                    reason: reason || 'Transaction failed'
-                  }
-                })
-                console.log(`[ValidatorService] Upserted OnChainImage as FAILED: ${imageRef} - ${reason}`)
-              } catch (imageUpdateErr: any) {
-                console.error('[ValidatorService] Failed to upsert OnChainImage status to FAILED:', imageUpdateErr)
-              }
-            }
-          }
-        }
       }))
       } catch (err: any) {
         console.error("[Validator] Poll loop error:", {
@@ -1947,8 +1849,7 @@ console.log("succeededKeys", succeededKeys)
      * decodes processActions calldata from the transactions to extract signatures.
      */
     async function replicationLoop() {
-      const replicatorAddress = process.env.REPLICATOR_ADDRESS
-      if (!replicatorAddress) return
+      const replicatorAddress = CAW_ACTIONS_REPLICATOR_L2_ADDRESS
 
       try {
         // Find clients that have replication enabled (from DB — config synced by ChainSyncService)
@@ -1957,6 +1858,7 @@ console.log("succeededKeys", succeededKeys)
           select: { id: true, replications: true }
         })
 
+        console.log(`[Replication] Polling: ${clients.length} client(s) with replication enabled`)
         if (clients.length === 0) return
 
         const replicatorViewAbi = [
@@ -1983,6 +1885,8 @@ console.log("succeededKeys", succeededKeys)
               const checkpointId = Number(nextCheckpointId)
               const total = Number(totalCheckpoints)
 
+              console.log(`[Replication] Client ${client.id} → chain ${destEid}: getNextUnreplicatedCheckpoint returned checkpointId=${checkpointId}, total=${total}`)
+
               if (checkpointId === 0) continue // Fully caught up
 
               console.log(`[Replication] Client ${client.id} → chain ${destEid}: checkpoint ${checkpointId}/${total} needs replication`)
@@ -1992,8 +1896,9 @@ console.log("succeededKeys", succeededKeys)
               // the transactionHash for each ActionsProcessed event) and decode it.
               const startPos = (checkpointId - 1) * 256
 
-              // Find Action records for this client in the checkpoint range, ordered by rawEventId
-              // (which preserves on-chain processing order)
+              // Find Action records for this client in the checkpoint range, ordered by id
+              // (auto-increment, which preserves on-chain processing order since RawEventsGatherer
+              // processes events in blockNumber+logIndex order and ActionProcessor inserts sequentially)
               const actionsInRange = await prisma.action.findMany({
                 where: {
                   data: { path: ['clientId'], equals: client.id }
@@ -2009,21 +1914,25 @@ console.log("succeededKeys", succeededKeys)
                 continue
               }
 
-              // Group by transaction hash to decode calldata in batches
-              const txHashes = [...new Set(actionsInRange.map(a => a.rawEvent?.transactionHash).filter(Boolean))] as string[]
-              const allActions: any[] = []
-              const allV: number[] = []
-              const allR: string[] = []
-              const allS: string[] = []
+              // Cache decoded tx calldata per txHash. A single processActions tx can contain
+              // multiple actions (potentially across different clients, and potentially
+              // straddling the 256-action checkpoint boundary), so we must match each DB row
+              // to its SPECIFIC action in the calldata — not just merge everything.
+              type DecodedEntry = { action: any; v: number; r: string; s: string }
+              const txCache = new Map<string, Map<string, DecodedEntry>>() // txHash → (senderId:cawonce → entry)
+              const uniqueTxHashes = Array.from(new Set(
+                actionsInRange.map(a => a.rawEvent?.transactionHash).filter(Boolean) as string[]
+              ))
 
-              for (const txHash of txHashes) {
+              let fetchFailed = false
+              for (const txHash of uniqueTxHashes) {
                 const tx = await provider.getTransaction(txHash)
                 if (!tx) {
                   console.error(`[Replication] Could not fetch tx ${txHash}`)
+                  fetchFailed = true
                   break
                 }
 
-                // Decode processActions calldata to extract actions + signatures
                 const decoded = iface.decodeFunctionData('processActions', tx.data)
                 const multiData = decoded[1] // The MultiActionData struct
                 const txActions = multiData.actions
@@ -2031,16 +1940,60 @@ console.log("succeededKeys", succeededKeys)
                 const txR = multiData.r
                 const txS = multiData.s
 
+                // Index entries by (senderId, cawonce) — unique per action
+                const entriesByKey = new Map<string, DecodedEntry>()
                 for (let i = 0; i < txActions.length; i++) {
-                  // Only include actions belonging to this client
-                  if (Number(txActions[i].clientId) === client.id) {
-                    allActions.push(txActions[i])
-                    allV.push(Number(txV[i]))
-                    allR.push(txR[i])
-                    allS.push(txS[i])
-                  }
+                  const a = txActions[i]
+                  // Only index entries for this client — keeps the map tight
+                  if (Number(a.clientId) !== client.id) continue
+                  const key = `${Number(a.senderId)}:${Number(a.cawonce)}`
+                  entriesByKey.set(key, {
+                    action: a,
+                    v: Number(txV[i]),
+                    r: txR[i],
+                    s: txS[i],
+                  })
                 }
+                txCache.set(txHash, entriesByKey)
               }
+
+              if (fetchFailed) continue
+
+              // Walk DB rows in order, pulling the matching calldata entry for each.
+              // This guarantees exactly 256 actions in the correct on-chain order.
+              const allActions: any[] = []
+              const allV: number[] = []
+              const allR: string[] = []
+              const allS: string[] = []
+              let reconstructionOk = true
+
+              for (const row of actionsInRange) {
+                const txHash = row.rawEvent?.transactionHash
+                if (!txHash) {
+                  console.error(`[Replication] Action row ${row.id} missing rawEvent.transactionHash, skipping checkpoint`)
+                  reconstructionOk = false
+                  break
+                }
+                const entriesByKey = txCache.get(txHash)
+                if (!entriesByKey) {
+                  console.error(`[Replication] Missing decoded tx ${txHash} for action row ${row.id}`)
+                  reconstructionOk = false
+                  break
+                }
+                const key = `${row.senderId}:${row.cawonce}`
+                const entry = entriesByKey.get(key)
+                if (!entry) {
+                  console.error(`[Replication] No calldata match for action row ${row.id} (key ${key}) in tx ${txHash}`)
+                  reconstructionOk = false
+                  break
+                }
+                allActions.push(entry.action)
+                allV.push(entry.v)
+                allR.push(entry.r)
+                allS.push(entry.s)
+              }
+
+              if (!reconstructionOk) continue
 
               if (allActions.length !== 256) {
                 console.log(`[Replication] Reconstructed ${allActions.length}/256 actions from calldata, skipping`)
@@ -2087,6 +2040,12 @@ console.log("succeededKeys", succeededKeys)
       }
     }
 
+    // Declare both loops with the watchdog. Timeouts are generous — 3× the
+    // typical interval — so transient slowness doesn't trigger a restart,
+    // but a truly hung loop will be caught within a few minutes.
+    ctx.declareLoop('poll', Math.max(checkInterval * 3, 60_000))
+    ctx.declareLoop('replication', Math.max(60_000 * 3, 180_000))
+
     // start polling with overlap protection
     let isPolling = false
     const safePollLoop = async () => {
@@ -2097,6 +2056,7 @@ console.log("succeededKeys", succeededKeys)
       isPolling = true
       try {
         await pollLoop()
+        ctx.heartbeat('poll')
       } catch (err) {
         console.error(err)
       } finally {
@@ -2112,6 +2072,7 @@ console.log("succeededKeys", succeededKeys)
       isReplicating = true
       try {
         await replicationLoop()
+        ctx.heartbeat('replication')
       } catch (err) {
         console.error('[Replication] Unhandled error:', err)
       } finally {
@@ -2121,7 +2082,9 @@ console.log("succeededKeys", succeededKeys)
 
     // Load DB settings before first poll (env/config values serve as defaults).
     // Settings are also refreshed at the start of every poll cycle.
-    refreshSettings(checkInterval).then(() => {
+    refreshSettings(checkInterval).catch(err => {
+      console.error('[Validator] refreshSettings failed, continuing with defaults:', err.message)
+    }).then(() => {
       console.log(`[Validator] Starting validator service with:`);
       console.log(`  - L2 RPC URL: ${l2RpcUrl}`);
       console.log(`  - ETH Mainnet RPC URL: ${ethMainnetRpcUrl}`);
@@ -2146,6 +2109,7 @@ console.log("succeededKeys", succeededKeys)
       }
       safePollLoop()
       schedulePoll()
+      safeReplicationLoop()
       scheduleReplication()
     })
 

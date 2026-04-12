@@ -52,6 +52,7 @@ interface Summary {
   netProfitLoss: string
   avgWaitTime: number
   prices: Prices
+  replication: { transactions: number; totalCost: string; checkpointsReplicated: number }
 }
 
 type ActionBreakdown = Record<string, number>
@@ -196,6 +197,7 @@ const ValidatorAnalytics: React.FC = () => {
         netProfitLoss: summaryData.totalProfit || '0',
         avgWaitTime: (summaryData.avgWaitMs || 0) / 1000,
         prices: summaryData.prices || { ethUsd: 0, cawUsd: 0 },
+        replication: summaryData.replication || { transactions: 0, totalCost: '0', checkpointsReplicated: 0 },
       })
       setTransactions((txData.transactions || []).map((t: any) => ({
         id: t.id,
@@ -485,7 +487,7 @@ const ValidatorAnalytics: React.FC = () => {
 
         {/* Summary Cards */}
         {summary && (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-6">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-6">
             <div className={cardClass}>
               <div className={labelClass}>Total Transactions</div>
               <div className={valueClass}>{summary.totalTransactions}</div>
@@ -514,6 +516,17 @@ const ValidatorAnalytics: React.FC = () => {
             <div className={cardClass}>
               <div className={labelClass}>Avg Wait Time</div>
               <div className={valueClass}>{summary.avgWaitTime.toFixed(1)}s</div>
+            </div>
+            <div className={cardClass}>
+              <div className={labelClass}>Replication</div>
+              <div className={valueClass}>
+                {summary.replication.checkpointsReplicated} checkpoint{summary.replication.checkpointsReplicated !== 1 ? 's' : ''}
+              </div>
+              <div className={subClass}>
+                {summary.replication.totalCost !== '0'
+                  ? `${weiToUsd(summary.replication.totalCost, summary.prices.ethUsd)} (${fmtEth(summary.replication.totalCost)} ETH)`
+                  : 'No replications yet'}
+              </div>
             </div>
           </div>
         )}
