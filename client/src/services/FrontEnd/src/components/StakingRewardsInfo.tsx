@@ -21,7 +21,7 @@ const StakingRewardsInfo: React.FC<StakingRewardsInfoProps> = ({
 
   return (
     <div className={`py-4 px-[10px] rounded-lg border transition-all duration-300 ${
-      dark ? 'bg-[#171202]/85 border-white/20' : 'bg-yellow-50 border-gray-300'
+      dark ? 'bg-[#171202]/85 border-white/20' : 'bg-yellow-50 border-gray-300 shadow-xl'
     }`}>
       <h3 className={`text-base font-semibold mb-3 transition-colors duration-300 ${
         dark ? 'text-white' : 'text-gray-900'

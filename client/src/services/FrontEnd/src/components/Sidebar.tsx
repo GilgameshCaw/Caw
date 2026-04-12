@@ -147,7 +147,7 @@ const Sidebar: React.FC = () => {
             <img
               src={cawLogo}
               alt="CAW Logo"
-              className="w-10 h-10 object-contain"
+              className={`w-10 h-10 object-contain ${isDark ? '' : 'drop-shadow-[1px_1px_1px_rgba(0,0,0,0.8)]'}`}
             />
             <span
               className="text-4xl"
@@ -158,7 +158,7 @@ const Sidebar: React.FC = () => {
                 marginLeft: '10px',
                 textShadow: isDark
                   ? '0 1px 2px rgba(0, 0, 0, 0.6), 0 0 4px rgba(0, 0, 0, 0.3)'
-                  : 'rgb(0 0 0) 0px 1px 1px, rgb(240 177 0) 0px 0px 3px',
+                  : 'rgba(0,0,0,1) 0.5px 0.5px 1px, rgba(0,0,0,0.3) 1.5px 1.5px 1px, rgba(240,177,0,1) 0px 0px 3px',
               }}
             >
               CAW

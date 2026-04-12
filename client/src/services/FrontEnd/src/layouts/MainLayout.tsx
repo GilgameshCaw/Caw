@@ -34,7 +34,14 @@ const MainLayout = ({ children }: MainLayoutProps) => {
   const hideSidebars = isCaptive && (location.pathname.startsWith('/help') || location.pathname.startsWith('/usernames') || location.pathname.startsWith('/faucet'))
 
   return (
-    <div className={`min-h-screen w-full max-w-[1050px] flex m-auto transition-colors duration-300 ${
+    <>
+    {/* Fixed backdrop so scrolling doesn't reveal the root gradient */}
+    {!isDark && (
+      <div className="fixed inset-0 z-0 flex justify-center pointer-events-none">
+        <div className="w-full max-w-[1050px] bg-white shadow-[0_0_40px_rgba(0,0,0,0.08)]" />
+      </div>
+    )}
+    <div className={`min-h-screen w-full max-w-[1050px] flex m-auto transition-colors duration-300 relative z-[1] ${
       isDark ? 'bg-black' : 'bg-white shadow-[0_0_40px_rgba(0,0,0,0.08)]'
     }`}>
       {/* Mobile Header */}
@@ -218,6 +225,7 @@ const MainLayout = ({ children }: MainLayoutProps) => {
       </div>
       <BugReportModal isOpen={showBugReport} onClose={() => setShowBugReport(false)} />
     </div>
+    </>
   );
 };
 

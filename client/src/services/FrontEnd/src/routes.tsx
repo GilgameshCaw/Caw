@@ -143,7 +143,11 @@ export default [
   },
   {
     path: "/help/howto",
-    component: <HelpPage defaultTab="howto" />,
+    component: <HelpPage defaultTab="gettingstarted" />,
+  },
+  {
+    path: "/help/gettingstarted",
+    component: <HelpPage defaultTab="gettingstarted" />,
   },
   {
     path: "/help/developers",

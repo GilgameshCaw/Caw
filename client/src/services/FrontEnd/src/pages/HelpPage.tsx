@@ -227,7 +227,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
 
   return (
     <MainLayout>
-      <div className="max-w-2xl mx-auto px-6 py-4">
+      <div className={`max-w-2xl mx-auto px-6 py-4 ${isDark ? 'bg-black/80' : 'bg-white/90'} backdrop-blur-sm`}>
         {/* Header */}
         <div className="flex items-center gap-4 mb-6">
           <Link
@@ -1067,7 +1067,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
               target="_blank"
               rel="noopener noreferrer"
               className={`flex items-center gap-2 p-3 rounded-lg transition-colors ${
-                isDark ? 'bg-[#0D0D0D]/85 hover:bg-[#1A1A1A]/85 text-white' : 'bg-gray-50 hover:bg-gray-100 text-gray-900'
+                isDark ? 'bg-[#0D0D0D]/85 hover:bg-[#1A1A1A]/85 text-white' : 'bg-gray-50 hover:bg-gray-100 text-gray-900 shadow-xl'
               }`}
             >
               <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
@@ -1080,7 +1080,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
               target="_blank"
               rel="noopener noreferrer"
               className={`flex items-center gap-2 p-3 rounded-lg transition-colors ${
-                isDark ? 'bg-[#0D0D0D]/85 hover:bg-[#1A1A1A]/85 text-white' : 'bg-gray-50 hover:bg-gray-100 text-gray-900'
+                isDark ? 'bg-[#0D0D0D]/85 hover:bg-[#1A1A1A]/85 text-white' : 'bg-gray-50 hover:bg-gray-100 text-gray-900 shadow-xl'
               }`}
             >
               <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">

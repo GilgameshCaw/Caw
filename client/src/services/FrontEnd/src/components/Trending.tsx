@@ -20,8 +20,8 @@ const Trending: React.FC = () => {
       </div>
 
       {/* Footer buttons - outside container */}
-      <div className="ml-8 mr-4 mt-4 mb-2">
-        <div className="flex flex-wrap gap-4 text-sm">
+      <div className="px-8 mt-4 mb-2">
+        <div className="flex justify-between text-sm">
           <a
             href="https://caw.is"
             target="_blank"

@@ -54,7 +54,7 @@ export const SettingsPage: React.FC = () => {
 
   return (
     <MainLayout>
-      <div className="max-w-2xl mx-auto px-6 py-4 bg-black">
+      <div className={`max-w-2xl mx-auto px-6 py-4 ${isDark ? 'bg-black' : 'bg-white'}`}>
         {/* Settings Header */}
         <div className="mb-6">
           <h1 className={`text-2xl font-bold mb-2 transition-colors duration-300 ${
@@ -66,10 +66,10 @@ export const SettingsPage: React.FC = () => {
 
         {/* Search Bar */}
         <div className="mb-6">
-          <div className={`relative rounded-2xl border transition-all duration-300 bg-black ${
-            isDark 
-              ? 'border-gray-600 focus-within:border-gray-400' 
-              : 'border-gray-300 focus-within:border-gray-500'
+          <div className={`relative rounded-2xl border transition-all duration-300 ${
+            isDark
+              ? 'bg-black border-gray-600 focus-within:border-gray-400'
+              : 'bg-gray-100 border-gray-300 focus-within:border-gray-500 shadow-xl'
           }`}>
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
               <svg 

@@ -161,7 +161,7 @@ const SessionKeySettings: React.FC = () => {
 
   return (
     <MainLayout>
-      <div className="max-w-2xl mx-auto px-6 py-4 bg-black">
+      <div className={`max-w-2xl mx-auto px-6 py-4 ${isDark ? 'bg-black' : 'bg-white'}`}>
         {/* Header */}
         <div className="flex items-center gap-4 mb-6">
           <Link to="/settings" className={`p-2 rounded-full transition-colors ${
@@ -316,7 +316,7 @@ const SessionKeySettings: React.FC = () => {
                               disabled={loading || !!wrongWallet}
                               className="px-6 py-3 rounded-lg font-medium bg-yellow-500 hover:bg-yellow-600 text-black transition-colors disabled:opacity-50 disabled:hover:bg-yellow-500 cursor-pointer"
                             >
-                              {loading ? (status || 'Activating...') : !isConnected ? 'Connect Wallet' : wrongChain ? 'Switch Network' : 'Activate Quick Sign'}
+                              {loading ? (status || 'Activating...') : 'Activate Quick Sign'}
                             </button>
                             {wrongWallet && (
                               <p className={`text-xs mt-2 ${isDark ? 'text-red-400' : 'text-red-500'}`}>
