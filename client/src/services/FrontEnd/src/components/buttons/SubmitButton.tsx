@@ -1,5 +1,5 @@
+import { useEnsureWallet } from "~/hooks/useEnsureWallet";
 import { useAccount } from "wagmi";
-import { useConnectModal } from "@rainbow-me/rainbowkit";
 import Spinner from "~/assets/images/spinner.svg?react";
 
 interface SubmitButtonProps {
@@ -17,20 +17,20 @@ export const SubmitButton: React.FC<React.PropsWithChildren<SubmitButtonProps>> 
   onClick,
 }) => {
   const { isConnected } = useAccount();
-  const { openConnectModal } = useConnectModal();
+  const ensureWallet = useEnsureWallet();
 
-  if (!isConnected) {
-    return (
-      <button className={className} onClick={openConnectModal}>
-        Connect Wallet
-      </button>
-    );
+  const handleClick = () => {
+    if (!isConnected) {
+      ensureWallet(null, async () => { onClick() })
+    } else {
+      onClick()
+    }
   }
 
   return (
     <button
       className={`${className} ${loading ? "btn-loading pointer-events-none" : ""} ${disabled ? "pointer-events-none" : ""}`}
-      onClick={onClick}
+      onClick={handleClick}
       disabled={disabled}
     >
       {loading && (
@@ -38,7 +38,7 @@ export const SubmitButton: React.FC<React.PropsWithChildren<SubmitButtonProps>> 
           <Spinner className="spinner h-10 w-10" />
         </div>
       )}
-      {children}
+      {!isConnected ? 'Connect Wallet' : children}
     </button>
   );
 };
