@@ -1861,16 +1861,24 @@ console.log("succeededKeys", succeededKeys)
         console.log(`[Replication] Polling: ${clients.length} client(s) with replication enabled`)
         if (clients.length === 0) return
 
+        // Use HTTP provider for replication — WebSocket can fail on historical
+        // tx lookups (rate limits, connection issues). HTTP is more reliable
+        // for the bulk data fetching the reconstruction needs.
+        const httpRpcUrl = (process.env.L2_RPC_URL_HTTP || l2RpcUrl)
+          .replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace('/ws/', '/')
+        const httpProvider = new JsonRpcProvider(httpRpcUrl)
+        const httpWallet = new Wallet(privateKey!, httpProvider)
+
         const replicatorViewAbi = [
           'function getNextUnreplicatedCheckpoint(uint32,uint32) view returns (uint256,uint256)',
           'function quoteReplicateBatch(uint32,uint256,bool) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
         ]
-        const replicatorView = new Contract(replicatorAddress, replicatorViewAbi, provider)
+        const replicatorView = new Contract(replicatorAddress, replicatorViewAbi, httpProvider)
 
         const replicatorWriteAbi = [
           'function replicateBatch(tuple(uint32 clientId, uint32 destEid, uint256 checkpointId, uint256 lzTokenAmount), tuple(uint8 actionType, uint32 senderId, uint32 receiverId, uint32 receiverCawonce, uint32 clientId, uint32 cawonce, uint32[] recipients, uint64[] amounts, string text)[], uint8[], bytes32[], bytes32[]) payable',
         ]
-        const replicatorWrite = new Contract(replicatorAddress, replicatorWriteAbi, wallet)
+        const replicatorWrite = new Contract(replicatorAddress, replicatorWriteAbi, httpWallet)
 
         for (const client of clients) {
           const replications = client.replications as any[]
@@ -1927,7 +1935,7 @@ console.log("succeededKeys", succeededKeys)
               let fetchFailed = false
 
               for (const txHash of txHashes) {
-                const tx = await provider.getTransaction(txHash)
+                const tx = await httpProvider.getTransaction(txHash)
                 if (!tx) {
                   console.error(`[Replication] Could not fetch tx ${txHash}`)
                   fetchFailed = true
@@ -1979,7 +1987,7 @@ console.log("succeededKeys", succeededKeys)
               // and compare to the on-chain checkpoint hash. This catches ordering bugs
               // before wasting gas on a revert.
               const hashCheckAbi = ['function clientHashAtCheckpoint(uint32,uint256) view returns (bytes32)']
-              const actionsView = new Contract(CAW_ACTIONS_ADDRESS, hashCheckAbi, provider)
+              const actionsView = new Contract(CAW_ACTIONS_ADDRESS, hashCheckAbi, httpProvider)
               const prevHash = checkpointId === 1
                 ? '0x' + '00'.repeat(32)
                 : await actionsView.clientHashAtCheckpoint(client.id, checkpointId - 1)
