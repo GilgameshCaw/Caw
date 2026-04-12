@@ -1897,19 +1897,27 @@ console.log("succeededKeys", succeededKeys)
               const startPos = (checkpointId - 1) * 256
 
               // Find Action records for this client in the checkpoint range.
-              // Order by rawEventId (NOT Action.id) to match on-chain processing order.
-              // RawEvent IDs are assigned sequentially by blockNumber+logIndex in the
-              // gatherer, so they reflect the exact order actions were processed on-chain.
-              // Action.id can differ because ActionProcessor may insert rows out of
-              // logIndex order within the same transaction batch.
+              // Order by (blockNumber, logIndex) on the RawEvent to match on-chain
+              // processing order exactly. Neither Action.id nor rawEventId is reliable
+              // because the gatherer may interleave different event types within a block
+              // (transfer events at low logIndexes vs ActionsProcessed at higher ones).
               const actionsInRange = await prisma.action.findMany({
                 where: {
                   data: { path: ['clientId'], equals: client.id }
                 },
-                orderBy: { rawEventId: 'asc' },
-                include: { rawEvent: { select: { transactionHash: true } } },
+                orderBy: {
+                  rawEvent: { blockNumber: 'asc' }
+                },
+                include: { rawEvent: { select: { transactionHash: true, blockNumber: true, logIndex: true } } },
                 skip: startPos,
                 take: 256,
+              })
+              // Prisma can only order by one nested field — sort by (blockNumber, logIndex) in JS
+              actionsInRange.sort((a, b) => {
+                const aBlock = Number(a.rawEvent?.blockNumber ?? 0)
+                const bBlock = Number(b.rawEvent?.blockNumber ?? 0)
+                if (aBlock !== bBlock) return aBlock - bBlock
+                return (a.rawEvent?.logIndex ?? 0) - (b.rawEvent?.logIndex ?? 0)
               })
 
               if (actionsInRange.length !== 256) {
