@@ -169,10 +169,20 @@ router.post('/', async (req, res) => {
     // This prevents queuing actions that will definitely fail on-chain.
     let recoveredAddress: string | null = null
     let ownerAddress: string | null = null
-    const sender = await prisma.user.findUnique({ where: { tokenId: data.senderId } })
+    let sender = await prisma.user.findUnique({ where: { tokenId: data.senderId } })
 
+    // Auto-create user from on-chain data if not in DB (e.g. after DB reset,
+    // or first action from a user on a new client instance)
     if (!sender?.address) {
-      return res.status(400).json({ error: 'Unknown sender' })
+      try {
+        await findOrCreateUser(data.senderId)
+        sender = await prisma.user.findUnique({ where: { tokenId: data.senderId } })
+      } catch (err: any) {
+        console.log(`[Actions] Failed to auto-create user ${data.senderId}: ${err.message}`)
+      }
+      if (!sender?.address) {
+        return res.status(400).json({ error: 'Unknown sender — token does not exist on-chain' })
+      }
     }
 
     ownerAddress = sender.address.toLowerCase()
