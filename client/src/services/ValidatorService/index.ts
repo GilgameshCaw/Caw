@@ -1997,7 +1997,19 @@ console.log("succeededKeys", succeededKeys)
                 continue
               }
 
-              const allActions = checkpoint.map(e => e.action)
+              // Deep-clone actions into plain objects — ethers v6 returns frozen
+              // Result objects from decodeFunctionData that can't be re-encoded
+              const allActions = checkpoint.map(e => ({
+                actionType: Number(e.action.actionType),
+                senderId: Number(e.action.senderId),
+                receiverId: Number(e.action.receiverId),
+                receiverCawonce: Number(e.action.receiverCawonce),
+                clientId: Number(e.action.clientId),
+                cawonce: Number(e.action.cawonce),
+                recipients: Array.from(e.action.recipients).map(Number),
+                amounts: Array.from(e.action.amounts).map((a: any) => BigInt(a)),
+                text: e.action.text,
+              }))
               const allV = checkpoint.map(e => e.v)
               const allR = checkpoint.map(e => e.r)
               const allS = checkpoint.map(e => e.s)
