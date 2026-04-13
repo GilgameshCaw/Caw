@@ -1866,6 +1866,15 @@ console.log("succeededKeys", succeededKeys)
       return msg.length > 200 ? msg.slice(0, 200) + '...' : msg
     }
 
+    // HTTP provider for replication — created once, reused across cycles.
+    // WebSocket can fail on historical tx lookups; HTTP is more reliable
+    // for the bulk data fetching the reconstruction needs.
+    const replicationHttpRpcUrl = (process.env.L2_RPC_URL_HTTP || l2RpcUrl)
+      .replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace('/ws/', '/')
+    const replicationHttpProvider = new JsonRpcProvider(replicationHttpRpcUrl)
+    const replicationHttpWallet = new Wallet(privateKey!, replicationHttpProvider)
+    console.log(`[Replication] HTTP RPC: ${replicationHttpRpcUrl.slice(0, 50)}...`)
+
     async function replicationLoop() {
       const replicatorAddress = CAW_ACTIONS_REPLICATOR_L2_ADDRESS
 
@@ -1879,14 +1888,8 @@ console.log("succeededKeys", succeededKeys)
         console.log(`[Replication] Polling: ${clients.length} client(s) with replication enabled`)
         if (clients.length === 0) return
 
-        // Use HTTP provider for replication — WebSocket can fail on historical
-        // tx lookups (rate limits, connection issues). HTTP is more reliable
-        // for the bulk data fetching the reconstruction needs.
-        const httpRpcUrl = (process.env.L2_RPC_URL_HTTP || l2RpcUrl)
-          .replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace('/ws/', '/')
-        console.log(`[Replication] Using HTTP RPC: ${httpRpcUrl.slice(0, 50)}...`)
-        const httpProvider = new JsonRpcProvider(httpRpcUrl)
-        const httpWallet = new Wallet(privateKey!, httpProvider)
+        const httpProvider = replicationHttpProvider
+        const httpWallet = replicationHttpWallet
 
         const replicatorViewAbi = [
           'function getNextUnreplicatedCheckpoint(uint32,uint32) view returns (uint256,uint256)',
@@ -2057,7 +2060,14 @@ console.log("succeededKeys", succeededKeys)
               console.log(`[Replication] Submitting checkpoint ${checkpointId} for client ${client.id} → chain ${destEid} (fee: ${nativeFee} wei)`)
 
               const params = { clientId: client.id, destEid, checkpointId, lzTokenAmount: 0 }
-              const tx = await replicatorWrite.replicateBatch(params, allActions, allV, allR, allS, { value: nativeFee })
+              // Use a generous manual gas limit to skip eth_estimateGas — the
+              // replicateBatch call has massive calldata (256 actions) which makes
+              // gas estimation very expensive for RPC nodes and often gets rate-limited.
+              // The contract verifies all signatures and hashes, consuming ~8-12M gas.
+              const tx = await replicatorWrite.replicateBatch(params, allActions, allV, allR, allS, {
+                value: nativeFee,
+                gasLimit: 15_000_000n,
+              })
               const receipt = await tx.wait()
               console.log(`[Replication] Checkpoint ${checkpointId} replicated! tx: ${receipt?.hash}`)
 
