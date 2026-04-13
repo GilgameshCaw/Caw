@@ -209,7 +209,7 @@ const SessionKeySettings: React.FC = () => {
         {enabled && (
           <div className="mt-6">
             {isActive ? (
-              <div className={`rounded-lg p-4 ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
+              <div className={`rounded-lg p-4 ${isDark ? 'bg-white/5' : 'bg-gray-50 shadow-xl'}`}>
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="flex items-center gap-2">

@@ -10,10 +10,10 @@ export const useTheme = () => {
 
     if (isDark) {
       html.classList.add('dark')
-      html.style.backgroundColor = '#000'
+      html.style.background = '#000'
     } else {
       html.classList.remove('dark')
-      html.style.backgroundColor = '#e5e7eb'
+      html.style.background = 'transparent'
     }
   }, [isDark])
 

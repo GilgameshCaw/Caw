@@ -9,8 +9,10 @@ interface QuickSignHowItWorksProps {
  */
 const QuickSignHowItWorks: React.FC<QuickSignHowItWorksProps> = ({ isDark = true }) => {
   return (
-    <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-4 text-sm">
-      <p className="font-medium text-yellow-400">How it works</p>
+    <div className={`rounded-lg p-4 text-sm border ${
+      isDark ? 'bg-yellow-900/20 border-yellow-700/50' : 'bg-yellow-50/80 border-yellow-200 shadow-xl'
+    }`}>
+      <p className={`font-medium ${isDark ? 'text-yellow-400' : 'text-gray-900'}`}>How it works</p>
       <p className={`mt-2 ${isDark ? 'text-gray-300' : 'text-gray-600'}`} style={{ marginBottom: 10 }}>
         Quick Sign creates a temporary signing key stored in your browser.
         It can post, like, repost, and follow on your behalf.

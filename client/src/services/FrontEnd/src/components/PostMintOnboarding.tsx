@@ -396,6 +396,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   const setupQsDone = qsComplete || hasActiveSession
 
   const handleCombinedSetup = async () => {
+    await ensureWallet(null, async () => {
     setSetupBusy(true)
     setSetupError(null)
 
@@ -449,6 +450,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
     setSetupSubStep('done')
     markComplete('setup')
     setSetupBusy(false)
+    })
   }
 
   // ── Step 3: Profile ──
@@ -739,7 +741,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
               to the world's first permissionless<br/>social network
             </p>
           </div>
-          <div className="w-48 h-48 min-[800px]:w-64 min-[800px]:h-64 shadow-xl rounded-2xl overflow-hidden">
+          <div className="w-48 h-48 min-[800px]:w-64 min-[800px]:h-64 shadow-xl rounded-2xl overflow-hidden border border-yellow-500/30">
             <UsernameSvg username={username} />
           </div>
           {activeToken?.stakedAmount != null && activeToken.stakedAmount > 0n && (
@@ -911,10 +913,8 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                             : 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
                     }`}
                   >
-                    {!isConnected ? 'Connect Wallet'
-                      : isApprovePending ? 'Approving...'
+                    {isApprovePending ? 'Approving...'
                       : isStakePending ? 'Staking...'
-                      : wrongChainForStake ? 'Switch to L1 Network'
                       : needsApproval ? 'Approve & Stake'
                       : insufficientBalance ? 'Insufficient Balance'
                       : 'Stake CAW'}
@@ -1050,18 +1050,6 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                     className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all cursor-pointer"
                   >
                     Continue <HiArrowRight className="w-4 h-4 inline ml-1" />
-                  </button>
-                </div>
-              ) : !isConnected ? (
-                <div className="space-y-3">
-                  <button
-                    onClick={() => openConnectModal?.()}
-                    className="w-full py-3 bg-yellow-500 hover:bg-yellow-600 text-black font-bold rounded-full transition-all cursor-pointer"
-                  >
-                    Connect Wallet
-                  </button>
-                  <button onClick={handleSkip} className="w-full py-2 text-white/40 hover:text-white/60 text-sm transition-colors cursor-pointer">
-                    Skip — {step.skipWarning}
                   </button>
                 </div>
               ) : (

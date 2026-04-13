@@ -637,9 +637,7 @@ const Staking = () => {
       >
         {isSwitchingNetwork
           ? 'Switching...'
-          : !isConnected
-          ? 'Connect Wallet'
-          : !isTokenOwner && activeToken && !wrongChainForStake
+          : !isTokenOwner && activeToken && isConnected && !wrongChainForStake
           ? 'Wrong Address'
           : isStakePending
           ? 'Depositing...'
@@ -727,9 +725,7 @@ const Staking = () => {
             >
               {isSwitchingNetwork
                 ? 'Switching...'
-                : !isConnected
-                ? 'Connect Wallet'
-                : !isTokenOwner && activeToken && !wrongChainForUnstake
+                : !isTokenOwner && activeToken && isConnected && !wrongChainForUnstake
                 ? 'Wrong Address'
                 : (withdraw.status === 'pending' || isWithdrawPending)
                 ? 'Withdrawing...'
@@ -873,9 +869,7 @@ const Staking = () => {
       >
         {isSwitchingNetwork
           ? 'Switching...'
-          : !isConnected
-          ? 'Connect Wallet'
-          : !isTokenOwner && activeToken && !isMainnet
+          : !isTokenOwner && activeToken && isConnected && !isMainnet
           ? 'Wrong Address'
           : isMainnet
           ? 'Switch Network'
@@ -1002,7 +996,7 @@ const Staking = () => {
         {/* Active Account */}
         <div className="mb-6">
           <div className={`inline-block px-4 py-2 rounded-full transition-all duration-300 ${
-            isDark ? 'bg-white/10' : 'bg-gray-200'
+            isDark ? 'bg-white/10' : 'bg-gray-200 shadow-xl'
           }`}>
             <span className={`text-sm font-medium transition-colors duration-300 ${
               isDark ? 'text-white' : 'text-black'

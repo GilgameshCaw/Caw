@@ -81,7 +81,7 @@ const CommunityStats: React.FC = () => {
           className={`p-4 rounded-lg border transition-all duration-300 ${
             isDark
               ? 'bg-white/5 border-white/10 hover:bg-white/10'
-              : 'bg-gray-50 border-gray-200 hover:bg-gray-100'
+              : 'bg-gray-50 border-gray-200 hover:bg-gray-100 shadow-xl'
           }`}
         >
           <div className="flex items-center space-x-3">

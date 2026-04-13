@@ -3,6 +3,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useAccount } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
+import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { useSearchParams, useParams, useNavigate } from 'react-router-dom'
 import ConnectButton from '~/components/buttons/ConnectButton'
 import Tooltip from '~/components/Tooltip'
@@ -45,6 +46,7 @@ import { FollowButton } from '~/components/FollowButton'
 
 const MessagesPage: React.FC = () => {
   const { isDark } = useTheme()
+  const ensureWallet = useEnsureWallet()
   const activeToken = useActiveToken()
   const currentUser = activeToken ? { id: activeToken.tokenId, username: activeToken.username } : null
   const { username: urlUsername } = useParams<{ username?: string }>()
@@ -634,32 +636,30 @@ const MessagesPage: React.FC = () => {
   // Handle DM registration
   const handleRegisterDm = async () => {
     if (!currentUser) return
-    if (!address) {
-      openConnectModal?.()
-      return
-    }
 
-    try {
-      await initializeClient()
-      setCurrentView('inbox')
+    await ensureWallet(null, async () => {
+      try {
+        await initializeClient()
+        setCurrentView('inbox')
 
-      // If we have a target user from URL params, create conversation
-      const userParam = searchParams.get('user')
-      if (userParam && targetUser) {
-        setTimeout(() => {
-          dmStartConversation(targetUser.tokenId)
-            .then((newConversation: any) => {
-              handleConversationSelect(newConversation.id)
-            })
-            .catch((error: any) => {
-              console.error('Failed to create conversation after init:', error)
-            })
-        }, 500)
+        // If we have a target user from URL params, create conversation
+        const userParam = searchParams.get('user')
+        if (userParam && targetUser) {
+          setTimeout(() => {
+            dmStartConversation(targetUser.tokenId)
+              .then((newConversation: any) => {
+                handleConversationSelect(newConversation.id)
+              })
+              .catch((error: any) => {
+                console.error('Failed to create conversation after init:', error)
+              })
+          }, 500)
+        }
+      } catch (error) {
+        console.error('Failed to enable DMs:', error)
+        setErrorModal({ title: 'DMs Setup Failed', message: error instanceof Error ? error.message : 'Failed to enable DMs. Please try again.' })
       }
-    } catch (error) {
-      console.error('Failed to enable DMs:', error)
-      setErrorModal({ title: 'DMs Setup Failed', message: error instanceof Error ? error.message : 'Failed to enable DMs. Please try again.' })
-    }
+    })
   }
 
   // Function to handle chat options menu actions
@@ -987,15 +987,6 @@ const MessagesPage: React.FC = () => {
                         Wrong Wallet
                       </button>
                       <p className="text-sm text-red-400">Please switch to the correct wallet</p>
-                    </div>
-                  ) : !address ? (
-                    <div className="flex flex-col items-center gap-2">
-                      <button
-                        onClick={() => openConnectModal?.()}
-                        className="px-6 py-3 rounded-full font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-all duration-300 cursor-pointer"
-                      >
-                        Connect Wallet
-                      </button>
                     </div>
                   ) : (
                     <button

@@ -23,7 +23,9 @@ export function useEnsureWallet() {
   const pendingAction = useRef<{ chainId?: number; action: () => Promise<void> } | null>(null)
   const wasDisconnected = useRef(false)
 
-  // Auto-execute pending action when wallet connects
+  // Auto-execute pending action when wallet connects.
+  // Use a short delay to let wagmi fully propagate wallet client state
+  // before attempting actions that need the signer (e.g. DM key derivation).
   useEffect(() => {
     if (!isConnected || !wasDisconnected.current || !pendingAction.current) return
     wasDisconnected.current = false
@@ -31,18 +33,18 @@ export function useEnsureWallet() {
     const { chainId: targetChain, action } = pendingAction.current
     pendingAction.current = null
 
-    const run = async () => {
+    const timer = setTimeout(async () => {
       try {
         if (targetChain && chainId !== targetChain) {
           await switchChainAsync({ chainId: targetChain })
         }
         await action()
       } catch (err) {
-        // User rejected switch or action failed — silently ignore
         console.warn('[useEnsureWallet] Deferred action failed:', err)
       }
-    }
-    run()
+    }, 500)
+
+    return () => clearTimeout(timer)
   }, [isConnected, chainId, switchChainAsync])
 
   /**

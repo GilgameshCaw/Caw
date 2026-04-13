@@ -131,7 +131,7 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
 
   return (
     <div className={`py-6 px-4 rounded-xl border transition-all duration-300 ${
-      isDark ? 'bg-black border-yellow-500/30' : 'bg-gray-100 border-gray-200 shadow-xl'
+      isDark ? 'bg-black border-yellow-500/30' : 'bg-gray-100 border-gray-200 shadow-inner'
     }`}>
       <h2 className={`text-lg font-semibold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
         Suggested users to follow

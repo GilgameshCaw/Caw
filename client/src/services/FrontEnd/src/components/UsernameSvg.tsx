@@ -56,13 +56,14 @@ const UsernameSvg: React.FC<UsernameSvgProps> = ({ username, textOpacity }) => {
   }
 
   return (
+    <div className="username-card">
     <svg
       xmlns="http://www.w3.org/2000/svg"
       width="100%"
       height="100%"
       viewBox="0 0 270 270"
       fill="none"
-      className="username-card"
+      style={{ display: 'block' }}
     >
       <defs>
         <filter
@@ -101,6 +102,7 @@ const UsernameSvg: React.FC<UsernameSvgProps> = ({ username, textOpacity }) => {
       </text>
       <rect x="0.5" y="0.5" width="269" height="269" rx="22" ry="22" fill="none" stroke="rgba(240,177,0,0.3)" strokeWidth="1"/>
     </svg>
+    </div>
   );
 };
 

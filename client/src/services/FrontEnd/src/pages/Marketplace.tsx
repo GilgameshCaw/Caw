@@ -244,7 +244,7 @@ const SalesTab: React.FC = () => {
           {sales.map(s => <SaleCard key={s.id} sale={s} />)}
         </div>
       ) : !loading ? (
-        <div className={`text-center py-16 ${themeBgSubtle(isDark)} rounded-xl`}>
+        <div className={`text-center py-16 ${themeBgSubtle(isDark)} rounded-xl ${isDark ? '' : 'shadow-inner'}`}>
           <p className={`text-lg ${themeTextMuted(isDark)}`}>No completed sales yet</p>
         </div>
       ) : null}
@@ -701,7 +701,7 @@ const MyOffersTab: React.FC = () => {
               })}
             </div>
           ) : (
-            <div className={`text-center py-8 ${themeBgSubtle(isDark)} rounded-xl`}>
+            <div className={`text-center py-8 ${themeBgSubtle(isDark)} rounded-xl ${isDark ? '' : 'shadow-inner'}`}>
               <p className={`text-sm ${themeTextMuted(isDark)}`}>No offers sent</p>
               <p className={`text-xs mt-1 ${themeTextMuted(isDark)}`}>
                 Make an offer on any profile to buy it
@@ -791,7 +791,7 @@ const MyOffersTab: React.FC = () => {
               })}
             </div>
           ) : (
-            <div className={`text-center py-8 ${themeBgSubtle(isDark)} rounded-xl`}>
+            <div className={`text-center py-8 ${themeBgSubtle(isDark)} rounded-xl ${isDark ? '' : 'shadow-inner'}`}>
               <p className={`text-sm ${themeTextMuted(isDark)}`}>No offers received</p>
             </div>
           )}
