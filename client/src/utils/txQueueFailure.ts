@@ -32,7 +32,13 @@ export async function markTxQueueFailed(
     data: { status: 'failed', reason }
   })
   await cleanupOptimisticRows(prisma, senderId, actionData, reason)
-  await createActionFailedNotification(prisma, senderId, txQueueId, actionData, reason)
+
+  // Don't notify for "Cawonce already used" — the action already succeeded
+  // on-chain. This happens when the validator detects a revert but the tx
+  // actually landed, or when a retry collides with the original.
+  if (!reason.includes('Cawonce already used')) {
+    await createActionFailedNotification(prisma, senderId, txQueueId, actionData, reason)
+  }
 }
 
 /**
