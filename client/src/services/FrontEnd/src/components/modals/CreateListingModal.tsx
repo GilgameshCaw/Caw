@@ -557,8 +557,7 @@ const CreateListingModal: React.FC = () => {
                   disabled={(isConnected && !isOwner) || isApproving || isApproveConfirming || isSwitchingChain}
                   className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-yellow-500"
                 >
-                  {!isConnected ? 'Connect Wallet'
-                    : !isOwner ? 'Wrong Wallet'
+                  {!isOwner ? 'Wrong Wallet'
                     : needsChainSwitch ? (isSwitchingChain ? 'Switching...' : 'Switch Network')
                     : isApproving ? 'Confirm in wallet...'
                     : isApproveConfirming ? 'Approving...'
@@ -574,8 +573,7 @@ const CreateListingModal: React.FC = () => {
                   disabled={(isConnected && !isOwner) || isSuccess || isSubmitting || isConfirming || isSwitchingChain || !startPrice || parseFloat(startPrice) <= 0 || (listingType === 1 && (!endPrice || parseFloat(endPrice) >= parseFloat(startPrice)))}
                   className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {!isConnected ? 'Connect Wallet'
-                    : !isOwner ? 'Wrong Wallet'
+                  {!isOwner ? 'Wrong Wallet'
                     : needsChainSwitch ? (isSwitchingChain ? 'Switching...' : 'Switch Network')
                     : isSubmitting ? 'Confirm in wallet...'
                     : isConfirming ? 'Confirming...'

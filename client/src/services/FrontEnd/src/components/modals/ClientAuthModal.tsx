@@ -117,8 +117,6 @@ const ClientAuthModal: React.FC = () => {
         >
           {isPending
             ? 'Confirming...'
-            : !isConnected
-            ? 'Connect Wallet'
             : wrongChain
             ? 'Switch to Ethereum'
             : 'Activate'}

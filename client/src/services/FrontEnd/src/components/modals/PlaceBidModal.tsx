@@ -436,8 +436,7 @@ const PlaceBidModal: React.FC = () => {
                 disabled={isApproving || isApproveConfirming || isSwitchingChain}
                 className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {!isConnected ? 'Connect Wallet'
-                  : needsChainSwitch ? (isSwitchingChain ? 'Switching...' : 'Switch Network')
+                {needsChainSwitch ? (isSwitchingChain ? 'Switching...' : 'Switch Network')
                   : isApproving ? 'Confirm in wallet...'
                   : isApproveConfirming ? 'Approving...'
                   : `Approve ${listing.paymentToken}`}
@@ -451,8 +450,7 @@ const PlaceBidModal: React.FC = () => {
                 disabled={isSubmitting || isConfirming || isSwitchingChain || !bidAmount || parseFloat(bidAmount) <= 0 || bidWei < BigInt(minBid) || insufficientBalance}
                 className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {!isConnected ? 'Connect Wallet'
-                  : needsChainSwitch ? (isSwitchingChain ? 'Switching...' : 'Switch Network')
+                {needsChainSwitch ? (isSwitchingChain ? 'Switching...' : 'Switch Network')
                   : isSubmitting ? 'Confirm in wallet...'
                   : isConfirming ? 'Confirming...'
                   : 'Place Bid'}

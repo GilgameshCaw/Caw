@@ -1,8 +1,8 @@
 import { Link } from 'react-router-dom'
-import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useAccount } from 'wagmi'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useSignInModalStore } from '~/store/signInModalStore'
+import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import ModalWrapper from './ModalWrapper'
 
 interface SignInModalProps {
@@ -17,7 +17,7 @@ interface SignInModalProps {
  */
 export default function SignInModal({ isOpen: propIsOpen, onClose: propOnClose, message: propMessage }: SignInModalProps) {
   const { isConnected } = useAccount()
-  const { openConnectModal } = useConnectModal()
+  const ensureWallet = useEnsureWallet()
   const activeToken = useActiveToken()
   const store = useSignInModalStore()
 
@@ -46,12 +46,12 @@ export default function SignInModal({ isOpen: propIsOpen, onClose: propOnClose, 
         {!isConnected ? (
           <button
             onClick={() => {
-              openConnectModal?.()
+              ensureWallet(null, async () => {})
               onClose()
             }}
             className="w-full py-3 bg-yellow-500 text-black font-semibold rounded-full hover:bg-yellow-400 transition-colors cursor-pointer"
           >
-            Connect Wallet
+            Sign In
           </button>
         ) : !activeToken?.username ? (
           <Link

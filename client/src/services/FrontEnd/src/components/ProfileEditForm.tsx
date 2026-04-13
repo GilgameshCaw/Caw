@@ -613,8 +613,6 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
                   <span>Saving...</span>
                 ) : saveOnChain && isSwitchingChain ? (
                   <span>Switching...</span>
-                ) : saveOnChain && !isConnected ? (
-                  <span>Connect Wallet</span>
                 ) : saveOnChain && !isOnCorrectChain ? (
                   <span>Switch to Base Sepolia</span>
                 ) : saveOnChain && wrongWallet ? (

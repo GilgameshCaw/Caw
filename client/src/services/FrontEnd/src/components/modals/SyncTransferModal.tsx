@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
 import { readContract } from '@wagmi/core'
-import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { formatEther } from 'viem'
+import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import ModalWrapper from './ModalWrapper'
 import ModalHeader from './ModalHeader'
 import { useTheme } from '~/hooks/useTheme'
@@ -18,7 +18,7 @@ const SyncTransferModal: React.FC = () => {
   const { isDark } = useTheme()
   const { isOpen, tokenId, username, close } = useSyncTransferStore()
   const { isConnected } = useAccount()
-  const { openConnectModal } = useConnectModal()
+  const ensureWallet = useEnsureWallet()
   const chainId = useChainId()
   const { switchChain, isPending: isSwitchingChain } = useSwitchChain()
   const { writeContract, data: hash, isPending: isSubmitting, error: writeError, reset } = useWriteContract()
@@ -72,28 +72,19 @@ const SyncTransferModal: React.FC = () => {
   }
 
   const handleSync = async () => {
-    if (!isConnected) {
-      openConnectModal?.()
-      return
-    }
-
-    if (needsChainSwitch) {
-      switchChain({ chainId: chains.l1.chainId })
-      return
-    }
-
-    writeContract({
-      address: CAW_NAMES_ADDRESS,
-      abi: cawNameAbi,
-      functionName: 'syncTransfer',
-      args: [chains.l2.layerZero, 0n] as [number, bigint],
-      value: lzFee ?? 0n,
-      chainId: chains.l1.chainId
+    await ensureWallet({ chainId: chains.l1.chainId }, async () => {
+      writeContract({
+        address: CAW_NAMES_ADDRESS,
+        abi: cawNameAbi,
+        functionName: 'syncTransfer',
+        args: [chains.l2.layerZero, 0n] as [number, bigint],
+        value: lzFee ?? 0n,
+        chainId: chains.l1.chainId
+      })
     })
   }
 
   const getButtonText = () => {
-    if (!isConnected) return 'Connect Wallet'
     if (needsChainSwitch) return isSwitchingChain ? 'Switching...' : 'Switch to Sepolia'
     if (isQuoting) return 'Estimating fee...'
     if (isSubmitting) return 'Confirm in wallet...'

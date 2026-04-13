@@ -353,8 +353,7 @@ const MakeOfferModal: React.FC = () => {
                 disabled={isApproving || isApproveConfirming || isSwitchingChain}
                 className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed mb-2"
               >
-                {!isConnected ? 'Connect Wallet'
-                  : needsChainSwitch ? (isSwitchingChain ? 'Switching...' : 'Switch Network')
+                {needsChainSwitch ? (isSwitchingChain ? 'Switching...' : 'Switch Network')
                   : isApproving ? 'Confirm in wallet...'
                   : isApproveConfirming ? 'Approving...'
                   : `Approve ${selectedToken.label}`}
@@ -368,8 +367,7 @@ const MakeOfferModal: React.FC = () => {
                 disabled={isSubmitting || isWaitingForReceipt || isSwitchingChain || insufficientBalance || amountWei === 0n}
                 className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-yellow-500"
               >
-                {!isConnected ? 'Connect Wallet'
-                  : needsChainSwitch ? (isSwitchingChain ? 'Switching...' : 'Switch Network')
+                {needsChainSwitch ? (isSwitchingChain ? 'Switching...' : 'Switch Network')
                   : isSubmitting ? 'Confirm in wallet...'
                   : isWaitingForReceipt ? 'Submitting offer...'
                   : 'Submit Offer'}

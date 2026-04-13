@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
 import { readContract } from '@wagmi/core'
-import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { isAddress, formatEther } from 'viem'
+import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import ModalWrapper from './ModalWrapper'
 import ModalHeader from './ModalHeader'
 import { useTheme } from '~/hooks/useTheme'
@@ -18,7 +18,7 @@ const TransferNFTModal: React.FC = () => {
   const { isDark } = useTheme()
   const { isOpen, tokenId, username, close } = useTransferModalStore()
   const { address, isConnected } = useAccount()
-  const { openConnectModal } = useConnectModal()
+  const ensureWallet = useEnsureWallet()
   const chainId = useChainId()
   const { switchChain, isPending: isSwitchingChain } = useSwitchChain()
   const { writeContract, data: hash, isPending: isSubmitting, error: writeError, reset } = useWriteContract()
@@ -94,32 +94,23 @@ const TransferNFTModal: React.FC = () => {
   }
 
   const handleTransfer = async () => {
-    if (!isConnected) {
-      openConnectModal?.()
-      return
-    }
+    await ensureWallet({ chainId: chains.l1.chainId }, async () => {
+      if (!validateRecipient(recipient)) return
+      if (!address || tokenId === null) return
 
-    if (needsChainSwitch) {
-      switchChain({ chainId: chains.l1.chainId })
-      return
-    }
-
-    if (!validateRecipient(recipient)) return
-    if (!address || tokenId === null) return
-
-    // Use transferAndSync to transfer + sync L2 ownership in one tx
-    writeContract({
-      address: CAW_NAMES_ADDRESS,
-      abi: cawNameAbi,
-      functionName: 'transferAndSync',
-      args: [recipient as `0x${string}`, BigInt(tokenId), 0n],
-      value: lzFee ?? 0n,
-      chainId: chains.l1.chainId
+      // Use transferAndSync to transfer + sync L2 ownership in one tx
+      writeContract({
+        address: CAW_NAMES_ADDRESS,
+        abi: cawNameAbi,
+        functionName: 'transferAndSync',
+        args: [recipient as `0x${string}`, BigInt(tokenId), 0n],
+        value: lzFee ?? 0n,
+        chainId: chains.l1.chainId
+      })
     })
   }
 
   const getButtonText = () => {
-    if (!isConnected) return 'Connect Wallet'
     if (needsChainSwitch) return isSwitchingChain ? 'Switching...' : 'Switch to Sepolia'
     if (isQuoting) return 'Estimating fee...'
     if (isSubmitting) return 'Confirm in wallet...'

@@ -1138,20 +1138,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               </button>
             </div>
 
-            {/* Right side - Action buttons (Connect/Switch/Post/etc.) */}
-            { !isConnected && !hasActiveSession ? (
-              <button
-                className="px-3 py-1.5 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer flex items-center justify-center gap-1"
-                onClick={openConnectModal}
-              >
-                <BsWallet className="w-3 h-3" />
-                Connect
-              </button>
-            ) : !hasActiveSession && wrongChain ? (
-              <button className="px-3 py-1.5 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer" onClick={handleSwitchChain}>
-                Switch
-              </button>
-            ) : hasNoToken ? (
+            {/* Right side - Action buttons (Post/etc.) */}
+            { hasNoToken ? (
               <Link
                 to="/usernames/new"
                 className="px-3 py-1.5 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer"
@@ -1516,19 +1504,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               )}
             </div>
 
-            { !isConnected && !hasActiveSession ? (
-            <button
-              className="px-5 py-2 bg-yellow-500 text-black font-semibold text-base rounded-full hover:bg-yellow-400 transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer flex items-center justify-center gap-2"
-              onClick={openConnectModal}
-            >
-              <BsWallet className="w-4 h-4" />
-              Connect Wallet
-            </button>
-          ) : !hasActiveSession && wrongChain ? (
-            <button className="px-5 py-2 bg-yellow-500 text-black font-semibold text-base rounded-full hover:bg-yellow-400 transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer" onClick={handleSwitchChain}>
-              Switch Network
-            </button>
-          ) : (() => {
+            {(() => {
                 const wrongWallet2 = !isTokenOwner && !hasActiveSession && activeToken?.tokenId
                 const tooltipText2 = wrongWallet2 ? 'Please switch to the correct wallet' : hasNoToken ? '' : isSubmitting ? (isThreadMode ? 'Waiting for signatures...' : 'Waiting for signature...') : ''
                 const isDisabled2 = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isSubmitting

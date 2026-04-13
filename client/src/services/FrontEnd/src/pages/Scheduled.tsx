@@ -110,14 +110,14 @@ const ScheduledPage: React.FC = () => {
           <div className={`text-center py-16 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
             <HiOutlineClock className="w-16 h-16 mx-auto mb-4 opacity-50" />
             <h2 className={`text-xl font-semibold mb-2 ${isDark ? 'text-white' : 'text-black'}`}>
-              Connect your wallet
+              Scheduled Posts
             </h2>
-            <p className="mb-4">Connect your wallet to view your scheduled posts.</p>
+            <p className="mb-4">Sign in to view your scheduled posts.</p>
             <button
               onClick={openConnectModal}
-              className="px-6 py-2 bg-yellow-500 hover:bg-yellow-400 text-black font-medium rounded-full transition-colors"
+              className="px-6 py-2 bg-yellow-500 hover:bg-yellow-400 text-black font-medium rounded-full transition-colors cursor-pointer"
             >
-              Connect Wallet
+              Sign In
             </button>
           </div>
         </div>

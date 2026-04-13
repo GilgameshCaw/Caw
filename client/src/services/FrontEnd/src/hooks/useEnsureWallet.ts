@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback } from 'react'
-import { useAccount, useSwitchChain, useChainId } from 'wagmi'
+import { useAccount, useSwitchChain, useChainId, useWalletClient } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 
 /**
@@ -15,25 +15,26 @@ import { useConnectModal } from '@rainbow-me/rainbowkit'
  *   })
  */
 export function useEnsureWallet() {
-  const { isConnected } = useAccount()
+  const { isConnected, address } = useAccount()
   const chainId = useChainId()
   const { openConnectModal } = useConnectModal()
   const { switchChainAsync } = useSwitchChain()
+  const { data: walletClient } = useWalletClient()
 
   const pendingAction = useRef<{ chainId?: number; action: () => Promise<void> } | null>(null)
   const wasDisconnected = useRef(false)
 
-  // Auto-execute pending action when wallet connects.
-  // Use a short delay to let wagmi fully propagate wallet client state
-  // before attempting actions that need the signer (e.g. DM key derivation).
+  // Auto-execute pending action when wallet is fully ready.
+  // We wait for both isConnected AND walletClient to be available,
+  // because wagmi sets isConnected before the wallet client is populated.
   useEffect(() => {
-    if (!isConnected || !wasDisconnected.current || !pendingAction.current) return
+    if (!isConnected || !address || !walletClient || !wasDisconnected.current || !pendingAction.current) return
     wasDisconnected.current = false
 
     const { chainId: targetChain, action } = pendingAction.current
     pendingAction.current = null
 
-    const timer = setTimeout(async () => {
+    const run = async () => {
       try {
         if (targetChain && chainId !== targetChain) {
           await switchChainAsync({ chainId: targetChain })
@@ -42,10 +43,9 @@ export function useEnsureWallet() {
       } catch (err) {
         console.warn('[useEnsureWallet] Deferred action failed:', err)
       }
-    }, 500)
-
-    return () => clearTimeout(timer)
-  }, [isConnected, chainId, switchChainAsync])
+    }
+    run()
+  }, [isConnected, address, walletClient, chainId, switchChainAsync])
 
   /**
    * Ensure wallet is connected (and optionally on the right chain), then run the action.

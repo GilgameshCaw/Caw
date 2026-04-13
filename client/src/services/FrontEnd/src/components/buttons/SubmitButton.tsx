@@ -38,7 +38,7 @@ export const SubmitButton: React.FC<React.PropsWithChildren<SubmitButtonProps>> 
           <Spinner className="spinner h-10 w-10" />
         </div>
       )}
-      {!isConnected ? 'Connect Wallet' : children}
+      {children}
     </button>
   );
 };

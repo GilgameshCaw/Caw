@@ -5,6 +5,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { HiArrowLeft, HiRefresh } from 'react-icons/hi'
 import { useAccount, useWriteContract, useWaitForTransactionReceipt, useReadContract, useSwitchChain, useChainId } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
+import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { CAW_ADDRESS } from '~/../../../abi/addresses'
 import { parseUnits, formatUnits } from 'viem'
 import { chains } from '~/config/chains'
@@ -41,6 +42,7 @@ const FaucetPage: React.FC = () => {
   const { isDark } = useTheme()
   const { address, isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
+  const ensureWallet = useEnsureWallet()
   const currentChainId = useChainId()
   const { switchChain, isPending: isSwitching } = useSwitchChain()
   const [selectedAmount, setSelectedAmount] = useState(MINT_AMOUNTS[1].value)
@@ -245,30 +247,13 @@ const FaucetPage: React.FC = () => {
           </div>
 
           {/* Mint Button */}
-          {!isConnected ? (
-            <button
-              onClick={openConnectModal}
-              className="w-full py-3 px-4 bg-yellow-500 text-black font-semibold rounded-xl hover:bg-yellow-400 transition-colors cursor-pointer"
-            >
-              Connect Wallet
-            </button>
-          ) : !isOnCorrectChain ? (
-            <button
-              onClick={() => switchChain({ chainId: chains.l1.chainId })}
-              disabled={isSwitching}
-              className="w-full py-3 px-4 bg-yellow-500 text-black font-semibold rounded-xl hover:bg-yellow-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-            >
-              {isSwitching ? 'Switching...' : 'Switch to Sepolia'}
-            </button>
-          ) : (
-            <button
-              onClick={handleMint}
-              disabled={isPending || isConfirming || !isValidAmount(getMintAmount())}
-              className="w-full py-3 px-4 bg-yellow-500 text-black font-semibold rounded-xl hover:bg-yellow-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
-            >
-              {isPending ? 'Confirm in Wallet...' : isConfirming ? 'Minting...' : `Mint ${getDisplayAmount()} mCAW`}
-            </button>
-          )}
+          <button
+            onClick={() => ensureWallet({ chainId: chains.l1.chainId }, async () => { handleMint() })}
+            disabled={isConnected && (isPending || isConfirming || !isValidAmount(getMintAmount()))}
+            className="w-full py-3 px-4 bg-yellow-500 text-black font-semibold rounded-xl hover:bg-yellow-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+          >
+            {isPending ? 'Confirm in Wallet...' : isConfirming ? 'Minting...' : `Mint ${getDisplayAmount()} mCAW`}
+          </button>
 
           {/* Status Messages */}
           {writeError && (

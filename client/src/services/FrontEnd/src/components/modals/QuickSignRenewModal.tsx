@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { useAccount, useChainId, useSwitchChain } from 'wagmi'
-import { useConnectModal } from '@rainbow-me/rainbowkit'
 import ModalWrapper from './ModalWrapper'
+import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { useTheme } from '~/hooks/useTheme'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { useActiveToken } from '~/store/tokenDataStore'
@@ -38,7 +38,7 @@ const QuickSignRenewModal: React.FC = () => {
   const setEnabled = useSessionKeyStore(s => s.setEnabled)
   const createSession = useCreateSession()
   const { address, isConnected } = useAccount()
-  const { openConnectModal } = useConnectModal()
+  const ensureWallet = useEnsureWallet()
   const chainId = useChainId()
   const { switchChain } = useSwitchChain()
   const activeToken = useActiveToken()
@@ -77,48 +77,32 @@ const QuickSignRenewModal: React.FC = () => {
   }
 
   const handleSignManually = () => {
-    if (!isConnected) {
-      openConnectModal?.()
-      return
-    }
-    if (wrongWallet) return
-    if (wrongChain) {
-      switchChain({ chainId: chains.l2.chainId })
-      return
-    }
+    ensureWallet({ chainId: chains.l2.chainId }, async () => {
+      if (wrongWallet) return
 
-    // Temporarily disable Quick Sign so the retry uses wallet signature,
-    // but don't clear the session — re-enable if the user cancels
-    setEnabled(false)
-    const retry = onRetry
-    close()
-    if (retry) {
-      setTimeout(async () => {
-        try {
-          await retry()
-        } catch {
-          // User cancelled or signature failed — re-enable Quick Sign
-          useSessionKeyStore.getState().setEnabled(true)
-        }
-      }, 100)
-    }
-  }
-
-  const handleNoteClick = () => {
-    if (!isConnected) {
-      openConnectModal?.()
-    } else if (wrongChain) {
-      switchChain({ chainId: chains.l2.chainId })
-    }
+      // Temporarily disable Quick Sign so the retry uses wallet signature,
+      // but don't clear the session — re-enable if the user cancels
+      setEnabled(false)
+      const retry = onRetry
+      close()
+      if (retry) {
+        setTimeout(async () => {
+          try {
+            await retry()
+          } catch {
+            // User cancelled or signature failed — re-enable Quick Sign
+            useSessionKeyStore.getState().setEnabled(true)
+          }
+        }, 100)
+      }
+    })
   }
 
   const signManuallyNote = wrongWallet
     ? null // Handled by the dedicated wrong wallet message above buttons
-    : !isConnected
-      ? 'Connect your wallet first'
-      : wrongChain
-        ? 'Switch to the correct network first'
-        : null
+    : wrongChain
+      ? 'Switch to the correct network first'
+      : null
 
   const title = reason === 'expired'
     ? 'Quick Sign Has Expired'
@@ -203,7 +187,7 @@ const QuickSignRenewModal: React.FC = () => {
         </div>
         {signManuallyNote && !wrongWallet && (
           <p className={`text-center text-xs whitespace-nowrap mt-2 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-            <button onClick={handleNoteClick} className="underline hover:opacity-80 cursor-pointer">
+            <button onClick={() => wrongChain && switchChain({ chainId: chains.l2.chainId })} className="underline hover:opacity-80 cursor-pointer">
               {signManuallyNote}
             </button>
           </p>
