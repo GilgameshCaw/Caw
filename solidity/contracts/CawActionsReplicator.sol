@@ -32,7 +32,7 @@ interface ICawActionsForReplicator {
  * @title CawActionsReplicator
  * @notice Replicates action data to archive chains via LayerZero.
  * @dev Deployed on L2. Replication is decoupled from action processing — it runs
- *      as a background process that submits complete 256-action checkpoint batches.
+ *      as a background process that submits complete 128-action checkpoint batches.
  *      Owner registers archive chains globally via addArchiveChain.
  *      Clients select which available chains they replicate to via setClientChains (called by CawNameL2).
  *      Anyone can call replicateBatch() — it's fully trustless since all data is verified on-chain.
@@ -240,11 +240,11 @@ contract CawActionsReplicator is OApp {
   // BATCH REPLICATION
   // ============================================
   //
-  // Replicates a complete 256-action checkpoint to an archive chain. Decoupled from
+  // Replicates a complete 128-action checkpoint to an archive chain. Decoupled from
   // action processing — intended to be called by a background replication service.
   //
   // Process:
-  // 1. Submit all 256 actions for a checkpoint with their signatures
+  // 1. Submit all 128 actions for a checkpoint with their signatures
   // 2. Contract verifies r values chain from previous checkpoint to this checkpoint
   // 3. Contract verifies each action's signature matches its r value
   // 4. Actions are replicated to the specified destination chain
@@ -259,12 +259,12 @@ contract CawActionsReplicator is OApp {
   }
 
   /**
-   * @notice Replicate a complete 256-action checkpoint to an archive chain
+   * @notice Replicate a complete 128-action checkpoint to an archive chain
    * @param params Replication parameters (clientId, destEid, checkpointId, lzTokenAmount)
-   * @param actions All 256 actions for this checkpoint (must all belong to clientId)
-   * @param v Signature v values (256 items)
-   * @param r Signature r values (256 items, also used for hash chain verification)
-   * @param s Signature s values (256 items)
+   * @param actions All 128 actions for this checkpoint (must all belong to clientId)
+   * @param v Signature v values (128 items)
+   * @param r Signature r values (128 items, also used for hash chain verification)
+   * @param s Signature s values (128 items)
    */
   function replicateBatch(
     ReplicationParams calldata params,
@@ -274,8 +274,8 @@ contract CawActionsReplicator is OApp {
     bytes32[] calldata s
   ) external payable {
     require(params.checkpointId > 0, "Invalid checkpoint");
-    require(actions.length == 256, "Must submit exactly 256 actions");
-    require(v.length == 256 && r.length == 256 && s.length == 256, "Signature arrays must be 256");
+    require(actions.length == 128, "Must submit exactly 128 actions");
+    require(v.length == 128 && r.length == 128 && s.length == 128, "Signature arrays must be 128");
 
     // Verify destination is valid
     require(isAvailableChain[params.destEid], "Chain not available");
@@ -311,7 +311,7 @@ contract CawActionsReplicator is OApp {
       ? bytes32(0)
       : cawActionsContract.clientHashAtCheckpoint(clientId, checkpointId - 1);
 
-    for (uint i = 0; i < 256; i++) {
+    for (uint i = 0; i < 128; i++) {
       hash = keccak256(abi.encodePacked(hash, r[i]));
     }
     require(hash == cawActionsContract.clientHashAtCheckpoint(clientId, checkpointId), "Invalid r sequence");
@@ -326,7 +326,7 @@ contract CawActionsReplicator is OApp {
   ) internal view {
     ICawActionsForReplicator cawActionsContract = ICawActionsForReplicator(cawActions);
 
-    for (uint i = 0; i < 256; i++) {
+    for (uint i = 0; i < 128; i++) {
       require(actions[i].clientId == clientId, "Action clientId mismatch");
       cawActionsContract.verifySignature(v[i], r[i], s[i], actions[i]);
       require(cawActionsContract.isCawonceUsed(actions[i].senderId, actions[i].cawonce), "Action never processed");
@@ -346,7 +346,7 @@ contract CawActionsReplicator is OApp {
   {
     ICawActionsForReplicator cawActionsContract = ICawActionsForReplicator(cawActions);
     uint256 actionCount = cawActionsContract.clientActionCount(clientId);
-    totalCheckpoints = actionCount / 256;
+    totalCheckpoints = actionCount / 128;
 
     for (uint256 i = 1; i <= totalCheckpoints; i++) {
       if (!checkpointReplicated[clientId][destEid][i]) {
@@ -369,11 +369,11 @@ contract CawActionsReplicator is OApp {
     uint256 avgTextLength,
     bool payInLzToken
   ) external view returns (MessagingFee memory fee) {
-    // Estimate payload size for 256 actions:
+    // Estimate payload size for 128 actions:
     // - Each ActionData: ~200 bytes base + text length + arrays
     // - v, r, s: 1 + 32 + 32 = 65 bytes per action
     // - Encoding overhead: ~100 bytes
-    uint256 estimatedSize = 100 + (256 * (265 + avgTextLength));
+    uint256 estimatedSize = 100 + (128 * (265 + avgTextLength));
 
     bytes memory dummyPayload = new bytes(estimatedSize);
     bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(RECEIVE_GAS_LIMIT, 0);

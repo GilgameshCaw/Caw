@@ -1842,7 +1842,7 @@ console.log("succeededKeys", succeededKeys)
     }
 
     /**
-     * Background replication loop. Checks for complete 256-action checkpoints
+     * Background replication loop. Checks for complete 128-action checkpoints
      * and submits them to archive chains via replicateBatch.
      *
      * All data comes from on-chain: reads ActionsProcessed events to get actions,
@@ -1921,7 +1921,7 @@ console.log("succeededKeys", succeededKeys)
 
               console.log(`[Replication] Client ${client.id} → chain ${destEid}: checkpoint ${checkpointId}/${total} needs replication`)
 
-              // Reconstruct the 256 actions + signatures from on-chain data.
+              // Reconstruct the 128 actions + signatures from on-chain data.
               //
               // The hash chain is built by CawActions._processAction in the exact
               // order actions appear in the calldata arrays. Within a block, multiple
@@ -1931,7 +1931,7 @@ console.log("succeededKeys", succeededKeys)
               // DB logIndex and rawEventId are NOT reliable for this ordering because
               // safeProcessActions makes external self-calls per action (producing
               // low logIndex events) before emitting the batch ActionsProcessed event.
-              const startPos = (checkpointId - 1) * 256
+              const startPos = (checkpointId - 1) * 128
 
               // Get unique tx hashes from DB actions for this client
               const dbActions = await prisma.action.findMany({
@@ -1993,10 +1993,10 @@ console.log("succeededKeys", succeededKeys)
               })
 
               // Slice the checkpoint window
-              const checkpoint = orderedEntries.slice(startPos, startPos + 256)
+              const checkpoint = orderedEntries.slice(startPos, startPos + 128)
 
-              if (checkpoint.length !== 256) {
-                console.log(`[Replication] Only ${checkpoint.length}/256 actions reconstructed for checkpoint ${checkpointId}, skipping`)
+              if (checkpoint.length !== 128) {
+                console.log(`[Replication] Only ${checkpoint.length}/128 actions reconstructed for checkpoint ${checkpointId}, skipping`)
                 continue
               }
 
@@ -2028,7 +2028,7 @@ console.log("succeededKeys", succeededKeys)
               const expectedHash = await actionsView.clientHashAtCheckpoint(client.id, checkpointId)
 
               let computedHash = prevHash
-              for (let i = 0; i < 256; i++) {
+              for (let i = 0; i < 128; i++) {
                 computedHash = keccak256(solidityPacked(['bytes32', 'bytes32'], [computedHash, allR[i]]))
               }
 
@@ -2061,12 +2061,12 @@ console.log("succeededKeys", succeededKeys)
 
               const params = { clientId: client.id, destEid, checkpointId, lzTokenAmount: 0 }
               // Use a generous manual gas limit to skip eth_estimateGas — the
-              // replicateBatch call has massive calldata (256 actions) which makes
+              // replicateBatch call has large calldata (128 actions) which makes
               // gas estimation very expensive for RPC nodes and often gets rate-limited.
               // The contract verifies all signatures and hashes, consuming ~8-12M gas.
               const tx = await replicatorWrite.replicateBatch(params, allActions, allV, allR, allS, {
                 value: nativeFee,
-                gasLimit: 15_000_000n,
+                gasLimit: 8_000_000n,
               })
               const receipt = await tx.wait()
               console.log(`[Replication] Checkpoint ${checkpointId} replicated! tx: ${receipt?.hash}`)
@@ -2080,7 +2080,7 @@ console.log("succeededKeys", succeededKeys)
                     clientId: client.id,
                     destEid,
                     checkpointId,
-                    actionCount: 256,
+                    actionCount: 128,
                     gasUsed: receipt.gasUsed.toString(),
                     gasPrice: receipt.fee ? (receipt.fee / receipt.gasUsed).toString() : '0',
                     ethCost: receipt.fee.toString(),
@@ -2090,6 +2090,7 @@ console.log("succeededKeys", succeededKeys)
                 } catch (e: any) { console.error('[Analytics] Failed to record replication:', e.message) }
               }
             } catch (err: any) {
+              console.error(err)
               console.error(`[Replication] Failed for client ${client.id} → chain ${destEid}: ${formatRpcError(err)}`)
             }
           }

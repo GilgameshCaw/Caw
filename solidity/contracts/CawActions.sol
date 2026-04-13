@@ -33,9 +33,9 @@ contract CawActions is Ownable {
   bytes32 public immutable eip712DomainHash;
 
   // Checkpointing for verifiable migration to other chains (per-client)
-  // Every 256 actions per client, we store the client's currentHash. This allows
+  // Every 128 actions per client, we store the client's currentHash. This allows
   // historical actions to be replayed and verified in chunks during migration,
-  // without storing all r values on-chain. Migration submits 256 r values + a batch
+  // without storing all r values on-chain. Migration submits 128 r values + a batch
   // of actions, verifies the r values chain to the checkpoint, and that actions
   // match their r values. Each client's actions are independent.
   mapping(uint32 => uint256) public clientActionCount;
@@ -126,8 +126,8 @@ contract CawActions is Ownable {
     clientCurrentHash[clientId] = keccak256(abi.encodePacked(clientCurrentHash[clientId], r));
     clientActionCount[clientId]++;
 
-    if (clientActionCount[clientId] % 256 == 0)
-      clientHashAtCheckpoint[clientId][clientActionCount[clientId] / 256] = clientCurrentHash[clientId];
+    if (clientActionCount[clientId] % 128 == 0)
+      clientHashAtCheckpoint[clientId][clientActionCount[clientId] / 128] = clientCurrentHash[clientId];
   }
 
   /// @return totalWholeTokens Total whole CAW tokens spent via distributeAmounts
