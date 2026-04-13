@@ -252,7 +252,7 @@ router.get('/by-token/:tokenId', async (req, res) => {
       return res.status(400).json({ error: 'Invalid tokenId' })
     }
 
-    const user = await prisma.user.findUnique({
+    let user = await prisma.user.findUnique({
       where: { tokenId },
       select: {
         tokenId: true,
@@ -265,6 +265,22 @@ router.get('/by-token/:tokenId', async (req, res) => {
         pendingDepositAmount: true,
       }
     })
+
+    // Auto-create from chain if not in DB
+    if (!user) {
+      try {
+        await findOrCreateUser(tokenId)
+        user = await prisma.user.findUnique({
+          where: { tokenId },
+          select: {
+            tokenId: true, username: true, displayName: true, avatarUrl: true,
+            image: true, address: true, lastStakedAt: true, pendingDepositAmount: true,
+          }
+        })
+      } catch (err: any) {
+        console.log(`[users/by-token] Auto-create failed for tokenId ${tokenId}: ${err.message?.slice(0, 100)}`)
+      }
+    }
 
     if (!user) {
       return res.status(404).json({ error: 'User not found' })
