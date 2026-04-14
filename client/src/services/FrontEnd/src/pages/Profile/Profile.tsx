@@ -97,7 +97,7 @@ export const Profile: React.FC = () => {
   const [profileData, setProfileData] = useState<ProfileData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [notFound, setNotFound] = useState(false)
+  const [notFoundStatus, setNotFoundStatus] = useState<{ available: boolean; onChainTokenId: number | null } | null>(null)
   const { isDark } = useTheme()
   const activeToken = useActiveToken()
   const showSignIn = useSignInModalStore(s => s.show)
@@ -225,21 +225,26 @@ export const Profile: React.FC = () => {
 
       setLoading(true)
       setError(null)
-      setNotFound(false)
+      setNotFoundStatus(null)
 
       try {
-        const data = await apiFetch<ProfileData>(`/api/users/${displayUsername}`)
+        const res = await fetch(`/api/users/${displayUsername}`)
+        if (res.status === 404) {
+          const body = await res.json().catch(() => ({})) as { available?: boolean; onChainTokenId?: number | null }
+          setNotFoundStatus({
+            available: body.available !== false,
+            onChainTokenId: body.onChainTokenId ?? null,
+          })
+          return
+        }
+        if (!res.ok) throw new Error(`API ${res.status}`)
+        const data = await res.json() as ProfileData
         setProfileData(data)
         setHasTipped(data.hasTipped || false)
         setTipPending(data.tipPending || false)
       } catch (err: any) {
         console.error('Failed to fetch profile:', err)
-        const msg = err?.message || ''
-        if (msg.includes('404')) {
-          setNotFound(true)
-        } else {
-          setError('Failed to load profile')
-        }
+        setError('Failed to load profile')
       } finally {
         setLoading(false)
       }
@@ -740,8 +745,9 @@ export const Profile: React.FC = () => {
     { id: 'likes',   label: `Likes${tabCount(profileData?.likeCount)}`    },
   ]
 
-  // Profile doesn't exist — show mint prompt
-  if (notFound) {
+  // Profile doesn't exist in our DB
+  if (notFoundStatus) {
+    const { available } = notFoundStatus
     return (
       <MainLayout>
         <div className="max-w-2xl mx-auto px-6 py-16 text-center">
@@ -755,15 +761,23 @@ export const Profile: React.FC = () => {
           <h2 className={`text-xl font-bold mb-2 ${isDark ? 'text-white' : 'text-black'}`}>
             This profile doesn't exist
           </h2>
-          <p className={`mb-6 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-            @{displayUsername} hasn't been minted yet. You could be the first to claim it.
-          </p>
-          <Link
-            to={`/usernames/new?username=${encodeURIComponent(displayUsername)}`}
-            className="inline-block px-6 py-2 bg-yellow-500 text-black font-semibold rounded-full hover:bg-yellow-400 transition-colors cursor-pointer"
-          >
-            Claim @{displayUsername}
-          </Link>
+          {available ? (
+            <>
+              <p className={`mb-6 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                @{displayUsername} hasn't been claimed yet. You could be the first to register it.
+              </p>
+              <Link
+                to={`/usernames/new?username=${encodeURIComponent(displayUsername)}`}
+                className="inline-block px-6 py-2 bg-yellow-500 text-black font-semibold rounded-full hover:bg-yellow-400 transition-colors cursor-pointer"
+              >
+                Claim @{displayUsername}
+              </Link>
+            </>
+          ) : (
+            <p className={`mb-6 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                @{displayUsername} exists on-chain but we're still syncing its data. Try again in a moment.
+            </p>
+          )}
         </div>
       </MainLayout>
     )
