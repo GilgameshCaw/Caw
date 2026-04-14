@@ -13,11 +13,11 @@
     "CawNameMinter": "0xe7596c5C9A7Fdf0d75A2720B940E0b1a06dBD91b",
     "CawActionsReplicator_L1": "0xB2d6E9Bb32755D67467932982857B38af3Ca0647",
     "CawActions_L2b": "0x14f2034630c535839f2EA211CDf7abAF4aB1a8fc",
-    "CawActions_L2": "0xE382afe72C8F917197d34818127dBC4EF43E3316",
     "CawActionsReplicator_L2b": "0x65B26049c6adB4A398061E4b8533fA907aD5fe05",
-    "CawActionsReplicator_L2": "0x84A3A11CAC7756104A7164b7C1E4Be93f5435DF2",
     "CawActionsArchive_L2b": "0x2493Bd4c4E20938040524feb375E5495B1f7eFca",
-    "CawActionsArchive_L2": "0x2859BdBCa01e433d621DB79e9716Acac1D9E9503"
+    "CawActionsArchive_L2": "0x2859BdBCa01e433d621DB79e9716Acac1D9E9503",
+    "CawActions_L2": "0xC6117059d8A94E1E8dB6881ce47Db39D4a43669F",
+    "CawActionsReplicator_L2": "0xcb5362894567492287881401b99145eE5039e860"
   },
   "linking": {
     "clientCreated": true
