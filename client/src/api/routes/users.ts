@@ -745,7 +745,11 @@ router.get('/:username', async (req, res) => {
     })
 
     if (!user) {
-      return res.status(404).json({ error: 'User not found' })
+      // User not in DB. Since the chain has no name→tokenId lookup, we treat
+      // any unknown username as mintable and let the frontend prompt the user
+      // to register it. If the chain-sync service later learns of an existing
+      // mint for this name, future requests will return the actual user row.
+      return res.status(404).json({ error: 'User not found', mintable: true })
     }
 
     // Get actual like count (total likes received on all caws)

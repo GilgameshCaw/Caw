@@ -84,9 +84,13 @@ const DatabaseAdmin: React.FC = () => {
   useEffect(() => {
     if (!detailRecord) return
     const onKeyDown = (e: KeyboardEvent) => {
-      // Don't intercept if user is typing in an input/textarea
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
-      if (e.key === 'Escape') closeDetail()
+      if (e.key !== 'Escape') return
+      // If focused on an input/textarea, blur it first; next Escape closes detail
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        e.target.blur()
+        return
+      }
+      closeDetail()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
@@ -113,6 +117,8 @@ const DatabaseAdmin: React.FC = () => {
     setSearchInput('')
     setFilterField('')
     setFilterValue('')
+    setSortField('')
+    setSortOrder('desc')
     closeDetail()
   }, [closeDetail])
 

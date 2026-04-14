@@ -283,7 +283,10 @@ router.get('/:model', async (req, res) => {
 
   const limit = Math.min(Number(req.query.limit) || 50, 200)
   const offset = Number(req.query.offset) || 0
-  const sortField = (req.query.sort as string) || meta.defaultSort
+  const requestedSort = (req.query.sort as string) || meta.defaultSort
+  // Guard against sort fields that aren't valid for this model (e.g. stale
+  // query param left over from switching models).
+  const sortField = meta.listFields.includes(requestedSort) ? requestedSort : meta.defaultSort
   const sortOrder = (req.query.order as string) === 'asc' ? 'asc' : 'desc'
   const search = (req.query.search as string) || ''
   const filterRaw = req.query.filter as string

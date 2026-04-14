@@ -130,15 +130,17 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
   }
 
   return (
-    <div className={`py-6 px-4 rounded-xl border transition-all duration-300 ${
-      isDark ? 'bg-black border-yellow-500/30' : 'bg-gray-100 border-gray-200 shadow-inner'
+    <div className={`pt-4 mb-3 rounded-xl ${
+      isDark ? 'bg-black' : 'bg-gray-100 border border-gray-200 shadow-inner'
     }`}>
-      <h2 className={`text-lg font-semibold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+      <h2 className={`text-lg font-semibold mb-4 ml-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
         Suggested users to follow
       </h2>
-      <div className={`flex gap-3 overflow-x-auto overflow-y-visible pb-2 transition-all duration-500 ${visibleUsers.length <= 3 ? 'justify-center' : ''}`}>
-        {visibleUsers.map(user => {
+      <div className={`flex gap-3 overflow-x-auto overflow-y-visible pb-[20px] transition-all duration-500 ${visibleUsers.length <= 3 ? 'justify-center' : ''}`}>
+        {visibleUsers.map((user, idx) => {
           const isFadingOut = fadingOutIds.has(user.tokenId)
+          const isFirst = idx === 0
+          const isLast = idx === visibleUsers.length - 1
           return (
             <div
               key={user.tokenId}
@@ -153,6 +155,8 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
                 opacity: isFadingOut ? 0 : 1,
                 padding: isFadingOut ? '0' : undefined,
                 overflow: isFadingOut ? 'hidden' : 'visible',
+                marginLeft: isFirst ? '20px' : undefined,
+                marginRight: isLast ? '20px' : undefined,
               }}
             >
               {/* Dismiss button */}

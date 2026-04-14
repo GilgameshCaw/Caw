@@ -14,7 +14,7 @@ import UsernameSvg from '~/components/UsernameSvg'
 import { formatNumber, formatNumberCompact, convertToNumber } from "~/utils";
 import { formatUnits } from "viem";
 import BadgedIcon from '~/assets/images/badged.svg'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate, Link, useSearchParams } from 'react-router-dom'
 import StakingRewardsInfo from '~/components/StakingRewardsInfo'
 import { HiInformationCircle } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
@@ -37,12 +37,14 @@ export const NewProfile: React.FC = () => {
   const { isDark } = useTheme()
   const { switchChain } = useSwitchChain();
   const [isSwitchingChain, setIsSwitchingChain] = useState(false);
-  const handleSwitchChain = async () => {
+  const handleSwitchChain = async (): Promise<boolean> => {
     setIsSwitchingChain(true);
     try {
       await switchChain({ chainId: chains.l1.chainId });
+      return true;
     } catch (error) {
       console.error('Failed to switch chain:', error);
+      return false;
     } finally {
       setIsSwitchingChain(false);
     }
@@ -50,7 +52,12 @@ export const NewProfile: React.FC = () => {
   const navigate = useNavigate();
   const activeToken = useActiveToken();
   const { isConnected, address, chainId }      = useAccount()
-  const [username, setUsername] = useState('')
+  const [searchParams] = useSearchParams()
+  const [username, setUsername] = useState(() => {
+    // Allow pre-filling via ?username=foo (e.g. from "claim this profile" links)
+    const prefill = searchParams.get('username') || ''
+    return prefill.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 16)
+  })
   const [showPricingModal, setShowPricingModal] = useState(false)
   const [mintSuccess, setMintSuccess] = useState(false)
   const [mintedTokenId, setMintedTokenId] = useState<number | null>(null)
@@ -381,9 +388,14 @@ console.log("BALANCE:", balance)
 
   const handleSubmit = useCallback(async () => {
     console.log('[New] handleSubmit called', { wrongChain, needsMinterApproval })
+    // If on the wrong network, switch first — then continue with the normal
+    // approve/mint flow so the user only clicks once. The button label stays
+    // "Create & Deposit" / "Create" the whole time (with a Switching... state).
     if (wrongChain) {
-      handleSwitchChain()
-    } else if (needsMinterApproval) {
+      const switched = await handleSwitchChain()
+      if (!switched) return
+    }
+    if (needsMinterApproval) {
       console.log('[New] approving minter...')
       await approveMinter();
     } else {
@@ -410,9 +422,7 @@ console.log("BALANCE:", balance)
         <span>Switching...</span>
       </div>
     )
-  } else if (wrongChain)
-    submitText = "Switch Network"
-  else if (waiting) {
+  } else if (waiting) {
     if (mintStatus === 'pending') {
       submitText = (
         <div className="flex items-center justify-center space-x-2">
@@ -579,8 +589,10 @@ console.log("BALANCE:", balance)
                         
                         {/* Modal de precios */}
                         {showPricingModal && (
-                            <div className="absolute top-1/2 -translate-y-1/2 right-full mr-3 w-72 bg-black border border-white/20 rounded-lg p-5 shadow-xl z-50">
-                                <div className="text-sm font-medium text-center text-white mb-3">Username Pricing</div>
+                            <div className={`absolute top-1/2 -translate-y-1/2 right-full mr-3 w-72 border rounded-lg p-5 shadow-xl z-50 ${
+                              isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
+                            }`}>
+                                <div className={`text-sm font-medium text-center mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>Username Pricing</div>
                                 <div className="space-y-2">
                                     {[
                                       { label: '1 Character', cost: '1T' },
@@ -593,8 +605,8 @@ console.log("BALANCE:", balance)
                                       { label: '8+ Characters', cost: '1M' },
                                     ].map(({ label, cost }) => (
                                       <div key={label} className="flex justify-between text-xs items-center">
-                                        <span className="text-gray-300">{label}</span>
-                                        <span className="font-mono text-white">BURN {cost} CAW</span>
+                                        <span className={isDark ? 'text-gray-300' : 'text-gray-600'}>{label}</span>
+                                        <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>BURN {cost} CAW</span>
                                       </div>
                                     ))}
                                 </div>
@@ -693,7 +705,9 @@ console.log("BALANCE:", balance)
                           className={`flex-1 py-1.5 text-xs rounded-full border transition-colors cursor-pointer ${
                             active
                               ? 'border-yellow-500 text-yellow-400'
-                              : 'border-white/10 text-gray-400 hover:text-white hover:border-white/30'
+                              : isDark
+                                ? 'border-white/10 text-gray-400 hover:text-white hover:border-white/30'
+                                : 'border-[#BBB] text-gray-600 hover:text-gray-900 hover:border-gray-500'
                           } disabled:opacity-30 disabled:cursor-not-allowed`}
                         >
                           ${dollars}
@@ -710,7 +724,11 @@ console.log("BALANCE:", balance)
                         }
                       }}
                       disabled={!balance || balance <= cost}
-                      className={`flex-1 py-1.5 text-xs rounded-full border transition-colors cursor-pointer border-white/10 text-gray-400 hover:text-white hover:border-white/30 disabled:opacity-30 disabled:cursor-not-allowed`}
+                      className={`flex-1 py-1.5 text-xs rounded-full border transition-colors cursor-pointer ${
+                        isDark
+                          ? 'border-white/10 text-gray-400 hover:text-white hover:border-white/30'
+                          : 'border-[#BBB] text-gray-600 hover:text-gray-900 hover:border-gray-500'
+                      } disabled:opacity-30 disabled:cursor-not-allowed`}
                     >
                       Max
                     </button>

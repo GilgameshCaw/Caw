@@ -1,6 +1,6 @@
 // src/pages/ProfilePage.tsx
 import React, { useState, useEffect } from 'react'
-import { useParams, useSearchParams }    from 'react-router-dom'
+import { Link, useParams, useSearchParams }    from 'react-router-dom'
 import MainLayout       from '~/layouts/MainLayout'
 import { Tabs, TabItem } from '~/components/Tabs'
 import Feed             from '~/components/Feed'
@@ -97,6 +97,7 @@ export const Profile: React.FC = () => {
   const [profileData, setProfileData] = useState<ProfileData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [notFound, setNotFound] = useState(false)
   const { isDark } = useTheme()
   const activeToken = useActiveToken()
   const showSignIn = useSignInModalStore(s => s.show)
@@ -224,15 +225,21 @@ export const Profile: React.FC = () => {
 
       setLoading(true)
       setError(null)
+      setNotFound(false)
 
       try {
         const data = await apiFetch<ProfileData>(`/api/users/${displayUsername}`)
         setProfileData(data)
         setHasTipped(data.hasTipped || false)
         setTipPending(data.tipPending || false)
-      } catch (err) {
+      } catch (err: any) {
         console.error('Failed to fetch profile:', err)
-        setError('Failed to load profile')
+        const msg = err?.message || ''
+        if (msg.includes('404')) {
+          setNotFound(true)
+        } else {
+          setError('Failed to load profile')
+        }
       } finally {
         setLoading(false)
       }
@@ -261,6 +268,7 @@ export const Profile: React.FC = () => {
 
   // Poll for profile update completion when localProfileUpdatePending is true
   const setAvatar = useTokenDataStore(s => s.setAvatar)
+  const optimisticAvatar = useTokenDataStore(s => profileData?.tokenId ? s.avatarsByTokenId[profileData.tokenId] : undefined)
   useEffect(() => {
     if (!localProfileUpdatePending || !displayUsername || displayUsername === 'user') return
 
@@ -732,6 +740,35 @@ export const Profile: React.FC = () => {
     { id: 'likes',   label: `Likes${tabCount(profileData?.likeCount)}`    },
   ]
 
+  // Profile doesn't exist — show mint prompt
+  if (notFound) {
+    return (
+      <MainLayout>
+        <div className="max-w-2xl mx-auto px-6 py-16 text-center">
+          <div className={`mb-6 w-24 h-24 mx-auto rounded-full flex items-center justify-center ${
+            isDark ? 'bg-gray-800' : 'bg-gray-200'
+          }`}>
+            <svg className={`w-12 h-12 ${isDark ? 'text-gray-600' : 'text-gray-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h2 className={`text-xl font-bold mb-2 ${isDark ? 'text-white' : 'text-black'}`}>
+            This profile doesn't exist
+          </h2>
+          <p className={`mb-6 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+            @{displayUsername} hasn't been minted yet. You could be the first to claim it.
+          </p>
+          <Link
+            to={`/usernames/new?username=${encodeURIComponent(displayUsername)}`}
+            className="inline-block px-6 py-2 bg-yellow-500 text-black font-semibold rounded-full hover:bg-yellow-400 transition-colors cursor-pointer"
+          >
+            Claim @{displayUsername}
+          </Link>
+        </div>
+      </MainLayout>
+    )
+  }
+
   // If this user is blocked, show blocked state (even if they're selected as active account)
   if (isBlocked && profileData) {
     return (
@@ -778,10 +815,10 @@ export const Profile: React.FC = () => {
             />
           ) : (
             <div
-              className="w-full h-full"
-              style={{
-                background: 'linear-gradient(to bottom, #000000 0%, #111111 50%, #000000 100%)'
-              }}
+              className={`w-full h-full ${isDark
+                ? 'bg-gradient-to-b from-black via-gray-900 to-black'
+                : 'bg-gradient-to-b from-gray-200 via-gray-100 to-gray-200'
+              }`}
             />
           )}
         </div>
@@ -794,7 +831,7 @@ export const Profile: React.FC = () => {
             }`}>
               {profileData && (
                 <img
-                  src={profileData.avatarUrl || profileData.image || "/images/logo.jpeg"}
+                  src={optimisticAvatar || profileData.avatarUrl || profileData.image || "/images/logo.jpeg"}
                   alt={`${profileData.username || displayUsername} avatar`}
                   className="w-full h-full object-cover rounded-full"
                 />
