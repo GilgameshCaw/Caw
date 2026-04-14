@@ -277,6 +277,50 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
 
   const [text, setText] = useState('')
   const [cursorPosition, setCursorPosition] = useState(0)
+  // Tracks which URLs we've already attempted to shorten so we don't re-call the API
+  const shortenedUrls = useRef<Set<string>>(new Set())
+
+  // Auto-shorten URLs as the user types. We only shorten URLs that are "finalized"
+  // (followed by whitespace or end-of-string) so we don't fire mid-typing.
+  // Short URLs already in the text are ignored.
+  useEffect(() => {
+    if (!text) return
+    // Match URLs that are followed by whitespace or end-of-text (finalized).
+    // Same char class as URL_REGEX but with explicit terminator.
+    const FINALIZED_URL = /(https?:\/\/[^\s<>"'{}|\\^`[\]]+[^\s<>"'{}|\\^`[\].,!?;:)\]])(?=\s|$)/g
+    const toShorten: string[] = []
+    let m: RegExpExecArray | null
+    while ((m = FINALIZED_URL.exec(text)) !== null) {
+      const url = m[1]
+      // Skip URLs that are already short URLs
+      if (/\/s\/[a-zA-Z0-9]+/.test(url)) continue
+      if (shortenedUrls.current.has(url)) continue
+      toShorten.push(url)
+    }
+    if (toShorten.length === 0) return
+
+    const timer = setTimeout(async () => {
+      toShorten.forEach(u => shortenedUrls.current.add(u))
+      try {
+        const response = await apiFetch('/api/shorturl/bulk', {
+          method: 'POST',
+          body: JSON.stringify({ urls: toShorten }),
+        }) as { results: Record<string, { shortUrl: string }> }
+        setText(current => {
+          let updated = current
+          for (const [originalUrl, data] of Object.entries(response.results)) {
+            updated = updated.split(originalUrl).join(data.shortUrl)
+          }
+          return updated
+        })
+      } catch {
+        // If shortening fails, leave the long URLs in place and let submit-time shortening handle it.
+        // Remove from attempted set so a later edit can retry.
+        toShorten.forEach(u => shortenedUrls.current.delete(u))
+      }
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [text])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const submitBtnRef = useRef<HTMLButtonElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
