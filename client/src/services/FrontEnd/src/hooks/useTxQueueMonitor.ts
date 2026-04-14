@@ -37,32 +37,31 @@ export function setFeedRefreshVisibleCallback(callback: (() => void) | null) {
  */
 export function useTxQueueMonitor() {
   const removePendingPostByTxQueueId = usePendingPostsStore(state => state.removePendingPostByTxQueueId)
-  const pendingPosts = usePendingPostsStore(state => state.pendingPosts)
   const removeOptimisticLikeByTxQueueId = useOptimisticLikesStore(state => state.removeOptimisticLikeByTxQueueId)
-  const optimisticLikes = useOptimisticLikesStore(state => state.optimisticLikes)
-  const pendingSpendCount = usePendingSpendStore(state => Object.keys(state.pendingByTxQueue).length)
   const processedIds = useRef(new Set<number>())
 
   useEffect(() => {
-    // Collect all txQueue IDs that need monitoring
-    const postsWithTxQueueIds = pendingPosts.filter(p => p.txQueueId)
-    const likesWithTxQueueIds = optimisticLikes.filter(l => l.txQueueId)
-    const pendingSpendIds = Object.keys(usePendingSpendStore.getState().pendingByTxQueue).map(Number)
-
-    const postTxQueueIds = postsWithTxQueueIds
-      .map(p => p.txQueueId)
-      .filter((id): id is number => id !== undefined)
-    const likeTxQueueIds = likesWithTxQueueIds
-      .map(l => l.txQueueId)
-      .filter((id): id is number => id !== undefined)
-    const allTxQueueIds = [...new Set([...postTxQueueIds, ...likeTxQueueIds, ...pendingSpendIds])]
-
-    if (allTxQueueIds.length === 0) return
+    // Stable polling interval — reads current store state on each tick.
+    // Previously the effect depended on pendingPosts/optimisticLikes/spendCount
+    // and restarted (+ immediately re-fetched) every time any of those changed,
+    // causing a burst of XHRs during thread submission.
+    const getAllTxQueueIds = (): number[] => {
+      const pendingPosts = usePendingPostsStore.getState().pendingPosts
+      const optimisticLikes = useOptimisticLikesStore.getState().optimisticLikes
+      const pendingSpendIds = Object.keys(usePendingSpendStore.getState().pendingByTxQueue).map(Number)
+      const postTxQueueIds = pendingPosts
+        .map(p => p.txQueueId)
+        .filter((id): id is number => id !== undefined)
+      const likeTxQueueIds = optimisticLikes
+        .map(l => l.txQueueId)
+        .filter((id): id is number => id !== undefined)
+      return [...new Set([...postTxQueueIds, ...likeTxQueueIds, ...pendingSpendIds])]
+    }
 
     const checkTxQueueStatus = async () => {
+      const allTxQueueIds = getAllTxQueueIds()
+      if (allTxQueueIds.length === 0) return
       try {
-        if (allTxQueueIds.length === 0) return
-
         // Fetch status for all txQueue entries
         const response = await apiFetch(`/api/txqueue/status?ids=${allTxQueueIds.join(',')}`)
 
@@ -203,7 +202,7 @@ export function useTxQueueMonitor() {
             // the next time they open the notifications panel.
           } else if (status.status === 'done') {
             console.log(`[TxQueueMonitor] TxQueue ID ${status.id} succeeded`)
-            const wasPendingPost = pendingPosts.some(p => p.txQueueId === status.id)
+            const wasPendingPost = usePendingPostsStore.getState().pendingPosts.some(p => p.txQueueId === status.id)
             removePendingPostByTxQueueId(status.id)
             removeOptimisticLikeByTxQueueId(status.id)
             usePendingSpendStore.getState().removePendingSpend(status.id)
@@ -239,12 +238,15 @@ export function useTxQueueMonitor() {
       }
     }
 
-    // Check immediately
+    // Check immediately on mount
     checkTxQueueStatus()
 
-    // Then poll every 2 seconds while there are pending posts
+    // Then poll every 2 seconds. Interval is stable — store reads happen
+    // inside getAllTxQueueIds(), so changes to pending posts/likes/spend
+    // don't restart the interval (and don't trigger a burst of immediate fetches).
     const interval = setInterval(checkTxQueueStatus, 2000)
 
     return () => clearInterval(interval)
-  }, [pendingPosts, optimisticLikes, pendingSpendCount, removePendingPostByTxQueueId, removeOptimisticLikeByTxQueueId])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 }
