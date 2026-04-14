@@ -10,6 +10,7 @@ import { CAW_ACTIONS_ADDRESS, CAW_ACTIONS_REPLICATOR_L2_ADDRESS, CAW_ADDRESS, WE
 import { WebSocketProvider, JsonRpcProvider, Contract, Wallet, keccak256, solidityPacked } from 'ethers'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
+import { incrementSessionSpent } from '../../utils/sessionSpendTracker'
 
 // Thin wrapper so this service's existing callers don't need to pass prisma
 // on every invocation. Shared helper lives in utils/txQueueFailure so it can
@@ -1748,6 +1749,10 @@ console.log("succeededKeys", succeededKeys)
             where: { id: entry.id },
             data: { status: 'done', reason: null }
           })
+          // Increment the session key's locally-tracked spent counter so the
+          // /api/actions fast-path spend-limit check stays accurate without
+          // a live sessionSpent() RPC call per submission.
+          await incrementSessionSpent(prisma as any, entry.payload as any, entry.signedTx)
         } else {
           await markTxQueueFailed(entry.id, reason || 'Transaction failed', data.senderId, data)
         }
