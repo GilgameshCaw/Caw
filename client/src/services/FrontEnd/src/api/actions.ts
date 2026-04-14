@@ -833,54 +833,49 @@ export function useSignAndSubmitAction() {
       onProgress?.({ signed: i + 1, submitted: 0, total: allParams.length })
     }
 
-    // Phase 2: submit with controlled concurrency
-    const CONCURRENCY = 5
-    const results: any[] = new Array(allParams.length)
-    let submittedCount = 0
-    const submitOne = async (idx: number) => {
-      const item = signedItems[idx]
-      try {
-        const response = await apiFetch('/api/actions', {
-          method: 'POST',
-          body: JSON.stringify({
-            data: item.data,
-            domain: item.domain,
-            types: item.types,
-            signature: item.signature,
-            isQuote: item.params.isQuote || false,
-          }),
-        })
-        results[idx] = response
-        // Track pending spend for stake budget accounting
-        if (response?.txQueueId) {
-          const actionCostWei: Record<string, bigint> = {
-            caw: 5000n, like: 2000n, recaw: 4000n, follow: 30000n,
-            unlike: 0n, unfollow: 0n, other: 0n, withdraw: 0n,
-          }
-          const costWholeTokens = (actionCostWei[item.params.actionType] || 0n) + effectiveTip
-          const costWei = costWholeTokens * 10n**18n
-          if (costWei > 0n) {
-            usePendingSpendStore.getState().addPendingSpend(response.txQueueId, costWei)
-          }
-        }
-      } catch (err: any) {
-        console.error(`[submitMany] Action ${idx} failed:`, err.message)
-        results[idx] = { error: err.message || 'submission failed' }
-      }
-      submittedCount++
-      onProgress?.({ signed: allParams.length, submitted: submittedCount, total: allParams.length })
+    // Phase 2: single batch POST. The server shares user lookup + session
+    // key verification across all actions, and inserts all TxQueue rows in
+    // one DB transaction.
+    const batchPayload = signedItems.map(item => ({
+      data: item.data,
+      domain: item.domain,
+      types: item.types,
+      signature: item.signature,
+      isQuote: item.params.isQuote || false,
+    }))
+
+    let batchResponse: any
+    try {
+      batchResponse = await apiFetch('/api/actions/batch', {
+        method: 'POST',
+        body: JSON.stringify({ actions: batchPayload }),
+      })
+    } catch (err: any) {
+      console.error('[submitMany] Batch submit failed:', err.message)
+      // Fill all with error so caller sees consistent shape
+      const results = signedItems.map(() => ({ error: err.message || 'batch submission failed' }))
+      return results
     }
 
-    // Run up to CONCURRENCY submissions in parallel
-    const queue = Array.from({ length: allParams.length }, (_, i) => i)
-    const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
-      while (queue.length > 0) {
-        const idx = queue.shift()
-        if (idx === undefined) break
-        await submitOne(idx)
+    const results: any[] = new Array(allParams.length)
+    const actionCostWei: Record<string, bigint> = {
+      caw: 5000n, like: 2000n, recaw: 4000n, follow: 30000n,
+      unlike: 0n, unfollow: 0n, other: 0n, withdraw: 0n,
+    }
+
+    for (let i = 0; i < allParams.length; i++) {
+      const r = batchResponse?.results?.[i]
+      results[i] = r || { error: 'no response for action' }
+      // Track pending spend for successful queues
+      if (r?.txQueueId) {
+        const costWholeTokens = (actionCostWei[signedItems[i].params.actionType] || 0n) + effectiveTip
+        const costWei = costWholeTokens * 10n**18n
+        if (costWei > 0n) {
+          usePendingSpendStore.getState().addPendingSpend(r.txQueueId, costWei)
+        }
       }
-    })
-    await Promise.all(workers)
+      onProgress?.({ signed: allParams.length, submitted: i + 1, total: allParams.length })
+    }
 
     return results
   }, [activeTokenId, activeToken?.owner])

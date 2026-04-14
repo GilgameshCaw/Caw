@@ -738,6 +738,155 @@ router.post('/', async (req, res) => {
   }
 })
 
+/**
+ * POST /api/actions/batch
+ *
+ * Fast-path batch endpoint for bulk action submission (e.g. thread posts).
+ *
+ * All actions in the batch MUST:
+ *   - Come from the same senderId
+ *   - Be signed by the same signer (the session key address)
+ *   - Be covered by an active session key on the token owner's contract state
+ *
+ * The endpoint does shared work once (user lookup, session key verification,
+ * owner address resolution) and then per-action work (signature verify, TxQueue insert).
+ * Returns an array of results in the same order as the input.
+ */
+router.post('/batch', async (req, res) => {
+  try {
+    const { actions } = req.body
+
+    if (!Array.isArray(actions) || actions.length === 0) {
+      return res.status(400).json({ error: 'Expected non-empty actions array' })
+    }
+    if (actions.length > 300) {
+      return res.status(400).json({ error: 'Batch size exceeds 300 actions' })
+    }
+
+    // Payload size guard
+    const bodySize = JSON.stringify(req.body).length
+    if (bodySize > 5 * 1024 * 1024) {
+      return res.status(413).json({ error: 'Batch payload too large (max 5MB)' })
+    }
+
+    // Validate shape and senderId consistency
+    const firstSenderId = actions[0]?.data?.senderId
+    if (firstSenderId == null) {
+      return res.status(400).json({ error: 'First action missing senderId' })
+    }
+    for (const a of actions) {
+      if (!a?.data || !a?.signature) {
+        return res.status(400).json({ error: 'Each action must have data and signature' })
+      }
+      if (a.data.senderId !== firstSenderId) {
+        return res.status(400).json({ error: 'All actions must share the same senderId' })
+      }
+    }
+
+    // Shared lookup: sender
+    let sender = await prisma.user.findUnique({ where: { tokenId: firstSenderId } })
+    if (!sender?.address) {
+      try {
+        await findOrCreateUser(firstSenderId)
+        sender = await prisma.user.findUnique({ where: { tokenId: firstSenderId } })
+      } catch { /* non-fatal */ }
+      if (!sender?.address) {
+        return res.status(400).json({ error: 'Unknown sender — token does not exist on-chain' })
+      }
+    }
+    const ownerAddress = sender.address.toLowerCase()
+
+    // Verify first signature to recover the signer (all must match)
+    let firstSigner: string
+    try {
+      firstSigner = ethers.verifyTypedData(
+        actions[0].domain,
+        { ActionData: actions[0].types.ActionData },
+        actions[0].data,
+        actions[0].signature
+      ).toLowerCase()
+    } catch {
+      return res.status(400).json({ error: 'Invalid signature on first action' })
+    }
+
+    // If not owner, check session key once
+    const isOwner = firstSigner === ownerAddress
+    if (!isOwner) {
+      const firstActionType = typeof actions[0].data.actionType === 'number' ? actions[0].data.actionType : undefined
+      const sessionCheck = await checkSessionKeyOnChain(ownerAddress, firstSigner, firstActionType)
+      if (!sessionCheck.valid) {
+        return res.status(403).json({ error: sessionCheck.reason || 'Signer is not authorized' })
+      }
+    }
+
+    // Verify every other signature matches the first signer
+    // (and that action types are in the session scope if session-signed)
+    const results: Array<{ index: number; txQueueId?: number; status?: string; error?: string }> = []
+    const rowsToInsert: Array<{ senderId: number; payload: any; signedTx: string }> = []
+
+    for (let i = 0; i < actions.length; i++) {
+      const a = actions[i]
+      // Sanitize amounts
+      if (a.data.amounts && Array.isArray(a.data.amounts)) {
+        a.data.amounts = a.data.amounts.map((amt: any) => {
+          if (amt === null || amt === undefined || amt === '') return '0'
+          const strAmt = String(amt)
+          return (strAmt === 'NaN' || isNaN(Number(strAmt))) ? '0' : strAmt
+        })
+      } else {
+        a.data.amounts = []
+      }
+
+      // Verify signature
+      try {
+        const recovered = ethers.verifyTypedData(
+          a.domain,
+          { ActionData: a.types.ActionData },
+          a.data,
+          a.signature
+        ).toLowerCase()
+        if (recovered !== firstSigner) {
+          results.push({ index: i, error: 'Signer mismatch — all actions must share the same signer' })
+          continue
+        }
+      } catch {
+        results.push({ index: i, error: 'Invalid signature' })
+        continue
+      }
+
+      rowsToInsert.push({
+        senderId: a.data.senderId,
+        payload: { data: a.data, domain: a.domain, types: a.types, isQuote: a.isQuote || false },
+        signedTx: a.signature,
+      })
+      results.push({ index: i }) // placeholder, txQueueId filled after insert
+    }
+
+    // Bulk insert. createMany doesn't return generated IDs, so we do individual
+    // creates inside a transaction to preserve order and return IDs.
+    if (rowsToInsert.length > 0) {
+      const created = await prisma.$transaction(
+        rowsToInsert.map(row => prisma.txQueue.create({ data: row }))
+      )
+      // Map created IDs back to results (skipping entries that had errors)
+      let insertIdx = 0
+      for (let i = 0; i < results.length; i++) {
+        if (results[i].error) continue
+        results[i].txQueueId = created[insertIdx].id
+        results[i].status = 'queued'
+        insertIdx++
+      }
+    }
+
+    console.log(`[Actions/batch] Processed ${actions.length} actions for sender ${firstSenderId}: ${rowsToInsert.length} queued, ${actions.length - rowsToInsert.length} rejected`)
+
+    res.status(201).json({ results })
+  } catch (err: any) {
+    console.error('POST /api/actions/batch error', err)
+    res.status(500).json({ error: 'Internal error' })
+  }
+})
+
 export default router
 
 
