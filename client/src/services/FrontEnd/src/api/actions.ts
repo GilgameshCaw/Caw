@@ -753,7 +753,139 @@ export function useSignAndSubmitAction() {
     })
   }, [isConnected, pendingParams, cawonce, requestAndSubmit, address, activeToken?.address])
 
-  return async (params: ActionParams) => {
+  /**
+   * Fast-path batch submission for threads/bulk actions.
+   *
+   * Runs pre-checks (auth, stake, deposit) ONCE for the whole batch, then
+   * signs all actions in sequence with the session key (in-memory, fast),
+   * then POSTs them to /api/actions with limited concurrency.
+   *
+   * Requires an active Quick Sign session (no wallet popups). Callers should
+   * pre-allocate cawonces and pass them in params. Returns an array of
+   * responses in the same order as the input params.
+   *
+   * @param allParams Array of action params. Each MUST have a cawonce pre-set.
+   * @param onProgress Called with { signed, submitted, total } as work progresses.
+   */
+  const signAndSubmitMany = useCallback(async (
+    allParams: ActionParams[],
+    onProgress?: (p: { signed: number; submitted: number; total: number }) => void,
+  ): Promise<any[]> => {
+    if (allParams.length === 0) return []
+    if (!activeTokenId) throw new Error('No active token selected')
+
+    // Require Quick Sign — otherwise we can't batch (wallet popup per action)
+    const sessionStore = useSessionKeyStore.getState()
+    const freshToken = Object.values(useTokenDataStore.getState().tokensByAddress)
+      .flat().find(t => t.tokenId === activeTokenId)
+    const tokenOwner = freshToken?.owner || activeToken?.owner
+    const activeSession = tokenOwner
+      ? sessionStore.getActiveSessionForAddress(tokenOwner)
+      : sessionStore.getActiveSession()
+    if (!activeSession) {
+      throw new Error('Batch submission requires an active Quick Sign session')
+    }
+
+    // Validate all actions are covered by the session scope
+    for (const p of allParams) {
+      const code = ActionTypeMap[p.actionType]
+      if (code === 6) throw new Error('Batch cannot include withdrawals')
+      if ((activeSession.scopeBitmap & (1 << code)) === 0) {
+        throw new Error(`Session does not cover ${p.actionType} actions`)
+      }
+      if (p.cawonce == null) {
+        throw new Error('All params must have pre-allocated cawonces')
+      }
+    }
+
+    // Pre-check client auth (once, cached after first hit)
+    if (!clientAuthCache.get(activeTokenId)) {
+      try {
+        const isAuthed = await readContract(wagmiConfig, {
+          address: CAW_NAMES_L2_ADDRESS,
+          abi: cawNameL2Abi,
+          functionName: 'authenticated',
+          args: [CLIENT_ID, activeTokenId],
+          chainId: baseSepolia.id,
+        })
+        if (isAuthed) clientAuthCache.set(activeTokenId, true)
+      } catch { /* non-fatal, server will validate */ }
+    }
+
+    // Determine effective tip once (respects session ceiling if set)
+    const effectiveTip = activeSession.tipCeiling !== undefined
+      ? getValidatorTip(BigInt(activeSession.tipCeiling || '0'))
+      : getValidatorTip()
+
+    // Phase 1: sign all actions in sequence (in-memory, fast)
+    const sessionAccount = privateKeyToAccount(activeSession.privateKey)
+    const signedItems: Array<{ params: ActionParams; data: any; signature: `0x${string}`; domain: any; types: any }> = []
+    for (let i = 0; i < allParams.length; i++) {
+      const p = allParams[i]
+      const { domain, types, primaryType, message } = buildTypedData(p, effectiveTip)
+      const signature = await sessionAccount.signTypedData({
+        domain: domain as any,
+        types: { ActionData: TYPES.ActionData },
+        primaryType,
+        message,
+      })
+      signedItems.push({ params: p, data: message, signature, domain, types })
+      onProgress?.({ signed: i + 1, submitted: 0, total: allParams.length })
+    }
+
+    // Phase 2: submit with controlled concurrency
+    const CONCURRENCY = 5
+    const results: any[] = new Array(allParams.length)
+    let submittedCount = 0
+    const submitOne = async (idx: number) => {
+      const item = signedItems[idx]
+      try {
+        const response = await apiFetch('/api/actions', {
+          method: 'POST',
+          body: JSON.stringify({
+            data: item.data,
+            domain: item.domain,
+            types: item.types,
+            signature: item.signature,
+            isQuote: item.params.isQuote || false,
+          }),
+        })
+        results[idx] = response
+        // Track pending spend for stake budget accounting
+        if (response?.txQueueId) {
+          const actionCostWei: Record<string, bigint> = {
+            caw: 5000n, like: 2000n, recaw: 4000n, follow: 30000n,
+            unlike: 0n, unfollow: 0n, other: 0n, withdraw: 0n,
+          }
+          const costWholeTokens = (actionCostWei[item.params.actionType] || 0n) + effectiveTip
+          const costWei = costWholeTokens * 10n**18n
+          if (costWei > 0n) {
+            usePendingSpendStore.getState().addPendingSpend(response.txQueueId, costWei)
+          }
+        }
+      } catch (err: any) {
+        console.error(`[submitMany] Action ${idx} failed:`, err.message)
+        results[idx] = { error: err.message || 'submission failed' }
+      }
+      submittedCount++
+      onProgress?.({ signed: allParams.length, submitted: submittedCount, total: allParams.length })
+    }
+
+    // Run up to CONCURRENCY submissions in parallel
+    const queue = Array.from({ length: allParams.length }, (_, i) => i)
+    const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
+      while (queue.length > 0) {
+        const idx = queue.shift()
+        if (idx === undefined) break
+        await submitOne(idx)
+      }
+    })
+    await Promise.all(workers)
+
+    return results
+  }, [activeTokenId, activeToken?.owner])
+
+  const signAndSubmit = async (params: ActionParams) => {
     // Session key active for this token's owner — skip wallet checks entirely
     if (hasActiveSession) {
       return await requestAndSubmit(params)
@@ -771,5 +903,9 @@ export function useSignAndSubmitAction() {
       return await requestAndSubmit(params)
     }
   }
+
+  // Attach signAndSubmitMany as a property on the returned function for backward compat
+  ;(signAndSubmit as any).many = signAndSubmitMany
+  return signAndSubmit as typeof signAndSubmit & { many: typeof signAndSubmitMany }
 }
 

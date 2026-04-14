@@ -260,9 +260,24 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     }
   }, [])
 
+  // Tab key in textarea moves focus to the submit button
+  useEffect(() => {
+    const ta = textareaRef.current
+    if (!ta) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Tab' && !e.shiftKey) {
+        e.preventDefault()
+        submitBtnRef.current?.focus()
+      }
+    }
+    ta.addEventListener('keydown', handler)
+    return () => ta.removeEventListener('keydown', handler)
+  }, [])
+
   const [text, setText] = useState('')
   const [cursorPosition, setCursorPosition] = useState(0)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const submitBtnRef = useRef<HTMLButtonElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [selectedMedia, setSelectedMedia] = useState<any[]>([])
   const [isDragOverTextarea, setIsDragOverTextarea] = useState(false)
@@ -875,53 +890,106 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     }
 
     if (chunks.length > 1) setSigningProgress({ current: 1, total: chunks.length })
-    const response = await signAndSubmit(firstParams)
 
-    // If signAndSubmit returned null (e.g. insufficient stake modal), don't clear the form
-    if (!response) return
+    // Fast path: use batch submission for threads (>1 chunk) when Quick Sign
+    // is active. Pre-checks run once, signing is in-memory, submissions are
+    // parallelized (5 at a time). Falls through to sequential path if no session.
+    const firstPostCawonce = threadCawonces[0]
+    const canBatch = chunks.length > 1 && typeof (signAndSubmit as any).many === 'function'
+      && (() => {
+        try {
+          const { useSessionKeyStore } = require('~/store/sessionKeyStore')
+          const store = useSessionKeyStore.getState()
+          const owner = activeToken?.owner
+          const sess = owner ? store.getActiveSessionForAddress(owner) : store.getActiveSession()
+          return !!sess && (sess.scopeBitmap & 1) !== 0 // CAW bit
+        } catch { return false }
+      })()
 
-    // Only add pending post AFTER signing succeeds (not before)
-    // This prevents showing the post before user confirms the signature
-    if (!replyTo && activeToken) {
-      const tempId = addPendingPost({
-        content: chunks[0],
-        username: activeToken.username,
-        tokenId: effectiveTokenId,
-        avatarUrl: avatars[effectiveTokenId] || undefined
+    if (canBatch) {
+      // Build all params upfront, submit as a batch
+      const allParams: ActionParams[] = [firstParams]
+      for (let i = 1; i < chunks.length; i++) {
+        allParams.push({
+          actionType: 'caw',
+          senderId: effectiveTokenId,
+          text: chunks[i],
+          cawonce: threadCawonces[i],
+          receiverId: effectiveTokenId,
+          receiverCawonce: firstPostCawonce,
+        })
+      }
+
+      const responses = await (signAndSubmit as any).many(allParams, (p: any) => {
+        // Report signing progress; submissions happen in parallel after all signs
+        setSigningProgress({ current: p.signed, total: p.total })
       })
 
-      // Update pending post with txQueue ID if available
-      if (response.txQueueId) {
-        updatePostWithTxQueueId(tempId, response.txQueueId)
-      }
-    }
-
-    // Post remaining chunks as replies to the first post
-    const firstPostCawonce = threadCawonces[0]
-    for (let i = 1; i < chunks.length; i++) {
-      const replyParams: ActionParams = {
-        actionType: 'caw',
-        senderId: effectiveTokenId,
-        text: chunks[i],
-        cawonce: threadCawonces[i],
-        receiverId: effectiveTokenId,
-        receiverCawonce: firstPostCawonce,
-      }
-
-      setSigningProgress({ current: i + 1, total: chunks.length })
-      const replyResponse = await signAndSubmit(replyParams)
-      if (!replyResponse) break // User cancelled or error
-
-      // Add pending posts for thread replies too
+      // Add pending posts for all successful submissions
       if (activeToken) {
+        for (let i = 0; i < chunks.length; i++) {
+          const response = responses[i]
+          if (!response || response.error) continue
+          const tempId = addPendingPost({
+            content: chunks[i],
+            username: activeToken.username,
+            tokenId: effectiveTokenId,
+            avatarUrl: avatars[effectiveTokenId] || undefined
+          })
+          if (response.txQueueId) {
+            updatePostWithTxQueueId(tempId, response.txQueueId)
+          }
+        }
+      }
+    } else {
+      // Slow path: no Quick Sign or single post — sign+submit one at a time
+      const response = await signAndSubmit(firstParams)
+
+      // If signAndSubmit returned null (e.g. insufficient stake modal), don't clear the form
+      if (!response) return
+
+      // Only add pending post AFTER signing succeeds (not before)
+      // This prevents showing the post before user confirms the signature
+      if (!replyTo && activeToken) {
         const tempId = addPendingPost({
-          content: chunks[i],
+          content: chunks[0],
           username: activeToken.username,
           tokenId: effectiveTokenId,
           avatarUrl: avatars[effectiveTokenId] || undefined
         })
-        if (replyResponse.txQueueId) {
-          updatePostWithTxQueueId(tempId, replyResponse.txQueueId)
+
+        // Update pending post with txQueue ID if available
+        if (response.txQueueId) {
+          updatePostWithTxQueueId(tempId, response.txQueueId)
+        }
+      }
+
+      // Post remaining chunks as replies to the first post
+      for (let i = 1; i < chunks.length; i++) {
+        const replyParams: ActionParams = {
+          actionType: 'caw',
+          senderId: effectiveTokenId,
+          text: chunks[i],
+          cawonce: threadCawonces[i],
+          receiverId: effectiveTokenId,
+          receiverCawonce: firstPostCawonce,
+        }
+
+        setSigningProgress({ current: i + 1, total: chunks.length })
+        const replyResponse = await signAndSubmit(replyParams)
+        if (!replyResponse) break // User cancelled or error
+
+        // Add pending posts for thread replies too
+        if (activeToken) {
+          const tempId = addPendingPost({
+            content: chunks[i],
+            username: activeToken.username,
+            tokenId: effectiveTokenId,
+            avatarUrl: avatars[effectiveTokenId] || undefined
+          })
+          if (replyResponse.txQueueId) {
+            updatePostWithTxQueueId(tempId, replyResponse.txQueueId)
+          }
         }
       }
     }
@@ -1152,6 +1220,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                 const isDisabled = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isSubmitting
                 const btn = (
                   <button
+                    ref={submitBtnRef}
                     className="px-3 py-1.5 bg-yellow-500 text-black font-semibold text-sm rounded-full hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer"
                     disabled={isDisabled}
                     onClick={handleSubmit}
@@ -1510,6 +1579,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                 const isDisabled2 = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isSubmitting
                 const btn2 = (
                   <button
+                    ref={submitBtnRef}
                     className="px-5 py-2 bg-yellow-500 text-black font-semibold text-base rounded-full hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer"
                     disabled={isDisabled2}
                     onClick={handleSubmit}
