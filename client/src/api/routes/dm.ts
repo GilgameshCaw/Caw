@@ -1,11 +1,9 @@
 import { Router, Request, Response } from 'express'
-import { PrismaClient } from '@prisma/client'
+import { prisma } from '../../prismaClient'
 import dmService from '../../services/DmService'
 import dmWebSocketService from '../../services/DmService/websocket'
 import { requireAuth } from '../middleware/auth'
 import { isBlockedEitherDirection, getBlockedUserIds } from '../shared/blockUtils'
-
-const prisma = new PrismaClient()
 
 const router = Router()
 

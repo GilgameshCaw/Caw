@@ -1,11 +1,9 @@
-import { PrismaClient } from '@prisma/client'
+import { prisma } from '../../prismaClient'
 import { JsonRpcProvider, WebSocketProvider, Contract } from 'ethers'
 import { dataCleanerLogger as logger } from '../../utils/dataCleanerLogger'
 import { markTxQueueFailed } from '../../utils/txQueueFailure'
 import { cawNameL2Abi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
-
-const prisma = new PrismaClient()
 
 // Lazy-initialized L2 read provider for the pending-mint-deposit watcher.
 // Reused across ticks so we don't churn sockets.

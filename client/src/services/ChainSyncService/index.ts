@@ -1,12 +1,10 @@
 // src/services/ChainSyncService/index.ts
 // Generic service for syncing on-chain data to the database
 
-import { PrismaClient } from '@prisma/client'
+import { prisma } from '../../prismaClient'
 import { JsonRpcProvider, Contract } from 'ethers'
 import { cawClientManagerAbi } from '../../abi/generated'
-import { CLIENT_MANAGER_ADDRESS } from '../../abi/addresses'
-
-const prisma = new PrismaClient()
+import { CLIENT_MANAGER_ADDRESS, CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 
 // Mainnet token addresses for price fetching (distinct from testnet contract addresses)
 const MAINNET_CAW_ADDRESS = '0xf3b9569F82B18aEf890De263B84189bd33EBe452'
@@ -638,7 +636,6 @@ async function syncL2Events(): Promise<void> {
     return
   }
 
-  const { CAW_NAMES_L2_ADDRESS } = await import('../../abi/addresses')
   const contract = new Contract(CAW_NAMES_L2_ADDRESS, CAW_NAME_L2_EVENT_ABI as any, l2Provider)
 
   // Determine starting block

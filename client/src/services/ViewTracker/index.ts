@@ -1,7 +1,6 @@
-import { PrismaClient } from '@prisma/client'
+import { prisma } from '../../prismaClient'
 import Redis from 'ioredis'
 
-const prisma = new PrismaClient()
 const redis = new Redis({
   port: 6379,
   host: '127.0.0.1',

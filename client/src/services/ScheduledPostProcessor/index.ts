@@ -1,8 +1,6 @@
-import { PrismaClient } from '@prisma/client'
+import { prisma } from '../../prismaClient'
 import { scheduledPostLogger as logger } from '../../utils/scheduledPostLogger'
 import { processHashtagsForCaw } from '../../tools/hashtags'
-
-const prisma = new PrismaClient()
 
 /**
  * Process a single scheduled post
