@@ -43,6 +43,36 @@ const ShortUrlImage: React.FC<{
   )
 }
 
+// Component to render an inline short URL link — shows the original URL
+// (truncated) as link text, but the href points to the short URL for analytics.
+const ShortUrlLink: React.FC<{ code: string; shortHref: string }> = ({ code, shortHref }) => {
+  const { url: originalUrl, loading } = useCachedFetch(
+    code,
+    shortUrlCache,
+    `/api/shorturl/${code}`,
+    (data: { originalUrl: string }) => data.originalUrl
+  )
+
+  // Display the original URL, stripped of protocol and truncated if too long
+  const displayText = (() => {
+    if (loading || !originalUrl) return shortHref
+    const stripped = originalUrl.replace(/^https?:\/\//, '')
+    return stripped.length > 40 ? stripped.slice(0, 37) + '…' : stripped
+  })()
+
+  return (
+    <a
+      href={shortHref}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      className="text-yellow-500 hover:text-yellow-600 dark:text-yellow-400 dark:hover:text-yellow-300 hover:underline break-all"
+    >
+      {displayText}
+    </a>
+  )
+}
+
 // Component to render short URL videos
 const ShortUrlVideo: React.FC<{
   code: string
@@ -146,13 +176,26 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
   }
 
   const parseTextWithHashtags = (text: string, keyPrefix: string) => {
-    // Regular expression to match hashtags, cashtags, and @mentions
-    // Supports international characters and numbers
-    const specialRegex = /([@#$][a-zA-Z0-9_\u00C0-\u017F\u1E00-\u1EFF\u0100-\u024F\u1EA0-\u1EF9]+)/g
+    // Regular expression that matches hashtags, cashtags, @mentions, AND short URLs
+    // (so we can render short URLs as clickable links pointing to the original URL).
+    // Short URLs: /s/code or https://host/s/code (with optional extension)
+    const specialRegex = /((?:https?:\/\/[^\s]+)?\/s\/[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)?|[@#$][a-zA-Z0-9_\u00C0-\u017F\u1E00-\u1EFF\u0100-\u024F\u1EA0-\u1EF9]+)/g
 
     const parts = text.split(specialRegex)
 
     return parts.map((part, index) => {
+      // Check if this is a short URL
+      const shortUrlMatch = part.match(/^((?:https?:\/\/[^\s\/]+)?\/s\/([a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)?))$/)
+      if (shortUrlMatch) {
+        const shortHref = shortUrlMatch[1]
+        const code = shortUrlMatch[2]
+        // Skip media short URLs — they're handled by parseContent as images/videos
+        if (isMediaShortUrl(code) || isVideoShortUrl(code)) return part
+        return (
+          <ShortUrlLink key={`${keyPrefix}-${index}`} code={code} shortHref={shortHref} />
+        )
+      }
+
       // Check if this is an @mention
       if (part.startsWith('@')) {
         return (

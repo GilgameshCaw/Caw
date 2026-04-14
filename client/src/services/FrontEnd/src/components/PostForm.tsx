@@ -209,7 +209,8 @@ function getChunkInfo(text: string, includePageIndicators = false, firstChunkRes
 }
 
 // URL detection regex - matches http(s) URLs
-const URL_REGEX = /https?:\/\/[^\s<>"{}|\\^`[\]]+/gi
+// Excludes quotes and trailing punctuation so `'url'` or "url" don't swallow the quote chars
+const URL_REGEX = /https?:\/\/[^\s<>"'{}|\\^`[\]]+[^\s<>"'{}|\\^`[\].,!?;:)\]]/gi
 
 // Helper function to shorten URLs in text
 async function shortenUrlsInText(text: string): Promise<string> {
