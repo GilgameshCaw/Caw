@@ -892,19 +892,22 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     if (chunks.length > 1) setSigningProgress({ current: 1, total: chunks.length })
 
     // Fast path: use batch submission for threads (>1 chunk) when Quick Sign
-    // is active. Pre-checks run once, signing is in-memory, submissions are
-    // parallelized (5 at a time). Falls through to sequential path if no session.
+    // is active. Pre-checks run once, signing is in-memory, submissions go
+    // through /api/actions/batch. Falls through to sequential path if no session.
     const firstPostCawonce = threadCawonces[0]
-    const canBatch = chunks.length > 1 && typeof (signAndSubmit as any).many === 'function'
-      && (() => {
-        try {
-          const { useSessionKeyStore } = require('~/store/sessionKeyStore')
-          const store = useSessionKeyStore.getState()
-          const owner = activeToken?.owner
-          const sess = owner ? store.getActiveSessionForAddress(owner) : store.getActiveSession()
-          return !!sess && (sess.scopeBitmap & 1) !== 0 // CAW bit
-        } catch { return false }
-      })()
+    let canBatch = false
+    if (chunks.length > 1 && typeof (signAndSubmit as any).many === 'function') {
+      try {
+        const { useSessionKeyStore: sks } = await import('~/store/sessionKeyStore')
+        const store = sks.getState()
+        const owner = activeToken?.owner
+        const sess = owner ? store.getActiveSessionForAddress(owner) : store.getActiveSession()
+        canBatch = !!sess && (sess.scopeBitmap & 1) !== 0 // CAW bit
+        console.log('[PostForm] Thread batch check: session=' + !!sess + ', scope=' + sess?.scopeBitmap + ', canBatch=' + canBatch)
+      } catch (e) {
+        console.warn('[PostForm] Batch check failed:', e)
+      }
+    }
 
     if (canBatch) {
       // Build all params upfront, submit as a batch
