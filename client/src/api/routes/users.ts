@@ -346,8 +346,13 @@ router.get('/client-auth/:tokenId', async (req, res) => {
   try {
     const tokenId = Number(req.params.tokenId)
     const clientId = Number(req.query.clientId) || 1
-    if (!tokenId || isNaN(tokenId)) {
+    // Bound the inputs — tokenIds and clientIds are uint32 on-chain, so they're
+    // positive and fit in a Postgres Int4. Reject anything that wouldn't map.
+    if (!Number.isInteger(tokenId) || tokenId <= 0 || tokenId > 2_147_483_647) {
       return res.status(400).json({ error: 'Invalid tokenId' })
+    }
+    if (!Number.isInteger(clientId) || clientId <= 0 || clientId > 2_147_483_647) {
+      return res.status(400).json({ error: 'Invalid clientId' })
     }
 
     const row = await prisma.clientAuth.findUnique({
