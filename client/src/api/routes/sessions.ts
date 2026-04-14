@@ -116,6 +116,37 @@ async function processSessionRequest(
     console.log(`[Sessions] Confirmed tx ${tx.hash} in block ${receipt.blockNumber}`)
     requests.set(requestId, { status: 'confirmed', txHash: tx.hash, blockNumber: receipt.blockNumber })
 
+    // Pre-populate the SessionKey table so the user's next action hits the
+    // DB fast path instead of falling back to a live RPC call. The L2Events
+    // indexer will eventually produce the same row from the SessionCreated
+    // event, but it runs every 15s — writing here eliminates the cold-start
+    // RPC on the very first action after Quick Sign activation.
+    try {
+      const ownerLc = recoveredAddress.toLowerCase()
+      const sessionLc = String(sessionKey).toLowerCase()
+      await prisma.sessionKey.upsert({
+        where: { ownerAddress_sessionAddress: { ownerAddress: ownerLc, sessionAddress: sessionLc } },
+        update: {
+          expiry: BigInt(expiry),
+          scopeBitmap: Number(scopeBitmap),
+          spendLimit: BigInt(spendLimit).toString(),
+          spent: '0',             // fresh session starts at zero
+          revokedAt: null,        // re-creating clears any prior revocation
+          lastSyncedAt: new Date(),
+        },
+        create: {
+          ownerAddress: ownerLc,
+          sessionAddress: sessionLc,
+          expiry: BigInt(expiry),
+          scopeBitmap: Number(scopeBitmap),
+          spendLimit: BigInt(spendLimit).toString(),
+          lastSyncedAt: new Date(),
+        },
+      })
+    } catch (err: any) {
+      console.warn(`[Sessions] Failed to pre-populate SessionKey row (indexer will backfill):`, err.message)
+    }
+
     // Record in ValidatorTx for analytics
     const gasUsed = receipt.gasUsed.toString()
     const gasPrice = (receipt.gasPrice ?? tx.gasPrice ?? 0n).toString()

@@ -51,6 +51,19 @@ async function readOnChainStake(tokenId: number): Promise<bigint | null> {
   }
 }
 
+// Throttle the pending-deposit on-chain check to at most once per 15s
+// per tokenId. Without this, every profile refresh by a user with a
+// pending deposit triggers an L2 RPC call. The DataCleaner watcher
+// independently polls so we won't miss the clearing event.
+const depositPollCache = new Map<number, number>()
+const DEPOSIT_POLL_THROTTLE_MS = 15_000
+setInterval(() => {
+  const cutoff = Date.now() - 10 * 60_000
+  for (const [k, t] of depositPollCache) {
+    if (t < cutoff) depositPollCache.delete(k)
+  }
+}, 60_000)
+
 // Validation limits for profile fields (must match ActionProcessor)
 const PROFILE_FIELD_LIMITS: Record<string, number> = {
   displayName: 50,
@@ -294,18 +307,28 @@ router.get('/by-token/:tokenId', async (req, res) => {
         try { return BigInt(user.pendingDepositAmount) } catch { return null }
       })()
       if (pendingWei !== null && pendingWei > 0n) {
-        const onChainStake = await readOnChainStake(tokenId)
-        console.log(`[users] by-token tokenId=${tokenId}: pending=${pendingWei} onChainStake=${onChainStake}`)
-        if (onChainStake !== null && onChainStake >= pendingWei) {
-          await prisma.user.update({
-            where: { tokenId },
-            data: { pendingDepositAmount: null, lastStakedAt: null },
-          })
-          user.pendingDepositAmount = null
-          user.lastStakedAt = null
-          console.log(`[users] Cleared pendingDepositAmount for tokenId=${tokenId} — deposit of ${pendingWei} landed (on-chain: ${onChainStake})`)
+        // Throttle the on-chain check: if we verified within the last 15s,
+        // skip the RPC and let the DataCleaner watcher handle it on its own
+        // schedule. Without this, every profile refresh triggers an L2 read.
+        const lastCheck = depositPollCache.get(tokenId) || 0
+        if (Date.now() - lastCheck < DEPOSIT_POLL_THROTTLE_MS) {
+          console.log(`[users] by-token tokenId=${tokenId}: pending deposit check throttled (last checked ${Math.round((Date.now() - lastCheck)/1000)}s ago)`)
         } else {
-          console.log(`[users] Pending deposit still in flight for tokenId=${tokenId} (on-chain ${onChainStake} < pending ${pendingWei})`)
+          depositPollCache.set(tokenId, Date.now())
+          const onChainStake = await readOnChainStake(tokenId)
+          console.log(`[users] by-token tokenId=${tokenId}: pending=${pendingWei} onChainStake=${onChainStake}`)
+          if (onChainStake !== null && onChainStake >= pendingWei) {
+            await prisma.user.update({
+              where: { tokenId },
+              data: { pendingDepositAmount: null, lastStakedAt: null },
+            })
+            user.pendingDepositAmount = null
+            user.lastStakedAt = null
+            depositPollCache.delete(tokenId) // no longer pending; drop the throttle
+            console.log(`[users] Cleared pendingDepositAmount for tokenId=${tokenId} — deposit of ${pendingWei} landed (on-chain: ${onChainStake})`)
+          } else {
+            console.log(`[users] Pending deposit still in flight for tokenId=${tokenId} (on-chain ${onChainStake} < pending ${pendingWei})`)
+          }
         }
       }
     }
