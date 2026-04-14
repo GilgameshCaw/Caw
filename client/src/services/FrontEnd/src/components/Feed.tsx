@@ -278,21 +278,28 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
         ))
       })
 
-      // Refresh visible items in-place (re-fetch from server without resetting scroll)
+      // Refresh visible items in-place (re-fetch from server without resetting scroll).
+      // Debounced so rapid-fire callers (e.g. txqueue monitor resolving many actions
+      // in one poll cycle) only trigger one refresh burst.
+      let refreshTimer: ReturnType<typeof setTimeout> | null = null
       setFeedRefreshVisibleCallback(() => {
-        const currentItems = itemsRef.current
-        if (currentItems.length === 0) return
-        // Refresh a sample of items (first 10) to avoid hammering the server
-        const toRefresh = currentItems.slice(0, 10)
-        for (const caw of toRefresh) {
-          apiFetch<{ caw: CawItem }>(`/api/caws/${caw.id}`)
-            .then(updated => {
-              setItems(current => current.map(item =>
-                item.id === caw.id ? { ...updated.caw } : item
-              ))
-            })
-            .catch(() => {})
-        }
+        if (refreshTimer) clearTimeout(refreshTimer)
+        refreshTimer = setTimeout(() => {
+          refreshTimer = null
+          const currentItems = itemsRef.current
+          if (currentItems.length === 0) return
+          // Refresh a sample of items (first 10) to avoid hammering the server
+          const toRefresh = currentItems.slice(0, 10)
+          for (const caw of toRefresh) {
+            apiFetch<{ caw: CawItem }>(`/api/caws/${caw.id}`)
+              .then(updated => {
+                setItems(current => current.map(item =>
+                  item.id === caw.id ? { ...updated.caw } : item
+                ))
+              })
+              .catch(() => {})
+          }
+        }, 1000)
       })
 
       return () => {
