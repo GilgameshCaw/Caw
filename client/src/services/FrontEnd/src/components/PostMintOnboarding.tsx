@@ -33,6 +33,7 @@ import LayerZeroStatus from '~/components/LayerZeroStatus'
 import StakingRewardsInfo from '~/components/StakingRewardsInfo'
 import QuickSignOptions from '~/components/QuickSignOptions'
 import QuickSignHowItWorks from '~/components/QuickSignHowItWorks'
+import { useTheme } from '~/hooks/useTheme'
 import { HiInformationCircle } from 'react-icons/hi'
 import { FollowButton } from '~/components/FollowButton'
 import cawLogo from '~/assets/images/caw-logo.png'
@@ -80,7 +81,7 @@ const STEPS: StepDef[] = [
   { id: 'follow',  label: 'Follow',  icon: <HiOutlineUserGroup className="w-5 h-5" />, skipWarning: '' },
 ]
 
-function CawPriceTicker() {
+function CawPriceTicker({ isDark }: { isDark: boolean }) {
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
 
   const formatAmount = (n: number): string => {
@@ -90,18 +91,16 @@ function CawPriceTicker() {
     return n.toFixed(0)
   }
 
+  const tickerClass = `mt-4 text-xs ${isDark ? 'text-white/30' : 'text-black/40'}`
+
   if (!cawPrice || cawPrice <= 0) {
-    return (
-      <div className="mt-4 text-xs text-white/30">
-        CAW price loading...
-      </div>
-    )
+    return <div className={tickerClass}>CAW price loading...</div>
   }
 
   const cawPerPenny = 0.01 / cawPrice
 
   return (
-    <div className="mt-4 text-xs text-white/30">
+    <div className={tickerClass}>
       $0.01 ≈ {formatAmount(cawPerPenny)} CAW
     </div>
   )
@@ -116,6 +115,38 @@ interface PostMintOnboardingProps {
 }
 
 const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, tokenId, initialStep = 0, pendingDeposit = null, onComplete }) => {
+  const { isDark } = useTheme()
+  // Theme class helpers — reused across the many cards, text styles, and
+  // sub-step indicators in this component. Keeping them here avoids threading
+  // `isDark` through every JSX node inline.
+  const tc = {
+    outerBg: isDark ? 'bg-black' : 'bg-white',
+    card: isDark
+      ? 'bg-white/[0.04] border border-white/10'
+      : 'bg-black/[0.03] border border-black/10',
+    cardMuted: isDark ? 'bg-[#0D0D0D]/85' : 'bg-black/[0.03]',
+    cardMutedHover: isDark ? 'hover:bg-[#1A1A1A]/85' : 'hover:bg-black/[0.06]',
+    cardBorderMuted: isDark ? 'border-[#1A1A1A]' : 'border-black/10',
+    cardActiveBg: isDark ? 'bg-[#171202]/85' : 'bg-yellow-500/10',
+    cardDoneBg: isDark ? 'bg-[#08140A]/85' : 'bg-green-500/10',
+    textPrimary: isDark ? 'text-white' : 'text-black',
+    textMuted: isDark ? 'text-gray-400' : 'text-gray-600',
+    textSubtle: isDark ? 'text-gray-500' : 'text-gray-500',
+    textFaint: isDark ? 'text-white/30' : 'text-black/40',
+    textVeryFaint: isDark ? 'text-white/40' : 'text-black/50',
+    textSemiFaint: isDark ? 'text-gray-300' : 'text-gray-700',
+    inputBg: isDark ? 'bg-black text-white border-white/20' : 'bg-white text-black border-black/20',
+    skipButton: isDark
+      ? 'text-white/40 hover:text-white/60'
+      : 'text-black/40 hover:text-black/60',
+    stepperInactive: isDark ? 'bg-[#1A1A1A]/85' : 'bg-black/10',
+    stepperSkipped: isDark ? 'bg-[#171202]/85' : 'bg-yellow-500/20',
+    presetInactive: isDark
+      ? 'bg-white/10 text-white hover:bg-white/20'
+      : 'bg-black/10 text-black hover:bg-black/20',
+    userCardBorder: isDark ? 'border-white/10' : 'border-black/10',
+    avatarBorder: isDark ? 'border-white/20' : 'border-black/20',
+  }
   const depositPending = !!pendingDeposit
   const pendingDepositAmount = pendingDeposit ? BigInt(pendingDeposit) : 0n
   const [currentStep, setCurrentStep] = useState(initialStep)
@@ -672,9 +703,9 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
           >
             <div className={`w-full h-2 rounded-full transition-all duration-300 ${
               done ? 'bg-green-500'
-              : skipped ? 'bg-[#171202]/85'
+              : skipped ? tc.stepperSkipped
               : active ? 'bg-yellow-500'
-              : 'bg-[#1A1A1A]/85'
+              : tc.stepperInactive
             }`} />
             <div className="flex items-center gap-1 whitespace-nowrap">
               <span className={`transition-colors duration-300 ${
@@ -682,15 +713,15 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                 : done ? 'text-green-400'
                 : active ? 'text-yellow-500'
                 : skipped ? 'text-yellow-500/50'
-                : 'text-white/30'
+                : tc.textFaint
               }`}>
                 {done ? <HiCheck className="w-4 h-4" /> : s.icon}
               </span>
               <span className={`text-sm font-medium transition-colors duration-300 ${
                 done ? 'text-green-400'
-                : active ? 'text-white'
+                : active ? tc.textPrimary
                 : skipped ? 'text-yellow-500/50'
-                : 'text-white/30'
+                : tc.textFaint
               }`}>
                 {s.shortLabel ? (
                   <>
@@ -707,8 +738,8 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   )
 
   return (
-    <div className="fixed inset-0 z-[100] bg-black overflow-y-auto overflow-x-hidden">
-      <BoidsBg isDark={true} />
+    <div className={`fixed inset-0 z-[100] overflow-y-auto overflow-x-hidden ${tc.outerBg}`}>
+      <BoidsBg isDark={isDark} />
       <div className="min-h-full flex flex-col pb-[50px] relative z-[2]">
 
         {/* Stepper — above columns on desktop, inline on mobile */}
@@ -720,23 +751,25 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
 
         {/* Left column — welcome + NFT */}
         <div className="flex items-center justify-center min-[800px]:sticky min-[800px]:top-16">
-        <div className="flex flex-col items-center px-6 py-4 w-full max-w-[400px] bg-white/[0.04] border border-white/10 rounded-2xl backdrop-blur-sm mb-5" style={{ paddingTop: 15 }}>
+        <div className={`flex flex-col items-center px-6 py-4 w-full max-w-[400px] rounded-2xl backdrop-blur-sm mb-5 ${tc.card}`} style={{ paddingTop: 15 }}>
           <h1
             className="text-4xl min-[800px]:text-5xl mb-3"
             style={{
               fontFamily: 'Fraunces',
               color: '#ebc046',
               letterSpacing: '5px',
-              textShadow: '0 1px 2px rgba(0, 0, 0, 0.6), 0 0 4px rgba(0, 0, 0, 0.3)',
+              textShadow: isDark
+                ? '0 1px 2px rgba(0, 0, 0, 0.6), 0 0 4px rgba(0, 0, 0, 0.3)'
+                : '0 1px 2px rgba(255, 255, 255, 0.6), 0 0 4px rgba(255, 255, 255, 0.3)',
             }}
           >
           </h1>
-          <p className="text-gray-400 text-center text-sm min-[800px]:text-base mt-3 mb-1 max-w-sm">
-            <b className="text-4xl text-white">Welcome
+          <p className={`text-center text-sm min-[800px]:text-base mt-3 mb-1 max-w-sm ${tc.textMuted}`}>
+            <b className={`text-4xl ${tc.textPrimary}`}>Welcome
             </b>
             <br/>
           </p>
-          <div className="text-gray-400 text-center text-sm min-[800px]:text-base max-w-sm mb-[10px]">
+          <div className={`text-center text-sm min-[800px]:text-base max-w-sm mb-[10px] ${tc.textMuted}`}>
             <p className="text-lg">
               to the world's first permissionless<br/>social network
             </p>
@@ -750,16 +783,16 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
             </p>
           )}
           <br/>
-          <p className="text-gray-400 text-center text-sm min-[800px]:text-base max-w-sm">
-            <b className="text-lg text-white">Your username is live</b>
+          <p className={`text-center text-sm min-[800px]:text-base max-w-sm ${tc.textMuted}`}>
+            <b className={`text-lg ${tc.textPrimary}`}>Your username is live</b>
           </p>
-          <p className="text-gray-400 text-center text-xl min-[800px]:text-base mt-2 max-w-sm">
+          <p className={`text-center text-xl min-[800px]:text-base mt-2 max-w-sm ${tc.textMuted}`}>
             You have successfully created a new profile.
           </p>
-          <p className="text-gray-400 text-center text-sm min-[800px]:text-base mt-2 max-w-sm">
+          <p className={`text-center text-sm min-[800px]:text-base mt-2 max-w-sm ${tc.textMuted}`}>
             Follow the steps to finish setting up your account.
           </p>
-          <CawPriceTicker />
+          <CawPriceTicker isDark={isDark} />
           {/* Show stepper inline on mobile only */}
           <div className="w-full min-[800px]:hidden mt-4">
             {renderStepper()}
@@ -775,19 +808,19 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
 
           {/* ── Step 1: Stake CAW ── */}
           {currentStep === 0 && (
-            <div className="space-y-6 max-w-md mx-auto bg-white/[0.04] border border-white/10 rounded-2xl py-6 px-[15px] backdrop-blur-sm">
+            <div className={`space-y-6 max-w-md mx-auto rounded-2xl py-6 px-[15px] backdrop-blur-sm ${tc.card}`}>
               <div className="text-center space-y-3">
                 <div className="w-16 h-16 rounded-full bg-yellow-500/20 flex items-center justify-center mx-auto">
                   <HiOutlineCube className="w-8 h-8 text-yellow-500" />
                 </div>
-                <h2 className="text-2xl font-bold text-white">Deposit CAW</h2>
-                <p className="text-gray-400 text-sm">
+                <h2 className={`text-2xl font-bold ${tc.textPrimary}`}>Deposit CAW</h2>
+                <p className={`text-sm ${tc.textMuted}`}>
                   Depositing CAW is required to interact on CAW. Every action on the protocol
                   generates fees that are distributed to depositors — the more you deposit, the more you earn.
                 </p>
               </div>
 
-              <StakingRewardsInfo alwaysDark />
+              <StakingRewardsInfo isDark={isDark} />
 
               {depositPending ? (
                 <div className="text-center space-y-4">
@@ -804,7 +837,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                       </span>
                     </div>
                     {address && (
-                      <LayerZeroStatus address={address} alwaysDark message="Your deposit is being transferred cross-chain." />
+                      <LayerZeroStatus address={address} isDark={isDark} message="Your deposit is being transferred cross-chain." />
                     )}
                   </div>
                   <button
@@ -844,7 +877,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                         <span className="font-medium">Deposit submitted — waiting for confirmation...</span>
                       </div>
                       {address && (
-                        <LayerZeroStatus address={address} alwaysDark message="Your deposit is being transferred cross-chain." />
+                        <LayerZeroStatus address={address} isDark={isDark} message="Your deposit is being transferred cross-chain." />
                       )}
                     </div>
                   )}
@@ -858,7 +891,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
               ) : (
                 <div className="space-y-4">
                   <div className="space-y-2">
-                    <label className="text-sm font-medium text-gray-300">Amount to Deposit</label>
+                    <label className={`text-sm font-medium ${tc.textSemiFaint}`}>Amount to Deposit</label>
                     {getPresetAmounts(availableBalance).length > 0 && (
                       <div className="flex flex-wrap gap-2">
                         {getPresetAmounts(availableBalance).map(preset => (
@@ -868,7 +901,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                             className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all cursor-pointer ${
                               parseFloat(amount) === preset
                                 ? 'bg-yellow-500 text-black'
-                                : 'bg-white/10 text-white hover:bg-white/20'
+                                : tc.presetInactive
                             }`}
                           >
                             {formatPresetLabel(preset)}
@@ -882,7 +915,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                         placeholder="0.0"
                         value={amount}
                         onChange={(e) => setAmount(e.target.value)}
-                        className="w-full px-4 py-3 pr-20 rounded-full border border-white/20 text-white bg-black focus:outline-none focus:ring-0"
+                        className={`w-full px-4 py-3 pr-20 rounded-full border focus:outline-none focus:ring-0 ${tc.inputBg}`}
                       />
                       <button
                         onClick={() => setAmount(availableBalance.toString())}
@@ -891,7 +924,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                         MAX
                       </button>
                     </div>
-                    <p className="text-xs text-gray-500 px-2">
+                    <p className={`text-xs px-2 ${tc.textSubtle}`}>
                       Available: {availableBalance.toLocaleString('en-US', { maximumFractionDigits: 2 })} CAW
                     </p>
                   </div>
@@ -909,7 +942,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                         : isStakePending || isApprovePending
                           ? 'bg-yellow-600 text-black cursor-not-allowed'
                           : !amount || parseFloat(amount) === 0 || depositFee === 0n
-                            ? 'bg-gray-700 text-gray-400 cursor-not-allowed'
+                            ? (isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-200 text-gray-400 cursor-not-allowed')
                             : 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
                     }`}
                   >
@@ -933,7 +966,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
 
                   <button
                     onClick={handleSkip}
-                    className="w-full py-2 text-white/40 hover:text-white/60 text-sm transition-colors cursor-pointer"
+                    className={`w-full py-2 text-sm transition-colors cursor-pointer ${tc.skipButton}`}
                   >
                     Skip — {step.skipWarning}
                   </button>
@@ -944,13 +977,13 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
 
           {/* ── Step 2: Combined Setup (DMs + Quick Sign) ── */}
           {currentStep === 1 && (
-            <div className="space-y-6 max-w-md mx-auto bg-white/[0.04] border border-white/10 rounded-2xl py-6 px-[15px] backdrop-blur-sm">
+            <div className={`space-y-6 max-w-md mx-auto rounded-2xl py-6 px-[15px] backdrop-blur-sm ${tc.card}`}>
               <div className="text-center space-y-3">
                 <div className="w-16 h-16 rounded-full bg-yellow-500/20 flex items-center justify-center mx-auto">
                   <HiLightningBolt className="w-8 h-8 text-yellow-500" />
                 </div>
-                <h2 className="text-2xl font-bold text-white">Set Up Your Account</h2>
-                <p className="text-gray-400 text-sm">
+                <h2 className={`text-2xl font-bold ${tc.textPrimary}`}>Set Up Your Account</h2>
+                <p className={`text-sm ${tc.textMuted}`}>
                   Two quick signatures to enable encrypted messaging and frictionless posting.
                 </p>
               </div>
@@ -959,67 +992,67 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
               <div className="space-y-3">
                 <div className={`flex items-center gap-3 p-3 rounded-xl border ${
                   setupDmDone
-                    ? 'border-green-500/30 bg-[#08140A]/85'
+                    ? `border-green-500/30 ${tc.cardDoneBg}`
                     : setupSubStep === 'dms'
-                    ? 'border-yellow-500/30 bg-[#171202]/85'
-                    : 'border-[#1A1A1A] bg-[#0D0D0D]/85'
+                    ? `border-yellow-500/30 ${tc.cardActiveBg}`
+                    : `${tc.cardBorderMuted} ${tc.cardMuted}`
                 }`}>
                   <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-                    setupDmDone ? 'bg-green-500' : 'bg-[#1A1A1A]/85'
+                    setupDmDone ? 'bg-green-500' : tc.stepperInactive
                   }`}>
                     {setupDmDone
                       ? <HiCheck className="w-4 h-4 text-white" />
                       : setupSubStep === 'dms'
                       ? <div className="w-4 h-4 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin" />
-                      : <HiOutlineLockClosed className="w-4 h-4 text-white/50" />
+                      : <HiOutlineLockClosed className={`w-4 h-4 ${isDark ? 'text-white/50' : 'text-black/50'}`} />
                     }
                   </div>
                   <div className="flex-1">
-                    <p className={`text-sm font-medium ${setupDmDone ? 'text-green-400' : 'text-white'}`}>
+                    <p className={`text-sm font-medium ${setupDmDone ? 'text-green-400' : tc.textPrimary}`}>
                       Encrypted DMs & Login
                     </p>
-                    <p className="text-xs text-gray-500">End-to-end encrypted messaging</p>
+                    <p className={`text-xs ${tc.textSubtle}`}>End-to-end encrypted messaging</p>
                   </div>
                 </div>
 
                 <div className={`p-3 rounded-xl border ${
                   setupQsDone
-                    ? 'border-green-500/30 bg-[#08140A]/85'
+                    ? `border-green-500/30 ${tc.cardDoneBg}`
                     : setupSubStep === 'quicksign'
-                    ? 'border-yellow-500/30 bg-[#171202]/85'
-                    : 'border-[#1A1A1A] bg-[#0D0D0D]/85'
+                    ? `border-yellow-500/30 ${tc.cardActiveBg}`
+                    : `${tc.cardBorderMuted} ${tc.cardMuted}`
                 }`}>
                   <div className="flex items-center gap-3">
                     <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-                      setupQsDone ? 'bg-green-500' : 'bg-[#1A1A1A]/85'
+                      setupQsDone ? 'bg-green-500' : tc.stepperInactive
                     }`}>
                       {setupQsDone
                         ? <HiCheck className="w-4 h-4 text-white" />
                         : setupSubStep === 'quicksign'
                         ? <div className="w-4 h-4 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin" />
-                        : <HiLightningBolt className="w-4 h-4 text-white/50" />
+                        : <HiLightningBolt className={`w-4 h-4 ${isDark ? 'text-white/50' : 'text-black/50'}`} />
                       }
                     </div>
                     <div className="flex-1">
                       <div className="flex items-center gap-1.5">
-                        <p className={`text-sm font-medium ${setupQsDone ? 'text-green-400' : 'text-white'}`}>
+                        <p className={`text-sm font-medium ${setupQsDone ? 'text-green-400' : tc.textPrimary}`}>
                           Quick Sign
                         </p>
                         <button
                           type="button"
                           onClick={() => setShowQsInfo(v => !v)}
-                          className="text-white/40 hover:text-white/70 transition-colors cursor-pointer"
+                          className={`transition-colors cursor-pointer ${isDark ? 'text-white/40 hover:text-white/70' : 'text-black/40 hover:text-black/70'}`}
                           aria-label="Learn about Quick Sign"
                         >
                           <HiInformationCircle className="w-4 h-4" />
                         </button>
                       </div>
-                      <p className="text-xs text-gray-500">Post and interact without wallet popups</p>
+                      <p className={`text-xs ${tc.textSubtle}`}>Post and interact without wallet popups</p>
                     </div>
                   </div>
                   {showQsInfo && (
                     <div className="mt-3">
-                      <QuickSignHowItWorks isDark={true} />
+                      <QuickSignHowItWorks isDark={isDark} />
                     </div>
                   )}
                   {!setupQsDone && isConnected && (
@@ -1033,6 +1066,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                         onTipCeilingChange={setQsTipCeiling}
                         walletProtect={qsWalletProtect}
                         onWalletProtectChange={setQsWalletProtect}
+                        isDark={isDark}
                       />
                     </div>
                   )}
@@ -1075,7 +1109,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                       : setupQsDone ? 'Sign to Enable DMs'
                       : `Set Up Account (${setupDmDone || setupQsDone ? '1' : '2'} signature${setupDmDone || setupQsDone ? '' : 's'})`}
                   </button>
-                  <button onClick={handleSkip} className="w-full py-2 text-white/40 hover:text-white/60 text-sm transition-colors cursor-pointer">
+                  <button onClick={handleSkip} className={`w-full py-2 text-sm transition-colors cursor-pointer ${tc.skipButton}`}>
                     Skip — {step.skipWarning}
                   </button>
                 </div>
@@ -1085,15 +1119,15 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
 
           {/* ── Step 3: Set Up Profile ── */}
           {currentStep === 2 && (
-            <div className="space-y-4 max-w-md mx-auto bg-white/[0.04] border border-white/10 rounded-2xl py-6 px-[15px] backdrop-blur-sm">
+            <div className={`space-y-4 max-w-md mx-auto rounded-2xl py-6 px-[15px] backdrop-blur-sm ${tc.card}`}>
               <div className="text-center space-y-2">
-                <h2 className="text-2xl font-bold text-white">Set Up Your Profile</h2>
+                <h2 className={`text-2xl font-bold ${tc.textPrimary}`}>Set Up Your Profile</h2>
               </div>
 
               <ProfileEditForm
                 activeToken={activeToken as any}
                 profileData={profileFormData}
-                isDark={true}
+                isDark={isDark}
                 saveLabel="Save"
                 onSaved={() => goNext()}
                 onSkip={handleSkip}
@@ -1123,13 +1157,13 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
 
           return (
           <div className="flex-1 flex flex-col items-center px-6 pb-8">
-            <div className="w-full max-w-3xl space-y-6 bg-white/[0.04] border border-white/10 rounded-2xl py-6 px-[15px] backdrop-blur-sm">
+            <div className={`w-full max-w-3xl space-y-6 rounded-2xl py-6 px-[15px] backdrop-blur-sm ${tc.card}`}>
               <div className="text-center space-y-3">
                 <div className="w-16 h-16 rounded-full bg-yellow-500/20 flex items-center justify-center mx-auto">
                   <HiOutlineUserGroup className="w-8 h-8 text-yellow-500" />
                 </div>
-                <h2 className="text-2xl font-bold text-white">Follow Some Users</h2>
-                <p className="text-gray-400 text-sm">
+                <h2 className={`text-2xl font-bold ${tc.textPrimary}`}>Follow Some Users</h2>
+                <p className={`text-sm ${tc.textMuted}`}>
                   Follow some of the most active users to fill your feed.
                 </p>
               </div>
@@ -1154,10 +1188,10 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
               {loadingUsers ? (
                 <div className="flex flex-wrap justify-center gap-3">
                   {[...Array(8)].map((_, i) => (
-                    <div key={i} className="animate-pulse rounded-xl p-4 bg-[#0D0D0D]/85 w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)] md:w-[calc(25%-9px)]">
-                      <div className="w-14 h-14 rounded-full bg-gray-700 mx-auto mb-3" />
-                      <div className="h-4 bg-gray-700 rounded w-3/4 mx-auto mb-2" />
-                      <div className="h-3 bg-gray-800 rounded w-1/2 mx-auto" />
+                    <div key={i} className={`animate-pulse rounded-xl p-4 w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)] md:w-[calc(25%-9px)] ${tc.cardMuted}`}>
+                      <div className={`w-14 h-14 rounded-full mx-auto mb-3 ${isDark ? 'bg-gray-700' : 'bg-gray-300'}`} />
+                      <div className={`h-4 rounded w-3/4 mx-auto mb-2 ${isDark ? 'bg-gray-700' : 'bg-gray-300'}`} />
+                      <div className={`h-3 rounded w-1/2 mx-auto ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`} />
                     </div>
                   ))}
                 </div>
@@ -1166,10 +1200,10 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                   {suggestedUsers.slice(0, 8).map(user => (
                     <div
                       key={user.tokenId}
-                      className="rounded-xl p-4 bg-[#0D0D0D]/85 hover:bg-[#1A1A1A]/85 border border-white/10 transition-colors w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)] md:w-[calc(25%-9px)]"
+                      className={`rounded-xl p-4 border transition-colors w-[calc(50%-6px)] sm:w-[calc(33.333%-8px)] md:w-[calc(25%-9px)] ${tc.cardMuted} ${tc.cardMutedHover} ${tc.userCardBorder}`}
                     >
                       <a href={`/users/${user.username}`} onClick={(e) => { e.preventDefault(); onComplete?.(); window.location.href = `/users/${user.username}` }} className="block text-center cursor-pointer">
-                        <div className="w-14 h-14 rounded-full mx-auto mb-2 overflow-hidden border border-white/20">
+                        <div className={`w-14 h-14 rounded-full mx-auto mb-2 overflow-hidden border ${tc.avatarBorder}`}>
                           {(user.avatarUrl || user.image) ? (
                             <img
                               src={user.avatarUrl || user.image || ''}
@@ -1184,11 +1218,11 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                             />
                           )}
                         </div>
-                        <p className="font-medium text-white text-sm truncate">
+                        <p className={`font-medium text-sm truncate ${tc.textPrimary}`}>
                           {user.displayName || user.username}
                         </p>
-                        <p className="text-white/40 text-xs truncate">@{user.username}</p>
-                        <p className="text-white/30 text-xs mt-1">
+                        <p className={`text-xs truncate ${tc.textVeryFaint}`}>@{user.username}</p>
+                        <p className={`text-xs mt-1 ${tc.textFaint}`}>
                           {formatCount(user.followerCount)} followers{user.likeCount > 0 ? ` · ${formatCount(user.likeCount)} likes` : ''}
                         </p>
                       </a>
@@ -1205,7 +1239,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                   ))}
                 </div>
               ) : (
-                <p className="text-gray-500 text-center text-sm">No suggested users yet.</p>
+                <p className={`text-center text-sm ${tc.textSubtle}`}>No suggested users yet.</p>
               )}
 
               <div className="max-w-sm mx-auto">
@@ -1225,7 +1259,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                 {suggestedUsers.length > 0 && (
                   <button
                     onClick={onComplete}
-                    className="w-full py-2 text-white/40 hover:text-white/60 text-sm transition-colors cursor-pointer"
+                    className={`w-full py-2 text-sm transition-colors cursor-pointer ${tc.skipButton}`}
                   >
                     Skip for now
                   </button>
@@ -1243,7 +1277,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
       <Tooltip text="Feedback" position="top" forceDark>
         <button
           onClick={() => setShowBugReport(true)}
-          className="w-9 h-9 rounded-full flex items-center justify-center shadow-lg transition-all cursor-pointer opacity-60 hover:opacity-100 bg-zinc-800 hover:bg-zinc-700 text-white/70"
+          className={`w-9 h-9 rounded-full flex items-center justify-center shadow-lg transition-all cursor-pointer opacity-60 hover:opacity-100 ${isDark ? 'bg-zinc-800 hover:bg-zinc-700 text-white/70' : 'bg-zinc-200 hover:bg-zinc-300 text-black/70'}`}
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <rect width="8" height="14" x="8" y="6" rx="4" />
