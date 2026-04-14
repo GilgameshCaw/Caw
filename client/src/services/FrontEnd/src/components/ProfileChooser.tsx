@@ -12,7 +12,7 @@ import { useTheme } from "~/hooks/useTheme";
 import { apiFetch } from "~/api/client";
 import { useHasActiveSession } from '~/hooks/useHasActiveSession';
 import { usePendingSpendStore } from '~/store/pendingSpendStore';
-import { useUserByUsername } from '~/hooks/useUserData';
+import { useUserByUsername, useUserByToken } from '~/hooks/useUserData';
 import cawLogo from '~/assets/images/caw-logo.png';
 
 const ProfileChooser: React.FC = () => {
@@ -119,13 +119,14 @@ const ProfileChooser: React.FC = () => {
   // on-chain stake has grown past that baseline by approximately the pending
   // amount. We use a 5% tolerance to absorb contract-side precision loss in
   // the L2 cawBalanceOf scaling math. When landed, flush the hint and badge.
+  // Share the by-token poll with other consumers via React Query — the
+  // 15s refetchInterval is coalesced across all callers using the same key.
+  const { data: byTokenData } = useUserByToken(activeToken?.tokenId, 15_000)
   useEffect(() => {
     if (!activeToken?.tokenId) return
-    let cancelled = false
-    const check = async () => {
-      try {
-        const data = await apiFetch(`/api/users/by-token/${activeToken.tokenId}`)
-        if (cancelled) return
+    const data = byTokenData
+    if (!data) return
+    const check = () => {
 
         // Parse the raw hint (not via readPendingHint — we need stakedAtHintTime)
         let hintWei: bigint | null = null
@@ -183,14 +184,9 @@ const ProfileChooser: React.FC = () => {
         } else {
           setPendingDepositWei(null)
         }
-      } catch {
-        // Network error — leave whatever we had from the hint
-      }
     }
     check()
-    const interval = setInterval(check, 15_000)
-    return () => { cancelled = true; clearInterval(interval) }
-  }, [activeToken?.tokenId, activeToken?.stakedAmount?.toString()])
+  }, [activeToken?.tokenId, byTokenData])
 
   const setLastAddress = useTokenDataStore(s => s.setLastAddress)
   const setActiveTokenId = useTokenDataStore(state => state.setActiveTokenId);;

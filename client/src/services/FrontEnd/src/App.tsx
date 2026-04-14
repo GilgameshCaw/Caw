@@ -21,9 +21,7 @@ import QuickSignModal from '~/components/modals/QuickSignModal'
 import QuickSignUnlock from '~/components/QuickSignUnlock'
 import ClientAuthModal from '~/components/modals/ClientAuthModal'
 import { useSessionSpendSync } from '~/hooks/useSessionSpendSync'
-import { useDmUnreadSync } from '~/hooks/useDmUnreadSync'
-import { useNotificationUnreadSync } from '~/hooks/useNotificationUnreadSync'
-import { useOffersUnreadSync } from '~/hooks/useOffersUnreadSync'
+import { useBadgeSync } from '~/hooks/useBadgeSync'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import { useActionErrorStore } from '~/store/actionErrorStore'
@@ -35,9 +33,7 @@ function App() {
   useTxQueueMonitor();
   useSessionKeyWalletGuard();
   useSessionSpendSync(); // Sync on-chain session spending on load
-  useDmUnreadSync(); // Fetch DM unread count for sidebar badge
-  useNotificationUnreadSync(); // Fetch notification unread count for sidebar badge
-  useOffersUnreadSync(); // Fetch received offers count for sidebar badge
+  useBadgeSync(); // Combined poll for sidebar badge counts (DMs, notifications, offers)
 
   // Fetch blocked users from server on init
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)

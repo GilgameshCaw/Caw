@@ -125,6 +125,79 @@ router.post('/ensure', async (req, res) => {
 })
 
 /**
+ * GET /api/users/badges?userId=N
+ * Returns all unread/unseen badge counts for a user in a single round-trip:
+ * - notifications: number of unread notifications
+ * - dmConversations: array of conversation ids + unreadCount (for muting filter on the client)
+ * - offers: number of unseen marketplace offers received
+ *
+ * Frontend uses this to combine three previously-separate polls into one.
+ * IMPORTANT: This route must be defined BEFORE /:username to avoid conflicts.
+ */
+router.get('/badges', requireAuth({ lookup: async (req) => Number(req.query.userId) || undefined }), async (req, res) => {
+  try {
+    const userId = parseInt(req.query.userId as string)
+    if (!userId || isNaN(userId)) {
+      return res.status(400).json({ error: 'userId required' })
+    }
+
+    // Run all three queries in parallel
+    const blockedIdsPromise = getBlockedUserIds(userId)
+    const userPromise = prisma.user.findUnique({
+      where: { tokenId: userId },
+      select: { address: true, lastViewedOffersAt: true },
+    })
+    const dmConversationsPromise = prisma.conversation.findMany({
+      where: { participants: { some: { userId } } },
+      select: {
+        id: true,
+        participants: { where: { userId }, select: { unreadCount: true } },
+      },
+    })
+
+    const [blockedIds, user, dmConversations] = await Promise.all([
+      blockedIdsPromise,
+      userPromise,
+      dmConversationsPromise,
+    ])
+
+    // Notifications
+    const notifWhere: any = { userId, isRead: false, hidden: false }
+    if (blockedIds.length > 0) {
+      notifWhere.actorId = { notIn: blockedIds }
+    }
+    const notifications = await prisma.notification.count({ where: notifWhere })
+
+    // Marketplace offers (need to look up all tokens owned by the user's address)
+    let offers = 0
+    if (user?.address) {
+      const ownedUsers = await prisma.user.findMany({
+        where: { address: { equals: user.address, mode: 'insensitive' } },
+        select: { tokenId: true },
+      })
+      const tokenIds = ownedUsers.map(u => u.tokenId)
+      if (tokenIds.length > 0) {
+        const offerWhere: any = { tokenId: { in: tokenIds }, status: 'ACTIVE' }
+        if (user.lastViewedOffersAt) offerWhere.createdAt = { gt: user.lastViewedOffersAt }
+        offers = await prisma.marketplaceOffer.count({ where: offerWhere })
+      }
+    }
+
+    res.json({
+      notifications,
+      offers,
+      dmConversations: dmConversations.map((c: { id: string; participants: { unreadCount: number }[] }) => ({
+        id: c.id,
+        unreadCount: c.participants[0]?.unreadCount || 0,
+      })),
+    })
+  } catch (err: any) {
+    console.error('[users/badges] error:', err.message)
+    res.status(500).json({ error: 'Failed to fetch badges' })
+  }
+})
+
+/**
  * GET /api/users/top-followed
  * Returns the top followed users (for suggestions)
  * IMPORTANT: This route must be defined BEFORE /:username to avoid conflicts

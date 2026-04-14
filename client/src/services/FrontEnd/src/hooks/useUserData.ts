@@ -33,11 +33,16 @@ interface UserByTokenData {
 /**
  * Fetches user data by token ID via React Query.
  * Multiple components calling this with the same tokenId will share a single request.
+ *
+ * Pass `refetchInterval` (in ms) for polling consumers — if multiple
+ * consumers poll the same tokenId, React Query coalesces them so only
+ * one network request fires per interval.
  */
-export function useUserByToken(tokenId?: number) {
+export function useUserByToken(tokenId?: number, refetchInterval?: number) {
   return useQuery<UserByTokenData>({
     queryKey: ['userByToken', tokenId],
     queryFn: () => apiFetch<UserByTokenData>(`/api/users/by-token/${tokenId}`),
     enabled: !!tokenId,
+    refetchInterval,
   })
 }
