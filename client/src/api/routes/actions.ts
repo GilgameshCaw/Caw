@@ -3,8 +3,8 @@ import { ethers, JsonRpcProvider, WebSocketProvider, Contract } from 'ethers'
 import { prisma } from '../../prismaClient'
 import { findOrCreateUser } from '../../services/UserService'
 import { getSession, addAuthorization, createSession } from '../sessionStore'
-import { cawNameL2Abi, cawActionsAbi } from '../../abi/generated'
-import { CAW_NAMES_L2_ADDRESS, CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
+import { cawNameL2Abi } from '../../abi/generated'
+import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 
 const router = Router()
 
@@ -54,106 +54,93 @@ interface SessionKeyCheck {
   reason?: string
 }
 
-// Cache session key validation results to avoid an RPC per action.
-// Keyed by `${owner}:${sessionKey}`. Entries are valid for 30 seconds,
-// or until the known expiry (whichever is sooner). If the session has a
-// spend limit, we skip the cache (spent amount changes per action).
-type CachedSession = {
-  expiry: number // unix seconds, from on-chain
-  scopeBitmap: number
-  spendLimit: bigint
-  cachedAt: number // ms, for freshness
-}
-const sessionKeyCache = new Map<string, CachedSession>()
-const SESSION_CACHE_TTL_MS = 30_000
-
-// Clean up expired cache entries every 5 minutes
-setInterval(() => {
-  const nowMs = Date.now()
-  const nowSec = Math.floor(nowMs / 1000)
-  for (const [key, entry] of sessionKeyCache) {
-    if (entry.expiry <= nowSec || nowMs - entry.cachedAt > SESSION_CACHE_TTL_MS) {
-      sessionKeyCache.delete(key)
-    }
-  }
-}, 5 * 60_000)
-
+/**
+ * Validate a session key against the local SessionKey table, which is kept
+ * in sync with on-chain state by ChainSyncService's L2Events indexer. Only
+ * falls back to a live RPC read if the session isn't in our DB yet — rare
+ * in steady state (the indexer runs every 15 seconds), common only for
+ * brand-new sessions created seconds ago.
+ *
+ * IMPORTANT: This check is purely for early rejection. The contract enforces
+ * session-key validity on-chain during the validator's processActions call,
+ * so letting an invalid session slip through here only wastes a validator
+ * simulation — it cannot result in an unauthorized on-chain action.
+ */
 async function checkSessionKeyOnChain(
   ownerAddress: string,
   sessionKeyAddress: string,
   actionType?: number
 ): Promise<SessionKeyCheck> {
-  const cacheKey = `${ownerAddress}:${sessionKeyAddress}`
-  const nowMs = Date.now()
-  const nowSec = Math.floor(nowMs / 1000)
+  const owner = ownerAddress.toLowerCase()
+  const sessionAddr = sessionKeyAddress.toLowerCase()
+  const nowSec = Math.floor(Date.now() / 1000)
 
-  let cached = sessionKeyCache.get(cacheKey)
-  if (cached && nowMs - cached.cachedAt > SESSION_CACHE_TTL_MS) {
-    sessionKeyCache.delete(cacheKey)
-    cached = undefined
-  }
+  // --- Fast path: local DB lookup ---
+  const row = await prisma.sessionKey.findUnique({
+    where: { ownerAddress_sessionAddress: { ownerAddress: owner, sessionAddress: sessionAddr } },
+  })
 
-  // If cached and the session has no spend limit, we can validate without any RPC.
-  // Spend-limited sessions still need a fresh RPC to check sessionSpent.
-  if (cached && cached.spendLimit === 0n) {
-    if (cached.expiry <= nowSec) {
-      sessionKeyCache.delete(cacheKey)
-      return { valid: false, reason: 'Session key expired' }
-    }
-    if (actionType !== undefined && actionType <= 7 && (cached.scopeBitmap & (1 << actionType)) === 0) {
+  if (row) {
+    if (row.revokedAt) return { valid: false, reason: 'Session key revoked' }
+    const expirySec = Number(row.expiry)
+    if (expirySec === 0) return { valid: false, reason: 'Session key not registered' }
+    if (expirySec <= nowSec) return { valid: false, reason: 'Session key expired' }
+    if (actionType !== undefined && actionType <= 7 && (row.scopeBitmap & (1 << actionType)) === 0) {
       return { valid: false, reason: 'Action type not in session scope' }
+    }
+    // Spend limit check against locally-tracked spent total.
+    // The validator updates row.spent after a successful batch, and the
+    // contract enforces the real limit — so a stale cache only under-counts
+    // (too permissive), never over-counts (too restrictive).
+    const spendLimit = BigInt(row.spendLimit || '0')
+    if (spendLimit > 0n) {
+      const spent = BigInt(row.spent || '0')
+      if (spent >= spendLimit) return { valid: false, reason: 'Session key spend limit reached' }
     }
     return { valid: true }
   }
 
+  // --- Slow path: not in DB yet (brand-new session, or indexer catching up).
+  // Make a live RPC call, then persist so future requests hit the fast path.
   try {
     const contract = getReadContract()
-    const session = await contract.sessions(ownerAddress, sessionKeyAddress)
-    const expiry = Number(session.expiry)
+    const session = await contract.sessions(owner, sessionAddr)
+    const expirySec = Number(session.expiry)
     const scopeBitmap = Number(session.scopeBitmap)
     const spendLimit = BigInt(session.spendLimit?.toString() || '0')
 
-    if (expiry === 0) {
-      return { valid: false, reason: 'Session key not registered' }
+    if (expirySec === 0) return { valid: false, reason: 'Session key not registered' }
+
+    // Persist for subsequent requests (best-effort; don't fail the request)
+    try {
+      await prisma.sessionKey.upsert({
+        where: { ownerAddress_sessionAddress: { ownerAddress: owner, sessionAddress: sessionAddr } },
+        update: {
+          expiry: BigInt(expirySec),
+          scopeBitmap,
+          spendLimit: spendLimit.toString(),
+          revokedAt: null,
+          lastSyncedAt: new Date(),
+        },
+        create: {
+          ownerAddress: owner,
+          sessionAddress: sessionAddr,
+          expiry: BigInt(expirySec),
+          scopeBitmap,
+          spendLimit: spendLimit.toString(),
+          lastSyncedAt: new Date(),
+        },
+      })
+    } catch { /* non-fatal */ }
+
+    if (expirySec <= nowSec) return { valid: false, reason: 'Session key expired' }
+    if (actionType !== undefined && actionType <= 7 && (scopeBitmap & (1 << actionType)) === 0) {
+      return { valid: false, reason: 'Action type not in session scope' }
     }
-
-    if (expiry <= nowSec) {
-      return { valid: false, reason: 'Session key expired' }
-    }
-
-    // Check scope if action type is provided
-    if (actionType !== undefined && actionType <= 7) {
-      if ((scopeBitmap & (1 << actionType)) === 0) {
-        return { valid: false, reason: 'Action type not in session scope' }
-      }
-    }
-
-    // Check spend limit (read on-chain spent amount)
-    if (spendLimit > 0n) {
-      try {
-        const actionsContract = new Contract(
-          CAW_ACTIONS_ADDRESS,
-          cawActionsAbi as any,
-          _readProvider!
-        )
-        const spent = BigInt((await actionsContract.sessionSpent(ownerAddress, sessionKeyAddress)).toString())
-        if (spent >= spendLimit) {
-          return { valid: false, reason: 'Session key spend limit reached' }
-        }
-      } catch {
-        // If we can't check spend, allow it — the contract will enforce
-      }
-    }
-
-    // Cache the successful lookup
-    sessionKeyCache.set(cacheKey, { expiry, scopeBitmap, spendLimit, cachedAt: nowMs })
-
     return { valid: true }
   } catch (err) {
-    // RPC failure — allow the action through rather than blocking users when the RPC is down.
-    // The on-chain contract will enforce session key validation when the validator submits the batch,
-    // so this server-side check is just an early rejection optimization, not a security boundary.
-    console.warn('[Actions] On-chain session key verification failed (allowing action — contract will enforce):', err)
+    // RPC failure — allow through; contract will enforce at submission.
+    console.warn('[Actions] Session key DB miss + RPC failed (allowing action):', (err as any)?.message)
     return { valid: true }
   }
 }
