@@ -803,13 +803,24 @@ router.post('/', async (req, res) => {
  */
 router.post('/batch', async (req, res) => {
   try {
-    const { actions } = req.body
+    const { actions, pendingDepositTxHash } = req.body
 
     if (!Array.isArray(actions) || actions.length === 0) {
       return res.status(400).json({ error: 'Expected non-empty actions array' })
     }
     if (actions.length > 300) {
       return res.status(400).json({ error: 'Batch size exceeds 300 actions' })
+    }
+
+    // Validate pendingDepositTxHash shape (same rules as single-action endpoint).
+    // When present, all resulting TxQueue rows get parked in waiting_for_deposit
+    // until the L1→L2 LayerZero propagation lands client authentication.
+    let sanitizedPendingDepositTxHash: string | null = null
+    if (pendingDepositTxHash !== undefined && pendingDepositTxHash !== null) {
+      if (typeof pendingDepositTxHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(pendingDepositTxHash)) {
+        return res.status(400).json({ error: 'Invalid pendingDepositTxHash format' })
+      }
+      sanitizedPendingDepositTxHash = pendingDepositTxHash.toLowerCase()
     }
 
     // Payload size guard
@@ -911,6 +922,11 @@ router.post('/batch', async (req, res) => {
       results.push({ index: i }) // placeholder, txQueueId filled after insert
     }
 
+    // No per-sender waiting_for_deposit cap on the batch endpoint — threads
+    // posted during LZ propagation are exactly the legitimate use case for
+    // pendingDepositTxHash, and callers are already bounded by the 300-action
+    // batch cap, 5MB payload cap, ownership check, and same-signer check.
+
     // Insert TxQueue rows + optimistic Caw/Reply records in a single transaction
     // so the frontend sees the thread in "pending" state immediately and the
     // ActionProcessor can resolve parent cawonces (post 2 → post 1) deterministically.
@@ -924,9 +940,13 @@ router.post('/batch', async (req, res) => {
       }
 
       const created = await prisma.$transaction(async (tx) => {
-        // Step 1: insert all TxQueue rows
+        // Step 1: insert all TxQueue rows. Forward pendingDepositTxHash so
+        // the validator parks them as waiting_for_deposit until LZ lands
+        // client authentication on L2.
         const txqRows = await Promise.all(
-          rowsToInsert.map(row => tx.txQueue.create({ data: row }))
+          rowsToInsert.map(row => tx.txQueue.create({
+            data: { ...row, pendingDepositTxHash: sanitizedPendingDepositTxHash }
+          }))
         )
 
         // Step 2: build optimistic Caw records for CAW (0) / RECAW (3) actions.

@@ -860,11 +860,33 @@ export function useSignAndSubmitAction() {
       isQuote: item.params.isQuote || false,
     }))
 
+    // Forward pending mint/deposit hint (same logic as single-action path) so
+    // threads posted during LZ propagation get parked in waiting_for_deposit
+    // instead of failing with "User has not authenticated with this client".
+    let pendingDepositTxHash: string | undefined
+    try {
+      const hintRaw = localStorage.getItem(`caw:pendingDeposit:${activeTokenId}`)
+      if (hintRaw) {
+        const hint = JSON.parse(hintRaw)
+        if (hint?.txHash && typeof hint.txHash === 'string' && /^0x[0-9a-fA-F]{64}$/.test(hint.txHash)) {
+          const age = Date.now() - (hint.at ?? 0)
+          if (age < 30 * 60 * 1000) {
+            pendingDepositTxHash = hint.txHash
+          } else {
+            localStorage.removeItem(`caw:pendingDeposit:${activeTokenId}`)
+          }
+        }
+      }
+    } catch { /* ignore */ }
+
     let batchResponse: any
     try {
       batchResponse = await apiFetch('/api/actions/batch', {
         method: 'POST',
-        body: JSON.stringify({ actions: batchPayload }),
+        body: JSON.stringify({
+          actions: batchPayload,
+          ...(pendingDepositTxHash ? { pendingDepositTxHash } : {}),
+        }),
       })
     } catch (err: any) {
       console.error('[submitMany] Batch submit failed:', err.message)
