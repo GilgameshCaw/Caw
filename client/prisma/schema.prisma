@@ -748,3 +748,41 @@ model Bookmark {
   @@index([userId, createdAt])
   @@index([cawId])
 }
+
+/// Indexed mirror of CawNameL2.sessions[owner][sessionKey] state.
+/// Written by the event indexer listening for SessionCreated / SessionRevoked
+/// on L2. Read by /api/actions to validate session-key-signed submissions
+/// without a live RPC call per action.
+model SessionKey {
+  id             Int       @id @default(autoincrement())
+  ownerAddress   String    // lowercase owner (token owner)
+  sessionAddress String    // lowercase session key address
+  expiry         BigInt    // unix seconds, matches contract uint64
+  scopeBitmap    Int       // contract uint8, bit i = action type i allowed
+  spendLimit     String    // bigint as string (whole CAW tokens, not wei)
+  spent          String    @default("0") // locally-tracked spend total
+  revokedAt      DateTime? // set when SessionRevoked event indexed
+  lastSyncedAt   DateTime  @default(now())
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([ownerAddress, sessionAddress])
+  @@index([ownerAddress])
+  @@index([sessionAddress])
+}
+
+/// Indexed mirror of CawNameL2.authenticated[clientId][tokenId] state.
+/// Written by the event indexer listening for Authenticated on L2.
+/// Auth is a one-way flag (once true, always true for that pair) — set
+/// when the token's owner deposits CAW for this client.
+model ClientAuth {
+  id            Int      @id @default(autoincrement())
+  clientId      Int
+  tokenId       Int
+  authenticated Boolean  @default(false)
+  lastSyncedAt  DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  @@unique([clientId, tokenId])
+  @@index([tokenId])
+}
