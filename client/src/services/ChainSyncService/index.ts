@@ -540,6 +540,166 @@ export async function getReplicationCount(clientId: number): Promise<number> {
 }
 
 // ============================================================================
+// L2 Event Indexing (SessionKey + ClientAuth)
+// ============================================================================
+
+// CawNameL2 ABI fragments for event indexing
+const CAW_NAME_L2_EVENT_ABI = [
+  'event SessionCreated(address indexed owner, address indexed sessionKey, uint64 expiry, uint8 scopeBitmap, uint256 spendLimit)',
+  'event SessionRevoked(address indexed owner, address indexed sessionKey)',
+  'event Authenticated(uint32 cawClientId, uint32 tokenId)',
+] as const
+
+// Key used in the ChainData table to track the last L2 block we indexed up through
+const L2_SYNC_BLOCK_KEY = 'l2_events_last_synced_block'
+const L2_EVENT_CHUNK_SIZE = 2000 // blocks per getLogs call
+const L2_EVENT_BOOTSTRAP_LOOKBACK = 10000 // if no cursor exists, start this many blocks back
+
+async function getLastSyncedL2Block(): Promise<number | null> {
+  try {
+    const row = await prisma.chainData.findUnique({ where: { key: L2_SYNC_BLOCK_KEY } })
+    const value = row?.value as any
+    return typeof value?.block === 'number' ? value.block : null
+  } catch {
+    return null
+  }
+}
+
+async function setLastSyncedL2Block(block: number): Promise<void> {
+  await prisma.chainData.upsert({
+    where: { key: L2_SYNC_BLOCK_KEY },
+    update: { value: { block } },
+    create: { key: L2_SYNC_BLOCK_KEY, value: { block } },
+  })
+}
+
+async function handleSessionCreated(args: any) {
+  const owner = String(args.owner).toLowerCase()
+  const sessionAddress = String(args.sessionKey).toLowerCase()
+  const expiry = BigInt(args.expiry?.toString() || '0')
+  const scopeBitmap = Number(args.scopeBitmap)
+  const spendLimit = String(args.spendLimit?.toString() || '0')
+
+  try {
+    await prisma.sessionKey.upsert({
+      where: { ownerAddress_sessionAddress: { ownerAddress: owner, sessionAddress } },
+      update: {
+        expiry,
+        scopeBitmap,
+        spendLimit,
+        revokedAt: null,      // re-creating a session clears any prior revocation
+        spent: '0',           // new session starts with zero spent
+        lastSyncedAt: new Date(),
+      },
+      create: {
+        ownerAddress: owner,
+        sessionAddress,
+        expiry,
+        scopeBitmap,
+        spendLimit,
+        lastSyncedAt: new Date(),
+      },
+    })
+  } catch (err: any) {
+    console.error(`[ChainSync:L2Events] Failed to upsert SessionKey for ${owner}/${sessionAddress}:`, err.message)
+  }
+}
+
+async function handleSessionRevoked(args: any) {
+  const owner = String(args.owner).toLowerCase()
+  const sessionAddress = String(args.sessionKey).toLowerCase()
+  try {
+    await prisma.sessionKey.updateMany({
+      where: { ownerAddress: owner, sessionAddress, revokedAt: null },
+      data: { revokedAt: new Date(), lastSyncedAt: new Date() },
+    })
+  } catch (err: any) {
+    console.error(`[ChainSync:L2Events] Failed to revoke SessionKey for ${owner}/${sessionAddress}:`, err.message)
+  }
+}
+
+async function handleAuthenticated(args: any) {
+  const clientId = Number(args.cawClientId)
+  const tokenId = Number(args.tokenId)
+  try {
+    await prisma.clientAuth.upsert({
+      where: { clientId_tokenId: { clientId, tokenId } },
+      update: { authenticated: true, lastSyncedAt: new Date() },
+      create: { clientId, tokenId, authenticated: true, lastSyncedAt: new Date() },
+    })
+  } catch (err: any) {
+    console.error(`[ChainSync:L2Events] Failed to upsert ClientAuth for ${clientId}/${tokenId}:`, err.message)
+  }
+}
+
+async function syncL2Events(): Promise<void> {
+  if (!l2Provider) {
+    console.log('[ChainSync:L2Events] Skipping — L2 provider not available')
+    return
+  }
+
+  const { CAW_NAMES_L2_ADDRESS } = await import('../../abi/addresses')
+  const contract = new Contract(CAW_NAMES_L2_ADDRESS, CAW_NAME_L2_EVENT_ABI as any, l2Provider)
+
+  // Determine starting block
+  let fromBlock = await getLastSyncedL2Block()
+  const latestBlock = await l2Provider.getBlockNumber()
+
+  if (fromBlock === null) {
+    fromBlock = Math.max(0, latestBlock - L2_EVENT_BOOTSTRAP_LOOKBACK)
+    console.log(`[ChainSync:L2Events] Bootstrapping from block ${fromBlock}`)
+  }
+
+  if (fromBlock >= latestBlock) return
+
+  // Scan in chunks — public RPCs often reject getLogs with ranges > 2-5k blocks
+  let cursor = fromBlock + 1
+  let totalEvents = 0
+  while (cursor <= latestBlock) {
+    const toBlock = Math.min(cursor + L2_EVENT_CHUNK_SIZE - 1, latestBlock)
+
+    try {
+      const [created, revoked, authed] = await Promise.all([
+        contract.queryFilter(contract.filters.SessionCreated(), cursor, toBlock),
+        contract.queryFilter(contract.filters.SessionRevoked(), cursor, toBlock),
+        contract.queryFilter(contract.filters.Authenticated(), cursor, toBlock),
+      ])
+
+      // Process in block/logIndex order to handle a revoke+create in the same block correctly
+      const combined = [
+        ...created.map(e => ({ ev: e, kind: 'created' as const })),
+        ...revoked.map(e => ({ ev: e, kind: 'revoked' as const })),
+        ...authed.map(e => ({ ev: e, kind: 'authed' as const })),
+      ].sort((a, b) => {
+        if (a.ev.blockNumber !== b.ev.blockNumber) return a.ev.blockNumber - b.ev.blockNumber
+        return (a.ev as any).logIndex - (b.ev as any).logIndex
+      })
+
+      for (const { ev, kind } of combined) {
+        const args = (ev as any).args
+        if (!args) continue
+        if (kind === 'created') await handleSessionCreated(args)
+        else if (kind === 'revoked') await handleSessionRevoked(args)
+        else if (kind === 'authed') await handleAuthenticated(args)
+      }
+
+      totalEvents += combined.length
+      await setLastSyncedL2Block(toBlock)
+    } catch (err: any) {
+      console.error(`[ChainSync:L2Events] getLogs failed for range ${cursor}-${toBlock}:`, err.message?.slice(0, 200))
+      // Break out — next tick will retry from the current cursor
+      return
+    }
+
+    cursor = toBlock + 1
+  }
+
+  if (totalEvents > 0) {
+    console.log(`[ChainSync:L2Events] Indexed ${totalEvents} events through block ${latestBlock}`)
+  }
+}
+
+// ============================================================================
 // Task Management
 // ============================================================================
 
@@ -627,6 +787,18 @@ export const chainSyncService = {
         sync: syncPrices
       })
       ctx.declareLoop('ChainSync:Prices', 15 * 60_000) // 3× interval
+    }
+
+    // L2 event indexing (SessionKey + ClientAuth) — drives action-submission
+    // validation off-chain. Needs to be fresh so users see session creation
+    // / revocation reflected quickly.
+    if (resolvedCfg.l2RpcUrl) {
+      registerTask({
+        name: 'L2Events',
+        interval: 15 * 1000, // 15 seconds
+        sync: syncL2Events,
+      })
+      ctx.declareLoop('ChainSync:L2Events', 60 * 1000) // 4× interval
     }
 
     // Start all tasks
