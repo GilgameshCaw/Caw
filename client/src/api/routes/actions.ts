@@ -3,8 +3,8 @@ import { ethers, JsonRpcProvider, WebSocketProvider, Contract } from 'ethers'
 import { prisma } from '../../prismaClient'
 import { findOrCreateUser } from '../../services/UserService'
 import { getSession, addAuthorization, createSession } from '../sessionStore'
-import { cawNameL2Abi } from '../../abi/generated'
-import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
+import { cawNameL2Abi, cawActionsAbi } from '../../abi/generated'
+import { CAW_NAMES_L2_ADDRESS, CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
 
 const router = Router()
 
@@ -54,11 +54,58 @@ interface SessionKeyCheck {
   reason?: string
 }
 
+// Cache session key validation results to avoid an RPC per action.
+// Keyed by `${owner}:${sessionKey}`. Entries are valid for 30 seconds,
+// or until the known expiry (whichever is sooner). If the session has a
+// spend limit, we skip the cache (spent amount changes per action).
+type CachedSession = {
+  expiry: number // unix seconds, from on-chain
+  scopeBitmap: number
+  spendLimit: bigint
+  cachedAt: number // ms, for freshness
+}
+const sessionKeyCache = new Map<string, CachedSession>()
+const SESSION_CACHE_TTL_MS = 30_000
+
+// Clean up expired cache entries every 5 minutes
+setInterval(() => {
+  const nowMs = Date.now()
+  const nowSec = Math.floor(nowMs / 1000)
+  for (const [key, entry] of sessionKeyCache) {
+    if (entry.expiry <= nowSec || nowMs - entry.cachedAt > SESSION_CACHE_TTL_MS) {
+      sessionKeyCache.delete(key)
+    }
+  }
+}, 5 * 60_000)
+
 async function checkSessionKeyOnChain(
   ownerAddress: string,
   sessionKeyAddress: string,
   actionType?: number
 ): Promise<SessionKeyCheck> {
+  const cacheKey = `${ownerAddress}:${sessionKeyAddress}`
+  const nowMs = Date.now()
+  const nowSec = Math.floor(nowMs / 1000)
+
+  let cached = sessionKeyCache.get(cacheKey)
+  if (cached && nowMs - cached.cachedAt > SESSION_CACHE_TTL_MS) {
+    sessionKeyCache.delete(cacheKey)
+    cached = undefined
+  }
+
+  // If cached and the session has no spend limit, we can validate without any RPC.
+  // Spend-limited sessions still need a fresh RPC to check sessionSpent.
+  if (cached && cached.spendLimit === 0n) {
+    if (cached.expiry <= nowSec) {
+      sessionKeyCache.delete(cacheKey)
+      return { valid: false, reason: 'Session key expired' }
+    }
+    if (actionType !== undefined && actionType <= 7 && (cached.scopeBitmap & (1 << actionType)) === 0) {
+      return { valid: false, reason: 'Action type not in session scope' }
+    }
+    return { valid: true }
+  }
+
   try {
     const contract = getReadContract()
     const session = await contract.sessions(ownerAddress, sessionKeyAddress)
@@ -70,7 +117,7 @@ async function checkSessionKeyOnChain(
       return { valid: false, reason: 'Session key not registered' }
     }
 
-    if (expiry <= Math.floor(Date.now() / 1000)) {
+    if (expiry <= nowSec) {
       return { valid: false, reason: 'Session key expired' }
     }
 
@@ -84,10 +131,9 @@ async function checkSessionKeyOnChain(
     // Check spend limit (read on-chain spent amount)
     if (spendLimit > 0n) {
       try {
-        // CawActions.sessionSpent(owner, sessionKey) returns the amount spent
         const actionsContract = new Contract(
-          (await import('../../abi/addresses')).CAW_ACTIONS_ADDRESS,
-          (await import('../../abi/generated')).cawActionsAbi as any,
+          CAW_ACTIONS_ADDRESS,
+          cawActionsAbi as any,
           _readProvider!
         )
         const spent = BigInt((await actionsContract.sessionSpent(ownerAddress, sessionKeyAddress)).toString())
@@ -98,6 +144,9 @@ async function checkSessionKeyOnChain(
         // If we can't check spend, allow it — the contract will enforce
       }
     }
+
+    // Cache the successful lookup
+    sessionKeyCache.set(cacheKey, { expiry, scopeBitmap, spendLimit, cachedAt: nowMs })
 
     return { valid: true }
   } catch (err) {
