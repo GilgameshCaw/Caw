@@ -1,5 +1,5 @@
 // src/pages/ProfilePage.tsx
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Link, useParams, useSearchParams }    from 'react-router-dom'
 import MainLayout       from '~/layouts/MainLayout'
 import { Tabs, TabItem } from '~/components/Tabs'
@@ -264,6 +264,36 @@ export const Profile: React.FC = () => {
   })
   const onChainTokenId = onChainTokenIdRaw ? Number(onChainTokenIdRaw) : 0
   const availableOnChain = dbNotFound && !checkingOnChain && onChainTokenId === 0
+
+  // If the name exists on-chain but not in the DB, ask the server to ensure
+  // the user record (which pulls their info from chain and upserts them),
+  // then re-fetch so the page renders normally. No-op if the ensure call fails.
+  const ensureTriggered = useRef<number | null>(null)
+  useEffect(() => {
+    if (!dbNotFound || checkingOnChain || onChainTokenId === 0) return
+    if (ensureTriggered.current === onChainTokenId) return // don't spam
+    ensureTriggered.current = onChainTokenId
+
+    ;(async () => {
+      try {
+        await apiFetch('/api/users/ensure', {
+          method: 'POST',
+          body: JSON.stringify({ tokenId: onChainTokenId }),
+        })
+        // Re-fetch the user — if sync succeeded, dbNotFound flips back to false
+        const res = await fetch(`/api/users/${displayUsername}`)
+        if (res.ok) {
+          const data = await res.json() as ProfileData
+          setProfileData(data)
+          setDbNotFound(false)
+          setHasTipped(data.hasTipped || false)
+          setTipPending(data.tipPending || false)
+        }
+      } catch (err) {
+        console.warn('[Profile] ensure failed:', err)
+      }
+    })()
+  }, [dbNotFound, checkingOnChain, onChainTokenId, displayUsername])
 
   // Poll for tip confirmation
   useEffect(() => {
@@ -790,7 +820,7 @@ export const Profile: React.FC = () => {
             </>
           ) : (
             <p className={`mb-6 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-              @{displayUsername} exists on-chain but we're still syncing its data. Try again in a moment.
+              Syncing @{displayUsername} from on-chain data...
             </p>
           )}
         </div>
