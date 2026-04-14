@@ -468,11 +468,38 @@ export const validatorService: Service = {
         console.log(`[Validator] Pre-sim hold: moved ${heldCount.count} rows to waiting_for_deposit`)
       }
 
-      return prisma.txQueue.findMany({
+      // Fetch more candidates than we might use so we can stop at the size limit.
+      // Base Sepolia transaction size limit is 128KB. We target ~80KB of action
+      // data to leave headroom for signatures, arrays, and ABI encoding overhead.
+      const candidates = await prisma.txQueue.findMany({
         where: { status: 'pending' },
         orderBy: { createdAt: 'asc' },
-        take: 256
+        take: 256,
       })
+
+      // Bound the batch by estimated calldata size. Each action's calldata cost
+      // is roughly: fixed struct overhead (~260 bytes) + text.length + arrays.
+      // Signatures add 65 bytes per action. We cap at 80KB to leave a safety
+      // margin below the 128KB protocol tx size limit.
+      const MAX_BATCH_CALLDATA_BYTES = 80_000
+      const PER_ACTION_OVERHEAD = 325 // struct fields + sig v/r/s
+      let runningSize = 500 // base overhead for the outer function call
+      const bounded: typeof candidates = []
+      for (const entry of candidates) {
+        const data = (entry.payload as any)?.data
+        const textLen = typeof data?.text === 'string' ? data.text.length : 0
+        const recipientsLen = Array.isArray(data?.recipients) ? data.recipients.length * 32 : 0
+        const amountsLen = Array.isArray(data?.amounts) ? data.amounts.length * 32 : 0
+        const entrySize = PER_ACTION_OVERHEAD + textLen + recipientsLen + amountsLen
+        if (bounded.length > 0 && runningSize + entrySize > MAX_BATCH_CALLDATA_BYTES) {
+          console.log(`[Validator] Batch size limit reached at ${bounded.length} entries (~${runningSize} bytes). Deferring ${candidates.length - bounded.length} entries to next poll.`)
+          break
+        }
+        bounded.push(entry)
+        runningSize += entrySize
+      }
+
+      return bounded
     }
 
     /** natstat: split each raw signedTx into r, s, v and collect action payloads */
@@ -879,6 +906,23 @@ export const validatorService: Service = {
         console.log("[submitProcessActions] Processed actions:", processed)
         return { processed, receipt }
       } catch (err: any) {
+        // Handle "oversized data" — tx calldata exceeds the 128KB protocol limit.
+        // Split the batch in half and try again. Uses recursion with a shrinking
+        // multiData so at worst we end up submitting one action at a time.
+        if (err.message?.includes('oversized data') && multiData.actions.length > 1) {
+          const halfLen = Math.floor(multiData.actions.length / 2)
+          console.warn(`[submitProcessActions] Oversized tx (${multiData.actions.length} actions). Splitting in half — sending first ${halfLen}, deferring the rest.`)
+          const firstHalf = {
+            actions: multiData.actions.slice(0, halfLen),
+            v: multiData.v.slice(0, halfLen),
+            r: multiData.r.slice(0, halfLen),
+            s: multiData.s.slice(0, halfLen),
+          }
+          // Note: quote was computed for the full batch. The withdraw-related
+          // portion should still be ≥ what we need for this smaller batch.
+          return submitProcessActions(validatorId, firstHalf, quote, rawGasLimit, 0)
+        }
+
         // Handle REPLACEMENT_UNDERPRICED - retry with higher gas
         if (err.code === 'REPLACEMENT_UNDERPRICED' || err.message?.includes('replacement transaction underpriced')) {
           if (retryCount < maxRetries) {
@@ -1849,21 +1893,53 @@ console.log("succeededKeys", succeededKeys)
      * decodes processActions calldata from the transactions to extract signatures.
      */
     function formatRpcError(err: any): string {
-      // Extract the most useful info from ethers error blobs
-      const msg = err.message || String(err)
-      if (msg.includes('Too Many Requests') || msg.includes('429')) {
-        const method = err.info?.payload?.method || 'unknown'
-        return `RPC rate limited (429) on ${method}`
+      // Extract the most useful info from ethers error blobs.
+      // Check the most specific signals first — ethers errors can have lots of
+      // fields and we want to avoid substring matches on arbitrary message text.
+
+      // 1. Contract revert (the most common "error" from writes)
+      if (err?.code === 'CALL_EXCEPTION') {
+        const reason = err.reason || err.revert?.args?.[0]
+        const status = err.receipt?.status
+        const txHash = err.receipt?.hash || err.transaction?.hash
+        if (status === 0 || status === '0') {
+          return `Transaction reverted${reason ? `: ${reason}` : ' (no reason)'} — tx: ${txHash}`
+        }
+        return `Call exception${reason ? `: ${reason}` : ''}`
       }
-      if (msg.includes('401') || msg.includes('Unauthorized')) {
-        return 'RPC auth failed (401) — check API key'
+
+      // 2. Insufficient funds for gas + value
+      if (err?.code === 'INSUFFICIENT_FUNDS' || err?.message?.includes('insufficient funds')) {
+        return `Insufficient funds for tx (gas + value)`
       }
-      if (msg.includes('internal error')) {
-        const method = err.info?.payload?.method || err.error?.message || 'unknown'
-        return `RPC internal error on ${method}`
+
+      // 3. RPC-level errors (inspect err.info.payload to know which method).
+      // ethers wraps RPC errors with error.code from the server (-32xxx).
+      const rpcCode = err?.error?.code ?? err?.info?.error?.code
+      const rpcMessage = err?.error?.message ?? err?.info?.error?.message
+      const method = err?.info?.payload?.method
+
+      if (rpcCode === -32005 || rpcMessage?.includes('Too Many Requests')) {
+        return `RPC rate limited on ${method || 'unknown'}`
       }
-      // Truncate long ethers messages
-      return msg.length > 200 ? msg.slice(0, 200) + '...' : msg
+      if (rpcCode === -32000 && rpcMessage?.includes('oversized data')) {
+        return `Oversized transaction data: ${rpcMessage}`
+      }
+      if (rpcCode === -32000 && rpcMessage?.includes('internal error')) {
+        return `RPC internal error on ${method || 'unknown'}: ${rpcMessage}`
+      }
+      if (rpcCode === -32600 || rpcMessage?.includes('Unauthorized')) {
+        return `RPC auth failed — check API key`
+      }
+
+      // 4. HTTP-level auth errors (before ethers wraps them)
+      if (err?.code === 'SERVER_ERROR' && err?.info?.responseStatus === '401 Unauthorized') {
+        return `RPC auth failed (HTTP 401) — check API key`
+      }
+
+      // 5. Anything else: full message (truncated)
+      const msg = err?.shortMessage || err?.message || String(err)
+      return msg.length > 300 ? msg.slice(0, 300) + '...' : msg
     }
 
     // HTTP provider for replication — created once, reused across cycles.
