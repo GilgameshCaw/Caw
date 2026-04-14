@@ -162,6 +162,9 @@ async function checkSessionKeyOnChain(
  * natstat: enqueue signed actions into TxQueue
  */
 router.post('/', async (req, res) => {
+  const reqStart = Date.now()
+  const timings: Record<string, number> = {}
+  const mark = (label: string) => { timings[label] = Date.now() - reqStart }
   try {
     const { data, domain, types, signature, isQuote, pendingDepositTxHash } = req.body
 
@@ -219,6 +222,7 @@ router.post('/', async (req, res) => {
     let recoveredAddress: string | null = null
     let ownerAddress: string | null = null
     let sender = await prisma.user.findUnique({ where: { tokenId: data.senderId } })
+    mark('userLookup')
 
     // Auto-create user from on-chain data if not in DB (e.g. after DB reset,
     // or first action from a user on a new client instance)
@@ -246,6 +250,7 @@ router.post('/', async (req, res) => {
     } catch (err) {
       return res.status(400).json({ error: 'Invalid signature' })
     }
+    mark('verifySig')
 
     const isOwner = recoveredAddress === ownerAddress
 
@@ -259,12 +264,18 @@ router.post('/', async (req, res) => {
         return res.status(403).json({ error: sessionCheck.reason || 'Signer is not authorized for this token' })
       }
     }
+    mark('sessionCheck')
 
     // --- Passive auth accumulation ---
     // Now that the signer is verified, create/extend the HTTP session for the token owner.
+    // Only runs for wallet-signed actions (owner signature) — session-key-signed actions
+    // don't need to accumulate HTTP sessions since they're not tied to a specific wallet.
     let authResult: { sessionToken: string; authorizedTokenIds: number[]; authorizedAddresses: string[]; expiresAt: number } | null = null
     let sessionToken = req.headers['x-session-token'] as string | undefined
     try {
+      if (!isOwner) {
+        // Session-key-signed — skip passive auth entirely
+      } else {
       let session = sessionToken ? await getSession(sessionToken) : null
       const alreadyAuthorized = session?.authorizedAddresses.includes(ownerAddress)
 
@@ -321,10 +332,12 @@ router.post('/', async (req, res) => {
           }
         }
       }
+      } // end else (isOwner path)
     } catch (err: any) {
       console.error('[Actions] ❌ PASSIVE AUTH FAILED:', err?.message || err)
       console.error('[Actions] Stack:', err?.stack)
     }
+    mark('passiveAuth')
 
     // Create optimistic pending state for profile updates
     if (data.actionType === 'other' && data.text && (data.text.startsWith('p:') || data.text.startsWith('profile-update:'))) {
@@ -343,15 +356,8 @@ router.post('/', async (req, res) => {
     const isRecaw = data.actionType === 3 || data.actionType === 'recaw'
     if (data.actionType === 0 || data.actionType === 'caw' || isRecaw) { // 0=caw, 3=recaw (plain or quote)
       try {
-        console.log('Creating optimistic pending caw for user:', data.senderId, 'cawonce:', data.cawonce)
-
-        // Ensure user exists first - fetch from chain if needed
-        try {
-          await findOrCreateUser(data.senderId)
-        } catch (userErr) {
-          console.error('Failed to find/create user from chain:', userErr)
-          // Continue anyway - the caw will be created with userId reference
-        }
+        // User was already verified above (sender.address is set); no need to
+        // call findOrCreateUser again — the redundant lookup was adding ~10ms.
 
         // Extract image URLs if present
         const imageUrlRegex = /(https?:\/\/[^\s]+\/uploads\/images\/[^\s]+\.(jpg|jpeg|png|gif|webp))/gi
@@ -493,6 +499,7 @@ router.post('/', async (req, res) => {
         // Continue even if optimistic caw creation fails
       }
     }
+    mark('optimisticCaw')
 
     // Debug logging for all actions
     console.log('Received action:', {
@@ -774,6 +781,12 @@ router.post('/', async (req, res) => {
       } else {
         console.error(`❌ WARNING: Pending caw NOT found after creation for userId ${data.senderId}, cawonce ${data.cawonce}`)
       }
+    }
+
+    mark('done')
+    const total = Date.now() - reqStart
+    if (total > 200) {
+      console.log(`[Actions] POST /api/actions took ${total}ms breakdown:`, timings)
     }
 
     res.status(201).json({
