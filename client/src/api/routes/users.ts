@@ -94,8 +94,12 @@ router.post('/ensure', async (req, res) => {
       return res.status(400).json({ error: 'tokenId is required' })
     }
 
+    // /api/users/ensure is called from PostMintOnboarding when the user has
+    // just minted a fresh name — they need to complete the welcome flow.
+    // Pass onboardingStep: 0 so the upsert creates them at the start of the
+    // flow (existing users are unchanged — upsert's update is a no-op).
     console.log(`[/api/users/ensure] Calling findOrCreateUser(${tokenId})...`)
-    const resultTokenId = await findOrCreateUser(Number(tokenId))
+    const resultTokenId = await findOrCreateUser(Number(tokenId), { onboardingStep: 0 })
     const findDuration = Date.now() - startTime
     console.log(`[/api/users/ensure] findOrCreateUser completed in ${findDuration}ms, resultTokenId=${resultTokenId}`)
 

@@ -183,7 +183,10 @@ async function getL1Provider() {
  * findOrCreateUser
  * - uses on‑chain senderId as both L2 address and NFT tokenId
  */
-export async function findOrCreateUser(senderId: number) {
+export async function findOrCreateUser(
+  senderId: number,
+  opts: { onboardingStep?: number } = {},
+) {
   const startTime = Date.now()
   const tokenId = senderId;
   console.log(`[UserService] findOrCreateUser START tokenId=${tokenId}`)
@@ -280,8 +283,10 @@ export async function findOrCreateUser(senderId: number) {
     console.log(`[UserService] Creating user in DB: tokenId=${tokenId}, owner=${ownerAddress}, username=${username}`);
 
     // atomic create‑or‑return (id = tokenId)
-    // Set onboardingStep=5 (complete) since the user already minted and has a
-    // username on-chain — they've completed onboarding on a previous instance.
+    // Default onboardingStep=5 (complete) since the user already minted and
+    // has a username on-chain — if we're finding them via this helper, they
+    // exist on-chain already. Callers doing fresh-mint onboarding (e.g.
+    // /api/users/ensure from PostMintOnboarding) can override with step 0.
     const dbStart = Date.now()
     user = await prisma.user.upsert({
       where:  { tokenId },
@@ -292,7 +297,7 @@ export async function findOrCreateUser(senderId: number) {
         tokenId,
         username: username.trim(),
         image: '',  // L2 contract doesn't store images
-        onboardingStep: 5,
+        onboardingStep: opts.onboardingStep ?? 5,
       },
     });
     console.log(`[UserService] User created in DB in ${Date.now() - dbStart}ms`)
