@@ -6,30 +6,8 @@ import { ActionType } from '@prisma/client'
 import { findOrCreateUser, StaleTokenError } from '../../services/UserService'
 import { getBlockedUserIds } from '../shared/blockUtils'
 import { requireAuth } from '../middleware/auth'
-import { CAW_NAMES_L2_ADDRESS, CAW_NAMES_MINTER_ADDRESS } from '../../abi/addresses'
+import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 import { cawNameL2Abi } from '../../abi/generated'
-
-// Lazy-cached L1 minter read contract for checking if a username is already
-// claimed on-chain. The minter has `mapping(string => uint32) idByUsername`
-// which returns 0 for untaken names (token IDs start at 1).
-let _l1MinterContract: Contract | null = null
-function getL1MinterContract(): Contract | null {
-  if (_l1MinterContract) return _l1MinterContract
-  const rpcUrl = process.env.L1_RPC_URL_HTTP || process.env.L1_RPC_URL
-  if (!rpcUrl) return null
-  try {
-    const httpUrl = rpcUrl.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace('/ws/', '/')
-    const provider = new JsonRpcProvider(httpUrl)
-    _l1MinterContract = new Contract(
-      CAW_NAMES_MINTER_ADDRESS,
-      ['function idByUsername(string) view returns (uint32)'],
-      provider
-    )
-    return _l1MinterContract
-  } catch {
-    return null
-  }
-}
 
 // Lazy-cached L2 read contract for checking on-chain staked balance.
 let _l2ReadContract: Contract | null = null
@@ -767,31 +745,11 @@ router.get('/:username', async (req, res) => {
     })
 
     if (!user) {
-      // User not in DB — check on-chain to distinguish "never registered"
-      // (can be claimed) from "registered on-chain but not yet synced to our DB"
-      // (treat as existing — usually a transient sync gap).
-      let available = true
-      let onChainTokenId: number | null = null
-      const minter = getL1MinterContract()
-      if (minter) {
-        try {
-          const tokenId = Number(await minter.idByUsername(username))
-          if (tokenId > 0) {
-            available = false
-            onChainTokenId = tokenId
-          }
-        } catch (err) {
-          // RPC failure — fall back to assuming available. The frontend will
-          // let the user attempt to register; the on-chain registration itself
-          // checks availability and will revert if the name is actually taken.
-          console.warn('[users] on-chain availability check failed:', (err as Error).message)
-        }
-      }
-      return res.status(404).json({
-        error: 'User not found',
-        available,
-        onChainTokenId,
-      })
+      // User not in DB. The frontend will do its own on-chain availability
+      // check via CawNameMinter.idByUsername to distinguish "never claimed"
+      // from "exists on-chain but not yet synced" — we keep that off the
+      // server so unrelated requests aren't delayed by an RPC round-trip.
+      return res.status(404).json({ error: 'User not found' })
     }
 
     // Get actual like count (total likes received on all caws)

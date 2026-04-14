@@ -11,8 +11,10 @@ import { HiPencil, HiX, HiCamera, HiGlobe, HiLink, HiLocationMarker, HiOutlineMa
 import { apiFetch } from '~/api/client'
 import { useDmIdentity } from '~/hooks/useDmIdentity'
 import { useDmClient } from '~/hooks/useDm'
-import { useAccount, useSwitchChain, useChainId, useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
+import { useAccount, useSwitchChain, useChainId, useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi'
 import { chains } from '~/config/chains'
+import { CAW_NAMES_MINTER_ADDRESS } from '~/../../../abi/addresses'
+import { cawNameMinterAbi } from '~/../../../abi/generated'
 import { useSignAndSubmitAction } from '~/api/actions'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useNavigate } from 'react-router-dom'
@@ -97,7 +99,7 @@ export const Profile: React.FC = () => {
   const [profileData, setProfileData] = useState<ProfileData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [notFoundStatus, setNotFoundStatus] = useState<{ available: boolean; onChainTokenId: number | null } | null>(null)
+  const [dbNotFound, setDbNotFound] = useState(false)
   const { isDark } = useTheme()
   const activeToken = useActiveToken()
   const showSignIn = useSignInModalStore(s => s.show)
@@ -225,16 +227,12 @@ export const Profile: React.FC = () => {
 
       setLoading(true)
       setError(null)
-      setNotFoundStatus(null)
+      setDbNotFound(false)
 
       try {
         const res = await fetch(`/api/users/${displayUsername}`)
         if (res.status === 404) {
-          const body = await res.json().catch(() => ({})) as { available?: boolean; onChainTokenId?: number | null }
-          setNotFoundStatus({
-            available: body.available !== false,
-            onChainTokenId: body.onChainTokenId ?? null,
-          })
+          setDbNotFound(true)
           return
         }
         if (!res.ok) throw new Error(`API ${res.status}`)
@@ -252,6 +250,20 @@ export const Profile: React.FC = () => {
 
     fetchProfile()
   }, [displayUsername, activeToken?.tokenId])
+
+  // If the DB doesn't have the user, check on-chain availability directly
+  // via the L1 minter contract (O(1) reverse lookup). Doing this on the
+  // frontend keeps the server fast for unrelated requests.
+  const { data: onChainTokenIdRaw, isLoading: checkingOnChain } = useReadContract({
+    address: CAW_NAMES_MINTER_ADDRESS,
+    abi: cawNameMinterAbi,
+    chainId: chains.l1.chainId,
+    functionName: 'idByUsername',
+    args: [displayUsername || ''],
+    query: { enabled: dbNotFound && !!displayUsername && displayUsername !== 'user' },
+  })
+  const onChainTokenId = onChainTokenIdRaw ? Number(onChainTokenIdRaw) : 0
+  const availableOnChain = dbNotFound && !checkingOnChain && onChainTokenId === 0
 
   // Poll for tip confirmation
   useEffect(() => {
@@ -745,9 +757,8 @@ export const Profile: React.FC = () => {
     { id: 'likes',   label: `Likes${tabCount(profileData?.likeCount)}`    },
   ]
 
-  // Profile doesn't exist in our DB
-  if (notFoundStatus) {
-    const { available } = notFoundStatus
+  // Profile not in our DB — check on-chain availability for better UX
+  if (dbNotFound) {
     return (
       <MainLayout>
         <div className="max-w-2xl mx-auto px-6 py-16 text-center">
@@ -761,7 +772,11 @@ export const Profile: React.FC = () => {
           <h2 className={`text-xl font-bold mb-2 ${isDark ? 'text-white' : 'text-black'}`}>
             This profile doesn't exist
           </h2>
-          {available ? (
+          {checkingOnChain ? (
+            <p className={`mb-6 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+              Checking availability...
+            </p>
+          ) : availableOnChain ? (
             <>
               <p className={`mb-6 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                 @{displayUsername} hasn't been claimed yet. You could be the first to register it.
@@ -775,7 +790,7 @@ export const Profile: React.FC = () => {
             </>
           ) : (
             <p className={`mb-6 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                @{displayUsername} exists on-chain but we're still syncing its data. Try again in a moment.
+              @{displayUsername} exists on-chain but we're still syncing its data. Try again in a moment.
             </p>
           )}
         </div>
