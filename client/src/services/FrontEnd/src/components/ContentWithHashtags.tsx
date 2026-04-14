@@ -179,7 +179,9 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
     // Regular expression that matches hashtags, cashtags, @mentions, AND short URLs
     // (so we can render short URLs as clickable links pointing to the original URL).
     // Short URLs: /s/code or https://host/s/code (with optional extension)
-    const specialRegex = /((?:https?:\/\/[^\s]+)?\/s\/[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)?|[@#$][a-zA-Z0-9_\u00C0-\u017F\u1E00-\u1EFF\u0100-\u024F\u1EA0-\u1EF9]+)/g
+    // Hashtags/cashtags/mentions must contain at least one letter — pure-numeric
+    // sequences like "$100" or "#5" should render as plain text.
+    const specialRegex = /((?:https?:\/\/[^\s]+)?\/s\/[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)?|[@#$](?=[a-zA-Z0-9_\u00C0-\u017F\u1E00-\u1EFF\u0100-\u024F\u1EA0-\u1EF9]*[a-zA-Z_\u00C0-\u017F\u1E00-\u1EFF\u0100-\u024F\u1EA0-\u1EF9])[a-zA-Z0-9_\u00C0-\u017F\u1E00-\u1EFF\u0100-\u024F\u1EA0-\u1EF9]+)/g
 
     const parts = text.split(specialRegex)
 

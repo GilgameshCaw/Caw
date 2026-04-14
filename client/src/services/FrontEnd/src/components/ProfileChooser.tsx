@@ -456,21 +456,15 @@ const ProfileChooser: React.FC = () => {
               </ul>
             </li>
           ))}
-          {/* Sticky footer: create new profile / connect wallet */}
+          {/* Sticky footer: create new profile */}
           <li
             className={`sticky bottom-0 z-10 text-xs text-center py-2 border-t ${
               isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
             }`}
           >
-            {isConnected ? (
-              <Link to={`/usernames/new`} className="block">
-                + Create new profile
-              </Link>
-            ) : (
-              <button onClick={() => openConnectModal?.()} className="cursor-pointer">
-                + Connect wallet
-              </button>
-            )}
+            <Link to={`/usernames/new`} className="block">
+              +Create new profile
+            </Link>
           </li>
         </ul>
 
