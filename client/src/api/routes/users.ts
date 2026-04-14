@@ -328,6 +328,46 @@ router.get('/by-token/:tokenId', async (req, res) => {
 })
 
 /**
+ * GET /api/users/client-auth/:tokenId?clientId=1
+ *
+ * Returns whether the given tokenId is authenticated with the given clientId,
+ * based on the indexed ClientAuth table (populated by ChainSyncService's
+ * L2Events indexer). Lets the frontend skip a live readContract call.
+ *
+ * Auth is a one-way flag: once true, always true for that (clientId, tokenId)
+ * pair. So `authenticated: false` here doesn't mean "never will be" — it
+ * means "we haven't seen the Authenticated event yet". The frontend may
+ * still want to fall back to a live RPC in that case, or rely on the
+ * waiting_for_deposit path to take over.
+ *
+ * IMPORTANT: This route must be defined BEFORE /:username to avoid conflicts
+ */
+router.get('/client-auth/:tokenId', async (req, res) => {
+  try {
+    const tokenId = Number(req.params.tokenId)
+    const clientId = Number(req.query.clientId) || 1
+    if (!tokenId || isNaN(tokenId)) {
+      return res.status(400).json({ error: 'Invalid tokenId' })
+    }
+
+    const row = await prisma.clientAuth.findUnique({
+      where: { clientId_tokenId: { clientId, tokenId } },
+      select: { authenticated: true, lastSyncedAt: true },
+    })
+
+    return res.json({
+      tokenId,
+      clientId,
+      authenticated: !!row?.authenticated,
+      lastSyncedAt: row?.lastSyncedAt ?? null,
+    })
+  } catch (err: any) {
+    console.error('GET /api/users/client-auth/:tokenId error', err)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
  * GET /api/users/min-cawonce/:tokenId
  * Returns the minimum safe cawonce for a user (accounting for scheduled posts)
  * This helps prevent cawonce collisions when a user has scheduled posts

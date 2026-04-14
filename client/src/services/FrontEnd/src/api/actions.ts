@@ -406,20 +406,41 @@ export function useSignAndSubmitAction() {
       return null
     }
 
-    // Check if user is authenticated with this client on-chain (cached after first check).
+    // Check if user is authenticated with this client. Auth is a one-way flag
+    // (once true, always true), so cache aggressively.
+    //
+    // Primary source: backend ClientAuth table (populated by ChainSyncService
+    // indexer watching the L2 Authenticated event) — a fast DB read, no RPC.
+    // Fallback: live readContract if the DB says false (the indexer may not
+    // have picked up a just-authenticated user yet).
+    //
     // Skip the modal entirely if we know a deposit is pending: minting through
     // this client auto-authenticates it, but the L1→L2 LZ message may not have
     // landed yet. The validator's waiting_for_deposit path will hold the action
     // until both the deposit and the client auth arrive.
     if (!clientAuthCache.get(activeTokenId) && !userHasPendingDeposit) {
       try {
-        const isAuthed = await readContract(wagmiConfig, {
-          address: CAW_NAMES_L2_ADDRESS,
-          abi: cawNameL2Abi,
-          functionName: 'authenticated',
-          args: [CLIENT_ID, activeTokenId],
-          chainId: baseSepolia.id,
-        })
+        // 1. Ask the backend first
+        let isAuthed = false
+        try {
+          const res = await apiFetch<{ authenticated: boolean }>(`/api/users/client-auth/${activeTokenId}?clientId=${CLIENT_ID}`)
+          isAuthed = !!res?.authenticated
+        } catch { /* fall through to RPC fallback */ }
+
+        // 2. If backend says no, verify via live RPC before showing the modal.
+        //    The backend might just be behind the indexer.
+        if (!isAuthed) {
+          try {
+            isAuthed = !!(await readContract(wagmiConfig, {
+              address: CAW_NAMES_L2_ADDRESS,
+              abi: cawNameL2Abi,
+              functionName: 'authenticated',
+              args: [CLIENT_ID, activeTokenId],
+              chainId: baseSepolia.id,
+            }))
+          } catch { /* treat as unknown */ }
+        }
+
         if (isAuthed) {
           clientAuthCache.set(activeTokenId, true)
         } else {
@@ -798,18 +819,13 @@ export function useSignAndSubmitAction() {
       }
     }
 
-    // Pre-check client auth (once, cached after first hit)
+    // Pre-check client auth (once, cached after first hit).
+    // Prefer backend DB lookup over live RPC — much faster for cold starts.
     if (!clientAuthCache.get(activeTokenId)) {
       try {
-        const isAuthed = await readContract(wagmiConfig, {
-          address: CAW_NAMES_L2_ADDRESS,
-          abi: cawNameL2Abi,
-          functionName: 'authenticated',
-          args: [CLIENT_ID, activeTokenId],
-          chainId: baseSepolia.id,
-        })
-        if (isAuthed) clientAuthCache.set(activeTokenId, true)
-      } catch { /* non-fatal, server will validate */ }
+        const res = await apiFetch<{ authenticated: boolean }>(`/api/users/client-auth/${activeTokenId}?clientId=${CLIENT_ID}`)
+        if (res?.authenticated) clientAuthCache.set(activeTokenId, true)
+      } catch { /* non-fatal, server will validate; contract will enforce */ }
     }
 
     // Determine effective tip once (respects session ceiling if set)
