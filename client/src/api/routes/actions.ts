@@ -862,13 +862,130 @@ router.post('/batch', async (req, res) => {
       results.push({ index: i }) // placeholder, txQueueId filled after insert
     }
 
-    // Bulk insert. createMany doesn't return generated IDs, so we do individual
-    // creates inside a transaction to preserve order and return IDs.
+    // Insert TxQueue rows + optimistic Caw/Reply records in a single transaction
+    // so the frontend sees the thread in "pending" state immediately and the
+    // ActionProcessor can resolve parent cawonces (post 2 → post 1) deterministically.
     if (rowsToInsert.length > 0) {
-      const created = await prisma.$transaction(
-        rowsToInsert.map(row => prisma.txQueue.create({ data: row }))
-      )
-      // Map created IDs back to results (skipping entries that had errors)
+      // Map index in `actions` array → row in `rowsToInsert`
+      const resultIndexToRowIndex = new Map<number, number>()
+      let r = 0
+      for (let i = 0; i < results.length; i++) {
+        if (results[i].error) continue
+        resultIndexToRowIndex.set(i, r++)
+      }
+
+      const created = await prisma.$transaction(async (tx) => {
+        // Step 1: insert all TxQueue rows
+        const txqRows = await Promise.all(
+          rowsToInsert.map(row => tx.txQueue.create({ data: row }))
+        )
+
+        // Step 2: build optimistic Caw records for CAW (0) / RECAW (3) actions.
+        // Insert them sequentially so that thread replies (post 2, 3, ... → post 1)
+        // can look up their parent within this same transaction.
+        const cawByUserCawonce = new Map<string, number>() // "userId:cawonce" → cawId
+
+        for (let i = 0; i < actions.length; i++) {
+          if (!resultIndexToRowIndex.has(i)) continue
+          const a = actions[i]
+          const d = a.data
+          const actionType = d.actionType
+          const isCaw = actionType === 0 || actionType === 'caw'
+          const isRecaw = actionType === 3 || actionType === 'recaw'
+          if (!isCaw && !isRecaw) continue
+
+          // Strip media URLs from text content (same as single-action path)
+          const imageUrlRegex = /(https?:\/\/[^\s]+\/uploads\/images\/[^\s]+\.(jpg|jpeg|png|gif|webp))/gi
+          const imageUrls = d.text?.match(imageUrlRegex) || []
+          const videoUrlRegex = /video:(https?:\/\/[^\s]+\/uploads\/videos\/[^\s]+\.(mp4|webm|mov|avi|mkv|ogg|ogv))/gi
+          const videoMatches = [...(d.text?.matchAll(videoUrlRegex) || [])]
+          const videoUrls = videoMatches.map((m: RegExpMatchArray) => m[1])
+          let textContent = d.text || ''
+          imageUrls.forEach((url: string) => { textContent = textContent.replace(url, '').trim() })
+          videoMatches.forEach((m: RegExpMatchArray) => { textContent = textContent.replace(m[0], '').trim() })
+          textContent = textContent.replace(/\n{3,}/g, '\n\n').trim()
+
+          // Resolve parent cawonce → cawId. Check this-batch map first, then DB.
+          let originalCawId: number | undefined
+          if (d.receiverId != null && d.receiverCawonce != null) {
+            const key = `${d.receiverId}:${d.receiverCawonce}`
+            originalCawId = cawByUserCawonce.get(key)
+            if (!originalCawId) {
+              const parent = await tx.caw.findFirst({
+                where: { userId: d.receiverId, cawonce: d.receiverCawonce },
+                select: { id: true },
+              })
+              if (parent) originalCawId = parent.id
+            }
+          }
+
+          // Upsert the pending Caw
+          const caw = await tx.caw.upsert({
+            where: { userId_cawonce: { userId: d.senderId, cawonce: d.cawonce } },
+            update: {
+              status: 'PENDING',
+              originalCawId: originalCawId || null,
+              updatedAt: new Date(),
+            },
+            create: {
+              userId: d.senderId,
+              cawonce: d.cawonce,
+              content: textContent,
+              action: isRecaw ? 'RECAW' : 'CAW',
+              status: 'PENDING',
+              originalCawId: originalCawId || null,
+              imageData: imageUrls.length > 0 ? `urls:${imageUrls.join('|||')}` : null,
+              hasImage: imageUrls.length > 0,
+              videoData: videoUrls.length > 0 ? videoUrls.join('|||') : null,
+              hasVideo: videoUrls.length > 0,
+            },
+          })
+          cawByUserCawonce.set(`${d.senderId}:${d.cawonce}`, caw.id)
+
+          // Create pending Reply record (CAW replies only — not RECAW quotes)
+          if (originalCawId && isCaw && !(a.isQuote === true)) {
+            try {
+              const existing = await tx.reply.findUnique({
+                where: {
+                  userId_cawId_replyCawId: {
+                    userId: d.senderId,
+                    cawId: originalCawId,
+                    replyCawId: caw.id,
+                  },
+                },
+              })
+              await tx.reply.upsert({
+                where: {
+                  userId_cawId_replyCawId: {
+                    userId: d.senderId,
+                    cawId: originalCawId,
+                    replyCawId: caw.id,
+                  },
+                },
+                update: { pending: true },
+                create: {
+                  userId: d.senderId,
+                  cawId: originalCawId,
+                  replyCawId: caw.id,
+                  pending: true,
+                },
+              })
+              if (!existing) {
+                await tx.caw.update({
+                  where: { id: originalCawId },
+                  data: { commentCount: { increment: 1 } },
+                })
+              }
+            } catch (replyErr: any) {
+              console.warn(`[Actions/batch] Reply record failed for ${d.senderId}:${d.cawonce}:`, replyErr.message)
+            }
+          }
+        }
+
+        return txqRows
+      })
+
+      // Map created TxQueue IDs back to results
       let insertIdx = 0
       for (let i = 0; i < results.length; i++) {
         if (results[i].error) continue
