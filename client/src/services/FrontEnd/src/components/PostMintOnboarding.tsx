@@ -358,6 +358,13 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
 
   // ── Step 3: Enable DMs ──
   const { initializeClient: initDm, isLoading: dmEnabling } = useDmClient(tokenId, username)
+  // Mirror the pattern used for createSessionRef below — initDm is a useCallback
+  // that closes over walletClient. If the user clicked "Set Up Account" with
+  // a locked wallet, the captured initDm sees walletClient=undefined and throws
+  // "Wallet not connected" even after connect completes. Route calls through a
+  // ref so the deferred action always hits the freshest closure.
+  const initDmRef = useRef(initDm)
+  useEffect(() => { initDmRef.current = initDm }, [initDm])
   const { hasIdentity: dmAlreadyEnabled } = useDmIdentity(tokenId)
   const [dmComplete, setDmComplete] = useState(false)
   const [dmError, setDmError] = useState<string | null>(null)
@@ -381,6 +388,12 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
 
   // ── Step 4: Quick Sign ──
   const createSession = useCreateSession()
+  // Keep a ref to the latest createSession so actions deferred by ensureWallet
+  // (run after connect/chain-switch) invoke the freshest closure — the one
+  // that sees isConnected=true. The closure captured at click time would
+  // early-return because isConnected was still false.
+  const createSessionRef = useRef(createSession)
+  useEffect(() => { createSessionRef.current = createSession }, [createSession])
   const setSessionEnabled = useSessionKeyStore(s => s.setEnabled)
   const setHasSeenPrompt = useSessionKeyStore(s => s.setHasSeenPrompt)
   const [qsLoading, setQsLoading] = useState(false)
@@ -391,7 +404,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   const qsDefaultLimit = getDefaultSpendLimit()
   const [qsSpendLimit, setQsSpendLimit] = useState<bigint>(qsDefaultLimit)
   const [qsDuration, setQsDuration] = useState<number>(DEFAULT_SESSION_DURATION)
-  const [qsTipCeiling, setQsTipCeiling] = useState<bigint>(() => getDefaultTipCeiling(getTipTiers().standard))
+  const [qsTipCeiling, setQsTipCeiling] = useState<bigint>(() => getDefaultTipCeiling(getTipTiers().fast))
   const [qsWalletProtect, setQsWalletProtect] = useState(false)
   const [showQsInfo, setShowQsInfo] = useState(false)
 
@@ -435,7 +448,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
     if (!setupDmDone) {
       setSetupSubStep('dms')
       try {
-        await initDm()
+        await initDmRef.current()
         setDmComplete(true)
         markComplete('dms')
         markComplete('verify')
@@ -458,7 +471,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
       setQsError(null)
       try {
         setSessionEnabled(true)
-        await createSession((s) => setQsStatus(s), qsSpendLimit, qsDuration, qsWalletProtect, qsTipCeiling)
+        await createSessionRef.current((s) => setQsStatus(s), qsSpendLimit, qsDuration, qsWalletProtect, qsTipCeiling)
         setHasSeenPrompt(true)
         setQsComplete(true)
         markComplete('quicksign')
@@ -1055,7 +1068,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                       <QuickSignHowItWorks isDark={isDark} />
                     </div>
                   )}
-                  {!setupQsDone && isConnected && (
+                  {!setupQsDone && (
                     <div className="mt-3">
                       <QuickSignOptions
                         spendLimit={qsSpendLimit}

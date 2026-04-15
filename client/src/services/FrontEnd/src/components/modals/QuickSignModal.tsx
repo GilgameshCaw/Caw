@@ -55,7 +55,7 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
   const [error, setError] = useState<string | null>(null)
   const [spendLimit, setSpendLimit] = useState<bigint>(() => getDefaultSpendLimit())
   const [duration, setDuration] = useState<number>(DEFAULT_SESSION_DURATION)
-  const [tipCeiling, setTipCeiling] = useState<bigint>(() => getDefaultTipCeiling(getTipTiers().standard))
+  const [tipCeiling, setTipCeiling] = useState<bigint>(() => getDefaultTipCeiling(getTipTiers().fast))
   const [dontShowAgain, setDontShowAgain] = useState(false)
   const [walletProtect, setWalletProtect] = useState(false)
 
@@ -65,7 +65,7 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
       setError(null)
       if (cawPrice > 0) setSpendLimit(BigInt(Math.round(5 / cawPrice)))
       // Re-fetch market tip in case it changed since the component mounted
-      setTipCeiling(getDefaultTipCeiling(getTipTiers().standard))
+      setTipCeiling(getDefaultTipCeiling(getTipTiers().fast))
     }
   }, [isOpen, cawPrice])
 

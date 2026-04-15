@@ -226,40 +226,36 @@ export function useDmClient(tokenId?: number, username?: string) {
     }
 
     if (hasCachedKeyPair(tokenId)) {
-      console.log('[DM] Keys already cached for this tokenId, checking auth...')
-      // Keys are cached but we still need a valid auth session to load conversations
-      if (!useAuthStore.getState().isTokenAuthorized(tokenId)) {
-        console.log('[DM] Token not authorized, verifying wallet...')
-        const ok = await verify()
-        if (!ok) throw new Error('Wallet verification was cancelled or failed')
-        if (!useAuthStore.getState().isTokenAuthorized(tokenId)) {
-          console.warn('[DM] Verified OK but token still not authorized — server may not recognize this wallet as owning any CAW names')
-          throw new Error('Your wallet was verified but is not linked to any CAW name. Make sure you are connected with the correct wallet.')
-        }
-      }
-      privateKeyRef = getCachedPrivateKey()
+      console.log('[DM] Keys already cached for this tokenId, checking server identity...')
 
-      // Check if the server actually has the identity registered — cached keys
-      // don't guarantee registration succeeded (e.g. previous attempt may have failed)
+      // If the server has no identity for this tokenId, the cached keys are
+      // stale (different deployment, different account, cleared DB, etc.).
+      // Wipe them and fall through to the fresh-setup path so the user signs
+      // the correct "Enable DMs" message and we call verify-dm — which does
+      // both auth AND identity registration in one signature. Otherwise we'd
+      // prompt them for the generic auth message ("Verify wallet ownership
+      // for CAW") which is the wrong message for this flow.
       const identityCheck = await fetch(`${API_HOST}/api/dm/identity/${tokenId}`).then(r => r.json())
       if (!identityCheck.hasIdentity) {
-        console.log('[DM] Keys cached but server has no identity — re-registering...')
-        const publicKeyHex = getCachedPublicKeyHex()
-        if (!publicKeyHex) throw new Error('Cached keys are missing public key — please re-enable DMs')
-        await apiFetch('/api/dm/identity', {
-          method: 'POST',
-          body: JSON.stringify({
-            userId: tokenId,
-            walletAddress: walletClient!.account.address,
-            publicKey: publicKeyHex
-          })
-        })
-        console.log('[DM] Identity re-registered successfully')
+        console.log('[DM] Server has no identity — treating cached keys as stale and re-deriving')
+        clearKeyCache(tokenId)
+        // Fall through to fresh-setup path below
+      } else {
+        // Cached keys + server identity exist — just need auth session if missing
+        if (!useAuthStore.getState().isTokenAuthorized(tokenId)) {
+          console.log('[DM] Token not authorized, verifying wallet...')
+          const ok = await verify()
+          if (!ok) throw new Error('Wallet verification was cancelled or failed')
+          if (!useAuthStore.getState().isTokenAuthorized(tokenId)) {
+            console.warn('[DM] Verified OK but token still not authorized — server may not recognize this wallet as owning any CAW names')
+            throw new Error('Your wallet was verified but is not linked to any CAW name. Make sure you are connected with the correct wallet.')
+          }
+        }
+        privateKeyRef = getCachedPrivateKey()
+        setIsInitialized(true)
+        await loadConversations()
+        return
       }
-
-      setIsInitialized(true)
-      await loadConversations()
-      return
     }
 
     setIsLoading(true)

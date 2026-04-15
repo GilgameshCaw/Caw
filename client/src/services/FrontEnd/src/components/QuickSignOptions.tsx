@@ -81,7 +81,7 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
   const currentMarketTip = useMemo(() => getCurrentMarketTip(), [])
   const tiers = useMemo(() => getTipTiers(), [])
   const tipPresets = useMemo(() => [
-    { label: 'Cheap',     caw: tiers.cheap,    speed: 'slower posts'   },
+    { label: 'Slow',      caw: tiers.slow,     speed: 'slower posts'   },
     { label: 'Standard',  caw: tiers.standard, speed: 'balanced'       },
     { label: 'Fast',      caw: tiers.fast,     speed: 'fastest posts'  },
   ], [tiers])
@@ -107,9 +107,9 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
     : 'text-white/30'
 
   const btnClass = (selected: boolean) => {
-    if (selected) return 'bg-yellow-500 text-black'
-    if (themed && !isDark) return 'bg-gray-100 text-gray-900 hover:bg-gray-200'
-    return 'bg-white/10 text-white hover:bg-white/20'
+    if (selected) return 'bg-yellow-500 text-black border border-yellow-500'
+    if (themed && !isDark) return 'bg-gray-100 text-gray-900 hover:bg-gray-200 border border-gray-300'
+    return 'bg-white/10 text-white hover:bg-white/20 border border-white/20'
   }
 
   const walletProtectCheckbox = onWalletProtectChange ? (
@@ -181,7 +181,7 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
                   ? fmtUsd(Number(spendLimit) * cawPrice)
                   : `${formatSpendLimit(spendLimit)} CAW`
               }
-            </strong> from your deposits.<br className="hidden sm:block" />
+            </strong> from your deposits.<br className="hidden sm:block" /><br className="hidden sm:block" />
             Validator tips capped at <strong className={isNoTip ? 'text-yellow-500' : 'text-white'}>{tipCeiling !== undefined ? formatTipCaw(tipCeiling) : '—'}</strong> per action and <strong className="text-white">{walletProtect ? 'unlock required' : 'no unlock per-session'}</strong>
           </span>
           <HiPencil className={`w-4.5 h-4.5 flex-shrink-0 ${themed ? (isDark ? 'text-white' : 'text-gray-600') : 'text-white'}`} />

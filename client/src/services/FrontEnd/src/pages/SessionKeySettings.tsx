@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { useReadContract, useAccount, useConnections, useSwitchChain } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
+import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
@@ -17,6 +18,7 @@ import { chains } from '~/config/chains'
 
 const SessionKeySettings: React.FC = () => {
   const { isDark } = useTheme()
+  const ensureWallet = useEnsureWallet()
   const activeToken = useActiveToken()
   const enabled = useSessionKeyStore(s => s.enabled)
   const setEnabled = useSessionKeyStore(s => s.setEnabled)
@@ -25,6 +27,14 @@ const SessionKeySettings: React.FC = () => {
   const activeWallet = useSessionKeyStore(s => s.activeWallet)
   const session = (ownerAddr && sessions[ownerAddr]) || (activeWallet && sessions[activeWallet]) || null
   const createSession = useCreateSession()
+  // Keep a ref to the latest createSession so the action passed into
+  // ensureWallet (which runs asynchronously after connect/chain-switch) always
+  // calls the freshest closure — the one that sees isConnected=true and the
+  // correct chainId. Without this, the deferred action calls a stale
+  // createSession captured at click time (when isConnected was false), which
+  // early-returns without prompting for the signature.
+  const createSessionRef = useRef(createSession)
+  useEffect(() => { createSessionRef.current = createSession }, [createSession])
   const revokeSession = useRevokeSession()
   const [loading, setLoading] = useState(false)
   const [status, setStatus] = useState('')
@@ -36,7 +46,7 @@ const SessionKeySettings: React.FC = () => {
   const [spendLimit, setSpendLimit] = useState<bigint>(defaultLimit)
   const [spendLimitTouched, setSpendLimitTouched] = useState(false)
   const [duration, setDuration] = useState<number>(DEFAULT_SESSION_DURATION)
-  const [tipCeiling, setTipCeiling] = useState<bigint>(() => getDefaultTipCeiling(getTipTiers().standard))
+  const [tipCeiling, setTipCeiling] = useState<bigint>(() => getDefaultTipCeiling(getTipTiers().fast))
   const [walletProtect, setWalletProtect] = useState(false)
 
   // When CAW price loads (or changes), update the spend limit to ~$10 unless the user has
@@ -90,18 +100,14 @@ const SessionKeySettings: React.FC = () => {
   }
 
   const handleActivate = async () => {
-    if (!isConnected) {
-      openConnectModal?.()
-      return
-    }
-    if (wrongChain) {
-      switchChain({ chainId: chains.l2.chainId })
-      return
-    }
+    await ensureWallet({ chainId: chains.l2.chainId }, async () => {
     setLoading(true)
     setError(null)
     try {
-      await createSession((s) => setStatus(s), spendLimit, duration, walletProtect, tipCeiling)
+      // Call through the ref so we always get the freshest createSession
+      // closure (post-connect, post-chain-switch). The function captured at
+      // click time sees isConnected=false and would silently no-op.
+      await createSessionRef.current((s) => setStatus(s), spendLimit, duration, walletProtect, tipCeiling)
     } catch (err: any) {
       console.error('[SessionKey] Create failed:', err)
       const msg = err?.message || ''
@@ -112,6 +118,7 @@ const SessionKeySettings: React.FC = () => {
       setLoading(false)
       setStatus('')
     }
+    })
   }
 
   const handleRevoke = async () => {
@@ -301,8 +308,10 @@ const SessionKeySettings: React.FC = () => {
                     </div>
 
                     {error && (
-                      <div className="mb-4 p-3 rounded-lg bg-red-900/20 border border-red-700/50 text-sm text-red-400">
-                        {error}
+                      <div className="mb-4 flex justify-center">
+                        <div className="inline-block px-4 py-2 rounded-lg bg-red-900/20 border border-red-700/50 text-sm text-red-400">
+                          {error}
+                        </div>
                       </div>
                     )}
 

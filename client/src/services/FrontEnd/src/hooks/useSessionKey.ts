@@ -41,10 +41,12 @@ export function getDefaultSpendLimit(): bigint {
 // Legacy export for any direct references
 export const DEFAULT_SPEND_LIMIT = FALLBACK_SPEND_LIMIT
 
-/** Get the default tip ceiling: the "Standard" tier (midpoint between base and priority).
- *  Callers should pass `getTipTiers().standard` from `~/api/actions`. */
-export function getDefaultTipCeiling(standardTierTip: bigint): bigint {
-  return standardTierTip
+/** Get the default tip ceiling: the "Fast" tier (priority tip).
+ *  We default to the highest tier so users get the snappiest experience by
+ *  default; they can always dial it down if they want to save CAW.
+ *  Callers should pass `getTipTiers().fast` from `~/api/actions`. */
+export function getDefaultTipCeiling(fastTierTip: bigint): bigint {
+  return fastTierTip
 }
 
 export const SPEND_LIMIT_OPTIONS = [

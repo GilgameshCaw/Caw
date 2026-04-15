@@ -47,7 +47,7 @@ const QuickSignRenewModal: React.FC = () => {
   const [error, setError] = useState<string | null>(null)
   const [spendLimit, setSpendLimit] = useState<bigint>(() => getDefaultSpendLimit())
   const [duration, setDuration] = useState<number>(DEFAULT_SESSION_DURATION)
-  const [tipCeiling, setTipCeiling] = useState<bigint>(() => getDefaultTipCeiling(getTipTiers().standard))
+  const [tipCeiling, setTipCeiling] = useState<bigint>(() => getDefaultTipCeiling(getTipTiers().fast))
   const [walletProtect, setWalletProtect] = useState(false)
 
   const wrongWallet = isConnected && activeToken && address

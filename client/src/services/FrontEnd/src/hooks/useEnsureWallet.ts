@@ -27,6 +27,17 @@ export function useEnsureWallet() {
   // Auto-execute pending action when wallet is fully ready.
   // We wait for both isConnected AND walletClient to be available,
   // because wagmi sets isConnected before the wallet client is populated.
+  //
+  // Important: we run the action on a macrotask (setTimeout 0) rather than
+  // synchronously. Callers frequently compose this hook with other wagmi-
+  // dependent hooks (e.g. useDmClient, useCreateSession) in the same
+  // component. Those hooks' useCallbacks are rebuilt on the commit where
+  // walletClient becomes populated — but React runs effects in declaration
+  // order, so our effect fires BEFORE the caller's re-rendered callback is
+  // reflected in the caller's action closure. Deferring by a macrotask lets
+  // the current commit finish and all hooks settle, so the deferred action
+  // calls the freshest closures (e.g. initializeClient with a populated
+  // walletClient).
   useEffect(() => {
     if (!isConnected || !address || !walletClient || !wasDisconnected.current || !pendingAction.current) return
     wasDisconnected.current = false
@@ -44,7 +55,8 @@ export function useEnsureWallet() {
         console.warn('[useEnsureWallet] Deferred action failed:', err)
       }
     }
-    run()
+    const handle = setTimeout(run, 0)
+    return () => clearTimeout(handle)
   }, [isConnected, address, walletClient, chainId, switchChainAsync])
 
   /**
