@@ -3,7 +3,7 @@ import { ethers } from 'ethers'
 import { prisma } from '../../prismaClient'
 import { createSession, getSession, addAuthorization, deleteSession } from '../sessionStore'
 import { extractSession } from '../middleware/auth'
-import { refreshOwnership } from '../../services/UserService'
+import { refreshOwnership, verifyOwnershipOnChain, findOrCreateUser } from '../../services/UserService'
 import dmService from '../../services/DmService'
 
 const router = Router()
@@ -136,17 +136,27 @@ router.post('/verify-dm', async (req, res) => {
       return
     }
 
-    // Verify the recovered address owns this tokenId
+    // Verify the recovered address owns this tokenId.
+    // Fast path: DB has a matching row. Otherwise we need an on-chain check —
+    // crucially, we check L1 first via verifyOwnershipOnChain. Right after a
+    // fresh mint, the L2 CawNameL2.mintAndUpdateOwners LZ hop can take 1–5 min
+    // to land, so refreshOwnership (L2-only) would miss the new tokenId even
+    // though the minter really does own it. Checking L1 covers that window.
     const user = await prisma.user.findUnique({
       where: { tokenId },
       select: { address: true }
     })
     if (!user || user.address.toLowerCase() !== recoveredAddress) {
-      // Check on-chain in case of transfer
-      const refreshed = await refreshOwnership(recoveredAddress)
-      if (!refreshed.includes(tokenId)) {
-        res.status(403).json({ error: 'Signature does not match the owner of this token' })
-        return
+      const onChainMatch = await verifyOwnershipOnChain(tokenId, recoveredAddress)
+      if (!onChainMatch) {
+        // Last resort: maybe the token was transferred and the DB is stale.
+        // refreshOwnership updates DB rows for any users whose on-chain owner
+        // has changed, which fixes future requests too.
+        const refreshed = await refreshOwnership(recoveredAddress)
+        if (!refreshed.includes(tokenId)) {
+          res.status(403).json({ error: 'Signature does not match the owner of this token' })
+          return
+        }
       }
     }
 
@@ -168,6 +178,17 @@ router.post('/verify-dm', async (req, res) => {
     }
 
     const updated = await addAuthorization(sessionToken!, recoveredAddress, tokenIds)
+
+    // DmIdentity has a FK on User.tokenId. Right after a mint the user row
+    // might not exist yet — ensure it does before the upsert, otherwise the
+    // FK violation bubbles up as a 500 with no useful message.
+    try {
+      await findOrCreateUser(tokenId)
+    } catch (err: any) {
+      // If the tokenId really doesn't exist on L1 (stale request / bad input),
+      // fall through — registerIdentity will fail cleanly and we'll 500.
+      console.warn(`[Auth] findOrCreateUser(${tokenId}) before DM register failed:`, err?.message)
+    }
 
     // Register DM identity
     await dmService.registerIdentity(tokenId, recoveredAddress, publicKey)

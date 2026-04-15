@@ -55,16 +55,26 @@ router.post('/track-bulk', async (req, res) => {
       return res.status(400).json({ error: 'cawIds array is required' })
     }
 
-    // Limit to 100 caws per request for safety
-    const limitedCawIds = cawIds.slice(0, 100).map(id => Number(id))
+    // Limit to 100 caws per request for safety. Drop any non-finite values
+    // so a stray null/undefined/NaN in the array can't poison the batch.
+    const limitedCawIds = cawIds
+      .slice(0, 100)
+      .map(id => Number(id))
+      .filter(id => Number.isFinite(id) && id > 0)
+
+    if (limitedCawIds.length === 0) {
+      return res.json({ success: true, tracked: 0 })
+    }
 
     await trackBulkViews(limitedCawIds, userId, ipHash)
 
     return res.json({ success: true, tracked: limitedCawIds.length })
 
   } catch (error) {
+    // View tracking is best-effort — don't surface infra errors (Redis hiccup,
+    // etc.) as 500s that pollute the client console. Log and return success.
     console.error('POST /api/views/track-bulk error:', error)
-    return res.status(500).json({ error: 'Failed to track views' })
+    return res.json({ success: true, tracked: 0 })
   }
 })
 

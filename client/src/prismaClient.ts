@@ -58,8 +58,15 @@ export const prisma = new Proxy(basePrisma, {
     const value = Reflect.get(target, prop, receiver)
 
     // Pass through $-prefixed APIs ($transaction, $executeRaw, $queryRaw,
-    // $connect, $extends, etc.) and any non-object properties.
-    if (typeof prop === 'string' && prop.startsWith('$')) return value
+    // $connect, $extends, etc.). CRITICAL: bind functions to the underlying
+    // target. Without binding, `this` inside Prisma internals becomes the
+    // proxy itself — and when Prisma reads `this.<something>` to access
+    // internal state, our get-trap routes it through the model-wrapping
+    // path, which then mis-interprets the request and triggers
+    // "data did not match any variant of untagged enum JsonBody".
+    if (typeof prop === 'string' && prop.startsWith('$')) {
+      return typeof value === 'function' ? value.bind(target) : value
+    }
     if (value === null || typeof value !== 'object') return value
 
     // Model delegates (prisma.user, prisma.txQueue, ...) are objects whose

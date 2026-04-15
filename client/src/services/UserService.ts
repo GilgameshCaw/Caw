@@ -361,6 +361,29 @@ export async function refreshOwnership(walletAddress: string): Promise<number[]>
 }
 
 /**
+ * verifyOwnershipOnChain
+ * L1 is the authoritative source of CAW name ownership — the L2 mirror can
+ * lag (LZ delivery takes 1–5 min after mints/transfers) but never overrides
+ * L1. Checking L1 alone also handles the fresh-mint window that was tripping
+ * /api/auth/verify-dm: the L1 tx is instant, so ownerOf returns the minter
+ * immediately. Returns true only on an L1 match.
+ */
+export async function verifyOwnershipOnChain(
+  tokenId: number,
+  expectedAddress: string,
+): Promise<boolean> {
+  try {
+    const { contract: l1Contract } = await getL1Provider()
+    const owner: string = await l1Contract.ownerOf(tokenId)
+    return owner.toLowerCase() === expectedAddress.toLowerCase()
+  } catch (err: any) {
+    // ownerOf reverts for non-existent tokens.
+    console.warn(`[UserService] L1 ownerOf(${tokenId}) failed: ${err?.message}`)
+    return false
+  }
+}
+
+/**
  * enrichUser
  * - calls L2 tokenURI, decodes base64 JSON, writes username+image
  */

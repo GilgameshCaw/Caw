@@ -163,6 +163,9 @@ router.get('/chart', async (req, res) => {
   try {
     const from = req.query.from ? new Date(req.query.from as string) : new Date(Date.now() - 7 * 86400000)
     const to = req.query.to ? new Date(req.query.to as string) : new Date()
+    if (isNaN(from.getTime()) || isNaN(to.getTime())) {
+      return res.status(400).json({ error: 'invalid from/to date' })
+    }
     const interval = (req.query.interval as string) || 'day'
 
     const validIntervals = ['hour', '6hour', 'day', 'week']
@@ -187,6 +190,13 @@ router.get('/chart', async (req, res) => {
       ? `date_trunc('day', "createdAt" AT TIME ZONE '${tzLiteral}') + (FLOOR(EXTRACT(HOUR FROM "createdAt" AT TIME ZONE '${tzLiteral}') / 6) * INTERVAL '6 hours')`
       : `date_trunc('${interval}', "createdAt" AT TIME ZONE '${tzLiteral}')`
 
+    // Inline ISO timestamps into the SQL — Prisma 6.18's $queryRawUnsafe
+    // serializer rejects both Date objects and (oddly) string-encoded dates
+    // when passed positionally for timestamptz columns. Date-string literals
+    // are safe to interpolate here: from/to come from validated `new Date(...)`
+    // calls so isNaN guards above ensure they're well-formed.
+    const fromIso = from.toISOString()
+    const toIso = to.toISOString()
     const rows: any[] = await prisma.$queryRawUnsafe(`
       SELECT
         bucket,
@@ -211,11 +221,11 @@ router.get('/chart', async (req, res) => {
           AVG("avgWaitMs")::int as avg_wait_ms,
           jsonb_agg("actionBreakdown") FILTER (WHERE "actionBreakdown" IS NOT NULL) as breakdowns
         FROM "ValidatorTx"
-        WHERE "createdAt" >= $1 AND "createdAt" <= $2 AND "status" = 'confirmed'
+        WHERE "createdAt" >= '${fromIso}'::timestamptz AND "createdAt" <= '${toIso}'::timestamptz AND "status" = 'confirmed'
         GROUP BY bucket
       ) sub
       ORDER BY bucket ASC
-    `, from, to)
+    `)
 
     // Merge per-tx breakdowns into a single aggregate per bucket
     function mergeBreakdowns(arr: Record<string, number>[] | null): Record<string, number> {
