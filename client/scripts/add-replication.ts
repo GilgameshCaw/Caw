@@ -124,9 +124,14 @@ async function main() {
     process.exit(1)
   }
 
-  // Setup providers
-  const l1RpcUrl = process.env.L1_RPC_URL_HTTP || 'REDACTED_INFURA_RPC'
-  const l2RpcUrl = process.env.L2_RPC_URL_HTTP || 'https://sepolia.base.org'
+  // Setup providers (both required — no hardcoded fallbacks to avoid
+  // committing API keys)
+  const l1RpcUrl = process.env.L1_RPC_URL_HTTP
+  const l2RpcUrl = process.env.L2_RPC_URL_HTTP
+  if (!l1RpcUrl || !l2RpcUrl) {
+    console.error('Error: L1_RPC_URL_HTTP and L2_RPC_URL_HTTP must be set in your .env file')
+    process.exit(1)
+  }
 
   const l1Provider = new JsonRpcProvider(l1RpcUrl)
   const l2Provider = new JsonRpcProvider(l2RpcUrl)
