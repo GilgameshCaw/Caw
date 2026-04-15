@@ -123,7 +123,15 @@ contract CawActions is Ownable {
     // Per-client hash and checkpointing (for client-specific migration)
     uint32 clientId = action.clientId;
 
-    clientCurrentHash[clientId] = keccak256(abi.encodePacked(clientCurrentHash[clientId], r));
+    // Extend the per-client hash chain with BOTH the signature r value AND a
+    // hash of the action body. The action-body hash binds the full struct
+    // (clientId, senderId, cawonce, text, recipients, amounts, etc.) to this
+    // position in the chain. This lets CawActionsReplicator (and the remote
+    // archive via trusted LZ peer delivery) prove the actions match exactly
+    // what was processed here, WITHOUT re-running ecrecover on replication.
+    // See CawActionsReplicator._verifyCheckpointHash for the verifier side.
+    bytes32 actionHash = keccak256(abi.encode(action));
+    clientCurrentHash[clientId] = keccak256(abi.encodePacked(clientCurrentHash[clientId], r, actionHash));
     clientActionCount[clientId]++;
 
     if (clientActionCount[clientId] % 128 == 0)

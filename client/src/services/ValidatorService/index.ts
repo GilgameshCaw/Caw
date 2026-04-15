@@ -7,7 +7,7 @@ import { prisma }  from '../../prismaClient'
 import getActionType from '../../abi/getActionType'
 import { cawActionsAbi } from '../../abi/generated'
 import { CAW_ACTIONS_ADDRESS, CAW_ACTIONS_REPLICATOR_L2_ADDRESS, CAW_ADDRESS, WETH_ADDRESS } from '../../abi/addresses'
-import { WebSocketProvider, JsonRpcProvider, Contract, Wallet, keccak256, solidityPacked } from 'ethers'
+import { WebSocketProvider, JsonRpcProvider, Contract, Wallet, keccak256, solidityPacked, AbiCoder } from 'ethers'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
 import { incrementSessionSpent } from '../../utils/sessionSpendTracker'
@@ -293,6 +293,15 @@ export const validatorService: Service = {
     let wallet: Wallet
     let cawActions: Contract
     let iface: any
+
+    // Dedicated HTTP provider for read-heavy calls (eth_call with large calldata,
+    // gas estimation, fee data). Infura WSS on Base Sepolia hangs/socket-hang-ups
+    // under large eth_call payloads (we routinely simulate 50+ actions in one
+    // call). HTTP handles these reliably. Subscriptions can stay on WSS.
+    const l2HttpRpcUrl = (process.env.L2_RPC_URL_HTTP || l2RpcUrl)
+      .replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace('/ws/', '/')
+    const httpProvider = new JsonRpcProvider(l2HttpRpcUrl)
+    console.log(`[Validator] HTTP RPC (for eth_call / gas): ${l2HttpRpcUrl.slice(0, 50)}...`)
 
     // Note: Uncaught exception handling is done at the process level in programs/start.ts
     // No need for service-specific handlers
@@ -628,33 +637,28 @@ export const validatorService: Service = {
         console.log("[Validator] Step 5: Making RPC call...")
         const startTime = Date.now();
 
-        // Add timeout wrapper to prevent hanging
-        console.log(`[Validator] Calling provider.call() to ${CAW_ACTIONS_ADDRESS} with value ${quote?.nativeFee?.toString() || '0'}`)
-        const callPromise = provider.call({
+        // Use the HTTP provider for simulation — WSS hangs on large eth_call
+        // payloads (50+ actions worth of calldata saturates the socket).
+        console.log(`[Validator] Calling httpProvider.call() to ${CAW_ACTIONS_ADDRESS} with value ${quote?.nativeFee?.toString() || '0'}`)
+        const callPromise = httpProvider.call({
           to: CAW_ACTIONS_ADDRESS,
           data: calldata,
           value: quote?.nativeFee
         })
 
         const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('RPC call timeout after 15 seconds')), 15000)
+          setTimeout(() => reject(new Error('RPC call timeout after 30 seconds')), 30000)
         })
 
         let returnData: string
         try {
-          console.log("[Validator] Awaiting RPC response (15s timeout)...")
+          console.log("[Validator] Awaiting RPC response (30s timeout)...")
           returnData = await Promise.race([callPromise, timeoutPromise]) as string
           console.log(`[Validator] RPC call returned data (${returnData?.length || 0} chars)`)
         } catch (timeoutErr: any) {
           console.error('[Validator] RPC call timeout or error:', timeoutErr.message)
           console.error('[Validator] Full timeout error:', timeoutErr)
-
-          // If timeout, reinitialize the WebSocket connection
-          if (timeoutErr.message?.includes('timeout')) {
-            console.log('[Validator] Timeout detected - reinitializing WebSocket connection')
-            initializeConnection()
-          }
-
+          // No WSS reinit needed — we're on HTTP now, each request is independent.
           throw timeoutErr
         }
 
@@ -774,13 +778,13 @@ export const validatorService: Service = {
         quote.withdrawLzTokenAmount,
       ])
 
-      const gasLimitRaw = await provider.estimateGas({
+      const gasLimitRaw = await httpProvider.estimateGas({
         to:    CAW_ACTIONS_ADDRESS,
         data:  calldata,
         value: quote.nativeFee
       })
 
-      const feeData = await provider.getFeeData()
+      const feeData = await httpProvider.getFeeData()
       const gasPrice = feeData.gasPrice ?? BigInt(0)
 
       return gasLimitRaw * gasPrice;
@@ -801,8 +805,9 @@ export const validatorService: Service = {
         quote.withdrawLzTokenAmount,
       ]);
 
-      // 2) Ask the provider directly for the gas estimate
-      const estimate = await provider.estimateGas({
+      // 2) Ask the provider directly for the gas estimate (via HTTP — WSS
+      //    estimateGas with large calldata is where we were seeing hangs too).
+      const estimate = await httpProvider.estimateGas({
         to:             CAW_ACTIONS_ADDRESS,
         data:           calldata,
         value:          quote.nativeFee,
@@ -824,7 +829,7 @@ export const validatorService: Service = {
 
       console.log("will submit ", multiData.actions.length, multiData)
       console.log("[submitProcessActions] Getting fee data..." + (retryCount > 0 ? ` (retry ${retryCount}/${maxRetries})` : ''))
-      const feeData = await provider.getFeeData();
+      const feeData = await httpProvider.getFeeData();
 
       // Bump gas fees on retry to handle REPLACEMENT_UNDERPRICED errors
       let maxFeePerGas = feeData.maxFeePerGas ?? BigInt(0)
@@ -1897,10 +1902,65 @@ console.log("succeededKeys", succeededKeys)
      * All data comes from on-chain: reads ActionsProcessed events to get actions,
      * decodes processActions calldata from the transactions to extract signatures.
      */
+    /**
+     * Decode known custom error selectors into human-readable strings.
+     * Add new entries as we hit them so future failures are diagnosable
+     * without grepping ABIs by hand.
+     *
+     * Returns null if the data isn't a recognized custom error.
+     */
+    function decodeCustomError(data: string | undefined | null): string | null {
+      if (!data || typeof data !== 'string' || !data.startsWith('0x') || data.length < 10) return null
+      const selector = data.slice(0, 10).toLowerCase()
+      const body = '0x' + data.slice(10)
+
+      const fmtEth = (wei: bigint): string => {
+        const n = Number(wei) / 1e18
+        if (n === 0) return '0 ETH'
+        if (n >= 0.001) return `${n.toFixed(6)} ETH`
+        return `${n.toExponential(3)} ETH (${wei} wei)`
+      }
+
+      try {
+        const coder = new AbiCoder()
+
+        // LZ_InsufficientFee(uint256 requiredNative, uint256 suppliedNative,
+        //                    uint256 requiredLzToken, uint256 suppliedLzToken)
+        if (selector === '0x4f3ec0d3') {
+          const [reqN, supN, reqL, supL] = coder.decode(['uint256', 'uint256', 'uint256', 'uint256'], body)
+          const reqNb = BigInt(reqN), supNb = BigInt(supN)
+          const shortBy = reqNb > supNb ? reqNb - supNb : 0n
+          const pct = reqNb > 0n ? Number(shortBy * 10000n / reqNb) / 100 : 0
+          return `LZ_InsufficientFee — required ${fmtEth(reqNb)}, supplied ${fmtEth(supNb)}` +
+                 (shortBy > 0n ? ` (short by ${fmtEth(shortBy)} ≈ ${pct}%; bump LZ fee buffer)` : ` (LZ token: req=${reqL}, sup=${supL})`)
+        }
+
+        // LZ_MessageLib_InvalidMessageSize(uint256 actual, uint256 max)
+        if (selector === '0xc667af3e') {
+          const [actual, max] = coder.decode(['uint256', 'uint256'], body)
+          return `LZ_InvalidMessageSize — payload ${actual} bytes exceeds limit ${max} bytes (raise maxMessageSize via setConfig)`
+        }
+
+        // OnlyOwner / generic Ownable
+        if (selector === '0x82b42900') return 'Unauthorized — only owner'
+      } catch {
+        // Decoder failed — fall through to return null
+      }
+      return null
+    }
+
     function formatRpcError(err: any): string {
       // Extract the most useful info from ethers error blobs.
       // Check the most specific signals first — ethers errors can have lots of
       // fields and we want to avoid substring matches on arbitrary message text.
+
+      // 0. Try to decode known custom errors first (LZ_InsufficientFee, etc.)
+      const errData = err?.data || err?.error?.data || err?.info?.error?.data
+      const decoded = decodeCustomError(errData)
+      if (decoded) {
+        const txHash = err?.receipt?.hash || err?.transaction?.hash
+        return `${decoded}${txHash ? ` — tx: ${txHash}` : ''}`
+      }
 
       // 1. Contract revert (the most common "error" from writes)
       if (err?.code === 'CALL_EXCEPTION') {
@@ -1979,7 +2039,7 @@ console.log("succeededKeys", succeededKeys)
         const replicatorView = new Contract(replicatorAddress, replicatorViewAbi, httpProvider)
 
         const replicatorWriteAbi = [
-          'function replicateBatch(tuple(uint32 clientId, uint32 destEid, uint256 checkpointId, uint256 lzTokenAmount), tuple(uint8 actionType, uint32 senderId, uint32 receiverId, uint32 receiverCawonce, uint32 clientId, uint32 cawonce, uint32[] recipients, uint64[] amounts, string text)[], uint8[], bytes32[], bytes32[]) payable',
+          'function replicateBatch(tuple(uint32 clientId, uint32 destEid, uint256 checkpointId, uint256 lzTokenAmount), tuple(uint8 actionType, uint32 senderId, uint32 receiverId, uint32 receiverCawonce, uint32 clientId, uint32 cawonce, uint32[] recipients, uint64[] amounts, string text)[], bytes32[]) payable',
         ]
         const replicatorWrite = new Contract(replicatorAddress, replicatorWriteAbi, httpWallet)
 
@@ -2094,12 +2154,12 @@ console.log("succeededKeys", succeededKeys)
                 amounts: Array.from(e.action.amounts).map((a: any) => BigInt(a)),
                 text: e.action.text,
               }))
-              const allV = checkpoint.map(e => e.v)
               const allR = checkpoint.map(e => e.r)
-              const allS = checkpoint.map(e => e.s)
 
-              // Pre-flight hash chain verification: recompute keccak256(prev, r) locally
-              // and compare to the on-chain checkpoint hash. This catches ordering bugs
+              // Pre-flight hash chain verification: recompute the on-chain hash chain
+              // locally and compare to the stored checkpoint hash. The chain now
+              // commits to BOTH r AND keccak256(abi.encode(action)) — see
+              // CawActions._processAction. Catches ordering and action-body bugs
               // before wasting gas on a revert.
               const hashCheckAbi = ['function clientHashAtCheckpoint(uint32,uint256) view returns (bytes32)']
               const actionsView = new Contract(CAW_ACTIONS_ADDRESS, hashCheckAbi, httpProvider)
@@ -2108,13 +2168,19 @@ console.log("succeededKeys", succeededKeys)
                 : await actionsView.clientHashAtCheckpoint(client.id, checkpointId - 1)
               const expectedHash = await actionsView.clientHashAtCheckpoint(client.id, checkpointId)
 
+              // ActionData struct tuple type — must match the order/types used by
+              // Solidity's abi.encode(action) inside CawActions._processAction.
+              const actionTupleType = 'tuple(uint8 actionType, uint32 senderId, uint32 receiverId, uint32 receiverCawonce, uint32 clientId, uint32 cawonce, uint32[] recipients, uint64[] amounts, string text)'
+              const chainCoder = new AbiCoder()
+
               let computedHash = prevHash
               for (let i = 0; i < 128; i++) {
-                computedHash = keccak256(solidityPacked(['bytes32', 'bytes32'], [computedHash, allR[i]]))
+                const actionHash = keccak256(chainCoder.encode([actionTupleType], [allActions[i]]))
+                computedHash = keccak256(solidityPacked(['bytes32', 'bytes32', 'bytes32'], [computedHash, allR[i], actionHash]))
               }
 
               if (computedHash !== expectedHash) {
-                console.error(`[Replication] Hash chain mismatch! Computed ${computedHash} but on-chain is ${expectedHash}. Action ordering may be wrong.`)
+                console.error(`[Replication] Hash chain mismatch! Computed ${computedHash} but on-chain is ${expectedHash}. Action ordering or encoding may be wrong.`)
                 continue
               }
               console.log(`[Replication] Hash chain verified for checkpoint ${checkpointId}`)
@@ -2127,7 +2193,10 @@ console.log("succeededKeys", succeededKeys)
               try {
                 const avgTextLength = Math.ceil(allActions.reduce((sum: number, a: any) => sum + (a.text?.length || 0), 0) / 256)
                 const fee = await replicatorView.quoteReplicateBatch(destEid, avgTextLength, false)
-                nativeFee = BigInt(fee.nativeFee) * 110n / 100n // 10% buffer
+                // 15% buffer — quoted fee is accurate to a few percent for a
+                // given block; 15% is plenty for inter-block drift. (Was 30%
+                // briefly; tuned down after confirming quote reliability.)
+                nativeFee = BigInt(fee.nativeFee) * 115n / 100n
               } catch (quoteErr: any) {
                 const errData = quoteErr?.data || quoteErr?.error?.data || ''
                 if (typeof errData === 'string' && errData.startsWith('0xc667af3e')) {
@@ -2141,16 +2210,66 @@ console.log("succeededKeys", succeededKeys)
               console.log(`[Replication] Submitting checkpoint ${checkpointId} for client ${client.id} → chain ${destEid} (fee: ${nativeFee} wei)`)
 
               const params = { clientId: client.id, destEid, checkpointId, lzTokenAmount: 0 }
-              // Use a generous manual gas limit to skip eth_estimateGas — the
-              // replicateBatch call has large calldata (128 actions) which makes
-              // gas estimation very expensive for RPC nodes and often gets rate-limited.
-              // The contract verifies all signatures and hashes, consuming ~8-12M gas.
-              const tx = await replicatorWrite.replicateBatch(params, allActions, allV, allR, allS, {
+
+              // Pre-flight staticCall: simulate the tx to surface a revert
+              // reason before spending gas. On-chain reverts from replicateBatch
+              // have no obvious message in the receipt; this catches contract
+              // requires (Action never processed, clientId mismatch, LZ peer
+              // not set, etc.) and logs the exact reason instead of the opaque
+              // "transaction execution reverted (no reason)".
+              try {
+                await replicatorWrite.replicateBatch.staticCall(
+                  params, allActions, allR,
+                  { value: nativeFee }
+                )
+              } catch (simErr: any) {
+                const errData = simErr?.data || simErr?.error?.data
+                const decoded = decodeCustomError(errData)
+                if (decoded) {
+                  console.error(`[Replication] Pre-flight simulation failed for checkpoint ${checkpointId} → chain ${destEid}: ${decoded}`)
+                } else {
+                  const reason = simErr?.revert?.args?.[0] || simErr?.reason || simErr?.shortMessage || simErr?.message || 'unknown'
+                  console.error(`[Replication] Pre-flight simulation failed for checkpoint ${checkpointId} → chain ${destEid}: ${reason}${errData ? ` (raw data: ${errData})` : ''}`)
+                }
+                continue
+              }
+
+              // Estimate gas via HTTP and submit with a 10% buffer. Estimates
+              // for replicateBatch are deterministic (no oracle reads, no
+              // dynamic loops) so 10% is plenty for inter-block storage drift.
+              // Cap at 25M to stay below Base's 30M block gas limit.
+              let gasLimit: bigint
+              try {
+                const estimated = await replicatorWrite.replicateBatch.estimateGas(
+                  params, allActions, allR,
+                  { value: nativeFee }
+                )
+                gasLimit = (estimated * 110n) / 100n
+                if (gasLimit > 25_000_000n) gasLimit = 25_000_000n
+                console.log(`[Replication] Gas estimated: ${estimated} → using ${gasLimit} (10% buffer)`)
+              } catch (gasErr: any) {
+                console.warn(`[Replication] estimateGas failed (${gasErr?.shortMessage || gasErr?.message}), using 12M fallback`)
+                gasLimit = 12_000_000n
+              }
+
+              const tx = await replicatorWrite.replicateBatch(params, allActions, allR, {
                 value: nativeFee,
-                gasLimit: 8_000_000n,
+                gasLimit,
               })
-              const receipt = await tx.wait()
-              console.log(`[Replication] Checkpoint ${checkpointId} replicated! tx: ${receipt?.hash}`)
+              let receipt
+              try {
+                receipt = await tx.wait()
+              } catch (waitErr: any) {
+                // Out-of-gas reverts arrive here with status=0 and no reason.
+                // Surface gasUsed vs gasLimit so it's obvious.
+                const r = waitErr?.receipt
+                if (r && r.status === 0) {
+                  const gasPct = Number((r.gasUsed * 100n) / gasLimit)
+                  console.error(`[Replication] Tx ${r.hash} reverted on-chain: status=0, gasUsed=${r.gasUsed}/${gasLimit} (${gasPct}%) — likely ${gasPct >= 95 ? 'OUT OF GAS (raise gasLimit)' : 'contract revert (no reason emitted)'}`)
+                }
+                throw waitErr
+              }
+              console.log(`[Replication] Checkpoint ${checkpointId} replicated! tx: ${receipt?.hash} (gas used: ${receipt?.gasUsed}/${gasLimit})`)
 
               // Record replication analytics
               if (receipt) {

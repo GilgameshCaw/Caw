@@ -261,21 +261,28 @@ contract CawActionsReplicator is OApp {
   /**
    * @notice Replicate a complete 128-action checkpoint to an archive chain
    * @param params Replication parameters (clientId, destEid, checkpointId, lzTokenAmount)
-   * @param actions All 128 actions for this checkpoint (must all belong to clientId)
-   * @param v Signature v values (128 items)
-   * @param r Signature r values (128 items, also used for hash chain verification)
-   * @param s Signature s values (128 items)
+   * @param actions All 128 actions for this checkpoint
+   * @param r Signature r values (128 items) — used for hash chain verification
+   *
+   * @dev Trust model: the on-chain hash chain `clientHashAtCheckpoint` in
+   *      CawActions commits to BOTH the r sequence AND a hash of each action
+   *      body (see CawActions._processAction). So if the hash chain check
+   *      below passes, both (actions, r) match EXACTLY what was processed.
+   *      No per-action ecrecover is needed on this side — the hash chain
+   *      IS the proof. v and s aren't needed on the source chain at all.
+   *      The archive also doesn't need v/s: it trusts (actions, r) arriving
+   *      from this contract because LZ's peer-authenticity guarantee plus
+   *      this contract's hash-chain gate together prove the payload matches
+   *      what CawActions stored. See docs/CLIENT_REPLICATION_GUIDE.md.
    */
   function replicateBatch(
     ReplicationParams calldata params,
     ICawActionsForReplicator.ActionData[] calldata actions,
-    uint8[] calldata v,
-    bytes32[] calldata r,
-    bytes32[] calldata s
+    bytes32[] calldata r
   ) external payable {
     require(params.checkpointId > 0, "Invalid checkpoint");
     require(actions.length == 128, "Must submit exactly 128 actions");
-    require(v.length == 128 && r.length == 128 && s.length == 128, "Signature arrays must be 128");
+    require(r.length == 128, "r array must be 128");
 
     // Verify destination is valid
     require(isAvailableChain[params.destEid], "Chain not available");
@@ -284,17 +291,19 @@ contract CawActionsReplicator is OApp {
     // Prevent duplicate replication
     require(!checkpointReplicated[params.clientId][params.destEid][params.checkpointId], "Already replicated");
 
-    // Verify r values chain correctly to the on-chain checkpoint hash
-    _verifyCheckpointHash(params.clientId, params.checkpointId, r);
-
-    // Verify each action's signature and that it was processed
-    _verifyActions(params.clientId, actions, v, r, s);
+    // Verify (actions, r) chain correctly to the on-chain checkpoint hash.
+    // This one call subsumes the previous _verifyActions (ecrecover + cawonce
+    // + clientId checks) because the hash chain commits to the full action
+    // struct, not just r.
+    _verifyCheckpointHash(params.clientId, params.checkpointId, actions, r);
 
     // Mark as replicated before sending (checks-effects-interactions)
     checkpointReplicated[params.clientId][params.destEid][params.checkpointId] = true;
 
-    // Replicate to the destination
-    bytes memory payload = abi.encode(actions, v, r, s);
+    // Replicate to the destination. Payload is (actions, r) only — v and s
+    // are no longer part of the trust boundary on either side, so we save
+    // ~4KB of LZ message size by omitting them.
+    bytes memory payload = abi.encode(actions, r);
     _replicateToDestination(params.clientId, params.destEid, payload, params.lzTokenAmount);
 
     emit BatchReplicated(params.checkpointId, params.clientId, params.destEid);
@@ -303,6 +312,7 @@ contract CawActionsReplicator is OApp {
   function _verifyCheckpointHash(
     uint32 clientId,
     uint256 checkpointId,
+    ICawActionsForReplicator.ActionData[] calldata actions,
     bytes32[] calldata r
   ) internal view {
     ICawActionsForReplicator cawActionsContract = ICawActionsForReplicator(cawActions);
@@ -311,26 +321,13 @@ contract CawActionsReplicator is OApp {
       ? bytes32(0)
       : cawActionsContract.clientHashAtCheckpoint(clientId, checkpointId - 1);
 
+    // Mirror the exact construction in CawActions._processAction:
+    //   H_i = keccak256(H_{i-1} || r_i || keccak256(abi.encode(action_i)))
     for (uint i = 0; i < 128; i++) {
-      hash = keccak256(abi.encodePacked(hash, r[i]));
+      bytes32 actionHash = keccak256(abi.encode(actions[i]));
+      hash = keccak256(abi.encodePacked(hash, r[i], actionHash));
     }
-    require(hash == cawActionsContract.clientHashAtCheckpoint(clientId, checkpointId), "Invalid r sequence");
-  }
-
-  function _verifyActions(
-    uint32 clientId,
-    ICawActionsForReplicator.ActionData[] calldata actions,
-    uint8[] calldata v,
-    bytes32[] calldata r,
-    bytes32[] calldata s
-  ) internal view {
-    ICawActionsForReplicator cawActionsContract = ICawActionsForReplicator(cawActions);
-
-    for (uint i = 0; i < 128; i++) {
-      require(actions[i].clientId == clientId, "Action clientId mismatch");
-      cawActionsContract.verifySignature(v[i], r[i], s[i], actions[i]);
-      require(cawActionsContract.isCawonceUsed(actions[i].senderId, actions[i].cawonce), "Action never processed");
-    }
+    require(hash == cawActionsContract.clientHashAtCheckpoint(clientId, checkpointId), "Hash chain mismatch");
   }
 
   /**
