@@ -18,7 +18,7 @@ interface ICawActionsForReplicator {
     uint32 cawonce;
     uint32[] recipients;
     uint64[] amounts;  // Whole CAW tokens (not wei)
-    string text;
+    bytes text;        // smltxt-compressed UTF-8
   }
 
   function clientActionCount(uint32 clientId) external view returns (uint256);

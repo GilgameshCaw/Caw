@@ -3,6 +3,21 @@ import { ContractEventPayload, WebSocketProvider, JsonRpcProvider, Contract, kec
 import type { Log } from '@ethersproject/abstract-provider'
 import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
 import delay from '../../tools/delay'
+import SmlTxt from 'smltxt'
+
+// smltxt singleton — events arrive with `bytes text` (compressed) but the
+// rest of the pipeline (ActionProcessor, hashtag/mention indexing, Caw.content
+// storage) expects plaintext. Decompress here so downstream code is unchanged.
+let _smlTxt: SmlTxt | undefined
+function decompressEventText(hex: unknown): string {
+  if (typeof hex !== 'string' || !hex || hex === '0x') return ''
+  const h = hex.startsWith('0x') ? hex.slice(2) : hex
+  if (!/^[0-9a-fA-F]*$/.test(h) || h.length % 2 !== 0) return ''
+  const bytes = new Uint8Array(h.length / 2)
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(h.slice(i * 2, i * 2 + 2), 16)
+  if (!_smlTxt) _smlTxt = SmlTxt.fromPkg()
+  try { return _smlTxt.decompress(bytes) } catch { return '' }
+}
 
 export type RawEventInput = {
   chainId: number
@@ -26,7 +41,7 @@ const CONTRACT_ABI = [
     'uint32 cawonce,' +
     'uint32[] recipients,' +
     'uint64[] amounts,' +
-    'string text' +
+    'bytes text' +
   ')[] actions' +
   ')'
 ]
@@ -125,7 +140,7 @@ export default async function listenForRawEvents(
           cawonce:         Number(tuple[5]),
           recipients:      tuple[6],
           amounts:         tuple[7],
-          text:            tuple[8]
+          text:            decompressEventText(tuple[8])
         }
         // Offset logIndex by action position within the batch so each action
         // gets a unique (blockNumber, logIndex, transactionHash) key
@@ -186,7 +201,7 @@ export default async function listenForRawEvents(
               cawonce:         Number(tuple[5]),
               recipients:      tuple[6],
               amounts:         tuple[7],
-              text:            tuple[8]
+              text:            decompressEventText(tuple[8])
             }
             // Offset logIndex by action position within the batch
             const logIndex = (ev.log.index ?? 0) + i

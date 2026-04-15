@@ -93,8 +93,10 @@ async function verifyPostSignature(
       return { valid: false, reason: proof.reason || 'No proof available' }
     }
 
-    // Verify the content matches what the API served
-    const signedText = proof.data.text || ''
+    // Verify the content matches what the API served. The signed `text` field
+    // is smltxt-compressed bytes (0x-hex); decompress for the plaintext compare.
+    const { decompressSignedText } = await import('~/api/actions')
+    const signedText = decompressSignedText(proof.data.text || '')
     // The signed text includes URLs and metadata — the displayed content is extracted from it
     // So we check if the signed text contains the displayed content
     if (expectedContent && !signedText.includes(expectedContent.slice(0, 50))) {

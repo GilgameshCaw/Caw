@@ -1,6 +1,25 @@
 import { Router } from 'express'
 import { ethers, JsonRpcProvider, WebSocketProvider, Contract } from 'ethers'
+import SmlTxt from 'smltxt'
 import { prisma } from '../../prismaClient'
+
+// smltxt singleton for decompressing the `bytes text` field signed by clients.
+// `data.text` arrives as 0x-hex of compressed bytes — keep it that way for the
+// validator's on-chain submission (the signature was over those exact bytes),
+// and derive plaintext separately for storage / URL extraction / tip parsing.
+let _smlTxt: SmlTxt | undefined
+function smlTxt(): SmlTxt {
+  if (!_smlTxt) _smlTxt = SmlTxt.fromPkg()
+  return _smlTxt
+}
+function decompressActionText(textField: unknown): string {
+  if (typeof textField !== 'string' || !textField || textField === '0x') return ''
+  const hex = textField.startsWith('0x') ? textField.slice(2) : textField
+  if (!/^[0-9a-fA-F]*$/.test(hex) || hex.length % 2 !== 0) return ''
+  const bytes = new Uint8Array(hex.length / 2)
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+  try { return smlTxt().decompress(bytes) } catch { return '' }
+}
 import { findOrCreateUser } from '../../services/UserService'
 import { getSession, addAuthorization, createSession } from '../sessionStore'
 import { cawNameL2Abi } from '../../abi/generated'
@@ -239,6 +258,11 @@ router.post('/', async (req, res) => {
     }
     mark('verifySig')
 
+    // Decompress smltxt-compressed `bytes text` once for downstream display /
+    // storage / URL extraction. The original `data.text` (compressed hex) stays
+    // intact — the on-chain submission requires the exact signed bytes.
+    const plaintext = decompressActionText(data.text)
+
     const isOwner = recoveredAddress === ownerAddress
 
     if (!isOwner) {
@@ -327,7 +351,7 @@ router.post('/', async (req, res) => {
     mark('passiveAuth')
 
     // Create optimistic pending state for profile updates
-    if (data.actionType === 'other' && data.text && (data.text.startsWith('p:') || data.text.startsWith('profile-update:'))) {
+    if (data.actionType === 'other' && plaintext && (plaintext.startsWith('p:') || plaintext.startsWith('profile-update:'))) {
       try {
         await prisma.user.update({
           where: { tokenId: data.senderId },
@@ -348,13 +372,13 @@ router.post('/', async (req, res) => {
 
         // Extract image URLs if present
         const imageUrlRegex = /(https?:\/\/[^\s]+\/uploads\/images\/[^\s]+\.(jpg|jpeg|png|gif|webp))/gi
-        const imageUrls = data.text?.match(imageUrlRegex) || []
+        const imageUrls = plaintext.match(imageUrlRegex) || []
         const videoUrlRegex = /video:(https?:\/\/[^\s]+\/uploads\/videos\/[^\s]+\.(mp4|webm|mov|avi|mkv|ogg|ogv))/gi
-        const videoMatches = [...(data.text?.matchAll(videoUrlRegex) || [])]
+        const videoMatches = [...plaintext.matchAll(videoUrlRegex)]
         const videoUrls = videoMatches.map((match: RegExpMatchArray) => match[1])
 
         // Remove URLs from text content
-        let textContent = data.text || ''
+        let textContent = plaintext
         imageUrls.forEach((url: string) => {
           textContent = textContent.replace(url, '').trim()
         })
@@ -494,7 +518,7 @@ router.post('/', async (req, res) => {
       senderId: data.senderId,
       receiverId: data.receiverId,
       receiverCawonce: data.receiverCawonce,
-      text: data.text?.substring(0, 50) // First 50 chars for debugging
+      text: plaintext.substring(0, 50) // First 50 chars for debugging
     })
 
     // Create optimistic pending like if this is a like action
@@ -634,7 +658,7 @@ router.post('/', async (req, res) => {
     }
 
     // Create pending tip if this is a tip action (OTHER with tip: prefix)
-    if ((data.actionType === 7 || data.actionType === 'other') && data.text?.startsWith('tip:')) {
+    if ((data.actionType === 7 || data.actionType === 'other') && plaintext.startsWith('tip:')) {
       console.log('Processing TIP action - creating pending tip record')
 
       try {
@@ -963,13 +987,15 @@ router.post('/batch', async (req, res) => {
           const isRecaw = actionType === 3 || actionType === 'recaw'
           if (!isCaw && !isRecaw) continue
 
-          // Strip media URLs from text content (same as single-action path)
+          // Strip media URLs from text content (same as single-action path).
+          // d.text is smltxt-compressed hex — decompress for display/URL parsing.
+          const dPlain = decompressActionText(d.text)
           const imageUrlRegex = /(https?:\/\/[^\s]+\/uploads\/images\/[^\s]+\.(jpg|jpeg|png|gif|webp))/gi
-          const imageUrls = d.text?.match(imageUrlRegex) || []
+          const imageUrls = dPlain.match(imageUrlRegex) || []
           const videoUrlRegex = /video:(https?:\/\/[^\s]+\/uploads\/videos\/[^\s]+\.(mp4|webm|mov|avi|mkv|ogg|ogv))/gi
-          const videoMatches = [...(d.text?.matchAll(videoUrlRegex) || [])]
+          const videoMatches = [...dPlain.matchAll(videoUrlRegex)]
           const videoUrls = videoMatches.map((m: RegExpMatchArray) => m[1])
-          let textContent = d.text || ''
+          let textContent = dPlain
           imageUrls.forEach((url: string) => { textContent = textContent.replace(url, '').trim() })
           videoMatches.forEach((m: RegExpMatchArray) => { textContent = textContent.replace(m[0], '').trim() })
           textContent = textContent.replace(/\n{3,}/g, '\n\n').trim()

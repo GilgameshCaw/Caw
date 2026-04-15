@@ -62,7 +62,7 @@ const dataTypes = {
     { name: 'cawonce', type: 'uint32'},
     { name: 'recipients', type: 'uint32[]' },
     { name: 'amounts', type: 'uint64[]' },
-    { name: 'text', type: 'string' },
+    { name: 'text', type: 'bytes' },
   ],
 };
 
@@ -384,7 +384,12 @@ async function generateData(type, params = {}) {
       senderId: params.senderId,
       receiverId: params.receiverId || 0,
       receiverCawonce: params.receiverCawonce || 0,
-      text: params.text || "",
+      // ActionData.text is `bytes` on-chain (smltxt-compressed in production).
+      // Tests pass plain UTF-8 strings; convert to hex bytes so EIP-712 signs
+      // them as a valid `bytes` value. The on-chain `keccak256(data.text)`
+      // is identical to the old `keccak256(bytes(stringText))` for the same
+      // underlying UTF-8 bytes, so test logic doesn't otherwise change.
+      text: params.text ? web3.utils.utf8ToHex(params.text) : '0x',
       cawonce: cawonce,
       recipients: params.recipients || [],
       amounts: params.amounts || [],
@@ -1860,7 +1865,8 @@ contract("CawActionsReplicator - Full Integration", function(accounts) {
           senderId: action.senderId,
           receiverId: action.receiverId || 0,
           receiverCawonce: action.receiverCawonce || 0,
-          text: action.text || "",
+          // ActionData.text is `bytes` on-chain; convert plain test strings to hex.
+          text: action.text ? web3.utils.utf8ToHex(action.text) : '0x',
           cawonce: cawonce,
           recipients: action.recipients || [],
           amounts: action.amounts || [],
@@ -1911,7 +1917,7 @@ contract("CawActionsReplicator - Full Integration", function(accounts) {
 
     // ABI tuple type must match the Solidity struct order EXACTLY — any drift
     // here will make the verification fail even though the contract is correct.
-    var actionTupleType = 'tuple(uint8 actionType, uint32 senderId, uint32 receiverId, uint32 receiverCawonce, uint32 clientId, uint32 cawonce, uint32[] recipients, uint64[] amounts, string text)';
+    var actionTupleType = 'tuple(uint8 actionType, uint32 senderId, uint32 receiverId, uint32 receiverCawonce, uint32 clientId, uint32 cawonce, uint32[] recipients, uint64[] amounts, bytes text)';
 
     for (var i = 0; i < 3; i++) {
       var result = await processActionsWithSignatures([{
@@ -1989,7 +1995,7 @@ contract("CawActionsReplicator - Full Integration", function(accounts) {
     // We process 3 real actions, then simulate an attack by swapping two
     // action bodies while keeping their r values in the original positions.
 
-    var actionTupleType = 'tuple(uint8 actionType, uint32 senderId, uint32 receiverId, uint32 receiverCawonce, uint32 clientId, uint32 cawonce, uint32[] recipients, uint64[] amounts, string text)';
+    var actionTupleType = 'tuple(uint8 actionType, uint32 senderId, uint32 receiverId, uint32 receiverCawonce, uint32 clientId, uint32 cawonce, uint32[] recipients, uint64[] amounts, bytes text)';
 
     function encodeActionHash(a) {
       var encoded = web3.eth.abi.encodeParameter(actionTupleType, [
@@ -2028,7 +2034,7 @@ contract("CawActionsReplicator - Full Integration", function(accounts) {
 
     // Attack: tamper with action[1]'s text. Keep r values in position.
     var tamperedActions = signed.map(s => ({ ...s.data.message }));
-    tamperedActions[1].text = 'Sneaky attacker-chosen text';
+    tamperedActions[1].text = web3.utils.utf8ToHex('Sneaky attacker-chosen text');
 
     var tamperedHash = '0x' + '0'.repeat(64);
     for (var k = 0; k < 3; k++) {

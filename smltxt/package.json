@@ -1,0 +1,40 @@
+{
+  "name": "smltxt",
+  "version": "0.1.0",
+  "main": "dist/src/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist-esm/src/index.js",
+      "require": "./dist/src/index.js",
+      "default": "./dist/src/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "dist-esm",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "tsc --noEmit && mocha --import=tsx tests/**/*.test.ts",
+    "build": "rm -rf dist dist-esm && tsc -p tsconfig.build.json && tsc -p tsconfig.esm.json && node scripts/finalize-esm.js",
+    "start": "tsx programs/main.ts",
+    "digest-posts": "tsx programs/digestPosts.ts",
+    "build-table-data": "tsx programs/buildTableData.ts",
+    "manual-test": "tsx programs/manualTest.ts"
+  },
+  "private": true,
+  "license": "UNLICENSED",
+  "description": "Small-text compression for CAW posts",
+  "devDependencies": {
+    "@types/chai": "^4.3.16",
+    "@types/mocha": "^10.0.6",
+    "@types/node": "^20.12.12",
+    "chai": "^5.1.1",
+    "mocha": "^10.4.0",
+    "tsx": "^4.11.0",
+    "typescript": "^5.4.5",
+    "xo": "^0.58.0"
+  },
+  "dependencies": {}
+}

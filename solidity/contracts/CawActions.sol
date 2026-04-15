@@ -20,7 +20,7 @@ contract CawActions is Ownable {
     uint32 cawonce;
     uint32[] recipients;
     uint64[] amounts;  // Whole CAW tokens (not wei) - multiplied by 10^18 on-chain
-    string text;
+    bytes text;        // smltxt-compressed UTF-8 (decompressed by frontends/indexers)
   }
 
   struct MultiActionData {
@@ -59,7 +59,7 @@ contract CawActions is Ownable {
     "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
   );
   bytes32 private constant ACTIONDATA_TYPEHASH = keccak256(
-    "ActionData(uint8 actionType,uint32 senderId,uint32 receiverId,uint32 receiverCawonce,uint32 clientId,uint32 cawonce,uint32[] recipients,uint64[] amounts,string text)"
+    "ActionData(uint8 actionType,uint32 senderId,uint32 receiverId,uint32 receiverCawonce,uint32 clientId,uint32 cawonce,uint32[] recipients,uint64[] amounts,bytes text)"
   );
 
   constructor(address _cawNames) {
@@ -80,7 +80,8 @@ contract CawActions is Ownable {
     (address signer, bool isSessionKey) = verifySignature(v, r, s, action);
 
     // Enforce text length limit on ALL action types (profile updates, tips, etc.)
-    require(bytes(action.text).length <= 420, "Text exceeds 420 characters");
+    // Limit applies to compressed bytes; frontends additionally enforce a 420-char visible limit.
+    require(action.text.length <= 420, "Text exceeds 420 bytes");
 
     // Fixed protocol costs per action type (in whole CAW tokens)
     uint256 actionCost;
@@ -193,7 +194,7 @@ contract CawActions is Ownable {
         data.cawonce,
         keccak256(abi.encodePacked(data.recipients)),
         keccak256(abi.encodePacked(data.amounts)),
-        keccak256(bytes(data.text))
+        keccak256(data.text)
       )
     );
 

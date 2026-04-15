@@ -165,8 +165,34 @@ export const TYPES: Record<string, TypedDataField[]> = {
     { name: 'cawonce',         type: 'uint32'   },
     { name: 'recipients',      type: 'uint32[]' },
     { name: 'amounts',         type: 'uint64[]' },
-    { name: 'text',            type: 'string'   }
+    { name: 'text',            type: 'bytes'    }
   ]
+}
+
+import SmlTxt from 'smltxt'
+import { bytesToHex } from 'viem'
+
+// Lazy singleton — table is ~380 KB inlined. First call costs ~1-2s of table parse;
+// subsequent calls are instant. Worth deferring until first signature attempt.
+let _smlTxt: SmlTxt | undefined
+function getSmlTxt(): SmlTxt {
+  if (!_smlTxt) _smlTxt = SmlTxt.fromPkg()
+  return _smlTxt
+}
+
+/** Compress UTF-8 text → 0x-prefixed hex string for an EIP-712 `bytes` field. */
+export function compressTextForSigning(text: string): `0x${string}` {
+  if (!text) return '0x'
+  return bytesToHex(getSmlTxt().compress(text))
+}
+
+/** Decompress 0x-prefixed hex from a signed action back to UTF-8 text. */
+export function decompressSignedText(hex: string): string {
+  if (!hex || hex === '0x') return ''
+  const bytes = new Uint8Array(
+    (hex.startsWith('0x') ? hex.slice(2) : hex).match(/.{1,2}/g)!.map(b => parseInt(b, 16))
+  )
+  return getSmlTxt().decompress(bytes)
 }
 
 export type ActionParams = {
@@ -216,7 +242,7 @@ export function buildTypedData(params: ActionParams, tipOverride?: bigint) {
       clientId:        CLIENT_ID,
       cawonce:         params.cawonce         ?? 0,
       recipients:      params.recipients      ?? [],
-      text:            params.text            ?? '',
+      text:            compressTextForSigning(params.text ?? ''),
       amounts:         amounts.map((amount) => amount.toString())
     }
   }

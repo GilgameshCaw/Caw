@@ -1,0 +1,8 @@
+{
+  "editor.rulers": [80],
+  "editor.tabSize": 2,
+  "editor.codeActionsOnSave": {
+    "source.fixAll": "always"
+  },
+  "xo.overrideSeverity": "warn"
+}
