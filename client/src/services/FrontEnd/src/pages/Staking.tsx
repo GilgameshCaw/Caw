@@ -273,6 +273,24 @@ const Staking = () => {
     return () => clearInterval(interval)
   }, [recentStakeTime, refetchTokenData, refetchBalance])
 
+  // Poll L1 token data after a recent completed withdrawal: the L2 side is done
+  // but the LayerZero message hasn't landed on L1 yet, so `withdrawable` stays 0
+  // until we refetch. Without this the "Complete Withdrawal" button never appears
+  // until the user reloads the page.
+  const hasRecentCompletedWithdrawal = (() => {
+    const oneHourAgo = Date.now() - 60 * 60 * 1000
+    return allWithdrawals.some((w: WithdrawalRequest) =>
+      w.status === 'completed' && w.updatedAt && new Date(w.updatedAt).getTime() > oneHourAgo
+    )
+  })()
+  useEffect(() => {
+    if (!hasRecentCompletedWithdrawal) return
+    const interval = setInterval(() => {
+      refetchTokenData?.()
+    }, 15_000)
+    return () => clearInterval(interval)
+  }, [hasRecentCompletedWithdrawal, refetchTokenData])
+
   const insufficientBalance = !balance || parseUnits(amount || "0", 18) > balance
   const needsApproval = !allowance || parseUnits(amount || "0", 18) > allowance
 

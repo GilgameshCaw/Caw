@@ -110,33 +110,54 @@ export const CawPage: React.FC = () => {
   }, [id])
 
   // Load caw and comments - refetch when id or activeTokenId changes
-  useEffect(() => {
-    (async () => {
-      try {
-        // Only show loading spinner for initial load, not account switches
-        if (!initialLoadDone) {
-          setLoading(true)
-        }
-        setError(null)
-
-        const data = await apiFetch<{ caw: CawItem; comments: CawItem[]; hasMoreComments?: boolean; nextCommentCursor?: number }>(`/api/caws/${id}`)
-        setCaw(data.caw)
-        setComments(data.comments)
-        setHasMoreComments(!!data.hasMoreComments)
-        setCommentCursor(data.nextCommentCursor)
-        setInitialLoadDone(true)
-      } catch (err) {
-        console.error('Error loading caw:', err)
-        setError('Failed to load post')
-      } finally {
-        setLoading(false)
+  const loadCaw = async () => {
+    try {
+      if (!initialLoadDone) {
+        setLoading(true)
       }
-    })()
+      setError(null)
+
+      const data = await apiFetch<{ caw: CawItem; comments: CawItem[]; hasMoreComments?: boolean; nextCommentCursor?: number }>(`/api/caws/${id}`)
+      setCaw(data.caw)
+      setComments(data.comments)
+      setHasMoreComments(!!data.hasMoreComments)
+      setCommentCursor(data.nextCommentCursor)
+      setInitialLoadDone(true)
+    } catch (err) {
+      console.error('Error loading caw:', err)
+      setError('Could not load post')
+    } finally {
+      setLoading(false)
+    }
+  }
+  useEffect(() => {
+    loadCaw()
   }, [id, activeTokenId])
 
-  if (loading) return <MainLayout><div className="flex items-center justify-center h-64 text-white">Loading…</div></MainLayout>
-  if (error) return <MainLayout><div className="flex items-center justify-center h-64 text-red-500">{error}</div></MainLayout>
-  if (!caw) return <MainLayout><div className="flex items-center justify-center h-64 text-gray-500">Post not found</div></MainLayout>
+  const errorView = (message: string) => (
+    <MainLayout>
+      <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
+        <div className="w-12 h-12 mb-4 rounded-full bg-red-500/10 flex items-center justify-center">
+          <svg className="w-6 h-6 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+          </svg>
+        </div>
+        <p className={`text-sm mb-4 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>{message}</p>
+        <button
+          onClick={() => loadCaw()}
+          className={`px-5 py-2 text-sm font-medium rounded-full transition cursor-pointer ${
+            isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-200 text-gray-900 hover:bg-gray-300'
+          }`}
+        >
+          Try again
+        </button>
+      </div>
+    </MainLayout>
+  )
+
+  if (loading) return <MainLayout><div className={`flex items-center justify-center h-64 ${isDark ? 'text-white' : 'text-gray-900'}`}>Loading…</div></MainLayout>
+  if (error) return errorView(error)
+  if (!caw) return errorView('Could not load post')
 
   return (
     <MainLayout>

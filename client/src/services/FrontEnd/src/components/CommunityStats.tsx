@@ -74,7 +74,7 @@ const CommunityStats: React.FC = () => {
   ]
 
   return (
-    <div className="grid grid-cols-2 gap-4 mb-6">
+    <div className="grid grid-cols-2 gap-4 mb-6 m-4">
       {statItems.map((stat, index) => (
         <div
           key={index}

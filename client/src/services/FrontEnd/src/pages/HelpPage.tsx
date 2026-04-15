@@ -136,7 +136,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
       className={`flex items-start gap-4 p-4 rounded-xl transition-colors ${
         isDark
           ? 'bg-[#0D0D0D]/85 hover:bg-[#1A1A1A]/85'
-          : 'bg-gray-50 hover:bg-gray-100'
+          : 'bg-gray-50 hover:bg-gray-100 shadow-xl'
       }`}
     >
       <div className={`p-2 rounded-lg ${
@@ -938,7 +938,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                     className={`flex items-start gap-4 p-4 rounded-xl transition-colors ${
                       isDark
                         ? 'bg-yellow-500/10 hover:bg-yellow-500/20 border border-yellow-500/20'
-                        : 'bg-yellow-50 hover:bg-yellow-100 border border-yellow-200'
+                        : 'bg-yellow-50 hover:bg-yellow-100 border border-yellow-200 shadow-xl'
                     }`}
                   >
                     <div className={`p-2 rounded-lg ${

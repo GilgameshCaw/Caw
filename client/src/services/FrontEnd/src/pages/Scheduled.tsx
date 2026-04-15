@@ -103,7 +103,10 @@ const ScheduledPage: React.FC = () => {
     }
   }
 
-  if (!isConnected) {
+  // Show sign-in prompt only when there's no active profile at all.
+  // If activeToken exists (e.g. via Quick Sign session), the user is "logged in"
+  // even if the wallet isn't currently connected — fall through to the page.
+  if (!activeToken) {
     return (
       <MainLayout>
         <div className="max-w-2xl mx-auto px-6 py-4">

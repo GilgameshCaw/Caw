@@ -181,10 +181,10 @@ export const HashtagPage: React.FC = () => {
 
         {/* Trending Hashtags Sidebar */}
         {trendingHashtags.length > 0 && (
-          <div className="mb-6 p-4 bg-gray-800 rounded-lg">
+          <div className={`mb-6 p-4 rounded-lg ${isDark ? 'bg-gray-800' : 'bg-gray-100 border border-gray-200'}`}>
             <div className="flex items-center mb-3">
               <HiTrendingUp className="h-5 w-5 text-orange-500 mr-2" />
-              <h3 className="font-semibold text-white">
+              <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 Trending Hashtags
               </h3>
             </div>
@@ -198,7 +198,9 @@ export const HashtagPage: React.FC = () => {
                     inline-flex items-center px-3 py-1 rounded-full text-sm
                     ${tag.name === cleanHashtag
                       ? 'bg-yellow-500 text-black'
-                      : 'bg-gray-700 text-gray-300 hover:bg-gray-600 border border-gray-600'
+                      : isDark
+                        ? 'bg-gray-700 text-gray-300 hover:bg-gray-600 border border-gray-600'
+                        : 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-300'
                     }
                     transition-colors
                   `}
