@@ -93,7 +93,7 @@ const UsernameSvg: React.FC<UsernameSvgProps> = ({ username, textOpacity }) => {
         fontSize={`${fontSize}px`}
         fill="rgb(235, 192, 70)"
         opacity={textOpacity ?? 1}
-        fontFamily="cursive"
+        fontFamily="'Apple Chancery', 'Snell Roundhand', 'Segoe Script', 'Lucida Handwriting', 'Brush Script MT', cursive"
         fontWeight="bold"
         filter="url(#dropShadow)"
         textAnchor="end"

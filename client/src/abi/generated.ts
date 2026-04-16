@@ -783,6 +783,25 @@ export const cawActionsReplicatorAbi = [
     anonymous: false,
     inputs: [
       {
+        name: 'oldLimit',
+        internalType: 'uint128',
+        type: 'uint128',
+        indexed: false,
+      },
+      {
+        name: 'newLimit',
+        internalType: 'uint128',
+        type: 'uint128',
+        indexed: false,
+      },
+    ],
+    name: 'ReceiveGasLimitUpdated',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
         name: 'destEid',
         internalType: 'uint32',
         type: 'uint32',
@@ -806,7 +825,7 @@ export const cawActionsReplicatorAbi = [
   {
     type: 'function',
     inputs: [],
-    name: 'RECEIVE_GAS_LIMIT',
+    name: 'MAX_RECEIVE_GAS_LIMIT',
     outputs: [{ name: '', internalType: 'uint128', type: 'uint128' }],
     stateMutability: 'view',
   },
@@ -1061,6 +1080,13 @@ export const cawActionsReplicatorAbi = [
   {
     type: 'function',
     inputs: [],
+    name: 'receiveGasLimit',
+    outputs: [{ name: '', internalType: 'uint128', type: 'uint128' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
     name: 'renounceOwnership',
     outputs: [],
     stateMutability: 'nonpayable',
@@ -1125,6 +1151,13 @@ export const cawActionsReplicatorAbi = [
       { name: '_peer', internalType: 'bytes32', type: 'bytes32' },
     ],
     name: 'setPeer',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'newLimit', internalType: 'uint128', type: 'uint128' }],
+    name: 'setReceiveGasLimit',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -4406,6 +4439,14 @@ export const cawNameQuoterAbi = [
 
 export const cawNameUriAbi = [
   {
+    type: 'constructor',
+    inputs: [
+      { name: '_fontDataA', internalType: 'address', type: 'address' },
+      { name: '_fontDataB', internalType: 'address', type: 'address' },
+    ],
+    stateMutability: 'nonpayable',
+  },
+  {
     type: 'event',
     anonymous: false,
     inputs: [
@@ -4429,6 +4470,20 @@ export const cawNameUriAbi = [
     inputs: [],
     name: 'description',
     outputs: [{ name: '', internalType: 'string', type: 'string' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'fontDataA',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'fontDataB',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
     stateMutability: 'view',
   },
   {
@@ -4550,6 +4605,20 @@ export const iCawActionsReplicatorAbi = [
     name: 'setClientChains',
     outputs: [],
     stateMutability: 'nonpayable',
+  },
+] as const
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// ICawFontData
+//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+export const iCawFontDataAbi = [
+  {
+    type: 'function',
+    inputs: [],
+    name: 'DATA',
+    outputs: [{ name: '', internalType: 'bytes', type: 'bytes' }],
+    stateMutability: 'view',
   },
 ] as const
 

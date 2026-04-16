@@ -183,11 +183,35 @@ const CONTRACTS = {
   },
 
   // Phase 2: L1 - Deploy everything on L1
-  CawNameURI: {
+  // CawFontDataA and CawFontDataB are pure-data contracts holding the vectorized
+  // glyph paths for on-chain SVG rendering. CawNameURI reads from them via
+  // `ICawFontData.DATA()` to assemble each NFT image. Split across two contracts
+  // because the combined path data exceeds the 24,576-byte per-contract limit.
+  CawFontDataA: {
     chain: 'L1',
     phase: 2,
     dependencies: [],
     constructorArgs: () => [],
+  },
+  CawFontDataB: {
+    chain: 'L1',
+    phase: 2,
+    dependencies: [],
+    constructorArgs: () => [],
+  },
+  CawNameURI: {
+    chain: 'L1',
+    phase: 2,
+    dependencies: ['CawFontDataA', 'CawFontDataB'],
+    constructorArgs: (state) => [
+      state.addresses.CawFontDataA,
+      state.addresses.CawFontDataB,
+    ],
+    // Dependents (CawName) have a runtime setter (`setUriGenerator`) so a
+    // URI redeploy does NOT need to cascade. The post-deploy linking step
+    // `Link CawName to CawNameURI` handles rewiring. This breaks the normal
+    // transitive-closure cascade at this node.
+    cascadeBreak: true,
   },
   CawClientManager: {
     chain: 'L1',
@@ -400,6 +424,26 @@ const LINKING_STEPS = [
     condition: (state) => state.addresses.CawName && state.addresses.CawNameMinter,
   },
   {
+    // This linking step exists because CawNameURI has cascadeBreak=true:
+    // redeploying CawNameURI does NOT redeploy CawName, so we need to
+    // rewire the URI generator address here via the setter.
+    name: 'Link CawName to CawNameURI',
+    chain: 'L1',
+    phase: 2,
+    contract: 'CawName',
+    method: 'setUriGenerator',
+    args: (state) => [state.addresses.CawNameURI],
+    condition: (state) => state.addresses.CawName && state.addresses.CawNameURI,
+    skipIf: async (state, deployer) => {
+      const contract = deployer.getContract('CawName');
+      if (!contract) return false;
+      try {
+        const current = await contract.uriGenerator();
+        return current.toLowerCase() === state.addresses.CawNameURI.toLowerCase();
+      } catch { return false; }
+    },
+  },
+  {
     name: 'Link CawNameL2_L1 to CawActions_L1',
     chain: 'L1',
     phase: 2,
@@ -517,12 +561,16 @@ const LINKING_STEPS = [
     ],
     condition: (state) => state.addresses.CawActionsArchive_L2b && state.addresses.CawActionsReplicator_L2,
     skipIf: async (state, deployer) => {
+      // Skip only if the peer already matches the CURRENT replicator address.
+      // A previous "skip if peer != ZeroHash" here left stale peers pointing
+      // at pre-redeploy replicators, silently breaking replication.
       const contract = deployer.getContract('CawActionsArchive_L2b');
       if (!contract) return false;
       const l2Eid = CHAINS[deployer.getChainKey('L2')].lzEid;
+      const expected = ethers.zeroPadValue(deployer.state.addresses.CawActionsReplicator_L2, 32);
       try {
         const peer = await contract.peers(l2Eid);
-        return peer !== ethers.ZeroHash;
+        return peer.toLowerCase() === expected.toLowerCase();
       } catch { return false; }
     },
   },
@@ -539,12 +587,14 @@ const LINKING_STEPS = [
     ],
     condition: (state) => state.addresses.CawActionsArchive_L2 && state.addresses.CawActionsReplicator_L2b,
     skipIf: async (state, deployer) => {
+      // Skip only if already pointed at the current replicator — see note above.
       const contract = deployer.getContract('CawActionsArchive_L2');
       if (!contract) return false;
       const l2bEid = CHAINS[deployer.getChainKey('L2b')].lzEid;
+      const expected = ethers.zeroPadValue(deployer.state.addresses.CawActionsReplicator_L2b, 32);
       try {
         const peer = await contract.peers(l2bEid);
-        return peer !== ethers.ZeroHash;
+        return peer.toLowerCase() === expected.toLowerCase();
       } catch { return false; }
     },
   },
@@ -664,6 +714,13 @@ const LINKING_STEPS = [
     condition: (state) => state.addresses.CawActionsReplicator_L2b,
   },
   // Add replication for client 1 on L2 (syncs to L2 via LZ — client replicates to L2b's archive)
+  //
+  // This runs once when the client is first enrolled. The skipIf compares
+  // against the clientManager's state: if this client is already enrolled for
+  // the archive EID, we skip the enrollment. The separate "Force sync" step
+  // below handles the case where the REPLICATOR was just redeployed and needs
+  // a fresh `setClientChains` LZ message even though the clientManager's
+  // enrollment is unchanged.
   {
     name: 'Add replication for client 1 on L2 (archive to L2b)',
     chain: 'L1',
@@ -675,12 +732,16 @@ const LINKING_STEPS = [
       CHAINS[chainConfig.env + 'L2b'].lzEid,
     ],
     condition: (state) => state.addresses.CawClientManager && state.addresses.CawActionsArchive_L2b && state.addresses.CawName,
-    skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawClientManager');
-      if (!contract) return false;
+    skipIf: async (state, deployer, chainConfig) => {
+      const cm = deployer.getContract('CawClientManager');
+      if (!cm) return false;
+      const l2bEid = CHAINS[chainConfig.env + 'L2b'].lzEid;
       try {
-        const enabled = await contract.clientReplicationEnabled(1);
-        return enabled;
+        // Skip only if this SPECIFIC eid is already in the client's chain list.
+        // Previously compared only `clientReplicationEnabled(1)` (true if ANY
+        // eid is enrolled) which wrongly skipped on subsequent target chains.
+        const eids = await cm.getClientChainEids(1);
+        return eids.map(e => Number(e)).includes(l2bEid);
       } catch { return false; }
     },
     overrides: async (state, deployer, chainConfig) => {
@@ -698,6 +759,60 @@ const LINKING_STEPS = [
         return { value: feeWithBuffer };
       } catch (e) {
         console.log(`   Fee quote failed: ${e.message}, using 0.0002 ETH as fallback`);
+        return { value: ethers.parseEther('0.0002') };
+      }
+    },
+  },
+  // Force-sync replication config to L2 when the replicator was redeployed.
+  // `clientManager.addReplication` already auto-syncs to L2 when called, but
+  // only fires when the CLIENT MANAGER's state needs updating. If we just
+  // redeployed the L2 replicator with the clientManager untouched, the new
+  // replicator has `clientChainEnabled[1][destEid] = false` until the next
+  // sync. This step checks the replicator directly and calls
+  // `CawName.syncReplication` on L1 if the flag isn't set.
+  {
+    name: 'Force syncReplication if new replicator missing clientChainEnabled',
+    chain: 'L1',
+    phase: 5,
+    contract: 'CawName',
+    method: 'syncReplication',
+    args: (state, chainConfig) => [
+      1, // clientId
+      CHAINS[chainConfig.env + 'L2'].lzEid, // storage chain — where CawNameL2 lives
+      0, // lzTokenAmount
+    ],
+    condition: (state) => state.addresses.CawName && state.addresses.CawActionsReplicator_L2,
+    skipIf: async (state, deployer, chainConfig) => {
+      // Query the L2 replicator directly to see if the client/dest pair is
+      // already enabled there. If yes, skip — no LZ sync needed.
+      const chainKey = deployer.getChainKey('L2');
+      await deployer.initChain(chainKey);
+      const replicatorAddr = deployer.state.addresses.CawActionsReplicator_L2;
+      if (!replicatorAddr) return true; // Not yet deployed — earlier step will handle
+      const provider = deployer.wallets[chainKey].provider;
+      const replicator = new ethers.Contract(
+        replicatorAddr,
+        ['function clientChainEnabled(uint32,uint32) view returns (bool)'],
+        provider,
+      );
+      const l2bEid = CHAINS[chainConfig.env + 'L2b'].lzEid;
+      try {
+        const enabled = await replicator.clientChainEnabled(1, l2bEid);
+        if (enabled) console.log(`   clientChainEnabled(1, ${l2bEid}) = true on replicator — skipping sync`);
+        return enabled;
+      } catch { return false; }
+    },
+    overrides: async (state, deployer, chainConfig) => {
+      const quoter = deployer.getContract('CawNameQuoter');
+      if (!quoter) return { value: ethers.parseEther('0.0002') };
+      try {
+        const l2bEid = CHAINS[chainConfig.env + 'L2b'].lzEid;
+        const l2Eid = CHAINS[chainConfig.env + 'L2'].lzEid;
+        const quote = await quoter.syncReplicationQuote(1, [l2bEid], l2Eid, false);
+        const feeWithBuffer = (quote.nativeFee * 120n) / 100n;
+        console.log(`   syncReplication LZ fee: ${ethers.formatEther(quote.nativeFee)} ETH (sending ${ethers.formatEther(feeWithBuffer)} with buffer)`);
+        return { value: feeWithBuffer };
+      } catch {
         return { value: ethers.parseEther('0.0002') };
       }
     },
@@ -1102,7 +1217,12 @@ class MultiChainDeployer {
   async redeploy(contractKey) {
     console.log(`\nRedeploying ${contractKey} and dependents...\n`);
 
-    // Find all contracts that depend on this one (transitive closure)
+    // Find all contracts that depend on this one (transitive closure).
+    // A dep that is flagged `cascadeBreak` halts the propagation — its
+    // dependents stay deployed and get rewired via their runtime setter
+    // (handled in the linking steps). This matters for e.g. CawNameURI
+    // where CawName.setUriGenerator() lets us swap the URI without
+    // redeploying the whole name/actions tree.
     const toRedeploy = new Set([contractKey]);
     let changed = true;
 
@@ -1111,11 +1231,11 @@ class MultiChainDeployer {
       for (const [key, config] of Object.entries(CONTRACTS)) {
         if (toRedeploy.has(key)) continue;
         for (const dep of config.dependencies) {
-          if (toRedeploy.has(dep)) {
-            toRedeploy.add(key);
-            changed = true;
-            break;
-          }
+          if (!toRedeploy.has(dep)) continue;
+          if (CONTRACTS[dep].cascadeBreak) continue;  // break propagation here
+          toRedeploy.add(key);
+          changed = true;
+          break;
         }
       }
     }
@@ -1158,8 +1278,17 @@ class MultiChainDeployer {
     // Redeploy by phase
     await this.deployAll();
 
-    // Record the L2 deployment block so RawEventsGatherer starts from the right place
-    if (isNameRedeploy) {
+    // Record the L2 deployment block so RawEventsGatherer starts from the right place.
+    // Runs on any redeploy that touches an L2 contract whose events the indexer
+    // watches (CawActions, or any of its prerequisites). Previously only fired
+    // on a full CawName redeploy, which silently left `startBlock` stale when
+    // we redeployed just CawActions_L2 — the indexer then missed every action
+    // from the new contract until someone manually bumped `config.json`.
+    const l2IndexedContracts = [
+      'CawActions_L2', 'CawActionsReplicator_L2', 'CawNameL2_L2', 'CawActionsArchive_L2',
+    ];
+    const isL2Redeploy = isNameRedeploy || l2IndexedContracts.some(c => toRedeploy.has(c));
+    if (isL2Redeploy) {
       try {
         const l2ChainKey = this.getChainKey('L2');
         await this.initChain(l2ChainKey);
@@ -1167,7 +1296,6 @@ class MultiChainDeployer {
         this.state.l2DeployBlock = currentBlock;
         this.saveState();
         console.log(`\n   Recorded L2 deploy block: ${currentBlock}`);
-        console.log('   Set "startBlock" in RawEventsGatherer config to this value.');
       } catch (e) {
         console.warn('   Could not record L2 deploy block:', e.message);
       }
