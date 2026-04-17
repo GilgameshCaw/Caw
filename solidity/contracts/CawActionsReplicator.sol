@@ -47,12 +47,42 @@ contract CawActionsReplicator is OApp {
   address public immutable cawNameL2;
 
   /// @notice Gas limit for receive on destination (just event emission, very cheap)
-  /// @dev 50,000 gas is sufficient because CawActionsArchive only emits an event.
-  ///      Event data cost scales with calldata (paid by sender), not execution gas.
-  ///      Breakdown: ~25,000 for LZ overhead + ~5,000 for event = ~30,000 used.
-  ///      Large payloads (images, long text) don't increase destination gas - they
-  ///      increase the LayerZero fee on the source chain instead.
-  uint128 public constant RECEIVE_GAS_LIMIT = 50000;
+  /// @notice Gas forwarded to `_lzReceive` on the destination archive.
+  /// @dev The destination archive's `_lzReceive` emits an event with the full
+  ///      payload in `data`. Solidity's LOG opcode charges 8 gas per byte of
+  ///      event data, plus memory expansion, plus LZ framing overhead. For a
+  ///      128-action checkpoint with smltxt-compressed text the payload is
+  ///      ~40-90KB, requiring ~500k–1M gas. The 1,000,000 default covers
+  ///      typical traffic with headroom.
+  ///
+  ///      This value is tunable by the owner within `[1, MAX_RECEIVE_GAS_LIMIT]`
+  ///      during the protocol's tuning period. After renouncement the setter
+  ///      becomes uncallable and the value is effectively immutable. The
+  ///      MAX_RECEIVE_GAS_LIMIT constant bounds the worst case an owner (or
+  ///      compromised owner key) can impose.
+  uint128 public receiveGasLimit = 1_000_000;
+
+  /// @notice Hard ceiling on receiveGasLimit. Immutable; not settable.
+  /// @dev 5M is comfortably above worst-case archive `_lzReceive` gas for a
+  ///      doubled (256-action) checkpoint with uncompressible text and leaves
+  ///      room below Arbitrum/Base's 30M block gas limit for LZ's surrounding
+  ///      executor overhead. Going above this would inflate LZ fees without
+  ///      covering any realistic payload.
+  uint128 public constant MAX_RECEIVE_GAS_LIMIT = 5_000_000;
+
+  /// @notice Emitted when the owner adjusts `receiveGasLimit`.
+  event ReceiveGasLimitUpdated(uint128 oldLimit, uint128 newLimit);
+
+  /// @notice Adjust the gas forwarded to destination `_lzReceive`. Bounded by
+  ///         MAX_RECEIVE_GAS_LIMIT. Typically called once after observing real
+  ///         traffic and before renouncing ownership.
+  /// @param newLimit Gas limit in the range [1, MAX_RECEIVE_GAS_LIMIT].
+  function setReceiveGasLimit(uint128 newLimit) external onlyOwner {
+    require(newLimit > 0 && newLimit <= MAX_RECEIVE_GAS_LIMIT, "Out of range");
+    uint128 oldLimit = receiveGasLimit;
+    receiveGasLimit = newLimit;
+    emit ReceiveGasLimitUpdated(oldLimit, newLimit);
+  }
 
   // ============================================
   // GLOBAL ARCHIVE CHAIN REGISTRY (owner-managed)
@@ -225,7 +255,7 @@ contract CawActionsReplicator is OApp {
     bytes memory payload,
     uint256 lzTokenAmount
   ) internal {
-    bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(RECEIVE_GAS_LIMIT, 0);
+    bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(receiveGasLimit, 0);
     _lzSend(
       destEid,
       payload,
@@ -288,8 +318,11 @@ contract CawActionsReplicator is OApp {
     require(isAvailableChain[params.destEid], "Chain not available");
     require(clientChainEnabled[params.clientId][params.destEid], "Client chain not enabled");
 
-    // Prevent duplicate replication
-    require(!checkpointReplicated[params.clientId][params.destEid][params.checkpointId], "Already replicated");
+    // No duplicate guard — re-submission is allowed. If LZ delivery failed
+    // (DVN stall, insufficient receiveGasLimit, etc.) anyone can resubmit the
+    // same checkpoint. The archive just emits the event again (idempotent),
+    // and the submitter pays gas + LZ fee so there's no griefing vector.
+    // The hash chain verification below is the real security gate.
 
     // Verify (actions, r) chain correctly to the on-chain checkpoint hash.
     // This one call subsumes the previous _verifyActions (ecrecover + cawonce
@@ -373,7 +406,7 @@ contract CawActionsReplicator is OApp {
     uint256 estimatedSize = 100 + (128 * (265 + avgTextLength));
 
     bytes memory dummyPayload = new bytes(estimatedSize);
-    bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(RECEIVE_GAS_LIMIT, 0);
+    bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(receiveGasLimit, 0);
 
     return _quote(destEid, dummyPayload, options, payInLzToken);
   }

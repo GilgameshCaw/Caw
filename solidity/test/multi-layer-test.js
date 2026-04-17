@@ -1418,13 +1418,67 @@ contract("CawActionsReplicator", function(accounts) {
     console.log("Disabled replication test passed");
   });
 
-  it("should have correct RECEIVE_GAS_LIMIT constant", async function() {
+  it("should default receiveGasLimit to 1,000,000 and bound by MAX", async function() {
     this.timeout(60000);
 
-    var gasLimit = await replicator.RECEIVE_GAS_LIMIT();
-    expect(gasLimit.toNumber()).to.equal(50000);
+    var limit = await replicator.receiveGasLimit();
+    expect(limit.toString()).to.equal('1000000');
 
-    console.log("Gas limit constant test passed");
+    var max = await replicator.MAX_RECEIVE_GAS_LIMIT();
+    expect(max.toString()).to.equal('5000000');
+
+    console.log("Default receiveGasLimit test passed");
+  });
+
+  it("should allow owner to update receiveGasLimit within range", async function() {
+    this.timeout(60000);
+
+    var newLimit = 2_000_000;
+    await replicator.setReceiveGasLimit(newLimit, { from: accounts[0] });
+    var updated = await replicator.receiveGasLimit();
+    expect(updated.toString()).to.equal(newLimit.toString());
+
+    // Restore default so other tests aren't affected
+    await replicator.setReceiveGasLimit(1_000_000, { from: accounts[0] });
+    console.log("setReceiveGasLimit within range test passed");
+  });
+
+  it("should reject receiveGasLimit = 0", async function() {
+    this.timeout(60000);
+    var reverted = false;
+    try {
+      await replicator.setReceiveGasLimit(0, { from: accounts[0] });
+    } catch (e) {
+      reverted = true;
+      expect((e.reason || e.message || '')).to.include('Out of range');
+    }
+    expect(reverted).to.equal(true);
+    console.log("setReceiveGasLimit(0) rejection test passed");
+  });
+
+  it("should reject receiveGasLimit above MAX (5,000,000)", async function() {
+    this.timeout(60000);
+    var reverted = false;
+    try {
+      await replicator.setReceiveGasLimit(5_000_001, { from: accounts[0] });
+    } catch (e) {
+      reverted = true;
+      expect((e.reason || e.message || '')).to.include('Out of range');
+    }
+    expect(reverted).to.equal(true);
+    console.log("setReceiveGasLimit(>MAX) rejection test passed");
+  });
+
+  it("should reject setReceiveGasLimit from non-owner", async function() {
+    this.timeout(60000);
+    var reverted = false;
+    try {
+      await replicator.setReceiveGasLimit(2_000_000, { from: accounts[5] });
+    } catch (e) {
+      reverted = true;
+    }
+    expect(reverted).to.equal(true, 'non-owner must not be able to update');
+    console.log("setReceiveGasLimit non-owner rejection test passed");
   });
 
   // Removed: tests for `replicator.replicate()`, `migratePartialCheckpoint`,

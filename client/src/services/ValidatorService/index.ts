@@ -8,6 +8,7 @@ import getActionType from '../../abi/getActionType'
 import { cawActionsAbi } from '../../abi/generated'
 import { CAW_ACTIONS_ADDRESS, CAW_ACTIONS_REPLICATOR_L2_ADDRESS, CAW_ADDRESS, WETH_ADDRESS } from '../../abi/addresses'
 import { WebSocketProvider, JsonRpcProvider, Contract, Wallet, keccak256, solidityPacked, AbiCoder } from 'ethers'
+import { makeJsonRpcProvider, makeWebSocketProvider } from '../../utils/rpcProvider'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
 import { incrementSessionSpent } from '../../utils/sessionSpendTracker'
@@ -69,7 +70,7 @@ let cachedMainnetProvider: JsonRpcProvider | null = null
  */
 function getUniswapRouter(mainnetRpcUrl: string): Contract {
   if (!cachedRouter || !cachedMainnetProvider) {
-    cachedMainnetProvider = new JsonRpcProvider(mainnetRpcUrl)
+    cachedMainnetProvider = makeJsonRpcProvider(mainnetRpcUrl)
     cachedRouter = new Contract(UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_ABI, cachedMainnetProvider)
   }
   return cachedRouter
@@ -300,7 +301,7 @@ export const validatorService: Service = {
     // call). HTTP handles these reliably. Subscriptions can stay on WSS.
     const l2HttpRpcUrl = (process.env.L2_RPC_URL_HTTP || l2RpcUrl)
       .replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace('/ws/', '/')
-    const httpProvider = new JsonRpcProvider(l2HttpRpcUrl)
+    const httpProvider = makeJsonRpcProvider(l2HttpRpcUrl)
     console.log(`[Validator] HTTP RPC (for eth_call / gas): ${l2HttpRpcUrl.slice(0, 50)}...`)
 
     // Note: Uncaught exception handling is done at the process level in programs/start.ts
@@ -361,7 +362,7 @@ export const validatorService: Service = {
 
       // Create new provider with error handling
       try {
-        provider = new WebSocketProvider(l2RpcUrl)
+        provider = makeWebSocketProvider(l2RpcUrl)
 
         // Add error handler to the WebSocket immediately to catch connection errors
         const ws = (provider as any)._websocket || (provider as any).websocket
@@ -2012,7 +2013,7 @@ console.log("succeededKeys", succeededKeys)
     // for the bulk data fetching the reconstruction needs.
     const replicationHttpRpcUrl = (process.env.L2_RPC_URL_HTTP || l2RpcUrl)
       .replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace('/ws/', '/')
-    const replicationHttpProvider = new JsonRpcProvider(replicationHttpRpcUrl)
+    const replicationHttpProvider = makeJsonRpcProvider(replicationHttpRpcUrl)
     const replicationHttpWallet = new Wallet(privateKey!, replicationHttpProvider)
     console.log(`[Replication] HTTP RPC: ${replicationHttpRpcUrl.slice(0, 50)}...`)
 
@@ -2033,13 +2034,21 @@ console.log("succeededKeys", succeededKeys)
         const httpWallet = replicationHttpWallet
 
         const replicatorViewAbi = [
-          'function getNextUnreplicatedCheckpoint(uint32,uint32) view returns (uint256,uint256)',
+          'function clientActionCount(uint32) view returns (uint256)',
+          'function checkpointReplicated(uint32,uint32,uint256) view returns (bool)',
           'function quoteReplicateBatch(uint32,uint256,bool) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
         ]
+        // Read clientActionCount from CawActions (not replicator) to know how
+        // many complete checkpoints exist.
+        const cawActionsViewAbi = ['function clientActionCount(uint32) view returns (uint256)']
+        const cawActionsView = new Contract(CAW_ACTIONS_ADDRESS, cawActionsViewAbi, httpProvider)
         const replicatorView = new Contract(replicatorAddress, replicatorViewAbi, httpProvider)
 
         const replicatorWriteAbi = [
-          'function replicateBatch(tuple(uint32 clientId, uint32 destEid, uint256 checkpointId, uint256 lzTokenAmount), tuple(uint8 actionType, uint32 senderId, uint32 receiverId, uint32 receiverCawonce, uint32 clientId, uint32 cawonce, uint32[] recipients, uint64[] amounts, string text)[], bytes32[]) payable',
+          // `text` is `bytes` (smltxt-compressed), not `string`. Mismatched
+          // ABI produces a different selector and the tx falls into the
+          // contract's fallback path (revert with no data at ~2.87M gas).
+          'function replicateBatch(tuple(uint32 clientId, uint32 destEid, uint256 checkpointId, uint256 lzTokenAmount), tuple(uint8 actionType, uint32 senderId, uint32 receiverId, uint32 receiverCawonce, uint32 clientId, uint32 cawonce, uint32[] recipients, uint64[] amounts, bytes text)[], bytes32[]) payable',
         ]
         const replicatorWrite = new Contract(replicatorAddress, replicatorWriteAbi, httpWallet)
 
@@ -2052,13 +2061,31 @@ console.log("succeededKeys", succeededKeys)
             if (!destEid) continue
 
             try {
-              const [nextCheckpointId, totalCheckpoints] = await replicatorView.getNextUnreplicatedCheckpoint(client.id, destEid)
-              const checkpointId = Number(nextCheckpointId)
-              const total = Number(totalCheckpoints)
+              // Determine how many complete checkpoints exist on the source chain.
+              const actionCount = Number(await cawActionsView.clientActionCount(client.id))
+              const total = Math.floor(actionCount / 128)
+              if (total === 0) continue
 
-              console.log(`[Replication] Client ${client.id} → chain ${destEid}: getNextUnreplicatedCheckpoint returned checkpointId=${checkpointId}, total=${total}`)
-
-              if (checkpointId === 0) continue // Fully caught up
+              // Find the first checkpoint not yet submitted. The contract no
+              // longer rejects re-submissions, so `checkpointReplicated` is just
+              // a hint for the validator to skip work it's already done. If LZ
+              // delivery failed, the user can force-retry by resetting this flag
+              // (or a future version could track delivery status separately).
+              let checkpointId = 0
+              for (let cp = 1; cp <= total; cp++) {
+                const done = await replicatorView.checkpointReplicated(client.id, destEid, cp)
+                if (!done) { checkpointId = cp; break }
+              }
+              if (checkpointId === 0) {
+                // All marked done. Check env flag for force-retry of specific checkpoint.
+                const forceRetry = Number(process.env.FORCE_REPLICATE_CHECKPOINT || 0)
+                if (forceRetry > 0 && forceRetry <= total) {
+                  console.log(`[Replication] All checkpoints marked done, but FORCE_REPLICATE_CHECKPOINT=${forceRetry} — retrying`)
+                  checkpointId = forceRetry
+                } else {
+                  continue // Fully caught up
+                }
+              }
 
               console.log(`[Replication] Client ${client.id} → chain ${destEid}: checkpoint ${checkpointId}/${total} needs replication`)
 
@@ -2074,17 +2101,41 @@ console.log("succeededKeys", succeededKeys)
               // low logIndex events) before emitting the batch ActionsProcessed event.
               const startPos = (checkpointId - 1) * 128
 
-              // Get unique tx hashes from DB actions for this client
-              const dbActions = await prisma.action.findMany({
-                where: { data: { path: ['clientId'], equals: client.id } },
-                include: { rawEvent: { select: { transactionHash: true, blockNumber: true } } },
-              })
-              const txHashes = Array.from(new Set(
-                dbActions.map(a => a.rawEvent?.transactionHash).filter(Boolean) as string[]
-              ))
+              // Get tx hashes by querying ALL ActionsProcessed events from the
+              // contract's deploy block to now. We scan FORWARD (not backward)
+              // because reconstruction needs actions from the very beginning:
+              // checkpoint 4 requires actions [384..512), which are near the
+              // start of the contract's history. A backward walk finds the most
+              // recent actions first and stops too early.
+              //
+              // Scanning the full history sounds expensive, but in practice the
+              // contract has a known deploy block and the total event count is
+              // small (tens of events, each containing dozens of actions). A
+              // single queryFilter over the entire range is one RPC call.
+              const latestL2 = await httpProvider.getBlockNumber()
+              const eventsContract = new Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi as any, httpProvider)
+
+              // Use the deploy block from config (RawEventsGatherer startBlock)
+              // to avoid scanning from block 0. Falls back to latest - 500k.
+              let deployBlock = Math.max(0, latestL2 - 500_000)
+              try {
+                const fs = require('fs')
+                const path = require('path')
+                const configPath = path.join(__dirname, '../../../config.json')
+                const config = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+                const gatherer = config.find?.((s: any) => s.service === 'RawEventsGatherer')
+                if (gatherer?.config?.startBlock) deployBlock = Number(gatherer.config.startBlock)
+              } catch { /* use fallback */ }
+
+              const processedEvents = await eventsContract.queryFilter(
+                eventsContract.filters.ActionsProcessed(),
+                deployBlock,
+                latestL2,
+              )
+              const txHashes = Array.from(new Set(processedEvents.map(e => e.transactionHash)))
 
               if (txHashes.length === 0) {
-                console.log(`[Replication] No tx hashes found for client ${client.id}, skipping`)
+                console.log(`[Replication] No ActionsProcessed events since deploy block ${deployBlock}, skipping`)
                 continue
               }
 
@@ -2170,7 +2221,10 @@ console.log("succeededKeys", succeededKeys)
 
               // ActionData struct tuple type — must match the order/types used by
               // Solidity's abi.encode(action) inside CawActions._processAction.
-              const actionTupleType = 'tuple(uint8 actionType, uint32 senderId, uint32 receiverId, uint32 receiverCawonce, uint32 clientId, uint32 cawonce, uint32[] recipients, uint64[] amounts, string text)'
+              // `text` is `bytes` since the smltxt compression change — actions
+              // come off-chain from decoded calldata where ethers decodes bytes
+              // into 0x-hex strings, which AbiCoder.encode takes as-is.
+              const actionTupleType = 'tuple(uint8 actionType, uint32 senderId, uint32 receiverId, uint32 receiverCawonce, uint32 clientId, uint32 cawonce, uint32[] recipients, uint64[] amounts, bytes text)'
               const chainCoder = new AbiCoder()
 
               let computedHash = prevHash
@@ -2180,7 +2234,8 @@ console.log("succeededKeys", succeededKeys)
               }
 
               if (computedHash !== expectedHash) {
-                console.error(`[Replication] Hash chain mismatch! Computed ${computedHash} but on-chain is ${expectedHash}. Action ordering or encoding may be wrong.`)
+                console.error(`[Replication] Hash chain mismatch for checkpoint ${checkpointId}! Computed ${computedHash} but on-chain is ${expectedHash}.`)
+                console.error(`[Replication]   orderedEntries total: ${orderedEntries.length}, startPos: ${startPos}, first action cawonce: ${allActions[0]?.cawonce}, last: ${allActions[127]?.cawonce}`)
                 continue
               }
               console.log(`[Replication] Hash chain verified for checkpoint ${checkpointId}`)
@@ -2217,21 +2272,54 @@ console.log("succeededKeys", succeededKeys)
               // requires (Action never processed, clientId mismatch, LZ peer
               // not set, etc.) and logs the exact reason instead of the opaque
               // "transaction execution reverted (no reason)".
+              // Pre-flight: check that clientChainEnabled is true for this
+              // (clientId, destEid). This flag is set on the replicator by a
+              // LZ-delivered `setClientChains` message originating from L1.
+              // On testnet the LZ DVN queue can stall for hours-to-days, so we
+              // log this specifically instead of burying it under "no reason"
+              // reverts later in the flow.
+              try {
+                const enabledAbi = ['function clientChainEnabled(uint32,uint32) view returns (bool)']
+                const replEnabledView = new Contract(replicatorAddress, enabledAbi, httpProvider)
+                const enabled: boolean = await replEnabledView.clientChainEnabled(client.id, destEid)
+                if (!enabled) {
+                  console.warn(`[Replication] clientChainEnabled(${client.id}, ${destEid}) = false on replicator ${replicatorAddress}. ` +
+                    `Setup LZ message (addReplication → setClientChains) hasn't been delivered yet. ` +
+                    `This is typically LZ testnet DVN queue lag — no on-chain action fixes it.`)
+                  continue
+                }
+              } catch (e: any) {
+                console.warn(`[Replication] clientChainEnabled pre-check failed: ${e?.shortMessage || e?.message}`)
+              }
+
               try {
                 await replicatorWrite.replicateBatch.staticCall(
                   params, allActions, allR,
                   { value: nativeFee }
                 )
               } catch (simErr: any) {
-                const errData = simErr?.data || simErr?.error?.data
+                const errData = simErr?.data || simErr?.error?.data || simErr?.info?.error?.data
                 const decoded = decodeCustomError(errData)
+                const reason = simErr?.revert?.args?.[0] || simErr?.reason || simErr?.shortMessage || simErr?.message || 'unknown'
+
+                // "missing revert data" + no errData means the RPC returned
+                // nothing useful — common on Infura when eth_call payload is
+                // large. Skipping the pre-flight and letting the real tx
+                // attempt is safer than blocking replication on an RPC quirk;
+                // estimateGas below will also surface any real revert.
+                const isNoRevertData = (!errData || errData === '0x') &&
+                  (reason.includes('missing revert data') || simErr?.code === 'CALL_EXCEPTION')
+
                 if (decoded) {
                   console.error(`[Replication] Pre-flight simulation failed for checkpoint ${checkpointId} → chain ${destEid}: ${decoded}`)
+                  continue
+                } else if (isNoRevertData) {
+                  console.warn(`[Replication] Pre-flight staticCall returned no data (likely RPC truncation on large calldata) — proceeding to estimateGas which will catch real reverts.`)
+                  // Fall through to the estimateGas / submit path
                 } else {
-                  const reason = simErr?.revert?.args?.[0] || simErr?.reason || simErr?.shortMessage || simErr?.message || 'unknown'
-                  console.error(`[Replication] Pre-flight simulation failed for checkpoint ${checkpointId} → chain ${destEid}: ${reason}${errData ? ` (raw data: ${errData})` : ''}`)
+                  console.error(`[Replication] Pre-flight simulation failed for checkpoint ${checkpointId} → chain ${destEid}: ${reason}${errData ? ` (raw data: ${errData})` : ''} code=${simErr?.code}`)
+                  continue
                 }
-                continue
               }
 
               // Estimate gas via HTTP and submit with a 10% buffer. Estimates

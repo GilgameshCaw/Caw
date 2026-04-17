@@ -1,6 +1,7 @@
 import { prisma } from '../prismaClient'
 import { CAW_NAMES_L2_ADDRESS, CAW_NAMES_ADDRESS } from '../abi/addresses'
 import { Contract, WebSocketProvider, JsonRpcProvider } from 'ethers'
+import { makeJsonRpcProvider, makeWebSocketProvider } from '../utils/rpcProvider'
 
 /** Thrown when a token ID doesn't exist on the current L1 contract (old deployment) */
 export class StaleTokenError extends Error {
@@ -47,7 +48,7 @@ async function createWebSocketProvider(rpcUrl: string, name: string): Promise<We
     }, 30000)
 
     try {
-      provider = new WebSocketProvider(rpcUrl)
+      provider = makeWebSocketProvider(rpcUrl)
 
       // Handle connection errors via websocket
       const ws = (provider as any)._websocket || (provider as any).websocket
@@ -61,8 +62,9 @@ async function createWebSocketProvider(rpcUrl: string, name: string): Promise<We
         })
       }
 
-      // Wait for ready - in ethers v6, ready is a Promise
-      const readyPromise = provider.ready
+      // Wait for ready - in ethers v6, ready is a Promise in the default case
+      // but a boolean `true` when staticNetwork is set (no network detection needed).
+      const readyPromise: any = provider.ready
       if (readyPromise && typeof readyPromise.then === 'function') {
         readyPromise.then(() => {
           if (!settled) {
@@ -243,7 +245,7 @@ export async function findOrCreateUser(
         console.warn(`[UserService] WebSocket timed out, trying HTTP fallback...`)
         const httpUrl = (process.env.L1_RPC_URL || '').replace(/^wss:/, 'https:').replace('/ws/', '/')
         if (httpUrl) {
-          const httpProvider = new JsonRpcProvider(httpUrl)
+          const httpProvider = makeJsonRpcProvider(httpUrl)
           const httpContract = new Contract(CAW_NAMES_ADDRESS, CawNameL1Abi, httpProvider)
           try {
             ;[ownerAddress, username] = await withTimeout(
