@@ -3,7 +3,6 @@ import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { getTrendingHashtags, searchHashtags } from '../../tools/hashtags'
 import { shapeCaw, getCawIncludeConfig, handlePagination } from '../shared/cawUtils'
-import { createHashtagMockCaw, mockTrendingHashtags } from '../shared/mockData'
 
 const router = Router()
 

@@ -100,7 +100,7 @@ async function searchCawsWithES(query: string, limit: number, offset: number) {
 
   // Maintain ES relevance order
   const cawMap = new Map(caws.map(c => [c.id, c]))
-  const orderedCaws = cawIds.map(id => cawMap.get(id)).filter(Boolean)
+  const orderedCaws = cawIds.map((id: number) => cawMap.get(id)).filter(Boolean)
 
   return {
     items: orderedCaws.map((caw: any) => ({
@@ -164,7 +164,7 @@ async function searchUsersWithES(query: string, limit: number, offset: number) {
 
   // Maintain ES relevance order
   const userMap = new Map(users.map(u => [u.tokenId, u]))
-  return tokenIds.map(id => userMap.get(id)).filter(Boolean)
+  return tokenIds.map((id: number) => userMap.get(id)).filter(Boolean)
 }
 
 /**

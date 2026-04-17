@@ -62,7 +62,7 @@ export interface ShapedCaw {
   reason?: string | null
 }
 
-export function shapeCaw(raw: CawRaw): ShapedCaw {
+export function shapeCaw(raw: CawRaw | any): ShapedCaw {
   const userLike = raw.likes && raw.likes[0]
   // Find recaws or quotes (exclude plain replies which are CAW with content but have a Reply record)
   // A RECAW is always a repost. A CAW with content is a quote IF it has no Reply record.
@@ -110,7 +110,7 @@ export function shapeCaw(raw: CawRaw): ShapedCaw {
     commentCount: raw.commentCount,
     recawCount: raw.recawCount,
     cawonce: raw.cawonce,
-    hashtags: raw.hashtags?.map(h => h.hashtag.name) || [],
+    hashtags: raw.hashtags?.map((h: any) => h.hashtag.name) || [],
     originalCaw: raw.parent ? shapeCaw(raw.parent) : undefined,
     parent: raw.parent ? shapeCaw(raw.parent) : null,
     imageData: raw.imageData,

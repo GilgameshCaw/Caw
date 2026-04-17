@@ -224,13 +224,13 @@ export default async function listenForRawEvents(
       })
 
       // Monitor WebSocket connection health
-      wsProvider.websocket.on('close', () => {
+      (wsProvider.websocket as any).on('close', () => {
         if (!isStopped) {
           scheduleReconnect()
         }
       })
 
-      wsProvider.websocket.on('error', (err: any) => {
+      (wsProvider.websocket as any).on('error', (err: any) => {
         // Suppress noisy stack traces for common RPC errors (rate limit, auth)
         const msg = err?.message || String(err)
         if (msg.includes('401') || msg.includes('429') || msg.includes('Too Many')) {

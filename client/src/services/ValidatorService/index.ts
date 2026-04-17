@@ -376,7 +376,7 @@ export const validatorService: Service = {
           })
         }
 
-        wallet = new Wallet(privateKey, provider)
+        wallet = new Wallet(privateKey!, provider)
         cawActions = new Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi, wallet)
         iface = cawActions.interface
 
@@ -1530,7 +1530,7 @@ console.log("succeededKeys", succeededKeys)
 
       // build a Set of senderId-cawonce keys for those that passed sim:
       const succeededKeys = new Set(
-        successfulActions.map(a => `${a.senderId}-${a.cawonce}`)
+        successfulActions.map((a: any) => `${a.senderId}-${a.cawonce}`)
       )
 
       // Check if we're on testnet
@@ -2036,7 +2036,7 @@ console.log("succeededKeys", succeededKeys)
         const replicatorViewAbi = [
           'function clientActionCount(uint32) view returns (uint256)',
           'function checkpointReplicated(uint32,uint32,uint256) view returns (bool)',
-          'function quoteReplicateBatch(uint32,uint256,bool) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
+          'function quoteReplicateBatch(uint32,uint256,uint256,uint256,bool) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
         ]
         // Read clientActionCount from CawActions (not replicator) to know how
         // many complete checkpoints exist.
@@ -2178,7 +2178,7 @@ console.log("succeededKeys", succeededKeys)
 
               // Sort by (blockNumber, transactionIndex, calldataPosition) — this is
               // the exact order the contract built the hash chain
-              orderedEntries.sort((a, b) => {
+              orderedEntries.sort((a: any, b) => {
                 if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber
                 if (a.txIndex !== b.txIndex) return a.txIndex - b.txIndex
                 return a.calldataPos - b.calldataPos
@@ -2247,7 +2247,9 @@ console.log("succeededKeys", succeededKeys)
               let nativeFee: bigint
               try {
                 const avgTextLength = Math.ceil(allActions.reduce((sum: number, a: any) => sum + (a.text?.length || 0), 0) / 256)
-                const fee = await replicatorView.quoteReplicateBatch(destEid, avgTextLength, false)
+                const avgRecipients = Math.ceil(allActions.reduce((sum: number, a: any) => sum + (a.recipients?.length || 0), 0) / 256)
+                const avgAmounts = Math.ceil(allActions.reduce((sum: number, a: any) => sum + (a.amounts?.length || 0), 0) / 256)
+                const fee = await replicatorView.quoteReplicateBatch(destEid, avgTextLength, avgRecipients, avgAmounts, false)
                 // 15% buffer — quoted fee is accurate to a few percent for a
                 // given block; 15% is plenty for inter-block drift. (Was 30%
                 // briefly; tuned down after confirming quote reliability.)

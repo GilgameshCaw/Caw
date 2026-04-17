@@ -70,7 +70,7 @@ class ElasticsearchService {
       node,
       auth,
       // Disable SSL verification for local development
-      ssl: {
+      tls: {
         rejectUnauthorized: false
       }
     })
@@ -576,7 +576,7 @@ class ElasticsearchService {
         }
       })
 
-      const buckets = response.aggregations?.trending?.buckets || []
+      const buckets = (response.aggregations?.trending as any)?.buckets as any[] || []
       return buckets.map((b: any) => b.key)
     } catch (error) {
       console.error('Failed to get trending hashtags:', error)

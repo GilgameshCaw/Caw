@@ -2,7 +2,6 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { shapeCaw, getCawIncludeConfig, handlePagination } from '../shared/cawUtils'
-import { mockCawItems, userMockItems } from '../shared/mockData'
 import { requireAuth } from '../middleware/auth'
 import { getBlockedUserIds } from '../shared/blockUtils'
 
