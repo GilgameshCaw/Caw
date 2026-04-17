@@ -7,6 +7,7 @@ import { z } from 'zod'
 import 'dotenv/config'
 import { Service } from '../../Service'
 import { JsonRpcProvider, Contract, Wallet } from 'ethers'
+import { makeJsonRpcProvider } from '../../utils/rpcProvider'
 import { cawClientManagerAbi } from '../../abi/generated'
 import { CLIENT_MANAGER_ADDRESS } from '../../abi/addresses'
 
@@ -57,7 +58,7 @@ export const instanceRegistryService: Service = {
 
     const started = (async () => {
       try {
-        const provider = new JsonRpcProvider(l1RpcUrl)
+        const provider = makeJsonRpcProvider(l1RpcUrl)
         const wallet = new Wallet(privateKey, provider)
         const clientManager = new Contract(CLIENT_MANAGER_ADDRESS, cawClientManagerAbi, wallet)
 

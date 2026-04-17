@@ -1,6 +1,7 @@
 // src/api/routes/users.ts
 import { Router } from 'express'
 import { Contract, JsonRpcProvider, WebSocketProvider } from 'ethers'
+import { makeJsonRpcProvider, makeWebSocketProvider } from '../../utils/rpcProvider'
 import { prisma } from '../../prismaClient'
 import { ActionType } from '@prisma/client'
 import { findOrCreateUser, StaleTokenError } from '../../services/UserService'
@@ -16,8 +17,8 @@ function getL2ReadContract(): Contract | null {
   const rpcUrl = process.env.L2_RPC_URL_HTTP || process.env.L2_RPC_URL
   if (!rpcUrl) return null
   const provider = rpcUrl.startsWith('wss://') || rpcUrl.startsWith('ws://')
-    ? new WebSocketProvider(rpcUrl)
-    : new JsonRpcProvider(rpcUrl)
+    ? makeWebSocketProvider(rpcUrl)
+    : makeJsonRpcProvider(rpcUrl)
   _l2ReadContract = new Contract(CAW_NAMES_L2_ADDRESS, cawNameL2Abi as any, provider)
   return _l2ReadContract
 }

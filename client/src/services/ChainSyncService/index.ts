@@ -3,6 +3,7 @@
 
 import { prisma } from '../../prismaClient'
 import { JsonRpcProvider, Contract } from 'ethers'
+import { makeJsonRpcProvider } from '../../utils/rpcProvider'
 import { cawClientManagerAbi } from '../../abi/generated'
 import { CLIENT_MANAGER_ADDRESS, CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 
@@ -88,19 +89,19 @@ function initializeProviders(config: ChainSyncConfig) {
     // Convert WSS/WS URLs to HTTPS/HTTP — JsonRpcProvider only supports HTTP
     const l1Url = config.l1RpcUrl.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace('/ws/', '/')
     console.log('[ChainSync] L1 provider URL:', l1Url.slice(0, 40) + '...')
-    l1Provider = new JsonRpcProvider(l1Url)
+    l1Provider = makeJsonRpcProvider(l1Url)
     clientManager = new Contract(CLIENT_MANAGER_ADDRESS, cawClientManagerAbi, l1Provider)
   }
 
   if (!l2Provider && config.l2RpcUrl) {
     const l2Url = config.l2RpcUrl.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace('/ws/', '/')
     console.log('[ChainSync] L2 provider URL:', l2Url.slice(0, 40) + '...')
-    l2Provider = new JsonRpcProvider(l2Url)
+    l2Provider = makeJsonRpcProvider(l2Url)
   }
 
   if (!mainnetProvider && config.ethMainnetRpcUrl) {
     console.log('[ChainSync] Mainnet provider URL:', config.ethMainnetRpcUrl.slice(0, 40) + '...')
-    mainnetProvider = new JsonRpcProvider(config.ethMainnetRpcUrl)
+    mainnetProvider = makeJsonRpcProvider(config.ethMainnetRpcUrl)
     uniswapRouter = new Contract(UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_ABI, mainnetProvider)
   }
 

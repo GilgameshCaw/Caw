@@ -2,6 +2,7 @@
 import 'dotenv/config'
 import { z } from 'zod'
 import { ethers } from 'ethers'
+import { makeJsonRpcProvider } from '../../utils/rpcProvider'
 import { Service } from '../../Service'
 import { prisma } from '../../prismaClient'
 import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS } from '../../abi/addresses'
@@ -78,7 +79,7 @@ export const marketplaceIndexerService: Service = {
       await prisma.$connect()
       console.log(`[MarketplaceIndexer] Started — marketplace=${marketplaceAddress}, cawName=${cawNameAddress}, rpc=${rpcUrl.substring(0, 40)}...`)
 
-      const provider = new ethers.JsonRpcProvider(rpcUrl)
+      const provider = makeJsonRpcProvider(rpcUrl)
       const marketplace = new ethers.Contract(marketplaceAddress, MARKETPLACE_ABI, provider)
       const cawName = new ethers.Contract(cawNameAddress, CAWNAME_TRANSFER_ABI, provider)
 

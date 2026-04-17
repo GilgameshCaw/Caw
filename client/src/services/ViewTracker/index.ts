@@ -106,19 +106,16 @@ async function syncViewsToDatabase() {
       increment: parseInt(increment)
     }))
 
-    // Update database in a transaction
-    await prisma.$transaction(
-      updates.map(({ cawId, increment }) =>
-        prisma.caw.update({
+    // Update database in a transaction (use interactive form — the Prisma
+    // proxy doesn't produce PrismaPromise objects the array form requires)
+    await prisma.$transaction(async (tx) => {
+      for (const { cawId, increment } of updates) {
+        await tx.caw.update({
           where: { id: cawId },
-          data: {
-            viewCount: {
-              increment: increment
-            }
-          }
+          data: { viewCount: { increment } }
         })
-      )
-    )
+      }
+    })
 
     // Clear the pending views
     await redis.del('caw:views:pending')

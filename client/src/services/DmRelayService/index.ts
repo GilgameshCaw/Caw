@@ -5,7 +5,8 @@
 // they're connected to. Fire-and-forget — best effort delivery.
 
 import 'dotenv/config'
-import { JsonRpcProvider, Contract } from 'ethers'
+import { Contract } from 'ethers'
+import { makeJsonRpcProvider } from '../../utils/rpcProvider'
 import { cawClientManagerAbi } from '../../abi/generated'
 import { CLIENT_MANAGER_ADDRESS } from '../../abi/addresses'
 
@@ -31,7 +32,7 @@ async function refreshPeerInstances(): Promise<void> {
   if (Date.now() - lastRefresh < REFRESH_INTERVAL) return
 
   try {
-    const provider = new JsonRpcProvider(l1RpcUrl)
+    const provider = makeJsonRpcProvider(l1RpcUrl)
     const clientManager = new Contract(CLIENT_MANAGER_ADDRESS, cawClientManagerAbi, provider)
 
     // Fetch InstanceRegistered events for our clientId

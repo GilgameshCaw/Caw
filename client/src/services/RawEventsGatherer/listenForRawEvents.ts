@@ -1,7 +1,8 @@
 // src/services/RawEventsGatherer/listenForRawEvents.ts
-import { ContractEventPayload, WebSocketProvider, JsonRpcProvider, Contract, keccak256, toUtf8Bytes, getBytes, concat } from 'ethers'
+import { ContractEventPayload, WebSocketProvider, Contract, keccak256, toUtf8Bytes, getBytes, concat } from 'ethers'
 import type { Log } from '@ethersproject/abstract-provider'
 import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
+import { makeJsonRpcProvider, makeWebSocketProvider } from '../../utils/rpcProvider'
 import delay from '../../tools/delay'
 import SmlTxt from 'smltxt'
 
@@ -86,7 +87,7 @@ export default async function listenForRawEvents(
 
   // HTTP provider for reliable polling (WebSocket can die silently)
   const httpRpcUrl = wsToHttp(config.rpcUrl)
-  const httpProvider = new JsonRpcProvider(httpRpcUrl)
+  const httpProvider = makeJsonRpcProvider(httpRpcUrl)
   const httpContract = new Contract(CAW_ACTIONS_ADDRESS, CONTRACT_ABI, httpProvider)
 
   const last = await config.rawEventsProvider.getLastProcessedEvent()
@@ -184,7 +185,7 @@ export default async function listenForRawEvents(
 
     try {
       console.log('[RawEventsGatherer] Setting up WebSocket connection...')
-      wsProvider = new WebSocketProvider(config.rpcUrl)
+      wsProvider = makeWebSocketProvider(config.rpcUrl)
       wsContract = new Contract(CAW_ACTIONS_ADDRESS, CONTRACT_ABI, wsProvider)
 
       wsContract.on('ActionsProcessed', async (rawActions: any[], ev: ContractEventPayload) => {

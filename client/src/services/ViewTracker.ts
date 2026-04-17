@@ -75,14 +75,14 @@ export async function trackBulkViews(cawIds: number[], userId?: number, ipHash?:
 
   // Bulk update view counts in database
   if (cawsToUpdate.length > 0) {
-    await prisma.$transaction(
-      cawsToUpdate.map(cawId =>
-        prisma.caw.update({
+    await prisma.$transaction(async (tx) => {
+      for (const cawId of cawsToUpdate) {
+        await tx.caw.update({
           where: { id: cawId },
           data: { viewCount: { increment: 1 } }
         })
-      )
-    )
+      }
+    })
   }
 }
 

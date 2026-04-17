@@ -1,5 +1,6 @@
 import { prisma } from '../../prismaClient'
 import { JsonRpcProvider, WebSocketProvider, Contract } from 'ethers'
+import { makeJsonRpcProvider, makeWebSocketProvider } from '../../utils/rpcProvider'
 import { dataCleanerLogger as logger } from '../../utils/dataCleanerLogger'
 import { markTxQueueFailed } from '../../utils/txQueueFailure'
 import { cawNameL2Abi } from '../../abi/generated'
@@ -15,8 +16,8 @@ function getCawNameL2(): Contract {
   const rpcUrl = process.env.L2_RPC_URL_HTTP || process.env.L2_RPC_URL
   if (!rpcUrl) throw new Error('[DataCleaner] L2 RPC not configured')
   _l2Provider = rpcUrl.startsWith('wss://') || rpcUrl.startsWith('ws://')
-    ? new WebSocketProvider(rpcUrl)
-    : new JsonRpcProvider(rpcUrl)
+    ? makeWebSocketProvider(rpcUrl)
+    : makeJsonRpcProvider(rpcUrl)
   _cawNameL2 = new Contract(CAW_NAMES_L2_ADDRESS, cawNameL2Abi as any, _l2Provider)
   return _cawNameL2
 }

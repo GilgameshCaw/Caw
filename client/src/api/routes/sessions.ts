@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { randomUUID } from 'crypto'
 import { ethers, Contract, Wallet, JsonRpcProvider, WebSocketProvider } from 'ethers'
+import { makeJsonRpcProvider, makeWebSocketProvider } from '../../utils/rpcProvider'
 import { cawNameL2Abi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 import { prisma } from '../../prismaClient'
@@ -69,8 +70,8 @@ function getContract() {
   const validatorKey = process.env.VALIDATOR_PRIVATE_KEY
   if (!validatorKey) throw new Error('Validator not configured')
   _provider = rpcUrl.startsWith('wss://') || rpcUrl.startsWith('ws://')
-    ? new WebSocketProvider(rpcUrl)
-    : new JsonRpcProvider(rpcUrl)
+    ? makeWebSocketProvider(rpcUrl)
+    : makeJsonRpcProvider(rpcUrl)
   _wallet = new Wallet(validatorKey, _provider)
   _contract = new Contract(CAW_NAMES_L2_ADDRESS, cawNameL2Abi as any, _wallet)
   return _contract

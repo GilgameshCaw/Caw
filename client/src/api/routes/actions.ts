@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { ethers, JsonRpcProvider, WebSocketProvider, Contract } from 'ethers'
+import { makeJsonRpcProvider, makeWebSocketProvider } from '../../utils/rpcProvider'
 import SmlTxt from 'smltxt'
 import { prisma } from '../../prismaClient'
 
@@ -62,8 +63,8 @@ function getReadContract(): Contract {
   const rpcUrl = process.env.L2_RPC_URL_HTTP || process.env.L2_RPC_URL
   if (!rpcUrl) throw new Error('L2 RPC not configured')
   _readProvider = rpcUrl.startsWith('wss://') || rpcUrl.startsWith('ws://')
-    ? new WebSocketProvider(rpcUrl)
-    : new JsonRpcProvider(rpcUrl)
+    ? makeWebSocketProvider(rpcUrl)
+    : makeJsonRpcProvider(rpcUrl)
   _readContract = new Contract(CAW_NAMES_L2_ADDRESS, cawNameL2Abi as any, _readProvider)
   return _readContract
 }
@@ -247,13 +248,26 @@ router.post('/', async (req, res) => {
     ownerAddress = sender.address.toLowerCase()
 
     try {
+      // Log the exact shape we're verifying so we can diagnose signature
+      // mismatches (e.g. after the string→bytes text-field change). These
+      // logs are small and only fire in the signature-verification path.
+      console.log('[Actions] verifyTypedData:', {
+        chainId: domain?.chainId,
+        verifyingContract: domain?.verifyingContract,
+        textType: types?.ActionData?.find((f: any) => f.name === 'text')?.type,
+        textValue: typeof data?.text === 'string' ? `${data.text.slice(0, 20)}…(${data.text.length}ch)` : typeof data?.text,
+        actionType: data?.actionType,
+        senderId: data?.senderId,
+        cawonce: data?.cawonce,
+      })
       recoveredAddress = ethers.verifyTypedData(
         domain,
         { ActionData: types.ActionData },
         data,
         signature
       ).toLowerCase()
-    } catch (err) {
+    } catch (err: any) {
+      console.warn('[Actions] verifyTypedData threw:', err?.shortMessage || err?.message || err)
       return res.status(400).json({ error: 'Invalid signature' })
     }
     mark('verifySig')
@@ -279,14 +293,14 @@ router.post('/', async (req, res) => {
 
     // --- Passive auth accumulation ---
     // Now that the signer is verified, create/extend the HTTP session for the token owner.
-    // Only runs for wallet-signed actions (owner signature) — session-key-signed actions
-    // don't need to accumulate HTTP sessions since they're not tied to a specific wallet.
+    // Runs for both wallet-signed actions AND session-key-signed actions — in the
+    // session-key case we've just proved on-chain that the signer is a valid delegate
+    // for `ownerAddress`, so it's safe to accumulate an HTTP session for the owner.
+    // Without this, Quick-Sign-only users never get an HTTP session and see
+    // "Verify Wallet" on pages like Notifications despite actively using the app.
     let authResult: { sessionToken: string; authorizedTokenIds: number[]; authorizedAddresses: string[]; expiresAt: number } | null = null
     let sessionToken = req.headers['x-session-token'] as string | undefined
     try {
-      if (!isOwner) {
-        // Session-key-signed — skip passive auth entirely
-      } else {
       let session = sessionToken ? await getSession(sessionToken) : null
       const alreadyAuthorized = session?.authorizedAddresses.includes(ownerAddress)
 
@@ -343,7 +357,6 @@ router.post('/', async (req, res) => {
           }
         }
       }
-      } // end else (isOwner path)
     } catch (err: any) {
       console.error('[Actions] ❌ PASSIVE AUTH FAILED:', err?.message || err)
       console.error('[Actions] Stack:', err?.stack)
