@@ -43,7 +43,6 @@ import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import { useSignInModalStore } from '~/store/signInModalStore'
 import MuteConfirmModal, { shouldShowMuteConfirmModal } from './modals/MuteConfirmModal'
 import ReportPostModal, { ReportReason } from './modals/ReportPostModal'
-import SwitchChainModal from './modals/SwitchChainModal'
 import TipModal from './modals/TipModal'
 import { HiOutlineCurrencyDollar } from 'react-icons/hi'
 import { chains } from '~/config/chains'
@@ -86,7 +85,6 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const { openConnectModal } = useConnectModal()
   const hasActiveSession = useHasActiveSession()
   const { isDark } = useTheme()
-  const [showSwitchChainModal, setShowSwitchChainModal] = useState(false)
   const navigate = useNavigate()
   const [busyLike, setBusyLike]     = useState(false)
   const [busyRecaw, setBusyRecaw]   = useState(false)
@@ -282,13 +280,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     }
 
     if (!hasActiveSession) {
-      // Check if connected to wrong chain (need L2 for actions)
-      if (chainId !== chains.l2.chainId) {
-        setShowSwitchChainModal(true)
-        return
-      }
-
-      // Check if connected to wrong wallet
+      // signAndSubmit handles wallet connection and chain switching
+      // automatically. We only need a pre-flight check for the wrong-wallet
+      // case here so the user sees an immediate hint instead of a generic
+      // "wrong wallet" error mid-sign.
       if (activeToken && address && activeToken.address.toLowerCase() !== address.toLowerCase()) {
         setWrongWalletError(true)
         setTimeout(() => setWrongWalletError(false), 5000) // Clear error after 5 seconds
@@ -422,13 +417,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     }
 
     if (!hasActiveSession) {
-      // Check if connected to wrong chain (need L2 for actions)
-      if (chainId !== chains.l2.chainId) {
-        setShowSwitchChainModal(true)
-        return
-      }
-
-      // Check if connected to wrong wallet
+      // signAndSubmit handles wallet connection and chain switching
+      // automatically. We only need a pre-flight check for the wrong-wallet
+      // case here so the user sees an immediate hint instead of a generic
+      // "wrong wallet" error mid-sign.
       if (activeToken && address && activeToken.address.toLowerCase() !== address.toLowerCase()) {
         setWrongWalletError(true)
         setTimeout(() => setWrongWalletError(false), 5000) // Clear error after 5 seconds
@@ -1475,12 +1467,6 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           setTipPending(true)
           onTipStateChange?.(item.id, true)
         }}
-      />
-
-      {/* Switch Chain Modal */}
-      <SwitchChainModal
-        isOpen={showSwitchChainModal}
-        onClose={() => setShowSwitchChainModal(false)}
       />
 
       {/* Mute Words Modal */}

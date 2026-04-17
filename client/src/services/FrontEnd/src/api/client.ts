@@ -131,7 +131,14 @@ export async function apiFetch<T = any>(
         continue
       }
 
-      if (!res.ok) throw new Error(`API ${res.status} ${res.statusText}`)
+      if (!res.ok) {
+        let detail = ''
+        try {
+          const body = await res.json()
+          detail = body?.error || body?.message || ''
+        } catch {}
+        throw new Error(detail ? `API ${res.status}: ${detail}` : `API ${res.status} ${res.statusText}`)
+      }
 
       // Track which host we're actively using
       useInstanceStore.getState().setActiveApiHost(host)

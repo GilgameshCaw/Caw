@@ -5,6 +5,8 @@ import MainLayout       from '~/layouts/MainLayout'
 import { Tabs, TabItem } from '~/components/Tabs'
 import Feed             from '~/components/Feed'
 import { useTheme } from '~/hooks/useTheme'
+import { useEnsureWallet } from '~/hooks/useEnsureWallet'
+import { formatWalletError } from '~/utils/errorMessage'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useModalStore } from '~/store/modalStore'
 import { HiPencil, HiX, HiCamera, HiGlobe, HiLink, HiLocationMarker, HiOutlineMail, HiDotsHorizontal, HiOutlineCurrencyDollar, HiOutlineLockClosed, HiClipboardCopy, HiCheck } from 'react-icons/hi'
@@ -121,17 +123,25 @@ export const Profile: React.FC = () => {
   const { hasIdentity: ownDmEnabled } = useDmIdentity(activeToken?.tokenId)
   const { hasIdentity: peerDmEnabled } = useDmIdentity(profileData?.tokenId)
   const { initializeClient, isLoading: dmEnabling } = useDmClient(activeToken?.tokenId, activeToken?.username)
+  // Route through a ref so the ensureWallet-deferred action hits the freshest
+  // closure (one where walletClient is populated). See Messages.tsx for
+  // the same pattern.
+  const initializeClientRef = useRef(initializeClient)
+  useEffect(() => { initializeClientRef.current = initializeClient }, [initializeClient])
+  const ensureWallet = useEnsureWallet()
   const [dmEnableError, setDmEnableError] = useState<string | null>(null)
 
   const handleEnableDms = async () => {
     setDmEnableError(null)
-    try {
-      await initializeClient()
-      // Identity will be detected by useDmIdentity on next poll; navigate to messages
-      navigate('/messages')
-    } catch (err) {
-      setDmEnableError(err instanceof Error ? err.message : 'Failed to enable DMs')
-    }
+    await ensureWallet(null, async () => {
+      try {
+        await initializeClientRef.current()
+        // Identity will be detected by useDmIdentity on next poll; navigate to messages
+        navigate('/messages')
+      } catch (err) {
+        setDmEnableError(formatWalletError(err))
+      }
+    })
   }
 
   // Follow button logic with hook
@@ -993,16 +1003,16 @@ export const Profile: React.FC = () => {
                       }</span>
                       <button
                         onClick={() => {
-                          if (!isConnected) { openConnectModal?.(); return }
-                          if (currentChainId !== chains.l1.chainId) { switchChain({ chainId: chains.l1.chainId }); return }
-                          if (cancelOfferError) resetCancelOffer()
-                          setCancellingOfferId(offer.offerId)
-                          writeCancelOffer({
-                            address: CAW_NAME_MARKETPLACE_ADDRESS,
-                            abi: cawNameMarketplaceAbi,
-                            functionName: 'cancelOffer',
-                            args: [BigInt(offer.offerId)],
-                            chainId: chains.l1.chainId,
+                          ensureWallet({ chainId: chains.l1.chainId }, async () => {
+                            if (cancelOfferError) resetCancelOffer()
+                            setCancellingOfferId(offer.offerId)
+                            writeCancelOffer({
+                              address: CAW_NAME_MARKETPLACE_ADDRESS,
+                              abi: cawNameMarketplaceAbi,
+                              functionName: 'cancelOffer',
+                              args: [BigInt(offer.offerId)],
+                              chainId: chains.l1.chainId,
+                            })
                           })
                         }}
                         disabled={isCancelling}

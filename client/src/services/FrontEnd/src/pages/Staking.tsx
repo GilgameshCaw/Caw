@@ -661,8 +661,6 @@ const Staking = () => {
           ? 'Depositing...'
           : isApprovePending
           ? 'Approving...'
-          : wrongChainForStake
-          ? 'Switch Network'
           : needsApproval
           ? 'Approve'
           : insufficientBalance
@@ -747,8 +745,6 @@ const Staking = () => {
                 ? 'Wrong Address'
                 : (withdraw.status === 'pending' || isWithdrawPending)
                 ? 'Withdrawing...'
-                : wrongChainForUnstake
-                ? 'Switch Network'
                 : 'Complete Withdrawal'}
             </button>
             {withdraw.gasCostEth != null && (() => {
@@ -889,8 +885,6 @@ const Staking = () => {
           ? 'Switching...'
           : !isTokenOwner && activeToken && isConnected && !isMainnet
           ? 'Wrong Address'
-          : isMainnet
-          ? 'Switch Network'
           : !amount || parseFloat(amount) <= 0
           ? "Enter Amount"
           : parseFloat(amount || "0") > mockData.maxWithdrawAmount

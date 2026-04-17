@@ -13,7 +13,6 @@ import { Link } from 'react-router-dom'
 import { User, CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
 import { usePendingCawPolling, usePendingLikePolling, usePendingReplyPolling } from '~/hooks/usePendingPolling'
-import SwitchChainModal from './modals/SwitchChainModal'
 import { chains } from '~/config/chains'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import Tooltip from '~/components/Tooltip'
@@ -38,7 +37,6 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
   const chainId = useChainId()
   const hasActiveSession = useHasActiveSession()
   const [busyLike, setBusyLike]     = useState(false)
-  const [showSwitchChainModal, setShowSwitchChainModal] = useState(false)
   const [busyRecaw, setBusyRecaw]   = useState(false)
   const [isRecawed, setIsRecawed]   = useState(false)
   const [likePending, setLikePending] = useState(item.likePending || false)
@@ -93,11 +91,8 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
       return
     }
 
-    // Check if connected to wrong chain (need L2 for actions)
-    if (chainId !== chains.l2.chainId) {
-      setShowSwitchChainModal(true)
-      return
-    }
+    // Chain switching is handled automatically by signAndSubmit — no
+    // pre-flight modal needed.
 
     // Check if connected to wrong wallet (skip if session key active)
     if (!hasActiveSession && activeToken && address && activeToken.address.toLowerCase() !== address.toLowerCase()) {
@@ -349,11 +344,6 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
         )}
       </div>
 
-      {/* Switch Chain Modal */}
-      <SwitchChainModal
-        isOpen={showSwitchChainModal}
-        onClose={() => setShowSwitchChainModal(false)}
-      />
     </Link>
   )
 }

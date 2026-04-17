@@ -2,7 +2,7 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { apiFetch }              from './client'
 import { baseSepolia }           from 'wagmi/chains'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
-import { useSignTypedData, useAccount, useSwitchChain } from 'wagmi'
+import { useSignTypedData, useAccount, useSwitchChain, useChainId } from 'wagmi'
 import { readContract } from '@wagmi/core'
 import type { TypedDataDomain, TypedDataField } from '@ethersproject/abstract-signer'
 import { useActiveToken, useTokenDataStore } from "~/store/tokenDataStore";
@@ -255,6 +255,7 @@ export function useSignAndSubmitAction() {
   const { isConnected, address }      = useAccount()
   const { openConnectModal } = useConnectModal()
   const { switchChainAsync } = useSwitchChain()
+  const walletChainId = useChainId()
   const hasActiveSession = useHasActiveSession()
 
   const { signTypedDataAsync } = useSignTypedData()
@@ -298,8 +299,14 @@ export function useSignAndSubmitAction() {
     // Prompt to enable Quick Sign if it's not active.
     // Only for action types that Quick Sign supports (codes 0-5: caw, like, unlike, recaw, follow, unfollow).
     // Tips (other=7) and withdrawals (6) always require wallet signing — don't prompt for those.
+    // Suppress the prompt only when Quick Sign is actually useful right now
+    // (we have a session covering this action). If `enabled` is true but
+    // `canUseSession0` is false (session expired, wrong scope, etc.), falling
+    // through to wallet signing without a heads-up makes clicks feel unresponsive
+    // — the user sees "Processing..." with no modal. Prompt them to re-enable
+    // Quick Sign or sign manually explicitly.
     const hasActiveSessions = Object.keys(sessionStore0.sessions).length > 0
-    const suppressPrompt = sessionStore0.hasSeenPrompt && (sessionStore0.enabled || hasActiveSessions)
+    const suppressPrompt = sessionStore0.hasSeenPrompt && hasActiveSessions
     const actionEligibleForQuickSign = actionCode0 !== 6 // everything except WITHDRAW
     if (!canUseSession0 && !suppressPrompt && actionEligibleForQuickSign) {
       const { useQuickSignPromptStore } = await import('~/components/modals/QuickSignModal')
@@ -611,6 +618,15 @@ export function useSignAndSubmitAction() {
     try {
       let signature: `0x${string}`
 
+      // Auto-switch to L2 before signing if the wallet is on the wrong chain.
+      // Without this, the wallet happily signs for the wrong chainId and the
+      // server rejects the signature with a 400.
+      if (!canUseSession) {
+        if (walletChainId !== baseSepolia.id) {
+          await switchChainAsync({ chainId: baseSepolia.id })
+        }
+      }
+
       if (canUseSession) {
         // Sign with session key — no wallet popup
         const sessionAccount = privateKeyToAccount(activeSession.privateKey)
@@ -794,10 +810,16 @@ export function useSignAndSubmitAction() {
     const params = pendingParams
     setPendingParams(null)
 
-    // Submit the action
-    requestAndSubmit(params).finally(() => {
-      submittingRef.current = false
-    })
+    // pendingParams is only set when the wallet was disconnected, so the user
+    // never saw the Quick Sign prompt. Let the normal prompt flow run — if they
+    // previously chose "don't show again", suppressPrompt handles it.
+    ;(async () => {
+      try {
+        await requestAndSubmit(params)
+      } finally {
+        submittingRef.current = false
+      }
+    })()
   }, [isConnected, pendingParams, cawonce, requestAndSubmit, address, activeToken?.address])
 
   /**

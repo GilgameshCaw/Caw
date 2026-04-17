@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { useAccount } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
+import { formatWalletError } from '~/utils/errorMessage'
 import { useSearchParams, useParams, useNavigate } from 'react-router-dom'
 import ConnectButton from '~/components/buttons/ConnectButton'
 import Tooltip from '~/components/Tooltip'
@@ -139,6 +140,13 @@ const MessagesPage: React.FC = () => {
     refreshConversations,
     clearUnreadCount
   } = useDmClient(currentUser?.id, currentUser?.username)
+  // Keep a ref to the latest initializeClient so the action passed into
+  // ensureWallet (which runs asynchronously after connect) always calls
+  // the freshest closure — the one that sees walletClient populated. The
+  // closure captured at click time sees walletClient=undefined and throws
+  // "Wallet not connected".
+  const initializeClientRef = useRef(initializeClient)
+  useEffect(() => { initializeClientRef.current = initializeClient }, [initializeClient])
   const { messages, isLoadingOlder, hasMoreMessages, loadOlderMessages, sendMessage: dmSendMessage, editMessage: dmEditMessage, deleteForMe: dmDeleteForMe, deleteForEveryone: dmDeleteForEveryone, isSending, markAsRead, addIncomingMessage, peerLastReadAt, getSharedSecret } = useDmMessages(selectedConversationId || '', currentUser?.id)
   const { uploadEncryptedFile, isUploading, uploadProgress } = useDmFileUpload()
 
@@ -639,7 +647,7 @@ const MessagesPage: React.FC = () => {
 
     await ensureWallet(null, async () => {
       try {
-        await initializeClient()
+        await initializeClientRef.current()
         setCurrentView('inbox')
 
         // If we have a target user from URL params, create conversation
@@ -656,8 +664,9 @@ const MessagesPage: React.FC = () => {
           }, 500)
         }
       } catch (error) {
+        // Error is surfaced inline on the setup screen via `dmError` from
+        // useDmClient — no modal needed.
         console.error('Failed to enable DMs:', error)
-        setErrorModal({ title: 'DMs Setup Failed', message: error instanceof Error ? error.message : 'Failed to enable DMs. Please try again.' })
       }
     })
   }
@@ -970,10 +979,12 @@ const MessagesPage: React.FC = () => {
                   Sign a message to derive your encryption keys. This is a free, one-time setup per profile and per device/browser.
                 </p>
                 {dmError && (
-                  <div className="mb-4 p-3 rounded-lg bg-red-500/20 border border-red-500">
-                    <p className="text-red-500 text-sm">
-                      {dmError.message || 'Failed to enable DMs. Please try again.'}
-                    </p>
+                  <div className="mb-4 flex justify-center">
+                    <div className={`inline-block px-4 py-2 rounded-lg text-sm ${
+                      isDark ? 'bg-red-500/10 border border-red-500/40 text-red-400' : 'bg-red-50 border border-red-200 text-red-700'
+                    }`}>
+                      {formatWalletError(dmError)}
+                    </div>
                   </div>
                 )}
                 {(() => {

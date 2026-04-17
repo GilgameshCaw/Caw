@@ -3,6 +3,7 @@ import Tooltip from '~/components/Tooltip'
 import { useAccount, useConnections, useSwitchChain, useReadContract } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
+import { formatWalletError } from '~/utils/errorMessage'
 import { maxUint256, parseUnits, formatUnits, erc20Abi } from 'viem'
 import { useActiveToken, useTokenDataStore, usePriceStore } from '~/store/tokenDataStore'
 import { useVerifyWallet } from '~/hooks/useVerifyWallet'
@@ -382,7 +383,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
       markComplete('dms')
       markComplete('verify')
     } catch (err) {
-      setDmError(err instanceof Error ? err.message : 'Failed to enable DMs')
+      setDmError(formatWalletError(err))
     }
   }
 

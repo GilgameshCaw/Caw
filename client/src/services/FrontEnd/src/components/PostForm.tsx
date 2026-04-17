@@ -358,7 +358,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   // Check if the user owns the selected token
   const isTokenOwner = activeToken && address && activeToken.owner?.toLowerCase() === address.toLowerCase();
   const hasNoToken = !activeToken?.tokenId;
-  const canPost = !hasNoToken && (hasActiveSession || (isTokenOwner && !wrongChain && isConnected));
+  // Allow posting whenever there's an active profile. If the wallet isn't
+  // connected, signAndSubmit opens the connect modal and auto-retries. If on
+  // the wrong chain, it auto-switches before signing. No need to gate the
+  // button on those here — let the user click and we'll handle it.
+  const canPost = !hasNoToken && (hasActiveSession || isTokenOwner || !isConnected);
 
   const handleMediaSelected = (media: any[]) => {
     setSelectedMedia(media)
@@ -936,68 +940,59 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
 
     if (chunks.length > 1) setSigningProgress({ current: 1, total: chunks.length })
 
-    // Fast path: use batch submission for threads (>1 chunk) when Quick Sign
-    // is active. Pre-checks run once, signing is in-memory, submissions go
-    // through /api/actions/batch. Falls through to sequential path if no session.
     const firstPostCawonce = threadCawonces[0]
-    let canBatch = false
-    if (chunks.length > 1 && typeof (signAndSubmit as any).many === 'function') {
+
+    // Check if we can batch via Quick Sign session
+    const checkCanBatch = async () => {
+      if (chunks.length <= 1 || typeof (signAndSubmit as any).many !== 'function') return false
       try {
         const { useSessionKeyStore: sks } = await import('~/store/sessionKeyStore')
         const store = sks.getState()
         const owner = activeToken?.owner
         const sess = owner ? store.getActiveSessionForAddress(owner) : store.getActiveSession()
-        canBatch = !!sess && (sess.scopeBitmap & 1) !== 0 // CAW bit
-        console.log('[PostForm] Thread batch check: session=' + !!sess + ', scope=' + sess?.scopeBitmap + ', canBatch=' + canBatch)
-      } catch (e) {
-        console.warn('[PostForm] Batch check failed:', e)
-      }
+        return !!sess && (sess.scopeBitmap & 1) !== 0 // CAW bit
+      } catch { return false }
     }
 
-    if (canBatch) {
-      // Build all params upfront, submit as a batch
-      const allParams: ActionParams[] = [firstParams]
-      for (let i = 1; i < chunks.length; i++) {
-        allParams.push({
-          actionType: 'caw',
-          senderId: effectiveTokenId,
-          text: chunks[i],
-          cawonce: threadCawonces[i],
-          receiverId: effectiveTokenId,
-          receiverCawonce: firstPostCawonce,
-        })
-      }
-
-      const responses = await (signAndSubmit as any).many(allParams, (p: any) => {
-        // Report signing progress; submissions happen in parallel after all signs
-        setSigningProgress({ current: p.signed, total: p.total })
+    // Batch-submit a set of chunk params via .many(), adding pending posts for each
+    const batchSubmitChunks = async (params: ActionParams[], chunkOffset: number) => {
+      const responses = await (signAndSubmit as any).many(params, (p: any) => {
+        setSigningProgress({ current: chunkOffset + p.signed, total: chunks.length })
       })
-
-      // Add pending posts for all successful submissions
       if (activeToken) {
-        for (let i = 0; i < chunks.length; i++) {
-          const response = responses[i]
-          if (!response || response.error) continue
+        for (let i = 0; i < params.length; i++) {
+          const r = responses[i]
+          if (!r || r.error) continue
           const tempId = addPendingPost({
-            content: chunks[i],
+            content: chunks[chunkOffset + i],
             username: activeToken.username,
             tokenId: effectiveTokenId,
             avatarUrl: avatars[effectiveTokenId] || undefined
           })
-          if (response.txQueueId) {
-            updatePostWithTxQueueId(tempId, response.txQueueId)
-          }
+          if (r.txQueueId) updatePostWithTxQueueId(tempId, r.txQueueId)
         }
       }
-    } else {
-      // Slow path: no Quick Sign or single post — sign+submit one at a time
-      const response = await signAndSubmit(firstParams)
+    }
 
-      // If signAndSubmit returned null (e.g. insufficient stake modal), don't clear the form
+    // Build reply params for chunks after the first
+    const buildReplyParams = (startIdx: number): ActionParams[] =>
+      chunks.slice(startIdx).map((text, i) => ({
+        actionType: 'caw' as const,
+        senderId: effectiveTokenId,
+        text,
+        cawonce: threadCawonces[startIdx + i],
+        receiverId: effectiveTokenId,
+        receiverCawonce: firstPostCawonce,
+      }))
+
+    if (await checkCanBatch()) {
+      // Fast path: batch all chunks (including first) through .many()
+      await batchSubmitChunks([firstParams, ...buildReplyParams(1)], 0)
+    } else {
+      // Sign+submit the first chunk (may trigger Quick Sign enable prompt)
+      const response = await signAndSubmit(firstParams)
       if (!response) return
 
-      // Only add pending post AFTER signing succeeds (not before)
-      // This prevents showing the post before user confirms the signature
       if (!replyTo && activeToken) {
         const tempId = addPendingPost({
           content: chunks[0],
@@ -1005,38 +1000,28 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           tokenId: effectiveTokenId,
           avatarUrl: avatars[effectiveTokenId] || undefined
         })
-
-        // Update pending post with txQueue ID if available
-        if (response.txQueueId) {
-          updatePostWithTxQueueId(tempId, response.txQueueId)
-        }
+        if (response.txQueueId) updatePostWithTxQueueId(tempId, response.txQueueId)
       }
 
-      // Post remaining chunks as replies to the first post
-      for (let i = 1; i < chunks.length; i++) {
-        const replyParams: ActionParams = {
-          actionType: 'caw',
-          senderId: effectiveTokenId,
-          text: chunks[i],
-          cawonce: threadCawonces[i],
-          receiverId: effectiveTokenId,
-          receiverCawonce: firstPostCawonce,
-        }
+      // Remaining chunks: re-check for session (user may have just enabled Quick Sign)
+      if (chunks.length > 1) {
+        if (await checkCanBatch()) {
+          await batchSubmitChunks(buildReplyParams(1), 1)
+        } else {
+          for (let i = 1; i < chunks.length; i++) {
+            setSigningProgress({ current: i + 1, total: chunks.length })
+            const replyResponse = await signAndSubmit(buildReplyParams(i)[0])
+            if (!replyResponse) break
 
-        setSigningProgress({ current: i + 1, total: chunks.length })
-        const replyResponse = await signAndSubmit(replyParams)
-        if (!replyResponse) break // User cancelled or error
-
-        // Add pending posts for thread replies too
-        if (activeToken) {
-          const tempId = addPendingPost({
-            content: chunks[i],
-            username: activeToken.username,
-            tokenId: effectiveTokenId,
-            avatarUrl: avatars[effectiveTokenId] || undefined
-          })
-          if (replyResponse.txQueueId) {
-            updatePostWithTxQueueId(tempId, replyResponse.txQueueId)
+            if (activeToken) {
+              const tempId = addPendingPost({
+                content: chunks[i],
+                username: activeToken.username,
+                tokenId: effectiveTokenId,
+                avatarUrl: avatars[effectiveTokenId] || undefined
+              })
+              if (replyResponse.txQueueId) updatePostWithTxQueueId(tempId, replyResponse.txQueueId)
+            }
           }
         }
       }
@@ -1263,7 +1248,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                 Create profile
               </Link>
             ) : (() => {
-                const wrongWallet = !isTokenOwner && !hasActiveSession && activeToken?.tokenId
+                // "Wrong Wallet" only applies when a wallet IS connected but
+                // doesn't own the active token (and no Quick Sign session is
+                // covering for it). If no wallet is connected, the button just
+                // triggers the connect flow and should say "Post".
+                const wrongWallet = isConnected && !isTokenOwner && !hasActiveSession && activeToken?.tokenId
                 const tooltipText = wrongWallet ? 'Please switch to the correct wallet' : isSubmitting ? (isThreadMode ? 'Waiting for signatures...' : 'Waiting for signature...') : ''
                 const isDisabled = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isSubmitting
                 const btn = (
@@ -1622,7 +1611,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             </div>
 
             {(() => {
-                const wrongWallet2 = !isTokenOwner && !hasActiveSession && activeToken?.tokenId
+                const wrongWallet2 = isConnected && !isTokenOwner && !hasActiveSession && activeToken?.tokenId
                 const tooltipText2 = wrongWallet2 ? 'Please switch to the correct wallet' : hasNoToken ? '' : isSubmitting ? (isThreadMode ? 'Waiting for signatures...' : 'Waiting for signature...') : ''
                 const isDisabled2 = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isSubmitting
                 const btn2 = (
