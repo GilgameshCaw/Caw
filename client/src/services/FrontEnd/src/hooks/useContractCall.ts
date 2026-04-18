@@ -51,7 +51,7 @@ export default function useContractCall<
   const { address: account } = useAccount();
   const data = encodeFunctionData({ abi, functionName, args });
 
-  const { data: gasLimit } = useEstimateGas({
+  const { data: gasLimit, error: gasError } = useEstimateGas({
     account,
     to: address,
     data,
@@ -61,11 +61,12 @@ export default function useContractCall<
   const { data: gasPrice } = useGasPrice();
 
   const gasCostEth = useMemo(() => {
+    if (gasError) console.warn(`[useContractCall] ${functionName} gas estimate failed:`, gasError.message?.slice(0, 200));
     if (!gasLimit || !gasPrice) return;
     const wei = gasLimit * gasPrice;
     const eth = Number(formatEther(wei));
     return eth;
-  }, [gasLimit, gasPrice]);
+  }, [gasLimit, gasPrice, gasError, functionName]);
 
   const { writeContractAsync, status } = useWriteContract();
   const publicClient = usePublicClient();
