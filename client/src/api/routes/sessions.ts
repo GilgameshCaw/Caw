@@ -188,15 +188,16 @@ async function processSessionRequest(
   } catch (err: any) {
     console.error(`[Sessions] Error processing ${requestId}:`, err.message)
     console.error(`[Sessions] Full error:`, JSON.stringify({ reason: err.reason, code: err.code, data: err.data, revert: err.revert }, null, 2))
-    const rawMsg = (err.reason || err.message || '').toLowerCase()
-    let userError = 'Something went wrong. Please try again.'
-    if (rawMsg.includes('cannot delegate withdraw')) {
+    const rawMsg = (err.reason || err.message || '')
+    const rawLower = rawMsg.toLowerCase()
+    let userError = `Something went wrong: ${rawMsg.slice(0, 200)}`
+    if (rawLower.includes('cannot delegate withdraw')) {
       userError = 'This action type cannot be delegated to Quick Sign.'
-    } else if (rawMsg.includes('already expired')) {
+    } else if (rawLower.includes('already expired')) {
       userError = 'Session duration is invalid. Please try again.'
-    } else if (rawMsg.includes('insufficient funds') && !rawMsg.includes('gas')) {
+    } else if (rawLower.includes('insufficient funds') && !rawLower.includes('gas')) {
       userError = 'Validator has insufficient funds. Please contact the node operator.'
-    } else if (rawMsg.includes('nonce') && rawMsg.includes('too low')) {
+    } else if (rawLower.includes('nonce') && rawLower.includes('too low')) {
       userError = 'Transaction conflict. Please try again.'
     }
     requests.set(requestId, { status: 'failed', error: userError })
