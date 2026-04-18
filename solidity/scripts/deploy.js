@@ -763,6 +763,42 @@ const LINKING_STEPS = [
       }
     },
   },
+  // Add the reverse direction: client 1 also replicates FROM L2b TO L2's archive.
+  // The ClientManager stores a global chain list; each replicator's setClientChains
+  // now skips EIDs it doesn't have registered (graceful filter instead of revert).
+  {
+    name: 'Add replication for client 1 on L2b (archive to L2)',
+    chain: 'L1',
+    phase: 5,
+    contract: 'CawClientManager',
+    method: 'addReplication',
+    args: (state, chainConfig) => [
+      1, // clientId
+      CHAINS[chainConfig.env + 'L2'].lzEid,
+    ],
+    condition: (state) => state.addresses.CawClientManager && state.addresses.CawActionsArchive_L2 && state.addresses.CawName,
+    skipIf: async (state, deployer, chainConfig) => {
+      const cm = deployer.getContract('CawClientManager');
+      if (!cm) return false;
+      const l2Eid = CHAINS[chainConfig.env + 'L2'].lzEid;
+      try {
+        const eids = await cm.getClientChainEids(1);
+        return eids.map(e => Number(e)).includes(l2Eid);
+      } catch { return false; }
+    },
+    overrides: async (state, deployer, chainConfig) => {
+      const quoter = deployer.getContract('CawNameQuoter');
+      if (!quoter) return { value: ethers.parseEther('0.0002') };
+      try {
+        const l2Eid = CHAINS[chainConfig.env + 'L2'].lzEid;
+        const quote = await quoter.syncReplicationQuote(1, [l2Eid], l2Eid, false);
+        const feeWithBuffer = (quote.nativeFee * 120n) / 100n;
+        return { value: feeWithBuffer };
+      } catch {
+        return { value: ethers.parseEther('0.0002') };
+      }
+    },
+  },
   // Force-sync replication config to L2 when the replicator was redeployed.
   // `clientManager.addReplication` already auto-syncs to L2 when called, but
   // only fires when the CLIENT MANAGER's state needs updating. If we just
@@ -817,8 +853,56 @@ const LINKING_STEPS = [
       }
     },
   },
-  // Note: Client 1's storage chain is L2 (Base Sepolia). Replication config auto-syncs there.
-  // To add a second client on L2b, call createClient with L2b's EID.
+  // Mirror of the Force sync above but targeting L2b's replicator. Client 1's
+  // storage chain is L2, but client 1 ALSO replicates FROM L2b (to L2's archive).
+  // After a L2b replicator redeploy, its clientChainEnabled mapping is empty.
+  // Sending syncReplication to L2b's CawNameL2 makes it call setClientChains
+  // on the new L2b replicator.
+  {
+    name: 'Force syncReplication on L2b if new replicator missing clientChainEnabled',
+    chain: 'L1',
+    phase: 5,
+    contract: 'CawName',
+    method: 'syncReplication',
+    args: (state, chainConfig) => [
+      1, // clientId
+      CHAINS[chainConfig.env + 'L2b'].lzEid, // target L2b's CawNameL2
+      0, // lzTokenAmount
+    ],
+    condition: (state) => state.addresses.CawName && state.addresses.CawActionsReplicator_L2b,
+    skipIf: async (state, deployer, chainConfig) => {
+      const chainKey = deployer.getChainKey('L2b');
+      await deployer.initChain(chainKey);
+      const replicatorAddr = deployer.state.addresses.CawActionsReplicator_L2b;
+      if (!replicatorAddr) return true;
+      const provider = deployer.wallets[chainKey].provider;
+      const replicator = new ethers.Contract(
+        replicatorAddr,
+        ['function clientChainEnabled(uint32,uint32) view returns (bool)'],
+        provider,
+      );
+      const l2Eid = CHAINS[chainConfig.env + 'L2'].lzEid;
+      try {
+        const enabled = await replicator.clientChainEnabled(1, l2Eid);
+        if (enabled) console.log(`   clientChainEnabled(1, ${l2Eid}) = true on L2b replicator — skipping sync`);
+        return enabled;
+      } catch { return false; }
+    },
+    overrides: async (state, deployer, chainConfig) => {
+      const quoter = deployer.getContract('CawNameQuoter');
+      if (!quoter) return { value: ethers.parseEther('0.0002') };
+      try {
+        const l2Eid = CHAINS[chainConfig.env + 'L2'].lzEid;
+        const l2bEid = CHAINS[chainConfig.env + 'L2b'].lzEid;
+        const quote = await quoter.syncReplicationQuote(1, [l2Eid], l2bEid, false);
+        const feeWithBuffer = (quote.nativeFee * 120n) / 100n;
+        console.log(`   syncReplication L2b LZ fee: ${ethers.formatEther(quote.nativeFee)} ETH (sending ${ethers.formatEther(feeWithBuffer)} with buffer)`);
+        return { value: feeWithBuffer };
+      } catch {
+        return { value: ethers.parseEther('0.0002') };
+      }
+    },
+  },
 
   // Phase 5: Marketplace payment token configuration
   // WETH

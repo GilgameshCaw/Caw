@@ -1,5 +1,7 @@
 const MintableCaw = artifacts.require("MintableCaw");
 const CawNameURI = artifacts.require("CawNameURI");
+const CawFontDataA = artifacts.require("CawFontDataA");
+const CawFontDataB = artifacts.require("CawFontDataB");
 const CawClientManager = artifacts.require("CawClientManager");
 const CawName = artifacts.require("CawName");
 const CawNameL2 = artifacts.require("CawNameL2");
@@ -510,6 +512,12 @@ async function expectBalanceOf(tokenId, params = {}) {
   expect(balance == value).to.equal(true);
 }
 
+async function deployURI() {
+  var fontA = await CawFontDataA.new();
+  var fontB = await CawFontDataB.new();
+  return await CawNameURI.new(fontA.address, fontB.address);
+}
+
 contract('CawNames', function(accounts, x) {
   var addr2;
   var addr1;
@@ -531,7 +539,7 @@ contract('CawNames', function(accounts, x) {
 
     clientManager = clientManager || await CawClientManager.new(buyAndBurnAddress);
 
-    uriGenerator = uriGenerator || await CawNameURI.new();
+    uriGenerator = uriGenerator || await deployURI();
     console.log("URI Generator addr", uriGenerator.address);
 
     cawNamesL2 = cawNamesL2 || await CawNameL2.new(l1, l2Endpoint.address);
@@ -1600,7 +1608,7 @@ contract("CawName - Transfer & Replication Gas", function(accounts) {
 
     localToken = await MintableCaw.new();
     localClientManager = await CawClientManager.new(accounts[0]);
-    localUriGenerator = await CawNameURI.new();
+    localUriGenerator = await deployURI();
     localCawNamesL2 = await CawNameL2.new(l1, l2Endpoint.address);
     await l1Endpoint.setDestLzEndpoint(localCawNamesL2.address, l2Endpoint.address);
 
@@ -1831,7 +1839,7 @@ contract("CawActionsReplicator - Full Integration", function(accounts) {
     // Deploy all contracts
     token = await MintableCaw.new();
     clientManager = await CawClientManager.new(buyAndBurnAddress);
-    uriGenerator = await CawNameURI.new();
+    uriGenerator = await deployURI();
 
     cawNamesL2 = await CawNameL2.new(l1, l2Endpoint.address);
     await l1Endpoint.setDestLzEndpoint(cawNamesL2.address, l2Endpoint.address);
@@ -2121,7 +2129,7 @@ contract("CawNameMinter - mintAndDeposit", function(accounts) {
 
     localToken = await MintableCaw.new();
     localClientManager = await CawClientManager.new(accounts[0]);
-    localUriGenerator = await CawNameURI.new();
+    localUriGenerator = await deployURI();
     localCawNamesL2 = await CawNameL2.new(l1, l2Endpoint.address);
     await l1Endpoint.setDestLzEndpoint(localCawNamesL2.address, l2Endpoint.address);
 
@@ -2265,7 +2273,7 @@ contract("CawName - depositFor", function(accounts) {
 
     localToken = await MintableCaw.new();
     localClientManager = await CawClientManager.new(gilg);
-    localUriGenerator = await CawNameURI.new();
+    localUriGenerator = await deployURI();
 
     localCawNamesL2 = await CawNameL2.new(l1, localEndpointL2.address);
     await localEndpointL1.setDestLzEndpoint(localCawNamesL2.address, localEndpointL2.address);
@@ -2467,7 +2475,7 @@ contract("CawName - locked withdraw fee + fee withdrawal", function(accounts) {
 
     localToken = await MintableCaw.new();
     localClientManager = await CawClientManager.new(gilg);
-    localUriGenerator = await CawNameURI.new();
+    localUriGenerator = await deployURI();
 
     localCawNamesL2 = await CawNameL2.new(l1, localEndpointL2.address);
     await localEndpointL1.setDestLzEndpoint(localCawNamesL2.address, localEndpointL2.address);

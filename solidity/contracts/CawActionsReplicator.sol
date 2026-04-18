@@ -178,10 +178,13 @@ contract CawActionsReplicator is OApp {
     }
     delete clientChains[clientId];
 
-    // Set new chain selections
+    // Set new chain selections. Skip EIDs that aren't registered on THIS
+    // replicator — the ClientManager stores a global chain list shared by
+    // all L2s, but each replicator only has its own destinations registered
+    // (e.g. L2's replicator has L2b's archive, L2b's replicator has L2's).
     for (uint i = 0; i < destEids.length; i++) {
-      require(isAvailableChain[destEids[i]], "Chain not available");
-      require(!clientChainEnabled[clientId][destEids[i]], "Duplicate chain");
+      if (!isAvailableChain[destEids[i]]) continue;
+      if (clientChainEnabled[clientId][destEids[i]]) continue;
       clientChains[clientId].push(destEids[i]);
       clientChainEnabled[clientId][destEids[i]] = true;
     }
@@ -255,7 +258,13 @@ contract CawActionsReplicator is OApp {
     bytes memory payload,
     uint256 lzTokenAmount
   ) internal {
-    bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(receiveGasLimit, 0);
+    // Dynamic gas limit: sized to the actual payload instead of a fixed 1M.
+    // Archive's _lzReceive emits an event: ~50K base + 8 gas per byte of data.
+    // 25% buffer on top for safety.
+    uint128 dynamicGas = uint128((50_000 + payload.length * 8) * 125 / 100);
+    // Clamp to receiveGasLimit (owner-tunable ceiling) — never exceed it.
+    if (dynamicGas > receiveGasLimit) dynamicGas = receiveGasLimit;
+    bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(dynamicGas, 0);
     _lzSend(
       destEid,
       payload,
@@ -333,10 +342,11 @@ contract CawActionsReplicator is OApp {
     // Mark as replicated before sending (checks-effects-interactions)
     checkpointReplicated[params.clientId][params.destEid][params.checkpointId] = true;
 
-    // Replicate to the destination. Payload is (actions, r) only — v and s
-    // are no longer part of the trust boundary on either side, so we save
-    // ~4KB of LZ message size by omitting them.
-    bytes memory payload = abi.encode(actions, r);
+    // Replicate to the destination. Payload is tight-packed actions only — r
+    // values are NOT forwarded. The hash chain was already verified above on
+    // the source chain; the archive is for data preservation, not re-verification.
+    // Dropping r saves 4KB (128×32) per checkpoint (~12-40% of payload).
+    bytes memory payload = _packPayload(actions);
     _replicateToDestination(params.clientId, params.destEid, payload, params.lzTokenAmount);
 
     emit BatchReplicated(params.checkpointId, params.clientId, params.destEid);
@@ -397,17 +407,160 @@ contract CawActionsReplicator is OApp {
   function quoteReplicateBatch(
     uint32 destEid,
     uint256 avgTextLength,
+    uint256 avgRecipients,
+    uint256 avgAmounts,
     bool payInLzToken
   ) external view returns (MessagingFee memory fee) {
-    // Estimate payload size for 128 actions:
-    // - Each ActionData: ~200 bytes base + text length + arrays
-    // - v, r, s: 1 + 32 + 32 = 65 bytes per action
-    // - Encoding overhead: ~100 bytes
-    uint256 estimatedSize = 100 + (128 * (265 + avgTextLength));
+    // Estimate packed payload size for 128 actions.
+    // Packed layout per action: 21 fixed + 1+4*recipients + 1+8*amounts + 2+textLen
+    // Plus: 4-byte header + 128*32 r values
+    uint256 perAction = 21 + 1 + (4 * avgRecipients) + 1 + (8 * avgAmounts) + 2 + avgTextLength;
+    uint256 estimatedSize = 4 + (128 * perAction); // no r values in v2 format
+
+    // Mirror the dynamic gas formula used in _replicateToDestination
+    uint128 dynamicGas = uint128((50_000 + estimatedSize * 8) * 125 / 100);
+    if (dynamicGas > receiveGasLimit) dynamicGas = receiveGasLimit;
 
     bytes memory dummyPayload = new bytes(estimatedSize);
-    bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(receiveGasLimit, 0);
+    bytes memory options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(dynamicGas, 0);
 
     return _quote(destEid, dummyPayload, options, payInLzToken);
+  }
+
+  // ============================================
+  // PAYLOAD PACKING
+  // ============================================
+
+  /// @dev Pack actions into a tight binary format for LZ transmission.
+  ///      Assembly-optimized: uses mstore to write 32 bytes at a time.
+  ///      r values are NOT included — hash-chain verification happens on the
+  ///      source chain before this is called; the archive is for data preservation.
+  ///
+  /// Layout (version 2):
+  ///   HEADER (4 bytes):
+  ///     uint16 actionCount
+  ///     uint8  version (2)
+  ///     uint8  flags   (0, reserved)
+  ///
+  ///   Per action (variable length):
+  ///     uint8   actionType
+  ///     uint32  senderId
+  ///     uint32  receiverId
+  ///     uint32  receiverCawonce
+  ///     uint32  clientId
+  ///     uint32  cawonce
+  ///     uint8   recipientCount
+  ///     uint32  recipients[recipientCount]
+  ///     uint8   amountCount
+  ///     uint64  amounts[amountCount]
+  ///     uint16  textLength
+  ///     bytes   text[textLength]       (no padding)
+  function _packPayload(
+    ICawActionsForReplicator.ActionData[] calldata actions
+  ) internal pure returns (bytes memory buf) {
+    uint256 n = actions.length;
+
+    // First pass: compute total size (Solidity — cheap, just length reads).
+    uint256 size = 4; // header
+    for (uint256 i = 0; i < n; i++) {
+      size += 25 + (actions[i].recipients.length * 4)
+                 + (actions[i].amounts.length * 8)
+                 + actions[i].text.length;
+    }
+
+    buf = new bytes(size);
+
+    assembly {
+      // `buf` points to the length slot; actual data starts at buf+32.
+      let ptr := add(buf, 32)
+
+      // --- Header (4 bytes) ---
+      // Pack [uint16 count, uint8 version=1, uint8 flags=0] into one word.
+      // count is at most 256, version=1, flags=0 → top bytes = 0x0080_0100
+      // for n=128. We shift into the top of a 32-byte word and mstore once.
+      mstore(ptr, shl(240, n))          // uint16 count at bytes 0-1
+      mstore8(add(ptr, 2), 2)           // version 2 (no r values)
+      // flags = 0, already zero from allocation
+      ptr := add(ptr, 4)
+    }
+
+    uint256 ptr;
+    assembly { ptr := add(buf, 36) } // buf + 32 (data start) + 4 (header)
+
+    // --- Actions ---
+    for (uint256 i = 0; i < n; i++) {
+      ICawActionsForReplicator.ActionData calldata a = actions[i];
+
+      assembly {
+        // actionType (1 byte)
+        mstore8(ptr, calldataload(a))
+        ptr := add(ptr, 1)
+
+        // 5 × uint32 big-endian: senderId, receiverId, receiverCawonce, clientId, cawonce
+        // Each is at a.offset + 32*fieldIndex in calldata.
+        // calldataload gives 32 bytes left-aligned; we want the low 4 bytes
+        // shifted to big-endian position. Since calldata uint32 is already
+        // right-aligned in its 32-byte slot, we shift left by 224 bits (28 bytes).
+        mstore(ptr, shl(224, calldataload(add(a, 0x20))))  // senderId
+        mstore(add(ptr, 4), shl(224, calldataload(add(a, 0x40))))  // receiverId
+        mstore(add(ptr, 8), shl(224, calldataload(add(a, 0x60))))  // receiverCawonce
+        mstore(add(ptr, 12), shl(224, calldataload(add(a, 0x80)))) // clientId
+        mstore(add(ptr, 16), shl(224, calldataload(add(a, 0xa0)))) // cawonce
+        ptr := add(ptr, 20)
+      }
+
+      // Recipients: count byte + 4 bytes each
+      uint32[] calldata recip = a.recipients;
+      uint256 rc = recip.length;
+      assembly {
+        mstore8(ptr, rc)
+        ptr := add(ptr, 1)
+      }
+      for (uint256 j = 0; j < rc; j++) {
+        uint32 v = recip[j];
+        assembly {
+          mstore(ptr, shl(224, v))
+          ptr := add(ptr, 4)
+        }
+      }
+
+      // Amounts: count byte + 8 bytes each
+      uint64[] calldata amts = a.amounts;
+      uint256 ac = amts.length;
+      assembly {
+        mstore8(ptr, ac)
+        ptr := add(ptr, 1)
+      }
+      for (uint256 j = 0; j < ac; j++) {
+        uint64 v = amts[j];
+        assembly {
+          mstore(ptr, shl(192, v))
+          ptr := add(ptr, 8)
+        }
+      }
+
+      // Text: uint16 length + raw bytes
+      bytes calldata text = a.text;
+      uint256 tl = text.length;
+      assembly {
+        mstore(ptr, shl(240, tl))  // uint16 length big-endian
+        ptr := add(ptr, 2)
+        // Copy text from calldata in 32-byte chunks. Overwrites past the end
+        // are harmless — they land in the next action's area (overwritten next
+        // iteration). The buffer was pre-allocated to exact size.
+        if tl {
+          let src := text.offset
+          let dst := ptr
+          let end := add(ptr, tl)
+          for {} lt(dst, end) {} {
+            mstore(dst, calldataload(src))
+            dst := add(dst, 32)
+            src := add(src, 32)
+          }
+        }
+        ptr := add(ptr, tl)
+      }
+    }
+
   }
 }

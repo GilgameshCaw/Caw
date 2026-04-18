@@ -1061,6 +1061,8 @@ export const cawActionsReplicatorAbi = [
     inputs: [
       { name: 'destEid', internalType: 'uint32', type: 'uint32' },
       { name: 'avgTextLength', internalType: 'uint256', type: 'uint256' },
+      { name: 'avgRecipients', internalType: 'uint256', type: 'uint256' },
+      { name: 'avgAmounts', internalType: 'uint256', type: 'uint256' },
       { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
     ],
     name: 'quoteReplicateBatch',

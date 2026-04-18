@@ -2115,27 +2115,49 @@ console.log("succeededKeys", succeededKeys)
               const latestL2 = await httpProvider.getBlockNumber()
               const eventsContract = new Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi as any, httpProvider)
 
-              // Use the deploy block from config (RawEventsGatherer startBlock)
-              // to avoid scanning from block 0. Falls back to latest - 500k.
-              let deployBlock = Math.max(0, latestL2 - 500_000)
-              try {
-                const fs = require('fs')
-                const path = require('path')
-                const configPath = path.join(__dirname, '../../../config.json')
-                const config = JSON.parse(fs.readFileSync(configPath, 'utf8'))
-                const gatherer = config.find?.((s: any) => s.service === 'RawEventsGatherer')
-                if (gatherer?.config?.startBlock) deployBlock = Number(gatherer.config.startBlock)
-              } catch { /* use fallback */ }
+              // We only need events covering this checkpoint's 128 actions.
+              // Walk backward from the latest block, accumulating client-
+              // action counts per event until we've passed the start of the
+              // checkpoint window. This is O(events-since-checkpoint) rather
+              // than O(all-events-ever).
+              //
+              // actionCount on-chain tells us the total. Checkpoint N covers
+              // action positions [(N-1)*128, N*128). We scan backward until
+              // the cumulative count from the tail exceeds
+              //   actionCount - (checkpointId - 1) * 128
+              // i.e. we've reached back far enough to include position startPos.
+              const actionsNeededFromEnd = actionCount - startPos // how many from tail to cover startPos
 
-              const processedEvents = await eventsContract.queryFilter(
-                eventsContract.filters.ActionsProcessed(),
-                deployBlock,
-                latestL2,
-              )
+              const CHUNK = 50_000
+              let processedEvents: any[] = []
+              let scannedActions = 0
+              let toBlock = latestL2
+
+              while (scannedActions < actionsNeededFromEnd) {
+                const fromBlock = Math.max(0, toBlock - CHUNK + 1)
+                const batch = await eventsContract.queryFilter(
+                  eventsContract.filters.ActionsProcessed(),
+                  fromBlock,
+                  toBlock,
+                )
+                // Count client actions in this batch (newest-first, but we
+                // prepend so the final array is oldest-first).
+                for (const ev of batch) {
+                  const args: any = (ev as any).args
+                  if (!args) continue
+                  const actionsArr = args[0] || args.actions || []
+                  for (const a of actionsArr) {
+                    if (Number(a.clientId) === client.id) scannedActions++
+                  }
+                }
+                processedEvents = [...batch, ...processedEvents]
+                if (fromBlock === 0) break
+                toBlock = fromBlock - 1
+              }
               const txHashes = Array.from(new Set(processedEvents.map(e => e.transactionHash)))
 
               if (txHashes.length === 0) {
-                console.log(`[Replication] No ActionsProcessed events since deploy block ${deployBlock}, skipping`)
+                console.log(`[Replication] No ActionsProcessed events found for checkpoint ${checkpointId}, skipping`)
                 continue
               }
 
@@ -2184,11 +2206,16 @@ console.log("succeededKeys", succeededKeys)
                 return a.calldataPos - b.calldataPos
               })
 
-              // Slice the checkpoint window
-              const checkpoint = orderedEntries.slice(startPos, startPos + 128)
+              // Slice the checkpoint window. orderedEntries is a PARTIAL list
+              // covering the last N actions (from the backward walk), not the
+              // full history. The first entry corresponds to action position
+              // (actionCount - orderedEntries.length) in the global ordering.
+              const firstGlobalPos = actionCount - orderedEntries.length
+              const localStart = startPos - firstGlobalPos
+              const checkpoint = orderedEntries.slice(localStart, localStart + 128)
 
               if (checkpoint.length !== 128) {
-                console.log(`[Replication] Only ${checkpoint.length}/128 actions reconstructed for checkpoint ${checkpointId}, skipping`)
+                console.log(`[Replication] Only ${checkpoint.length}/128 actions reconstructed for checkpoint ${checkpointId} (localStart=${localStart}, entries=${orderedEntries.length}, firstGlobal=${firstGlobalPos}), skipping`)
                 continue
               }
 
