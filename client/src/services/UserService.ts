@@ -290,9 +290,9 @@ export async function findOrCreateUser(
     // exist on-chain already. Callers doing fresh-mint onboarding (e.g.
     // /api/users/ensure from PostMintOnboarding) can override with step 0.
     const dbStart = Date.now()
-    // Pick a random default avatar (1-100) for users who haven't set one
-    const defaultAvatarId = Math.floor(Math.random() * 100) + 1
-    const defaultAvatarUrl = `/images/avatars/${defaultAvatarId}.png`
+    // Assign a random default avatar (1-100) for the placeholder shown when
+    // the user hasn't uploaded a custom avatar. avatarUrl stays null.
+    const randomAvatarId = Math.floor(Math.random() * 100) + 1
 
     user = await prisma.user.upsert({
       where:  { tokenId },
@@ -303,7 +303,7 @@ export async function findOrCreateUser(
         tokenId,
         username: username.trim(),
         image: '',  // L2 contract doesn't store images
-        avatarUrl: defaultAvatarUrl,
+        defaultAvatarId: randomAvatarId,
         onboardingStep: opts.onboardingStep ?? 5,
       },
     });

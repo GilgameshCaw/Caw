@@ -80,20 +80,14 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>(undefined)
   const [coverUrl, setCoverUrl] = useState<string | undefined>(undefined)
 
-  // Extract current default avatar number for prev/next cycling
-  const currentDefaultAvatarId = (() => {
-    const url = avatarPreview || avatarUrl || profileData?.avatarUrl || ''
-    const match = url.match(/\/images\/avatars\/(\d+)\.png/)
-    return match ? parseInt(match[1]) : null
-  })()
-  const isDefaultAvatar = currentDefaultAvatarId !== null && !avatarPreview
+  // Default avatar cycling — changes defaultAvatarId, not avatarUrl
+  const [selectedDefaultId, setSelectedDefaultId] = useState<number | null>(null)
+  const currentDefaultId = selectedDefaultId ?? (profileData as any)?.defaultAvatarId ?? ((profileData as any)?.tokenId ? ((profileData as any).tokenId % 100) + 1 : 1)
+  const hasCustomAvatar = !!avatarPreview || !!avatarUrl
 
   const cycleDefaultAvatar = (delta: number) => {
-    const current = currentDefaultAvatarId || 1
-    let next = ((current - 1 + delta + 100) % 100) + 1
-    const newUrl = `/images/avatars/${next}.png`
-    setAvatarUrl(newUrl)
-    setAvatarPreview(newUrl)
+    const next = ((currentDefaultId - 1 + delta + 100) % 100) + 1
+    setSelectedDefaultId(next)
   }
   const [isUploading, setIsUploading] = useState(false)
   const [updateCost, setUpdateCost] = useState(0)
@@ -222,6 +216,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
     if (formData.website !== (profileData?.website || '')) changes.website = formData.website
     if (avatarUrl) changes.avatarUrl = avatarUrl
     if (coverUrl) changes.coverPhotoUrl = coverUrl
+    if (selectedDefaultId !== null) (changes as any).defaultAvatarId = String(selectedDefaultId)
 
     if (Object.keys(changes).length === 0) {
       setProfileError('No changes to save')
@@ -386,41 +381,40 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
                 handleImageDrop('avatar', e)
               }}
             >
-              <div className="relative w-full h-full flex items-center justify-center overflow-hidden rounded-full">
-                {avatarPreview && !avatarPreview.includes('/images/avatars/') ? (
-                  <img src={avatarPreview} alt="Avatar preview" className="w-full h-full object-cover" />
-                ) : (
+              <div className="relative w-full h-full flex items-center justify-center overflow-hidden rounded-full" title="Click or drag image to upload custom avatar">
+                {hasCustomAvatar ? (
+                  <img src={avatarPreview || avatarUrl} alt="Avatar preview" className="w-full h-full object-cover" />
+                ) : profileData?.avatarUrl ? (
                   <>
-                    {(avatarPreview || profileData?.avatarUrl) && (
-                      <>
-                        <img src={avatarPreview || profileData!.avatarUrl!} alt="" className="absolute inset-0 w-full h-full object-cover" />
-                        {!(avatarPreview || profileData?.avatarUrl || '').includes('/images/avatars/') && (
-                          <div className="absolute inset-0 bg-black/50" />
-                        )}
-                      </>
-                    )}
-                    {(avatarPreview || profileData?.avatarUrl || '').includes('/images/avatars/') ? (
-                      <span className="absolute bottom-0 text-[9px] font-medium text-black/60 text-center leading-tight px-2">click to<br/>upload</span>
-                    ) : (avatarPreview || profileData?.avatarUrl) ? (
-                      <HiCamera className="relative w-6 h-6 text-white" />
-                    ) : (
-                      <HiCamera className={`relative w-6 h-6 ${isDark ? 'text-gray-400' : 'text-gray-500'}`} />
-                    )}
+                    <img src={profileData.avatarUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                    <div className="absolute inset-0 bg-black/50" />
+                    <HiCamera className="relative w-6 h-6 text-white" />
                   </>
+                ) : (
+                  <img src={`/images/avatars/${currentDefaultId}.png`} alt="" className="w-full h-full object-cover" />
+                )}
+                {/* Pencil edit badge — top-right corner */}
+                {!hasCustomAvatar && !profileData?.avatarUrl && (
+                  <div className={`absolute top-0.5 right-0.5 w-5 h-5 rounded-full flex items-center justify-center ${
+                    isDark ? 'bg-gray-600/80' : 'bg-gray-400/80'
+                  }`}>
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3 text-white">
+                      <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z" />
+                    </svg>
+                  </div>
                 )}
               </div>
             </button>
-            {!hideAvatarCaption && !isDefaultAvatar && (
+            {!hideAvatarCaption && hasCustomAvatar && (
               <p className={`text-xs mt-2 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Click to upload</p>
             )}
-            {isDefaultAvatar && (
+            {!hasCustomAvatar && !profileData?.avatarUrl && (
               <div className="flex items-center gap-3 mt-1.5">
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); cycleDefaultAvatar(-1); }}
                   className={`text-lg px-1 rounded hover:bg-white/10 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}
                 >‹</button>
-                <span className={`text-[10px] ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>{currentDefaultAvatarId}/100</span>
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); cycleDefaultAvatar(1); }}

@@ -735,11 +735,17 @@ router.patch(
         return res.status(400).json({ error: 'Invalid tokenId' })
       }
 
-      const { displayName, bio, location, website, avatarUrl, coverPhotoUrl } = req.body ?? {}
+      const { displayName, bio, location, website, avatarUrl, coverPhotoUrl, defaultAvatarId } = req.body ?? {}
 
-      const updateData: Record<string, string> = {}
+      const updateData: Record<string, any> = {}
       const incoming: Record<string, unknown> = {
         displayName, bio, location, website, avatarUrl, coverPhotoUrl,
+      }
+
+      // Handle defaultAvatarId separately (integer, not string)
+      if (defaultAvatarId !== undefined) {
+        const id = parseInt(String(defaultAvatarId))
+        if (id >= 1 && id <= 100) updateData.defaultAvatarId = id
       }
 
       for (const [field, rawValue] of Object.entries(incoming)) {
@@ -767,6 +773,7 @@ router.patch(
           location: true,
           website: true,
           avatarUrl: true,
+          defaultAvatarId: true,
           coverPhotoUrl: true,
           profileSource: true,
           profileUpdatePending: true,

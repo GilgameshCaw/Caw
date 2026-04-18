@@ -39,6 +39,7 @@ model User {
   tokenId               Int            @unique // Kept for backwards compatibility, always equals id
   username              String         @unique
   avatarUrl             String?
+  defaultAvatarId       Int            @default(0) // 1-100; which default avatar to show when avatarUrl is null
   bio                   String?
   coverPhotoUrl         String?
   displayName           String?
