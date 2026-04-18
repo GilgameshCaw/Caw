@@ -216,12 +216,15 @@ contract CawProfile is
     uint256 clientAmount = accruedFees[msg.sender];
     require(clientAmount > 0, "No fees to withdraw");
 
-    uint256 protocolAmount = accruedFees[address(buyAndBurn)];
+    // Only take the protocol portion matching this client's contribution (1:1 from payFee).
+    // Use min() as a safety net in case the pool has been partially drained.
+    uint256 protocolPool = accruedFees[address(buyAndBurn)];
+    uint256 protocolAmount = clientAmount < protocolPool ? clientAmount : protocolPool;
 
-    // Zero both before external calls (checks-effects-interactions)
+    // Zero balances before external calls (checks-effects-interactions)
     accruedFees[msg.sender] = 0;
     if (protocolAmount > 0) {
-      accruedFees[address(buyAndBurn)] = 0;
+      accruedFees[address(buyAndBurn)] -= protocolAmount;
     }
 
     uint256 totalEth = clientAmount + protocolAmount;

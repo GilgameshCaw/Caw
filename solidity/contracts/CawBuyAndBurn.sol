@@ -18,6 +18,7 @@ contract CawBuyAndBurn {
   address public immutable WETH;
 
   address public cawProfile;
+  address private immutable deployer;
 
   address public constant DEAD = 0x000000000000000000000000000000000000dEaD;
 
@@ -27,10 +28,12 @@ contract CawBuyAndBurn {
     CAW = IERC20(_caw);
     router = ISwapRouter(_router);
     WETH = router.WETH();
+    deployer = msg.sender;
   }
 
-  /// @notice Set the CawProfile address. Can only be called once.
+  /// @notice Set the CawProfile address. Can only be called once, by the deployer.
   function setCawProfile(address _cawProfile) external {
+    require(msg.sender == deployer, "Only deployer");
     require(cawProfile == address(0), "Already set");
     cawProfile = _cawProfile;
   }
@@ -79,5 +82,4 @@ contract CawBuyAndBurn {
     return amounts[1];
   }
 
-  receive() external payable {}
 }
