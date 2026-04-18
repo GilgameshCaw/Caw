@@ -213,20 +213,36 @@ const CONTRACTS = {
     // transitive-closure cascade at this node.
     cascadeBreak: true,
   },
-  CawClientManager: {
+  MockSwapRouter: {
+    artifact: 'MockSwapRouter',
     chain: 'L1',
     phase: 2,
     dependencies: [],
-    constructorArgs: (state) => [state.deployerAddress], // buyAndBurnAddress
+    constructorArgs: (state) => [state.addresses.MintableCaw],
+  },
+  CawBuyAndBurn: {
+    chain: 'L1',
+    phase: 2,
+    dependencies: ['MockSwapRouter'],
+    constructorArgs: (state) => [
+      state.addresses.MintableCaw,
+      state.addresses.MockSwapRouter,
+    ],
+  },
+  CawClientManager: {
+    chain: 'L1',
+    phase: 2,
+    dependencies: ['CawBuyAndBurn'],
+    constructorArgs: (state) => [state.addresses.CawBuyAndBurn],
   },
   CawProfile: {
     chain: 'L1',
     phase: 2,
-    dependencies: ['CawProfileL2_L2', 'CawProfileL2_L2b', 'CawProfileURI', 'CawClientManager'],
+    dependencies: ['CawProfileL2_L2', 'CawProfileL2_L2b', 'CawProfileURI', 'CawClientManager', 'CawBuyAndBurn'],
     constructorArgs: (state, chain) => [
       state.addresses.MintableCaw,
       state.addresses.CawProfileURI,
-      state.deployerAddress, // buyAndBurnAddress
+      state.addresses.CawBuyAndBurn,
       state.addresses.CawClientManager,
       CHAINS[chain].lzEndpoint,
       CHAINS[chain].lzEid,
@@ -463,6 +479,20 @@ const LINKING_STEPS = [
     getter: 'cawActionsReplicator',
     args: (state) => [state.addresses.CawActionsReplicator_L1],
     condition: (state) => state.addresses.CawProfileL2_L1 && state.addresses.CawActionsReplicator_L1,
+  },
+  {
+    name: 'Set CawProfile on BuyAndBurn',
+    chain: 'L1',
+    phase: 2,
+    contract: 'CawBuyAndBurn',
+    method: 'setCawProfile',
+    args: (state) => [state.addresses.CawProfile],
+    condition: (state) => state.addresses.CawBuyAndBurn && state.addresses.CawProfile,
+    skipIf: async (state, deployer) => {
+      const contract = deployer.getContract('CawBuyAndBurn');
+      const current = await contract.cawProfile();
+      return current !== '0x0000000000000000000000000000000000000000';
+    },
   },
   {
     name: 'Set CawProfile on ClientManager',
