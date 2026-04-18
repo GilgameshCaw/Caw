@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { HiCamera, HiLink, HiLocationMarker } from 'react-icons/hi'
+import Tooltip from '~/components/Tooltip'
 import { apiFetch, getAuthHeaders } from '~/api/client'
 import { useSignAndSubmitAction } from '~/api/actions'
 import { useTokenDataStore } from '~/store/tokenDataStore'
@@ -80,9 +81,11 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>(undefined)
   const [coverUrl, setCoverUrl] = useState<string | undefined>(undefined)
 
-  // Default avatar cycling — changes defaultAvatarId, not avatarUrl
+  // Default avatar cycling — changes defaultAvatarId, not avatarUrl.
+  // Start with a random one if the user doesn't have one assigned yet.
+  const randomFallback = useRef(Math.floor(Math.random() * 100) + 1)
   const [selectedDefaultId, setSelectedDefaultId] = useState<number | null>(null)
-  const currentDefaultId = selectedDefaultId ?? (profileData as any)?.defaultAvatarId ?? ((profileData as any)?.tokenId ? ((profileData as any).tokenId % 100) + 1 : 1)
+  const currentDefaultId = selectedDefaultId ?? ((profileData as any)?.defaultAvatarId || randomFallback.current)
   // A "custom" avatar is one the user uploaded — not a default /images/avatars/ path
   const profileHasCustomAvatar = profileData?.avatarUrl && !profileData.avatarUrl.includes('/images/avatars/')
   const hasCustomAvatar = !!avatarPreview || !!avatarUrl || !!profileHasCustomAvatar
@@ -383,27 +386,31 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
                 handleImageDrop('avatar', e)
               }}
             >
-              <div className="relative w-full h-full flex items-center justify-center overflow-hidden rounded-full" title="Click or drag image to upload custom avatar">
-                {hasCustomAvatar ? (
-                  <>
-                    <img src={avatarPreview || avatarUrl || profileData?.avatarUrl || ''} alt="Avatar preview" className="w-full h-full object-cover" />
-                    <div className="absolute inset-0 bg-black/50" />
-                    <HiCamera className="relative w-6 h-6 text-white" />
-                  </>
-                ) : (
-                  <>
-                    <img src={`/images/avatars/${currentDefaultId}.png`} alt="" className="w-full h-full object-cover" />
-                    {/* Pencil edit badge — top-right corner */}
-                    <div className={`absolute top-0.5 right-0.5 w-5 h-5 rounded-full flex items-center justify-center ${
-                      isDark ? 'bg-gray-600/80' : 'bg-gray-400/80'
+              <Tooltip text="Click or drag image to upload custom avatar" position="top">
+                <div className="relative w-full h-full">
+                  <div className="w-full h-full flex items-center justify-center overflow-hidden rounded-full">
+                    {hasCustomAvatar ? (
+                      <>
+                        <img src={avatarPreview || avatarUrl || profileData?.avatarUrl || ''} alt="Avatar preview" className="w-full h-full object-cover" />
+                        <div className="absolute inset-0 bg-black/50 rounded-full" />
+                        <HiCamera className="relative w-6 h-6 text-white" />
+                      </>
+                    ) : (
+                      <img src={`/images/avatars/${currentDefaultId}.png`} alt="" className="w-full h-full object-cover" />
+                    )}
+                  </div>
+                  {/* Pencil badge floats OUTSIDE overflow-hidden so it isn't clipped */}
+                  {!hasCustomAvatar && (
+                    <div className={`absolute -top-0.5 -right-0.5 w-5 h-5 rounded-full flex items-center justify-center shadow-sm ${
+                      isDark ? 'bg-gray-600' : 'bg-gray-400'
                     }`}>
                       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3 text-white">
                         <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z" />
                       </svg>
                     </div>
-                  </>
-                )}
-              </div>
+                  )}
+                </div>
+              </Tooltip>
             </button>
             {!hasCustomAvatar && (
               <div className="flex items-center gap-3 mt-1.5">
