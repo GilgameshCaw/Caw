@@ -190,7 +190,8 @@ async function processSessionRequest(
     console.error(`[Sessions] Full error:`, JSON.stringify({ reason: err.reason, code: err.code, data: err.data, revert: err.revert }, null, 2))
     const rawMsg = (err.reason || err.message || '')
     const rawLower = rawMsg.toLowerCase()
-    let userError = `Something went wrong: ${rawMsg.slice(0, 200)}`
+    console.error(`[Sessions] Raw error for ${requestId}:`, rawMsg)
+    let userError = 'Something went wrong. Please try again.'
     if (rawLower.includes('cannot delegate withdraw')) {
       userError = 'This action type cannot be delegated to Quick Sign.'
     } else if (rawLower.includes('already expired')) {

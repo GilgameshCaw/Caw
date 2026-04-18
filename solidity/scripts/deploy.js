@@ -1610,6 +1610,18 @@ After deployment, ABIs are automatically regenerated for the frontend.
     }
   }
 
+  // Always compile before deploying to avoid stale artifacts
+  console.log('Compiling contracts...');
+  const { execSync } = require('child_process');
+  try {
+    execSync('npx hardhat compile --force', { cwd: __dirname + '/..', stdio: 'inherit' });
+    execSync('npx truffle compile --all', { cwd: __dirname + '/..', stdio: 'inherit' });
+    console.log('Compilation complete.\n');
+  } catch (err) {
+    console.error('Compilation failed:', err.message);
+    process.exit(1);
+  }
+
   const deployer = new MultiChainDeployer(env);
 
   if (reset) {
