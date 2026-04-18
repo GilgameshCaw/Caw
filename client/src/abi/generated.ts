@@ -2777,6 +2777,16 @@ export const cawProfileAbi = [
   },
   {
     type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'minCawOut', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'withdrawFeesFor',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
     inputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
     name: 'withdrawable',
     outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],

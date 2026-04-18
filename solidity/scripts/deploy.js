@@ -1100,12 +1100,22 @@ class MultiChainDeployer {
       return this.artifacts[contractName];
     }
 
-    const artifactPath = path.join(
+    // Check standard path, then mocks/ subdirectory
+    let artifactPath = path.join(
       __dirname,
       '../artifacts/contracts',
       `${contractName}.sol`,
       `${contractName}.json`
     );
+
+    if (!fs.existsSync(artifactPath)) {
+      artifactPath = path.join(
+        __dirname,
+        '../artifacts/contracts/mocks',
+        `${contractName}.sol`,
+        `${contractName}.json`
+      );
+    }
 
     if (!fs.existsSync(artifactPath)) {
       return null; // Contract not compiled yet — skip gracefully
