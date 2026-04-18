@@ -79,9 +79,15 @@ function buildSessionMessage(sessionKeyAddress: string, spendLimit: bigint, expi
 
   return [
     'Enable Quick Sign',
-    `Spend limit: ${formatSpendLimitForMessage(spendLimit)} CAW`,
-    `Expires: ${day} ${month} ${year} ${hh}:${mm}:${ss} UTC`,
-    `Session key: ${sessionKeyAddress}`,
+    '------------------',
+    'Spend limit:',
+    `${formatSpendLimitForMessage(spendLimit)} CAW`,
+    '',
+    'Expires:',
+    `${day} ${month} ${year} ${hh}:${mm}:${ss} UTC`,
+    '',
+    'CAW Key:',
+    sessionKeyAddress,
   ].join('\n')
 }
 

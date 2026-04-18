@@ -69,8 +69,8 @@ const MONTHS: Record<string, number> = {
 }
 
 function parseExpiryFromMessage(line: string): number {
-  // "Expires: 25 April 2026 00:00:00 UTC"
-  const match = line.match(/Expires: (\d+) (\w+) (\d+) (\d+):(\d+):(\d+) UTC/)
+  // "25 April 2026 00:00:00 UTC"
+  const match = line.match(/(\d+) (\w+) (\d+) (\d+):(\d+):(\d+) UTC/)
   if (!match) return 0
   const [, day, month, year, hh, mm, ss] = match
   const d = new Date(Date.UTC(+year, MONTHS[month] ?? 0, +day, +hh, +mm, +ss))
@@ -78,8 +78,8 @@ function parseExpiryFromMessage(line: string): number {
 }
 
 function parseSpendLimitFromMessage(line: string): bigint {
-  // "Spend limit: 5M CAW"
-  const match = line.match(/Spend limit: (\d+)([KMB]) CAW/)
+  // "5M CAW"
+  const match = line.match(/(\d+)([KMB]) CAW/)
   if (!match) return 0n
   const [, num, unit] = match
   const multiplier = unit === 'B' ? 1_000_000_000n : unit === 'M' ? 1_000_000n : 1_000n
@@ -112,15 +112,12 @@ async function processSessionRequest(
       sig.s,
     )
 
-    // Parse expiry and session key from message for DB pre-population
+    // Parse values from message for DB pre-population
     const lines = message.split('\n')
-    const spendLimitLine = lines[1] || ''
-    const expiryLine = lines[2] || ''
-    const sessionKeyLine = lines[3] || ''
-    const sessionKey = sessionKeyLine.replace('Session key: ', '').trim()
-    const expiry = parseExpiryFromMessage(expiryLine)
+    const sessionKey = (lines[9] || '').trim()
+    const expiry = parseExpiryFromMessage(lines[6] || '')
     const scopeBitmap = 0xBF
-    const spendLimit = parseSpendLimitFromMessage(spendLimitLine)
+    const spendLimit = parseSpendLimitFromMessage(lines[3] || '')
 
     console.log(`[Sessions] Submitted tx: ${tx.hash}`)
     requests.set(requestId, { status: 'pending', txHash: tx.hash })
@@ -225,16 +222,16 @@ router.post('/', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Missing required fields: message and signature' })
     }
 
-    // Validate message format
+    // Validate message format (10 lines)
     const lines = (message as string).split('\n')
-    if (lines.length !== 4 || lines[0] !== 'Enable Quick Sign') {
+    if (lines.length !== 10 || lines[0] !== 'Enable Quick Sign') {
       return res.status(400).json({ error: 'Invalid message format' })
     }
 
-    // Parse values from message
-    const expiry = parseExpiryFromMessage(lines[2])
-    const spendLimit = parseSpendLimitFromMessage(lines[1])
-    const sessionKey = lines[3]?.replace('Session key: ', '').trim()
+    // Parse values: line 3 = spend limit value, line 6 = expiry value, line 9 = address
+    const spendLimit = parseSpendLimitFromMessage(lines[3])
+    const expiry = parseExpiryFromMessage(lines[6])
+    const sessionKey = lines[9]?.trim()
 
     if (!sessionKey || !expiry) {
       return res.status(400).json({ error: 'Could not parse session parameters from message' })

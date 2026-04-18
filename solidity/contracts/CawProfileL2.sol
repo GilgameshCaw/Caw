@@ -421,23 +421,31 @@ contract CawProfileL2 is
     emit SessionCreated(signer, sessionKey, expiry, scopeBitmap, spendLimit);
   }
 
-  /// @dev Parse "Enable Quick Sign\nSpend limit: 5M CAW\nExpires: 25 April 2026 00:00:00 UTC\nSession key: 0x..."
+  /// @dev Parse the multi-line session message. Format:
+  ///   Enable Quick Sign\n------------------\nSpend limit:\n5M CAW\n\nExpires:\n25 April 2026 00:00:00 UTC\n\nCAW Key:\n0x...
   function _parseSessionMessage(bytes memory msg_) internal pure returns (uint256 spendLimit, uint64 expiry, address sessionKey) {
-    // Split into lines
     bytes[] memory lines = _splitLines(msg_);
-    require(lines.length == 4, "Expected 4 lines");
+    require(lines.length == 10, "Expected 10 lines");
 
-    // Line 0: "Enable Quick Sign" (just validate)
+    // Line 0: "Enable Quick Sign"
     require(keccak256(lines[0]) == keccak256("Enable Quick Sign"), "Invalid header");
+    // Line 1: "------------------" (decorative, skip)
+    // Line 2: "Spend limit:" (label, skip)
 
-    // Line 1: "Spend limit: 5M CAW"
-    spendLimit = _parseSpendLimit(lines[1]);
+    // Line 3: "5M CAW"
+    spendLimit = _parseSpendLimitValue(lines[3]);
 
-    // Line 2: "Expires: 25 April 2026 00:00:00 UTC"
-    expiry = _parseExpiry(lines[2]);
+    // Line 4: "" (blank, skip)
+    // Line 5: "Expires:" (label, skip)
 
-    // Line 3: "Session key: 0x..."
-    sessionKey = _parseSessionKey(lines[3]);
+    // Line 6: "25 April 2026 00:00:00 UTC"
+    expiry = _parseExpiryValue(lines[6]);
+
+    // Line 7: "" (blank, skip)
+    // Line 8: "CAW Key:" (label, skip)
+
+    // Line 9: "0x..."
+    sessionKey = _parseAddressLine(lines[9]);
   }
 
   function _splitLines(bytes memory data) internal pure returns (bytes[] memory) {
@@ -466,18 +474,16 @@ contract CawProfileL2 is
     return result;
   }
 
-  /// @dev Parse "Spend limit: 5M CAW" → 5000000
-  function _parseSpendLimit(bytes memory line) internal pure returns (uint256) {
-    // Skip "Spend limit: " (14 bytes)
-    require(line.length > 18, "Invalid spend limit");
+  /// @dev Parse "5M CAW" → 5000000
+  function _parseSpendLimitValue(bytes memory line) internal pure returns (uint256) {
+    require(line.length >= 5, "Invalid spend limit");
     uint256 number = 0;
-    uint256 i = 14;
+    uint256 i = 0;
     while (i < line.length && line[i] >= 0x30 && line[i] <= 0x39) {
       number = number * 10 + (uint8(line[i]) - 0x30);
       i++;
     }
     require(number > 0, "Zero spend limit");
-    // Expect "M CAW" or "K CAW" or "B CAW"
     require(i < line.length, "Missing unit");
     if (line[i] == 'M') return number * 1_000_000;
     if (line[i] == 'K') return number * 1_000;
@@ -485,11 +491,10 @@ contract CawProfileL2 is
     revert("Invalid unit (expected K, M, or B)");
   }
 
-  /// @dev Parse "Expires: 25 April 2026 00:00:00 UTC" → unix timestamp
-  function _parseExpiry(bytes memory line) internal pure returns (uint64) {
-    // Skip "Expires: " (9 bytes)
-    require(line.length > 30, "Invalid expiry");
-    uint256 i = 9;
+  /// @dev Parse "25 April 2026 00:00:00 UTC" → unix timestamp
+  function _parseExpiryValue(bytes memory line) internal pure returns (uint64) {
+    require(line.length > 20, "Invalid expiry");
+    uint256 i = 0;
 
     // Day (1-2 digits)
     uint256 day = 0;
@@ -562,11 +567,11 @@ contract CawProfileL2 is
     return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
   }
 
-  /// @dev Parse "Session key: 0x..." → address
-  function _parseSessionKey(bytes memory line) internal pure returns (address) {
-    // Skip "Session key: 0x" (15 bytes)
-    require(line.length == 55, "Invalid session key length");
-    bytes memory hexStr = _slice(line, 15, 55);
+  /// @dev Parse "0x742d...3e" → address
+  function _parseAddressLine(bytes memory line) internal pure returns (address) {
+    // "0x" + 40 hex chars = 42 bytes
+    require(line.length == 42, "Invalid address length");
+    bytes memory hexStr = _slice(line, 2, 42);
     return address(uint160(_hexToUint(hexStr)));
   }
 
