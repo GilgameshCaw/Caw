@@ -79,6 +79,22 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
   const [coverPreview, setCoverPreview] = useState<string | undefined>(undefined)
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>(undefined)
   const [coverUrl, setCoverUrl] = useState<string | undefined>(undefined)
+
+  // Extract current default avatar number for prev/next cycling
+  const currentDefaultAvatarId = (() => {
+    const url = avatarPreview || avatarUrl || profileData?.avatarUrl || ''
+    const match = url.match(/\/images\/avatars\/(\d+)\.png/)
+    return match ? parseInt(match[1]) : null
+  })()
+  const isDefaultAvatar = currentDefaultAvatarId !== null && !avatarPreview
+
+  const cycleDefaultAvatar = (delta: number) => {
+    const current = currentDefaultAvatarId || 1
+    let next = ((current - 1 + delta + 100) % 100) + 1
+    const newUrl = `/images/avatars/${next}.png`
+    setAvatarUrl(newUrl)
+    setAvatarPreview(newUrl)
+  }
   const [isUploading, setIsUploading] = useState(false)
   const [updateCost, setUpdateCost] = useState(0)
   const [isSaving, setIsSaving] = useState(false)
@@ -371,31 +387,46 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
               }}
             >
               <div className="relative w-full h-full flex items-center justify-center overflow-hidden rounded-full">
-                {avatarPreview ? (
+                {avatarPreview && !avatarPreview.includes('/images/avatars/') ? (
                   <img src={avatarPreview} alt="Avatar preview" className="w-full h-full object-cover" />
                 ) : (
                   <>
-                    {profileData?.avatarUrl && (
+                    {(avatarPreview || profileData?.avatarUrl) && (
                       <>
-                        <img src={profileData.avatarUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
-                        <div className={`absolute inset-0 ${
-                          profileData.avatarUrl.includes('/images/avatars/') ? 'bg-black/20' : 'bg-black/50'
-                        }`} />
+                        <img src={avatarPreview || profileData!.avatarUrl!} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                        {!(avatarPreview || profileData?.avatarUrl || '').includes('/images/avatars/') && (
+                          <div className="absolute inset-0 bg-black/50" />
+                        )}
                       </>
                     )}
-                    <HiCamera className={`relative w-6 h-6 ${
-                      profileData?.avatarUrl
-                        ? profileData.avatarUrl.includes('/images/avatars/')
-                          ? 'text-white/50'
-                          : 'text-white'
-                        : (isDark ? 'text-gray-400' : 'text-gray-500')
-                    }`} />
+                    {(avatarPreview || profileData?.avatarUrl || '').includes('/images/avatars/') ? (
+                      <span className="absolute bottom-0 text-[9px] font-medium text-black/60 text-center leading-tight px-2">click to<br/>upload</span>
+                    ) : (avatarPreview || profileData?.avatarUrl) ? (
+                      <HiCamera className="relative w-6 h-6 text-white" />
+                    ) : (
+                      <HiCamera className={`relative w-6 h-6 ${isDark ? 'text-gray-400' : 'text-gray-500'}`} />
+                    )}
                   </>
                 )}
               </div>
             </button>
-            {!hideAvatarCaption && (
+            {!hideAvatarCaption && !isDefaultAvatar && (
               <p className={`text-xs mt-2 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>Click to upload</p>
+            )}
+            {isDefaultAvatar && (
+              <div className="flex items-center gap-3 mt-1.5">
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); cycleDefaultAvatar(-1); }}
+                  className={`text-lg px-1 rounded hover:bg-white/10 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}
+                >‹</button>
+                <span className={`text-[10px] ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>{currentDefaultAvatarId}/100</span>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); cycleDefaultAvatar(1); }}
+                  className={`text-lg px-1 rounded hover:bg-white/10 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}
+                >›</button>
+              </div>
             )}
           </div>
 

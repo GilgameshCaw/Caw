@@ -72,7 +72,7 @@
 /* Default avatars: darken in dark mode, brighten in light mode so they
    blend with the app's surface colors instead of looking flat gray. */
 :root.dark img[src*="/images/avatars/"] {
-  filter: brightness(0.7);
+  filter: brightness(0.9);
 }
 :root:not(.dark) img[src*="/images/avatars/"] {
   filter: brightness(1.1);
