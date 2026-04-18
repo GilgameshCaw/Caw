@@ -69,6 +69,15 @@
   background-attachment: fixed;
 }
 
+/* Default avatars: darken in dark mode, brighten in light mode so they
+   blend with the app's surface colors instead of looking flat gray. */
+:root.dark img[src*="/images/avatars/"] {
+  filter: brightness(0.7);
+}
+:root:not(.dark) img[src*="/images/avatars/"] {
+  filter: brightness(1.1);
+}
+
 :root:not(.dark) {
   color: #111;
   background: #e5e7eb;
