@@ -455,7 +455,7 @@ console.log("BALANCE:", balance)
   // Show loading screen while waiting for mint to complete
   if (!hasResetForm && (mintStatus === 'pending' || (mintStatus === 'success' && !mintSuccess))) {
     return (
-      <MainLayout>
+      <MainLayout hideSidebars>
         <div className="max-w-xl mx-auto p-6 space-y-4 mt-8">
           <div className="text-center space-y-6">
             <h1 className={`text-4xl font-bold ${isDark ? 'text-white' : 'text-black'}`}>Creating your new profile...</h1>
@@ -756,6 +756,9 @@ console.log("BALANCE:", balance)
                 return (
                     <div className="text-sm text-gray-500 text-center">
                         est. gas+fees: {totalEth.toFixed(4)} ETH{ethPrice > 0 && ` (~$${(totalEth * ethPrice).toFixed(2)})`}
+                        <span className="block text-xs mt-0.5 opacity-60">
+                            Half of all fees are used to buy and burn CAW
+                        </span>
                     </div>
                 )
             })()}

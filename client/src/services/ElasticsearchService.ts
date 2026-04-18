@@ -93,8 +93,11 @@ class ElasticsearchService {
         this.reconnectInterval = null
       }
 
-      // Create indices with mappings
+      // Create indices with mappings, then populate from PostgreSQL
       await this.createIndices()
+      this.syncAllData().catch(err =>
+        console.error('[Elasticsearch] Initial data sync failed:', err)
+      )
     } catch (error: any) {
       this.isConnected = false
 
@@ -138,8 +141,11 @@ class ElasticsearchService {
           this.reconnectInterval = null
         }
 
-        // Create indices if needed
+        // Create indices if needed, then populate
         await this.createIndices()
+        this.syncAllData().catch(err =>
+          console.error('[Elasticsearch] Post-reconnect data sync failed:', err)
+        )
       } catch (error: any) {
         if (this.reconnectAttempts >= this.maxReconnectAttempts) {
           console.log(`[Elasticsearch] Max reconnection attempts (${this.maxReconnectAttempts}) reached. Giving up.`)

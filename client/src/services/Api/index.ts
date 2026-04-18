@@ -36,14 +36,19 @@ export const apiService: Service = {
 
     const server = startApi(port)
 
-    // Heartbeat as long as the HTTP server is still listening. If the server
-    // crashes or closes, this stops ticking and the watchdog restarts us.
-    ctx.declareLoop('listening', 2 * 60_000)
+    // Heartbeat via actual HTTP probe, not just the `listening` flag.
+    // A server can have listening=true but be unable to serve requests
+    // (e.g. event loop blocked, socket backlog full after network outage).
+    ctx.declareLoop('listening', 60_000)
     const heartbeatTimer = setInterval(() => {
-      if ((server as any).listening) {
-        ctx.heartbeat('listening')
-      }
-    }, 30_000)
+      if (!(server as any).listening) return
+      const req = http.get(`http://127.0.0.1:${port}/api/health`, (res) => {
+        res.resume()
+        if (res.statusCode === 200) ctx.heartbeat('listening')
+      })
+      req.on('error', () => {})
+      req.setTimeout(5000, () => req.destroy())
+    }, 15_000)
 
     return {
       started: Promise.resolve(),

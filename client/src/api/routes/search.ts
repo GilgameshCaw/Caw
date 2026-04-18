@@ -200,8 +200,8 @@ router.get('/', async (req, res) => {
       if (useES) {
         cawResults = await searchCawsWithES(query, cawLimit, cawOffset)
       }
-      // Fall back to Prisma if ES failed or not available
-      if (!cawResults) {
+      // Fall back to Prisma if ES failed, not available, or returned no results
+      if (!cawResults || cawResults.items.length === 0) {
         cawResults = await searchCawsWithPrisma(query, cawLimit, cawOffset)
       }
 
@@ -233,8 +233,8 @@ router.get('/', async (req, res) => {
       if (useES) {
         users = await searchUsersWithES(query, userLimit, userOffset)
       }
-      // Fall back to Prisma if ES failed or not available
-      if (!users) {
+      // Fall back to Prisma if ES failed, not available, or returned no results
+      if (!users || users.length === 0) {
         users = await prisma.user.findMany({
           where: {
             username: { contains: query, mode: 'insensitive' }

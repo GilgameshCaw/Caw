@@ -18,6 +18,7 @@ import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import { useQuickSignRenewStore } from '~/components/modals/QuickSignRenewModal'
 import { useClientAuthStore } from '~/store/clientAuthStore'
+import toast from 'react-hot-toast'
 import { usePendingSpendStore } from '~/store/pendingSpendStore'
 import { useInstanceStore } from '~/store/instanceStore'
 import { API_HOST } from './client'
@@ -455,14 +456,17 @@ export function useSignAndSubmitAction() {
       try {
         // 1. Ask the backend first
         let isAuthed = false
+        let backendReachable = false
         try {
           const res = await apiFetch<{ authenticated: boolean }>(`/api/users/client-auth/${activeTokenId}?clientId=${CLIENT_ID}`)
+          backendReachable = true
           isAuthed = !!res?.authenticated
         } catch { /* fall through to RPC fallback */ }
 
         // 2. If backend says no, verify via live RPC before showing the modal.
         //    The backend might just be behind the indexer.
         if (!isAuthed) {
+          let rpcFailed = false
           try {
             isAuthed = !!(await readContract(wagmiConfig, {
               address: CAW_NAMES_L2_ADDRESS,
@@ -471,7 +475,15 @@ export function useSignAndSubmitAction() {
               args: [CLIENT_ID, activeTokenId],
               chainId: baseSepolia.id,
             }))
-          } catch { /* treat as unknown */ }
+          } catch (e) {
+            rpcFailed = true
+            console.warn('[Actions] RPC client-auth fallback failed:', e)
+          }
+
+          if (!isAuthed && rpcFailed) {
+            toast.error('Network error — please check your connection and try again.')
+            return null as any
+          }
         }
 
         if (isAuthed) {

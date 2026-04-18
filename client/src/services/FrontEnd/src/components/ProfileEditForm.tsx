@@ -1,12 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { HiCamera, HiLink, HiLocationMarker } from 'react-icons/hi'
-import { useAccount, useSwitchChain, useChainId } from 'wagmi'
-import { useConnectModal } from '@rainbow-me/rainbowkit'
-import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { apiFetch, getAuthHeaders } from '~/api/client'
 import { useSignAndSubmitAction } from '~/api/actions'
 import { useTokenDataStore } from '~/store/tokenDataStore'
-import { chains } from '~/config/chains'
 import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
 
 export type ProfileEditFormData = {
@@ -58,15 +54,9 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
   skipAsLink,
 }) => {
   const containerSpacing = compactFields ? 'space-y-2' : 'space-y-6'
-  const { address, isConnected } = useAccount()
-  const { switchChain, isPending: isSwitchingChain } = useSwitchChain()
-  const currentChainId = useChainId()
-  const { openConnectModal } = useConnectModal()
-  const ensureWallet = useEnsureWallet()
   const signAndSubmit = useSignAndSubmitAction()
   const setAvatar = useTokenDataStore(s => s.setAvatar)
 
-  const isOnCorrectChain = currentChainId === chains.l2.chainId
   const providerDomain = typeof window !== 'undefined' ? window.location.hostname : ''
 
   const [formData, setFormData] = useState({
@@ -251,7 +241,6 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
       return
     }
 
-    await ensureWallet({ chainId: chains.l2.chainId }, async () => {
     setProfileError(null)
     setIsSaving(true)
 
@@ -274,9 +263,6 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
       const { getValidatorTip } = await import('~/api/actions')
       const totalCost = BigInt(updateCost) + getValidatorTip()
 
-      // Don't pre-check stakedAmount here — signAndSubmit accounts for
-      // pending deposits and in-flight spends, and will show the
-      // InsufficientStakeModal itself if the effective budget is too low.
       await signAndSubmit({
         actionType: 'other',
         senderId: activeToken.tokenId,
@@ -284,15 +270,10 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
         amounts: [totalCost],
       })
 
-      // Optimistically update the avatar in the global store so it shows
-      // immediately across the app (profile page, nav, etc.) without
-      // waiting for the on-chain action to confirm.
       if (avatarUrl && activeToken.tokenId) {
         setAvatar(activeToken.tokenId, avatarUrl)
       }
 
-      // Also persist changes off-chain so the server returns them immediately
-      // on subsequent fetches (don't wait for on-chain confirmation).
       const offChainChanges: Record<string, string> = {}
       if (formData.displayName !== (profileData?.displayName || '')) offChainChanges.displayName = formData.displayName
       if (formData.description !== (profileData?.bio || '')) offChainChanges.bio = formData.description
@@ -321,27 +302,23 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
       })
     } catch (err: any) {
       console.error('Failed to update profile:', err)
-      let errorMessage = 'Failed to update profile'
-      if (err?.message) {
-        if (err.message.includes('User rejected') || err.message.includes('user rejected')) {
-          errorMessage = 'Transaction rejected'
-        } else if (err.message.includes('chainId should be same')) {
-          errorMessage = 'Please switch to the correct network'
-        } else {
-          errorMessage = err.message.split('\n')[0].slice(0, 100)
-        }
+      if (err?.message?.includes('User rejected') || err?.message?.includes('user rejected')) {
+        setProfileError('Transaction rejected')
+      } else if (err?.code === 'ACTION_REJECTED') {
+        // User dismissed Quick Sign prompt — don't show error
+      } else if (err?.message) {
+        setProfileError(err.message.split('\n')[0].slice(0, 100))
+      } else {
+        setProfileError('Failed to update profile')
       }
-      setProfileError(errorMessage)
     } finally {
       setIsSaving(false)
     }
-    })
   }
 
-  const wrongWallet = !!(isConnected && activeToken && address?.toLowerCase() !== activeToken.address?.toLowerCase())
   const saveDisabled =
     isSaving || isSavingOffChain || isUploading || updateCost === 0 ||
-    (saveOnChain && (isSwitchingChain || wrongWallet || overLimit))
+    (saveOnChain && overLimit)
 
   return (
     <div className="flex flex-col">
@@ -611,12 +588,6 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
               >
                 {isSaving || isSavingOffChain ? (
                   <span>Saving...</span>
-                ) : saveOnChain && isSwitchingChain ? (
-                  <span>Switching...</span>
-                ) : saveOnChain && !isOnCorrectChain ? (
-                  <span>Switch to Base Sepolia</span>
-                ) : saveOnChain && wrongWallet ? (
-                  <span>Wrong Address</span>
                 ) : (
                   <span>
                     {saveLabel} {saveOnChain && updateCost > 0 && `(${updateCost.toLocaleString()} CAW)`}

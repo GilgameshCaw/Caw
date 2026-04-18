@@ -154,6 +154,9 @@ function createApp() {
     message: { error: 'Too many requests, try again later' }
   }))
 
+  // Health check — used by the watchdog's HTTP probe
+  app.get('/api/health', (_req, res) => { res.json({ status: 'ok' }) })
+
   // API routes
   app.use('/api/auth', authRouter)
   app.use('/api/actions', actionsRouter)

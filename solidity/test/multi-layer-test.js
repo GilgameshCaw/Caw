@@ -1612,15 +1612,19 @@ contract("CawName - Transfer & Replication Gas", function(accounts) {
     l2Endpoint = await MockLayerZeroEndpoint.new(l2);
 
     localToken = await MintableCaw.new();
-    localClientManager = await CawClientManager.new(accounts[0]);
+    var mr = await MockSwapRouter.new(localToken.address);
+    var bb = await CawBuyAndBurn.new(localToken.address, mr.address);
+
+    localClientManager = await CawClientManager.new(bb.address);
     localUriGenerator = await deployURI();
     localCawNamesL2 = await CawNameL2.new(l1, l2Endpoint.address);
     await l1Endpoint.setDestLzEndpoint(localCawNamesL2.address, l2Endpoint.address);
 
     localCawNames = await CawName.new(
-      localToken.address, localUriGenerator.address, accounts[0],
+      localToken.address, localUriGenerator.address, bb.address,
       localClientManager.address, l1Endpoint.address, l1
     );
+    await bb.setCawName(localCawNames.address);
 
     await localCawNamesL2.setL1Peer(l1, localCawNames.address, false);
     await l2Endpoint.setDestLzEndpoint(localCawNames.address, l1Endpoint.address);
@@ -1839,10 +1843,13 @@ contract("CawActionsReplicator - Full Integration", function(accounts) {
     web3.eth.defaultAccount = accounts[0];
     l1Endpoint = await MockLayerZeroEndpoint.new(l1);
     l2Endpoint = await MockLayerZeroEndpoint.new(l2);
-    buyAndBurnAddress = gilg;
 
     // Deploy all contracts
     token = await MintableCaw.new();
+    var mockRouter = await MockSwapRouter.new(token.address);
+    var localBuyAndBurn = await CawBuyAndBurn.new(token.address, mockRouter.address);
+    buyAndBurnAddress = localBuyAndBurn.address;
+
     clientManager = await CawClientManager.new(buyAndBurnAddress);
     uriGenerator = await deployURI();
 
@@ -1857,6 +1864,7 @@ contract("CawActionsReplicator - Full Integration", function(accounts) {
       l1Endpoint.address,
       l1
     );
+    await localBuyAndBurn.setCawName(cawNames.address);
     await cawNamesL2.setL1Peer(l1, cawNames.address, false);
     await l2Endpoint.setDestLzEndpoint(cawNames.address, l1Endpoint.address);
     await cawNames.setL2Peer(l2, cawNamesL2.address);
@@ -2133,15 +2141,19 @@ contract("CawNameMinter - mintAndDeposit", function(accounts) {
     l2Endpoint = await MockLayerZeroEndpoint.new(l2);
 
     localToken = await MintableCaw.new();
-    localClientManager = await CawClientManager.new(accounts[0]);
+    var mr = await MockSwapRouter.new(localToken.address);
+    var bb = await CawBuyAndBurn.new(localToken.address, mr.address);
+
+    localClientManager = await CawClientManager.new(bb.address);
     localUriGenerator = await deployURI();
     localCawNamesL2 = await CawNameL2.new(l1, l2Endpoint.address);
     await l1Endpoint.setDestLzEndpoint(localCawNamesL2.address, l2Endpoint.address);
 
     localCawNames = await CawName.new(
-      localToken.address, localUriGenerator.address, accounts[0],
+      localToken.address, localUriGenerator.address, bb.address,
       localClientManager.address, l1Endpoint.address, l1
     );
+    await bb.setCawName(localCawNames.address);
 
     await localCawNamesL2.setL1Peer(l1, localCawNames.address, false);
     await l2Endpoint.setDestLzEndpoint(localCawNames.address, l1Endpoint.address);
@@ -2277,13 +2289,17 @@ contract("CawName - depositFor", function(accounts) {
     localEndpointL2 = await MockLayerZeroEndpoint.new(l2);
 
     localToken = await MintableCaw.new();
-    localClientManager = await CawClientManager.new(gilg);
+    var mr = await MockSwapRouter.new(localToken.address);
+    var bb = await CawBuyAndBurn.new(localToken.address, mr.address);
+
+    localClientManager = await CawClientManager.new(bb.address);
     localUriGenerator = await deployURI();
 
     localCawNamesL2 = await CawNameL2.new(l1, localEndpointL2.address);
     await localEndpointL1.setDestLzEndpoint(localCawNamesL2.address, localEndpointL2.address);
 
-    localCawNames = await CawName.new(localToken.address, localUriGenerator.address, gilg, localClientManager.address, localEndpointL1.address, l1);
+    localCawNames = await CawName.new(localToken.address, localUriGenerator.address, bb.address, localClientManager.address, localEndpointL1.address, l1);
+    await bb.setCawName(localCawNames.address);
     await localCawNamesL2.setL1Peer(l1, localCawNames.address, false);
     await localEndpointL2.setDestLzEndpoint(localCawNames.address, localEndpointL1.address);
     await localCawNames.setL2Peer(l2, localCawNamesL2.address);
@@ -2479,13 +2495,17 @@ contract("CawName - locked withdraw fee + fee withdrawal", function(accounts) {
     localEndpointL2 = await MockLayerZeroEndpoint.new(l2);
 
     localToken = await MintableCaw.new();
-    localClientManager = await CawClientManager.new(gilg);
+    var localMockRouter = await MockSwapRouter.new(localToken.address);
+    var localBuyAndBurn = await CawBuyAndBurn.new(localToken.address, localMockRouter.address);
+
+    localClientManager = await CawClientManager.new(localBuyAndBurn.address);
     localUriGenerator = await deployURI();
 
     localCawNamesL2 = await CawNameL2.new(l1, localEndpointL2.address);
     await localEndpointL1.setDestLzEndpoint(localCawNamesL2.address, localEndpointL2.address);
 
-    localCawNames = await CawName.new(localToken.address, localUriGenerator.address, gilg, localClientManager.address, localEndpointL1.address, l1);
+    localCawNames = await CawName.new(localToken.address, localUriGenerator.address, localBuyAndBurn.address, localClientManager.address, localEndpointL1.address, l1);
+    await localBuyAndBurn.setCawName(localCawNames.address);
     await localCawNamesL2.setL1Peer(l1, localCawNames.address, false);
     await localEndpointL2.setDestLzEndpoint(localCawNames.address, localEndpointL1.address);
     await localCawNames.setL2Peer(l2, localCawNamesL2.address);
@@ -2799,5 +2819,186 @@ contract("CawName - locked withdraw fee + fee withdrawal", function(accounts) {
     console.log("recipients-limit-rejects-11: PASS");
   });
   }); // end describe("text length and recipients limits")
+});
+
+
+// ============================================
+// Buy and Burn tests
+// ============================================
+contract("CawName - Buy and Burn", function(accounts) {
+  var localToken, localClientManager, localUriGenerator, localCawNamesL2;
+  var localCawNames, localMinter, localQuoter, localEndpointL1, localEndpointL2;
+  var localBuyAndBurn, localMockRouter;
+
+  const DEAD = '0x000000000000000000000000000000000000dEaD';
+  const MINT_FEE    = web3.utils.toWei('0.01', 'ether');
+  const DEPOSIT_FEE = web3.utils.toWei('0.005', 'ether');
+  const AUTH_FEE    = web3.utils.toWei('0.002', 'ether');
+  const WITHDRAW_FEE = web3.utils.toWei('0.003', 'ether');
+
+  before(async function() {
+    this.timeout(120000);
+
+    localEndpointL1 = await MockLayerZeroEndpoint.new(l1);
+    localEndpointL2 = await MockLayerZeroEndpoint.new(l2);
+
+    localToken = await MintableCaw.new();
+    localMockRouter = await MockSwapRouter.new(localToken.address);
+    localBuyAndBurn = await CawBuyAndBurn.new(localToken.address, localMockRouter.address);
+
+    localClientManager = await CawClientManager.new(localBuyAndBurn.address);
+    localUriGenerator = await deployURI();
+
+    localCawNamesL2 = await CawNameL2.new(l1, localEndpointL2.address);
+    await localEndpointL1.setDestLzEndpoint(localCawNamesL2.address, localEndpointL2.address);
+
+    localCawNames = await CawName.new(
+      localToken.address, localUriGenerator.address, localBuyAndBurn.address,
+      localClientManager.address, localEndpointL1.address, l1
+    );
+    await localBuyAndBurn.setCawName(localCawNames.address);
+    await localCawNamesL2.setL1Peer(l1, localCawNames.address, false);
+    await localEndpointL2.setDestLzEndpoint(localCawNames.address, localEndpointL1.address);
+    await localCawNames.setL2Peer(l2, localCawNamesL2.address);
+
+    // Client with meaningful fees — feeAddress = accounts[0]
+    await localClientManager.createClient("BuyBurn Client", accounts[0], l2, WITHDRAW_FEE, DEPOSIT_FEE, AUTH_FEE, MINT_FEE);
+    await localClientManager.setCawName(localCawNames.address);
+
+    localMinter = await CawNameMinter.new(localToken.address, localCawNames.address);
+    await localCawNames.setMinter(localMinter.address);
+    localQuoter = await CawNameQuoter.new(localCawNames.address);
+
+    // Fund user accounts with CAW and approve
+    var cawAmount = BigInt(100) * 1_000_000_000n * 10n**18n;
+    await localToken.mint(accounts[1], cawAmount.toString());
+    await localToken.approve(localMinter.address, cawAmount.toString(), { from: accounts[1] });
+    await localToken.approve(localCawNames.address, cawAmount.toString(), { from: accounts[1] });
+  });
+
+  it("fees accrue to both client and buy-and-burn on mint", async function() {
+    this.timeout(60000);
+
+    var mintQuote = await localQuoter.mintQuote(1, false);
+    await localMinter.mint(1, 'burntest', 0, { from: accounts[1], value: BigInt(mintQuote.nativeFee).toString() });
+
+    var clientAccrued = BigInt(await localCawNames.accruedFees(accounts[0]));
+    var protocolAccrued = BigInt(await localCawNames.accruedFees(localBuyAndBurn.address));
+
+    expect(clientAccrued.toString()).to.equal(MINT_FEE);
+    expect(protocolAccrued.toString()).to.equal(MINT_FEE);
+    console.log("fees-accrue-on-mint: PASS (client:", clientAccrued.toString(), "protocol:", protocolAccrued.toString(), ")");
+  });
+
+  it("withdrawFees() swaps ETH to CAW, sends half to client, burns half", async function() {
+    this.timeout(60000);
+
+    var clientAccrued = BigInt(await localCawNames.accruedFees(accounts[0]));
+    var protocolAccrued = BigInt(await localCawNames.accruedFees(localBuyAndBurn.address));
+    var totalEth = clientAccrued + protocolAccrued;
+    expect(totalEth > 0n).to.be.true;
+
+    var deadBefore = BigInt(await localToken.balanceOf(DEAD));
+    var clientCawBefore = BigInt(await localToken.balanceOf(accounts[0]));
+
+    // Get expected output from mock router (1 ETH = 1M CAW)
+    var expectedCaw = await localBuyAndBurn.getExpectedCawOut(totalEth.toString());
+    var minCawOut = BigInt(expectedCaw) * 97n / 100n; // 3% slippage
+
+    await localCawNames.withdrawFees(minCawOut.toString(), { from: accounts[0] });
+
+    var deadAfter = BigInt(await localToken.balanceOf(DEAD));
+    var clientCawAfter = BigInt(await localToken.balanceOf(accounts[0]));
+    var cawBurned = deadAfter - deadBefore;
+    var cawToClient = clientCawAfter - clientCawBefore;
+
+    expect(cawBurned > 0n).to.be.true;
+    expect(cawToClient > 0n).to.be.true;
+    // Half goes to each (within rounding)
+    expect(cawBurned.toString()).to.equal(cawToClient.toString());
+
+    // Accrued fees should be zero now
+    var clientAccruedAfter = BigInt(await localCawNames.accruedFees(accounts[0]));
+    var protocolAccruedAfter = BigInt(await localCawNames.accruedFees(localBuyAndBurn.address));
+    expect(clientAccruedAfter).to.equal(0n);
+    expect(protocolAccruedAfter).to.equal(0n);
+
+    console.log("buy-and-burn: PASS (burned:", cawBurned.toString(), "to client:", cawToClient.toString(), ")");
+  });
+
+  it("withdrawFees() reverts with no accrued fees", async function() {
+    this.timeout(60000);
+
+    try {
+      await localCawNames.withdrawFees(0, { from: accounts[2] });
+      assert.fail("Should have reverted");
+    } catch (err) {
+      assert(err.message.includes("No fees to withdraw"), "Expected revert but got: " + err.message);
+    }
+    console.log("no-fees-reverts: PASS");
+  });
+
+  it("swapAndSplit() reverts when called directly (not via CawName)", async function() {
+    this.timeout(60000);
+
+    try {
+      await localBuyAndBurn.swapAndSplit(0, accounts[0], { from: accounts[0], value: web3.utils.toWei('0.01', 'ether') });
+      assert.fail("Should have reverted");
+    } catch (err) {
+      assert(err.message.includes("Only CawName"), "Expected revert but got: " + err.message);
+    }
+    console.log("direct-swap-reverts: PASS");
+  });
+
+  it("setCawName() can only be called once", async function() {
+    this.timeout(60000);
+
+    try {
+      await localBuyAndBurn.setCawName(accounts[0]);
+      assert.fail("Should have reverted");
+    } catch (err) {
+      assert(err.message.includes("Already set"), "Expected revert but got: " + err.message);
+    }
+    console.log("set-caw-name-once: PASS");
+  });
+
+  it("withdrawFees() reverts if minCawOut is too high", async function() {
+    this.timeout(60000);
+
+    // Generate some fees first via a deposit
+    var depositAmount = BigInt(1000) * 10n**18n;
+    var depositQuote = await localQuoter.depositQuote(1, 1, depositAmount.toString(), l2, false);
+    await localCawNames.deposit(1, 1, depositAmount.toString(), l2, 0, { from: accounts[1], value: BigInt(depositQuote.nativeFee).toString() });
+
+    var clientAccrued = BigInt(await localCawNames.accruedFees(accounts[0]));
+    expect(clientAccrued > 0n).to.be.true;
+
+    // Set minCawOut absurdly high — should revert
+    try {
+      await localCawNames.withdrawFees(web3.utils.toWei('999999999', 'ether'), { from: accounts[0] });
+      assert.fail("Should have reverted");
+    } catch (err) {
+      assert(err.message.includes("INSUFFICIENT_OUTPUT_AMOUNT") || err.message.includes("revert"),
+        "Expected slippage revert but got: " + err.message);
+    }
+
+    // Fees should still be accrued (not lost)
+    var clientAccruedAfter = BigInt(await localCawNames.accruedFees(accounts[0]));
+    expect(clientAccruedAfter.toString()).to.equal(clientAccrued.toString());
+
+    console.log("high-min-caw-reverts-safely: PASS (fees preserved)");
+  });
+
+  it("getExpectedCawOut() returns correct preview", async function() {
+    this.timeout(60000);
+
+    var ethAmount = web3.utils.toWei('1', 'ether');
+    var expected = await localBuyAndBurn.getExpectedCawOut(ethAmount);
+    // Mock router: 1 ETH = 1,000,000 CAW
+    var expectedBigInt = BigInt(expected);
+    var oneMillionCaw = BigInt(1_000_000) * 10n**18n;
+    expect(expectedBigInt.toString()).to.equal(oneMillionCaw.toString());
+    console.log("expected-caw-out-preview: PASS");
+  });
 });
 

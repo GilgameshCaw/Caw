@@ -13,9 +13,9 @@
     "api": "npm run prisma:push && mkdir -p logs && (node -r ./file-polyfill.js -r tsx/cjs programs/start.ts 2>&1 | tee -a \"logs/caw-client-$(date +%Y-%m-%d).log\")",
     "check-node": "export NVM_DIR=\"$HOME/.nvm\" && [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\" && (nvm list | grep -q 'v22.0.0' || (echo 'Node.js 22.0.0 not found. Installing...' && nvm install 22.0.0))",
     "web": "cd src/services/FrontEnd && export NVM_DIR=\"$HOME/.nvm\" && [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\" && nvm use 22.0.0 && yarn dev",
-    "dev:api": "bash scripts/cleanup-processes.sh 2>/dev/null || true && npm run prisma:push && mkdir -p logs && nodemon --watch src --ext ts,js --ignore ./src/services/FrontEnd/src/ --exec \"bash -c 'node -r ./file-polyfill.js -r tsx/cjs programs/start.ts 2>&1 | tee -a logs/caw-client-$(date +%Y-%m-%d).log'\"",
-    "start": "concurrently \"npm run elasticsearch\" \"npm run redis\" \"npm run api\"",
-    "dev": "unset npm_config_prefix && export NVM_DIR=\"$HOME/.nvm\" && [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\" && (nvm list | grep -q 'v22.0.0' || nvm install 22.0.0) && nvm use 22.0.0 && concurrently \"npm run postgres\" \"npm run elasticsearch\" \"npm run redis\" \"npm run dev:api\" \"npm run web\""
+    "dev:api": "bash scripts/cleanup-processes.sh 2>/dev/null || true && npm run prisma:push && mkdir -p logs && nodemon --watch src --ext ts,js --ignore ./src/services/FrontEnd/src/ --exec \"node -r ./file-polyfill.js -r tsx/cjs programs/start.ts\"",
+    "start": "concurrently --restart-tries -1 --restart-after exponential \"npm run elasticsearch\" \"npm run redis\" \"npm run api\"",
+    "dev": "unset npm_config_prefix && export NVM_DIR=\"$HOME/.nvm\" && [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\" && (nvm list | grep -q 'v22.0.0' || nvm install 22.0.0) && nvm use 22.0.0 && concurrently --restart-tries -1 --restart-after exponential \"npm run postgres\" \"npm run elasticsearch\" \"npm run redis\" \"npm run dev:api\" \"npm run web\""
   },
   "author": "",
   "license": "UNLICENSED",

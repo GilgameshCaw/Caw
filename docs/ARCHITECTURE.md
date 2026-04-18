@@ -201,6 +201,37 @@ User Action → PENDING → Validator Processing → On-chain Submission → SUC
 - Emits `ActionsArchived` events for permanent storage
 - Minimal gas cost - just event emission for data preservation
 
+### Fee Structure
+
+CawName charges ETH fees on four operations: **mint**, **deposit**, **authenticate**, and **withdraw**. Each fee is set independently per client by the client owner via `CawClientManager`.
+
+#### 50/50 Split
+Every fee is split equally between two recipients:
+1. **Client** — receives their share as CAW tokens (converted via Uniswap at withdrawal time)
+2. **Burn** — the matching share of CAW is sent to `0xdead` (permanently burned)
+
+The fee amount set by the client (e.g. `mintFee = 0.001 ETH`) is the **per-recipient** amount. The user pays **double** that (0.002 ETH total) at the time of the transaction. When the client later withdraws fees, all accumulated ETH is swapped to CAW in a single trade, with half going to the client and half burned. UIs must show the total cost, not the per-recipient fee.
+
+#### Withdraw Fee Locking
+When a user first authenticates or deposits with a client, the current withdraw fee is locked for that (client, token) pair. On withdrawal, the user pays `min(locked, current)` — they automatically benefit if the client lowers fees, but are protected from retroactive increases.
+
+#### Buy-and-Burn (`CawBuyAndBurn.sol`)
+- Protocol fees accumulate in CawName's `accruedFees` mapping under the buy-and-burn contract's address
+- When a client calls `withdrawFees(minCawOut)`, CawName combines the client's fees + the protocol's matching portion and sends them to `CawBuyAndBurn.swapAndSplit()` in a single Uniswap swap
+- Half the resulting CAW goes to the client, half to `0xdead` (burned)
+- Clients receive CAW instead of ETH — this aligns incentives: a bad `minCawOut` hurts the client's own payout equally, making sandwich griefing self-punishing
+- Only CawName can call `swapAndSplit()` — no public access, no external MEV griefing
+- The CAW/ETH Uniswap V2 pool has 99.99% of LP tokens burned, ensuring permanent liquidity
+
+#### Fee Configuration (for client operators)
+Client owners set fees via `CawClientManager`:
+- `setMintFee(clientId, fee)` — charged when a user creates a username through this client
+- `setAuthFee(clientId, fee)` — charged on first authentication with this client
+- `setDepositFee(clientId, fee)` — charged on each CAW deposit
+- `setWithdrawFee(clientId, fee)` — charged on withdrawal (subject to locking, see above)
+- `setFees(clientId, ...)` — atomic batch update of all four fees
+- All fees are in wei (ETH). Remember: users pay 2× the set amount due to the 50/50 split.
+
 ### Backend Services (TypeScript/Node.js)
 
 #### API Server (`/src/api`)

@@ -12,6 +12,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 
 import "./CawNameURI.sol";
 import "./CawNameL2.sol";
+import "./CawBuyAndBurn.sol";
 
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 import { CawClientManager, ReplicationDestination } from "./CawClientManager.sol";
@@ -88,7 +89,7 @@ contract CawName is
   event Deposited(uint32 indexed cawClientId, uint32 indexed tokenId, uint256 amount, uint32 indexed lzDestId, address depositor);
 
   CawClientManager public clientManager;
-  address buyAndBurnCaw;
+  CawBuyAndBurn public buyAndBurn;
 
   constructor(address _caw, address _gui, address _buyAndBurn, address _clientManager, address _endpoint, uint32 mainnetEid)
     ERC721("CAW NAME", "cawNAME")
@@ -96,7 +97,7 @@ contract CawName is
   {
     clientManager = CawClientManager(payable(_clientManager));
     uriGenerator = CawNameURI(_gui);
-    buyAndBurnCaw = _buyAndBurn;
+    buyAndBurn = CawBuyAndBurn(payable(_buyAndBurn));
     CAW = IERC20(_caw);
     mainnetLzId = mainnetEid;
   }
@@ -196,24 +197,37 @@ contract CawName is
   function payFee(uint256 fee, address feeAddress) internal returns (uint256) {
     if (fee > 0) {
       accruedFees[feeAddress] += fee;
-      accruedFees[buyAndBurnCaw] += fee;
+      accruedFees[address(buyAndBurn)] += fee;
       emit FeesAccrued(feeAddress, fee);
-      emit FeesAccrued(buyAndBurnCaw, fee);
+      emit FeesAccrued(address(buyAndBurn), fee);
     }
     return fee * 2;
   }
 
-  /// @notice Withdraw accrued fees (callable by anyone owed fees)
-  /// @dev Uses .call{value:} instead of .transfer() so contract recipients (multisigs, etc.)
-  ///      can receive fees. Reentrancy is prevented by zeroing accruedFees BEFORE the call
-  ///      (checks-effects-interactions pattern).
-  function withdrawFees() external {
-    uint256 amount = accruedFees[msg.sender];
-    require(amount > 0, "No fees to withdraw");
+  /// @notice Withdraw accrued fees as CAW. Swaps the client's ETH fees + the matching protocol
+  ///         portion together into CAW via Uniswap. Client receives half the CAW, other half is burned.
+  /// @param minCawOut Minimum total CAW the swap must produce (sandwich protection).
+  ///                  Client receives minCawOut/2, protocol burns minCawOut/2.
+  ///                  Use buyAndBurn.getExpectedCawOut(totalETH) and apply slippage (e.g. 97%).
+  /// @dev By paying the client in CAW from the same swap, their incentives are perfectly aligned
+  ///      with the protocol: a bad minCawOut hurts the client's own payout equally. A client
+  ///      calling withdrawFees(0) would get sandwiched and lose their own fees — self-punishing.
+  function withdrawFees(uint256 minCawOut) external {
+    uint256 clientAmount = accruedFees[msg.sender];
+    require(clientAmount > 0, "No fees to withdraw");
+
+    uint256 protocolAmount = accruedFees[address(buyAndBurn)];
+
+    // Zero both before external calls (checks-effects-interactions)
     accruedFees[msg.sender] = 0;
-    (bool sent, ) = payable(msg.sender).call{value: amount}("");
-    require(sent, "Fee transfer failed");
-    emit FeesWithdrawn(msg.sender, amount);
+    if (protocolAmount > 0) {
+      accruedFees[address(buyAndBurn)] = 0;
+    }
+
+    uint256 totalEth = clientAmount + protocolAmount;
+    uint256 cawReceived = buyAndBurn.swapAndSplit{value: totalEth}(minCawOut, msg.sender);
+
+    emit FeesWithdrawn(msg.sender, cawReceived);
   }
 
   function nextId() public view returns (uint32) {

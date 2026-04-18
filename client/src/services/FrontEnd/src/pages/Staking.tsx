@@ -673,6 +673,9 @@ const Staking = () => {
         return (
           <div className="text-sm text-gray-500 text-center mt-2">
             est. gas+fees: {totalEth.toFixed(4)} ETH{ethPrice > 0 && ` (~$${(totalEth * ethPrice).toFixed(2)})`}
+            <span className="block text-xs mt-0.5 opacity-60">
+              Half of all fees are used to buy and burn CAW
+            </span>
           </div>
         )
       })()}
@@ -752,6 +755,9 @@ const Staking = () => {
               return (
                 <div className="text-sm text-gray-500 text-center mt-2">
                   est. gas+fees: {totalEth.toFixed(4)} ETH{ethPrice > 0 && ` (~$${(totalEth * ethPrice).toFixed(2)})`}
+                  <span className="block text-xs mt-0.5 opacity-60">
+                    Half of all fees are used to buy and burn CAW
+                  </span>
                 </div>
               )
             })()}

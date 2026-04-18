@@ -99,7 +99,8 @@ const ClientAuthModal: React.FC = () => {
           }`}>
             Total cost: {formatEther(totalFee)} ETH
             <span className={`block text-xs mt-0.5 ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
-              Includes registration fee + network relay
+              Includes registration fee + network relay.
+              Half of all fees are used to buy and burn CAW.
             </span>
           </div>
         )}
