@@ -3,7 +3,7 @@ import { prisma } from '../src/prismaClient'
 import { CAW_NAMES_L2_ADDRESS } from '../src/abi/addresses'
 import { Contract, WebSocketProvider } from 'ethers'
 
-const CawNameAbi = [
+const CawProfileAbi = [
   'function tokenURI(uint256 tokenId) view returns (string)',
   'function ownerOf(uint256 tokenId) view returns (address)'
 ]
@@ -15,7 +15,7 @@ if (!l2RpcUrl) {
 }
 
 const l2Provider = new WebSocketProvider(l2RpcUrl)
-const nameContract = new Contract(CAW_NAMES_L2_ADDRESS, CawNameAbi, l2Provider)
+const nameContract = new Contract(CAW_NAMES_L2_ADDRESS, CawProfileAbi, l2Provider)
 
 async function fixUser5() {
   const tokenId = 5

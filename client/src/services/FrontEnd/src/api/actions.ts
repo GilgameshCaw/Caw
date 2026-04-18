@@ -7,7 +7,7 @@ import { readContract } from '@wagmi/core'
 import type { TypedDataDomain, TypedDataField } from '@ethersproject/abstract-signer'
 import { useActiveToken, useTokenDataStore } from "~/store/tokenDataStore";
 import { CAW_ACTIONS_ADDRESS, CAW_NAMES_L2_ADDRESS } from '~/../../../abi/addresses'
-import { cawActionsAbi, cawNameL2Abi } from '~/../../../abi/generated'
+import { cawActionsAbi, cawProfileL2Abi } from '~/../../../abi/generated'
 import { wagmiConfig } from '~/config/Web3Provider'
 import { hasMinimumStake, getRequiredStake, STAKING_REQUIREMENTS } from '~/constants/stakingRequirements'
 import { getActionTypeForModal } from '~/errors/InsufficientStakeError'
@@ -44,7 +44,7 @@ export async function readOnChainStakeForHint(tokenId: number): Promise<bigint> 
   try {
     const result = await readContract(wagmiConfig, {
       address: CAW_NAMES_L2_ADDRESS,
-      abi: cawNameL2Abi,
+      abi: cawProfileL2Abi,
       functionName: 'cawBalanceOf',
       args: [tokenId],
       chainId: baseSepolia.id,
@@ -470,7 +470,7 @@ export function useSignAndSubmitAction() {
           try {
             isAuthed = !!(await readContract(wagmiConfig, {
               address: CAW_NAMES_L2_ADDRESS,
-              abi: cawNameL2Abi,
+              abi: cawProfileL2Abi,
               functionName: 'authenticated',
               args: [CLIENT_ID, activeTokenId],
               chainId: baseSepolia.id,

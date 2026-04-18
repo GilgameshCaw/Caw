@@ -21,7 +21,7 @@ const replicatorAbi = [
   'function clientChains(uint32, uint256) view returns (uint32)',
   'function isAvailableChain(uint32) view returns (bool)',
   'function clientReplicationEnabled(uint32) view returns (bool)',
-  'function cawNameL2() view returns (address)',
+  'function cawProfileL2() view returns (address)',
 ]
 
 const clientManagerAbi = [
@@ -30,11 +30,11 @@ const clientManagerAbi = [
   'function clients(uint32) view returns (address owner, uint32 storageChainEid, uint32 instanceId, uint8 clientType)',
   'function clientReplicationEnabled(uint32) view returns (bool)',
   'function getReplications(uint32) view returns (tuple(address target, uint32 eid)[])',
-  'function cawName() view returns (address)',
+  'function cawProfile() view returns (address)',
   'event ClientReplicationAdded(uint32 indexed clientId, uint32 indexed eid, address target)',
 ]
 
-const cawNameOAppAbi = [
+const cawProfileOAppAbi = [
   'function peers(uint32) view returns (bytes32)',
   'function mainnetLzId() view returns (uint32)',
 ]
@@ -54,10 +54,10 @@ async function main() {
   console.log(`\n== L2 CawActionsReplicator @ ${CAW_ACTIONS_REPLICATOR_L2_ADDRESS} ==`)
   console.log(`   (Base Sepolia)`)
 
-  const cawNameL2Ref = await replicator.cawNameL2()
-  console.log(`   cawNameL2 (only authorised caller): ${cawNameL2Ref}`)
-  console.log(`   expected CawNameL2 address:         ${CAW_NAMES_L2_ADDRESS}`)
-  console.log(`   match: ${cawNameL2Ref.toLowerCase() === CAW_NAMES_L2_ADDRESS.toLowerCase() ? '✓' : '✗'}`)
+  const cawProfileL2Ref = await replicator.cawProfileL2()
+  console.log(`   cawProfileL2 (only authorised caller): ${cawProfileL2Ref}`)
+  console.log(`   expected CawProfileL2 address:         ${CAW_NAMES_L2_ADDRESS}`)
+  console.log(`   match: ${cawProfileL2Ref.toLowerCase() === CAW_NAMES_L2_ADDRESS.toLowerCase() ? '✓' : '✗'}`)
 
   const isAvailable = await replicator.isAvailableChain(DEST_EID)
   console.log(`\n   isAvailableChain(${DEST_EID}): ${isAvailable}`)
@@ -134,38 +134,38 @@ async function main() {
     console.log(`   Failed to query events: ${e?.message}`)
   }
 
-  // Verify the L1 clientManager.cawName() matches the configured CawName
-  console.log(`\n== L1 clientManager.cawName() vs. configured CAW_NAMES_ADDRESS ==`)
+  // Verify the L1 clientManager.cawProfile() matches the configured CawProfile
+  console.log(`\n== L1 clientManager.cawProfile() vs. configured CAW_NAMES_ADDRESS ==`)
   try {
-    const cm_cawName = await clientManager.cawName()
-    console.log(`   clientManager.cawName():        ${cm_cawName}`)
+    const cm_cawProfile = await clientManager.cawProfile()
+    console.log(`   clientManager.cawProfile():        ${cm_cawProfile}`)
     console.log(`   configured CAW_NAMES_ADDRESS:   ${CAW_NAMES_L1}`)
-    console.log(`   match: ${cm_cawName.toLowerCase() === CAW_NAMES_L1.toLowerCase() ? '✓' : '✗ ← LZ syncs go via a stale CawName contract'}`)
+    console.log(`   match: ${cm_cawProfile.toLowerCase() === CAW_NAMES_L1.toLowerCase() ? '✓' : '✗ ← LZ syncs go via a stale CawProfile contract'}`)
   } catch (e: any) {
-    console.log(`   cawName() reverted: ${e?.shortMessage || e?.message}`)
+    console.log(`   cawProfile() reverted: ${e?.shortMessage || e?.message}`)
   }
 
-  // Verify the L2 CawNameL2 peer is whatever sent the LZ message the scan API reported.
+  // Verify the L2 CawProfileL2 peer is whatever sent the LZ message the scan API reported.
   // LZ scan showed receiver 0xb43c3c5809bc9c82bc8f20b03b2d0dd12386d1e2 on base-sepolia,
   // which should equal our CAW_NAMES_L2_ADDRESS if configuration is correct.
   console.log(`\n== LayerZero peer sanity ==`)
   console.log(`   LZ scan showed destination receiver: 0xb43c3c5809bc9c82bc8f20b03b2d0dd12386d1e2`)
   console.log(`   configured CAW_NAMES_L2_ADDRESS:     ${CAW_NAMES_L2_ADDRESS}`)
   const receiverMatch = '0xb43c3c5809bc9c82bc8f20b03b2d0dd12386d1e2' === CAW_NAMES_L2_ADDRESS.toLowerCase()
-  console.log(`   match: ${receiverMatch ? '✓' : '✗ ← LZ messages are being delivered to a DIFFERENT CawNameL2'}`)
+  console.log(`   match: ${receiverMatch ? '✓' : '✗ ← LZ messages are being delivered to a DIFFERENT CawProfileL2'}`)
 
-  // Check the CURRENT CawName's LZ peer for Base Sepolia.
-  console.log(`\n== Current CawName LZ peer for Base Sepolia (40245) ==`)
+  // Check the CURRENT CawProfile's LZ peer for Base Sepolia.
+  console.log(`\n== Current CawProfile LZ peer for Base Sepolia (40245) ==`)
   const BASE_SEPOLIA_EID = 40245
   try {
-    const currentCawName = new Contract(CAW_NAMES_L1, cawNameOAppAbi, l1)
-    const peerBytes = await currentCawName.peers(BASE_SEPOLIA_EID)
+    const currentCawProfile = new Contract(CAW_NAMES_L1, cawProfileOAppAbi, l1)
+    const peerBytes = await currentCawProfile.peers(BASE_SEPOLIA_EID)
     // peer is left-padded bytes32 of the address
     const peerAddress = '0x' + peerBytes.slice(26)
-    console.log(`   CawName(${CAW_NAMES_L1}).peers(${BASE_SEPOLIA_EID}): ${peerAddress}`)
+    console.log(`   CawProfile(${CAW_NAMES_L1}).peers(${BASE_SEPOLIA_EID}): ${peerAddress}`)
     console.log(`   configured CAW_NAMES_L2_ADDRESS:                   ${CAW_NAMES_L2_ADDRESS}`)
     const ok = peerAddress.toLowerCase() === CAW_NAMES_L2_ADDRESS.toLowerCase()
-    console.log(`   match: ${ok ? '✓ (sync via current CawName should land on current CawNameL2)' : '✗ (current CawName also points at the wrong L2)'}`)
+    console.log(`   match: ${ok ? '✓ (sync via current CawProfile should land on current CawProfileL2)' : '✗ (current CawProfile also points at the wrong L2)'}`)
   } catch (e: any) {
     console.log(`   peers() query failed: ${e?.shortMessage || e?.message}`)
   }
@@ -176,7 +176,7 @@ async function main() {
     console.log(`   Admin must call CawActionsReplicator.registerChain(…) on L2 first.`)
   } else if (!isEnabled) {
     console.log(`✗ Client ${CLIENT_ID} is not enrolled for destination ${DEST_EID} on L2.`)
-    console.log(`   Fix: client owner calls CawName.syncReplication(${CLIENT_ID}, <BASE_SEPOLIA_LZ_EID>, 0)`)
+    console.log(`   Fix: client owner calls CawProfile.syncReplication(${CLIENT_ID}, <BASE_SEPOLIA_LZ_EID>, 0)`)
     console.log(`        on L1 with enough ETH for LZ fees. After the LZ message lands on L2,`)
     console.log(`        clientChainEnabled(${CLIENT_ID}, ${DEST_EID}) will flip to true.`)
   } else {

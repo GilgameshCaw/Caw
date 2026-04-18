@@ -34,7 +34,7 @@ interface ICawActionsForReplicator {
  * @dev Deployed on L2. Replication is decoupled from action processing — it runs
  *      as a background process that submits complete 128-action checkpoint batches.
  *      Owner registers archive chains globally via addArchiveChain.
- *      Clients select which available chains they replicate to via setClientChains (called by CawNameL2).
+ *      Clients select which available chains they replicate to via setClientChains (called by CawProfileL2).
  *      Anyone can call replicateBatch() — it's fully trustless since all data is verified on-chain.
  */
 contract CawActionsReplicator is OApp {
@@ -43,8 +43,8 @@ contract CawActionsReplicator is OApp {
   /// @notice The CawActions contract used for checkpoint and signature verification
   address public immutable cawActions;
 
-  /// @notice The CawNameL2 contract authorized to set client chains (immutable, set at deployment)
-  address public immutable cawNameL2;
+  /// @notice The CawProfileL2 contract authorized to set client chains (immutable, set at deployment)
+  address public immutable cawProfileL2;
 
   /// @notice Gas limit for receive on destination (just event emission, very cheap)
   /// @notice Gas forwarded to `_lzReceive` on the destination archive.
@@ -95,7 +95,7 @@ contract CawActionsReplicator is OApp {
   mapping(uint32 => bool) public isAvailableChain;
 
   // ============================================
-  // CLIENT CHAIN SELECTION (set via CawNameL2)
+  // CLIENT CHAIN SELECTION (set via CawProfileL2)
   // ============================================
 
   /// @notice Which chains each client replicates to: clientId => destEid[]
@@ -118,17 +118,17 @@ contract CawActionsReplicator is OApp {
   /**
    * @param _endpoint LayerZero endpoint address
    * @param _cawActions The CawActions contract address (for checkpoint/signature verification)
-   * @param _cawNameL2 The CawNameL2 contract address (for receiving config updates)
+   * @param _cawProfileL2 The CawProfileL2 contract address (for receiving config updates)
    */
   constructor(
     address _endpoint,
     address _cawActions,
-    address _cawNameL2
+    address _cawProfileL2
   ) OApp(_endpoint, msg.sender) {
     require(_cawActions != address(0), "Invalid CawActions address");
-    require(_cawNameL2 != address(0), "Invalid CawNameL2 address");
+    require(_cawProfileL2 != address(0), "Invalid CawProfileL2 address");
     cawActions = _cawActions;
-    cawNameL2 = _cawNameL2;
+    cawProfileL2 = _cawProfileL2;
   }
 
   // ============================================
@@ -160,16 +160,16 @@ contract CawActionsReplicator is OApp {
   }
 
   // ============================================
-  // CLIENT CHAIN SELECTION (called by CawNameL2)
+  // CLIENT CHAIN SELECTION (called by CawProfileL2)
   // ============================================
 
   /**
-   * @notice Set the full list of chains a client replicates to. Called by CawNameL2.
+   * @notice Set the full list of chains a client replicates to. Called by CawProfileL2.
    * @param clientId The client ID
    * @param destEids Array of destination chain EIDs (must all be available chains)
    */
   function setClientChains(uint32 clientId, uint32[] calldata destEids) external {
-    require(msg.sender == cawNameL2, "Only CawNameL2");
+    require(msg.sender == cawProfileL2, "Only CawProfileL2");
 
     // Clear old chain selections
     uint32[] storage oldChains = clientChains[clientId];

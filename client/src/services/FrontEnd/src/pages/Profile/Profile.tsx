@@ -16,7 +16,7 @@ import { useDmClient } from '~/hooks/useDm'
 import { useAccount, useSwitchChain, useChainId, useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi'
 import { chains } from '~/config/chains'
 import { CAW_NAMES_MINTER_ADDRESS } from '~/../../../abi/addresses'
-import { cawNameMinterAbi } from '~/../../../abi/generated'
+import { cawProfileMinterAbi } from '~/../../../abi/generated'
 import { useSignAndSubmitAction } from '~/api/actions'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useNavigate } from 'react-router-dom'
@@ -28,7 +28,7 @@ import TipModal from '~/components/modals/TipModal'
 import { useTransferModalStore } from '~/store/transferModalStore'
 import { useMarketplaceStore, MarketplaceListing, MarketplaceOffer } from '~/store/marketplaceStore'
 import { CAW_NAME_MARKETPLACE_ADDRESS } from '~/../../../abi/addresses'
-import { cawNameMarketplaceAbi } from '~/../../../abi/generated'
+import { cawProfileMarketplaceAbi } from '~/../../../abi/generated'
 import Tooltip from '~/components/Tooltip'
 import { useSignInModalStore } from '~/store/signInModalStore'
 import ProfileEditForm from '~/components/ProfileEditForm'
@@ -266,7 +266,7 @@ export const Profile: React.FC = () => {
   // frontend keeps the server fast for unrelated requests.
   const { data: onChainTokenIdRaw, isLoading: checkingOnChain } = useReadContract({
     address: CAW_NAMES_MINTER_ADDRESS,
-    abi: cawNameMinterAbi,
+    abi: cawProfileMinterAbi,
     chainId: chains.l1.chainId,
     functionName: 'idByUsername',
     args: [displayUsername || ''],
@@ -1008,7 +1008,7 @@ export const Profile: React.FC = () => {
                             setCancellingOfferId(offer.offerId)
                             writeCancelOffer({
                               address: CAW_NAME_MARKETPLACE_ADDRESS,
-                              abi: cawNameMarketplaceAbi,
+                              abi: cawProfileMarketplaceAbi,
                               functionName: 'cancelOffer',
                               args: [BigInt(offer.offerId)],
                               chainId: chains.l1.chainId,

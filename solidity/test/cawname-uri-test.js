@@ -1,8 +1,8 @@
-const CawNameURI = artifacts.require("CawNameURI");
+const CawProfileURI = artifacts.require("CawProfileURI");
 
-contract("CawNameURI", (accounts) => {
+contract("CawProfileURI", (accounts) => {
   it("should generate URI for 'gilgamesh'", async () => {
-    const uri = await CawNameURI.new();
+    const uri = await CawProfileURI.new();
     const result = await uri.generate("gilgamesh");
 
     // result is a data URI: data:application/json;base64,...

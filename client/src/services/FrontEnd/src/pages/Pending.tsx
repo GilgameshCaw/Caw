@@ -56,7 +56,7 @@ export const PendingPage: React.FC = () => {
     return <MainLayout>
       <div className="text-center py-12">
         <h2 className="text-xl font-semibold mb-4">No Active Token</h2>
-        <p className="text-gray-400">Please connect your wallet and select a CawName to view pending transactions.</p>
+        <p className="text-gray-400">Please connect your wallet and select a CawProfile to view pending transactions.</p>
       </div>
     </MainLayout>
   if (actions.length === 0)

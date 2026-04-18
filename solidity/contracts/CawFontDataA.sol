@@ -2,8 +2,8 @@
 pragma solidity ^0.8.20;
 
 /// @notice Raw glyph path data for CawFontDataA. Pure data contract — no logic.
-/// @dev Layout is documented in CawNameURI. Each slot's (offset, length)
-///      into this blob is stored in CawNameURI's offset/length tables.
+/// @dev Layout is documented in CawProfileURI. Each slot's (offset, length)
+///      into this blob is stored in CawProfileURI's offset/length tables.
 contract CawFontDataA {
   bytes public constant DATA =
     hex"4d3134332c333033513134332c353739203333332c3830362e35513532332c31"

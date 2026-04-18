@@ -81,7 +81,7 @@ User Action → PENDING → Validator Processing → On-chain Submission → SUC
 ┌──────────────────────────────────────────────────────────────────┐
 │                    Smart Contracts                               │
 │  • CawActions.sol - Core action processing                       │
-│  • CawName.sol - Name service (L1/L2)                           │
+│  • CawProfile.sol - Name service (L1/L2)                           │
 │  • CawClientManager.sol - Client management                      │
 │  • LayerZero integration for cross-chain                        │
 └────────────────────────┬────────────────────────────────────────┘
@@ -180,7 +180,7 @@ User Action → PENDING → Validator Processing → On-chain Submission → SUC
 - Emits events for all actions
 - Manages cross-chain messaging via LayerZero
 
-#### CawName.sol / CawNameL2.sol
+#### CawProfile.sol / CawProfileL2.sol
 - Name service for user handles
 - Separate contracts for L1 and L2
 - Manages name registration and transfers
@@ -203,7 +203,7 @@ User Action → PENDING → Validator Processing → On-chain Submission → SUC
 
 ### Fee Structure
 
-CawName charges ETH fees on four operations: **mint**, **deposit**, **authenticate**, and **withdraw**. Each fee is set independently per client by the client owner via `CawClientManager`.
+CawProfile charges ETH fees on four operations: **mint**, **deposit**, **authenticate**, and **withdraw**. Each fee is set independently per client by the client owner via `CawClientManager`.
 
 #### 50/50 Split
 Every fee is split equally between two recipients:
@@ -216,11 +216,11 @@ The fee amount set by the client (e.g. `mintFee = 0.001 ETH`) is the **per-recip
 When a user first authenticates or deposits with a client, the current withdraw fee is locked for that (client, token) pair. On withdrawal, the user pays `min(locked, current)` — they automatically benefit if the client lowers fees, but are protected from retroactive increases.
 
 #### Buy-and-Burn (`CawBuyAndBurn.sol`)
-- Protocol fees accumulate in CawName's `accruedFees` mapping under the buy-and-burn contract's address
-- When a client calls `withdrawFees(minCawOut)`, CawName combines the client's fees + the protocol's matching portion and sends them to `CawBuyAndBurn.swapAndSplit()` in a single Uniswap swap
+- Protocol fees accumulate in CawProfile's `accruedFees` mapping under the buy-and-burn contract's address
+- When a client calls `withdrawFees(minCawOut)`, CawProfile combines the client's fees + the protocol's matching portion and sends them to `CawBuyAndBurn.swapAndSplit()` in a single Uniswap swap
 - Half the resulting CAW goes to the client, half to `0xdead` (burned)
 - Clients receive CAW instead of ETH — this aligns incentives: a bad `minCawOut` hurts the client's own payout equally, making sandwich griefing self-punishing
-- Only CawName can call `swapAndSplit()` — no public access, no external MEV griefing
+- Only CawProfile can call `swapAndSplit()` — no public access, no external MEV griefing
 - The CAW/ETH Uniswap V2 pool has 99.99% of LP tokens burned, ensuring permanent liquidity
 
 #### Fee Configuration (for client operators)

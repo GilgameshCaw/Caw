@@ -9,7 +9,7 @@ import { formatEther, formatUnits } from 'viem'
 import { usePriceStore } from '~/store/tokenDataStore'
 import { apiFetch } from '~/api/client'
 import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
-import { cawNameMarketplaceAbi, cawNameQuoterAbi } from '~/../../../abi/generated'
+import { cawProfileMarketplaceAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { chains } from '~/config/chains'
 import { wagmiConfig } from '~/config/Web3Provider'
 import ProfileCard from './ProfileCard'
@@ -88,7 +88,7 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
     ensureWallet({ chainId: chains.l1.chainId }, async () => {
       writeCancel({
         address: CAW_NAME_MARKETPLACE_ADDRESS,
-        abi: cawNameMarketplaceAbi,
+        abi: cawProfileMarketplaceAbi,
         functionName: 'cancelListing',
         args: [BigInt(listing.listingId)],
         chainId: chains.l1.chainId,
@@ -112,7 +112,7 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
     if (!canSettle || !listing.highestBidder) return
     readContract(wagmiConfig, {
       address: CAW_NAME_QUOTER_ADDRESS,
-      abi: cawNameQuoterAbi,
+      abi: cawProfileQuoterAbi,
       functionName: 'syncTransferQuote',
       args: [listing.tokenId, listing.highestBidder as `0x${string}`, false],
       chainId: chains.l1.chainId,
@@ -130,7 +130,7 @@ const ListingCard: React.FC<{ listing: MarketplaceListing; showCancel?: boolean 
     ensureWallet({ chainId: chains.l1.chainId }, async () => {
       writeSettle({
         address: CAW_NAME_MARKETPLACE_ADDRESS,
-        abi: cawNameMarketplaceAbi,
+        abi: cawProfileMarketplaceAbi,
         functionName: 'settleAuction',
         args: [BigInt(listing.listingId)],
         value: settleLzFee,

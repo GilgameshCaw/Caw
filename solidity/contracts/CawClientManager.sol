@@ -25,8 +25,8 @@ struct MessagingFee {
   uint256 lzTokenFee;
 }
 
-/// @notice Interface for CawName's replication sync functions
-interface ICawName {
+/// @notice Interface for CawProfile's replication sync functions
+interface ICawProfile {
   function syncReplicationInternal(uint32 clientId, uint32[] calldata destEids, uint32 lzDestId) external payable;
   function syncReplicationQuote(uint32 clientId, uint32[] calldata destEids, uint32 lzDestId, bool payInLzToken) external view returns (MessagingFee memory);
 }
@@ -34,15 +34,15 @@ interface ICawName {
 /**
  * @title CawClientManager
  * @notice Manages client configuration including fees and replication destinations.
- * @dev Deployed on L1. This is a simple registry - cross-chain messaging is handled by CawName.
- *      Replication config changes are automatically synced to L2 via CawName's LayerZero connection.
+ * @dev Deployed on L1. This is a simple registry - cross-chain messaging is handled by CawProfile.
+ *      Replication config changes are automatically synced to L2 via CawProfile's LayerZero connection.
  */
 contract CawClientManager {
 
   address public immutable buyAndBurnAddress;
 
-  /// @notice The CawName contract used for L1->L2 sync
-  ICawName public cawName;
+  /// @notice The CawProfile contract used for L1->L2 sync
+  ICawProfile public cawProfile;
 
   uint32 public nextClientId = 1;
   mapping(uint32 => CawClient) public clients;
@@ -58,7 +58,7 @@ contract CawClientManager {
   event ClientReplicationAdded(uint32 indexed clientId, uint32 indexed eid, address target);
   event ClientReplicationRemoved(uint32 indexed clientId, uint32 indexed eid);
   event ClientReplicationEnabledChanged(uint32 indexed clientId, bool enabled);
-  event CawNameSet(address indexed cawName);
+  event CawProfileSet(address indexed cawProfile);
 
   // ============================================
   // INSTANCE REGISTRY
@@ -89,13 +89,13 @@ contract CawClientManager {
   }
 
   /**
-   * @notice Set the CawName contract address. Can only be called once.
-   * @param _cawName The CawName contract address
+   * @notice Set the CawProfile contract address. Can only be called once.
+   * @param _cawProfile The CawProfile contract address
    */
-  function setCawName(address _cawName) external onlyOwner {
-    require(address(cawName) == address(0), "CawName already set");
-    cawName = ICawName(_cawName);
-    emit CawNameSet(_cawName);
+  function setCawProfile(address _cawProfile) external onlyOwner {
+    require(address(cawProfile) == address(0), "CawProfile already set");
+    cawProfile = ICawProfile(_cawProfile);
+    emit CawProfileSet(_cawProfile);
   }
 
   /**
@@ -301,12 +301,12 @@ contract CawClientManager {
   // ============================================
   // REPLICATION CONFIG MANAGEMENT
   // ============================================
-  // Note: These functions only update local state. The CawName contract
+  // Note: These functions only update local state. The CawProfile contract
   // is responsible for syncing changes to L2 via LayerZero.
 
   /**
    * @notice Add a replication destination for a client.
-   * @dev Automatically syncs to L2 via CawName. Requires msg.value for LayerZero fees.
+   * @dev Automatically syncs to L2 via CawProfile. Requires msg.value for LayerZero fees.
    *      Target address is managed by the replicator owner via addArchiveChain, not by the client.
    * @param clientId The ID of the client.
    * @param eid The LayerZero endpoint ID of the destination chain.
@@ -329,15 +329,15 @@ contract CawClientManager {
     emit ClientReplicationAdded(clientId, eid, address(0));
 
     // Auto-sync full chain list to client's storage chain
-    if (address(cawName) != address(0)) {
+    if (address(cawProfile) != address(0)) {
       uint32 storageEid = clients[clientId].storageChainEid;
-      cawName.syncReplicationInternal{value: msg.value}(clientId, getClientChainEids(clientId), storageEid);
+      cawProfile.syncReplicationInternal{value: msg.value}(clientId, getClientChainEids(clientId), storageEid);
     }
   }
 
   /**
    * @notice Remove a replication destination from a client.
-   * @dev Automatically syncs updated chain list to L2 via CawName. Requires msg.value for LayerZero fees.
+   * @dev Automatically syncs updated chain list to L2 via CawProfile. Requires msg.value for LayerZero fees.
    * @param clientId The ID of the client.
    * @param eid The LayerZero endpoint ID to remove.
    */
@@ -351,9 +351,9 @@ contract CawClientManager {
         emit ClientReplicationRemoved(clientId, eid);
 
         // Auto-sync updated chain list to client's storage chain
-        if (address(cawName) != address(0)) {
+        if (address(cawProfile) != address(0)) {
           uint32 storageEid = clients[clientId].storageChainEid;
-          cawName.syncReplicationInternal{value: msg.value}(clientId, getClientChainEids(clientId), storageEid);
+          cawProfile.syncReplicationInternal{value: msg.value}(clientId, getClientChainEids(clientId), storageEid);
         }
         return;
       }
@@ -406,9 +406,9 @@ contract CawClientManager {
    * @return quote The MessagingFee with nativeFee and lzTokenFee
    */
   function replicationSyncQuote(uint32 clientId) public view returns (MessagingFee memory) {
-    require(address(cawName) != address(0), "CawName not set");
+    require(address(cawProfile) != address(0), "CawProfile not set");
     uint32 storageEid = clients[clientId].storageChainEid;
-    return cawName.syncReplicationQuote(clientId, getClientChainEids(clientId), storageEid, false);
+    return cawProfile.syncReplicationQuote(clientId, getClientChainEids(clientId), storageEid, false);
   }
 
   function getStorageChainEid(uint32 clientId) public view returns (uint32) {
@@ -416,8 +416,8 @@ contract CawClientManager {
   }
 
   /// @notice Accept ETH refunds from LayerZero. When `addReplication`/`removeReplication` forwards
-  /// `msg.value` to `CawName.syncReplicationInternal`, the LZ refund address ends up being this
-  /// contract (since CawName uses `payable(msg.sender)` for refunds, and msg.sender at the LZ
+  /// `msg.value` to `CawProfile.syncReplicationInternal`, the LZ refund address ends up being this
+  /// contract (since CawProfile uses `payable(msg.sender)` for refunds, and msg.sender at the LZ
   /// boundary is this contract). Without `receive()`, the LZ excess-fee refund would revert the
   /// entire add/remove flow.
   receive() external payable {}

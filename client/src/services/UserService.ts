@@ -11,12 +11,12 @@ export class StaleTokenError extends Error {
   }
 }
 
-const CawNameL2Abi = [
+const CawProfileL2Abi = [
   'function ownerOf(uint256 tokenId) view returns (address)',
   'function getTokens(uint32[] tokenIds) view returns (tuple(uint256 tokenId, uint256 balance, string username, uint256 cawBalance, uint256 nextCawonce)[])'
 ]
 
-const CawNameL1Abi = [
+const CawProfileL1Abi = [
   'function usernames(uint256 index) view returns (string)',
   'function ownerOf(uint256 tokenId) view returns (address)'
 ]
@@ -120,7 +120,7 @@ async function getL2Provider() {
       l2Provider = await createWebSocketProvider(rpcUrl, 'L2')
       l2NameContract = new Contract(
         CAW_NAMES_L2_ADDRESS,
-        CawNameL2Abi,
+        CawProfileL2Abi,
         l2Provider
       )
       // Reset retry delay on success
@@ -162,7 +162,7 @@ async function getL1Provider() {
       l1Provider = await createWebSocketProvider(rpcUrl, 'L1')
       l1NameContract = new Contract(
         CAW_NAMES_ADDRESS,
-        CawNameL1Abi,
+        CawProfileL1Abi,
         l1Provider
       )
       // Reset retry delay on success
@@ -246,7 +246,7 @@ export async function findOrCreateUser(
         const httpUrl = (process.env.L1_RPC_URL || '').replace(/^wss:/, 'https:').replace('/ws/', '/')
         if (httpUrl) {
           const httpProvider = makeJsonRpcProvider(httpUrl)
-          const httpContract = new Contract(CAW_NAMES_ADDRESS, CawNameL1Abi, httpProvider)
+          const httpContract = new Contract(CAW_NAMES_ADDRESS, CawProfileL1Abi, httpProvider)
           try {
             ;[ownerAddress, username] = await withTimeout(
               Promise.all([

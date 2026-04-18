@@ -18,9 +18,10 @@ const BoidsBg = lazy(() => import('~/components/BoidsBg'))
 
 interface MainLayoutProps {
   children: React.ReactNode;
+  hideSidebars?: boolean;
 }
 
-const MainLayout = ({ children }: MainLayoutProps) => {
+const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProps) => {
   const { isDark } = useTheme()
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [showBugReport, setShowBugReport] = useState(false)
@@ -31,7 +32,7 @@ const MainLayout = ({ children }: MainLayoutProps) => {
 
   // Captive mode: no username and on a public page like /help/*
   const isCaptive = !activeToken?.username
-  const hideSidebars = isCaptive && (location.pathname.startsWith('/help') || location.pathname.startsWith('/usernames') || location.pathname.startsWith('/faucet'))
+  const hideSidebars = hideSidebarsProp || (isCaptive && (location.pathname.startsWith('/help') || location.pathname.startsWith('/usernames') || location.pathname.startsWith('/faucet')))
 
   return (
     <>

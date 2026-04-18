@@ -1,4 +1,4 @@
-// contracts/CawName.sol
+// contracts/CawProfile.sol
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
@@ -7,8 +7,8 @@ import "@openzeppelin/contracts/utils/cryptography/draft-EIP712.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./interfaces/ICawActions.sol";
-import "./CawNameURI.sol";
-import "./CawName.sol";
+import "./CawProfileURI.sol";
+import "./CawProfile.sol";
 
 interface ICawActionsReplicator {
   function setClientChains(uint32 clientId, uint32[] calldata destEids) external;
@@ -16,7 +16,7 @@ interface ICawActionsReplicator {
 
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
-contract CawNameL2 is 
+contract CawProfileL2 is 
   Context,
   Ownable,
   OApp
@@ -24,7 +24,7 @@ contract CawNameL2 is
   using OptionsBuilder for bytes;
 
   modifier onlyOnMainnet() {
-    require(bypassLZ && msg.sender == address(cawName), "only callable on the mainnet, from mainnet CawName");
+    require(bypassLZ && msg.sender == address(cawProfile), "only callable on the mainnet, from mainnet CawProfile");
     _;
   }
 
@@ -36,10 +36,10 @@ contract CawNameL2 is
   address public cawActionsReplicator;
 
   // SECURITY NOTE (audited 2026-04-06): Unlike standard ERC721, this ownerOf intentionally returns
-  // address(0) for non-existent tokens instead of reverting. This is by design — CawNameL2 is a
+  // address(0) for non-existent tokens instead of reverting. This is by design — CawProfileL2 is a
   // lightweight mirror synced from L1 via LayerZero, and tokens may be in a "not yet synced" state.
-  // Reverting here would cascade failures through batch reads (CawName.sol:435,459), marketplace
-  // operations (CawNameMarketplace.sol:331 reclaimBid), and action processing (CawActions.sol:111).
+  // Reverting here would cascade failures through batch reads (CawProfile.sol:435,459), marketplace
+  // operations (CawProfileMarketplace.sol:331 reclaimBid), and action processing (CawActions.sol:111).
   // The zero-address return is NOT a security risk: registerSession cannot populate
   // sessions[address(0)][...] because ecrecover cannot produce address(0), and the default session
   // expiry of 0 always fails the expiry > block.timestamp check in CawActions.verifySignature.
@@ -60,7 +60,7 @@ contract CawNameL2 is
   bool private fromLZ;
 
   bool public bypassLZ;
-  CawName public cawName;
+  CawProfile public cawProfile;
 
   // ============================================
   // SESSION KEY DELEGATION (address-based)
@@ -120,7 +120,7 @@ contract CawNameL2 is
     return keccak256(
       abi.encode(
         EIP712_DOMAIN_TYPEHASH,
-        keccak256(bytes("CawNameL2")),
+        keccak256(bytes("CawProfileL2")),
         keccak256(bytes("1")),
         block.chainid,
         address(this)
@@ -147,15 +147,15 @@ contract CawNameL2 is
   }
 
   /// @notice Configure the L1 peer. Owner-only.
-  /// @dev If `_bypassLZ` is true, this contract is co-deployed on the same chain as CawName,
+  /// @dev If `_bypassLZ` is true, this contract is co-deployed on the same chain as CawProfile,
   ///      and the L1 contract will call this contract directly instead of via LayerZero.
   /// @param _eid LayerZero EID of the L1 chain
-  /// @param peer Address of the L1 CawName contract
+  /// @param peer Address of the L1 CawProfile contract
   /// @param _bypassLZ True for mainnet co-deployment, false for cross-chain operation
   function setL1Peer(uint32 _eid, address payable peer, bool _bypassLZ) external onlyOwner {
     if (_bypassLZ) {
       bypassLZ = true;
-      cawName = CawName(peer);
+      cawProfile = CawProfile(peer);
     } else setPeer(_eid, bytes32(uint256(uint160(address(peer)))));
   }
 
@@ -309,7 +309,7 @@ contract CawNameL2 is
    * @param destEids Array of destination chain EIDs the client replicates to
    */
   function setClientChains(uint32 clientId, uint32[] calldata destEids) public {
-    require(fromLZ || (bypassLZ && msg.sender == address(cawName)), "only callable from L1");
+    require(fromLZ || (bypassLZ && msg.sender == address(cawProfile)), "only callable from L1");
     require(cawActionsReplicator != address(0), "Replicator not set");
 
     // Forward to replicator
@@ -319,7 +319,7 @@ contract CawNameL2 is
   }
 
   /// @notice Credit a deposit from a co-deployed L1 contract (no LayerZero involved).
-  /// @dev Only callable in mainnet co-deployment mode (`bypassLZ && msg.sender == cawName`).
+  /// @dev Only callable in mainnet co-deployment mode (`bypassLZ && msg.sender == cawProfile`).
   function deposit(uint32 cawClientId, uint32 tokenId, uint256 amount) external onlyOnMainnet {
     totalCaw += amount;
     auth(cawClientId, tokenId);
@@ -327,7 +327,7 @@ contract CawNameL2 is
   }
 
   /// @notice Mint a token (mirror of L1 mint) — co-deployment mode only.
-  /// @dev Only callable when `bypassLZ` is true and the caller is the L1 CawName contract.
+  /// @dev Only callable when `bypassLZ` is true and the caller is the L1 CawProfile contract.
   function mint(uint32 tokenId, address owner, string memory username) external onlyOnMainnet {
     emit UsernameMinted(tokenId, owner);
     usernames[tokenId] = username;
@@ -521,7 +521,7 @@ contract CawNameL2 is
   function setWithdrawable(uint32[] memory tokenIds, uint256[] memory amounts, uint256 lzTokenAmount) external payable {
     require(address(cawActions) == _msgSender(), "caller is not CawActions");
     if (bypassLZ)
-      cawName.setWithdrawable(tokenIds, amounts);
+      cawProfile.setWithdrawable(tokenIds, amounts);
     else {
       bytes memory payload = abi.encodeWithSelector(setWithdrawableSelector, tokenIds, amounts);
       lzSend(setWithdrawableSelector, tokenIds.length, payload, lzTokenAmount);

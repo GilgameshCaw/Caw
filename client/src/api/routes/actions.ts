@@ -23,7 +23,7 @@ function decompressActionText(textField: unknown): string {
 }
 import { findOrCreateUser } from '../../services/UserService'
 import { getSession, addAuthorization, createSession } from '../sessionStore'
-import { cawNameL2Abi } from '../../abi/generated'
+import { cawProfileL2Abi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 
 const router = Router()
@@ -65,7 +65,7 @@ function getReadContract(): Contract {
   _readProvider = rpcUrl.startsWith('wss://') || rpcUrl.startsWith('ws://')
     ? makeWebSocketProvider(rpcUrl)
     : makeJsonRpcProvider(rpcUrl)
-  _readContract = new Contract(CAW_NAMES_L2_ADDRESS, cawNameL2Abi as any, _readProvider)
+  _readContract = new Contract(CAW_NAMES_L2_ADDRESS, cawProfileL2Abi as any, _readProvider)
   return _readContract
 }
 
@@ -328,7 +328,7 @@ router.post('/', async (req, res) => {
         }
       } else if (session && sessionToken) {
         // Already authorized — but re-check DB for any new token IDs the user may have
-        // acquired since the session was created (e.g., bought/transferred a new CawName).
+        // acquired since the session was created (e.g., bought/transferred a new CawProfile).
         // This ensures the session stays in sync with on-chain ownership.
         const userTokens = await prisma.user.findMany({
           where: { address: ownerAddress },

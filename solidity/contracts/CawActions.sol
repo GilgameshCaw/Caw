@@ -5,7 +5,7 @@ pragma solidity ^0.8.20;
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 
-import "./CawNameL2.sol";
+import "./CawProfileL2.sol";
 import { MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
 contract CawActions is Ownable {
@@ -51,7 +51,7 @@ contract CawActions is Ownable {
   event ActionsProcessed(ActionData[] actions);
   event ActionRejected(uint32 senderId, uint32 cawonce, string reason);
 
-  CawNameL2 public immutable cawName;
+  CawProfileL2 public immutable cawProfile;
   CawActions public immutable externalSelf;
 
   // Precomputed type hashes for EIP712
@@ -62,10 +62,10 @@ contract CawActions is Ownable {
     "ActionData(uint8 actionType,uint32 senderId,uint32 receiverId,uint32 receiverCawonce,uint32 clientId,uint32 cawonce,uint32[] recipients,uint64[] amounts,bytes text)"
   );
 
-  constructor(address _cawNames) {
+  constructor(address _cawProfiles) {
     eip712DomainHash = generateDomainHash();
     externalSelf = CawActions(this);
-    cawName = CawNameL2(_cawNames);
+    cawProfile = CawProfileL2(_cawProfiles);
   }
 
   function processAction(uint32 validatorId, ActionData calldata action, uint8 v, bytes32 r, bytes32 s) external {
@@ -75,7 +75,7 @@ contract CawActions is Ownable {
 
   function _processAction(uint32 validatorId, ActionData calldata action, uint8 v, bytes32 r, bytes32 s) internal {
     require(!isCawonceUsed(action.senderId, action.cawonce), "Cawonce already used");
-    require(cawName.authenticated(action.clientId, action.senderId), "User has not authenticated with this client");
+    require(cawProfile.authenticated(action.clientId, action.senderId), "User has not authenticated with this client");
 
     (address signer, bool isSessionKey) = verifySignature(v, r, s, action);
 
@@ -86,20 +86,20 @@ contract CawActions is Ownable {
     // Fixed protocol costs per action type (in whole CAW tokens)
     uint256 actionCost;
     if (action.actionType == ActionType.CAW) {
-      cawName.spendAndDistributeTokens(action.senderId, 5000, 5000);
+      cawProfile.spendAndDistributeTokens(action.senderId, 5000, 5000);
       actionCost = 5000;
     } else if (action.actionType == ActionType.LIKE) {
-      cawName.spendDistributeAndAddTokensToBalance(action.senderId, 2000, 400, action.receiverId, 1600);
+      cawProfile.spendDistributeAndAddTokensToBalance(action.senderId, 2000, 400, action.receiverId, 1600);
       actionCost = 2000;
     } else if (action.actionType == ActionType.RECAW) {
-      cawName.spendDistributeAndAddTokensToBalance(action.senderId, 4000, 2000, action.receiverId, 2000);
+      cawProfile.spendDistributeAndAddTokensToBalance(action.senderId, 4000, 2000, action.receiverId, 2000);
       actionCost = 4000;
     } else if (action.actionType == ActionType.FOLLOW) {
       require(action.senderId != action.receiverId, "Cannot follow yourself");
-      cawName.spendDistributeAndAddTokensToBalance(action.senderId, 30000, 6000, action.receiverId, 24000);
+      cawProfile.spendDistributeAndAddTokensToBalance(action.senderId, 30000, 6000, action.receiverId, 24000);
       actionCost = 30000;
     } else if (action.actionType == ActionType.WITHDRAW)
-      cawName.withdraw(action.senderId, uint256(action.amounts[0]) * 10**18);
+      cawProfile.withdraw(action.senderId, uint256(action.amounts[0]) * 10**18);
     else if ( action.actionType != ActionType.UNLIKE &&
         action.actionType != ActionType.UNFOLLOW &&
         action.actionType != ActionType.OTHER)
@@ -111,8 +111,8 @@ contract CawActions is Ownable {
 
     // Enforce session spend limit
     if (isSessionKey && actionCost > 0) {
-      address owner = cawName.ownerOf(action.senderId);
-      (,, uint256 spendLimit) = cawName.sessions(owner, signer);
+      address owner = cawProfile.ownerOf(action.senderId);
+      (,, uint256 spendLimit) = cawProfile.sessions(owner, signer);
       if (spendLimit > 0) {
         sessionSpent[owner][signer] += actionCost;
         require(sessionSpent[owner][signer] <= spendLimit, "Session spend limit exceeded");
@@ -155,7 +155,7 @@ contract CawActions is Ownable {
 
     // Validate that validatorId corresponds to a real token before crediting it.
     // This prevents accidentally locking validator fees in a non-existent token.
-    require(cawName.ownerOf(validatorId) != address(0), "Invalid validatorId");
+    require(cawProfile.ownerOf(validatorId) != address(0), "Invalid validatorId");
 
     bool isWithdrawal = action.actionType == ActionType.WITHDRAW;
     uint256 startIndex = isWithdrawal ? 1 : 0;
@@ -166,14 +166,14 @@ contract CawActions is Ownable {
 
     for (uint256 i = startIndex; i < numRecipients; ) {
       uint256 amountWei = uint256(action.amounts[i]) * 10**18;
-      cawName.addToBalance(action.recipients[i], amountWei);
+      cawProfile.addToBalance(action.recipients[i], amountWei);
       amountTotal += amountWei;
       totalWholeTokens += uint256(action.amounts[i]);
       unchecked { ++i; }
     }
 
-    cawName.spendAndDistribute(action.senderId, amountTotal, 0);
-    cawName.addToBalance(validatorId, uint256(action.amounts[numAmounts - 1]) * 10**18);
+    cawProfile.spendAndDistribute(action.senderId, amountTotal, 0);
+    cawProfile.addToBalance(validatorId, uint256(action.amounts[numAmounts - 1]) * 10**18);
   }
 
   /// @notice Verify action signature. Returns the signer and whether it was a session key.
@@ -202,11 +202,11 @@ contract CawActions is Ownable {
     require(signer != address(0), "Invalid signature");
 
     // Direct owner signature — pass immediately
-    address owner = cawName.ownerOf(data.senderId);
+    address owner = cawProfile.ownerOf(data.senderId);
     if (signer == owner) return (signer, false);
 
     // Session key fallback: look up delegation by the token's current owner
-    (uint64 expiry, uint8 scopeBitmap,) = cawName.sessions(owner, signer);
+    (uint64 expiry, uint8 scopeBitmap,) = cawProfile.sessions(owner, signer);
     require(expiry > block.timestamp, "Session expired or not found");
     require((scopeBitmap & (1 << uint8(data.actionType))) != 0, "Action not in session scope");
     return (signer, true);
@@ -384,13 +384,13 @@ contract CawActions is Ownable {
         }
         unchecked { ++i; }
       }
-      cawName.setWithdrawable{ value: withdrawFee }(withdrawIds, withdrawAmounts, lzTokenAmountForWithdraws);
+      cawProfile.setWithdrawable{ value: withdrawFee }(withdrawIds, withdrawAmounts, lzTokenAmountForWithdraws);
     }
   }
 
   function withdrawQuote(uint32[] memory tokenIds, uint256[] memory amounts, bool payInLzToken)
   external view returns (MessagingFee memory quote) {
-    return cawName.withdrawQuote(tokenIds, amounts, payInLzToken);
+    return cawProfile.withdrawQuote(tokenIds, amounts, payInLzToken);
   }
 
 }

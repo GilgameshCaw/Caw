@@ -3,11 +3,11 @@ import { prisma } from '../src/prismaClient'
 import { CAW_NAMES_L2_ADDRESS, CAW_NAMES_ADDRESS } from '../src/abi/addresses'
 import { Contract, WebSocketProvider } from 'ethers'
 
-const CawNameL2Abi = [
+const CawProfileL2Abi = [
   'function ownerOf(uint256 tokenId) view returns (address)'
 ]
 
-const CawNameL1Abi = [
+const CawProfileL1Abi = [
   'function usernames(uint256 index) view returns (string)'
 ]
 
@@ -20,10 +20,10 @@ if (!l2RpcUrl || !l1RpcUrl) {
 }
 
 const l2Provider = new WebSocketProvider(l2RpcUrl)
-const l2NameContract = new Contract(CAW_NAMES_L2_ADDRESS, CawNameL2Abi, l2Provider)
+const l2NameContract = new Contract(CAW_NAMES_L2_ADDRESS, CawProfileL2Abi, l2Provider)
 
 const l1Provider = new WebSocketProvider(l1RpcUrl)
-const l1NameContract = new Contract(CAW_NAMES_ADDRESS, CawNameL1Abi, l1Provider)
+const l1NameContract = new Contract(CAW_NAMES_ADDRESS, CawProfileL1Abi, l1Provider)
 
 async function updateAllUsers() {
   console.log('Fetching all users from database...')

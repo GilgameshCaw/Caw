@@ -4,7 +4,7 @@ import { prisma } from '../../prismaClient'
 const router = Router()
 
 /**
- * CAW burn cost per username length (whole tokens, matches CawNameMinter.sol)
+ * CAW burn cost per username length (whole tokens, matches CawProfileMinter.sol)
  */
 function mintCostByLength(len: number): bigint {
   switch (len) {

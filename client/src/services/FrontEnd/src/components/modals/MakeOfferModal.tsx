@@ -11,7 +11,7 @@ import { usePriceStore, useActiveToken } from '~/store/tokenDataStore'
 import { apiFetch } from '~/api/client'
 import { chains } from '~/config/chains'
 import { CAW_NAME_MARKETPLACE_ADDRESS, WETH_ADDRESS, CAW_ADDRESS, USDC_ADDRESS, USDT_ADDRESS } from '~/../../../abi/addresses'
-import { cawNameMarketplaceAbi } from '~/../../../abi/generated'
+import { cawProfileMarketplaceAbi } from '~/../../../abi/generated'
 import UsernameSvg from '~/components/UsernameSvg'
 
 const PAYMENT_OPTIONS = [
@@ -156,7 +156,7 @@ const MakeOfferModal: React.FC = () => {
       if (isEth) {
         writeOffer({
           address: CAW_NAME_MARKETPLACE_ADDRESS,
-          abi: cawNameMarketplaceAbi,
+          abi: cawProfileMarketplaceAbi,
           functionName: 'createOfferETH',
           args: [tokenId, BigInt(duration.seconds)],
           value: amountWei,
@@ -165,7 +165,7 @@ const MakeOfferModal: React.FC = () => {
       } else {
         writeOffer({
           address: CAW_NAME_MARKETPLACE_ADDRESS,
-          abi: cawNameMarketplaceAbi,
+          abi: cawProfileMarketplaceAbi,
           functionName: 'createOfferERC20',
           args: [tokenId, selectedToken.value as `0x${string}`, amountWei, BigInt(duration.seconds)],
           chainId: chains.l1.chainId,

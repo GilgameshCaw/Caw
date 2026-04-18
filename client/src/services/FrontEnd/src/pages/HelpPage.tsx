@@ -85,7 +85,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
       icon: <HiDocumentText className="w-6 h-6" />,
       title: 'CAW Manifesto',
       description: 'The original vision for decentralized social media',
-      url: 'https://caw.is'
+      url: '/help/manifesto'
     },
     {
       icon: <HiCode className="w-6 h-6" />,
@@ -128,17 +128,18 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
     },
   ]
 
-  const ResourceCard: React.FC<{ item: ResourceItem }> = ({ item }) => (
-    <a
-      href={item.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className={`flex items-start gap-4 p-4 rounded-xl transition-colors ${
-        isDark
-          ? 'bg-[#0D0D0D]/85 hover:bg-[#1A1A1A]/85'
-          : 'bg-gray-50 hover:bg-gray-100 shadow-xl'
-      }`}
-    >
+  const ResourceCard: React.FC<{ item: ResourceItem }> = ({ item }) => {
+    const isInternal = item.url.startsWith('/')
+    const cls = `flex items-start gap-4 p-4 rounded-xl transition-colors ${
+      isDark
+        ? 'bg-[#0D0D0D]/85 hover:bg-[#1A1A1A]/85'
+        : 'bg-gray-50 hover:bg-gray-100 shadow-xl'
+    }`
+    const Wrapper = isInternal
+      ? ({ children }: { children: React.ReactNode }) => <Link to={item.url} className={cls}>{children}</Link>
+      : ({ children }: { children: React.ReactNode }) => <a href={item.url} target="_blank" rel="noopener noreferrer" className={cls}>{children}</a>
+    return (
+    <Wrapper>
       <div className={`p-2 rounded-lg ${
         isDark ? 'bg-yellow-500/10 text-yellow-500' : 'bg-yellow-100 text-yellow-700'
       }`}>
@@ -155,8 +156,9 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
           {item.description}
         </p>
       </div>
-    </a>
+    </Wrapper>
   )
+  }
 
   const faqItems: FAQItem[] = [
     {

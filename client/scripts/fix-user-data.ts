@@ -2,7 +2,7 @@ import { prisma } from '../src/prismaClient'
 import { CAW_NAMES_L2_ADDRESS } from '../src/abi/addresses'
 import { Contract, JsonRpcProvider } from 'ethers'
 
-const CawNameAbi = [
+const CawProfileAbi = [
   'function tokenURI(uint256 tokenId) view returns (string)',
   'function ownerOf(uint256 tokenId) view returns (address)'
 ]
@@ -24,7 +24,7 @@ async function setupProvider() {
 
 async function fixUserData() {
   const { provider, address } = await setupProvider()
-  const nameContract = new Contract(address, CawNameAbi, provider)
+  const nameContract = new Contract(address, CawProfileAbi, provider)
   console.log('Fetching all users...')
   const users = await prisma.user.findMany()
 

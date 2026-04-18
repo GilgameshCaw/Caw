@@ -7,7 +7,7 @@ import { maxUint256, parseUnits, erc20Abi, formatEther } from "viem";
 import MainLayout from '~/layouts/MainLayout'
 import useContractCall, { UseContractCallReturn } from '~/hooks/useContractCall'
 import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_MINTER_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
-import { cawNameAbi, cawNameMinterAbi, cawNameQuoterAbi } from '~/../../../abi/generated'
+import { cawProfileAbi, cawProfileMinterAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { useActiveToken, useTokenDataStore, usePriceStore } from "~/store/tokenDataStore";
 import { chains } from '~/config/chains'
 import UsernameSvg from '~/components/UsernameSvg'
@@ -184,7 +184,7 @@ export const NewProfile: React.FC = () => {
 
   const { data: existingId, isLoading: checkingUsername } = useReadContract({
     address:      CAW_NAMES_MINTER_ADDRESS,
-    abi:          cawNameMinterAbi,
+    abi:          cawProfileMinterAbi,
     chainId: chains.l1.chainId,
     functionName: "idByUsername",
     args:         [username],
@@ -204,9 +204,9 @@ export const NewProfile: React.FC = () => {
   })
 console.log("BALANCE:", balance)
 
-  // quote on‐chain LZ fee from CawNameQuoter — switches between mint and mintAndDeposit
+  // quote on‐chain LZ fee from CawProfileQuoter — switches between mint and mintAndDeposit
   const { data: mintOnlyQuote } = useReadContract({
-    abi: cawNameQuoterAbi,
+    abi: cawProfileQuoterAbi,
     chainId: chains.l1.chainId,
     functionName: "mintQuote",
     address: CAW_NAME_QUOTER_ADDRESS,
@@ -214,7 +214,7 @@ console.log("BALANCE:", balance)
     query: { enabled: !depositEnabled }
   })
   const { data: mintAndDepositQuote, error: mintAndDepositQuoteError, isLoading: mintAndDepositQuoteLoading } = useReadContract({
-    abi: cawNameQuoterAbi,
+    abi: cawProfileQuoterAbi,
     chainId: chains.l1.chainId,
     functionName: "mintAndDepositQuote",
     address: CAW_NAME_QUOTER_ADDRESS,
@@ -272,7 +272,7 @@ console.log("BALANCE:", balance)
   const { call: mintOnly, status: mintOnlyStatus, gasCostEth: mintOnlyGas }: UseContractCallReturn = useContractCall({
     value:        quote?.nativeFee || 0n,
     functionName: 'mint',
-    abi:      cawNameMinterAbi,
+    abi:      cawProfileMinterAbi,
     address: CAW_NAMES_MINTER_ADDRESS,
     args:         [CLIENT_ID, username, lzTokenAmount],
     disabled:     depositEnabled || !address || !isValid || needsApproval,
@@ -311,7 +311,7 @@ console.log("BALANCE:", balance)
   const { call: mintAndDeposit, status: mintAndDepositStatus, gasCostEth: mintAndDepositGas }: UseContractCallReturn = useContractCall({
     value:        quote?.nativeFee || 0n,
     functionName: 'mintAndDeposit',
-    abi:      cawNameMinterAbi,
+    abi:      cawProfileMinterAbi,
     address: CAW_NAMES_MINTER_ADDRESS,
     args:         [CLIENT_ID, username, depositAmountWei, chains.l2.layerZero, lzTokenAmount],
     disabled:     !depositEnabled || !address || !isValid || needsApproval || depositAmountWei === 0n,

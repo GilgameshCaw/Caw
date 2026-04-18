@@ -11,8 +11,8 @@ import { useMarketplaceStore } from '~/store/marketplaceStore'
 import { usePriceStore, useTokenDataStore } from '~/store/tokenDataStore'
 import { chains } from '~/config/chains'
 import { CAW_NAMES_ADDRESS, CAW_NAME_MARKETPLACE_ADDRESS, WETH_ADDRESS, CAW_ADDRESS, USDC_ADDRESS, USDT_ADDRESS } from '~/../../../abi/addresses'
-import { cawNameAbi } from '~/../../../abi/generated'
-import { cawNameMarketplaceAbi } from '~/../../../abi/generated'
+import { cawProfileAbi } from '~/../../../abi/generated'
+import { cawProfileMarketplaceAbi } from '~/../../../abi/generated'
 
 type ListingStep = 'type' | 'params' | 'approve' | 'confirm'
 
@@ -30,7 +30,7 @@ const PAYMENT_OPTIONS = [
   { value: USDT_ADDRESS, label: 'USDT', decimals: 6 },
 ]
 
-// CAW burn cost schedule (before 10^18 multiplier) — mirrors CawNameMinter
+// CAW burn cost schedule (before 10^18 multiplier) — mirrors CawProfileMinter
 const MINT_COST: Record<number, number> = {
   1: 1_000_000_000_000,
   2: 240_000_000_000,
@@ -76,7 +76,7 @@ const CreateListingModal: React.FC = () => {
   // Check if marketplace is approved to transfer NFTs
   const { data: isApproved, refetch: refetchApproval } = useReadContract({
     address: CAW_NAMES_ADDRESS,
-    abi: cawNameAbi,
+    abi: cawProfileAbi,
     functionName: 'isApprovedForAll',
     args: [address!, CAW_NAME_MARKETPLACE_ADDRESS],
     chainId: chains.l1.chainId,
@@ -193,7 +193,7 @@ const CreateListingModal: React.FC = () => {
     ensureWallet({ chainId: chains.l1.chainId }, async () => {
       writeApprove({
         address: CAW_NAMES_ADDRESS,
-        abi: cawNameAbi,
+        abi: cawProfileAbi,
         functionName: 'setApprovalForAll',
         args: [CAW_NAME_MARKETPLACE_ADDRESS, true],
         chainId: chains.l1.chainId,
@@ -222,7 +222,7 @@ const CreateListingModal: React.FC = () => {
 
       writeListing({
         address: CAW_NAME_MARKETPLACE_ADDRESS,
-        abi: cawNameMarketplaceAbi,
+        abi: cawProfileMarketplaceAbi,
         functionName: 'createListing',
         args: [tokenId, listingType, paymentToken as `0x${string}`, startPriceWei, endPriceWei, duration],
         chainId: chains.l1.chainId,

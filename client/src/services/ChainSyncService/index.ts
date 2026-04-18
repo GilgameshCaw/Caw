@@ -542,7 +542,7 @@ export async function getReplicationCount(clientId: number): Promise<number> {
 // L2 Event Indexing (SessionKey + ClientAuth)
 // ============================================================================
 
-// CawNameL2 ABI fragments for event indexing
+// CawProfileL2 ABI fragments for event indexing
 const CAW_NAME_L2_EVENT_ABI = [
   'event SessionCreated(address indexed owner, address indexed sessionKey, uint64 expiry, uint8 scopeBitmap, uint256 spendLimit)',
   'event SessionRevoked(address indexed owner, address indexed sessionKey)',

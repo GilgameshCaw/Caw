@@ -11,7 +11,7 @@ import { apiFetch } from '~/api/client'
 import { usePriceStore } from '~/store/tokenDataStore'
 import { chains } from '~/config/chains'
 import { CAW_NAME_MARKETPLACE_ADDRESS } from '~/../../../abi/addresses'
-import { cawNameMarketplaceAbi } from '~/../../../abi/generated'
+import { cawProfileMarketplaceAbi } from '~/../../../abi/generated'
 import LiveCountdown from '~/components/marketplace/LiveCountdown'
 
 const DECIMALS: Record<string, number> = { USDC: 6, USDT: 6 }
@@ -180,7 +180,7 @@ const PlaceBidModal: React.FC = () => {
       if (isEth) {
         writeBid({
           address: CAW_NAME_MARKETPLACE_ADDRESS,
-          abi: cawNameMarketplaceAbi,
+          abi: cawProfileMarketplaceAbi,
           functionName: 'placeBid',
           args: [BigInt(listing.listingId)],
           value: bidWei,
@@ -189,7 +189,7 @@ const PlaceBidModal: React.FC = () => {
       } else {
         writeBid({
           address: CAW_NAME_MARKETPLACE_ADDRESS,
-          abi: cawNameMarketplaceAbi,
+          abi: cawProfileMarketplaceAbi,
           functionName: 'placeBidWithToken',
           args: [BigInt(listing.listingId), bidWei],
           chainId: chains.l1.chainId,

@@ -11,12 +11,12 @@ import { useMarketplaceStore } from '~/store/marketplaceStore'
 import { usePriceStore, useTokenDataStore } from '~/store/tokenDataStore'
 import { chains } from '~/config/chains'
 import { CAW_NAME_MARKETPLACE_ADDRESS } from '~/../../../abi/addresses'
-import { cawNameMarketplaceAbi } from '~/../../../abi/generated'
+import { cawProfileMarketplaceAbi } from '~/../../../abi/generated'
 import UsernameSvg from '~/components/UsernameSvg'
 import { apiFetch } from '~/api/client'
 import { formatNumberCompact } from '~/utils'
 import { CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
-import { cawNameQuoterAbi } from '~/../../../abi/generated'
+import { cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { wagmiConfig } from '~/config/Web3Provider'
 
 const DECIMALS: Record<string, number> = { USDC: 6, USDT: 6 }
@@ -120,7 +120,7 @@ const BuyModal: React.FC = () => {
     if (!listing || !address) return
     readContract(wagmiConfig, {
       address: CAW_NAME_QUOTER_ADDRESS,
-      abi: cawNameQuoterAbi,
+      abi: cawProfileQuoterAbi,
       functionName: 'syncTransferQuote',
       args: [listing.tokenId, address, false],
       chainId: chains.l1.chainId,
@@ -220,7 +220,7 @@ const BuyModal: React.FC = () => {
       if (isEth) {
         writeBuy({
           address: CAW_NAME_MARKETPLACE_ADDRESS,
-          abi: cawNameMarketplaceAbi,
+          abi: cawProfileMarketplaceAbi,
           functionName: 'buy',
           args: [BigInt(listing.listingId)],
           value: BigInt(currentPrice) + lzFee,
@@ -229,7 +229,7 @@ const BuyModal: React.FC = () => {
       } else {
         writeBuy({
           address: CAW_NAME_MARKETPLACE_ADDRESS,
-          abi: cawNameMarketplaceAbi,
+          abi: cawProfileMarketplaceAbi,
           functionName: 'buyWithToken',
           args: [BigInt(listing.listingId), BigInt(currentPrice)],
           value: lzFee,

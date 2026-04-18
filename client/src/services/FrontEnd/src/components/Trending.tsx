@@ -22,16 +22,14 @@ const Trending: React.FC = () => {
       {/* Footer buttons - outside container */}
       <div className="px-8 mt-4 mb-2">
         <div className="flex justify-between text-sm">
-          <a
-            href="https://caw.is"
-            target="_blank"
-            rel="noopener noreferrer"
+          <Link
+            to="/help/faq"
             className={`transition-colors duration-200 hover:underline cursor-pointer ${
               isDark ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-black'
             }`}
           >
-            Caw.is
-          </a>
+            FAQ
+          </Link>
           <span className={`${
             isDark ? 'text-gray-600' : 'text-gray-400'
           }`}>-</span>
@@ -47,12 +45,12 @@ const Trending: React.FC = () => {
             isDark ? 'text-gray-600' : 'text-gray-400'
           }`}>-</span>
           <Link
-            to="/help/faq"
+            to="/help/manifesto"
             className={`transition-colors duration-200 hover:underline cursor-pointer ${
               isDark ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-black'
             }`}
           >
-            FAQ
+            Manifesto
           </Link>
           <span className={`${isDark ? 'text-gray-600' : 'text-gray-400'}`}>-</span>
           <button

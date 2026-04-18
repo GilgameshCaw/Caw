@@ -1,4 +1,4 @@
-// contracts/CawNameURI.sol
+// contracts/CawProfileURI.sol
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
@@ -11,7 +11,7 @@ interface ICawFontData {
   function DATA() external view returns (bytes memory);
 }
 
-/// @title CawNameURI
+/// @title CawProfileURI
 /// @notice On-chain SVG renderer for CAW username NFTs. Builds each username
 ///         from 54 vectorized glyph paths (36 base chars + 18 ligatures), with
 ///         a dynamic-programming tokenizer for ligature selection and a
@@ -19,7 +19,7 @@ interface ICawFontData {
 ///         the 270×270 viewport. The glyph paths are stored in two companion
 ///         data contracts (CawFontDataA and CawFontDataB) because they exceed
 ///         the 24,576-byte per-contract bytecode limit.
-contract CawNameURI is Ownable {
+contract CawProfileURI is Ownable {
   string public description = "CAW NAMEs are username NFTs the CAW social network on the ethereum chain.";
 
   /// @notice Address of the data contract holding glyph paths for slots 0-38.

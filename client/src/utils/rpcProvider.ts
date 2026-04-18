@@ -25,13 +25,19 @@ export function makeJsonRpcProvider(url: string, chainId?: number): JsonRpcProvi
 }
 
 /**
- * Create a WebSocketProvider with `staticNetwork: true`. Same reasoning as
- * makeJsonRpcProvider — avoids ethers' 1-second detect-network retry loop.
+ * Create a WebSocketProvider. Unlike JsonRpcProvider, we do NOT set
+ * staticNetwork here — WebSocket providers need the normal startup
+ * handshake to establish the connection before Contract.on() and other
+ * subscription methods work. The "retry in 1s" spam is not an issue for
+ * WebSocket providers since they have their own close/error event-driven
+ * reconnection, not a polling loop.
+ *
+ * If `chainId` is known, pass it as a hint to skip the initial eth_chainId call.
  */
 export function makeWebSocketProvider(url: string, chainId?: number): WebSocketProvider {
   if (chainId != null) {
     const network = Network.from(chainId)
-    return new WebSocketProvider(url, network, { staticNetwork: network })
+    return new WebSocketProvider(url, network)
   }
-  return new WebSocketProvider(url, undefined, { staticNetwork: true })
+  return new WebSocketProvider(url)
 }

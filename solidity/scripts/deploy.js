@@ -28,16 +28,16 @@
  *   RPC_ARBITRUM        - Arbitrum mainnet RPC URL
  *
  * DEPLOYMENT PHASES:
- *   Phase 1: L2a + L2b - Deploy CawNameL2 on both L2 chains
- *   Phase 2: L1 - Deploy all L1 contracts (CawName, CawClientManager, etc.)
+ *   Phase 1: L2a + L2b - Deploy CawProfileL2 on both L2 chains
+ *   Phase 2: L1 - Deploy all L1 contracts (CawProfile, CawClientManager, etc.)
  *   Phase 3: L2a + L2b - Deploy remaining L2 contracts (CawActions, Replicator)
  *   Phase 4: L2a + L2b - Deploy CawActionsArchive on each chain (for cross-replication)
  *   Phase 5: Cross-chain - Register archive chains, set LZ peers, addReplication
  *
  * ARCHITECTURE (testnet):
- *   L1 (Sepolia): CawName, CawClientManager, CawNameMinter, CawNameQuoter
- *   L2 (Base Sepolia): CawNameL2, CawActions, CawActionsReplicator, CawActionsArchive
- *   L2b (Arbitrum Sepolia): CawNameL2, CawActions, CawActionsReplicator, CawActionsArchive
+ *   L1 (Sepolia): CawProfile, CawClientManager, CawProfileMinter, CawProfileQuoter
+ *   L2 (Base Sepolia): CawProfileL2, CawActions, CawActionsReplicator, CawActionsArchive
+ *   L2b (Arbitrum Sepolia): CawProfileL2, CawActions, CawActionsReplicator, CawActionsArchive
  *   Each L2's Replicator archives to the other L2's CawActionsArchive.
  *
  * STATE FILE:
@@ -160,9 +160,9 @@ const EXISTING_CONTRACTS = {
 
 // Contract definitions with dependencies
 const CONTRACTS = {
-  // Phase 1: Deploy CawNameL2 on both L2 chains (needed by L1 CawName for cross-chain setup)
-  CawNameL2_L2: {
-    artifact: 'CawNameL2',
+  // Phase 1: Deploy CawProfileL2 on both L2 chains (needed by L1 CawProfile for cross-chain setup)
+  CawProfileL2_L2: {
+    artifact: 'CawProfileL2',
     chain: 'L2',
     phase: 1,
     dependencies: [],
@@ -171,8 +171,8 @@ const CONTRACTS = {
       CHAINS[chain].lzEndpoint,
     ],
   },
-  CawNameL2_L2b: {
-    artifact: 'CawNameL2',
+  CawProfileL2_L2b: {
+    artifact: 'CawProfileL2',
     chain: 'L2b',
     phase: 1,
     dependencies: [],
@@ -184,7 +184,7 @@ const CONTRACTS = {
 
   // Phase 2: L1 - Deploy everything on L1
   // CawFontDataA and CawFontDataB are pure-data contracts holding the vectorized
-  // glyph paths for on-chain SVG rendering. CawNameURI reads from them via
+  // glyph paths for on-chain SVG rendering. CawProfileURI reads from them via
   // `ICawFontData.DATA()` to assemble each NFT image. Split across two contracts
   // because the combined path data exceeds the 24,576-byte per-contract limit.
   CawFontDataA: {
@@ -199,7 +199,7 @@ const CONTRACTS = {
     dependencies: [],
     constructorArgs: () => [],
   },
-  CawNameURI: {
+  CawProfileURI: {
     chain: 'L1',
     phase: 2,
     dependencies: ['CawFontDataA', 'CawFontDataB'],
@@ -207,9 +207,9 @@ const CONTRACTS = {
       state.addresses.CawFontDataA,
       state.addresses.CawFontDataB,
     ],
-    // Dependents (CawName) have a runtime setter (`setUriGenerator`) so a
+    // Dependents (CawProfile) have a runtime setter (`setUriGenerator`) so a
     // URI redeploy does NOT need to cascade. The post-deploy linking step
-    // `Link CawName to CawNameURI` handles rewiring. This breaks the normal
+    // `Link CawProfile to CawProfileURI` handles rewiring. This breaks the normal
     // transitive-closure cascade at this node.
     cascadeBreak: true,
   },
@@ -219,22 +219,22 @@ const CONTRACTS = {
     dependencies: [],
     constructorArgs: (state) => [state.deployerAddress], // buyAndBurnAddress
   },
-  CawName: {
+  CawProfile: {
     chain: 'L1',
     phase: 2,
-    dependencies: ['CawNameL2_L2', 'CawNameL2_L2b', 'CawNameURI', 'CawClientManager'],
+    dependencies: ['CawProfileL2_L2', 'CawProfileL2_L2b', 'CawProfileURI', 'CawClientManager'],
     constructorArgs: (state, chain) => [
       state.addresses.MintableCaw,
-      state.addresses.CawNameURI,
+      state.addresses.CawProfileURI,
       state.deployerAddress, // buyAndBurnAddress
       state.addresses.CawClientManager,
       CHAINS[chain].lzEndpoint,
       CHAINS[chain].lzEid,
     ],
   },
-  CawNameL2_L1: {
-    // CawNameL2 deployed on L1 (for local actions without cross-chain)
-    artifact: 'CawNameL2',
+  CawProfileL2_L1: {
+    // CawProfileL2 deployed on L1 (for local actions without cross-chain)
+    artifact: 'CawProfileL2',
     chain: 'L1',
     phase: 2,
     dependencies: [],
@@ -243,43 +243,43 @@ const CONTRACTS = {
       CHAINS[chain].lzEndpoint,
     ],
   },
-  CawNameMinter: {
+  CawProfileMinter: {
     chain: 'L1',
     phase: 2,
-    dependencies: ['CawName'],
+    dependencies: ['CawProfile'],
     constructorArgs: (state) => [
       state.addresses.MintableCaw,
-      state.addresses.CawName,
+      state.addresses.CawProfile,
     ],
   },
-  CawNameQuoter: {
+  CawProfileQuoter: {
     chain: 'L1',
     phase: 2,
-    dependencies: ['CawName'],
-    constructorArgs: (state) => [state.addresses.CawName],
+    dependencies: ['CawProfile'],
+    constructorArgs: (state) => [state.addresses.CawProfile],
   },
-  CawNameMarketplace: {
+  CawProfileMarketplace: {
     chain: 'L1',
     phase: 2,
-    dependencies: ['CawName'],
-    constructorArgs: (state) => [state.addresses.CawName],
+    dependencies: ['CawProfile'],
+    constructorArgs: (state) => [state.addresses.CawProfile],
   },
   CawActions_L1: {
     artifact: 'CawActions',
     chain: 'L1',
     phase: 2,
-    dependencies: ['CawNameL2_L1'],
-    constructorArgs: (state) => [state.addresses.CawNameL2_L1],
+    dependencies: ['CawProfileL2_L1'],
+    constructorArgs: (state) => [state.addresses.CawProfileL2_L1],
   },
   CawActionsReplicator_L1: {
     artifact: 'CawActionsReplicator',
     chain: 'L1',
     phase: 2,
-    dependencies: ['CawActions_L1', 'CawNameL2_L1'],
+    dependencies: ['CawActions_L1', 'CawProfileL2_L1'],
     constructorArgs: (state, chain) => [
       CHAINS[chain].lzEndpoint,
       state.addresses.CawActions_L1,
-      state.addresses.CawNameL2_L1,
+      state.addresses.CawProfileL2_L1,
     ],
   },
 
@@ -288,36 +288,36 @@ const CONTRACTS = {
     artifact: 'CawActions',
     chain: 'L2',
     phase: 3,
-    dependencies: ['CawNameL2_L2'],
-    constructorArgs: (state) => [state.addresses.CawNameL2_L2],
+    dependencies: ['CawProfileL2_L2'],
+    constructorArgs: (state) => [state.addresses.CawProfileL2_L2],
   },
   CawActionsReplicator_L2: {
     artifact: 'CawActionsReplicator',
     chain: 'L2',
     phase: 3,
-    dependencies: ['CawActions_L2', 'CawNameL2_L2'],
+    dependencies: ['CawActions_L2', 'CawProfileL2_L2'],
     constructorArgs: (state, chain) => [
       CHAINS[chain].lzEndpoint,
       state.addresses.CawActions_L2,
-      state.addresses.CawNameL2_L2,
+      state.addresses.CawProfileL2_L2,
     ],
   },
   CawActions_L2b: {
     artifact: 'CawActions',
     chain: 'L2b',
     phase: 3,
-    dependencies: ['CawNameL2_L2b'],
-    constructorArgs: (state) => [state.addresses.CawNameL2_L2b],
+    dependencies: ['CawProfileL2_L2b'],
+    constructorArgs: (state) => [state.addresses.CawProfileL2_L2b],
   },
   CawActionsReplicator_L2b: {
     artifact: 'CawActionsReplicator',
     chain: 'L2b',
     phase: 3,
-    dependencies: ['CawActions_L2b', 'CawNameL2_L2b'],
+    dependencies: ['CawActions_L2b', 'CawProfileL2_L2b'],
     constructorArgs: (state, chain) => [
       CHAINS[chain].lzEndpoint,
       state.addresses.CawActions_L2b,
-      state.addresses.CawNameL2_L2b,
+      state.addresses.CawProfileL2_L2b,
     ],
   },
 
@@ -359,19 +359,19 @@ const LINKING_STEPS = [
     },
   },
   {
-    name: 'Set L1 peer on CawNameL2_L1 (bypassLZ=true)',
+    name: 'Set L1 peer on CawProfileL2_L1 (bypassLZ=true)',
     chain: 'L1',
     phase: 2,
-    contract: 'CawNameL2_L1',
+    contract: 'CawProfileL2_L1',
     method: 'setL1Peer',
     args: (state, chainConfig) => [
       CHAINS[chainConfig.env + 'L1'].lzEid,
-      state.addresses.CawName,
+      state.addresses.CawProfile,
       true, // bypassLZ for local
     ],
-    condition: (state) => state.addresses.CawNameL2_L1 && state.addresses.CawName,
+    condition: (state) => state.addresses.CawProfileL2_L1 && state.addresses.CawProfile,
     skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawNameL2_L1');
+      const contract = deployer.getContract('CawProfileL2_L1');
       if (!contract) return false;
       try {
         return await contract.bypassLZ();
@@ -379,106 +379,106 @@ const LINKING_STEPS = [
     },
   },
   {
-    name: 'Set L2 peer on CawName (to L1 local CawNameL2)',
+    name: 'Set L2 peer on CawProfile (to L1 local CawProfileL2)',
     chain: 'L1',
     phase: 2,
-    contract: 'CawName',
+    contract: 'CawProfile',
     method: 'setL2Peer',
     args: (state, chainConfig) => [
       CHAINS[chainConfig.env + 'L1'].lzEid,
-      state.addresses.CawNameL2_L1,
+      state.addresses.CawProfileL2_L1,
     ],
-    condition: (state) => state.addresses.CawName && state.addresses.CawNameL2_L1,
+    condition: (state) => state.addresses.CawProfile && state.addresses.CawProfileL2_L1,
   },
   {
-    name: 'Set L2 peer on CawName (to L2 CawNameL2)',
+    name: 'Set L2 peer on CawProfile (to L2 CawProfileL2)',
     chain: 'L1',
     phase: 2,
-    contract: 'CawName',
+    contract: 'CawProfile',
     method: 'setL2Peer',
     args: (state, chainConfig) => [
       CHAINS[chainConfig.env + 'L2'].lzEid,
-      state.addresses.CawNameL2_L2,
+      state.addresses.CawProfileL2_L2,
     ],
-    condition: (state) => state.addresses.CawName && state.addresses.CawNameL2_L2,
+    condition: (state) => state.addresses.CawProfile && state.addresses.CawProfileL2_L2,
   },
   {
-    name: 'Set L2b peer on CawName (to L2b CawNameL2)',
+    name: 'Set L2b peer on CawProfile (to L2b CawProfileL2)',
     chain: 'L1',
     phase: 2,
-    contract: 'CawName',
+    contract: 'CawProfile',
     method: 'setL2Peer',
     args: (state, chainConfig) => [
       CHAINS[chainConfig.env + 'L2b'].lzEid,
-      state.addresses.CawNameL2_L2b,
+      state.addresses.CawProfileL2_L2b,
     ],
-    condition: (state) => state.addresses.CawName && state.addresses.CawNameL2_L2b,
+    condition: (state) => state.addresses.CawProfile && state.addresses.CawProfileL2_L2b,
   },
   {
-    name: 'Set minter on CawName',
+    name: 'Set minter on CawProfile',
     chain: 'L1',
     phase: 2,
-    contract: 'CawName',
+    contract: 'CawProfile',
     method: 'setMinter',
     getter: 'minter',
-    args: (state) => [state.addresses.CawNameMinter],
-    condition: (state) => state.addresses.CawName && state.addresses.CawNameMinter,
+    args: (state) => [state.addresses.CawProfileMinter],
+    condition: (state) => state.addresses.CawProfile && state.addresses.CawProfileMinter,
   },
   {
-    // This linking step exists because CawNameURI has cascadeBreak=true:
-    // redeploying CawNameURI does NOT redeploy CawName, so we need to
+    // This linking step exists because CawProfileURI has cascadeBreak=true:
+    // redeploying CawProfileURI does NOT redeploy CawProfile, so we need to
     // rewire the URI generator address here via the setter.
-    name: 'Link CawName to CawNameURI',
+    name: 'Link CawProfile to CawProfileURI',
     chain: 'L1',
     phase: 2,
-    contract: 'CawName',
+    contract: 'CawProfile',
     method: 'setUriGenerator',
-    args: (state) => [state.addresses.CawNameURI],
-    condition: (state) => state.addresses.CawName && state.addresses.CawNameURI,
+    args: (state) => [state.addresses.CawProfileURI],
+    condition: (state) => state.addresses.CawProfile && state.addresses.CawProfileURI,
     skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawName');
+      const contract = deployer.getContract('CawProfile');
       if (!contract) return false;
       try {
         const current = await contract.uriGenerator();
-        return current.toLowerCase() === state.addresses.CawNameURI.toLowerCase();
+        return current.toLowerCase() === state.addresses.CawProfileURI.toLowerCase();
       } catch { return false; }
     },
   },
   {
-    name: 'Link CawNameL2_L1 to CawActions_L1',
+    name: 'Link CawProfileL2_L1 to CawActions_L1',
     chain: 'L1',
     phase: 2,
-    contract: 'CawNameL2_L1',
+    contract: 'CawProfileL2_L1',
     method: 'setCawActions',
     getter: 'cawActions',
     args: (state) => [state.addresses.CawActions_L1],
-    condition: (state) => state.addresses.CawNameL2_L1 && state.addresses.CawActions_L1,
+    condition: (state) => state.addresses.CawProfileL2_L1 && state.addresses.CawActions_L1,
   },
   {
-    name: 'Link CawNameL2_L1 to replicator',
+    name: 'Link CawProfileL2_L1 to replicator',
     chain: 'L1',
     phase: 2,
-    contract: 'CawNameL2_L1',
+    contract: 'CawProfileL2_L1',
     method: 'setCawActionsReplicator',
     getter: 'cawActionsReplicator',
     args: (state) => [state.addresses.CawActionsReplicator_L1],
-    condition: (state) => state.addresses.CawNameL2_L1 && state.addresses.CawActionsReplicator_L1,
+    condition: (state) => state.addresses.CawProfileL2_L1 && state.addresses.CawActionsReplicator_L1,
   },
   {
-    name: 'Set CawName on ClientManager',
+    name: 'Set CawProfile on ClientManager',
     chain: 'L1',
     phase: 2,
     contract: 'CawClientManager',
-    method: 'setCawName',
+    method: 'setCawProfile',
     args: (state) => [
-      state.addresses.CawName,
+      state.addresses.CawProfile,
     ],
-    condition: (state) => state.addresses.CawClientManager && state.addresses.CawName,
+    condition: (state) => state.addresses.CawClientManager && state.addresses.CawProfile,
     skipIf: async (state, deployer) => {
       const contract = deployer.getContract('CawClientManager');
       if (!contract) return false;
       try {
-        const current = await contract.cawName();
+        const current = await contract.cawProfile();
         return current !== '0x0000000000000000000000000000000000000000';
       } catch { return false; }
     },
@@ -486,72 +486,72 @@ const LINKING_STEPS = [
 
   // Phase 3 linking (L2 - Base Sepolia)
   {
-    name: 'Set L1 peer on CawNameL2_L2',
+    name: 'Set L1 peer on CawProfileL2_L2',
     chain: 'L2',
     phase: 3,
-    contract: 'CawNameL2_L2',
+    contract: 'CawProfileL2_L2',
     method: 'setL1Peer',
     args: (state, chainConfig) => [
       CHAINS[chainConfig.env + 'L1'].lzEid,
-      state.addresses.CawName,
+      state.addresses.CawProfile,
       false, // don't bypass LZ for cross-chain
     ],
-    condition: (state) => state.addresses.CawNameL2_L2 && state.addresses.CawName,
+    condition: (state) => state.addresses.CawProfileL2_L2 && state.addresses.CawProfile,
   },
   {
-    name: 'Link CawNameL2_L2 to CawActions_L2',
+    name: 'Link CawProfileL2_L2 to CawActions_L2',
     chain: 'L2',
     phase: 3,
-    contract: 'CawNameL2_L2',
+    contract: 'CawProfileL2_L2',
     method: 'setCawActions',
     getter: 'cawActions',
     args: (state) => [state.addresses.CawActions_L2],
-    condition: (state) => state.addresses.CawNameL2_L2 && state.addresses.CawActions_L2,
+    condition: (state) => state.addresses.CawProfileL2_L2 && state.addresses.CawActions_L2,
   },
   {
-    name: 'Link CawNameL2_L2 to replicator',
+    name: 'Link CawProfileL2_L2 to replicator',
     chain: 'L2',
     phase: 3,
-    contract: 'CawNameL2_L2',
+    contract: 'CawProfileL2_L2',
     method: 'setCawActionsReplicator',
     getter: 'cawActionsReplicator',
     args: (state) => [state.addresses.CawActionsReplicator_L2],
-    condition: (state) => state.addresses.CawNameL2_L2 && state.addresses.CawActionsReplicator_L2,
+    condition: (state) => state.addresses.CawProfileL2_L2 && state.addresses.CawActionsReplicator_L2,
   },
 
   // Phase 3 linking (L2b - Arbitrum Sepolia)
   {
-    name: 'Set L1 peer on CawNameL2_L2b',
+    name: 'Set L1 peer on CawProfileL2_L2b',
     chain: 'L2b',
     phase: 3,
-    contract: 'CawNameL2_L2b',
+    contract: 'CawProfileL2_L2b',
     method: 'setL1Peer',
     args: (state, chainConfig) => [
       CHAINS[chainConfig.env + 'L1'].lzEid,
-      state.addresses.CawName,
+      state.addresses.CawProfile,
       false,
     ],
-    condition: (state) => state.addresses.CawNameL2_L2b && state.addresses.CawName,
+    condition: (state) => state.addresses.CawProfileL2_L2b && state.addresses.CawProfile,
   },
   {
-    name: 'Link CawNameL2_L2b to CawActions_L2b',
+    name: 'Link CawProfileL2_L2b to CawActions_L2b',
     chain: 'L2b',
     phase: 3,
-    contract: 'CawNameL2_L2b',
+    contract: 'CawProfileL2_L2b',
     method: 'setCawActions',
     getter: 'cawActions',
     args: (state) => [state.addresses.CawActions_L2b],
-    condition: (state) => state.addresses.CawNameL2_L2b && state.addresses.CawActions_L2b,
+    condition: (state) => state.addresses.CawProfileL2_L2b && state.addresses.CawActions_L2b,
   },
   {
-    name: 'Link CawNameL2_L2b to replicator',
+    name: 'Link CawProfileL2_L2b to replicator',
     chain: 'L2b',
     phase: 3,
-    contract: 'CawNameL2_L2b',
+    contract: 'CawProfileL2_L2b',
     method: 'setCawActionsReplicator',
     getter: 'cawActionsReplicator',
     args: (state) => [state.addresses.CawActionsReplicator_L2b],
-    condition: (state) => state.addresses.CawNameL2_L2b && state.addresses.CawActionsReplicator_L2b,
+    condition: (state) => state.addresses.CawProfileL2_L2b && state.addresses.CawActionsReplicator_L2b,
   },
 
   // Phase 5: Cross-chain replication setup
@@ -738,7 +738,7 @@ const LINKING_STEPS = [
       1, // clientId
       CHAINS[chainConfig.env + 'L2b'].lzEid,
     ],
-    condition: (state) => state.addresses.CawClientManager && state.addresses.CawActionsArchive_L2b && state.addresses.CawName,
+    condition: (state) => state.addresses.CawClientManager && state.addresses.CawActionsArchive_L2b && state.addresses.CawProfile,
     skipIf: async (state, deployer, chainConfig) => {
       const cm = deployer.getContract('CawClientManager');
       if (!cm) return false;
@@ -752,9 +752,9 @@ const LINKING_STEPS = [
       } catch { return false; }
     },
     overrides: async (state, deployer, chainConfig) => {
-      const quoter = deployer.getContract('CawNameQuoter');
+      const quoter = deployer.getContract('CawProfileQuoter');
       if (!quoter) {
-        console.log('   CawNameQuoter not available, using 0.0002 ETH as fallback');
+        console.log('   CawProfileQuoter not available, using 0.0002 ETH as fallback');
         return { value: ethers.parseEther('0.0002') };
       }
       try {
@@ -783,7 +783,7 @@ const LINKING_STEPS = [
       1, // clientId
       CHAINS[chainConfig.env + 'L2'].lzEid,
     ],
-    condition: (state) => state.addresses.CawClientManager && state.addresses.CawActionsArchive_L2 && state.addresses.CawName,
+    condition: (state) => state.addresses.CawClientManager && state.addresses.CawActionsArchive_L2 && state.addresses.CawProfile,
     skipIf: async (state, deployer, chainConfig) => {
       const cm = deployer.getContract('CawClientManager');
       if (!cm) return false;
@@ -794,7 +794,7 @@ const LINKING_STEPS = [
       } catch { return false; }
     },
     overrides: async (state, deployer, chainConfig) => {
-      const quoter = deployer.getContract('CawNameQuoter');
+      const quoter = deployer.getContract('CawProfileQuoter');
       if (!quoter) return { value: ethers.parseEther('0.0002') };
       try {
         const l2Eid = CHAINS[chainConfig.env + 'L2'].lzEid;
@@ -812,19 +812,19 @@ const LINKING_STEPS = [
   // redeployed the L2 replicator with the clientManager untouched, the new
   // replicator has `clientChainEnabled[1][destEid] = false` until the next
   // sync. This step checks the replicator directly and calls
-  // `CawName.syncReplication` on L1 if the flag isn't set.
+  // `CawProfile.syncReplication` on L1 if the flag isn't set.
   {
     name: 'Force syncReplication if new replicator missing clientChainEnabled',
     chain: 'L1',
     phase: 5,
-    contract: 'CawName',
+    contract: 'CawProfile',
     method: 'syncReplication',
     args: (state, chainConfig) => [
       1, // clientId
-      CHAINS[chainConfig.env + 'L2'].lzEid, // storage chain — where CawNameL2 lives
+      CHAINS[chainConfig.env + 'L2'].lzEid, // storage chain — where CawProfileL2 lives
       0, // lzTokenAmount
     ],
-    condition: (state) => state.addresses.CawName && state.addresses.CawActionsReplicator_L2,
+    condition: (state) => state.addresses.CawProfile && state.addresses.CawActionsReplicator_L2,
     skipIf: async (state, deployer, chainConfig) => {
       // Query the L2 replicator directly to see if the client/dest pair is
       // already enabled there. If yes, skip — no LZ sync needed.
@@ -846,7 +846,7 @@ const LINKING_STEPS = [
       } catch { return false; }
     },
     overrides: async (state, deployer, chainConfig) => {
-      const quoter = deployer.getContract('CawNameQuoter');
+      const quoter = deployer.getContract('CawProfileQuoter');
       if (!quoter) return { value: ethers.parseEther('0.0002') };
       try {
         const l2bEid = CHAINS[chainConfig.env + 'L2b'].lzEid;
@@ -863,20 +863,20 @@ const LINKING_STEPS = [
   // Mirror of the Force sync above but targeting L2b's replicator. Client 1's
   // storage chain is L2, but client 1 ALSO replicates FROM L2b (to L2's archive).
   // After a L2b replicator redeploy, its clientChainEnabled mapping is empty.
-  // Sending syncReplication to L2b's CawNameL2 makes it call setClientChains
+  // Sending syncReplication to L2b's CawProfileL2 makes it call setClientChains
   // on the new L2b replicator.
   {
     name: 'Force syncReplication on L2b if new replicator missing clientChainEnabled',
     chain: 'L1',
     phase: 5,
-    contract: 'CawName',
+    contract: 'CawProfile',
     method: 'syncReplication',
     args: (state, chainConfig) => [
       1, // clientId
-      CHAINS[chainConfig.env + 'L2b'].lzEid, // target L2b's CawNameL2
+      CHAINS[chainConfig.env + 'L2b'].lzEid, // target L2b's CawProfileL2
       0, // lzTokenAmount
     ],
-    condition: (state) => state.addresses.CawName && state.addresses.CawActionsReplicator_L2b,
+    condition: (state) => state.addresses.CawProfile && state.addresses.CawActionsReplicator_L2b,
     skipIf: async (state, deployer, chainConfig) => {
       const chainKey = deployer.getChainKey('L2b');
       await deployer.initChain(chainKey);
@@ -896,7 +896,7 @@ const LINKING_STEPS = [
       } catch { return false; }
     },
     overrides: async (state, deployer, chainConfig) => {
-      const quoter = deployer.getContract('CawNameQuoter');
+      const quoter = deployer.getContract('CawProfileQuoter');
       if (!quoter) return { value: ethers.parseEther('0.0002') };
       try {
         const l2Eid = CHAINS[chainConfig.env + 'L2'].lzEid;
@@ -917,12 +917,12 @@ const LINKING_STEPS = [
     name: 'Allow WETH as marketplace payment token',
     chain: 'L1',
     phase: 5,
-    contract: 'CawNameMarketplace',
+    contract: 'CawProfileMarketplace',
     method: 'setAllowedPaymentToken',
     args: () => ['0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', true], // Mainnet WETH
-    condition: (state) => !!state.addresses.CawNameMarketplace,
+    condition: (state) => !!state.addresses.CawProfileMarketplace,
     skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawNameMarketplace');
+      const contract = deployer.getContract('CawProfileMarketplace');
       if (!contract) return false;
       try { return await contract.allowedPaymentTokens('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'); } catch { return false; }
     },
@@ -932,12 +932,12 @@ const LINKING_STEPS = [
     name: 'Allow USDC as marketplace payment token',
     chain: 'L1',
     phase: 5,
-    contract: 'CawNameMarketplace',
+    contract: 'CawProfileMarketplace',
     method: 'setAllowedPaymentToken',
     args: () => ['0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', true], // Mainnet USDC
-    condition: (state) => !!state.addresses.CawNameMarketplace,
+    condition: (state) => !!state.addresses.CawProfileMarketplace,
     skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawNameMarketplace');
+      const contract = deployer.getContract('CawProfileMarketplace');
       if (!contract) return false;
       try { return await contract.allowedPaymentTokens('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'); } catch { return false; }
     },
@@ -947,12 +947,12 @@ const LINKING_STEPS = [
     name: 'Allow USDT as marketplace payment token',
     chain: 'L1',
     phase: 5,
-    contract: 'CawNameMarketplace',
+    contract: 'CawProfileMarketplace',
     method: 'setAllowedPaymentToken',
     args: () => ['0xdAC17F958D2ee523a2206206994597C13D831ec7', true], // Mainnet USDT
-    condition: (state) => !!state.addresses.CawNameMarketplace,
+    condition: (state) => !!state.addresses.CawProfileMarketplace,
     skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawNameMarketplace');
+      const contract = deployer.getContract('CawProfileMarketplace');
       if (!contract) return false;
       try { return await contract.allowedPaymentTokens('0xdAC17F958D2ee523a2206206994597C13D831ec7'); } catch { return false; }
     },
@@ -962,12 +962,12 @@ const LINKING_STEPS = [
     name: 'Allow CAW as marketplace payment token',
     chain: 'L1',
     phase: 5,
-    contract: 'CawNameMarketplace',
+    contract: 'CawProfileMarketplace',
     method: 'setAllowedPaymentToken',
     args: (state) => [state.addresses.MintableCaw || state.addresses.CAW, true],
-    condition: (state) => !!state.addresses.CawNameMarketplace && !!(state.addresses.MintableCaw || state.addresses.CAW),
+    condition: (state) => !!state.addresses.CawProfileMarketplace && !!(state.addresses.MintableCaw || state.addresses.CAW),
     skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawNameMarketplace');
+      const contract = deployer.getContract('CawProfileMarketplace');
       if (!contract) return false;
       const cawAddr = state.addresses.MintableCaw || state.addresses.CAW;
       if (!cawAddr) return false;
@@ -1133,9 +1133,9 @@ class MultiChainDeployer {
     const factory = new ethers.ContractFactory(artifact.abi, artifact.bytecode, wallet);
 
     const contract = await this.retry(async () => {
-      // Use higher gas limit for large contracts like CawName
+      // Use higher gas limit for large contracts like CawProfile
       const overrides = {};
-      if (contractKey === 'CawName') {
+      if (contractKey === 'CawProfile') {
         overrides.gasLimit = 12000000n;
       }
       const deployed = await factory.deploy(...args, overrides);
@@ -1386,8 +1386,8 @@ class MultiChainDeployer {
     // Find all contracts that depend on this one (transitive closure).
     // A dep that is flagged `cascadeBreak` halts the propagation — its
     // dependents stay deployed and get rewired via their runtime setter
-    // (handled in the linking steps). This matters for e.g. CawNameURI
-    // where CawName.setUriGenerator() lets us swap the URI without
+    // (handled in the linking steps). This matters for e.g. CawProfileURI
+    // where CawProfile.setUriGenerator() lets us swap the URI without
     // redeploying the whole name/actions tree.
     const toRedeploy = new Set([contractKey]);
     let changed = true;
@@ -1406,24 +1406,24 @@ class MultiChainDeployer {
       }
     }
 
-    // If CawName (L1) is being redeployed, token IDs will change —
-    // all CawNameL2 and CawActions contracts must also be redeployed,
+    // If CawProfile (L1) is being redeployed, token IDs will change —
+    // all CawProfileL2 and CawActions contracts must also be redeployed,
     // and the database must be reset (old actions reference stale token IDs).
-    const nameContracts = ['CawName', 'CawNameL2_L1', 'CawNameL2_L2', 'CawNameL2_L2b'];
+    const nameContracts = ['CawProfile', 'CawProfileL2_L1', 'CawProfileL2_L2', 'CawProfileL2_L2b'];
     const isNameRedeploy = nameContracts.some(c => toRedeploy.has(c));
     if (isNameRedeploy) {
       // Force-include all CawActions and related contracts
       const forceInclude = [
-        'CawNameL2_L1', 'CawNameL2_L2', 'CawNameL2_L2b',
+        'CawProfileL2_L1', 'CawProfileL2_L2', 'CawProfileL2_L2b',
         'CawActions_L1', 'CawActions_L2', 'CawActions_L2b',
         'CawActionsReplicator_L1', 'CawActionsReplicator_L2', 'CawActionsReplicator_L2b',
         'CawActionsArchive_L2', 'CawActionsArchive_L2b',
-        'CawNameMinter', 'CawNameQuoter', 'CawNameMarketplace',
+        'CawProfileMinter', 'CawProfileQuoter', 'CawProfileMarketplace',
       ];
       for (const key of forceInclude) {
         if (CONTRACTS[key]) toRedeploy.add(key);
       }
-      console.log('\n   ⚠️  CawName redeploy detected — forcing full contract redeploy.');
+      console.log('\n   ⚠️  CawProfile redeploy detected — forcing full contract redeploy.');
       console.log('   ⚠️  You MUST reset the database after this deployment!');
       console.log('   ⚠️  Run: cd client && npx prisma migrate reset\n');
     }
@@ -1447,11 +1447,11 @@ class MultiChainDeployer {
     // Record the L2 deployment block so RawEventsGatherer starts from the right place.
     // Runs on any redeploy that touches an L2 contract whose events the indexer
     // watches (CawActions, or any of its prerequisites). Previously only fired
-    // on a full CawName redeploy, which silently left `startBlock` stale when
+    // on a full CawProfile redeploy, which silently left `startBlock` stale when
     // we redeployed just CawActions_L2 — the indexer then missed every action
     // from the new contract until someone manually bumped `config.json`.
     const l2IndexedContracts = [
-      'CawActions_L2', 'CawActionsReplicator_L2', 'CawNameL2_L2', 'CawActionsArchive_L2',
+      'CawActions_L2', 'CawActionsReplicator_L2', 'CawProfileL2_L2', 'CawActionsArchive_L2',
     ];
     const isL2Redeploy = isNameRedeploy || l2IndexedContracts.some(c => toRedeploy.has(c));
     if (isL2Redeploy) {
@@ -1475,7 +1475,7 @@ class MultiChainDeployer {
 
     console.log('Addresses:');
     const phases = {
-      1: 'L2 + L2b CawNameL2 (Phase 1)',
+      1: 'L2 + L2b CawProfileL2 (Phase 1)',
       2: 'L1 (Phase 2)',
       3: 'L2 + L2b Contracts (Phase 3)',
       4: 'Archives (Phase 4)',
@@ -1553,14 +1553,14 @@ Options:
   --help              Show this help
 
 Deployment Phases:
-  Phase 1: Deploy CawNameL2 on L2 + L2b (needed by L1 contracts)
+  Phase 1: Deploy CawProfileL2 on L2 + L2b (needed by L1 contracts)
   Phase 2: Deploy all L1 contracts and link them
   Phase 3: Deploy remaining L2 + L2b contracts and link them
   Phase 4: Deploy CawActionsArchive on each L2 chain
   Phase 5: Cross-chain replication setup (archive peers, addArchiveChain, addReplication)
 
 Architecture:
-  L1 (Sepolia): CawName, CawClientManager, CawNameMinter, CawNameQuoter
+  L1 (Sepolia): CawProfile, CawClientManager, CawProfileMinter, CawProfileQuoter
   L2 (Base Sepolia): Full L2 stack + CawActionsArchive (receives from L2b)
   L2b (Arbitrum Sepolia): Full L2 stack + CawActionsArchive (receives from L2)
 
@@ -1611,20 +1611,20 @@ After deployment, ABIs are automatically regenerated for the frontend.
     const addressesFile = path.join(__dirname, '../../client/src/abi/addresses.ts');
     const addressMap = {
       MintableCaw: 'CAW_ADDRESS',
-      CawName: 'CAW_NAMES_ADDRESS',
-      CawNameQuoter: 'CAW_NAME_QUOTER_ADDRESS',
-      CawNameMinter: 'CAW_NAMES_MINTER_ADDRESS',
-      CawNameURI: 'URI_GENERATOR_ADDRESS',
+      CawProfile: 'CAW_NAMES_ADDRESS',
+      CawProfileQuoter: 'CAW_NAME_QUOTER_ADDRESS',
+      CawProfileMinter: 'CAW_NAMES_MINTER_ADDRESS',
+      CawProfileURI: 'URI_GENERATOR_ADDRESS',
       CawClientManager: 'CLIENT_MANAGER_ADDRESS',
-      CawNameL2_L2: 'CAW_NAMES_L2_ADDRESS',
-      CawNameL2_L1: 'CAW_NAMES_L2_MAINNET_ADDRESS',
+      CawProfileL2_L2: 'CAW_NAMES_L2_ADDRESS',
+      CawProfileL2_L1: 'CAW_NAMES_L2_MAINNET_ADDRESS',
       CawActions_L1: 'CAW_ACTIONS_MAINNET_ADDRESS',
       CawActions_L2: 'CAW_ACTIONS_ADDRESS',
       CawActionsReplicator_L1: 'CAW_ACTIONS_REPLICATOR_L1_ADDRESS',
       CawActionsReplicator_L2: 'CAW_ACTIONS_REPLICATOR_L2_ADDRESS',
       CawActionsArchive_L2: 'CAW_ACTIONS_ARCHIVE_L2_ADDRESS',
       CawActionsArchive_L2b: 'CAW_ACTIONS_ARCHIVE_L2B_ADDRESS',
-      CawNameMarketplace: 'CAW_NAME_MARKETPLACE_ADDRESS',
+      CawProfileMarketplace: 'CAW_NAME_MARKETPLACE_ADDRESS',
     };
 
     try {

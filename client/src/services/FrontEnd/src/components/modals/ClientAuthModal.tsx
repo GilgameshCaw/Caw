@@ -6,7 +6,7 @@ import { useClientAuthStore } from '~/store/clientAuthStore'
 import { useTheme } from '~/hooks/useTheme'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { CLIENT_ID } from '~/api/actions'
-import { cawNameAbi, cawNameQuoterAbi } from '~/../../../abi/generated'
+import { cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
 import { chains } from '~/config/chains'
 import { formatEther } from 'viem'
@@ -27,7 +27,7 @@ const ClientAuthModal: React.FC = () => {
 
   // Get LZ quote for the authenticate call (includes auth fee + LZ messaging fee)
   const { data: authQuote } = useReadContract({
-    abi: cawNameQuoterAbi,
+    abi: cawProfileQuoterAbi,
     address: CAW_NAME_QUOTER_ADDRESS,
     chainId: chains.l1.chainId,
     functionName: 'authenticateQuote',
@@ -47,7 +47,7 @@ const ClientAuthModal: React.FC = () => {
       try {
         await writeContractAsync({
           address: CAW_NAMES_ADDRESS,
-          abi: cawNameAbi,
+          abi: cawProfileAbi,
           functionName: 'authenticate',
           args: [CLIENT_ID, tokenId, chains.l2.layerZero, 0n],
           value: totalFee,

@@ -49,7 +49,7 @@ Welcome to the comprehensive documentation for the CAW Protocol - a trustless an
 
 ### Smart Contracts
 - **CawActions.sol** - Core action processing
-- **CawName.sol** - Name service (L1/L2)
+- **CawProfile.sol** - Name service (L1/L2)
 - **CawClientManager.sol** - Client management
 - LayerZero integration for cross-chain
 

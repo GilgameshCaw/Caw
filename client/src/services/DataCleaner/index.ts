@@ -2,24 +2,24 @@ import { prisma } from '../../prismaClient'
 import { JsonRpcProvider, WebSocketProvider, Contract } from 'ethers'
 import { makeJsonRpcProvider, makeWebSocketProvider } from '../../utils/rpcProvider'
 import { dataCleanerLogger as logger } from '../../utils/dataCleanerLogger'
-import { markTxQueueFailed } from '../../utils/txQueueFailure'
-import { cawNameL2Abi } from '../../abi/generated'
+import { markTxQueueFailed, createActionFailedNotification } from '../../utils/txQueueFailure'
+import { cawProfileL2Abi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 
 // Lazy-initialized L2 read provider for the pending-mint-deposit watcher.
 // Reused across ticks so we don't churn sockets.
 let _l2Provider: JsonRpcProvider | WebSocketProvider | null = null
-let _cawNameL2: Contract | null = null
+let _cawProfileL2: Contract | null = null
 
-function getCawNameL2(): Contract {
-  if (_cawNameL2) return _cawNameL2
+function getCawProfileL2(): Contract {
+  if (_cawProfileL2) return _cawProfileL2
   const rpcUrl = process.env.L2_RPC_URL_HTTP || process.env.L2_RPC_URL
   if (!rpcUrl) throw new Error('[DataCleaner] L2 RPC not configured')
   _l2Provider = rpcUrl.startsWith('wss://') || rpcUrl.startsWith('ws://')
     ? makeWebSocketProvider(rpcUrl)
     : makeJsonRpcProvider(rpcUrl)
-  _cawNameL2 = new Contract(CAW_NAMES_L2_ADDRESS, cawNameL2Abi as any, _l2Provider)
-  return _cawNameL2
+  _cawProfileL2 = new Contract(CAW_NAMES_L2_ADDRESS, cawProfileL2Abi as any, _l2Provider)
+  return _cawProfileL2
 }
 
 const CAW_CLIENT_ID = Number(process.env.CLIENT_ID || 1)
@@ -643,6 +643,47 @@ async function cleanupFailedTxQueue() {
 }
 
 /**
+ * Escalate "Cawonce already used" failures older than 24 hours to
+ * ACTION_FAILED notifications. The frontend auto-retries these within the
+ * first 24h; if that hasn't worked, the user needs a manual retry path.
+ */
+async function escalateStaleCawonceFailures() {
+  try {
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000)
+
+    const staleEntries = await prisma.txQueue.findMany({
+      where: {
+        status: 'failed',
+        reason: 'Cawonce already used',
+        updatedAt: { lt: cutoff },
+      },
+      take: 50,
+    })
+
+    if (staleEntries.length === 0) return
+
+    logger.log(`Escalating ${staleEntries.length} stale cawonce failures to notifications`)
+
+    for (const entry of staleEntries) {
+      try {
+        const actionData = (entry.payload as any)?.data
+        if (actionData) {
+          await createActionFailedNotification(prisma, entry.senderId, entry.id, actionData, 'Cawonce already used')
+        }
+        await prisma.txQueue.update({
+          where: { id: entry.id },
+          data: { reason: 'Cawonce already used (notified)' },
+        })
+      } catch (err) {
+        logger.error(` Error escalating cawonce failure ${entry.id}:`, err)
+      }
+    }
+  } catch (err) {
+    logger.error('Fatal error during cawonce failure escalation:', err)
+  }
+}
+
+/**
  * Clean up stale pending follows
  * - If a follow has been PENDING for 5+ minutes, check if the action exists on-chain
  * - If action exists, mark as SUCCESS
@@ -798,7 +839,7 @@ async function cleanupPendingMintDeposits() {
     const twentyMinutesAgo = new Date(Date.now() - 20 * 60 * 1000)
     let contract: Contract
     try {
-      contract = getCawNameL2()
+      contract = getCawProfileL2()
     } catch (err: any) {
       logger.error(`[PendingMintDeposit] Cannot get L2 contract, skipping pass: ${err.message}`)
       return
@@ -907,6 +948,9 @@ async function runDataCleanup() {
 
   // Clean up failed txqueue records and update associated caws
   await cleanupFailedTxQueue()
+
+  // Escalate stale "Cawonce already used" failures (>24h) to notifications
+  await escalateStaleCawonceFailures()
 
   // Promote waiting_for_deposit rows once their L1 deposit has landed on L2
   await cleanupPendingMintDeposits()

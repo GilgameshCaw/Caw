@@ -1,4 +1,4 @@
-// contracts/CawNameMinter.sol
+// contracts/CawProfileMinter.sol
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
@@ -6,16 +6,16 @@ import "@openzeppelin/contracts/utils/Context.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./interfaces/IMint.sol";
 
-contract CawNameMinter is Context {
+contract CawProfileMinter is Context {
 
   mapping(string => uint32) public idByUsername;
 
-  IMint CawName;
+  IMint CawProfile;
   IERC20 CAW;
 
-  constructor(address _caw, address _cawNames) {
+  constructor(address _caw, address _cawProfiles) {
     CAW = IERC20(_caw);
-    CawName = IMint(_cawNames);
+    CawProfile = IMint(_cawProfiles);
   }
 
   function mint(uint32 clientId, string memory username, uint256 lzTokenAmount) public payable {
@@ -27,16 +27,16 @@ contract CawNameMinter is Context {
     require(CAW.allowance(_msgSender(), address(this)) >= amount, "You must approve spending of your CAW");
     CAW.transferFrom(_msgSender(), address(0xdEAD000000000000000042069420694206942069), amount);
 
-    uint32 newId = CawName.nextId();
+    uint32 newId = CawProfile.nextId();
     idByUsername[username] = newId;
 
-    CawName.mint{value: msg.value}(clientId, msg.sender, username, newId, lzTokenAmount);
+    CawProfile.mint{value: msg.value}(clientId, msg.sender, username, newId, lzTokenAmount);
   }
 
   /// @notice Mint a username and deposit CAW in one transaction.
   /// @dev The user only needs to approve the Minter for the full amount (burn + deposit).
   ///      The Minter pulls all CAW from the user, burns the burn portion, and forwards
-  ///      the deposit portion to CawName.
+  ///      the deposit portion to CawProfile.
   /// @param clientId The client ID to authenticate with
   /// @param username The username to mint
   /// @param depositAmount The amount of CAW to deposit (in wei)
@@ -55,17 +55,17 @@ contract CawNameMinter is Context {
     CAW.transferFrom(_msgSender(), address(0xdEAD000000000000000042069420694206942069), burnAmount);
 
     // Pull the deposit portion from the user into this contract,
-    // then approve CawName to transferFrom this contract during mintAndDeposit.
+    // then approve CawProfile to transferFrom this contract during mintAndDeposit.
     if (depositAmount > 0) {
       CAW.transferFrom(_msgSender(), address(this), depositAmount);
-      CAW.approve(address(CawName), depositAmount);
+      CAW.approve(address(CawProfile), depositAmount);
     }
 
-    uint32 newId = CawName.nextId();
+    uint32 newId = CawProfile.nextId();
     idByUsername[username] = newId;
 
-    // Mint + deposit in one call (CawName pulls depositAmount from this contract)
-    CawName.mintAndDeposit{value: msg.value}(clientId, msg.sender, username, newId, depositAmount, lzDestId, lzTokenAmount);
+    // Mint + deposit in one call (CawProfile pulls depositAmount from this contract)
+    CawProfile.mintAndDeposit{value: msg.value}(clientId, msg.sender, username, newId, depositAmount, lzDestId, lzTokenAmount);
   }
 
   function isValidUsername(string memory _input) public pure returns (bool) {

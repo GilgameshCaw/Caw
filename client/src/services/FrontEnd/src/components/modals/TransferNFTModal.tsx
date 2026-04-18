@@ -10,7 +10,7 @@ import { themeTextSecondary, themeTextMuted, themeBgSubtle, themeSecondaryButton
 import { useTransferModalStore } from '~/store/transferModalStore'
 import { chains } from '~/config/chains'
 import { CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
-import { cawNameAbi, cawNameQuoterAbi } from '~/../../../abi/generated'
+import { cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { wagmiConfig } from '~/config/Web3Provider'
 import { usePriceStore } from '~/store/tokenDataStore'
 
@@ -45,7 +45,7 @@ const TransferNFTModal: React.FC = () => {
 
     readContract(wagmiConfig, {
       address: CAW_NAME_QUOTER_ADDRESS,
-      abi: cawNameQuoterAbi,
+      abi: cawProfileQuoterAbi,
       functionName: 'syncTransferQuote',
       args: [tokenId, recipient as `0x${string}`, false],
       chainId: chains.l1.chainId
@@ -101,7 +101,7 @@ const TransferNFTModal: React.FC = () => {
       // Use transferAndSync to transfer + sync L2 ownership in one tx
       writeContract({
         address: CAW_NAMES_ADDRESS,
-        abi: cawNameAbi,
+        abi: cawProfileAbi,
         functionName: 'transferAndSync',
         args: [recipient as `0x${string}`, BigInt(tokenId), 0n],
         value: lzFee ?? 0n,

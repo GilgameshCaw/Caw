@@ -1,4 +1,4 @@
-// contracts/CawNameMarketplace.sol
+// contracts/CawProfileMarketplace.sol
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
@@ -8,17 +8,17 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-interface ICawNameTransfer is IERC721 {
+interface ICawProfileTransfer is IERC721 {
     function transferAndSync(address to, uint256 tokenId, uint256 lzTokenAmount) external payable;
 }
 
 /**
- * @title CawNameMarketplace
+ * @title CawProfileMarketplace
  * @notice Trustless, feeless marketplace for CAW username NFTs.
  *         Supports fixed-price sales, Dutch auctions, English auctions, and buy offers.
  *         0% fees forever — per the CAW manifesto.
  */
-contract CawNameMarketplace is ReentrancyGuard, Ownable {
+contract CawProfileMarketplace is ReentrancyGuard, Ownable {
     using SafeERC20 for IERC20;
 
     enum ListingType { FIXED, DUTCH_AUCTION, ENGLISH_AUCTION }
@@ -46,7 +46,7 @@ contract CawNameMarketplace is ReentrancyGuard, Ownable {
         bool active;
     }
 
-    ICawNameTransfer public immutable cawName;
+    ICawProfileTransfer public immutable cawProfile;
 
     mapping(uint256 => Listing) public listings;
     mapping(uint32 => uint256) public listingByTokenId;  // tokenId => active listingId (1-indexed)
@@ -74,9 +74,9 @@ contract CawNameMarketplace is ReentrancyGuard, Ownable {
     event OfferAccepted(uint256 indexed offerId, uint32 indexed tokenId, address seller, address buyer, uint256 price, address paymentToken);
     event OfferCancelled(uint256 indexed offerId);
 
-    constructor(address _cawName) {
-        require(_cawName != address(0), "Invalid CawName address");
-        cawName = ICawNameTransfer(_cawName);
+    constructor(address _cawProfile) {
+        require(_cawProfile != address(0), "Invalid CawProfile address");
+        cawProfile = ICawProfileTransfer(_cawProfile);
         // ETH is always allowed (represented by address(0))
         allowedPaymentTokens[address(0)] = true;
     }
@@ -86,7 +86,7 @@ contract CawNameMarketplace is ReentrancyGuard, Ownable {
     // ============================================
 
     /**
-     * @notice Create a new listing for a CawName NFT.
+     * @notice Create a new listing for a CawProfile NFT.
      * @param tokenId The NFT token ID to list
      * @param listingType FIXED, DUTCH_AUCTION, or ENGLISH_AUCTION
      * @param paymentToken The ERC20 token for payment (address(0) for ETH)
@@ -102,10 +102,10 @@ contract CawNameMarketplace is ReentrancyGuard, Ownable {
         uint256 endPrice,
         uint64 duration
     ) external nonReentrant returns (uint256 listingId) {
-        require(cawName.ownerOf(tokenId) == msg.sender, "Not token owner");
+        require(cawProfile.ownerOf(tokenId) == msg.sender, "Not token owner");
         require(
-            cawName.isApprovedForAll(msg.sender, address(this)) ||
-            cawName.getApproved(tokenId) == address(this),
+            cawProfile.isApprovedForAll(msg.sender, address(this)) ||
+            cawProfile.getApproved(tokenId) == address(this),
             "Marketplace not approved"
         );
         require(listingByTokenId[tokenId] == 0, "Token already listed");
@@ -187,7 +187,7 @@ contract CawNameMarketplace is ReentrancyGuard, Ownable {
 
         // Transfer NFT to buyer and sync L2 ownership (excess ETH covers LZ fee)
         uint256 lzFee = msg.value - price;
-        cawName.transferAndSync{value: lzFee}(msg.sender, listing.tokenId, 0);
+        cawProfile.transferAndSync{value: lzFee}(msg.sender, listing.tokenId, 0);
 
         emit Sale(listingId, listing.tokenId, msg.sender, price, address(0));
     }
@@ -212,7 +212,7 @@ contract CawNameMarketplace is ReentrancyGuard, Ownable {
         IERC20(listing.paymentToken).safeTransferFrom(msg.sender, listing.seller, price);
 
         // Transfer NFT to buyer and sync L2 (msg.value covers LZ fee)
-        cawName.transferAndSync{value: msg.value}(msg.sender, listing.tokenId, 0);
+        cawProfile.transferAndSync{value: msg.value}(msg.sender, listing.tokenId, 0);
 
         emit Sale(listingId, listing.tokenId, msg.sender, price, listing.paymentToken);
     }
@@ -310,7 +310,7 @@ contract CawNameMarketplace is ReentrancyGuard, Ownable {
         }
 
         // Transfer NFT to winner and sync L2 (msg.value covers LZ fee)
-        cawName.transferAndSync{value: msg.value}(listing.highestBidder, listing.tokenId, 0);
+        cawProfile.transferAndSync{value: msg.value}(listing.highestBidder, listing.tokenId, 0);
 
         emit AuctionSettled(listingId, listing.highestBidder, listing.highestBid);
     }
@@ -328,7 +328,7 @@ contract CawNameMarketplace is ReentrancyGuard, Ownable {
         require(listing.highestBidder != address(0), "No bids to reclaim");
 
         // The seller must no longer own the NFT
-        address currentOwner = cawName.ownerOf(listing.tokenId);
+        address currentOwner = cawProfile.ownerOf(listing.tokenId);
         require(currentOwner != listing.seller, "Seller still owns NFT");
 
         listing.active = false;
@@ -373,7 +373,7 @@ contract CawNameMarketplace is ReentrancyGuard, Ownable {
     // ============================================
 
     /**
-     * @notice Create a buy offer on any CawName NFT with ETH.
+     * @notice Create a buy offer on any CawProfile NFT with ETH.
      *         Funds are escrowed in the contract until accepted, cancelled, or expired.
      * @param tokenId The token to make an offer on
      * @param duration How long the offer is valid (seconds)
@@ -397,7 +397,7 @@ contract CawNameMarketplace is ReentrancyGuard, Ownable {
     }
 
     /**
-     * @notice Create a buy offer on any CawName NFT with an ERC20 token.
+     * @notice Create a buy offer on any CawProfile NFT with an ERC20 token.
      *         Tokens are transferred to the contract as escrow.
      * @param tokenId The token to make an offer on
      * @param paymentToken The ERC20 token to pay with
@@ -442,10 +442,10 @@ contract CawNameMarketplace is ReentrancyGuard, Ownable {
         require(block.timestamp <= offer.expiry, "Offer expired");
 
         uint32 tokenId = offer.tokenId;
-        require(cawName.ownerOf(tokenId) == msg.sender, "Not token owner");
+        require(cawProfile.ownerOf(tokenId) == msg.sender, "Not token owner");
         require(
-            cawName.isApprovedForAll(msg.sender, address(this)) ||
-            cawName.getApproved(tokenId) == address(this),
+            cawProfile.isApprovedForAll(msg.sender, address(this)) ||
+            cawProfile.getApproved(tokenId) == address(this),
             "Marketplace not approved"
         );
 
@@ -475,7 +475,7 @@ contract CawNameMarketplace is ReentrancyGuard, Ownable {
         }
 
         // Transfer NFT to offerer and sync L2 (msg.value covers LZ fee)
-        cawName.transferAndSync{value: msg.value}(offer.offerer, tokenId, 0);
+        cawProfile.transferAndSync{value: msg.value}(offer.offerer, tokenId, 0);
 
         emit OfferAccepted(offerId, tokenId, msg.sender, offer.offerer, offer.amount, offer.paymentToken);
     }

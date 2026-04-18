@@ -24,7 +24,7 @@
 
 import 'dotenv/config'
 import { JsonRpcProvider, Wallet, Contract, formatEther, Interface } from 'ethers'
-import { cawClientManagerAbi, cawNameQuoterAbi, cawActionsAbi, cawActionsReplicatorAbi } from '../src/abi/generated'
+import { cawClientManagerAbi, cawProfileQuoterAbi, cawActionsAbi, cawActionsReplicatorAbi } from '../src/abi/generated'
 import { CLIENT_MANAGER_ADDRESS, CAW_ACTIONS_ARCHIVE_L2_ADDRESS, CAW_NAME_QUOTER_ADDRESS, CAW_ACTIONS_ADDRESS, CAW_ACTIONS_REPLICATOR_L2_ADDRESS } from '../src/abi/addresses'
 
 // Known archive addresses (add more as needed)
@@ -227,7 +227,7 @@ async function main() {
 
     let quote: { nativeFee: bigint; lzTokenFee: bigint }
     try {
-      const quoter = new Contract(CAW_NAME_QUOTER_ADDRESS, cawNameQuoterAbi, l1Provider)
+      const quoter = new Contract(CAW_NAME_QUOTER_ADDRESS, cawProfileQuoterAbi, l1Provider)
       quote = await quoter.syncReplicationQuote(
         clientId,
         [archiveEid],

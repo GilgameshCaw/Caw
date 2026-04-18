@@ -10,7 +10,7 @@ import { themeTextSecondary, themeTextMuted, themeBgSubtle, themeSecondaryButton
 import { useSyncTransferStore } from '~/store/syncTransferStore'
 import { chains } from '~/config/chains'
 import { CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
-import { cawNameAbi, cawNameQuoterAbi } from '~/../../../abi/generated'
+import { cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { wagmiConfig } from '~/config/Web3Provider'
 import { usePriceStore } from '~/store/tokenDataStore'
 
@@ -44,7 +44,7 @@ const SyncTransferModal: React.FC = () => {
     // Quote with tokenId=0 and address(0) since the transfer is already pending in the queue
     readContract(wagmiConfig, {
       address: CAW_NAME_QUOTER_ADDRESS,
-      abi: cawNameQuoterAbi,
+      abi: cawProfileQuoterAbi,
       functionName: 'syncTransferQuote',
       args: [0, '0x0000000000000000000000000000000000000000', false],
       chainId: chains.l1.chainId
@@ -75,7 +75,7 @@ const SyncTransferModal: React.FC = () => {
     await ensureWallet({ chainId: chains.l1.chainId }, async () => {
       writeContract({
         address: CAW_NAMES_ADDRESS,
-        abi: cawNameAbi,
+        abi: cawProfileAbi,
         functionName: 'syncTransfer',
         args: [chains.l2.layerZero, 0n] as [number, bigint],
         value: lzFee ?? 0n,

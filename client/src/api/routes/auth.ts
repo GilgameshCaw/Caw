@@ -139,7 +139,7 @@ router.post('/verify-dm', async (req, res) => {
     // Verify the recovered address owns this tokenId.
     // Fast path: DB has a matching row. Otherwise we need an on-chain check —
     // crucially, we check L1 first via verifyOwnershipOnChain. Right after a
-    // fresh mint, the L2 CawNameL2.mintAndUpdateOwners LZ hop can take 1–5 min
+    // fresh mint, the L2 CawProfileL2.mintAndUpdateOwners LZ hop can take 1–5 min
     // to land, so refreshOwnership (L2-only) would miss the new tokenId even
     // though the minter really does own it. Checking L1 covers that window.
     const user = await prisma.user.findUnique({

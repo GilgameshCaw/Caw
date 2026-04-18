@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { randomUUID } from 'crypto'
 import { ethers, Contract, Wallet, JsonRpcProvider, WebSocketProvider } from 'ethers'
 import { makeJsonRpcProvider, makeWebSocketProvider } from '../../utils/rpcProvider'
-import { cawNameL2Abi } from '../../abi/generated'
+import { cawProfileL2Abi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 import { prisma } from '../../prismaClient'
 import { refreshOwnership } from '../../services/UserService'
@@ -12,7 +12,7 @@ const router = Router()
 const redis = new Redis({ port: 6379, host: '127.0.0.1' })
 
 const SESSION_DOMAIN = {
-  name:              'CawNameL2',
+  name:              'CawProfileL2',
   version:           '1',
   verifyingContract: CAW_NAMES_L2_ADDRESS,
 }
@@ -73,7 +73,7 @@ function getContract() {
     ? makeWebSocketProvider(rpcUrl)
     : makeJsonRpcProvider(rpcUrl)
   _wallet = new Wallet(validatorKey, _provider)
-  _contract = new Contract(CAW_NAMES_L2_ADDRESS, cawNameL2Abi as any, _wallet)
+  _contract = new Contract(CAW_NAMES_L2_ADDRESS, cawProfileL2Abi as any, _wallet)
   return _contract
 }
 
@@ -91,7 +91,7 @@ async function processSessionRequest(
   console.log(`[Sessions] Processing request ${requestId}`)
 
   try {
-    const cawNameL2 = getContract()
+    const cawProfileL2 = getContract()
 
     requests.set(requestId, { status: 'submitting' })
     console.log(`[Sessions] Using contract at: ${CAW_NAMES_L2_ADDRESS}`)
@@ -99,7 +99,7 @@ async function processSessionRequest(
     const sig = ethers.Signature.from(signature)
     const { sessionKey, expiry, scopeBitmap, spendLimit, nonce } = delegation
 
-    const tx = await cawNameL2.registerSession(
+    const tx = await cawProfileL2.registerSession(
       sessionKey,
       BigInt(expiry),
       Number(scopeBitmap),
@@ -321,10 +321,10 @@ router.delete('/', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Missing required fields: owner, sessionKey, signature' })
     }
 
-    const cawNameL2 = getContract()
+    const cawProfileL2 = getContract()
     const sig = ethers.Signature.from(signature)
 
-    const tx = await cawNameL2.revokeSessionBySig(
+    const tx = await cawProfileL2.revokeSessionBySig(
       owner,
       sessionKey,
       sig.v,

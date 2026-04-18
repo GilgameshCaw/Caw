@@ -10,7 +10,7 @@ import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS } from '../../abi/addre
 const Config = z.object({
   l1RpcUrl:            z.string().optional(),
   marketplaceAddress:  z.string().optional(),
-  cawNameAddress:      z.string().optional(),
+  cawProfileAddress:      z.string().optional(),
   pollIntervalMs:      z.number().int().positive().default(15000),
 })
 
@@ -68,7 +68,7 @@ export const marketplaceIndexerService: Service = {
     ctx.declareLoop('poll', Math.max((cfg as any).pollIntervalMs * 3, 120_000))
     const rpcUrl = (process.env.L1_RPC_URL || cfg.l1RpcUrl || '').replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace('/ws/', '/')
     const marketplaceAddress = cfg.marketplaceAddress || CAW_NAME_MARKETPLACE_ADDRESS
-    const cawNameAddress = cfg.cawNameAddress || CAW_NAMES_ADDRESS
+    const cawProfileAddress = cfg.cawProfileAddress || CAW_NAMES_ADDRESS
     const { pollIntervalMs } = cfg
 
     let alive = true
@@ -77,11 +77,11 @@ export const marketplaceIndexerService: Service = {
     const started = (async () => {
       if (!rpcUrl) throw new Error('[MarketplaceIndexer] No L1 RPC URL configured (set L1_RPC_URL env var)')
       await prisma.$connect()
-      console.log(`[MarketplaceIndexer] Started — marketplace=${marketplaceAddress}, cawName=${cawNameAddress}, rpc=${rpcUrl.substring(0, 40)}...`)
+      console.log(`[MarketplaceIndexer] Started — marketplace=${marketplaceAddress}, cawProfile=${cawProfileAddress}, rpc=${rpcUrl.substring(0, 40)}...`)
 
       const provider = makeJsonRpcProvider(rpcUrl)
       const marketplace = new ethers.Contract(marketplaceAddress, MARKETPLACE_ABI, provider)
-      const cawName = new ethers.Contract(cawNameAddress, CAWNAME_TRANSFER_ABI, provider)
+      const cawProfile = new ethers.Contract(cawProfileAddress, CAWNAME_TRANSFER_ABI, provider)
 
       // Track last processed block
       let lastBlock = await getLastProcessedBlock()
@@ -437,9 +437,9 @@ export const marketplaceIndexerService: Service = {
             data: { status: 'EXPIRED' },
           })
 
-          // Check for CawName transfers that invalidate listings
-          const transferFilter = cawName.filters.Transfer()
-          const transfers = await cawName.queryFilter(transferFilter, fromBlock, toBlock)
+          // Check for CawProfile transfers that invalidate listings
+          const transferFilter = cawProfile.filters.Transfer()
+          const transfers = await cawProfile.queryFilter(transferFilter, fromBlock, toBlock)
 
           for (const event of transfers) {
             const ev = event as ethers.EventLog

@@ -11,7 +11,7 @@ import { useMarketplaceStore, MarketplaceOffer } from '~/store/marketplaceStore'
 import { usePriceStore, useTokenDataStore } from '~/store/tokenDataStore'
 import { chains } from '~/config/chains'
 import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
-import { cawNameMarketplaceAbi, cawNameAbi, cawNameQuoterAbi } from '~/../../../abi/generated'
+import { cawProfileMarketplaceAbi, cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import UsernameSvg from '~/components/UsernameSvg'
 import LiveCountdown from '~/components/marketplace/LiveCountdown'
 import { apiFetch } from '~/api/client'
@@ -64,7 +64,7 @@ const ViewOffersModal: React.FC = () => {
   // 2. On-chain fallback
   const { data: tokenOwner } = useReadContract({
     address: CAW_NAMES_ADDRESS,
-    abi: cawNameAbi,
+    abi: cawProfileAbi,
     functionName: 'ownerOf',
     args: [BigInt(tokenId ?? 0)],
     chainId: chains.l1.chainId,
@@ -78,7 +78,7 @@ const ViewOffersModal: React.FC = () => {
   // Check NFT approval for accepting offers
   const { data: isApproved, refetch: refetchApproval } = useReadContract({
     address: CAW_NAMES_ADDRESS,
-    abi: cawNameAbi,
+    abi: cawProfileAbi,
     functionName: 'isApprovedForAll',
     args: [address!, CAW_NAME_MARKETPLACE_ADDRESS],
     chainId: chains.l1.chainId,
@@ -108,7 +108,7 @@ const ViewOffersModal: React.FC = () => {
       setActionType('accept')
       writeAction({
         address: CAW_NAME_MARKETPLACE_ADDRESS,
-        abi: cawNameMarketplaceAbi,
+        abi: cawProfileMarketplaceAbi,
         functionName: 'acceptOffer',
         args: [BigInt(offer.offerId)],
         value: lzFee,
@@ -132,7 +132,7 @@ const ViewOffersModal: React.FC = () => {
     if (!isOwner || !tokenId || !address) return
     readContract(wagmiConfig, {
       address: CAW_NAME_QUOTER_ADDRESS,
-      abi: cawNameQuoterAbi,
+      abi: cawProfileQuoterAbi,
       functionName: 'syncTransferQuote',
       args: [tokenId, address, false],
       chainId: chains.l1.chainId,
@@ -171,7 +171,7 @@ const ViewOffersModal: React.FC = () => {
     ensureWallet({ chainId: chains.l1.chainId }, async () => {
       writeApprove({
         address: CAW_NAMES_ADDRESS,
-        abi: cawNameAbi,
+        abi: cawProfileAbi,
         functionName: 'setApprovalForAll',
         args: [CAW_NAME_MARKETPLACE_ADDRESS, true],
         chainId: chains.l1.chainId,
@@ -185,7 +185,7 @@ const ViewOffersModal: React.FC = () => {
       setActionType('accept')
       writeAction({
         address: CAW_NAME_MARKETPLACE_ADDRESS,
-        abi: cawNameMarketplaceAbi,
+        abi: cawProfileMarketplaceAbi,
         functionName: 'acceptOffer',
         args: [BigInt(offer.offerId)],
         value: lzFee,

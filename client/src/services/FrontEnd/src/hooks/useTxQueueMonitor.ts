@@ -97,8 +97,8 @@ export function useTxQueueMonitor() {
               if (retryCount >= MAX_CAWONCE_RETRIES) {
                 console.warn(`[TxQueueMonitor] Cawonce retry limit reached for TxQueue ${status.id}`)
                 cawonceRetries.delete(status.id)
-                // Failure is recorded server-side as an ACTION_FAILED
-                // notification — no modal needed here.
+                // Retries exhausted — the DataCleaner will escalate to an
+                // ACTION_FAILED notification after 24h if still unresolved.
               } else {
                 cawonceRetries.set(status.id, retryCount + 1)
                 console.log(`[TxQueueMonitor] Cawonce collision for TxQueue ${status.id}, auto-retrying (attempt ${retryCount + 1})`)
@@ -237,6 +237,97 @@ export function useTxQueueMonitor() {
         console.error('Error checking txQueue status:', error)
       }
     }
+
+    // On mount, check for failed "Cawonce already used" TxQueue entries that
+    // weren't retried (e.g. because the page was refreshed mid-retry). The
+    // backend returns entries from the last 24 hours; older ones get an
+    // ACTION_FAILED notification instead.
+    const retryFailedCawonceEntries = async () => {
+      try {
+        const state = useTokenDataStore.getState()
+        const allTokens = Object.values(state.tokensByAddress).flat()
+        // Mirror the useActiveToken selector logic for imperative access
+        let activeToken = state.activeTokenId != null
+          ? allTokens.find(t => t.tokenId === state.activeTokenId)
+          : undefined
+        if (!activeToken && state.lastAddress) {
+          const norm = state.lastAddress.toLowerCase()
+          const forAddr = Object.entries(state.tokensByAddress)
+            .find(([a]) => a.toLowerCase() === norm)?.[1] || []
+          const activeId = Object.entries(state.activeTokenIdByAddress)
+            .find(([a]) => a.toLowerCase() === norm)?.[1]
+          activeToken = forAddr.find(t => t.tokenId === activeId) || forAddr[0]
+        }
+        if (!activeToken) activeToken = allTokens[0]
+        if (!activeToken?.tokenId) return
+
+        const senderId = activeToken.tokenId
+        const res = await apiFetch(`/api/txqueue/failed-cawonce/${senderId}`)
+        if (!res?.entries?.length) return
+
+        console.log(`[TxQueueMonitor] Found ${res.entries.length} retryable cawonce failures on mount`)
+
+        for (const entry of res.entries) {
+          if (processedIds.current.has(entry.id)) continue
+          const originalData = entry.payload?.data
+          if (!originalData) continue
+
+          try {
+            const cawonceRes = await apiFetch(`/api/users/min-cawonce/${senderId}`)
+            const freshCawonce = cawonceRes?.minSafeCawonce
+            if (freshCawonce == null) continue
+
+            useTokenDataStore.getState().setCawonce(senderId, freshCawonce + 1)
+
+            const user = await apiFetch(`/api/users/by-token/${senderId}`)
+            const ownerAddress = user?.address?.toLowerCase()
+            if (!ownerAddress) continue
+
+            const sessionStore = useSessionKeyStore.getState()
+            const session = sessionStore.getSessionForAddress(ownerAddress)
+            if (!session || !sessionStore.enabled || session.expiry < Date.now() / 1000) {
+              console.log(`[TxQueueMonitor] No active session key for mount-retry of TxQueue ${entry.id}`)
+              continue
+            }
+
+            useAutoRetryStore.getState().startRetry(entry.id)
+
+            const message = { ...originalData, cawonce: freshCawonce }
+            const sessionAccount = privateKeyToAccount(session.privateKey)
+            const signature = await sessionAccount.signTypedData({
+              domain: DOMAIN,
+              types: { ActionData: TYPES.ActionData },
+              primaryType: 'ActionData' as const,
+              message,
+            })
+
+            const isQuote = entry.payload?.isQuote || false
+            await apiFetch('/api/actions', {
+              method: 'POST',
+              body: JSON.stringify({ data: message, domain: DOMAIN, types: TYPES, signature, isQuote }),
+            })
+
+            console.log(`[TxQueueMonitor] Mount-retried TxQueue ${entry.id} with cawonce ${freshCawonce}`)
+            processedIds.current.add(entry.id)
+
+            try {
+              await apiFetch('/api/notifications/hide-by-original-tx', {
+                method: 'POST',
+                body: JSON.stringify({ userId: senderId, txQueueId: entry.id }),
+              })
+            } catch (_) {}
+          } catch (err) {
+            console.warn(`[TxQueueMonitor] Mount-retry failed for TxQueue ${entry.id}:`, err)
+          } finally {
+            useAutoRetryStore.getState().endRetry(entry.id)
+          }
+        }
+      } catch (err) {
+        console.warn('[TxQueueMonitor] Failed to check for retryable cawonce failures:', err)
+      }
+    }
+
+    retryFailedCawonceEntries()
 
     // Check immediately on mount
     checkTxQueueStatus()

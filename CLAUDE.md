@@ -42,7 +42,7 @@ Uses Truffle for deployment and testing. Networks configured include:
 
 ### Smart Contracts
 - **CawActions.sol** - Core contract for CAW social actions (post, like, follow, etc.)
-- **CawName.sol** / **CawNameL2.sol** - Name service contracts for L1/L2
+- **CawProfile.sol** / **CawProfileL2.sol** - Name service contracts for L1/L2
 - **CawClientManager.sol** - Client management system with archive chain configuration
 - **CawActionsReplicator.sol** - Cross-chain archiving via LayerZero
 - **CawActionsArchive.sol** - Archive contract deployed on archive chains

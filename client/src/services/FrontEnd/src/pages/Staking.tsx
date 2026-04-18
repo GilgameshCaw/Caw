@@ -15,7 +15,7 @@ import useAllowance from "~/hooks/useAllowance";
 import { useAccount, useConnections, useReadContract, useSwitchChain, useChainId } from "wagmi"
 import { useConnectModal } from "@rainbow-me/rainbowkit"
 import { useActiveToken, useTokenDataStore, usePriceStore } from "~/store/tokenDataStore"
-import { cawNameAbi, cawNameL2Abi, cawNameQuoterAbi } from "~/../../../abi/generated"
+import { cawProfileAbi, cawProfileL2Abi, cawProfileQuoterAbi } from "~/../../../abi/generated"
 import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_L2_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from "~/../../../abi/addresses"
 import { maxUint256, parseUnits, formatUnits, formatEther, erc20Abi } from "viem";
 import MainLayout from '~/layouts/MainLayout'
@@ -125,9 +125,9 @@ const Staking = () => {
     }
   })
 
-  // Get deposit quote from CawNameQuoter
+  // Get deposit quote from CawProfileQuoter
   const { data: depositQuote } = useReadContract({
-    abi: cawNameQuoterAbi,
+    abi: cawProfileQuoterAbi,
     chainId: chains.l1.chainId,
     functionName: "depositQuote",
     address: CAW_NAME_QUOTER_ADDRESS,
@@ -137,10 +137,10 @@ const Staking = () => {
     }
   })
 
-  // Get withdraw quote from CawNameQuoter
+  // Get withdraw quote from CawProfileQuoter
   const { data: withdrawQuote } = useReadContract({
     address: CAW_NAME_QUOTER_ADDRESS,
-    abi: cawNameQuoterAbi,
+    abi: cawProfileQuoterAbi,
     chainId: chains.l1.chainId,
     functionName: "withdrawQuote",
     args: [CLIENT_ID, false],
@@ -385,7 +385,7 @@ const Staking = () => {
   // Deposit/Stake CAW
   const stake = useContractCall({
     address: CAW_NAMES_ADDRESS,
-    abi: cawNameAbi,
+    abi: cawProfileAbi,
     functionName: "deposit",
     args: [CLIENT_ID, tokenId || 0, parseUnits((amount || "0").toString(), 18), chains.l2.layerZero, 0n],
     disabled: !tokenId || !amount || depositFee === 0n || !isTokenOwner,
@@ -486,7 +486,7 @@ const Staking = () => {
   // Withdraw CAW from L1
   const withdraw = useContractCall({
     address: CAW_NAMES_ADDRESS,
-    abi: cawNameAbi,
+    abi: cawProfileAbi,
     functionName: "withdraw",
     args: [CLIENT_ID, Number(tokenId ?? 0), 0n],
     disabled: !tokenId || withdrawFee === 0n,

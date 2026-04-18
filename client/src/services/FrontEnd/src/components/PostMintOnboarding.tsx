@@ -18,7 +18,7 @@ import { useInsufficientStakeStore } from '~/store/insufficientStakeStore'
 import useAllowance from '~/hooks/useAllowance'
 import useContractCall from '~/hooks/useContractCall'
 import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
-import { cawNameAbi, cawNameQuoterAbi } from '~/../../../abi/generated'
+import { cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { chains } from '~/config/chains'
 import { handleError } from '~/utils'
 import { apiFetch } from '~/api/client'
@@ -202,7 +202,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   })
 
   const { data: depositQuote } = useReadContract({
-    abi: cawNameQuoterAbi,
+    abi: cawProfileQuoterAbi,
     chainId: chains.l1.chainId,
     functionName: 'depositQuote',
     address: CAW_NAME_QUOTER_ADDRESS,
@@ -253,7 +253,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
 
   const stake = useContractCall({
     address: CAW_NAMES_ADDRESS,
-    abi: cawNameAbi,
+    abi: cawProfileAbi,
     functionName: 'deposit',
     args: [CLIENT_ID, tokenId || 0, parseUnits((amount || '0').toString(), 18), chains.l2.layerZero, 0n],
     disabled: !tokenId || !amount || depositFee === 0n || !isTokenOwner,

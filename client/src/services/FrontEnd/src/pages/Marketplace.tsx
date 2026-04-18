@@ -17,7 +17,7 @@ import { wagmiConfig } from '~/config/Web3Provider'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { formatEther, formatUnits } from 'viem'
 import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
-import { cawNameMarketplaceAbi, cawNameAbi, cawNameQuoterAbi } from '~/../../../abi/generated'
+import { cawProfileMarketplaceAbi, cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { chains } from '~/config/chains'
 import UsernameSvg from '~/components/UsernameSvg'
 import { useOffersUnreadStore } from '~/store/offersUnreadStore'
@@ -416,7 +416,7 @@ const MyOffersTab: React.FC = () => {
   // Check NFT approval
   const { data: isNftApproved, refetch: refetchApproval } = useReadContract({
     address: CAW_NAMES_ADDRESS,
-    abi: cawNameAbi,
+    abi: cawProfileAbi,
     functionName: 'isApprovedForAll',
     args: [walletAddress!, CAW_NAME_MARKETPLACE_ADDRESS],
     chainId: chains.l1.chainId,
@@ -432,7 +432,7 @@ const MyOffersTab: React.FC = () => {
     try {
       const quote: any = await readContract(wagmiConfig, {
         address: CAW_NAME_QUOTER_ADDRESS,
-        abi: cawNameQuoterAbi,
+        abi: cawProfileQuoterAbi,
         functionName: 'syncTransferQuote',
         args: [offer.tokenId, offer.offerer as `0x${string}`, false],
         chainId: chains.l1.chainId,
@@ -442,7 +442,7 @@ const MyOffersTab: React.FC = () => {
       setAcceptingId(offer.offerId)
       writeAccept({
         address: CAW_NAME_MARKETPLACE_ADDRESS,
-        abi: cawNameMarketplaceAbi,
+        abi: cawProfileMarketplaceAbi,
         functionName: 'acceptOffer',
         args: [BigInt(offer.offerId)],
         value: exactFee,
@@ -566,7 +566,7 @@ const MyOffersTab: React.FC = () => {
     setCancellingId(offer.offerId)
     writeContract({
       address: CAW_NAME_MARKETPLACE_ADDRESS,
-      abi: cawNameMarketplaceAbi,
+      abi: cawProfileMarketplaceAbi,
       functionName: 'cancelOffer',
       args: [BigInt(offer.offerId)],
       chainId: chains.l1.chainId,
@@ -591,7 +591,7 @@ const MyOffersTab: React.FC = () => {
       setAcceptingId(offer.offerId)
       writeApprove({
         address: CAW_NAMES_ADDRESS,
-        abi: cawNameAbi,
+        abi: cawProfileAbi,
         functionName: 'setApprovalForAll',
         args: [CAW_NAME_MARKETPLACE_ADDRESS, true],
         chainId: chains.l1.chainId,

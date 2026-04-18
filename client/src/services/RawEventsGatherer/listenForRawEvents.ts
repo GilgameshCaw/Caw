@@ -267,7 +267,17 @@ export default async function listenForRawEvents(
       try { wsContract.removeAllListeners() } catch {}
     }
     if (wsProvider) {
-      try { (wsProvider as any).destroy?.() } catch {}
+      try {
+        const ws = (wsProvider as any).websocket || (wsProvider as any)._websocket
+        if (ws && (ws.readyState === 0 /* CONNECTING */ || ws.readyState === 3 /* CLOSED */)) {
+          // Don't call destroy if the WebSocket never connected or is already closed —
+          // ethers' destroy() calls ws.close() which throws "WebSocket was closed before
+          // the connection was established" as an uncaught exception.
+          wsProvider = null
+        } else {
+          (wsProvider as any).destroy?.()
+        }
+      } catch {}
     }
     wsProvider = null
     wsContract = null

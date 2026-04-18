@@ -1,14 +1,14 @@
-// One-shot sync script: calls CawName.syncReplication on L1 Sepolia, using the
-// CURRENT CawName contract (not the stale one referenced by clientManager).
-// This is the workaround for the stale-clientManager.cawName() wiring — the
-// current CawName's LZ peer points at the current CawNameL2, so the message
+// One-shot sync script: calls CawProfile.syncReplication on L1 Sepolia, using the
+// CURRENT CawProfile contract (not the stale one referenced by clientManager).
+// This is the workaround for the stale-clientManager.cawProfile() wiring — the
+// current CawProfile's LZ peer points at the current CawProfileL2, so the message
 // lands on the right replicator.
 //
 // Usage:  npx tsx scripts/sync-replication.ts
 // Env:    VALIDATOR_PRIVATE_KEY (client owner), L1_RPC_URL
 //
 // Reads:  clientManager.getClientChainEids(1) on L1 (includes 40231)
-// Writes: CawName.syncReplication(1, 40245, 0) on L1 with LZ fee
+// Writes: CawProfile.syncReplication(1, 40245, 0) on L1 with LZ fee
 // After the LZ message lands on L2 Base Sepolia,
 // CawActionsReplicator.clientChainEnabled(1, 40231) flips to true.
 
@@ -16,16 +16,16 @@ import { JsonRpcProvider, Wallet, Contract, formatEther } from 'ethers'
 import 'dotenv/config'
 // Read addresses from the canonical addresses.ts so this script doesn't go
 // stale across redeploys (it did once: previously hardcoded the FIRST-redeploy
-// CawName, which silently routed sync messages through stale contracts.)
+// CawProfile, which silently routed sync messages through stale contracts.)
 import { CAW_NAMES_ADDRESS as CAW_NAMES_L1, CAW_NAME_QUOTER_ADDRESS } from '../src/abi/addresses'
 const CLIENT_ID = 1
-const BASE_SEPOLIA_EID = 40245 // storage chain EID, also the LZ path CawName uses
+const BASE_SEPOLIA_EID = 40245 // storage chain EID, also the LZ path CawProfile uses
 
-const cawNameAbi = [
+const cawProfileAbi = [
   'function syncReplication(uint32 clientId, uint32 lzDestId, uint256 lzTokenAmount) external payable',
   'function clientManager() view returns (address)',
 ]
-const cawNameQuoterAbi = [
+const cawProfileQuoterAbi = [
   'function syncReplicationQuote(uint32 clientId, uint32[] destEids, uint32 lzDestId, bool payInLzToken) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
 ]
 const clientManagerAbi = [
@@ -42,9 +42,9 @@ async function main() {
   const wallet = new Wallet(pk, l1)
   console.log(`Signer: ${wallet.address}`)
 
-  const cawName = new Contract(CAW_NAMES_L1, cawNameAbi, wallet)
-  const quoter = new Contract(CAW_NAME_QUOTER_ADDRESS, cawNameQuoterAbi, l1)
-  const clientManagerAddr: string = await cawName.clientManager()
+  const cawProfile = new Contract(CAW_NAMES_L1, cawProfileAbi, wallet)
+  const quoter = new Contract(CAW_NAME_QUOTER_ADDRESS, cawProfileQuoterAbi, l1)
+  const clientManagerAddr: string = await cawProfile.clientManager()
   const clientManager = new Contract(clientManagerAddr, clientManagerAbi, l1)
 
   const rawDestEids = await clientManager.getClientChainEids(CLIENT_ID)
@@ -65,7 +65,7 @@ async function main() {
   if (balance < value) throw new Error(`Insufficient L1 balance for LZ fee`)
 
   console.log(`\nSubmitting syncReplication(${CLIENT_ID}, ${BASE_SEPOLIA_EID}, 0)...`)
-  const tx = await cawName.syncReplication(CLIENT_ID, BASE_SEPOLIA_EID, 0, { value })
+  const tx = await cawProfile.syncReplication(CLIENT_ID, BASE_SEPOLIA_EID, 0, { value })
   console.log(`tx: ${tx.hash}`)
 
   const receipt = await tx.wait()

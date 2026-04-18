@@ -6,7 +6,7 @@ import { baseSepolia } from 'wagmi/chains'
 import { apiFetch } from '~/api/client'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { CAW_NAMES_L2_ADDRESS } from '~/../../../abi/addresses'
-import { cawNameL2Abi } from '~/../../../abi/generated'
+import { cawProfileL2Abi } from '~/../../../abi/generated'
 import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
 import { encryptPrivateKey, getEncryptionSignMessage, setDecryptedKey } from '~/services/sessionKeyEncryption'
 
@@ -58,7 +58,7 @@ export const SPEND_LIMIT_OPTIONS = [
 ]
 
 const SESSION_DOMAIN = {
-  name:              'CawNameL2',
+  name:              'CawProfileL2',
   version:           '1',
   chainId:           baseSepolia.id,
   verifyingContract: CAW_NAMES_L2_ADDRESS,
@@ -89,7 +89,7 @@ export function useCreateSession() {
       return null as any // User will retry after connecting
     }
 
-    // Ensure wallet is on Base Sepolia (where CawNameL2 lives)
+    // Ensure wallet is on Base Sepolia (where CawProfileL2 lives)
     if (chainId !== baseSepolia.id) {
       onProgress?.('Switching network...')
       await switchChainAsync({ chainId: baseSepolia.id })
@@ -102,7 +102,7 @@ export function useCreateSession() {
     const l2Client = createPublicClient({ chain: baseSepolia, transport: http() })
     const nonce = await l2Client.readContract({
       address: CAW_NAMES_L2_ADDRESS,
-      abi: cawNameL2Abi,
+      abi: cawProfileL2Abi,
       functionName: 'sessionNonce',
       args: [connectedAddress!],
     }) as bigint

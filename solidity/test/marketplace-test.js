@@ -1,22 +1,22 @@
-const CawName = artifacts.require("CawName");
-const CawNameMinter = artifacts.require("CawNameMinter");
-const CawNameURI = artifacts.require("CawNameURI");
+const CawProfile = artifacts.require("CawProfile");
+const CawProfileMinter = artifacts.require("CawProfileMinter");
+const CawProfileURI = artifacts.require("CawProfileURI");
 const CawClientManager = artifacts.require("CawClientManager");
-const CawNameMarketplace = artifacts.require("CawNameMarketplace");
+const CawProfileMarketplace = artifacts.require("CawProfileMarketplace");
 const MintableCaw = artifacts.require("MintableCaw");
 const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
 
 const truffleAssert = require('truffle-assertions');
 const { BN, expectRevert, time } = require('@openzeppelin/test-helpers');
 
-contract("CawNameMarketplace", (accounts) => {
+contract("CawProfileMarketplace", (accounts) => {
   const deployer = accounts[0];
   const seller = accounts[1];
   const buyer = accounts[2];
   const bidder1 = accounts[3];
   const bidder2 = accounts[4];
 
-  let token, cawNames, minter, uriGenerator, clientManager, marketplace, lzEndpoint;
+  let token, cawProfiles, minter, uriGenerator, clientManager, marketplace, lzEndpoint;
   let tokenId1, tokenId2;
 
   // Deploy a simple ERC20 for testing ERC20 payment
@@ -27,10 +27,10 @@ contract("CawNameMarketplace", (accounts) => {
     const l1Eid = 30101;
     lzEndpoint = await MockLayerZeroEndpoint.new(l1Eid);
     token = await MintableCaw.new();
-    uriGenerator = await CawNameURI.new();
+    uriGenerator = await CawProfileURI.new();
     clientManager = await CawClientManager.new(deployer);
 
-    cawNames = await CawName.new(
+    cawProfiles = await CawProfile.new(
       token.address,
       uriGenerator.address,
       deployer,
@@ -39,22 +39,22 @@ contract("CawNameMarketplace", (accounts) => {
       l1Eid
     );
 
-    minter = await CawNameMinter.new(
+    minter = await CawProfileMinter.new(
       token.address,
-      cawNames.address
+      cawProfiles.address
     );
 
-    await cawNames.setMinter(minter.address);
+    await cawProfiles.setMinter(minter.address);
 
     // Set up a dummy L2 peer (needed for mint to not revert on peerWithMaxPendingTransfers)
     const dummyL2Eid = 40245;
-    await cawNames.setL2Peer(dummyL2Eid, accounts[9]); // dummy peer address
+    await cawProfiles.setL2Peer(dummyL2Eid, accounts[9]); // dummy peer address
 
     // Create a client (needed for minting)
     await clientManager.createClient("Test Client", deployer, dummyL2Eid, 0, 0, 0, 0);
 
     // Deploy marketplace
-    marketplace = await CawNameMarketplace.new(cawNames.address);
+    marketplace = await CawProfileMarketplace.new(cawProfiles.address);
 
     // Use MintableCaw as payment token for ERC20 tests
     paymentToken = token;
@@ -72,18 +72,18 @@ contract("CawNameMarketplace", (accounts) => {
     // Seller approves minter to burn CAW
     await token.approve(minter.address, mintAmount, { from: seller });
 
-    // Mint two CawName NFTs for seller (clientId=1, lzTokenAmount=0)
-    tokenId1 = (await cawNames.nextId()).toNumber();
+    // Mint two CawProfile NFTs for seller (clientId=1, lzTokenAmount=0)
+    tokenId1 = (await cawProfiles.nextId()).toNumber();
     await minter.mint(1, "alice", 0, { from: seller, value: web3.utils.toWei("0.01", "ether") });
 
-    tokenId2 = (await cawNames.nextId()).toNumber();
+    tokenId2 = (await cawProfiles.nextId()).toNumber();
     await minter.mint(1, "bob", 0, { from: seller, value: web3.utils.toWei("0.01", "ether") });
   });
 
   describe("Fixed Price Listing", () => {
     it("should create a fixed price listing with ETH", async () => {
       // Approve marketplace
-      await cawNames.setApprovalForAll(marketplace.address, true, { from: seller });
+      await cawProfiles.setApprovalForAll(marketplace.address, true, { from: seller });
 
       const price = web3.utils.toWei("1", "ether");
       const tx = await marketplace.createListing(
@@ -129,7 +129,7 @@ contract("CawNameMarketplace", (accounts) => {
       });
 
       // Verify NFT transferred
-      const newOwner = await cawNames.ownerOf(tokenId1);
+      const newOwner = await cawProfiles.ownerOf(tokenId1);
       assert.equal(newOwner, buyer);
 
       // Verify listing is no longer active
@@ -143,7 +143,7 @@ contract("CawNameMarketplace", (accounts) => {
 
     it("should forward excess ETH as LZ fee for L2 sync", async () => {
       // Transfer token back to seller for more tests
-      await cawNames.transferFrom(buyer, seller, tokenId1, { from: buyer });
+      await cawProfiles.transferFrom(buyer, seller, tokenId1, { from: buyer });
 
       const price = web3.utils.toWei("0.5", "ether");
       await marketplace.createListing(
@@ -158,12 +158,12 @@ contract("CawNameMarketplace", (accounts) => {
       await marketplace.buy(listingId, { from: buyer, value: totalValue });
 
       // Verify NFT transferred
-      assert.equal(await cawNames.ownerOf(tokenId1), buyer);
+      assert.equal(await cawProfiles.ownerOf(tokenId1), buyer);
     });
 
     it("should create and buy fixed price listing with ERC20", async () => {
       // Transfer back for this test
-      await cawNames.transferFrom(buyer, seller, tokenId1, { from: buyer });
+      await cawProfiles.transferFrom(buyer, seller, tokenId1, { from: buyer });
 
       const price = web3.utils.toWei("1000", "ether");
       await marketplace.createListing(
@@ -179,7 +179,7 @@ contract("CawNameMarketplace", (accounts) => {
       await marketplace.buyWithToken(listingId, price, { from: buyer });
       const sellerBalAfter = BigInt((await paymentToken.balanceOf(seller)).toString());
 
-      assert.equal((await cawNames.ownerOf(tokenId1)), buyer);
+      assert.equal((await cawProfiles.ownerOf(tokenId1)), buyer);
       assert(sellerBalAfter > sellerBalBefore, "Seller should receive ERC20");
     });
   });
@@ -189,7 +189,7 @@ contract("CawNameMarketplace", (accounts) => {
 
     before(async () => {
       // Transfer back
-      await cawNames.transferFrom(buyer, seller, tokenId1, { from: buyer });
+      await cawProfiles.transferFrom(buyer, seller, tokenId1, { from: buyer });
     });
 
     it("should create a Dutch auction listing", async () => {
@@ -234,12 +234,12 @@ contract("CawNameMarketplace", (accounts) => {
 
       await marketplace.buy(dutchListingId, { from: buyer, value: overpay.toString() });
 
-      assert.equal(await cawNames.ownerOf(tokenId1), buyer);
+      assert.equal(await cawProfiles.ownerOf(tokenId1), buyer);
     });
 
     it("should return endPrice after duration expires", async () => {
       // Transfer back and create new Dutch auction
-      await cawNames.transferFrom(buyer, seller, tokenId1, { from: buyer });
+      await cawProfiles.transferFrom(buyer, seller, tokenId1, { from: buyer });
 
       const startPrice = web3.utils.toWei("1", "ether");
       const endPrice = web3.utils.toWei("0.1", "ether");
@@ -258,7 +258,7 @@ contract("CawNameMarketplace", (accounts) => {
 
       // Buy at floor price
       await marketplace.buy(lid, { from: buyer, value: endPrice });
-      assert.equal(await cawNames.ownerOf(tokenId1), buyer);
+      assert.equal(await cawProfiles.ownerOf(tokenId1), buyer);
     });
   });
 
@@ -267,7 +267,7 @@ contract("CawNameMarketplace", (accounts) => {
 
     before(async () => {
       // Transfer back
-      await cawNames.transferFrom(buyer, seller, tokenId1, { from: buyer });
+      await cawProfiles.transferFrom(buyer, seller, tokenId1, { from: buyer });
     });
 
     it("should create an English auction listing", async () => {
@@ -364,7 +364,7 @@ contract("CawNameMarketplace", (accounts) => {
       truffleAssert.eventEmitted(tx, 'AuctionSettled');
 
       // NFT goes to highest bidder (bidder1 with 0.3 ETH)
-      assert.equal(await cawNames.ownerOf(tokenId1), bidder1);
+      assert.equal(await cawProfiles.ownerOf(tokenId1), bidder1);
 
       // Seller gets the payment
       const sellerBalAfter = BigInt(await web3.eth.getBalance(seller));
@@ -375,7 +375,7 @@ contract("CawNameMarketplace", (accounts) => {
   describe("Cancellation", () => {
     it("should allow cancelling a fixed listing", async () => {
       // bidder1 now owns tokenId1, let's use tokenId2 (still owned by seller)
-      await cawNames.setApprovalForAll(marketplace.address, true, { from: seller });
+      await cawProfiles.setApprovalForAll(marketplace.address, true, { from: seller });
 
       const price = web3.utils.toWei("1", "ether");
       await marketplace.createListing(
@@ -424,7 +424,7 @@ contract("CawNameMarketplace", (accounts) => {
   describe("Edge Cases", () => {
     it("should fail if marketplace not approved", async () => {
       // Revoke approval
-      await cawNames.setApprovalForAll(marketplace.address, false, { from: seller });
+      await cawProfiles.setApprovalForAll(marketplace.address, false, { from: seller });
 
       await expectRevert(
         marketplace.createListing(
@@ -435,7 +435,7 @@ contract("CawNameMarketplace", (accounts) => {
       );
 
       // Restore approval
-      await cawNames.setApprovalForAll(marketplace.address, true, { from: seller });
+      await cawProfiles.setApprovalForAll(marketplace.address, true, { from: seller });
     });
 
     it("should fail if non-owner tries to list", async () => {
@@ -457,7 +457,7 @@ contract("CawNameMarketplace", (accounts) => {
       const lid = (await marketplace.nextListingId()).toNumber() - 1;
 
       // Seller transfers NFT away (breaking the listing)
-      await cawNames.transferFrom(seller, accounts[6], tokenId2, { from: seller });
+      await cawProfiles.transferFrom(seller, accounts[6], tokenId2, { from: seller });
 
       // Buy should fail because seller no longer owns the token
       await expectRevert.unspecified(
@@ -465,7 +465,7 @@ contract("CawNameMarketplace", (accounts) => {
       );
 
       // Transfer back for cleanup
-      await cawNames.transferFrom(accounts[6], seller, tokenId2, { from: accounts[6] });
+      await cawProfiles.transferFrom(accounts[6], seller, tokenId2, { from: accounts[6] });
 
       // Cancel the broken listing
       await marketplace.cancelListing(lid, { from: seller });
@@ -536,8 +536,8 @@ contract("CawNameMarketplace", (accounts) => {
 
     before(async () => {
       // Ensure seller owns tokenId2 and marketplace is approved
-      assert.equal(await cawNames.ownerOf(tokenId2), seller);
-      await cawNames.setApprovalForAll(marketplace.address, true, { from: seller });
+      assert.equal(await cawProfiles.ownerOf(tokenId2), seller);
+      await cawProfiles.setApprovalForAll(marketplace.address, true, { from: seller });
     });
 
     it("should allow reclaiming bid when seller transfers NFT away", async () => {
@@ -554,7 +554,7 @@ contract("CawNameMarketplace", (accounts) => {
       await marketplace.placeBid(reclaimAuctionId, { from: bidder1, value: bid });
 
       // Seller transfers NFT to someone else
-      await cawNames.transferFrom(seller, accounts[7], tokenId2, { from: seller });
+      await cawProfiles.transferFrom(seller, accounts[7], tokenId2, { from: seller });
 
       // Advance past auction end
       await time.increase(3700);
@@ -580,7 +580,7 @@ contract("CawNameMarketplace", (accounts) => {
       assert.equal(listing.active, false);
 
       // Transfer back for other tests
-      await cawNames.transferFrom(accounts[7], seller, tokenId2, { from: accounts[7] });
+      await cawProfiles.transferFrom(accounts[7], seller, tokenId2, { from: accounts[7] });
     });
 
     it("should not allow reclaim when seller still owns NFT", async () => {
@@ -603,11 +603,11 @@ contract("CawNameMarketplace", (accounts) => {
       await marketplace.settleAuction(lid);
 
       // Transfer back
-      await cawNames.transferFrom(bidder1, seller, tokenId2, { from: bidder1 });
+      await cawProfiles.transferFrom(bidder1, seller, tokenId2, { from: bidder1 });
     });
 
     it("should allow anyone to call reclaimBid (not just bidder)", async () => {
-      await cawNames.setApprovalForAll(marketplace.address, true, { from: seller });
+      await cawProfiles.setApprovalForAll(marketplace.address, true, { from: seller });
 
       const minBid = web3.utils.toWei("0.1", "ether");
       await marketplace.createListing(
@@ -619,7 +619,7 @@ contract("CawNameMarketplace", (accounts) => {
       await marketplace.placeBid(lid, { from: bidder2, value: web3.utils.toWei("0.2", "ether") });
 
       // Transfer NFT away
-      await cawNames.transferFrom(seller, accounts[7], tokenId2, { from: seller });
+      await cawProfiles.transferFrom(seller, accounts[7], tokenId2, { from: seller });
 
       // Anyone (accounts[5]) can call reclaimBid
       const bidderBalBefore = BigInt(await web3.eth.getBalance(bidder2));
@@ -629,11 +629,11 @@ contract("CawNameMarketplace", (accounts) => {
       assert(bidderBalAfter > bidderBalBefore, "Bidder should receive refund even when called by third party");
 
       // Transfer back
-      await cawNames.transferFrom(accounts[7], seller, tokenId2, { from: accounts[7] });
+      await cawProfiles.transferFrom(accounts[7], seller, tokenId2, { from: accounts[7] });
     });
 
     it("should allow reclaiming ERC20 bid when seller transfers NFT", async () => {
-      await cawNames.setApprovalForAll(marketplace.address, true, { from: seller });
+      await cawProfiles.setApprovalForAll(marketplace.address, true, { from: seller });
 
       const minBid = web3.utils.toWei("100", "ether");
       await marketplace.createListing(
@@ -649,7 +649,7 @@ contract("CawNameMarketplace", (accounts) => {
       const bidderBalBefore = BigInt((await paymentToken.balanceOf(bidder1)).toString());
 
       // Seller transfers away
-      await cawNames.transferFrom(seller, accounts[7], tokenId2, { from: seller });
+      await cawProfiles.transferFrom(seller, accounts[7], tokenId2, { from: seller });
 
       // Reclaim
       await marketplace.reclaimBid(lid, { from: bidder1 });
@@ -658,15 +658,15 @@ contract("CawNameMarketplace", (accounts) => {
       assert(bidderBalAfter > bidderBalBefore, "Bidder should get ERC20 refund");
 
       // Transfer back
-      await cawNames.transferFrom(accounts[7], seller, tokenId2, { from: accounts[7] });
+      await cawProfiles.transferFrom(accounts[7], seller, tokenId2, { from: accounts[7] });
     });
   });
 
   describe("Buy Offers", () => {
     before(async () => {
       // Ensure seller owns tokenId2
-      assert.equal(await cawNames.ownerOf(tokenId2), seller);
-      await cawNames.setApprovalForAll(marketplace.address, true, { from: seller });
+      assert.equal(await cawProfiles.ownerOf(tokenId2), seller);
+      await cawProfiles.setApprovalForAll(marketplace.address, true, { from: seller });
     });
 
     it("should create an ETH offer", async () => {
@@ -697,7 +697,7 @@ contract("CawNameMarketplace", (accounts) => {
       });
 
       // NFT transferred to buyer
-      assert.equal(await cawNames.ownerOf(tokenId2), buyer);
+      assert.equal(await cawProfiles.ownerOf(tokenId2), buyer);
 
       // Seller received ETH
       const sellerBalAfter = BigInt(await web3.eth.getBalance(seller));
@@ -708,7 +708,7 @@ contract("CawNameMarketplace", (accounts) => {
       assert.equal(offer.active, false);
 
       // Transfer back
-      await cawNames.transferFrom(buyer, seller, tokenId2, { from: buyer });
+      await cawProfiles.transferFrom(buyer, seller, tokenId2, { from: buyer });
     });
 
     it("should create and accept an ERC20 offer", async () => {
@@ -726,11 +726,11 @@ contract("CawNameMarketplace", (accounts) => {
       await marketplace.acceptOffer(offerId, { from: seller });
       const sellerBalAfter = BigInt((await paymentToken.balanceOf(seller)).toString());
 
-      assert.equal(await cawNames.ownerOf(tokenId2), buyer);
+      assert.equal(await cawProfiles.ownerOf(tokenId2), buyer);
       assert(sellerBalAfter > sellerBalBefore, "Seller should receive ERC20");
 
       // Transfer back
-      await cawNames.transferFrom(buyer, seller, tokenId2, { from: buyer });
+      await cawProfiles.transferFrom(buyer, seller, tokenId2, { from: buyer });
     });
 
     it("should allow offerer to cancel and reclaim funds", async () => {
@@ -834,11 +834,11 @@ contract("CawNameMarketplace", (accounts) => {
       assert.equal(listing.active, false);
 
       // Transfer back
-      await cawNames.transferFrom(buyer, seller, tokenId2, { from: buyer });
+      await cawProfiles.transferFrom(buyer, seller, tokenId2, { from: buyer });
     });
 
     it("should not allow accepting offer when auction has bids", async () => {
-      await cawNames.setApprovalForAll(marketplace.address, true, { from: seller });
+      await cawProfiles.setApprovalForAll(marketplace.address, true, { from: seller });
 
       // Create English auction with a bid
       await marketplace.createListing(
@@ -865,7 +865,7 @@ contract("CawNameMarketplace", (accounts) => {
       await marketplace.cancelOffer(offerId, { from: buyer });
 
       // Transfer back
-      await cawNames.transferFrom(bidder1, seller, tokenId2, { from: bidder1 });
+      await cawProfiles.transferFrom(bidder1, seller, tokenId2, { from: bidder1 });
     });
   });
 

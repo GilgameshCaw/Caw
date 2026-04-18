@@ -1,4 +1,4 @@
-// contracts/CawName.sol
+// contracts/CawProfile.sol
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
@@ -10,14 +10,14 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 
-import "./CawNameURI.sol";
-import "./CawNameL2.sol";
+import "./CawProfileURI.sol";
+import "./CawProfileL2.sol";
 import "./CawBuyAndBurn.sol";
 
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 import { CawClientManager, ReplicationDestination } from "./CawClientManager.sol";
 
-contract CawName is 
+contract CawProfile is 
   Context,
   ERC721Enumerable,
   Ownable,
@@ -27,9 +27,9 @@ contract CawName is
   using EnumerableSet for EnumerableSet.UintSet;
 
   IERC20 public immutable CAW;
-  CawNameURI public uriGenerator;
+  CawProfileURI public uriGenerator;
 
-  CawNameL2 public cawNameL2;
+  CawProfileL2 public cawProfileL2;
 
   uint256 public totalCaw;
 
@@ -96,7 +96,7 @@ contract CawName is
     OApp(_endpoint, msg.sender)
   {
     clientManager = CawClientManager(payable(_clientManager));
-    uriGenerator = CawNameURI(_gui);
+    uriGenerator = CawProfileURI(_gui);
     buyAndBurn = CawBuyAndBurn(payable(_buyAndBurn));
     CAW = IERC20(_caw);
     mainnetLzId = mainnetEid;
@@ -106,7 +106,7 @@ contract CawName is
     if (_eid != mainnetLzId) {
       peerIds.add(uint256(_eid));
       setPeer(_eid, bytes32(uint256(uint160(_peer))));
-    } else cawNameL2 = CawNameL2(_peer);
+    } else cawProfileL2 = CawProfileL2(_peer);
     emit L2PeerSet(_eid, _peer);
   }
 
@@ -116,7 +116,7 @@ contract CawName is
   }
 
   function setUriGenerator(address _gui) external onlyOwner {
-    uriGenerator = CawNameURI(_gui);
+    uriGenerator = CawProfileURI(_gui);
   }
 
   function tokenURI(uint256 tokenId) override public view returns (string memory) {
@@ -169,7 +169,7 @@ contract CawName is
     uint256 lzEthAmount = msg.value - totalFeesPaid;
 
     if (lzDestId == mainnetLzId) {
-      cawNameL2.deposit(cawClientId, newId, depositAmount);
+      cawProfileL2.deposit(cawClientId, newId, depositAmount);
     } else {
       uint32[] memory tokenIds;
       address[] memory owners;
@@ -276,7 +276,7 @@ contract CawName is
   }
 
   function authenticate(uint32 cawClientId, uint32 tokenId, uint32 lzDestId, uint256 lzTokenAmount) external payable {
-    require(ownerOf(tokenId) == msg.sender, "can not authenticate with a CawName that you do not own");
+    require(ownerOf(tokenId) == msg.sender, "can not authenticate with a CawProfile that you do not own");
 
     (uint256 fee, address feeAddress) = clientManager.getAuthFeeAndAddress(cawClientId);
     uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
@@ -284,7 +284,7 @@ contract CawName is
     _lockWithdrawFeeIfNeeded(cawClientId, tokenId);
 
     if (lzDestId == mainnetLzId)
-      cawNameL2.auth(tokenId, cawClientId);
+      cawProfileL2.auth(tokenId, cawClientId);
     else {
       uint32[] memory tokenIds;
       address[] memory owners;
@@ -315,7 +315,7 @@ contract CawName is
     uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
 
     if (lzDestId == mainnetLzId)
-      cawNameL2.deposit(cawClientId, tokenId, amount);
+      cawProfileL2.deposit(cawClientId, tokenId, amount);
     else {
       uint32[] memory tokenIds;
       address[] memory owners;
@@ -328,7 +328,7 @@ contract CawName is
   }
 
   function deposit(uint32 cawClientId, uint32 tokenId, uint256 amount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
-    require(ownerOf(tokenId) == msg.sender, "can not deposit into a CawName that you do not own");
+    require(ownerOf(tokenId) == msg.sender, "can not deposit into a CawProfile that you do not own");
     depositFor(cawClientId, tokenId, amount, lzDestId, lzTokenAmount);
   }
 
@@ -349,7 +349,7 @@ contract CawName is
   }
 
   function withdraw(uint32 cawClientId, uint32 tokenId, uint256 lzTokenAmount) public payable {
-    require(ownerOf(tokenId) == msg.sender, "can not withdraw from a CawName that you do not own");
+    require(ownerOf(tokenId) == msg.sender, "can not withdraw from a CawProfile that you do not own");
     require(withdrawable[tokenId] > 0, "nothing to withdraw, you may need to withdraw from the L2 first");
 
     uint256 amount = withdrawable[tokenId];
@@ -373,7 +373,7 @@ contract CawName is
 
   /**
    * @notice Transfer a token and immediately sync ownership to L2 via LayerZero.
-   * @dev Requires msg.value to cover the LZ fee. Use syncTransferQuote() on CawNameQuoter to estimate.
+   * @dev Requires msg.value to cover the LZ fee. Use syncTransferQuote() on CawProfileQuoter to estimate.
    *      Also flushes any other pending ownership transfers for the target chain.
    * @param to The recipient address
    * @param tokenId The token to transfer
@@ -435,16 +435,16 @@ contract CawName is
   function _syncClientChains(uint32 clientId, uint32[] memory destEids, uint32 lzDestId, uint256 lzEthAmount, uint256 lzTokenAmount) internal {
     if (lzDestId == mainnetLzId) {
       // Direct call on mainnet
-      cawNameL2.setClientChains(clientId, destEids);
+      cawProfileL2.setClientChains(clientId, destEids);
     } else {
       bytes memory payload = abi.encodeWithSelector(setClientChainsSelector, clientId, destEids);
       lzSend(lzDestId, setClientChainsSelector, destEids.length, payload, lzEthAmount, lzTokenAmount);
     }
   }
 
-  // syncReplicationQuote moved to CawNameQuoter contract
+  // syncReplicationQuote moved to CawProfileQuoter contract
 
-  /// @notice Credit per-token withdraw amounts. Only callable via LayerZero from L2 CawNameL2.
+  /// @notice Credit per-token withdraw amounts. Only callable via LayerZero from L2 CawProfileL2.
   /// @dev SECURITY NOTE (audited 2026-04-07): No `tokenIds.length == amounts.length` check is
   ///      intentional. The only caller is `CawActions.setWithdrawable` (on L2), which constructs
   ///      both arrays from the same `withdrawCount` variable in lockstep — they are guaranteed
@@ -468,7 +468,7 @@ contract CawName is
     bool hasPendingSync = false;
     for (uint256 i = 0; i < chainIds.length(); i++) {
       uint32 chainId = uint32(chainIds.at(i));
-      if (chainId == mainnetLzId) cawNameL2.setOwnerOf(token, to);
+      if (chainId == mainnetLzId) cawProfileL2.setOwnerOf(token, to);
       else {
         pendingTransfers[chainId][pendingTransferEnd[chainId]++] = token;
         hasPendingSync = true;
@@ -539,7 +539,7 @@ contract CawName is
     (tokenIds, owners) = extractPendingTransferUpdates(lzDestId);
     if (tokenIds.length > 0) {
       if (lzDestId == mainnetLzId)
-        cawNameL2.updateOwners(tokenIds, owners);
+        cawProfileL2.updateOwners(tokenIds, owners);
       else {
         bytes memory payload = abi.encodeWithSelector(updateOwnersSelector, tokenIds, owners);
         lzSend(lzDestId, updateOwnersSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
@@ -618,7 +618,7 @@ contract CawName is
 
     // Refund excess LZ fee to tx.origin — the EOA that actually paid.
     // Using msg.sender would break when called through an intermediary contract
-    // (e.g. CawNameMarketplace.acceptOffer -> transferAndSync) because the contract
+    // (e.g. CawProfileMarketplace.acceptOffer -> transferAndSync) because the contract
     // wouldn't have a receive() function to accept the refund.
     _lzSend(
       lzDestId, // Destination chain's endpoint ID.
@@ -630,7 +630,7 @@ contract CawName is
   }
 
 
-  // Most quote functions moved to CawNameQuoter contract to reduce contract size
+  // Most quote functions moved to CawProfileQuoter contract to reduce contract size
   // lzQuote stays here since it needs access to inherited _quote from OApp
 
   function lzQuote(bytes4 selector, uint256 n, bytes memory payload, uint32 lzDestId, bool _payInLzToken) public view returns (MessagingFee memory quote) {

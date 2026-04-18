@@ -213,8 +213,8 @@ async enrichUser(userId, tokenId)
 ```
 
 ### Data Sources
-- **L2 (CawNameL2):** Wallet address, token info
-- **L1 (CawName):** Username lookup
+- **L2 (CawProfileL2):** Wallet address, token info
+- **L1 (CawProfile):** Username lookup
 
 ### Features
 - Exponential backoff for rate limiting

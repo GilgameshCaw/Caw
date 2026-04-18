@@ -61,11 +61,11 @@ async function main() {
   console.log(`  DstEid:  ${dstEid}${dstEid === 40231 ? ' (Arbitrum Sepolia)' : dstEid === 40161 ? ' (Sepolia)' : ''}`)
   console.log(`  Endpoint: ${BASE_SEPOLIA_ENDPOINT}`)
 
-  // Hint: compare with the replicator and the CawNameL2 OApps side-by-side
+  // Hint: compare with the replicator and the CawProfileL2 OApps side-by-side
   if (!args[0]) {
     const otherOapps: Array<[string, string]> = [
       [CAW_ACTIONS_REPLICATOR_L2_ADDRESS, 'replicator (→ archives)'],
-      [CAW_NAMES_L2_ADDRESS, 'CawNameL2 (← L1 CawName)'],
+      [CAW_NAMES_L2_ADDRESS, 'CawProfileL2 (← L1 CawProfile)'],
     ]
     console.log(`  (Also useful: ${otherOapps.map(([a, l]) => `${a} [${l}]`).join(', ')})`)
   }

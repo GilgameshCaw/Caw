@@ -5,7 +5,7 @@
 export const cawActionsAbi = [
   {
     type: 'constructor',
-    inputs: [{ name: '_cawNames', internalType: 'address', type: 'address' }],
+    inputs: [{ name: '_cawProfiles', internalType: 'address', type: 'address' }],
     stateMutability: 'nonpayable',
   },
   {
@@ -83,9 +83,9 @@ export const cawActionsAbi = [
   {
     type: 'function',
     inputs: [],
-    name: 'cawName',
+    name: 'cawProfile',
     outputs: [
-      { name: '', internalType: 'contract CawNameL2', type: 'address' },
+      { name: '', internalType: 'contract CawProfileL2', type: 'address' },
     ],
     stateMutability: 'view',
   },
@@ -652,7 +652,7 @@ export const cawActionsReplicatorAbi = [
     inputs: [
       { name: '_endpoint', internalType: 'address', type: 'address' },
       { name: '_cawActions', internalType: 'address', type: 'address' },
-      { name: '_cawNameL2', internalType: 'address', type: 'address' },
+      { name: '_cawProfileL2', internalType: 'address', type: 'address' },
     ],
     stateMutability: 'nonpayable',
   },
@@ -874,7 +874,7 @@ export const cawActionsReplicatorAbi = [
   {
     type: 'function',
     inputs: [],
-    name: 'cawNameL2',
+    name: 'cawProfileL2',
     outputs: [{ name: '', internalType: 'address', type: 'address' }],
     stateMutability: 'view',
   },
@@ -1187,13 +1187,13 @@ export const cawClientManagerAbi = [
     anonymous: false,
     inputs: [
       {
-        name: 'cawName',
+        name: 'cawProfile',
         internalType: 'address',
         type: 'address',
         indexed: true,
       },
     ],
-    name: 'CawNameSet',
+    name: 'CawProfileSet',
   },
   {
     type: 'event',
@@ -1388,8 +1388,8 @@ export const cawClientManagerAbi = [
   {
     type: 'function',
     inputs: [],
-    name: 'cawName',
-    outputs: [{ name: '', internalType: 'contract ICawName', type: 'address' }],
+    name: 'cawProfile',
+    outputs: [{ name: '', internalType: 'contract ICawProfile', type: 'address' }],
     stateMutability: 'view',
   },
   {
@@ -1690,8 +1690,8 @@ export const cawClientManagerAbi = [
   },
   {
     type: 'function',
-    inputs: [{ name: '_cawName', internalType: 'address', type: 'address' }],
-    name: 'setCawName',
+    inputs: [{ name: '_cawProfile', internalType: 'address', type: 'address' }],
+    name: 'setCawProfile',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -1773,10 +1773,10 @@ export const cawClientManagerAbi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// CawName
+// CawProfile
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-export const cawNameAbi = [
+export const cawProfileAbi = [
   {
     type: 'constructor',
     inputs: [
@@ -2114,9 +2114,9 @@ export const cawNameAbi = [
   {
     type: 'function',
     inputs: [],
-    name: 'cawNameL2',
+    name: 'cawProfileL2',
     outputs: [
-      { name: '', internalType: 'contract CawNameL2', type: 'address' },
+      { name: '', internalType: 'contract CawProfileL2', type: 'address' },
     ],
     stateMutability: 'view',
   },
@@ -2597,7 +2597,7 @@ export const cawNameAbi = [
     outputs: [
       {
         name: '',
-        internalType: 'struct CawName.Token',
+        internalType: 'struct CawProfile.Token',
         type: 'tuple',
         components: [
           { name: 'withdrawable', internalType: 'uint256', type: 'uint256' },
@@ -2641,7 +2641,7 @@ export const cawNameAbi = [
     outputs: [
       {
         name: '',
-        internalType: 'struct CawName.Token[]',
+        internalType: 'struct CawProfile.Token[]',
         type: 'tuple[]',
         components: [
           { name: 'withdrawable', internalType: 'uint256', type: 'uint256' },
@@ -2723,7 +2723,7 @@ export const cawNameAbi = [
     inputs: [],
     name: 'uriGenerator',
     outputs: [
-      { name: '', internalType: 'contract CawNameURI', type: 'address' },
+      { name: '', internalType: 'contract CawProfileURI', type: 'address' },
     ],
     stateMutability: 'view',
   },
@@ -2773,10 +2773,10 @@ export const cawNameAbi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// CawNameL2
+// CawProfileL2
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-export const cawNameL2Abi = [
+export const cawProfileL2Abi = [
   {
     type: 'constructor',
     inputs: [
@@ -3110,8 +3110,8 @@ export const cawNameL2Abi = [
   {
     type: 'function',
     inputs: [],
-    name: 'cawName',
-    outputs: [{ name: '', internalType: 'contract CawName', type: 'address' }],
+    name: 'cawProfile',
+    outputs: [{ name: '', internalType: 'contract CawProfile', type: 'address' }],
     stateMutability: 'view',
   },
   {
@@ -3196,7 +3196,7 @@ export const cawNameL2Abi = [
     outputs: [
       {
         name: '',
-        internalType: 'struct CawNameL2.Token[]',
+        internalType: 'struct CawProfileL2.Token[]',
         type: 'tuple[]',
         components: [
           { name: 'tokenId', internalType: 'uint256', type: 'uint256' },
@@ -3603,13 +3603,13 @@ export const cawNameL2Abi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// CawNameMarketplace
+// CawProfileMarketplace
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-export const cawNameMarketplaceAbi = [
+export const cawProfileMarketplaceAbi = [
   {
     type: 'constructor',
-    inputs: [{ name: '_cawName', internalType: 'address', type: 'address' }],
+    inputs: [{ name: '_cawProfile', internalType: 'address', type: 'address' }],
     stateMutability: 'nonpayable',
   },
   {
@@ -3736,7 +3736,7 @@ export const cawNameMarketplaceAbi = [
       },
       {
         name: 'listingType',
-        internalType: 'enum CawNameMarketplace.ListingType',
+        internalType: 'enum CawProfileMarketplace.ListingType',
         type: 'uint8',
         indexed: false,
       },
@@ -3985,9 +3985,9 @@ export const cawNameMarketplaceAbi = [
   {
     type: 'function',
     inputs: [],
-    name: 'cawName',
+    name: 'cawProfile',
     outputs: [
-      { name: '', internalType: 'contract ICawNameTransfer', type: 'address' },
+      { name: '', internalType: 'contract ICawProfileTransfer', type: 'address' },
     ],
     stateMutability: 'view',
   },
@@ -3997,7 +3997,7 @@ export const cawNameMarketplaceAbi = [
       { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
       {
         name: 'listingType',
-        internalType: 'enum CawNameMarketplace.ListingType',
+        internalType: 'enum CawProfileMarketplace.ListingType',
         type: 'uint8',
       },
       { name: 'paymentToken', internalType: 'address', type: 'address' },
@@ -4055,7 +4055,7 @@ export const cawNameMarketplaceAbi = [
       { name: 'paymentToken', internalType: 'address', type: 'address' },
       {
         name: 'listingType',
-        internalType: 'enum CawNameMarketplace.ListingType',
+        internalType: 'enum CawProfileMarketplace.ListingType',
         type: 'uint8',
       },
       { name: 'startPrice', internalType: 'uint256', type: 'uint256' },
@@ -4178,15 +4178,15 @@ export const cawNameMarketplaceAbi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// CawNameMinter
+// CawProfileMinter
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-export const cawNameMinterAbi = [
+export const cawProfileMinterAbi = [
   {
     type: 'constructor',
     inputs: [
       { name: '_caw', internalType: 'address', type: 'address' },
-      { name: '_cawNames', internalType: 'address', type: 'address' },
+      { name: '_cawProfiles', internalType: 'address', type: 'address' },
     ],
     stateMutability: 'nonpayable',
   },
@@ -4238,13 +4238,13 @@ export const cawNameMinterAbi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// CawNameQuoter
+// CawProfileQuoter
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-export const cawNameQuoterAbi = [
+export const cawProfileQuoterAbi = [
   {
     type: 'constructor',
-    inputs: [{ name: '_cawName', internalType: 'address', type: 'address' }],
+    inputs: [{ name: '_cawProfile', internalType: 'address', type: 'address' }],
     stateMutability: 'nonpayable',
   },
   {
@@ -4272,9 +4272,9 @@ export const cawNameQuoterAbi = [
   {
     type: 'function',
     inputs: [],
-    name: 'cawName',
+    name: 'cawProfile',
     outputs: [
-      { name: '', internalType: 'contract ICawNameForQuoter', type: 'address' },
+      { name: '', internalType: 'contract ICawProfileForQuoter', type: 'address' },
     ],
     stateMutability: 'view',
   },
@@ -4436,10 +4436,10 @@ export const cawNameQuoterAbi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// CawNameURI
+// CawProfileURI
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-export const cawNameUriAbi = [
+export const cawProfileUriAbi = [
   {
     type: 'constructor',
     inputs: [
@@ -4625,10 +4625,10 @@ export const iCawFontDataAbi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ICawName
+// ICawProfile
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-export const iCawNameAbi = [
+export const iCawProfileAbi = [
   {
     type: 'function',
     inputs: [
@@ -4665,10 +4665,10 @@ export const iCawNameAbi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ICawNameForQuoter
+// ICawProfileForQuoter
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-export const iCawNameForQuoterAbi = [
+export const iCawProfileForQuoterAbi = [
   {
     type: 'function',
     inputs: [],
@@ -4800,10 +4800,10 @@ export const iCawNameForQuoterAbi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ICawNameTransfer
+// ICawProfileTransfer
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-export const iCawNameTransferAbi = [
+export const iCawProfileTransferAbi = [
   {
     type: 'event',
     anonymous: false,

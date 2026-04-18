@@ -6,7 +6,7 @@ import "./ISwapRouter.sol";
 
 /// @title CawBuyAndBurn
 /// @notice Swaps ETH for CAW, sends half to the client and burns the other half.
-///         Called atomically by CawName.withdrawFees().
+///         Called atomically by CawProfile.withdrawFees().
 /// @dev The client's fees and the protocol's matching portion are swapped together
 ///      in a single Uniswap trade. Half the CAW goes to the client, half to 0xdead.
 ///      Because the client receives CAW from the same swap, they are incentivized to
@@ -17,7 +17,7 @@ contract CawBuyAndBurn {
   ISwapRouter public immutable router;
   address public immutable WETH;
 
-  address public cawName;
+  address public cawProfile;
 
   address public constant DEAD = 0x000000000000000000000000000000000000dEaD;
 
@@ -29,19 +29,19 @@ contract CawBuyAndBurn {
     WETH = router.WETH();
   }
 
-  /// @notice Set the CawName address. Can only be called once.
-  function setCawName(address _cawName) external {
-    require(cawName == address(0), "Already set");
-    cawName = _cawName;
+  /// @notice Set the CawProfile address. Can only be called once.
+  function setCawProfile(address _cawProfile) external {
+    require(cawProfile == address(0), "Already set");
+    cawProfile = _cawProfile;
   }
 
   /// @notice Swap all incoming ETH for CAW, send half to the client and burn half.
-  ///         Only callable by CawName during withdrawFees().
+  ///         Only callable by CawProfile during withdrawFees().
   /// @param minCawOut Minimum total CAW the swap must produce.
   /// @param client Address to receive half the CAW.
   /// @return clientShare The amount of CAW sent to the client.
   function swapAndSplit(uint256 minCawOut, address client) external payable returns (uint256 clientShare) {
-    require(msg.sender == cawName, "Only CawName");
+    require(msg.sender == cawProfile, "Only CawProfile");
     require(msg.value > 0, "No ETH");
 
     address[] memory path = new address[](2);
