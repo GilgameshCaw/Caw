@@ -213,24 +213,36 @@ contract CawProfile is
   ///      with the protocol: a bad minCawOut hurts the client's own payout equally. A client
   ///      calling withdrawFees(0) would get sandwiched and lose their own fees — self-punishing.
   function withdrawFees(uint256 minCawOut) external {
-    uint256 clientAmount = accruedFees[msg.sender];
+    _withdrawFees(msg.sender, minCawOut);
+  }
+
+  /// @notice Withdraw fees on behalf of a client. Callable by the client's owner.
+  ///         CAW is sent to the client's feeAddress (not the caller).
+  /// @param clientId The client whose fees to withdraw.
+  /// @param minCawOut Minimum total CAW the swap must produce (sandwich protection).
+  function withdrawFeesFor(uint32 clientId, uint256 minCawOut) external {
+    require(clientManager.getClientOwner(clientId) == msg.sender, "Not client owner");
+    address feeAddress = clientManager.getClient(clientId).feeAddress;
+    _withdrawFees(feeAddress, minCawOut);
+  }
+
+  function _withdrawFees(address feeAddress, uint256 minCawOut) internal {
+    uint256 clientAmount = accruedFees[feeAddress];
     require(clientAmount > 0, "No fees to withdraw");
 
-    // Only take the protocol portion matching this client's contribution (1:1 from payFee).
-    // Use min() as a safety net in case the pool has been partially drained.
     uint256 protocolPool = accruedFees[address(buyAndBurn)];
     uint256 protocolAmount = clientAmount < protocolPool ? clientAmount : protocolPool;
 
     // Zero balances before external calls (checks-effects-interactions)
-    accruedFees[msg.sender] = 0;
+    accruedFees[feeAddress] = 0;
     if (protocolAmount > 0) {
       accruedFees[address(buyAndBurn)] -= protocolAmount;
     }
 
     uint256 totalEth = clientAmount + protocolAmount;
-    uint256 cawReceived = buyAndBurn.swapAndSplit{value: totalEth}(minCawOut, msg.sender);
+    uint256 cawReceived = buyAndBurn.swapAndSplit{value: totalEth}(minCawOut, feeAddress);
 
-    emit FeesWithdrawn(msg.sender, cawReceived);
+    emit FeesWithdrawn(feeAddress, cawReceived);
   }
 
   function nextId() public view returns (uint32) {
