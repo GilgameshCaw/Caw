@@ -19,7 +19,7 @@ import {
 } from 'react-icons/hi'
 import Tooltip from '~/components/Tooltip'
 import { useNotificationUnreadStore } from '~/store/notificationUnreadStore'
-import { useSignAndSubmitAction, type ActionTypeKey } from '~/api/actions'
+import { useSignAndSubmitAction, decompressSignedText, type ActionTypeKey } from '~/api/actions'
 import { useAutoRetryStore } from '~/store/autoRetryStore'
 
 interface Actor {
@@ -296,8 +296,11 @@ const Notifications: React.FC = () => {
   // caw they tried to interact with). The render layer can style these
   // differently — title bold, snippet italic and muted.
   const describeFailedAction = (payload: NonNullable<Notification['actionPayload']>): { title: string; snippet?: string; snippetLabel?: string } => {
-    const { actionType, text, receiverUsername, targetCaw } = payload
-    const userTextTrim = text?.trim() ?? ''
+    const { actionType, receiverUsername, targetCaw } = payload
+    // payload.text is smltxt-compressed hex from the signed action — decompress
+    // to plaintext for display. Falls back to empty string on decode failure.
+    const plaintext = payload.text ? decompressSignedText(payload.text) : ''
+    const userTextTrim = plaintext.trim()
     const userSnippet = userTextTrim
       ? (userTextTrim.length > 140 ? userTextTrim.slice(0, 140) + '…' : userTextTrim)
       : ''
@@ -344,12 +347,12 @@ const Notifications: React.FC = () => {
           title: receiverUsername ? `Following @${receiverUsername} failed` : 'Follow failed',
         }
       case 7: // other — tip, image upload, profile update
-        if (text?.startsWith('tip:')) {
+        if (plaintext.startsWith('tip:')) {
           return {
             title: receiverUsername ? `Tip to @${receiverUsername} failed` : 'Tip failed',
           }
         }
-        if (text?.startsWith('p:') || text?.startsWith('profile-update:')) return { title: 'Profile update failed' }
+        if (plaintext.startsWith('p:') || plaintext.startsWith('profile-update:')) return { title: 'Profile update failed' }
         return { title: 'Action failed' }
       default:
         return { title: 'Action failed' }
@@ -530,7 +533,7 @@ const Notifications: React.FC = () => {
         senderId: activeToken.tokenId,
         ...(payload.receiverId != null ? { receiverId: payload.receiverId } : {}),
         ...(payload.receiverCawonce != null ? { receiverCawonce: payload.receiverCawonce } : {}),
-        ...(payload.text != null ? { text: payload.text } : {}),
+        ...(payload.text != null ? { text: decompressSignedText(payload.text) } : {}),
         ...(payload.recipients != null ? { recipients: payload.recipients } : {}),
         ...(hasUserAmounts && payload.amounts != null ? { amounts: payload.amounts.map(a => BigInt(a)) as any } : {}),
       })
