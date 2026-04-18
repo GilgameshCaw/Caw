@@ -378,11 +378,17 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
                     {profileData?.avatarUrl && (
                       <>
                         <img src={profileData.avatarUrl} alt="" className="absolute inset-0 w-full h-full object-cover" />
-                        <div className="absolute inset-0 bg-black/50" />
+                        <div className={`absolute inset-0 ${
+                          profileData.avatarUrl.includes('/images/avatars/') ? 'bg-black/20' : 'bg-black/50'
+                        }`} />
                       </>
                     )}
                     <HiCamera className={`relative w-6 h-6 ${
-                      profileData?.avatarUrl ? 'text-white' : (isDark ? 'text-gray-400' : 'text-gray-500')
+                      profileData?.avatarUrl
+                        ? profileData.avatarUrl.includes('/images/avatars/')
+                          ? 'text-white/50'
+                          : 'text-white'
+                        : (isDark ? 'text-gray-400' : 'text-gray-500')
                     }`} />
                   </>
                 )}
