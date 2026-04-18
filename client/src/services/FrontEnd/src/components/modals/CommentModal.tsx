@@ -1,3 +1,4 @@
+import { getUserAvatar } from "~/utils/defaultAvatar"
 // src/components/CommentModal.tsx
 import React from 'react'
 import type { CawItem } from '~/types'
@@ -36,7 +37,7 @@ export const CommentModal: React.FC<CommentModalProps> = ({ isOpen, caw, onClose
       <div className={`px-4 pt-4 ${isDark ? 'text-white' : 'text-black'}`}>
         <div className="flex items-start space-x-3">
           <img
-            src={caw.user.avatarUrl || caw.user.image || "/images/logo.jpeg"}
+            src={getUserAvatar(caw.user)}
             alt={`${caw.user.username} avatar`}
             className="w-10 h-10 rounded-full object-cover"
           />

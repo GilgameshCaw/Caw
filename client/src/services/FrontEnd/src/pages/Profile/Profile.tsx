@@ -1,3 +1,4 @@
+import { getUserAvatar } from "~/utils/defaultAvatar"
 // src/pages/ProfilePage.tsx
 import React, { useState, useEffect, useRef } from 'react'
 import { Link, useParams, useSearchParams }    from 'react-router-dom'
@@ -900,7 +901,7 @@ export const Profile: React.FC = () => {
             }`}>
               {profileData && (
                 <img
-                  src={optimisticAvatar || profileData.avatarUrl || profileData.image || "/images/logo.jpeg"}
+                  src={optimisticAvatar || getUserAvatar(profileData)}
                   alt={`${profileData.username || displayUsername} avatar`}
                   className="w-full h-full object-cover rounded-full"
                 />

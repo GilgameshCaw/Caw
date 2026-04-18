@@ -1,3 +1,4 @@
+import { getUserAvatar } from "~/utils/defaultAvatar"
 // src/components/QuoteModal.tsx
 import React from 'react'
 import PostForm from '~/components/PostForm'
@@ -86,7 +87,7 @@ export const QuoteModal: React.FC<QuoteModalProps> = ({ isOpen, caw, onClose, on
           <div className="flex items-center gap-3 mb-3">
             {/* Avatar */}
             <img
-              src={caw.user.avatarUrl || caw.user.image || "/images/logo.jpeg"}
+              src={getUserAvatar(caw.user)}
               alt={`${caw.user.username} avatar`}
               className="w-10 h-10 rounded-full object-cover"
             />

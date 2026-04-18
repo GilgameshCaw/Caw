@@ -1,3 +1,4 @@
+import { getUserAvatar } from "~/utils/defaultAvatar"
 // src/components/FeedItem.tsx - UPDATED FOR CONSISTENCY
 import React, { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
@@ -715,7 +716,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 className="w-10 h-10 rounded-full cursor-pointer overflow-hidden border border-gray-700"
               >
                 <img
-                  src={useItem.user.avatarUrl || useItem.user.image || "/images/logo.jpeg"}
+                  src={getUserAvatar(useItem.user)}
                   alt={`${useItem.user.username} avatar`}
                   className="w-full h-full object-cover rounded-full hover:opacity-80 transition-opacity duration-200"
                 />

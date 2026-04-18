@@ -1,3 +1,4 @@
+import { getUserAvatar } from "~/utils/defaultAvatar"
 // src/components/modals/FollowListModal.tsx
 import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -151,7 +152,7 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
                 >
                   <div className={`w-10 h-10 rounded-full overflow-hidden ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`}>
                     <img
-                      src={user.avatarUrl || user.image || "/images/logo.jpeg"}
+                      src={getUserAvatar(user)}
                       alt={user.username}
                       className="w-full h-full rounded-full object-cover"
                     />
