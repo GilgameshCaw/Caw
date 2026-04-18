@@ -2787,6 +2787,18 @@ export const cawProfileAbi = [
   },
   {
     type: 'function',
+    inputs: [
+      { name: 'cawClientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+      { name: 'recipient', internalType: 'address', type: 'address' },
+      { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'withdrawTo',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
     inputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
     name: 'withdrawable',
     outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
@@ -3390,6 +3402,18 @@ export const cawProfileL2Abi = [
       { name: 's', internalType: 'bytes32', type: 'bytes32' },
     ],
     name: 'registerSession',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'message', internalType: 'bytes', type: 'bytes' },
+      { name: 'v', internalType: 'uint8', type: 'uint8' },
+      { name: 'r', internalType: 'bytes32', type: 'bytes32' },
+      { name: 's', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'registerSessionPersonal',
     outputs: [],
     stateMutability: 'nonpayable',
   },
