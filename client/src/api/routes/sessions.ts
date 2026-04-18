@@ -11,22 +11,6 @@ import Redis from 'ioredis'
 const router = Router()
 const redis = new Redis({ port: 6379, host: '127.0.0.1' })
 
-const SESSION_DOMAIN = {
-  name:              'CawProfileL2',
-  version:           '1',
-  verifyingContract: CAW_NAMES_L2_ADDRESS,
-}
-
-const DELEGATION_TYPES = {
-  SessionDelegation: [
-    { name: 'sessionKey',     type: 'address'  },
-    { name: 'expiry',         type: 'uint64'   },
-    { name: 'scopeBitmap',    type: 'uint8'    },
-    { name: 'spendLimit',     type: 'uint256'  },
-    { name: 'nonce',          type: 'uint256'  },
-  ],
-}
-
 // Rate limiting: 20 registrations per address per day (Redis-backed, survives restarts)
 const RATE_LIMIT_MAX = 20
 const RATE_LIMIT_WINDOW = 24 * 60 * 60 // seconds
@@ -79,13 +63,36 @@ function getContract() {
 
 // requestCounter removed — using crypto.randomUUID()
 
+const MONTHS: Record<string, number> = {
+  January: 0, February: 1, March: 2, April: 3, May: 4, June: 5,
+  July: 6, August: 7, September: 8, October: 9, November: 10, December: 11,
+}
+
+function parseExpiryFromMessage(line: string): number {
+  // "Expires: 25 April 2026 00:00:00 UTC"
+  const match = line.match(/Expires: (\d+) (\w+) (\d+) (\d+):(\d+):(\d+) UTC/)
+  if (!match) return 0
+  const [, day, month, year, hh, mm, ss] = match
+  const d = new Date(Date.UTC(+year, MONTHS[month] ?? 0, +day, +hh, +mm, +ss))
+  return Math.floor(d.getTime() / 1000)
+}
+
+function parseSpendLimitFromMessage(line: string): bigint {
+  // "Spend limit: 5M CAW"
+  const match = line.match(/Spend limit: (\d+)([KMB]) CAW/)
+  if (!match) return 0n
+  const [, num, unit] = match
+  const multiplier = unit === 'B' ? 1_000_000_000n : unit === 'M' ? 1_000_000n : 1_000n
+  return BigInt(num) * multiplier
+}
+
 /**
  * Background: submit session registration tx, record rate limit only on success
  */
 async function processSessionRequest(
   requestId: string,
   recoveredAddress: string,
-  delegation: any,
+  message: string,
   signature: string
 ) {
   console.log(`[Sessions] Processing request ${requestId}`)
@@ -95,20 +102,25 @@ async function processSessionRequest(
 
     requests.set(requestId, { status: 'submitting' })
     console.log(`[Sessions] Using contract at: ${CAW_NAMES_L2_ADDRESS}`)
-    console.log(`[Sessions] Scope bitmap: ${delegation.scopeBitmap} (0x${Number(delegation.scopeBitmap).toString(16)})`)
     const sig = ethers.Signature.from(signature)
-    const { sessionKey, expiry, scopeBitmap, spendLimit, nonce } = delegation
+    const messageBytes = ethers.toUtf8Bytes(message)
 
-    const tx = await cawProfileL2.registerSession(
-      sessionKey,
-      BigInt(expiry),
-      Number(scopeBitmap),
-      BigInt(spendLimit),
-      BigInt(nonce),
+    const tx = await cawProfileL2.registerSessionPersonal(
+      messageBytes,
       sig.v,
       sig.r,
       sig.s,
     )
+
+    // Parse expiry and session key from message for DB pre-population
+    const lines = message.split('\n')
+    const spendLimitLine = lines[1] || ''
+    const expiryLine = lines[2] || ''
+    const sessionKeyLine = lines[3] || ''
+    const sessionKey = sessionKeyLine.replace('Session key: ', '').trim()
+    const expiry = parseExpiryFromMessage(expiryLine)
+    const scopeBitmap = 0xBF
+    const spendLimit = parseSpendLimitFromMessage(spendLimitLine)
 
     console.log(`[Sessions] Submitted tx: ${tx.hash}`)
     requests.set(requestId, { status: 'pending', txHash: tx.hash })
@@ -202,52 +214,43 @@ async function processSessionRequest(
 
 /**
  * POST /api/sessions
- * Accepts an EIP-712 signed session delegation, validates the signature,
+ * Accepts a personal_sign signed session message, validates the signature,
  * and kicks off background processing. Returns a requestId for polling.
  */
 router.post('/', async (req: any, res: any) => {
   try {
-    const { delegation, signature } = req.body
+    const { message, signature } = req.body
 
-    if (!delegation || !signature) {
-      return res.status(400).json({ error: 'Missing required fields: delegation and signature' })
+    if (!message || !signature) {
+      return res.status(400).json({ error: 'Missing required fields: message and signature' })
     }
 
-    const { sessionKey, expiry, scopeBitmap, spendLimit, nonce } = delegation
-    if (!sessionKey || !expiry || scopeBitmap === undefined || spendLimit === undefined || nonce === undefined) {
-      return res.status(400).json({ error: 'Missing delegation fields' })
+    // Validate message format
+    const lines = (message as string).split('\n')
+    if (lines.length !== 4 || lines[0] !== 'Enable Quick Sign') {
+      return res.status(400).json({ error: 'Invalid message format' })
     }
 
-    // Server-side validation: reject expired or unreasonably long sessions before paying gas
+    // Parse values from message
+    const expiry = parseExpiryFromMessage(lines[2])
+    const spendLimit = parseSpendLimitFromMessage(lines[1])
+    const sessionKey = lines[3]?.replace('Session key: ', '').trim()
+
+    if (!sessionKey || !expiry) {
+      return res.status(400).json({ error: 'Could not parse session parameters from message' })
+    }
+
+    // Server-side validation
     const nowSeconds = Math.floor(Date.now() / 1000)
-    if (Number(expiry) <= nowSeconds) {
+    if (expiry <= nowSeconds) {
       return res.status(400).json({ error: 'Session already expired' })
     }
-    if (Number(expiry) - nowSeconds > MAX_EXPIRY_SECONDS) {
+    if (expiry - nowSeconds > MAX_EXPIRY_SECONDS) {
       return res.status(400).json({ error: 'Session expiry too far in the future (max 30 days)' })
     }
 
-    // Reject forbidden scope bits server-side (WITHDRAW=0x40 only)
-    if ((Number(scopeBitmap) & 0x40) !== 0) {
-      return res.status(400).json({ error: 'Cannot delegate WITHDRAW actions' })
-    }
-
-    // Verify EIP-712 signature to recover signer address (fast, no RPC needed)
-    const message = {
-      sessionKey,
-      expiry:        BigInt(expiry),
-      scopeBitmap:   Number(scopeBitmap),
-      spendLimit:    BigInt(spendLimit),
-      nonce:         BigInt(nonce),
-    }
-    const domain = { ...SESSION_DOMAIN, chainId: Number(process.env.L2_CHAIN_ID || 84532) }
-
-    const recoveredAddress = ethers.verifyTypedData(
-      domain,
-      DELEGATION_TYPES,
-      message,
-      signature
-    ).toLowerCase()
+    // Recover signer from personal_sign
+    const recoveredAddress = ethers.verifyMessage(message, signature).toLowerCase()
 
     // Rate limit by full recovered address (Redis-backed)
     if (!await checkRateLimit(recoveredAddress)) {
@@ -285,7 +288,7 @@ router.post('/', async (req: any, res: any) => {
     requests.set(requestId, { status: 'submitting' })
     inFlight.add(recoveredAddress)
 
-    processSessionRequest(requestId, recoveredAddress, delegation, signature)
+    processSessionRequest(requestId, recoveredAddress, message, signature)
 
     return res.json({ requestId, status: 'submitting' })
   } catch (err: any) {

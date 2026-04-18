@@ -388,6 +388,214 @@ contract CawProfileL2 is
     emit SessionCreated(signer, sessionKey, expiry, scopeBitmap, spendLimit);
   }
 
+  /// @notice Register a session key using a human-readable personal_sign message.
+  ///         Message format (4 lines, separated by \n):
+  ///           Enable Quick Sign
+  ///           Spend limit: 5M CAW
+  ///           Expires: 25 April 2026 00:00:00 UTC
+  ///           Session key: 0x742d...3e
+  function registerSessionPersonal(
+    bytes memory message,
+    uint8 v, bytes32 r, bytes32 s
+  ) external {
+    // Recover signer from personal_sign prefix
+    bytes32 digest = keccak256(abi.encodePacked(
+      "\x19Ethereum Signed Message:\n",
+      _uint2str(message.length),
+      message
+    ));
+    address signer = ecrecover(digest, v, r, s);
+    require(signer != address(0), "Invalid signature");
+
+    // Parse the message
+    (uint256 spendLimit, uint64 expiry, address sessionKey) = _parseSessionMessage(message);
+
+    require(sessionKey != address(0), "Zero session key");
+    require(expiry > block.timestamp, "Already expired");
+
+    uint256 nonce = sessionNonce[signer];
+    sessionNonce[signer]++;
+
+    uint8 scopeBitmap = 0xBF; // all actions except WITHDRAW (bit 6)
+    sessions[signer][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit);
+    emit SessionCreated(signer, sessionKey, expiry, scopeBitmap, spendLimit);
+  }
+
+  /// @dev Parse "Enable Quick Sign\nSpend limit: 5M CAW\nExpires: 25 April 2026 00:00:00 UTC\nSession key: 0x..."
+  function _parseSessionMessage(bytes memory msg_) internal pure returns (uint256 spendLimit, uint64 expiry, address sessionKey) {
+    // Split into lines
+    bytes[] memory lines = _splitLines(msg_);
+    require(lines.length == 4, "Expected 4 lines");
+
+    // Line 0: "Enable Quick Sign" (just validate)
+    require(keccak256(lines[0]) == keccak256("Enable Quick Sign"), "Invalid header");
+
+    // Line 1: "Spend limit: 5M CAW"
+    spendLimit = _parseSpendLimit(lines[1]);
+
+    // Line 2: "Expires: 25 April 2026 00:00:00 UTC"
+    expiry = _parseExpiry(lines[2]);
+
+    // Line 3: "Session key: 0x..."
+    sessionKey = _parseSessionKey(lines[3]);
+  }
+
+  function _splitLines(bytes memory data) internal pure returns (bytes[] memory) {
+    // Count newlines
+    uint256 count = 1;
+    for (uint256 i = 0; i < data.length; i++) {
+      if (data[i] == 0x0A) count++;
+    }
+    bytes[] memory lines = new bytes[](count);
+    uint256 lineIdx = 0;
+    uint256 start = 0;
+    for (uint256 i = 0; i < data.length; i++) {
+      if (data[i] == 0x0A) {
+        lines[lineIdx] = _slice(data, start, i);
+        lineIdx++;
+        start = i + 1;
+      }
+    }
+    lines[lineIdx] = _slice(data, start, data.length);
+    return lines;
+  }
+
+  function _slice(bytes memory data, uint256 from, uint256 to) internal pure returns (bytes memory) {
+    bytes memory result = new bytes(to - from);
+    for (uint256 i = from; i < to; i++) result[i - from] = data[i];
+    return result;
+  }
+
+  /// @dev Parse "Spend limit: 5M CAW" → 5000000
+  function _parseSpendLimit(bytes memory line) internal pure returns (uint256) {
+    // Skip "Spend limit: " (14 bytes)
+    require(line.length > 18, "Invalid spend limit");
+    uint256 number = 0;
+    uint256 i = 14;
+    while (i < line.length && line[i] >= 0x30 && line[i] <= 0x39) {
+      number = number * 10 + (uint8(line[i]) - 0x30);
+      i++;
+    }
+    require(number > 0, "Zero spend limit");
+    // Expect "M CAW" or "K CAW" or "B CAW"
+    require(i < line.length, "Missing unit");
+    if (line[i] == 'M') return number * 1_000_000;
+    if (line[i] == 'K') return number * 1_000;
+    if (line[i] == 'B') return number * 1_000_000_000;
+    revert("Invalid unit (expected K, M, or B)");
+  }
+
+  /// @dev Parse "Expires: 25 April 2026 00:00:00 UTC" → unix timestamp
+  function _parseExpiry(bytes memory line) internal pure returns (uint64) {
+    // Skip "Expires: " (9 bytes)
+    require(line.length > 30, "Invalid expiry");
+    uint256 i = 9;
+
+    // Day (1-2 digits)
+    uint256 day = 0;
+    while (i < line.length && line[i] >= 0x30 && line[i] <= 0x39) {
+      day = day * 10 + (uint8(line[i]) - 0x30);
+      i++;
+    }
+    require(day >= 1 && day <= 31, "Invalid day");
+    i++; // skip space
+
+    // Month name
+    uint256 monthStart = i;
+    while (i < line.length && line[i] != 0x20) i++;
+    uint256 month = _parseMonth(_slice(line, monthStart, i));
+    i++; // skip space
+
+    // Year (4 digits)
+    uint256 year = 0;
+    for (uint256 j = 0; j < 4; j++) {
+      year = year * 10 + (uint8(line[i + j]) - 0x30);
+    }
+    i += 4;
+    i++; // skip space
+
+    // HH:MM:SS
+    uint256 hour   = (uint8(line[i]) - 0x30) * 10 + (uint8(line[i+1]) - 0x30);
+    uint256 minute = (uint8(line[i+3]) - 0x30) * 10 + (uint8(line[i+4]) - 0x30);
+    uint256 second = (uint8(line[i+6]) - 0x30) * 10 + (uint8(line[i+7]) - 0x30);
+
+    return uint64(_toUnixTimestamp(year, month, day, hour, minute, second));
+  }
+
+  function _parseMonth(bytes memory m) internal pure returns (uint256) {
+    bytes32 h = keccak256(m);
+    if (h == keccak256("January"))   return 1;
+    if (h == keccak256("February"))  return 2;
+    if (h == keccak256("March"))     return 3;
+    if (h == keccak256("April"))     return 4;
+    if (h == keccak256("May"))       return 5;
+    if (h == keccak256("June"))      return 6;
+    if (h == keccak256("July"))      return 7;
+    if (h == keccak256("August"))    return 8;
+    if (h == keccak256("September")) return 9;
+    if (h == keccak256("October"))   return 10;
+    if (h == keccak256("November"))  return 11;
+    if (h == keccak256("December"))  return 12;
+    revert("Invalid month");
+  }
+
+  /// @dev Convert date components to unix timestamp (UTC). Only valid for years >= 1970.
+  function _toUnixTimestamp(uint256 year, uint256 month, uint256 day, uint256 hour, uint256 minute, uint256 second) internal pure returns (uint256) {
+    require(year >= 1970, "Year before epoch");
+    uint256 timestamp = 0;
+    // Years
+    for (uint256 y = 1970; y < year; y++) {
+      timestamp += _isLeapYear(y) ? 366 days : 365 days;
+    }
+    // Months
+    uint8[12] memory daysInMonth = [31,28,31,30,31,30,31,31,30,31,30,31];
+    if (_isLeapYear(year)) daysInMonth[1] = 29;
+    for (uint256 m = 1; m < month; m++) {
+      timestamp += uint256(daysInMonth[m - 1]) * 1 days;
+    }
+    // Days, hours, minutes, seconds
+    timestamp += (day - 1) * 1 days + hour * 1 hours + minute * 1 minutes + second;
+    return timestamp;
+  }
+
+  function _isLeapYear(uint256 year) internal pure returns (bool) {
+    return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+  }
+
+  /// @dev Parse "Session key: 0x..." → address
+  function _parseSessionKey(bytes memory line) internal pure returns (address) {
+    // Skip "Session key: 0x" (15 bytes)
+    require(line.length == 55, "Invalid session key length");
+    bytes memory hexStr = _slice(line, 15, 55);
+    return address(uint160(_hexToUint(hexStr)));
+  }
+
+  function _hexToUint(bytes memory hexStr) internal pure returns (uint256 result) {
+    for (uint256 i = 0; i < hexStr.length; i++) {
+      uint8 c = uint8(hexStr[i]);
+      uint8 val;
+      if (c >= 0x30 && c <= 0x39) val = c - 0x30;
+      else if (c >= 0x61 && c <= 0x66) val = c - 0x61 + 10;
+      else if (c >= 0x41 && c <= 0x46) val = c - 0x41 + 10;
+      else revert("Invalid hex char");
+      result = result * 16 + val;
+    }
+  }
+
+  function _uint2str(uint256 value) internal pure returns (bytes memory) {
+    if (value == 0) return "0";
+    uint256 temp = value;
+    uint256 digits;
+    while (temp != 0) { digits++; temp /= 10; }
+    bytes memory buffer = new bytes(digits);
+    while (value != 0) {
+      digits--;
+      buffer[digits] = bytes1(uint8(48 + value % 10));
+      value /= 10;
+    }
+    return buffer;
+  }
+
   /// @notice Revoke a session key. Callable by the delegating wallet.
   function revokeSession(address sessionKey) external {
     delete sessions[msg.sender][sessionKey];

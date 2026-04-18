@@ -364,16 +364,19 @@ contract CawProfile is
   }
 
   function withdraw(uint32 cawClientId, uint32 tokenId, uint256 lzTokenAmount) public payable {
+    withdrawTo(cawClientId, tokenId, msg.sender, lzTokenAmount);
+  }
+
+  /// @notice Withdraw CAW to any address. Only callable by the token owner.
+  function withdrawTo(uint32 cawClientId, uint32 tokenId, address recipient, uint256 lzTokenAmount) public payable {
     require(ownerOf(tokenId) == msg.sender, "can not withdraw from a CawProfile that you do not own");
     require(withdrawable[tokenId] > 0, "nothing to withdraw, you may need to withdraw from the L2 first");
+    require(recipient != address(0), "Cannot withdraw to zero address");
 
     uint256 amount = withdrawable[tokenId];
     totalCaw -= withdrawable[tokenId];
     withdrawable[tokenId] = 0;
 
-    // Honor the withdraw fee that was locked in when this token first authenticated with the
-    // client. If the client has since LOWERED their fee, the user gets the lower rate. If the
-    // client has RAISED their fee, the user pays only the locked-in rate.
     (uint256 currentFee, address feeAddress) = clientManager.getWithdrawFeeAndAddress(cawClientId);
     uint256 fee = currentFee;
     if (withdrawFeeLocked[cawClientId][tokenId]) {
@@ -382,7 +385,7 @@ contract CawProfile is
     }
     uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
 
-    CAW.transfer(msg.sender, amount);
+    CAW.transfer(recipient, amount);
     _updateNewOwners(peerWithMaxPendingTransfers(), lzEthAmount, lzTokenAmount);
   }
 

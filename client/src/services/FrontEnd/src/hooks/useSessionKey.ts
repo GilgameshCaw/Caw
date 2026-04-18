@@ -1,12 +1,11 @@
 import { useCallback, useEffect } from 'react'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
-import { useSignTypedData, useSignMessage, useSwitchChain, useChainId, useAccount } from 'wagmi'
+import { useSignMessage, useSwitchChain, useChainId, useAccount } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { baseSepolia } from 'wagmi/chains'
 import { apiFetch } from '~/api/client'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { CAW_NAMES_L2_ADDRESS } from '~/../../../abi/addresses'
-import { cawProfileL2Abi } from '~/../../../abi/generated'
 import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
 import { encryptPrivateKey, getEncryptionSignMessage, setDecryptedKey } from '~/services/sessionKeyEncryption'
 
@@ -57,6 +56,35 @@ export const SPEND_LIMIT_OPTIONS = [
   { label: 'No limit', value: BigInt(0) },
 ]
 
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December']
+
+function formatSpendLimitForMessage(spendLimit: bigint): string {
+  const n = Number(spendLimit)
+  if (n === 0) return '0M'
+  if (n >= 1_000_000_000 && n % 1_000_000_000 === 0) return `${n / 1_000_000_000}B`
+  if (n >= 1_000_000 && n % 1_000_000 === 0) return `${n / 1_000_000}M`
+  if (n >= 1_000 && n % 1_000 === 0) return `${n / 1_000}K`
+  // Round up to nearest million
+  return `${Math.ceil(n / 1_000_000)}M`
+}
+
+function buildSessionMessage(sessionKeyAddress: string, spendLimit: bigint, expiryTimestamp: number): string {
+  const d = new Date(expiryTimestamp * 1000)
+  const day = d.getUTCDate()
+  const month = MONTHS[d.getUTCMonth()]
+  const year = d.getUTCFullYear()
+  const hh = String(d.getUTCHours()).padStart(2, '0')
+  const mm = String(d.getUTCMinutes()).padStart(2, '0')
+  const ss = String(d.getUTCSeconds()).padStart(2, '0')
+
+  return [
+    'Enable Quick Sign',
+    `Spend limit: ${formatSpendLimitForMessage(spendLimit)} CAW`,
+    `Expires: ${day} ${month} ${year} ${hh}:${mm}:${ss} UTC`,
+    `Session key: ${sessionKeyAddress}`,
+  ].join('\n')
+}
+
 const SESSION_DOMAIN = {
   name:              'CawProfileL2',
   version:           '1',
@@ -64,18 +92,7 @@ const SESSION_DOMAIN = {
   verifyingContract: CAW_NAMES_L2_ADDRESS,
 } as const
 
-const DELEGATION_TYPES = {
-  SessionDelegation: [
-    { name: 'sessionKey',     type: 'address'  },
-    { name: 'expiry',         type: 'uint64'   },
-    { name: 'scopeBitmap',    type: 'uint8'    },
-    { name: 'spendLimit',     type: 'uint256'  },
-    { name: 'nonce',          type: 'uint256'  },
-  ],
-} as const
-
 export function useCreateSession() {
-  const { signTypedDataAsync } = useSignTypedData()
   const { signMessageAsync } = useSignMessage()
   const { switchChainAsync } = useSwitchChain()
   const { isConnected, address: connectedAddress } = useAccount()
@@ -97,66 +114,32 @@ export function useCreateSession() {
 
     onProgress?.('Generating session key...')
 
-    // Fetch the signer's current session nonce from L2 contract
-    const { createPublicClient, http } = await import('viem')
-    const l2Client = createPublicClient({ chain: baseSepolia, transport: http() })
-    const nonce = await l2Client.readContract({
-      address: CAW_NAMES_L2_ADDRESS,
-      abi: cawProfileL2Abi,
-      functionName: 'sessionNonce',
-      args: [connectedAddress!],
-    }) as bigint
-
     const expiry = Math.floor(Date.now() / 1000) + durationSeconds
 
     // Generate ephemeral keypair
     const privateKey = generatePrivateKey()
     const sessionAccount = privateKeyToAccount(privateKey)
 
-    const message = {
-      sessionKey:    sessionAccount.address,
-      expiry:        BigInt(expiry),
-      scopeBitmap:   DEFAULT_SCOPE,
-      spendLimit,
-      nonce,
-    }
+    const message = buildSessionMessage(sessionAccount.address, spendLimit, expiry)
 
-    console.log('[QuickSign] domain:', SESSION_DOMAIN)
     console.log('[QuickSign] message:', message)
-    console.log('[QuickSign] types:', DELEGATION_TYPES)
 
     onProgress?.('Sign to authorize key...')
 
-    // Owner signs the delegation (one wallet popup)
     let signature: `0x${string}`
     try {
-      signature = await signTypedDataAsync({
-        domain:      SESSION_DOMAIN,
-        types:       DELEGATION_TYPES,
-        primaryType: 'SessionDelegation',
-        message,
-      })
+      signature = await signMessageAsync({ message })
     } catch (err) {
-      console.error('[QuickSign] signTypedData failed:', err)
+      console.error('[QuickSign] signMessage failed:', err)
       throw err
     }
 
     console.log('[QuickSign] signature obtained, submitting to validator...')
     onProgress?.('Submitting...')
 
-    // Submit to the validator API — returns immediately with a requestId
     const result = await apiFetch<{ requestId: string; status: string }>('/api/sessions', {
       method: 'POST',
-      body: JSON.stringify({
-        delegation: {
-          sessionKey:    sessionAccount.address,
-          expiry:        expiry.toString(),
-          scopeBitmap:   DEFAULT_SCOPE,
-          spendLimit:    spendLimit.toString(),
-          nonce:         nonce.toString(),
-        },
-        signature,
-      }),
+      body: JSON.stringify({ message, signature }),
     })
 
     console.log('[QuickSign] Request created:', result.requestId)
@@ -223,7 +206,7 @@ export function useCreateSession() {
     }
 
     return { address: sessionAccount.address, expiry }
-  }, [isConnected, connectedAddress, openConnectModal, chainId, signTypedDataAsync, signMessageAsync, switchChainAsync, setSession])
+  }, [isConnected, connectedAddress, openConnectModal, chainId, signMessageAsync, switchChainAsync, setSession])
 }
 
 export function useRevokeSession() {
