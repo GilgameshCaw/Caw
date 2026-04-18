@@ -8,6 +8,8 @@ const CawNameL2 = artifacts.require("CawNameL2");
 const CawNameMinter = artifacts.require("CawNameMinter");
 const CawNameQuoter = artifacts.require("CawNameQuoter");
 const CawActions = artifacts.require("CawActions");
+const CawBuyAndBurn = artifacts.require("CawBuyAndBurn");
+const MockSwapRouter = artifacts.require("MockSwapRouter");
 const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
 // const ethereumjs = require("ethereumjs-util");
 
@@ -531,11 +533,13 @@ contract('CawNames', function(accounts, x) {
     web3.eth.defaultAccount = accounts[0];
     l1Endpoint = await MockLayerZeroEndpoint.new(l1);
     l2Endpoint = await MockLayerZeroEndpoint.new(l2);
-    buyAndBurnAddress = gilg;
-
     console.log("Deploying MintableCaw...")
     token = token || await MintableCaw.new();
     console.log("MintableCaw deployed at:", token.address)
+
+    var mockRouter = await MockSwapRouter.new(token.address);
+    var buyAndBurn = await CawBuyAndBurn.new(token.address, mockRouter.address);
+    buyAndBurnAddress = buyAndBurn.address;
 
     clientManager = clientManager || await CawClientManager.new(buyAndBurnAddress);
 
@@ -546,6 +550,7 @@ contract('CawNames', function(accounts, x) {
     await l1Endpoint.setDestLzEndpoint(cawNamesL2.address, l2Endpoint.address);
 
     cawNames = cawNames || await CawName.new(token.address, uriGenerator.address, buyAndBurnAddress, clientManager.address, l1Endpoint.address, l1);
+    await buyAndBurn.setCawName(cawNames.address);
     await cawNamesL2.setL1Peer(l1, cawNames.address, false);
     await l2Endpoint.setDestLzEndpoint(cawNames.address, l1Endpoint.address);
     await cawNames.setL2Peer(l2, cawNamesL2.address);

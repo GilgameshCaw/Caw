@@ -420,6 +420,7 @@ const LINKING_STEPS = [
     phase: 2,
     contract: 'CawName',
     method: 'setMinter',
+    getter: 'minter',
     args: (state) => [state.addresses.CawNameMinter],
     condition: (state) => state.addresses.CawName && state.addresses.CawNameMinter,
   },
@@ -449,6 +450,7 @@ const LINKING_STEPS = [
     phase: 2,
     contract: 'CawNameL2_L1',
     method: 'setCawActions',
+    getter: 'cawActions',
     args: (state) => [state.addresses.CawActions_L1],
     condition: (state) => state.addresses.CawNameL2_L1 && state.addresses.CawActions_L1,
   },
@@ -458,6 +460,7 @@ const LINKING_STEPS = [
     phase: 2,
     contract: 'CawNameL2_L1',
     method: 'setCawActionsReplicator',
+    getter: 'cawActionsReplicator',
     args: (state) => [state.addresses.CawActionsReplicator_L1],
     condition: (state) => state.addresses.CawNameL2_L1 && state.addresses.CawActionsReplicator_L1,
   },
@@ -501,6 +504,7 @@ const LINKING_STEPS = [
     phase: 3,
     contract: 'CawNameL2_L2',
     method: 'setCawActions',
+    getter: 'cawActions',
     args: (state) => [state.addresses.CawActions_L2],
     condition: (state) => state.addresses.CawNameL2_L2 && state.addresses.CawActions_L2,
   },
@@ -510,6 +514,7 @@ const LINKING_STEPS = [
     phase: 3,
     contract: 'CawNameL2_L2',
     method: 'setCawActionsReplicator',
+    getter: 'cawActionsReplicator',
     args: (state) => [state.addresses.CawActionsReplicator_L2],
     condition: (state) => state.addresses.CawNameL2_L2 && state.addresses.CawActionsReplicator_L2,
   },
@@ -534,6 +539,7 @@ const LINKING_STEPS = [
     phase: 3,
     contract: 'CawNameL2_L2b',
     method: 'setCawActions',
+    getter: 'cawActions',
     args: (state) => [state.addresses.CawActions_L2b],
     condition: (state) => state.addresses.CawNameL2_L2b && state.addresses.CawActions_L2b,
   },
@@ -543,6 +549,7 @@ const LINKING_STEPS = [
     phase: 3,
     contract: 'CawNameL2_L2b',
     method: 'setCawActionsReplicator',
+    getter: 'cawActionsReplicator',
     args: (state) => [state.addresses.CawActionsReplicator_L2b],
     condition: (state) => state.addresses.CawNameL2_L2b && state.addresses.CawActionsReplicator_L2b,
   },
@@ -1191,6 +1198,34 @@ class MultiChainDeployer {
       }
     }
 
+    // Auto-skip: if the step has a `getter` field, read the current on-chain
+    // value and compare to args[0]. Saves a transaction when the setter would
+    // be a no-op (e.g. setCawActions already pointing at the right address).
+    if (step.getter && !step.skipIf) {
+      try {
+        const contract = this.getContract(step.contract);
+        const chainConfig = { env: this.env, ...CHAINS[this.getChainKey(step.chain)] };
+        const args = step.args(this.state, chainConfig);
+        if (contract && contract[step.getter]) {
+          // For setters like setL2Peer(eid, addr), the getter is peers(eid).
+          // `getterArgs` optionally specifies which args to pass to the getter.
+          const getterArgs = step.getterArgs
+            ? step.getterArgs(this.state, chainConfig)
+            : [];
+          const current = await contract[step.getter](...getterArgs);
+          const expected = args[step.getterCompareArgIndex || 0];
+          const currentStr = String(current).toLowerCase();
+          const expectedStr = String(expected).toLowerCase();
+          if (currentStr === expectedStr || currentStr.endsWith(expectedStr.replace('0x', ''))) {
+            console.log(`  Skipping "${step.name}" - already set`);
+            return;
+          }
+        }
+      } catch (e) {
+        // Getter failed — proceed with the setter
+      }
+    }
+
     const chainConfig = { env: this.env, ...CHAINS[chainKey] };
 
     // Support fully custom steps (e.g. multi-contract operations like LZ config)
@@ -1240,50 +1275,75 @@ class MultiChainDeployer {
     console.log(`PHASE ${phase}`);
     console.log(`${'='.repeat(50)}`);
 
-    // Get contracts for this phase, sorted by dependencies
+    // Get contracts for this phase
     const phaseContracts = Object.entries(CONTRACTS)
       .filter(([_, config]) => config.phase === phase)
       .map(([key, _]) => key);
 
-    // Deploy in dependency order
-    const deployed = new Set(Object.keys(this.state.addresses));
+    // Deploy in dependency order. Contracts on DIFFERENT chains whose deps are
+    // all satisfied can deploy in parallel — saves ~30-60s per parallel batch.
     const toDeploy = [...phaseContracts];
 
-    let progress = true;
-    while (toDeploy.length > 0 && progress) {
-      progress = false;
-      for (let i = toDeploy.length - 1; i >= 0; i--) {
-        const key = toDeploy[i];
-        const config = CONTRACTS[key];
-        const depsReady = config.dependencies.every(dep => this.state.addresses[dep]);
+    while (toDeploy.length > 0) {
+      // Find all contracts whose deps are ready AND that are on distinct chains
+      // (can't parallelize two deploys on the same chain — nonce conflicts).
+      const ready = toDeploy.filter(key =>
+        CONTRACTS[key].dependencies.every(dep => this.state.addresses[dep])
+      );
+      if (ready.length === 0) {
+        console.warn(`Could not deploy (missing dependencies): ${toDeploy.join(', ')}`);
+        break;
+      }
 
-        if (depsReady) {
-          try {
-            await this.deploy(key);
-            deployed.add(key);
-            toDeploy.splice(i, 1);
-            progress = true;
-          } catch (e) {
-            console.error(`Failed to deploy ${key}: ${e.message}`);
-            throw e;
-          }
+      // Group by chain, pick one per chain for parallel deployment
+      const byChain = {};
+      for (const key of ready) {
+        const chain = CONTRACTS[key].chain;
+        if (!byChain[chain]) byChain[chain] = key;
+      }
+      const batch = Object.values(byChain);
+
+      if (batch.length > 1) {
+        console.log(`\n   Deploying in parallel: ${batch.join(', ')}`);
+      }
+
+      const results = await Promise.allSettled(
+        batch.map(key => this.deploy(key))
+      );
+      for (let i = 0; i < batch.length; i++) {
+        if (results[i].status === 'rejected') {
+          console.error(`Failed to deploy ${batch[i]}: ${results[i].reason.message}`);
+          throw results[i].reason;
         }
+        toDeploy.splice(toDeploy.indexOf(batch[i]), 1);
       }
     }
 
-    if (toDeploy.length > 0) {
-      console.warn(`Could not deploy (missing dependencies): ${toDeploy.join(', ')}`);
-    }
-
-    // Run linking steps for this phase
+    // Run linking steps for this phase. Steps on different chains run in
+    // parallel; steps on the same chain run sequentially (nonce ordering).
     const phaseLinks = LINKING_STEPS.filter(s => s.phase === phase);
-    for (const step of phaseLinks) {
-      try {
-        await this.executeLink(step);
-      } catch (e) {
-        console.error(`Failed: ${step.name} - ${e.message}`);
-        // Continue with other steps
+    if (phaseLinks.length > 0) {
+      // Group by chain
+      const linksByChain = {};
+      for (const step of phaseLinks) {
+        const chain = step.chain;
+        if (!linksByChain[chain]) linksByChain[chain] = [];
+        linksByChain[chain].push(step);
       }
+
+      // Run each chain's steps sequentially, but all chains in parallel
+      await Promise.allSettled(
+        Object.entries(linksByChain).map(async ([chain, steps]) => {
+          for (const step of steps) {
+            try {
+              await this.executeLink(step);
+            } catch (e) {
+              console.error(`Failed: ${step.name} - ${e.message}`);
+              // Continue with other steps on this chain
+            }
+          }
+        })
+      );
     }
   }
 
@@ -1291,6 +1351,18 @@ class MultiChainDeployer {
     console.log('\nStarting full deployment...');
     console.log(`   Environment: ${this.env}`);
     console.log(`   Expected deployer: ${EXPECTED_DEPLOYER}`);
+
+    // Pre-initialize all chains in parallel so later deploy/link steps don't
+    // wait for serial RPC connections. Each initChain is ~2-3s of RPC round-trips.
+    const allChainKeys = new Set();
+    for (const [_, config] of Object.entries(CONTRACTS)) {
+      allChainKeys.add(this.getChainKey(config.chain));
+    }
+    for (const step of LINKING_STEPS) {
+      allChainKeys.add(this.getChainKey(step.chain));
+    }
+    console.log(`\nPre-connecting to ${allChainKeys.size} chains...`);
+    await Promise.all([...allChainKeys].map(k => this.initChain(k)));
 
     // Deploy in phases
     for (const phase of [1, 2, 3, 4, 5]) {
@@ -1300,6 +1372,16 @@ class MultiChainDeployer {
 
   async redeploy(contractKey) {
     console.log(`\nRedeploying ${contractKey} and dependents...\n`);
+
+    // Pre-initialize all chains in parallel
+    const allChainKeys = new Set();
+    for (const [_, config] of Object.entries(CONTRACTS)) {
+      allChainKeys.add(this.getChainKey(config.chain));
+    }
+    for (const step of LINKING_STEPS) {
+      allChainKeys.add(this.getChainKey(step.chain));
+    }
+    await Promise.all([...allChainKeys].map(k => this.initChain(k)));
 
     // Find all contracts that depend on this one (transitive closure).
     // A dep that is flagged `cascadeBreak` halts the propagation — its
