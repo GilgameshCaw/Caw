@@ -106,19 +106,19 @@ export default function runServices(fullConfig: RunServicesConfig) {
   process.on('SIGINT', async () => {
     sigintCount++;
 
-    if (sigintCount > 2) {
-      console.error('SIGINT caught again, force exiting');
+    if (sigintCount >= 2) {
+      console.error('Force exiting');
       process.exit(1);
     }
 
     console.warn(
-      'SIGINT caught. Services have 30s to stop. Use three SIGINTs to exit immediately.',
+      'SIGINT caught. Stopping services... Press Ctrl+C again to force exit.',
     );
 
     setTimeout(() => {
-      console.error('Services not stopped in 30s');
+      console.error('Services not stopped in 10s, force exiting');
       process.exit(1);
-    }, 30_000).unref();
+    }, 10_000).unref();
 
     await Promise.all(runningInstances.map(async (i) => i.stop()));
     process.exit(0);
