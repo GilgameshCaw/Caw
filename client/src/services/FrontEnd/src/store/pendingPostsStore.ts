@@ -56,10 +56,10 @@ export const usePendingPostsStore = create<PendingPostsStore>((set) => ({
       pendingPosts: [pendingPost, ...state.pendingPosts]
     }))
 
-    // Auto-remove after 30 seconds if still pending
+    // Auto-remove after 30 seconds if still pending and not tracked by TxQueueMonitor
     setTimeout(() => {
       set((state) => ({
-        pendingPosts: state.pendingPosts.filter(p => p.tempId !== tempId)
+        pendingPosts: state.pendingPosts.filter(p => p.tempId !== tempId || p.txQueueId)
       }))
     }, 30000)
 

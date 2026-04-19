@@ -28,6 +28,7 @@ export const CawPage: React.FC = () => {
   const allPendingPosts = usePendingPostsStore(s => s.pendingPosts)
   const pendingReplies = useMemo(() => allPendingPosts.filter(p => p.replyToId === id), [allPendingPosts, id])
   const [showSignInModal, setShowSignInModal] = useState(false)
+  const [pollingReplies, setPollingReplies] = useState(false)
 
   // Function to refresh comments after posting a reply
   const refreshComments = async () => {
@@ -63,23 +64,32 @@ export const CawPage: React.FC = () => {
     return () => clearInterval(interval)
   }, [caw?.status, id])
 
-  // Poll for pending replies on the main caw (user just submitted a reply)
+  // Start polling when replyPending is set
   useEffect(() => {
-    if (!caw || !caw.replyPending) return
+    if (caw?.replyPending && !pollingReplies) setPollingReplies(true)
+  }, [caw?.replyPending])
 
-    console.log('[CawPage] Starting reply poll for main caw:', caw.id)
+  // Poll for pending replies until both replyPending clears AND no PENDING comments remain
+  useEffect(() => {
+    if (!pollingReplies) return
+
+    console.log('[CawPage] Starting reply poll for caw:', id)
     const interval = setInterval(async () => {
       try {
         const { caw: fetched, comments: fetchedComments } =
           await apiFetch<{ caw: CawItem; comments: CawItem[] }>(`/api/caws/${id}`)
 
+        console.log('[CawPage] Poll result:', {
+          replyPending: fetched.replyPending,
+          commentCount: fetchedComments.length,
+          commentStatuses: fetchedComments.map(c => ({ id: c.id, status: c.status, content: c.content?.slice(0, 30) })),
+        })
         setCaw(fetched)
-        // Only update comments if the reply was confirmed (new comments available)
-        // This avoids resetting paginated comments during polling
-        if (!fetched.replyPending) {
-          setComments(fetchedComments)
-          console.log('[CawPage] Reply confirmed, updating comments and stopping poll')
-          clearInterval(interval)
+        setComments(fetchedComments)
+        const hasPendingComments = fetchedComments.some(c => c.status === 'PENDING')
+        if (!fetched.replyPending && !hasPendingComments) {
+          console.log('[CawPage] Reply confirmed, stopping poll')
+          setPollingReplies(false)
         }
       } catch (error) {
         console.error('Error polling for reply updates:', error)
@@ -87,7 +97,7 @@ export const CawPage: React.FC = () => {
     }, 3000)
 
     return () => clearInterval(interval)
-  }, [caw?.replyPending, id])
+  }, [pollingReplies, id])
 
   const loadMoreComments = async () => {
     if (!commentCursor || loadingMore) return
@@ -233,7 +243,11 @@ export const CawPage: React.FC = () => {
                 <FeedItem item={post as CawItem} isReply={true} hideParentPreview={true} />
               </div>
             ))}
-            {comments.map((comm) => (
+            {comments.filter(comm => {
+              if (comm.status !== 'PENDING') return true
+              const sig = `${comm.user.tokenId}:${comm.content?.trim()}`
+              return !pendingReplies.some(p => `${p.user?.tokenId}:${p.content?.trim()}` === sig)
+            }).map((comm) => (
               <div key={comm.id} className="relative">
                 <FeedItem
                   item={comm}
