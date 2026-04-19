@@ -24,8 +24,6 @@ import {
   HiOutlineUserAdd,
   HiOutlineColorSwatch,
   HiOutlineUser,
-  HiOutlineSun,
-  HiOutlineMoon
 } from 'react-icons/hi'
 import cawLogo from '~/assets/images/caw-logo.png'
 import { useInstanceStore } from '~/store/instanceStore'
