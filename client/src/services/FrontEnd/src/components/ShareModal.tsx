@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { HiX, HiLink, HiMail, HiShare, HiCheck } from 'react-icons/hi'
 import { FaXTwitter, FaFacebook, FaWhatsapp, FaTelegram } from 'react-icons/fa6'
 import { useTheme } from '~/hooks/useTheme'
@@ -22,6 +22,13 @@ export const ShareModal: React.FC<ShareModalProps> = ({
   const [copied, setCopied] = useState(false)
   const shareUrl = `${window.location.origin}${url}`
   const shareText = text || title
+
+  useEffect(() => {
+    if (!isOpen) return
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [isOpen, onClose])
 
   if (!isOpen) return null
 
@@ -124,9 +131,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
               <button
                 onClick={handleNativeShare}
                 className={`w-full mb-4 px-4 py-3 rounded-full flex items-center justify-center space-x-2 transition ${
-                  isDark
-                    ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                    : 'bg-blue-500 hover:bg-blue-600 text-white'
+                  'bg-yellow-500 hover:bg-yellow-400 text-black font-medium'
                 }`}
               >
                 <HiShare className="w-5 h-5" />
@@ -157,14 +162,14 @@ export const ShareModal: React.FC<ShareModalProps> = ({
             </button>
 
             {/* Share options grid */}
-            <div className="grid grid-cols-3 gap-3">
+            <div className="flex flex-wrap justify-center gap-3">
               {shareOptions.map((option) => (
                 <a
                   key={option.name}
                   href={option.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className={`flex flex-col items-center justify-center p-3 rounded-lg transition ${
+                  className={`flex flex-col items-center justify-center p-3 rounded-lg transition w-[calc(33.333%-0.5rem)] ${
                     isDark
                       ? 'bg-white/5 hover:bg-white/10'
                       : 'bg-gray-50 hover:bg-gray-100'
