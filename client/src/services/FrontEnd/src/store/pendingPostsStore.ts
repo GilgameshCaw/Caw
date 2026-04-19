@@ -9,11 +9,12 @@ interface PendingPost extends Partial<CawItem> {
   isPending: true
   isFailed?: boolean // Track if the post failed to submit
   txQueueId?: number // Track the associated txQueue ID
+  replyToId?: string
 }
 
 interface PendingPostsStore {
   pendingPosts: PendingPost[]
-  addPendingPost: (post: { content: string; username: string; tokenId: number; displayName?: string; image?: string; avatarUrl?: string }) => string
+  addPendingPost: (post: { content: string; username: string; tokenId: number; displayName?: string; image?: string; avatarUrl?: string; replyToId?: string }) => string
   updatePostWithTxQueueId: (tempId: string, txQueueId: number) => void
   markPostAsFailed: (txQueueId: number) => void
   removePendingPost: (tempId: string) => void
@@ -47,7 +48,8 @@ export const usePendingPostsStore = create<PendingPostsStore>((set) => ({
       hasLiked: false,
       hasRecawed: false,
       cawonce: 0,
-      isPending: true
+      isPending: true,
+      replyToId: post.replyToId,
     }
 
     set((state) => ({

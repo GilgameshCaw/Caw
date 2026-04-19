@@ -173,7 +173,7 @@ router.post('/', async (req, res) => {
   const timings: Record<string, number> = {}
   const mark = (label: string) => { timings[label] = Date.now() - reqStart }
   try {
-    const { data, domain, types, signature, isQuote, pendingDepositTxHash } = req.body
+    const { data, domain, types, signature, isQuote, pendingDepositTxHash, retriedTxQueueId } = req.body
 
     // Validate pendingDepositTxHash shape if provided. The server does NOT verify
     // the hash synchronously (that would block the request path on an L1 RPC call).
@@ -765,18 +765,41 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // Create the transaction queue entry (or return existing if duplicate signature)
+    // Create the transaction queue entry (or return existing if duplicate signature).
+    // If this is a retry, atomically mark the original as 'retried' in the same transaction
+    // so we never mark-without-creating or create-without-marking.
     let txQueueEntry
+    const parsedRetryId = retriedTxQueueId != null ? Number(retriedTxQueueId) : null
+    if (parsedRetryId != null && isNaN(parsedRetryId)) {
+      return res.status(400).json({ error: 'Invalid retriedTxQueueId' })
+    }
+
     try {
-      txQueueEntry = await prisma.txQueue.create({
-        data: {
-          senderId: data.senderId,          // ← pull out the on-chain sender
-          payload: { data, domain, types, isQuote: isQuote || false },
-          signedTx: signature,
-          pendingDepositTxHash: sanitizedPendingDepositTxHash
+      txQueueEntry = await prisma.$transaction(async (tx) => {
+        if (parsedRetryId != null) {
+          const updated = await tx.txQueue.updateMany({
+            where: { id: parsedRetryId, status: 'failed' },
+            data: { status: 'retried' }
+          })
+          if (updated.count === 0) {
+            throw Object.assign(new Error('Original txQueue is not in failed state — retry already submitted'), { retryConflict: true })
+          }
+          console.log(`[Actions] Marked TxQueue ${parsedRetryId} as retried`)
         }
+
+        return tx.txQueue.create({
+          data: {
+            senderId: data.senderId,
+            payload: { data, domain, types, isQuote: isQuote || false },
+            signedTx: signature,
+            pendingDepositTxHash: sanitizedPendingDepositTxHash
+          }
+        })
       })
     } catch (err: any) {
+      if (err.retryConflict) {
+        return res.status(409).json({ error: err.message })
+      }
       if (err.code === 'P2002') {
         // Duplicate signature — find the existing entry and return it
         const existing = await prisma.txQueue.findFirst({ where: { signedTx: signature } })

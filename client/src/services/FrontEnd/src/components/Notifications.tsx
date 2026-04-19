@@ -536,6 +536,7 @@ const Notifications: React.FC = () => {
         ...(payload.text != null ? { text: decompressSignedText(payload.text) } : {}),
         ...(payload.recipients != null ? { recipients: payload.recipients } : {}),
         ...(hasUserAmounts && payload.amounts != null ? { amounts: payload.amounts.map(a => BigInt(a)) as any } : {}),
+        retriedTxQueueId: payload.originalTxQueueId,
       })
       if (result) {
         // Hide the old failed notification so the list reflects the retry.

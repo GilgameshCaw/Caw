@@ -10,8 +10,20 @@ import { privateKeyToAccount } from 'viem/accounts'
 import { useAutoRetryStore } from '~/store/autoRetryStore'
 import { TYPES, DOMAIN } from '~/api/actions'
 
-// Track retry counts per TxQueue ID to prevent infinite loops
-const cawonceRetries = new Map<number, number>()
+// Track retry counts per TxQueue ID to prevent infinite loops.
+// Persisted to sessionStorage so retries don't reset on page refresh.
+const RETRY_STORAGE_KEY = 'caw:cawonceRetries'
+function loadRetries(): Map<number, number> {
+  try {
+    const raw = sessionStorage.getItem(RETRY_STORAGE_KEY)
+    if (raw) return new Map(JSON.parse(raw))
+  } catch {}
+  return new Map()
+}
+function saveRetries(map: Map<number, number>) {
+  try { sessionStorage.setItem(RETRY_STORAGE_KEY, JSON.stringify([...map])) } catch {}
+}
+const cawonceRetries = loadRetries()
 const MAX_CAWONCE_RETRIES = 2
 
 // Global callbacks for feed updates - set by Feed component
@@ -92,16 +104,15 @@ export function useTxQueueMonitor() {
               useQuickSignRenewStore.getState().show('spend_limit')
             } else if (reason.includes('cawonce already used')) {
               // Cawonce collision — auto-retry with a fresh cawonce using Quick Sign.
-              // If Quick Sign isn't available or retries exhausted, silently drop it.
-              const retryCount = cawonceRetries.get(status.id) || 0
-              if (retryCount >= MAX_CAWONCE_RETRIES) {
-                console.warn(`[TxQueueMonitor] Cawonce retry limit reached for TxQueue ${status.id}`)
-                cawonceRetries.delete(status.id)
-                // Retries exhausted — the DataCleaner will escalate to an
-                // ACTION_FAILED notification after 24h if still unresolved.
+              // Each txqueue ID gets exactly one retry attempt.
+              if (cawonceRetries.has(status.id)) {
+                console.log(`[TxQueueMonitor] TxQueue ${status.id} already retried, skipping`)
               } else {
-                cawonceRetries.set(status.id, retryCount + 1)
-                console.log(`[TxQueueMonitor] Cawonce collision for TxQueue ${status.id}, auto-retrying (attempt ${retryCount + 1})`)
+                // Mark as retried IMMEDIATELY so a page refresh or subsequent
+                // poll during the async retry won't start another attempt.
+                cawonceRetries.set(status.id, MAX_CAWONCE_RETRIES)
+                saveRetries(cawonceRetries)
+                console.log(`[TxQueueMonitor] Cawonce collision for TxQueue ${status.id}, auto-retrying`)
 
                 // Flip the "retrying" flag BEFORE kicking off the async work so
                 // the Notifications UI can swap its Retry button for a
@@ -159,11 +170,12 @@ export function useTxQueueMonitor() {
                     const isQuote = status.payload?.isQuote || false
                     await apiFetch('/api/actions', {
                       method: 'POST',
-                      body: JSON.stringify({ data: message, domain, types, signature, isQuote }),
+                      body: JSON.stringify({ data: message, domain, types, signature, isQuote, retriedTxQueueId: status.id }),
                     })
 
                     console.log(`[TxQueueMonitor] Auto-retried TxQueue ${status.id} with cawonce ${freshCawonce}`)
                     cawonceRetries.delete(status.id)
+                    saveRetries(cawonceRetries)
                     retrySucceeded = true
 
                     // Hide the ACTION_FAILED notification the server created
@@ -304,7 +316,7 @@ export function useTxQueueMonitor() {
             const isQuote = entry.payload?.isQuote || false
             await apiFetch('/api/actions', {
               method: 'POST',
-              body: JSON.stringify({ data: message, domain: DOMAIN, types: TYPES, signature, isQuote }),
+              body: JSON.stringify({ data: message, domain: DOMAIN, types: TYPES, signature, isQuote, retriedTxQueueId: entry.id }),
             })
 
             console.log(`[TxQueueMonitor] Mount-retried TxQueue ${entry.id} with cawonce ${freshCawonce}`)

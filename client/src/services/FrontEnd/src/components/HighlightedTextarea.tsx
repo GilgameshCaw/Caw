@@ -55,14 +55,13 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   const getHighlightedText = (text: string) => {
     if (!text) return null
 
-    // Regex for @mentions and #hashtags
-    // @mentions: @ followed by alphanumeric/underscore characters
-    // #hashtags: # followed by alphanumeric/underscore characters
-    const regex = /([@#][a-zA-Z0-9_]+)/g
+    // Regex for @mentions, #hashtags, and $cashtags
+    const regex = /([@#$][a-zA-Z0-9_]+)/g
     const parts = text.split(regex)
+    const isMatch = /^[@#$][a-zA-Z0-9_]+$/
 
     return parts.map((part, index) => {
-      if (part.startsWith('@') || part.startsWith('#')) {
+      if (isMatch.test(part)) {
         return (
           <span key={index} className="text-yellow-500">
             {part}

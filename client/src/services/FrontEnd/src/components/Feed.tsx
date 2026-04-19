@@ -470,8 +470,8 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       {/* Section title (rendered after suggested users) */}
       {title}
 
-      {/* Show pending posts at the top */}
-      {showPending && pendingPosts.map(post => (
+      {/* Show pending posts at the top (exclude replies — those show on the caw's page) */}
+      {showPending && pendingPosts.filter(p => !p.replyToId).map(post => (
         <FeedItem key={post.tempId} item={post as CawItem} />
       ))}
 

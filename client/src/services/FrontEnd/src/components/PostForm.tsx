@@ -994,12 +994,13 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       const response = await signAndSubmit(firstParams)
       if (!response) return
 
-      if (!replyTo && activeToken) {
+      if (activeToken) {
         const tempId = addPendingPost({
           content: chunks[0],
           username: activeToken.username,
           tokenId: effectiveTokenId,
-          avatarUrl: avatars[effectiveTokenId] || getUserAvatar({ tokenId: effectiveTokenId })
+          avatarUrl: avatars[effectiveTokenId] || getUserAvatar({ tokenId: effectiveTokenId }),
+          replyToId: replyTo?.id,
         })
         if (response.txQueueId) updatePostWithTxQueueId(tempId, response.txQueueId)
       }

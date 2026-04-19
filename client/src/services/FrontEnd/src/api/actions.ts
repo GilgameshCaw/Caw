@@ -206,6 +206,7 @@ export type ActionParams = {
   amounts?:       BigInt[]
   text?:          string
   isQuote?:       boolean
+  retriedTxQueueId?: number
 }
 
 /**
@@ -686,6 +687,7 @@ export function useSignAndSubmitAction() {
           data: message, domain, types, signature,
           isQuote: params.isQuote || false,
           ...(pendingDepositTxHash ? { pendingDepositTxHash } : {}),
+          ...(params.retriedTxQueueId ? { retriedTxQueueId: params.retriedTxQueueId } : {}),
         })
       })
 

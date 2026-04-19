@@ -62,10 +62,11 @@ export const actionProcessorService: Service = {
         } catch (err) {
           if (err instanceof StaleTokenError) {
             console.warn(`[ActionProcessor] Skipping stale event ${raw.id}: ${err.message}`)
+            lastId = raw.id
           } else {
             console.error(`[ActionProcessor] Failed to process backlog event ${raw.id}:`, err)
+            // Don't advance lastId — retry this event on next restart
           }
-          lastId = raw.id
         }
         ctx.heartbeat('listen')
       }
@@ -85,10 +86,11 @@ export const actionProcessorService: Service = {
             } catch (err) {
               if (err instanceof StaleTokenError) {
                 console.warn(`[ActionProcessor] Skipping stale event ${rawEventId}: ${(err as Error).message}`)
+                lastId = rawEventId
               } else {
                 console.error(`[ActionProcessor] Failed to process event ${rawEventId}:`, err)
+                // Don't advance lastId — retry on next message/restart
               }
-              lastId = rawEventId
             }
           }
         }

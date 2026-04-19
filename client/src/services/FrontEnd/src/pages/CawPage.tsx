@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import PostForm from "~/components/PostForm";
 import MainLayout from '~/layouts/MainLayout'
@@ -9,6 +9,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { useTokenDataStore, useActiveToken } from '~/store/tokenDataStore'
 import { HiArrowLeft } from 'react-icons/hi'
 import SignInModal from '~/components/modals/SignInModal'
+import { usePendingPostsStore } from '~/store/pendingPostsStore'
 
 export const CawPage: React.FC = () => {
   const { id } = useParams<{ id: string }>()
@@ -24,6 +25,8 @@ export const CawPage: React.FC = () => {
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const activeToken = useActiveToken()
   const isAuthenticated = !!activeToken?.username
+  const allPendingPosts = usePendingPostsStore(s => s.pendingPosts)
+  const pendingReplies = useMemo(() => allPendingPosts.filter(p => p.replyToId === id), [allPendingPosts, id])
   const [showSignInModal, setShowSignInModal] = useState(false)
 
   // Function to refresh comments after posting a reply
@@ -225,6 +228,11 @@ export const CawPage: React.FC = () => {
         {/* Comments Section */}
         {isAuthenticated ? (
           <div className="space-y-0 relative">
+            {pendingReplies.map((post) => (
+              <div key={post.tempId} className="relative">
+                <FeedItem item={post as CawItem} isReply={true} hideParentPreview={true} />
+              </div>
+            ))}
             {comments.map((comm) => (
               <div key={comm.id} className="relative">
                 <FeedItem
