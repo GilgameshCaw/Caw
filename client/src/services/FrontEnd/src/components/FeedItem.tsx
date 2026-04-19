@@ -125,7 +125,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   // A quote is a RECAW with content (isQuote=true from API).
   // A pure recaw is a RECAW with empty content (handled below).
   // A reply is a CAW with a parent.
-  const isQuote = !!(item.isQuote && !isReply);
+  const isQuote = !!item.isQuote;
   if (item.content === "" && item.parent) {
     // Check if the recaw is by the current user
     const userId = item.user.tokenId;
@@ -1022,7 +1022,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
             >
               <div className="flex items-center gap-2 mb-1.5">
                 <img
-                  src={item.parent.user.avatarUrl || item.parent.user.image || '/images/logo.jpeg'}
+                  src={getUserAvatar(item.parent.user)}
                   alt=""
                   className="w-5 h-5 rounded-full object-cover border border-gray-700"
                 />
