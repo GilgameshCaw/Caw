@@ -33,9 +33,9 @@ const ProfileChooser: React.FC = () => {
   const { data: activeUserData } = useUserByUsername(activeToken?.username)
   useEffect(() => {
     if (activeToken && activeUserData) {
-      setAvatar(activeToken.tokenId, activeUserData.avatarUrl || null)
+      setAvatar(activeToken.tokenId, getUserAvatar(activeUserData) || null)
     }
-  }, [activeToken?.tokenId, activeUserData?.avatarUrl])
+  }, [activeToken?.tokenId, activeUserData?.avatarUrl, activeUserData?.defaultAvatarId])
 
   // Pending L1→L2 deposit in flight — show "+X CAW pending" alongside staked.
   // We keep a per-token localStorage hint so the badge can render instantly
@@ -253,7 +253,7 @@ const ProfileChooser: React.FC = () => {
       const allTokens = Object.values(tokensByAddress).flat()
       for (const token of allTokens) {
         apiFetch(`/api/users/${token.username}`)
-          .then(data => setAvatar(token.tokenId, data.avatarUrl || null))
+          .then(data => setAvatar(token.tokenId, getUserAvatar(data) || null))
           .catch(() => {})
       }
     }
