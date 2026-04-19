@@ -5,11 +5,15 @@ Solidity smart contracts for the CAW decentralized social network as described i
 ## Contracts
 
 ### Core Contracts
-- **CawActions.sol** - Processes social actions (post, like, follow, etc.)
-- **CawName.sol** - ERC-721 username NFTs on L1 (Ethereum)
-- **CawNameL2.sol** - Username state mirror on L2 (Base)
+- **CawActions.sol** - Processes social actions (post, like, follow, tip, etc.) with EIP-712 signature verification
+- **CawProfile.sol** - ERC-721 username NFTs on L1 (Ethereum)
+- **CawProfileL2.sol** - Username state mirror on L2 (Base)
 - **CawClientManager.sol** - Client/app registration, fee management, and replication configuration
-- **CawNameMinter.sol** - Username minting with CAW token burning
+- **CawProfileMinter.sol** - Username minting with CAW token burning
+- **CawProfileMarketplace.sol** - On-chain profile trading
+- **CawProfileQuoter.sol** - Minting price quotes
+- **CawProfileURI.sol** - On-chain SVG renderer for profile NFTs (with CawFontDataA/B)
+- **CawBuyAndBurn.sol** - Token economics: buy and burn mechanism
 
 ### Cross-Chain Replication
 - **CawActionsReplicator.sol** - Replicates action data to other chains via LayerZero

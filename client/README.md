@@ -1,8 +1,8 @@
-# caw client
-
+# CAW Client
 
 ### To start
 
+```bash
 # install dependencies
 npm install
 
@@ -11,7 +11,7 @@ npm run prisma:reset
 
 # run everything in dev
 npm run dev
-
+```
 
 ## 🗄️ Database & Cache Setup
 
@@ -39,12 +39,13 @@ docker run --rm -d \
 
 # Set your DATABASE_URL
 export DATABASE_URL="postgresql://caw:caw@127.0.0.1:5432/caw"
+```
 
+### Option 2: Native install
 
-### Option 2: Native install.
+**macOS:**
 
-# Option 2A (macOS):
-
+```bash
 # Install
 brew install postgresql redis
 
@@ -58,10 +59,11 @@ psql postgres -c "CREATE DATABASE caw OWNER caw;"
 
 # Set your DATABASE_URL
 export DATABASE_URL="postgresql://caw:caw@127.0.0.1:5432/caw"
+```
 
+**Ubuntu:**
 
-# Option 2B (ubuntu):
-
+```bash
 # Install
 sudo apt update
 sudo apt install -y postgresql redis-server
@@ -75,10 +77,9 @@ sudo systemctl enable --now redis-server
 
 # Set your DATABASE_URL
 export DATABASE_URL="postgresql://caw:caw@127.0.0.1:5432/caw"
+```
 
-
-
-
+---
 
 ## External API Keys
 
@@ -95,135 +96,82 @@ To enable the GIF picker in post composition, you need a Giphy API key:
 
 **Note:** The free tier allows 100 requests per hour. For production usage, you may need a paid plan.
 
+### RPC URLs
+
+The backend needs RPC access to both L1 (Ethereum) and L2 (Base). Configure in `.env`:
+
+```env
+# L1 — used for name resolution and deposit watching
+MAINNET_RPC_URL="https://sepolia.drpc.org"
+L1_RPC_URL="wss://eth-sepolia.g.alchemy.com/v2/YOUR_KEY"
+
+# L2 — used by the validator, event gatherer, and chain sync
+L2_RPC_URL="wss://base-sepolia.infura.io/ws/v3/YOUR_KEY"
+L2_RPC_URL_HTTP="https://base-sepolia.infura.io/v3/YOUR_KEY"
+
+# Validator wallet (for submitting on-chain transactions)
+VALIDATOR_PRIVATE_KEY="0x..."
+```
+
+WebSocket URLs (`wss://`) are required for the RawEventsGatherer. HTTP URLs are used as fallback by other services. You'll need an Alchemy, Infura, or similar provider key.
+
+---
+
+## Authentication
+
+Session-based wallet authentication — no passwords, no JWTs for end users.
+
+1. **Wallet connect** — User connects via RainbowKit/Wagmi (MetaMask, WalletConnect, etc.)
+2. **Passive sign** — Frontend requests a `personal_sign` of a timestamped message:
+   `"Verify wallet ownership for CAW\nTimestamp: {unix_seconds}"`
+3. **Session creation** — Server recovers the signing address, looks up the user's
+   CAW NFT token IDs, and creates a Redis-backed session (returned as an opaque
+   `x-session-token` header). Subsequent API calls include this header.
+4. **Multi-token support** — A single session can authorize multiple token IDs
+   owned by the same wallet. Switching active profiles doesn't require re-signing.
+5. **DM auth shortcut** — The `POST /api/auth/verify-dm` endpoint combines session
+   creation with DM key registration in a single signature, so enabling DMs
+   doesn't require a separate sign step.
+
+Sessions expire after inactivity. The frontend detects expired sessions and
+prompts a re-sign transparently.
+
 ---
 
 ## Structure
 
-this repo is organized into services which should be capable of running across
-different machines.
-
-**However**, all services can be run together in the same process. This makes
-development and testing much easier, and even in production you might decide to
-simply run some/all services together. Configure the list of services
-you want to include:
+The backend is organized into services that can run together in a single process
+or independently across machines. Configure which services to run in
+`config.json`:
 
 ```jsonc
 // config.json
 [
   {
-    "service": "hello",
-    "config": {}
-  },
-  {
-    "service": "hello",
-    // use instanceName if you want multiple instances of the same service
-    // (defaults to the same name as the service, but instanceName must be
-    // unique)
-    "instanceName": "hello-copy",
-    "config": {}
-  },
-  {
-    "service": "other-service",
-    "config": {
-      // config specific to other-service goes here
-    }
-  },
-]
-```
-
-To make this work, all comms between services must go over a socket/etc. Do not
-pass native objects directly or rely on globals. This will prevent services from
-running independently. Don't even think about it.
-
-## Manual Testing Guide
-
-```sh
-npm install
-cp config.template.json config.json
-npm start
-# to stop, use Ctrl+C
-```
-
-The template config used above just uses the `Hello` service, which can be used
-to check all the stuff local to this repo is working properly.
-
-Beyond that, the one and only meaningful service so far is `RawEventsGatherer`,
-which gets events from ethereum rpc and inserts them into a postgres database.
-
-To get this working:
-
-**Step 1**: Postgres
-
-You'll need postgres. If you're on macOS I recommend
-[postgresapp](https://postgresapp.com/). Other options include docker, aws, and
-running a good-old-fashioned native postgres instance.
-
-**Step 2**: Ethereum Network
-
-You'll need access to an ethereum network with a contract like this deployed:
-
-```solidity
-contract Emitter {
-    uint256 id;
-    event ActionsProcessed(uint256 indexed id, bytes data);
-
-    constructor() {
-        id = 0;
-    }
-
-    function process(bytes calldata data) public {
-        emit ActionsProcessed(id, data);
-        id++;
-    }
-}
-```
-
-Then call that process function (or otherwise) to emit the event.
-
-You will need:
-- A websocket rpc url for the network (starts with `ws://` or `wss://`)
-- The deployed contract address
-
-[Hardhat](https://hardhat.org/) is a viable option here (rpc at
-`ws://127.0.0.1:8545`).
-
-**Step 3**: Configure
-
-Add `RawEventsGatherer` to your `config.json`:
-
-```jsonc
-[
-  // ...
-  {
     "service": "RawEventsGatherer",
-    "config": {
-      "rpcUrl": "see ethereum step",
-      "contractAddress": "see ethereum step",
-      "postgresDb": { /* see postgres step */ }
-    }
+    "config": { /* service-specific config */ }
+  },
+  {
+    "service": "ValidatorService",
+    "config": {}
   }
-  // ...
 ]
 ```
 
-**Step 4**: Trigger events and check
+Copy `config.template.json` to `config.json` to get started. See
+[SERVICES.md](./src/services/SERVICES.md) for the full list of available
+services and their configuration options.
 
-Call `.process` (or otherwise) on your contract a few times.
+All inter-service communication goes over sockets/HTTP — no shared globals or
+direct object passing — so services can be split across machines when needed.
 
-Check that rows are inserted into the database.
-[TablePlus](https://tableplus.com/) can be useful here.
+## Available Scripts
 
-
-
-
-
-
-Notes:
-  if a new provider gets events (more efficiently) from a untrusted source, 
-  if the contract stored a 'current hash', which represented the entire history
-  of all valid events, then the provider can reconstruct and verify all events
-  against that.
-
-
-
-
+```bash
+npm run dev          # Start all services with hot reload
+npm start            # Start Redis, Elasticsearch, and API
+npm run web          # Start frontend dev server only
+npm test             # TypeScript check + Mocha tests
+npm run prisma:push  # Push schema changes to DB
+npm run prisma:reset # Reset DB and push schema
+```
