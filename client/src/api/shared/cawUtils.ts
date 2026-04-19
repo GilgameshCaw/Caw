@@ -143,7 +143,7 @@ export function getCawIncludeConfig(options: CawQueryOptions = {}) {
   const { currentUserId, includeHashtags = false } = options
 
   return {
-    user: { select: { id: true, tokenId: true, username: true, displayName: true, image: true, avatarUrl: true } },
+    user: { select: { id: true, tokenId: true, username: true, displayName: true, image: true, avatarUrl: true, defaultAvatarId: true } },
     likes: currentUserId
       ? { where: { userId: currentUserId }, select: { userId: true, pending: true } }
       : false,
@@ -167,7 +167,7 @@ export function getCawIncludeConfig(options: CawQueryOptions = {}) {
     }),
     parent: {
       include: {
-        user: { select: { id: true, tokenId: true, username: true, displayName: true, image: true, avatarUrl: true } },
+        user: { select: { id: true, tokenId: true, username: true, displayName: true, image: true, avatarUrl: true, defaultAvatarId: true } },
         ...(includeHashtags && {
           hashtags: {
             include: { hashtag: { select: { name: true } } }

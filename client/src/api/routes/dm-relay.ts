@@ -144,7 +144,7 @@ router.post('/', async (req, res) => {
       include: {
         sender: {
           include: {
-            user: { select: { username: true, displayName: true, avatarUrl: true, tokenId: true } }
+            user: { select: { username: true, displayName: true, avatarUrl: true, defaultAvatarId: true, tokenId: true } }
           }
         }
       }

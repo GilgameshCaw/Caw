@@ -57,7 +57,7 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
             tokenId: true,
             username: true,
             displayName: true,
-            avatarUrl: true
+            avatarUrl: true, defaultAvatarId: true
           }
         },
         caw: {

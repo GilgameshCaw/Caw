@@ -22,7 +22,7 @@ router.get('/',
               tokenId: true,
               username: true,
               displayName: true,
-              avatarUrl: true,
+              avatarUrl: true, defaultAvatarId: true,
               image: true
             }
           }

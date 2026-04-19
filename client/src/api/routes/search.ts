@@ -156,7 +156,7 @@ async function searchUsersWithES(query: string, limit: number, offset: number) {
       tokenId: true,
       username: true,
       displayName: true,
-      avatarUrl: true,
+      avatarUrl: true, defaultAvatarId: true,
       image: true,
       address: true
     }
@@ -249,7 +249,7 @@ router.get('/', async (req, res) => {
             tokenId: true,
             username: true,
             displayName: true,
-            avatarUrl: true,
+            avatarUrl: true, defaultAvatarId: true,
             image: true,
             address: true
           }

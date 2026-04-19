@@ -65,7 +65,7 @@ router.post('/conversations',
       // Verify peer has a DM identity
       const peerIdentity = await prisma.dmIdentity.findUnique({
         where: { userId: Number(peerUserId) },
-        include: { user: { select: { username: true, displayName: true, avatarUrl: true, image: true, tokenId: true } } }
+        include: { user: { select: { username: true, displayName: true, avatarUrl: true, defaultAvatarId: true, image: true, tokenId: true } } }
       })
       if (!peerIdentity) {
         return res.status(400).json({ error: 'Peer has not enabled DMs' })
@@ -200,7 +200,7 @@ router.post('/messages',
       if (peer) {
         const peerIdentity = await prisma.dmIdentity.findUnique({
           where: { userId: peer.userId },
-          include: { user: { select: { username: true, displayName: true, avatarUrl: true, image: true, tokenId: true } } }
+          include: { user: { select: { username: true, displayName: true, avatarUrl: true, defaultAvatarId: true, image: true, tokenId: true } } }
         })
 
         const privacy = peerIdentity?.dmPrivacy || 'EVERYONE'

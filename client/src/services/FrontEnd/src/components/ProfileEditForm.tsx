@@ -54,7 +54,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
   hideAvatarCaption,
   skipAsLink,
 }) => {
-  const containerSpacing = compactFields ? 'space-y-2' : 'space-y-6'
+  const containerSpacing = compactFields ? '' : 'space-y-6'
   const signAndSubmit = useSignAndSubmitAction()
   const setAvatar = useTokenDataStore(s => s.setAvatar)
 
@@ -183,7 +183,9 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
   if (avatarUrl) changedData.a = avatarUrl
   if (coverUrl) changedData.c = coverUrl
 
-  const hasChanges = Object.keys(changedData).length > 0
+  const defaultAvatarChanged = selectedDefaultId !== null && selectedDefaultId !== ((profileData as any)?.defaultAvatarId || 0)
+  const hasOnChainChanges = Object.keys(changedData).length > 0
+  const hasChanges = hasOnChainChanges || defaultAvatarChanged
   const actionText = hasChanges ? `p:${JSON.stringify(changedData)}` : ''
   const actionTextLength = actionText.length
   const overLimit = actionTextLength > MAX_ACTION_TEXT
@@ -362,7 +364,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
           <label className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Cover Photo</label>
         </div>
 
-        <div className="flex items-center space-x-6">
+        <div className="flex items-center space-x-6" style={{ whiteSpace: 'break-spaces' }}>
           {/* Avatar */}
           <div className="flex flex-col items-center ml-[7px]">
             <button
@@ -386,34 +388,28 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
                 handleImageDrop('avatar', e)
               }}
             >
-              <Tooltip text="Click or drag image to upload custom avatar" position="top">
+              <Tooltip text="Click or drag image to upload custom avatar" position="top" className="h-full">
                 <div className="relative w-full h-full">
-                  <div className="w-full h-full flex items-center justify-center overflow-hidden rounded-full">
-                    {hasCustomAvatar ? (
-                      <>
-                        <img src={avatarPreview || avatarUrl || profileData?.avatarUrl || ''} alt="Avatar preview" className="w-full h-full object-cover" />
-                        <div className="absolute inset-0 bg-black/50 rounded-full" />
-                        <HiCamera className="relative w-6 h-6 text-white" />
-                      </>
-                    ) : (
-                      <img src={`/images/avatars/${currentDefaultId}.png`} alt="" className="w-full h-full object-cover" />
-                    )}
+                  <div className="w-full h-full overflow-hidden rounded-full">
+                    <img
+                      src={hasCustomAvatar ? (avatarPreview || avatarUrl || profileData?.avatarUrl || '') : `/images/avatars/${currentDefaultId}.png`}
+                      alt=""
+                      className="w-full h-full object-cover"
+                    />
                   </div>
                   {/* Pencil badge floats OUTSIDE overflow-hidden so it isn't clipped */}
-                  {!hasCustomAvatar && (
-                    <div className={`absolute -top-0.5 -right-0.5 w-5 h-5 rounded-full flex items-center justify-center shadow-sm ${
-                      isDark ? 'bg-gray-600' : 'bg-gray-400'
-                    }`}>
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3 text-white">
-                        <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z" />
-                      </svg>
-                    </div>
-                  )}
+                  <div className={`absolute -top-0.5 -right-0.5 w-5 h-5 rounded-full flex items-center justify-center shadow-sm ${
+                    isDark ? 'bg-gray-600' : 'bg-gray-400'
+                  }`}>
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-3 h-3 text-white">
+                      <path d="M2.695 14.763l-1.262 3.154a.5.5 0 00.65.65l3.155-1.262a4 4 0 001.343-.885L17.5 5.5a2.121 2.121 0 00-3-3L3.58 13.42a4 4 0 00-.885 1.343z" />
+                    </svg>
+                  </div>
                 </div>
               </Tooltip>
             </button>
             {!hasCustomAvatar && (
-              <div className="flex items-center gap-3 mt-1.5">
+              <div className="flex items-center gap-3">
                 <button
                   type="button"
                   onClick={(e) => { e.stopPropagation(); cycleDefaultAvatar(-1); }}
@@ -469,7 +465,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
                       <p className={`text-xs ${
                         profileData?.coverPhotoUrl ? 'text-white/90' : (isDark ? 'text-gray-400' : 'text-gray-500')
                       }`}>
-                        Click to upload
+                        Click or drag to upload
                       </p>
                     </div>
                   </>
@@ -505,6 +501,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
             )}
           </div>
         )}
+        <div />
       </div>
 
       {/* Display Name */}
@@ -523,7 +520,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
       </div>
 
       {/* Description */}
-      <div className="space-y-2">
+      <div>
         <div className="flex justify-between items-center">
           <label className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Description</label>
           {saveOnChain && (
@@ -542,8 +539,8 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
           value={formData.description}
           onChange={(e) => setFormData({ ...formData, description: e.target.value })}
           placeholder="Tell us about yourself"
-          rows={4}
-          className={`w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-gray-500/30 resize-none ${
+          rows={3}
+          className={`block w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-gray-500/30 resize-none ${
             isDark ? 'bg-black border-gray-600 text-white placeholder-gray-400' : 'bg-white border-gray-300 text-black placeholder-gray-500'
           } ${overLimit && saveOnChain ? 'border-red-500' : ''}`}
         />
@@ -567,7 +564,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
       </div>
 
       {/* Location */}
-      <div className="space-y-2">
+      <div className="space-y-2 mb-2">
         <label className={`text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>Location</label>
         <div className="relative">
           <HiLocationMarker className={`absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 ${isDark ? 'text-gray-400' : 'text-gray-500'}`} />
@@ -585,20 +582,21 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
       </div>
 
       {/* Footer: toggle + save */}
-      <div className="pt-4 mt-4 border-t border-white/10">
+      <div className="pt-4 border-t border-white/10">
         <div className="flex items-center justify-between gap-4">
           {/* On-chain toggle */}
-          <label className={`cursor-pointer select-none ${compactFields ? 'flex flex-row items-center gap-2' : 'flex flex-col items-center'}`}>
+          <label className={`select-none ${hasOnChainChanges ? 'cursor-pointer' : 'cursor-not-allowed opacity-50'} ${compactFields ? 'flex flex-row items-center gap-2' : 'flex flex-col items-center'}`}>
             <span className={`${compactFields ? '' : 'mb-1'} text-sm font-medium ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>On-chain</span>
             <input
               type="checkbox"
-              checked={saveOnChain}
-              onChange={() => setSaveOnChain(v => !v)}
+              checked={saveOnChain && hasOnChainChanges}
+              onChange={() => { if (hasOnChainChanges) setSaveOnChain(v => !v) }}
+              disabled={!hasOnChainChanges}
               className="sr-only"
             />
             <div className={`relative w-11 h-[22px] flex items-center rounded-full border ${isDark ? 'border-gray-500' : 'border-gray-400'}`}>
-              <div className={`absolute inset-0 rounded-full transition-colors duration-200 ${saveOnChain ? 'bg-yellow-500' : 'bg-gray-300 dark:bg-gray-600'}`} />
-              <div className={`absolute w-[18px] h-[18px] bg-white rounded-full shadow-md transform transition-all duration-200 ${saveOnChain ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
+              <div className={`absolute inset-0 rounded-full transition-colors duration-200 ${saveOnChain && hasOnChainChanges ? 'bg-yellow-500' : 'bg-gray-300 dark:bg-gray-600'}`} />
+              <div className={`absolute w-[18px] h-[18px] bg-white rounded-full shadow-md transform transition-all duration-200 ${saveOnChain && hasOnChainChanges ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
             </div>
           </label>
 

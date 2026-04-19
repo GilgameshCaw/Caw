@@ -29,7 +29,7 @@ router.get('/post/:cawId', async (req, res) => {
               tokenId: true,
               username: true,
               displayName: true,
-              avatarUrl: true
+              avatarUrl: true, defaultAvatarId: true
             }
           }
         }
@@ -70,7 +70,7 @@ router.get('/sent', async (req, res) => {
             tokenId: true,
             username: true,
             displayName: true,
-            avatarUrl: true
+            avatarUrl: true, defaultAvatarId: true
           }
         }
       }
@@ -107,7 +107,7 @@ router.get('/received', async (req, res) => {
             tokenId: true,
             username: true,
             displayName: true,
-            avatarUrl: true
+            avatarUrl: true, defaultAvatarId: true
           }
         }
       }

@@ -219,6 +219,7 @@ router.get('/top-followed', async (req, res) => {
         username: true,
         displayName: true,
         avatarUrl: true,
+        defaultAvatarId: true,
         image: true,
         followerCount: true,
       },
@@ -350,6 +351,7 @@ router.get('/by-token/:tokenId', async (req, res) => {
         username: true,
         displayName: true,
         avatarUrl: true,
+        defaultAvatarId: true,
         image: true,
         address: true,
         lastStakedAt: true,
@@ -365,6 +367,7 @@ router.get('/by-token/:tokenId', async (req, res) => {
           where: { tokenId },
           select: {
             tokenId: true, username: true, displayName: true, avatarUrl: true,
+        defaultAvatarId: true,
             image: true, address: true, lastStakedAt: true, pendingDepositAmount: true,
           }
         })
@@ -641,6 +644,7 @@ router.get('/by-address/:address', async (req, res) => {
         image: true,
         displayName: true,
         avatarUrl: true,
+        defaultAvatarId: true,
         bio: true,
         createdAt: true,
       }
@@ -773,6 +777,7 @@ router.patch(
           location: true,
           website: true,
           avatarUrl: true,
+        defaultAvatarId: true,
           defaultAvatarId: true,
           coverPhotoUrl: true,
           profileSource: true,
@@ -813,6 +818,7 @@ router.get('/:username', async (req, res) => {
         location: true,
         website: true,
         avatarUrl: true,
+        defaultAvatarId: true,
         coverPhotoUrl: true,
         profileUpdatePending: true,
         profileSource: true,
@@ -1192,6 +1198,7 @@ router.get('/search/:query', async (req, res) => {
         username: true,
         displayName: true,
         avatarUrl: true,
+        defaultAvatarId: true,
         image: true,
       },
       take: limit,
