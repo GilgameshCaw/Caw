@@ -320,8 +320,8 @@ contract CawActionsReplicator is OApp {
     bytes32[] calldata r
   ) external payable {
     require(params.checkpointId > 0, "Invalid checkpoint");
-    require(actions.length == 128, "Must submit exactly 256 actions");
-    require(r.length == 128, "r array must be 256");
+    require(actions.length == 128, "Must submit exactly 128 actions");
+    require(r.length == 128, "r array must be 128");
 
     // Verify destination is valid
     require(isAvailableChain[params.destEid], "Chain not available");
