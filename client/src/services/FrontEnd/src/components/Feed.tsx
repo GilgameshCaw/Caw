@@ -433,7 +433,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       </button>
     </div>
   )
-  const isOwnProfile = filter === 'profile' && username && activeToken?.username === username
+  const isOwnProfile = (filter === 'profile' || filter === 'profile-replies') && username && activeToken?.username === username
   const showPending = (filter === 'For you' || filter === 'Following' || isOwnProfile) && pendingPosts.length > 0
   const hasPending = showPending
 
@@ -472,8 +472,10 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       {/* Section title (rendered after suggested users) */}
       {title}
 
-      {/* Show pending posts at the top (exclude replies — those show on the caw's page) */}
-      {showPending && pendingPosts.filter(p => !p.replyToId).map(post => (
+      {/* Show pending posts at the top */}
+      {showPending && pendingPosts.filter(p =>
+        filter === 'profile-replies' ? !!p.replyToId : !p.replyToId
+      ).map(post => (
         <FeedItem key={post.tempId} item={post as CawItem} />
       ))}
 
