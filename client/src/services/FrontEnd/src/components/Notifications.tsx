@@ -21,12 +21,14 @@ import Tooltip from '~/components/Tooltip'
 import { useNotificationUnreadStore } from '~/store/notificationUnreadStore'
 import { useSignAndSubmitAction, decompressSignedText, type ActionTypeKey } from '~/api/actions'
 import { useAutoRetryStore } from '~/store/autoRetryStore'
+import { getUserAvatar } from '~/utils/defaultAvatar'
 
 interface Actor {
   tokenId: number
   username: string
   displayName?: string
   avatarUrl?: string
+  defaultAvatarId?: number
 }
 
 interface Notification {
@@ -754,7 +756,14 @@ const Notifications: React.FC = () => {
                   {getNotificationIcon(notification.type)}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className={`text-sm ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  <p className={`text-sm flex items-center gap-1.5 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                    {notification.actor && (
+                      <img
+                        src={getUserAvatar(notification.actor)}
+                        alt=""
+                        className="w-[18px] h-[18px] rounded-full object-cover flex-shrink-0"
+                      />
+                    )}
                     <span className="font-semibold">
                       {getNotificationText(notification)}
                     </span>
