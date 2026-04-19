@@ -472,6 +472,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
                 )}
               </div>
             </button>
+            <div>&nbsp;</div>
           </div>
         </div>
 
@@ -679,7 +680,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
         {onSkip && skipAsLink && (
           <button
             onClick={onSkip}
-            className="block w-full mt-3 py-2 text-sm text-white/40 hover:text-white/60 transition-colors cursor-pointer text-center"
+            className={`block w-full mt-3 py-2 text-sm transition-colors cursor-pointer text-center ${isDark ? 'text-white/40 hover:text-white/60' : 'text-black/40 hover:text-black/60'}`}
           >
             {skipLabel || 'Skip'}
           </button>
