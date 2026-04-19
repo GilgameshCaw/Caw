@@ -63,7 +63,7 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
     return parts.map((part, index) => {
       if (isMatch.test(part)) {
         return (
-          <span key={index} className="text-yellow-500">
+          <span key={index} className={isDark ? 'text-yellow-400' : 'text-yellow-600'}>
             {part}
           </span>
         )
