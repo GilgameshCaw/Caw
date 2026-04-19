@@ -63,6 +63,8 @@ export const NewProfile: React.FC = () => {
   const [mintedTokenId, setMintedTokenId] = useState<number | null>(null)
   const [hasResetForm, setHasResetForm] = useState(false)
   const [isApprovePending, setIsApprovePending] = useState(false)
+  const [pendingMintAfterApproval, setPendingMintAfterApproval] = useState(false)
+  const [pendingSubmitAfterSwitch, setPendingSubmitAfterSwitch] = useState(false)
   const [depositEnabled, setDepositEnabled] = useState(true)
   const [depositAmount, setDepositAmount] = useState('')
   const [depositDefaultSet, setDepositDefaultSet] = useState(false)
@@ -264,7 +266,11 @@ console.log("BALANCE:", balance)
     args: [CAW_NAMES_MINTER_ADDRESS, maxUint256],
     disabled: wrongChain || !needsMinterApproval,
     onPending: () => setIsApprovePending(true),
-    onSuccess: () => { setIsApprovePending(false); refetchMinterAllowance() },
+    onSuccess: async () => {
+      setIsApprovePending(false)
+      await refetchMinterAllowance()
+      setPendingMintAfterApproval(true)
+    },
     onError: () => setIsApprovePending(false),
   });
 
@@ -386,17 +392,10 @@ console.log("BALANCE:", balance)
     minterAllowanceNeeded: minterAllowanceNeeded.toString(),
   })
 
-  const handleSubmit = useCallback(async () => {
-    console.log('[New] handleSubmit called', { wrongChain, needsMinterApproval })
-    // If on the wrong network, switch first — then continue with the normal
-    // approve/mint flow so the user only clicks once. The button label stays
-    // "Create & Deposit" / "Create" the whole time (with a Switching... state).
-    if (wrongChain) {
-      const switched = await handleSwitchChain()
-      if (!switched) return
-    }
+  const doApproveOrMint = useCallback(async () => {
     if (needsMinterApproval) {
       console.log('[New] approving minter...')
+      setIsApprovePending(true)
       await approveMinter();
     } else {
       console.log('[New] calling mint...', {
@@ -409,7 +408,38 @@ console.log("BALANCE:", balance)
       })
       await mint();
     }
-  }, [wrongChain, needsMinterApproval, approveMinter, mint, handleSwitchChain]);
+  }, [needsMinterApproval, approveMinter, mint]);
+
+  // After a chain switch completes and wagmi hooks re-render with the correct
+  // chain, auto-trigger the approve/mint flow so it's one-click for the user.
+  useEffect(() => {
+    if (pendingSubmitAfterSwitch && !wrongChain) {
+      setPendingSubmitAfterSwitch(false)
+      doApproveOrMint()
+    }
+  }, [pendingSubmitAfterSwitch, wrongChain, doApproveOrMint])
+
+  // After approval completes and allowance refetches, auto-trigger mint
+  // so the user gets the next signature popup without clicking again.
+  useEffect(() => {
+    if (pendingMintAfterApproval && !needsApproval) {
+      setPendingMintAfterApproval(false)
+      mint()
+    }
+  }, [pendingMintAfterApproval, needsApproval, mint])
+
+  const handleSubmit = useCallback(async () => {
+    console.log('[New] handleSubmit called', { wrongChain, needsMinterApproval })
+    if (wrongChain) {
+      const switched = await handleSwitchChain()
+      if (!switched) return
+      // Don't continue here — the closure has stale hook values from the old chain.
+      // Set a flag so a useEffect picks up after re-render with fresh state.
+      setPendingSubmitAfterSwitch(true)
+      return
+    }
+    await doApproveOrMint()
+  }, [wrongChain, needsMinterApproval, handleSwitchChain, doApproveOrMint]);
 
   let submitText;
   if (isSwitchingChain) {
@@ -446,52 +476,56 @@ console.log("BALANCE:", balance)
     } else {
       submitText = "Processing..."
     }
-  } else if (needsMinterApproval)
-    submitText = "Approve CAW"
-  else if (usernameTaken)
+  } else if (usernameTaken)
     submitText = "username taken"
+  else if (insufficientBalance)
+    submitText = "Insufficient Balance"
   else submitText = depositEnabled && depositAmountWei > 0n ? "Create & Deposit" : "Create"
 
   // Show loading screen while waiting for mint to complete
   if (!hasResetForm && (mintStatus === 'pending' || (mintStatus === 'success' && !mintSuccess))) {
     return (
       <MainLayout hideSidebars>
-        <div className="max-w-xl mx-auto p-6 space-y-4 mt-8">
-          <div className="text-center space-y-6">
-            <h1 className={`text-4xl font-bold ${isDark ? 'text-white' : 'text-black'}`}>Creating your new profile...</h1>
-            <p className="text-gray-400 text-sm">Your username will be created as a tradeable and transferable NFT, and will live forever on the Ethereum Blockchain</p>
+        <div className="min-h-screen">
+          <div className="max-w-xl mx-auto p-6 space-y-4 pt-16">
+            <div className="text-center space-y-6">
+              <h1 className={`text-4xl font-bold ${isDark ? 'text-white' : 'text-black'}`}>
+                {mintStatus === 'pending' ? 'Creating your new profile...' : 'Confirming on the blockchain...'}
+              </h1>
+              <p className="text-gray-400 text-sm">Your username will be created as a tradeable and transferable NFT, and will live forever on the Ethereum Blockchain</p>
 
-            {/* Show the username SVG with loader overlay */}
-            <div className="flex justify-center items-center my-8">
-              <div className="relative w-64 h-64 overflow-hidden" style={{ borderRadius: '22px' }}>
-                <UsernameSvg username={username}/>
-                {/* Loader overlay */}
-                <div className="absolute inset-0 flex items-center justify-center">
-                  <div className="w-16 h-16 rounded-full bg-black/60 flex items-center justify-center">
-                    <svg className="animate-spin h-10 w-10 text-yellow-500" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
-                    </svg>
+              {/* Show the username SVG with loader overlay */}
+              <div className="flex justify-center items-center my-8">
+                <div className="relative w-64 h-64 overflow-hidden" style={{ borderRadius: '22px' }}>
+                  <UsernameSvg username={username}/>
+                  {/* Loader overlay */}
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="w-16 h-16 rounded-full bg-black/60 flex items-center justify-center">
+                      <svg className="animate-spin h-10 w-10 text-yellow-500" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                      </svg>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
 
-            {depositEnabled && depositAmountWei > 0n && (
-              <p className="text-yellow-500 text-sm">{Number(depositAmount).toLocaleString()} CAW deposit pending</p>
-            )}
+              {depositEnabled && depositAmountWei > 0n && (
+                <p className="text-yellow-500 text-sm">{Number(depositAmount).toLocaleString()} CAW deposit pending</p>
+              )}
 
-            <div className="space-y-4">
-              {mintStatus === 'pending' && (
-                <p className="text-gray-400">
-                  Please confirm the transaction in your wallet...
-                </p>
-              )}
-              {mintStatus === 'success' && (
-                <p className="text-gray-400">
-                  Please wait while your transaction is being processed on the blockchain...
-                </p>
-              )}
+              <div className="space-y-4">
+                {mintStatus === 'pending' && (
+                  <p className="text-gray-400">
+                    Please confirm the transaction in your wallet...
+                  </p>
+                )}
+                {mintStatus === 'success' && (
+                  <p className="text-gray-400">
+                    Please wait while your transaction is being processed on the blockchain...
+                  </p>
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -654,7 +688,7 @@ console.log("BALANCE:", balance)
                     </div>
                   </div>
                   </div>
-                  <ul className="text-gray-500 text-xs mt-0.5 list-disc list-outside pl-4 space-y-0.5">
+                  <ul className="text-yellow-500/80 text-xs mt-0.5 list-disc list-outside pl-4 space-y-0.5">
                     <li>Required to post, like, and follow</li>
                     <li>You earn tokens from every action on the protocol based on your deposit</li>
                     <li>The more you deposit, the more you earn</li>
@@ -745,11 +779,33 @@ console.log("BALANCE:", balance)
 
             <SubmitButton
                 onClick={handleSubmit}
-                disabled={wrongChain ? false : (usernameTaken || waiting || !quote || (!needsApproval && (!cost || cost == 0n || !!insufficientBalance)))}
+                disabled={!!insufficientBalance || (wrongChain ? false : (usernameTaken || waiting || !quote || !cost || cost == 0n))}
                 className="btn btn-submit mt-0 transition-all duration-300"
             >
                 {submitText}
             </SubmitButton>
+
+            {insufficientBalance && !waiting && (
+              <div className="text-center mt-2">
+                {chains.l1.chainId === 11155111 ? (
+                  <Link
+                    to="/faucet"
+                    className={`text-sm font-medium transition-colors ${isDark ? 'text-yellow-500 hover:text-yellow-400' : 'text-yellow-700 hover:text-yellow-600'}`}
+                  >
+                    Get mCAW from the faucet &rarr;
+                  </Link>
+                ) : (
+                  <a
+                    href="https://app.uniswap.org/explore/tokens/ethereum/0xf3b9569f82b18aef890de263b84189bd33ebe452"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`text-sm font-medium transition-colors ${isDark ? 'text-yellow-500 hover:text-yellow-400' : 'text-yellow-700 hover:text-yellow-600'}`}
+                  >
+                    Buy CAW on Uniswap &rarr;
+                  </a>
+                )}
+              </div>
+            )}
 
             {gasCostEth != null && (() => {
                 const totalEth = gasCostEth + Number(formatEther(quote?.nativeFee ?? 0n))

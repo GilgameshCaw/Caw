@@ -187,22 +187,9 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
     window.addEventListener('touchmove', onTouchMove, { passive: true })
     window.addEventListener('touchend', onTouchEnd)
 
-    // FPS counter (temporary)
-    let frameCount = 0
-    let lastFpsTime = performance.now()
-    let currentFps = 0
     let simHalf = 0 // alternate which half of boids we simulate
 
     const tick = () => {
-      // FPS tracking
-      frameCount++
-      const now = performance.now()
-      if (now - lastFpsTime >= 1000) {
-        currentFps = frameCount
-        frameCount = 0
-        lastFpsTime = now
-      }
-
       const boids = boidsRef.current
       const { separationRadius, alignmentRadius, cohesionRadius, separationWeight, alignmentWeight, cohesionWeight, wanderStrength } = config
       ctx.clearRect(0, 0, w, h)
@@ -371,11 +358,6 @@ export default function BoidsBg({ isDark }: { isDark: boolean }) {
         ctx.drawImage(sprite, -spriteW / 2, -spriteH / 2)
         ctx.restore()
       }
-
-      // FPS display (temporary)
-      ctx.fillStyle = 'rgba(255,255,0,0.8)'
-      ctx.font = '14px monospace'
-      ctx.fillText(`${currentFps} fps / ${boids.length} boids`, OVERFLOW + 10, OVERFLOW + 20)
 
       animRef.current = requestAnimationFrame(tick)
     }

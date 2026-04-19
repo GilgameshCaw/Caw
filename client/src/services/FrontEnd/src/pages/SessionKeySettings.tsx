@@ -309,7 +309,7 @@ const SessionKeySettings: React.FC = () => {
 
                     {error && (
                       <div className="mb-4 flex justify-center">
-                        <div className="inline-block px-4 py-2 rounded-lg bg-red-900/20 border border-red-700/50 text-sm text-red-400">
+                        <div className="inline-block px-4 py-2 rounded-lg bg-red-900/20 border border-red-700/50 text-sm text-red-400 whitespace-pre-line">
                           {error}
                         </div>
                       </div>

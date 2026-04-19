@@ -645,24 +645,22 @@ const Staking = () => {
         className={`w-full py-3 px-4 rounded-full font-semibold transition-all duration-300 ${
           !isConnected
             ? 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
-            : (!tokenId || (!isTokenOwner && !wrongChainForStake) || (!wrongChainForStake && !needsApproval && (!amount || depositFee === 0n)))
+            : (!tokenId || (!isTokenOwner && !wrongChainForStake) || (!wrongChainForStake && (!amount || depositFee === 0n)))
             ? (isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed')
             : (isStakePending || isApprovePending)
             ? 'bg-yellow-600 text-black cursor-not-allowed'
             : 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
         }`}
-        disabled={isConnected && (!tokenId || (!isTokenOwner && !wrongChainForStake) || (!wrongChainForStake && ((!needsApproval && (!amount || depositFee === 0n || isStakePending)) || (needsApproval && isApprovePending))))}
+        disabled={isConnected && (!tokenId || (!isTokenOwner && !wrongChainForStake) || (!wrongChainForStake && (!amount || depositFee === 0n || isStakePending || isApprovePending)))}
       >
         {isSwitchingNetwork
           ? 'Switching...'
           : !isTokenOwner && activeToken && isConnected && !wrongChainForStake
           ? 'Wrong Address'
-          : isStakePending
-          ? 'Depositing...'
           : isApprovePending
           ? 'Approving...'
-          : needsApproval
-          ? 'Approve'
+          : isStakePending
+          ? 'Depositing...'
           : insufficientBalance
           ? "Insufficient Balance"
           : "Deposit CAW"}
