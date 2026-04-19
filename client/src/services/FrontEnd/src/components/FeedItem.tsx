@@ -382,7 +382,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           tokenId: effectiveTokenId,
           displayName: item.user?.displayName,
           image: item.user?.image,
-          avatarUrl: item.user?.avatarUrl,
+          avatarUrl: getUserAvatar(item.user),
         })
         if (result.txQueueId) {
           updatePostWithTxQueueId(tempId, result.txQueueId)

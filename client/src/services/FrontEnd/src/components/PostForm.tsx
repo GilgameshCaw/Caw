@@ -8,6 +8,7 @@ import type { ActionParams } from '~/api/actions'
 import { baseSepolia } from "wagmi/chains";
 import type { CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
+import { getUserAvatar } from '~/utils/defaultAvatar'
 import { BsWallet } from 'react-icons/bs'
 import MediaUpload from './MediaUpload'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
@@ -967,7 +968,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             content: chunks[chunkOffset + i],
             username: activeToken.username,
             tokenId: effectiveTokenId,
-            avatarUrl: avatars[effectiveTokenId] || undefined
+            avatarUrl: avatars[effectiveTokenId] || getUserAvatar({ tokenId: effectiveTokenId })
           })
           if (r.txQueueId) updatePostWithTxQueueId(tempId, r.txQueueId)
         }
@@ -998,7 +999,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           content: chunks[0],
           username: activeToken.username,
           tokenId: effectiveTokenId,
-          avatarUrl: avatars[effectiveTokenId] || undefined
+          avatarUrl: avatars[effectiveTokenId] || getUserAvatar({ tokenId: effectiveTokenId })
         })
         if (response.txQueueId) updatePostWithTxQueueId(tempId, response.txQueueId)
       }
@@ -1018,7 +1019,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                 content: chunks[i],
                 username: activeToken.username,
                 tokenId: effectiveTokenId,
-                avatarUrl: avatars[effectiveTokenId] || undefined
+                avatarUrl: avatars[effectiveTokenId] || getUserAvatar({ tokenId: effectiveTokenId })
               })
               if (replyResponse.txQueueId) updatePostWithTxQueueId(tempId, replyResponse.txQueueId)
             }
