@@ -38,6 +38,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { HiInformationCircle } from 'react-icons/hi'
 import { FollowButton } from '~/components/FollowButton'
 import cawLogo from '~/assets/images/caw-logo.png'
+import { getUserAvatar } from '~/utils/defaultAvatar'
 import BoidsBg from '~/components/BoidsBg'
 import UsernameSvg from '~/components/UsernameSvg'
 import ProfileEditForm from '~/components/ProfileEditForm'
@@ -59,6 +60,7 @@ interface SuggestedUser {
   displayName: string | null
   avatarUrl: string | null
   image: string | null
+  defaultAvatarId: number | null
   followerCount: number
   likeCount: number
   isFollowing: boolean
@@ -137,9 +139,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
     textVeryFaint: isDark ? 'text-white/40' : 'text-black/50',
     textSemiFaint: isDark ? 'text-gray-300' : 'text-gray-700',
     inputBg: isDark ? 'bg-black text-white border-white/20' : 'bg-white text-black border-black/20',
-    skipButton: isDark
-      ? 'text-white/40 hover:text-white/60'
-      : 'text-black/40 hover:text-black/60',
+    skipButton: 'text-white/40 hover:text-white/60',
     stepperInactive: isDark ? 'bg-[#1A1A1A]/85' : 'bg-black/10',
     stepperSkipped: isDark ? 'bg-[#171202]/85' : 'bg-yellow-500/20',
     presetInactive: isDark
@@ -1218,19 +1218,11 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                     >
                       <a href={`/users/${user.username}`} onClick={(e) => { e.preventDefault(); onComplete?.(); window.location.href = `/users/${user.username}` }} className="block text-center cursor-pointer">
                         <div className={`w-14 h-14 rounded-full mx-auto mb-2 overflow-hidden border ${tc.avatarBorder}`}>
-                          {(user.avatarUrl || user.image) ? (
-                            <img
-                              src={user.avatarUrl || user.image || ''}
-                              alt={user.username}
-                              className="w-full h-full object-cover"
-                            />
-                          ) : (
-                            <img
-                              src={cawLogo}
-                              alt={user.username}
-                              className="w-full h-full object-contain p-2"
-                            />
-                          )}
+                          <img
+                            src={getUserAvatar(user)}
+                            alt={user.username}
+                            className="w-full h-full object-cover"
+                          />
                         </div>
                         <p className={`font-medium text-sm truncate ${tc.textPrimary}`}>
                           {user.displayName || user.username}
