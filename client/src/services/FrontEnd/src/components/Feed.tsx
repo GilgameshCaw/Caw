@@ -315,7 +315,9 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
     setItems([])
     setNextCursor(undefined)
     setHasMore(true)
-    loadPage(true)
+    setLoading(false)
+    // setTimeout ensures the state resets flush before loadPage checks `loading`
+    setTimeout(() => loadPageRef.current?.(true), 0)
   }, [filter, activeTokenId, apiEndpoint, username])
 
   // Fetch following count for current user when on Following or For You tab
