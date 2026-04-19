@@ -486,8 +486,10 @@ console.log("BALANCE:", balance)
   if (!hasResetForm && (mintStatus === 'pending' || (mintStatus === 'success' && !mintSuccess))) {
     return (
       <MainLayout hideSidebars>
-        <div className="min-h-screen">
-          <div className="max-w-xl mx-auto p-6 space-y-4 pt-16">
+        <div className="min-h-screen flex items-start justify-center pt-12" ref={el => { if (el) window.scrollTo(0, 0) }}>
+          <div className={`max-w-xl w-full mx-auto p-8 rounded-2xl backdrop-blur-[2px] ${
+            isDark ? 'bg-white/5 border border-white/10' : 'bg-gray-200/50 border-2 border-gray-300/50'
+          }`}>
             <div className="text-center space-y-6">
               <h1 className={`text-4xl font-bold ${isDark ? 'text-white' : 'text-black'}`}>
                 {mintStatus === 'pending' ? 'Creating your new profile...' : 'Confirming on the blockchain...'}

@@ -37,14 +37,14 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
   return (
     <>
     {/* Fixed backdrop so scrolling doesn't reveal the root gradient */}
-    {!isDark && (
+    {!isDark && !hideSidebars && (
       <div className="fixed inset-0 z-0 flex justify-center pointer-events-none">
         <div className="w-full max-w-[1050px] bg-white shadow-[0_0_40px_rgba(0,0,0,0.08)]" />
       </div>
     )}
     <div className={`min-h-screen w-full flex transition-colors duration-300 relative z-[1] ${
       hideSidebars
-        ? (isDark ? 'bg-gray-900/60' : 'bg-gray-100/80')
+        ? (isDark ? 'bg-gray-900/60' : 'bg-gray-100')
         : `max-w-[1050px] m-auto ${isDark ? 'bg-black' : 'bg-white shadow-[0_0_40px_rgba(0,0,0,0.08)]'}`
     }`}>
       {/* Mobile Header */}
@@ -105,8 +105,10 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
 
       {/* Main Content */}
       <main className={`flex-1 min-w-0 transition-colors duration-300 flex flex-col ${
-        isDark ? 'bg-black text-white' : 'bg-white text-black'
-      } ${hideSidebars ? 'pt-0 relative overflow-hidden' : isMobileMenuOpen ? 'md:pt-0 pt-16' : 'pt-16 md:pt-0'}`}>
+        hideSidebars
+          ? `pt-0 relative overflow-hidden ${isDark ? 'text-white' : 'text-black'}`
+          : `${isDark ? 'bg-black text-white' : 'bg-white text-black'} ${isMobileMenuOpen ? 'md:pt-0 pt-16' : 'pt-16 md:pt-0'}`
+      }`}>
         {hideSidebars && (
           <Suspense fallback={null}>
             <BoidsBg isDark={isDark} />
@@ -139,7 +141,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
       <Modals />
 
       {/* Captive banner — fixed bottom bar for unauthenticated users on public pages */}
-      {hideSidebars && (
+      {hideSidebars && isCaptive && (
         <div className={`fixed bottom-0 left-0 right-0 z-50 border-t backdrop-blur-[2px] ${
           isDark ? 'bg-black/10 border-white/10' : 'bg-white/10 border-gray-200'
         }`}>
