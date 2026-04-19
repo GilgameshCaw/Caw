@@ -544,8 +544,11 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                   That being said, at the level of a protocol no username or message will be blocked or quarantined. Due to the nature of renounced ownership of smart contracts, there will be nobody who can limit such content. (perhaps now you see why renouceing the contract with no multi-sig or upgrades is important.)
                 </p>
 
+                <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  Now onto the frontends.
+                </h3>
                 <p>
-                  Now onto the frontends. Anybody is free to make or host their own frontend which will show whatever they woud like (or don't). we expect there will be many along with a goal of a mobile app and browser extension that serves as cawing/wallet and instant messager platform that executes the sigs fast and invisible to give a smoother messaging experience (signing a metamask everytime can be tiresome)
+                  Anybody is free to make or host their own frontend which will show whatever they woud like (or don't). we expect there will be many along with a goal of a mobile app and browser extension that serves as cawing/wallet and instant messager platform that executes the sigs fast and invisible to give a smoother messaging experience (signing a metamask everytime can be tiresome)
                 </p>
                 <p>
                   We would recommend that the community makes an alpha frontend, that is more or less 'neutral'. It may filter overt hate/violence, along with hard-illegal activity, remember we need to win the world first. Others may have a better idea of what should be shown, and their perogative should be to create and host their own frontend. The point being, CAW is like Twitter. Except it is bound by no laws, and no central content moderation. However, the frontends may choose to moderate the content however they like, or must to fit whatever legal guidelines they need to fit.

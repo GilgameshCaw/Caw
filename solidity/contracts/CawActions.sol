@@ -135,8 +135,8 @@ contract CawActions is Ownable {
     clientCurrentHash[clientId] = keccak256(abi.encodePacked(clientCurrentHash[clientId], r, actionHash));
     clientActionCount[clientId]++;
 
-    if (clientActionCount[clientId] % 256 == 0)
-      clientHashAtCheckpoint[clientId][clientActionCount[clientId] / 256] = clientCurrentHash[clientId];
+    if (clientActionCount[clientId] % 128 == 0)
+      clientHashAtCheckpoint[clientId][clientActionCount[clientId] / 128] = clientCurrentHash[clientId];
   }
 
   /// @return totalWholeTokens Total whole CAW tokens spent via distributeAmounts

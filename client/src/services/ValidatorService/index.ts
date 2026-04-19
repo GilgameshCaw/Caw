@@ -2063,7 +2063,7 @@ console.log("succeededKeys", succeededKeys)
             try {
               // Determine how many complete checkpoints exist on the source chain.
               const actionCount = Number(await cawActionsView.clientActionCount(client.id))
-              const total = Math.floor(actionCount / 256)
+              const total = Math.floor(actionCount / 128)
               if (total === 0) continue
 
               // Find the first checkpoint not yet submitted. The contract no
@@ -2099,7 +2099,7 @@ console.log("succeededKeys", succeededKeys)
               // DB logIndex and rawEventId are NOT reliable for this ordering because
               // safeProcessActions makes external self-calls per action (producing
               // low logIndex events) before emitting the batch ActionsProcessed event.
-              const startPos = (checkpointId - 1) * 256
+              const startPos = (checkpointId - 1) * 128
 
               // Get tx hashes by querying ALL ActionsProcessed events from the
               // contract's deploy block to now. We scan FORWARD (not backward)
@@ -2122,9 +2122,9 @@ console.log("succeededKeys", succeededKeys)
               // than O(all-events-ever).
               //
               // actionCount on-chain tells us the total. Checkpoint N covers
-              // action positions [(N-1)*256, N*256). We scan backward until
+              // action positions [(N-1)*128, N*128). We scan backward until
               // the cumulative count from the tail exceeds
-              //   actionCount - (checkpointId - 1) * 256
+              //   actionCount - (checkpointId - 1) * 128
               // i.e. we've reached back far enough to include position startPos.
               const actionsNeededFromEnd = actionCount - startPos // how many from tail to cover startPos
 
@@ -2212,10 +2212,10 @@ console.log("succeededKeys", succeededKeys)
               // (actionCount - orderedEntries.length) in the global ordering.
               const firstGlobalPos = actionCount - orderedEntries.length
               const localStart = startPos - firstGlobalPos
-              const checkpoint = orderedEntries.slice(localStart, localStart + 256)
+              const checkpoint = orderedEntries.slice(localStart, localStart + 128)
 
-              if (checkpoint.length !== 256) {
-                console.log(`[Replication] Only ${checkpoint.length}/256 actions reconstructed for checkpoint ${checkpointId} (localStart=${localStart}, entries=${orderedEntries.length}, firstGlobal=${firstGlobalPos}), skipping`)
+              if (checkpoint.length !== 128) {
+                console.log(`[Replication] Only ${checkpoint.length}/128 actions reconstructed for checkpoint ${checkpointId} (localStart=${localStart}, entries=${orderedEntries.length}, firstGlobal=${firstGlobalPos}), skipping`)
                 continue
               }
 
@@ -2255,14 +2255,14 @@ console.log("succeededKeys", succeededKeys)
               const chainCoder = new AbiCoder()
 
               let computedHash = prevHash
-              for (let i = 0; i < 256; i++) {
+              for (let i = 0; i < 128; i++) {
                 const actionHash = keccak256(chainCoder.encode([actionTupleType], [allActions[i]]))
                 computedHash = keccak256(solidityPacked(['bytes32', 'bytes32', 'bytes32'], [computedHash, allR[i], actionHash]))
               }
 
               if (computedHash !== expectedHash) {
                 console.error(`[Replication] Hash chain mismatch for checkpoint ${checkpointId}! Computed ${computedHash} but on-chain is ${expectedHash}.`)
-                console.error(`[Replication]   orderedEntries total: ${orderedEntries.length}, startPos: ${startPos}, first action cawonce: ${allActions[0]?.cawonce}, last: ${allActions[255]?.cawonce}`)
+                console.error(`[Replication]   orderedEntries total: ${orderedEntries.length}, startPos: ${startPos}, first action cawonce: ${allActions[0]?.cawonce}, last: ${allActions[127]?.cawonce}`)
                 continue
               }
               console.log(`[Replication] Hash chain verified for checkpoint ${checkpointId}`)

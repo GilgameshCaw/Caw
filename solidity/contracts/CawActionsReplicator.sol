@@ -320,8 +320,8 @@ contract CawActionsReplicator is OApp {
     bytes32[] calldata r
   ) external payable {
     require(params.checkpointId > 0, "Invalid checkpoint");
-    require(actions.length == 256, "Must submit exactly 256 actions");
-    require(r.length == 256, "r array must be 256");
+    require(actions.length == 128, "Must submit exactly 256 actions");
+    require(r.length == 128, "r array must be 256");
 
     // Verify destination is valid
     require(isAvailableChain[params.destEid], "Chain not available");
@@ -366,7 +366,7 @@ contract CawActionsReplicator is OApp {
 
     // Mirror the exact construction in CawActions._processAction:
     //   H_i = keccak256(H_{i-1} || r_i || keccak256(abi.encode(action_i)))
-    for (uint i = 0; i < 256; i++) {
+    for (uint i = 0; i < 128; i++) {
       bytes32 actionHash = keccak256(abi.encode(actions[i]));
       hash = keccak256(abi.encodePacked(hash, r[i], actionHash));
     }
@@ -386,7 +386,7 @@ contract CawActionsReplicator is OApp {
   {
     ICawActionsForReplicator cawActionsContract = ICawActionsForReplicator(cawActions);
     uint256 actionCount = cawActionsContract.clientActionCount(clientId);
-    totalCheckpoints = actionCount / 256;
+    totalCheckpoints = actionCount / 128;
 
     for (uint256 i = 1; i <= totalCheckpoints; i++) {
       if (!checkpointReplicated[clientId][destEid][i]) {
@@ -415,7 +415,7 @@ contract CawActionsReplicator is OApp {
     // Packed layout per action: 21 fixed + 1+4*recipients + 1+8*amounts + 2+textLen
     // Plus: 4-byte header + 128*32 r values
     uint256 perAction = 21 + 1 + (4 * avgRecipients) + 1 + (8 * avgAmounts) + 2 + avgTextLength;
-    uint256 estimatedSize = 4 + (256 * perAction); // no r values in v2 format
+    uint256 estimatedSize = 4 + (128 * perAction); // no r values in v2 format
 
     // Mirror the dynamic gas formula used in _replicateToDestination
     uint128 dynamicGas = uint128((50_000 + estimatedSize * 8) * 125 / 100);
