@@ -5,6 +5,7 @@ import { apiFetch, getAuthHeaders } from '~/api/client'
 import { useSignAndSubmitAction } from '~/api/actions'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
+import { getUserAvatar } from '~/utils/defaultAvatar'
 
 export type ProfileEditFormData = {
   displayName?: string | null
@@ -221,7 +222,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
     if (formData.description !== (profileData?.bio || '')) changes.bio = formData.description
     if (formData.location !== (profileData?.location || '')) changes.location = formData.location
     if (formData.website !== (profileData?.website || '')) changes.website = formData.website
-    if (avatarUrl) changes.avatarUrl = avatarUrl
+    if (avatarUrl !== undefined) changes.avatarUrl = avatarUrl
     if (coverUrl) changes.coverPhotoUrl = coverUrl
     if (selectedDefaultId !== null) (changes as any).defaultAvatarId = String(selectedDefaultId)
 
@@ -237,8 +238,8 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
         `/api/users/${activeToken.tokenId}/profile`,
         { method: 'PATCH', body: JSON.stringify(changes) }
       )
-      if (res.user?.avatarUrl !== undefined && activeToken.tokenId) {
-        setAvatar(activeToken.tokenId, res.user.avatarUrl || null)
+      if (activeToken.tokenId) {
+        setAvatar(activeToken.tokenId, getUserAvatar(res.user) || null)
       }
       setAvatarPreview(undefined)
       setCoverPreview(undefined)
@@ -476,13 +477,18 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
           </div>
         </div>
 
-        {(avatarPreview || coverPreview) && (
+        {(hasCustomAvatar || coverPreview) && (
           <div className="flex space-x-4 mt-2">
-            {avatarPreview && (
+            {hasCustomAvatar && (
               <button
                 type="button"
-                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setAvatarPreview(undefined); setAvatarUrl(undefined) }}
-                className={`px-3 py-1 text-xs rounded-full ${
+                onClick={(e) => {
+                  e.preventDefault(); e.stopPropagation()
+                  setAvatarPreview(undefined)
+                  setAvatarUrl('')
+                  if (profileData) (profileData as any).avatarUrl = null
+                }}
+                className={`px-3 py-1 text-xs rounded-full cursor-pointer ${
                   isDark ? 'bg-red-600/20 text-red-400 hover:bg-red-600/30' : 'bg-red-100 text-red-600 hover:bg-red-200'
                 }`}
               >
