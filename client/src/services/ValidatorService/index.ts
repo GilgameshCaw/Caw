@@ -2273,9 +2273,9 @@ console.log("succeededKeys", succeededKeys)
               // selector is 0xc667af3e.
               let nativeFee: bigint
               try {
-                const avgTextLength = Math.ceil(allActions.reduce((sum: number, a: any) => sum + (a.text?.length || 0), 0) / 256)
-                const avgRecipients = Math.ceil(allActions.reduce((sum: number, a: any) => sum + (a.recipients?.length || 0), 0) / 256)
-                const avgAmounts = Math.ceil(allActions.reduce((sum: number, a: any) => sum + (a.amounts?.length || 0), 0) / 256)
+                const avgTextLength = Math.ceil(allActions.reduce((sum: number, a: any) => sum + (a.text?.length || 0), 0) / 128)
+                const avgRecipients = Math.ceil(allActions.reduce((sum: number, a: any) => sum + (a.recipients?.length || 0), 0) / 128)
+                const avgAmounts = Math.ceil(allActions.reduce((sum: number, a: any) => sum + (a.amounts?.length || 0), 0) / 128)
                 const fee = await replicatorView.quoteReplicateBatch(destEid, avgTextLength, avgRecipients, avgAmounts, false)
                 // 15% buffer — quoted fee is accurate to a few percent for a
                 // given block; 15% is plenty for inter-block drift. (Was 30%
