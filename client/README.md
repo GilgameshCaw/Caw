@@ -104,6 +104,7 @@ The backend needs RPC access to both L1 (Ethereum) and L2 (Base). Configure in `
 # L1 — used for name resolution and deposit watching
 MAINNET_RPC_URL="https://sepolia.drpc.org"
 L1_RPC_URL="wss://eth-sepolia.g.alchemy.com/v2/YOUR_KEY"
+L1_RPC_URL_HTTP="https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY"
 
 # L2 — used by the validator, event gatherer, and chain sync
 L2_RPC_URL="wss://base-sepolia.infura.io/ws/v3/YOUR_KEY"
@@ -113,7 +114,11 @@ L2_RPC_URL_HTTP="https://base-sepolia.infura.io/v3/YOUR_KEY"
 VALIDATOR_PRIVATE_KEY="0x..."
 ```
 
-WebSocket URLs (`wss://`) are required for the RawEventsGatherer. HTTP URLs are used as fallback by other services. You'll need an Alchemy, Infura, or similar provider key.
+WebSocket URLs (`wss://`) are required for the RawEventsGatherer's live event
+subscriptions. Most other services use the HTTP URLs. If the `_HTTP` variants
+are not set, the system falls back to converting the WebSocket URL by swapping
+the scheme — but this may not work with all providers, so setting explicit HTTP
+URLs is recommended.
 
 ---
 

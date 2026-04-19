@@ -2,7 +2,7 @@
 import 'dotenv/config'
 import { z } from 'zod'
 import { ethers } from 'ethers'
-import { makeJsonRpcProvider } from '../../utils/rpcProvider'
+import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../../utils/rpcProvider'
 import { Service } from '../../Service'
 import { prisma } from '../../prismaClient'
 import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS } from '../../abi/addresses'
@@ -66,7 +66,7 @@ export const marketplaceIndexerService: Service = {
   start(configParam: unknown, ctx: import('../../Service').HeartbeatContext) {
     const cfg = Config.parse(configParam)
     ctx.declareLoop('poll', Math.max((cfg as any).pollIntervalMs * 3, 120_000))
-    const rpcUrl = (process.env.L1_RPC_URL || cfg.l1RpcUrl || '').replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace('/ws/', '/')
+    const rpcUrl = getL1HttpRpcUrl(cfg.l1RpcUrl)
     const marketplaceAddress = cfg.marketplaceAddress || CAW_NAME_MARKETPLACE_ADDRESS
     const cawProfileAddress = cfg.cawProfileAddress || CAW_NAMES_ADDRESS
     const { pollIntervalMs } = cfg

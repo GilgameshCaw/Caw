@@ -1,6 +1,35 @@
 import { JsonRpcProvider, WebSocketProvider, Network } from 'ethers'
 
 /**
+ * Convert a WebSocket RPC URL to its HTTP equivalent by swapping the scheme.
+ * This is a best-effort fallback — prefer using an explicit HTTP URL from
+ * env vars (L2_RPC_URL_HTTP, L1_RPC_URL_HTTP) when available.
+ *
+ * Only the scheme is changed (wss→https, ws→http). We intentionally do NOT
+ * strip path segments like `/ws/` — that pattern is Infura-specific and
+ * would corrupt URLs from other providers (Alchemy, dRPC, QuickNode, etc.).
+ */
+export function wsToHttp(wsUrl: string): string {
+  return wsUrl
+    .replace(/^wss:\/\//, 'https://')
+    .replace(/^ws:\/\//, 'http://')
+}
+
+/**
+ * Get the HTTP RPC URL for L2, preferring the explicit env var.
+ */
+export function getL2HttpRpcUrl(fallbackWsUrl?: string): string {
+  return process.env.L2_RPC_URL_HTTP || wsToHttp(fallbackWsUrl || process.env.L2_RPC_URL || '')
+}
+
+/**
+ * Get the HTTP RPC URL for L1, preferring the explicit env var.
+ */
+export function getL1HttpRpcUrl(fallbackWsUrl?: string): string {
+  return process.env.L1_RPC_URL_HTTP || wsToHttp(fallbackWsUrl || process.env.L1_RPC_URL || '')
+}
+
+/**
  * Create a JsonRpcProvider with `staticNetwork: true` so ethers skips its
  * internal "_detectNetwork" retry loop. Without staticNetwork, when the RPC
  * is unreachable ethers spams `JsonRpcProvider failed to detect network; retry

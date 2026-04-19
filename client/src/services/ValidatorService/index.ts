@@ -7,11 +7,21 @@ import { prisma }  from '../../prismaClient'
 import getActionType from '../../abi/getActionType'
 import { cawActionsAbi } from '../../abi/generated'
 import { CAW_ACTIONS_ADDRESS, CAW_ACTIONS_REPLICATOR_L2_ADDRESS, CAW_ADDRESS, WETH_ADDRESS } from '../../abi/addresses'
-import { WebSocketProvider, JsonRpcProvider, Contract, Wallet, keccak256, solidityPacked, AbiCoder } from 'ethers'
-import { makeJsonRpcProvider, makeWebSocketProvider } from '../../utils/rpcProvider'
+import { WebSocketProvider, JsonRpcProvider, Contract, Wallet, Interface, keccak256, solidityPacked, AbiCoder } from 'ethers'
+import { packActions, packSignatures, bytesToHex, getPackedActionSlices } from '../../utils/packActions'
+import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
 import { incrementSessionSpent } from '../../utils/sessionSpendTracker'
+
+// ABI for the new packed-calldata CawActions functions
+const PACKED_ABI = [
+  'function processActions(uint32 validatorId, bytes packedActions, bytes sigs, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable',
+  'function safeProcessActions(uint32 validatorId, bytes packedActions, bytes sigs, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable returns (uint256 successCount, string[] rejections)',
+  'event ActionsProcessed(bytes packedActions)',
+  'event ActionRejected(uint32 senderId, uint32 cawonce, string reason)',
+]
+const packedIface = new Interface(PACKED_ABI)
 
 // Thin wrapper so this service's existing callers don't need to pass prisma
 // on every invocation. Shared helper lives in utils/txQueueFailure so it can
@@ -299,8 +309,7 @@ export const validatorService: Service = {
     // gas estimation, fee data). Infura WSS on Base Sepolia hangs/socket-hang-ups
     // under large eth_call payloads (we routinely simulate 50+ actions in one
     // call). HTTP handles these reliably. Subscriptions can stay on WSS.
-    const l2HttpRpcUrl = (process.env.L2_RPC_URL_HTTP || l2RpcUrl)
-      .replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace('/ws/', '/')
+    const l2HttpRpcUrl = getL2HttpRpcUrl(l2RpcUrl)
     const httpProvider = makeJsonRpcProvider(l2HttpRpcUrl)
     console.log(`[Validator] HTTP RPC (for eth_call / gas): ${l2HttpRpcUrl.slice(0, 50)}...`)
 
@@ -518,49 +527,68 @@ export const validatorService: Service = {
       queueEntries: Array<{ payload: any; signedTx: string }>
     ) {
       const actions: any[]    = []
-      const v: number[] = []
-      const r: string[] = []
-      const s: string[] = []
+      const sigParts: Array<{ v: number; r: string; s: string }> = []
 
       for (const entry of queueEntries) {
         const signature = entry.signedTx
         const hex = signature.startsWith('0x') ? signature.slice(2) : signature
 
-        r.push('0x' + hex.slice(0, 64))
-        s.push('0x' + hex.slice(64, 128))
-        v.push(parseInt(hex.slice(128, 130), 16))
+        sigParts.push({
+          r: '0x' + hex.slice(0, 64),
+          s: '0x' + hex.slice(64, 128),
+          v: parseInt(hex.slice(128, 130), 16),
+        })
 
-        // Ensure amounts are properly formatted as strings
+        // Ensure amounts are properly formatted
         const actionData = (entry.payload as any).data
-        const sanitizedAction = {
-          ...actionData,
-          amounts: Array.isArray(actionData.amounts)
-            ? actionData.amounts.map((amt: any) => {
-                // Convert to string and validate
-                if (amt === null || amt === undefined || amt === '') {
-                  return '0'
-                }
-                // Ensure it's a valid number string
-                const strAmt = String(amt)
-                if (strAmt === 'NaN' || isNaN(Number(strAmt))) {
-                  console.warn(`Invalid amount value: ${amt}, defaulting to 0`)
-                  return '0'
-                }
-                return strAmt
-              })
-            : []
-        }
+        const recipients = Array.isArray(actionData.recipients) ? actionData.recipients.map(Number) : []
+        const amounts = Array.isArray(actionData.amounts)
+          ? actionData.amounts.map((amt: any) => {
+              if (amt === null || amt === undefined || amt === '') return '0'
+              const strAmt = String(amt)
+              return (strAmt === 'NaN' || isNaN(Number(strAmt))) ? '0' : strAmt
+            })
+          : []
 
-        actions.push(sanitizedAction)
+        // Ensure amounts has exactly recipients.length + 1 entries for packed format
+        while (amounts.length < recipients.length + 1) amounts.push('0')
+
+        actions.push({
+          ...actionData,
+          recipients,
+          amounts,
+        })
       }
 
-      return { actions, v, r, s }
+      // Build packed format
+      const packedBytes = packActions(actions.map(a => ({
+        actionType: Number(a.actionType),
+        senderId: Number(a.senderId),
+        receiverId: Number(a.receiverId || 0),
+        receiverCawonce: Number(a.receiverCawonce || 0),
+        clientId: Number(a.clientId),
+        cawonce: Number(a.cawonce),
+        recipients: (a.recipients || []).map(Number),
+        amounts: a.amounts.map((x: any) => BigInt(x)),
+        text: a.text || '0x',
+      })))
+      const sigsBytes = packSignatures(sigParts)
+
+      return {
+        actions,
+        v: sigParts.map(s => s.v),
+        r: sigParts.map(s => s.r),
+        s: sigParts.map(s => s.s),
+        // Packed format for the new contract
+        packedActions: bytesToHex(packedBytes),
+        packedSigs: bytesToHex(sigsBytes),
+      }
     }
 
 
     async function simulateActions(
       validatorId: number,
-      multiData: { actions: any[]; v: number[]; r: string[]; s: string[] },
+      multiData: { actions: any[]; v: number[]; r: string[]; s: string[]; packedActions: string; packedSigs: string },
       retryCount: number = 0
     ): Promise<{ successfulActions: any[], rejectionMessages: string[], quote: any }> {
       const maxRetries = 3;
@@ -613,9 +641,10 @@ export const validatorService: Service = {
         console.log("[Validator] Step 3: Encoding calldata...")
         let calldata: string
         try {
-          calldata = iface.encodeFunctionData('safeProcessActions', [
+          calldata = packedIface.encodeFunctionData('safeProcessActions', [
             validatorId,
-            { actions: multiData.actions, v: multiData.v, r: multiData.r, s: multiData.s },
+            multiData.packedActions,
+            multiData.packedSigs,
             quote.withdrawFee,
             quote.withdrawLzTokenAmount,
           ])
@@ -667,15 +696,17 @@ export const validatorService: Service = {
 
         console.log(`[Validator] Step 6: Decoding response...`)
         console.log(`Simulation completed in ${elapsed}ms`)
-        const decoded = iface.decodeFunctionResult(
+        const decoded = packedIface.decodeFunctionResult(
           'safeProcessActions',
           returnData
-        ) as [ any[], string[] ]  // [ successfulActions, rejectionMessages ]
+        ) as [ bigint, string[] ]  // [ successCount, rejectionMessages ]
         console.log("decoded", decoded)
 
-        const [ successfulActions, rejectionMessages ] = decoded
+        const [ successCount, rejectionMessages ] = decoded
+        // Build a minimal successfulActions array from the non-rejected entries
+        const successfulActions = multiData.actions.filter((_: any, i: number) => !rejectionMessages[i])
 
-        console.log("simulated:", successfulActions.length, rejectionMessages)
+        console.log("simulated:", Number(successCount), rejectionMessages)
         console.log("[Validator] Simulation results:")
         console.log(`  - Successful actions: ${successfulActions.length}`)
         if (successfulActions.length > 0) {
@@ -769,12 +800,13 @@ export const validatorService: Service = {
 
     async function estimateProcessGasCost(
       validatorId: number,
-      multiData: { actions: any[]; v: number[]; r: string[]; s: string[] },
+      multiData: { actions: any[]; v: number[]; r: string[]; s: string[]; packedActions: string; packedSigs: string },
       quote: { nativeFee: bigint; withdrawFee: bigint; withdrawLzTokenAmount: bigint }
     ) {
-      const calldata = iface.encodeFunctionData('processActions', [
+      const calldata = packedIface.encodeFunctionData('processActions', [
         validatorId,
-        { actions: multiData.actions, v: multiData.v, r: multiData.r, s: multiData.s },
+        multiData.packedActions,
+        multiData.packedSigs,
         quote.withdrawFee,
         quote.withdrawLzTokenAmount,
       ])
@@ -795,13 +827,14 @@ export const validatorService: Service = {
     /** natstat: estimate the raw gas‐limit for processActions */
     async function estimateGasLimit(
       validatorId: number,
-      multiData: { actions: any[]; v: number[]; r: string[]; s: string[] },
+      multiData: { actions: any[]; v: number[]; r: string[]; s: string[]; packedActions: string; packedSigs: string },
       quote: { nativeFee: bigint; withdrawFee: bigint; withdrawLzTokenAmount: bigint }
     ): Promise<bigint> {
       // 1) ABI-encode the same calldata you'd send on-chain
-      const calldata = iface.encodeFunctionData('processActions', [
+      const calldata = packedIface.encodeFunctionData('processActions', [
         validatorId,
-        { actions: multiData.actions, v: multiData.v, r: multiData.r, s: multiData.s },
+        multiData.packedActions,
+        multiData.packedSigs,
         quote.withdrawFee,
         quote.withdrawLzTokenAmount,
       ]);
@@ -820,7 +853,7 @@ export const validatorService: Service = {
 
     async function submitProcessActions(
       validatorId: number,
-      multiData: { actions: any[]; v: number[]; r: string[]; s: string[] },
+      multiData: { actions: any[]; v: number[]; r: string[]; s: string[]; packedActions: string; packedSigs: string },
       quote: { nativeFee: bigint; withdrawFee: bigint; withdrawLzTokenAmount: bigint },
       rawGasLimit: bigint,
       retryCount: number = 0
@@ -860,9 +893,10 @@ export const validatorService: Service = {
 
       try {
         // Encode calldata and validate before sending
-        const txData = iface.encodeFunctionData('processActions', [
+        const txData = packedIface.encodeFunctionData('processActions', [
           validatorId,
-          { actions: multiData.actions, v: multiData.v, r: multiData.r, s: multiData.s },
+          multiData.packedActions,
+          multiData.packedSigs,
           quote.withdrawFee,
           quote.withdrawLzTokenAmount,
         ])
@@ -1105,7 +1139,7 @@ console.log("succeededKeys", succeededKeys)
      * Used after filtering to succeeded actions to get accurate fees
      */
     async function recalculateQuoteForActions(
-      multiData: { actions: any[]; v: number[]; r: string[]; s: string[] }
+      multiData: { actions: any[]; v: number[]; r: string[]; s: string[]; packedActions: string; packedSigs: string }
     ): Promise<{ nativeFee: bigint; withdrawFee: bigint; withdrawLzTokenAmount: bigint }> {
       // Get withdrawal quote
       const withdraws = multiData.actions.filter((action: any) => getActionType(action.actionType).toString() === 'WITHDRAW')
@@ -2011,8 +2045,7 @@ console.log("succeededKeys", succeededKeys)
     // HTTP provider for replication — created once, reused across cycles.
     // WebSocket can fail on historical tx lookups; HTTP is more reliable
     // for the bulk data fetching the reconstruction needs.
-    const replicationHttpRpcUrl = (process.env.L2_RPC_URL_HTTP || l2RpcUrl)
-      .replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace('/ws/', '/')
+    const replicationHttpRpcUrl = getL2HttpRpcUrl(l2RpcUrl)
     const replicationHttpProvider = makeJsonRpcProvider(replicationHttpRpcUrl)
     const replicationHttpWallet = new Wallet(privateKey!, replicationHttpProvider)
     console.log(`[Replication] HTTP RPC: ${replicationHttpRpcUrl.slice(0, 50)}...`)
@@ -2036,7 +2069,7 @@ console.log("succeededKeys", succeededKeys)
         const replicatorViewAbi = [
           'function clientActionCount(uint32) view returns (uint256)',
           'function checkpointReplicated(uint32,uint32,uint256) view returns (bool)',
-          'function quoteReplicateBatch(uint32,uint256,uint256,uint256,bool) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
+          'function quoteReplicateBatch(uint32,uint256,uint256,bool) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
         ]
         // Read clientActionCount from CawActions (not replicator) to know how
         // many complete checkpoints exist.
@@ -2048,7 +2081,7 @@ console.log("succeededKeys", succeededKeys)
           // `text` is `bytes` (smltxt-compressed), not `string`. Mismatched
           // ABI produces a different selector and the tx falls into the
           // contract's fallback path (revert with no data at ~2.87M gas).
-          'function replicateBatch(tuple(uint32 clientId, uint32 destEid, uint256 checkpointId, uint256 lzTokenAmount), tuple(uint8 actionType, uint32 senderId, uint32 receiverId, uint32 receiverCawonce, uint32 clientId, uint32 cawonce, uint32[] recipients, uint64[] amounts, bytes text)[], bytes32[]) payable',
+          'function replicateBatch(tuple(uint32 clientId, uint32 destEid, uint256 checkpointId, uint256 lzTokenAmount), bytes packedActions, bytes32[] r) payable',
         ]
         const replicatorWrite = new Contract(replicatorAddress, replicatorWriteAbi, httpWallet)
 
@@ -2178,20 +2211,41 @@ console.log("succeededKeys", succeededKeys)
                   break
                 }
 
-                const decoded = iface.decodeFunctionData('processActions', tx.data)
-                const multiData = decoded[1]
+                // Decode the packed processActions calldata
+                const decoded = packedIface.decodeFunctionData('processActions', tx.data)
+                const packedHex: string = decoded[1] // packedActions bytes
+                const sigsHex: string = decoded[2]  // sigs bytes
 
-                for (let i = 0; i < multiData.actions.length; i++) {
-                  const a = multiData.actions[i]
-                  if (Number(a.clientId) !== client.id) continue
+                // Unpack the actions from the packed bytes
+                const { unpackReplicationPayload } = await import('../../utils/unpackReplicationPayload')
+                const packedBytes = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
+                const unpacked = unpackReplicationPayload(packedBytes)
+
+                // Extract signatures
+                const sigBytes = new Uint8Array((sigsHex.startsWith('0x') ? sigsHex.slice(2) : sigsHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
+
+                for (let i = 0; i < unpacked.actions.length; i++) {
+                  const a = unpacked.actions[i]
+                  if (a.clientId !== client.id) continue
+                  const sigOff = i * 65
                   orderedEntries.push({
                     blockNumber: tx.blockNumber!,
                     txIndex: tx.index!,
                     calldataPos: i,
-                    action: a,
-                    v: Number(multiData.v[i]),
-                    r: multiData.r[i],
-                    s: multiData.s[i],
+                    action: {
+                      actionType: a.actionType,
+                      senderId: a.senderId,
+                      receiverId: a.receiverId,
+                      receiverCawonce: a.receiverCawonce,
+                      clientId: a.clientId,
+                      cawonce: a.cawonce,
+                      recipients: a.recipients,
+                      amounts: a.amounts,
+                      text: '0x' + Array.from(a.text).map(b => b.toString(16).padStart(2, '0')).join(''),
+                    },
+                    v: sigBytes[sigOff],
+                    r: '0x' + Array.from(sigBytes.slice(sigOff + 1, sigOff + 33)).map(b => b.toString(16).padStart(2, '0')).join(''),
+                    s: '0x' + Array.from(sigBytes.slice(sigOff + 33, sigOff + 65)).map(b => b.toString(16).padStart(2, '0')).join(''),
                   })
                 }
               }
@@ -2246,17 +2300,25 @@ console.log("succeededKeys", succeededKeys)
                 : await actionsView.clientHashAtCheckpoint(client.id, checkpointId - 1)
               const expectedHash = await actionsView.clientHashAtCheckpoint(client.id, checkpointId)
 
-              // ActionData struct tuple type — must match the order/types used by
-              // Solidity's abi.encode(action) inside CawActions._processAction.
-              // `text` is `bytes` since the smltxt compression change — actions
-              // come off-chain from decoded calldata where ethers decodes bytes
-              // into 0x-hex strings, which AbiCoder.encode takes as-is.
-              const actionTupleType = 'tuple(uint8 actionType, uint32 senderId, uint32 receiverId, uint32 receiverCawonce, uint32 clientId, uint32 cawonce, uint32[] recipients, uint64[] amounts, bytes text)'
-              const chainCoder = new AbiCoder()
+              // Hash chain uses keccak256 of the packed action slice (NOT abi.encode).
+              // Pack the actions, then slice each one for hashing.
+              const { packActions: packActionsForHash, getPackedActionSlices: getSlices, bytesToHex: toHex } = await import('../../utils/packActions')
+              const packedForHash = packActionsForHash(allActions.map(a => ({
+                actionType: a.actionType,
+                senderId: a.senderId,
+                receiverId: a.receiverId,
+                receiverCawonce: a.receiverCawonce,
+                clientId: a.clientId,
+                cawonce: a.cawonce,
+                recipients: a.recipients,
+                amounts: a.amounts.map((x: any) => BigInt(x)),
+                text: a.text,
+              })))
+              const actionSlices = getSlices(packedForHash)
 
               let computedHash = prevHash
               for (let i = 0; i < 128; i++) {
-                const actionHash = keccak256(chainCoder.encode([actionTupleType], [allActions[i]]))
+                const actionHash = keccak256(toHex(actionSlices[i]))
                 computedHash = keccak256(solidityPacked(['bytes32', 'bytes32', 'bytes32'], [computedHash, allR[i], actionHash]))
               }
 
@@ -2275,8 +2337,7 @@ console.log("succeededKeys", succeededKeys)
               try {
                 const avgTextLength = Math.ceil(allActions.reduce((sum: number, a: any) => sum + (a.text?.length || 0), 0) / 128)
                 const avgRecipients = Math.ceil(allActions.reduce((sum: number, a: any) => sum + (a.recipients?.length || 0), 0) / 128)
-                const avgAmounts = Math.ceil(allActions.reduce((sum: number, a: any) => sum + (a.amounts?.length || 0), 0) / 128)
-                const fee = await replicatorView.quoteReplicateBatch(destEid, avgTextLength, avgRecipients, avgAmounts, false)
+                const fee = await replicatorView.quoteReplicateBatch(destEid, avgTextLength, avgRecipients, false)
                 // 15% buffer — quoted fee is accurate to a few percent for a
                 // given block; 15% is plenty for inter-block drift. (Was 30%
                 // briefly; tuned down after confirming quote reliability.)
@@ -2321,9 +2382,10 @@ console.log("succeededKeys", succeededKeys)
                 console.warn(`[Replication] clientChainEnabled pre-check failed: ${e?.shortMessage || e?.message}`)
               }
 
+              const packedForReplication = toHex(packedForHash)
               try {
                 await replicatorWrite.replicateBatch.staticCall(
-                  params, allActions, allR,
+                  params, packedForReplication, allR,
                   { value: nativeFee }
                 )
               } catch (simErr: any) {
@@ -2358,7 +2420,7 @@ console.log("succeededKeys", succeededKeys)
               let gasLimit: bigint
               try {
                 const estimated = await replicatorWrite.replicateBatch.estimateGas(
-                  params, allActions, allR,
+                  params, packedForReplication, allR,
                   { value: nativeFee }
                 )
                 gasLimit = (estimated * 110n) / 100n
@@ -2369,7 +2431,7 @@ console.log("succeededKeys", succeededKeys)
                 gasLimit = 12_000_000n
               }
 
-              const tx = await replicatorWrite.replicateBatch(params, allActions, allR, {
+              const tx = await replicatorWrite.replicateBatch(params, packedForReplication, allR, {
                 value: nativeFee,
                 gasLimit,
               })
@@ -2462,8 +2524,7 @@ console.log("succeededKeys", succeededKeys)
     refreshSettings(checkInterval).catch(err => {
       console.error('[Validator] refreshSettings failed, continuing with defaults:', err.message)
     }).then(() => {
-      const httpRpcUrlForLog = (process.env.L2_RPC_URL_HTTP || l2RpcUrl)
-        .replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace('/ws/', '/')
+      const httpRpcUrlForLog = getL2HttpRpcUrl(l2RpcUrl)
       console.log(`[Validator] Starting validator service with:`);
       console.log(`  - L2 WS RPC: ${l2RpcUrl.slice(0, 50)}...`);
       console.log(`  - L2 HTTP RPC: ${httpRpcUrlForLog.slice(0, 50)}...`);

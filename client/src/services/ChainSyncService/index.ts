@@ -3,7 +3,7 @@
 
 import { prisma } from '../../prismaClient'
 import { JsonRpcProvider, Contract } from 'ethers'
-import { makeJsonRpcProvider } from '../../utils/rpcProvider'
+import { makeJsonRpcProvider, getL1HttpRpcUrl, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import { cawClientManagerAbi } from '../../abi/generated'
 import { CLIENT_MANAGER_ADDRESS, CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 
@@ -86,15 +86,14 @@ function initializeProviders(config: ChainSyncConfig) {
   })
 
   if (!l1Provider && config.l1RpcUrl) {
-    // Convert WSS/WS URLs to HTTPS/HTTP — JsonRpcProvider only supports HTTP
-    const l1Url = config.l1RpcUrl.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace('/ws/', '/')
+    const l1Url = getL1HttpRpcUrl(config.l1RpcUrl)
     console.log('[ChainSync] L1 provider URL:', l1Url.slice(0, 40) + '...')
     l1Provider = makeJsonRpcProvider(l1Url)
     clientManager = new Contract(CLIENT_MANAGER_ADDRESS, cawClientManagerAbi, l1Provider)
   }
 
   if (!l2Provider && config.l2RpcUrl) {
-    const l2Url = config.l2RpcUrl.replace(/^wss:/, 'https:').replace(/^ws:/, 'http:').replace('/ws/', '/')
+    const l2Url = getL2HttpRpcUrl(config.l2RpcUrl)
     console.log('[ChainSync] L2 provider URL:', l2Url.slice(0, 40) + '...')
     l2Provider = makeJsonRpcProvider(l2Url)
   }

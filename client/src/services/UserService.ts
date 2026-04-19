@@ -1,7 +1,7 @@
 import { prisma } from '../prismaClient'
 import { CAW_NAMES_L2_ADDRESS, CAW_NAMES_ADDRESS } from '../abi/addresses'
 import { Contract, WebSocketProvider, JsonRpcProvider } from 'ethers'
-import { makeJsonRpcProvider, makeWebSocketProvider } from '../utils/rpcProvider'
+import { makeJsonRpcProvider, makeWebSocketProvider, getL1HttpRpcUrl } from '../utils/rpcProvider'
 
 /** Thrown when a token ID doesn't exist on the current L1 contract (old deployment) */
 export class StaleTokenError extends Error {
@@ -243,7 +243,7 @@ export async function findOrCreateUser(
       // If WebSocket timed out, try HTTP fallback
       if (err?.message?.includes('timed out')) {
         console.warn(`[UserService] WebSocket timed out, trying HTTP fallback...`)
-        const httpUrl = (process.env.L1_RPC_URL || '').replace(/^wss:/, 'https:').replace('/ws/', '/')
+        const httpUrl = getL1HttpRpcUrl()
         if (httpUrl) {
           const httpProvider = makeJsonRpcProvider(httpUrl)
           const httpContract = new Contract(CAW_NAMES_ADDRESS, CawProfileL1Abi, httpProvider)

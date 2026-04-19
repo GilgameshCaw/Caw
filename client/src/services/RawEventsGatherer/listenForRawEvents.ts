@@ -2,7 +2,7 @@
 import { ContractEventPayload, WebSocketProvider, Contract, keccak256, toUtf8Bytes, getBytes, concat } from 'ethers'
 import type { Log } from '@ethersproject/abstract-provider'
 import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
-import { makeJsonRpcProvider, makeWebSocketProvider } from '../../utils/rpcProvider'
+import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import delay from '../../tools/delay'
 import SmlTxt from 'smltxt'
 
@@ -47,16 +47,6 @@ const CONTRACT_ABI = [
   ')'
 ]
 
-/**
- * Convert WebSocket URL to HTTP URL for fallback polling
- * Handles Infura and other providers that have /ws in the WebSocket path
- */
-function wsToHttp(wsUrl: string): string {
-  return wsUrl
-    .replace(/^wss:\/\//, 'https://')
-    .replace(/^ws:\/\//, 'http://')
-    .replace(/\/ws\//, '/')  // Remove /ws/ from path (Infura format)
-}
 
 /**
  * listenForRawEvents
@@ -86,7 +76,7 @@ export default async function listenForRawEvents(
   let isStopped = false
 
   // HTTP provider for reliable polling (WebSocket can die silently)
-  const httpRpcUrl = wsToHttp(config.rpcUrl)
+  const httpRpcUrl = getL2HttpRpcUrl(config.rpcUrl)
   const httpProvider = makeJsonRpcProvider(httpRpcUrl)
   const httpContract = new Contract(CAW_ACTIONS_ADDRESS, CONTRACT_ABI, httpProvider)
 
