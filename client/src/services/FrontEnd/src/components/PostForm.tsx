@@ -815,7 +815,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     }
 
     // Hard limit on thread length to prevent oversized API requests
-    if (chunks.length > 512) return
+    if (chunks.length > 300) return
 
     // Pre-check: verify the user has enough CAW budget (staked + pending deposit
     // - in-flight spend) to cover all thread chunks. Without this, a multi-post
@@ -1167,18 +1167,13 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             {/* Character counter and thread indicator */}
             <div className="flex items-center space-x-2">
               {isThreadMode && (
-                <>
-                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
-                    chunkCount > 512
-                      ? (isDark ? 'bg-red-500/20 text-red-400' : 'bg-red-100 text-red-700')
-                      : (isDark ? 'bg-yellow-500/20 text-yellow-400' : 'bg-yellow-100 text-yellow-700')
-                  }`}>
-                    {currentChunkIndex + 1}/{chunkCount}
-                  </span>
-                  {chunkCount > 512 && (
-                    <span className="text-xs text-red-500">Max 512 posts</span>
-                  )}
-                </>
+                <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                  chunkCount > 300
+                    ? (isDark ? 'bg-red-500/20 text-red-400' : 'bg-red-100 text-red-700')
+                    : (isDark ? 'bg-yellow-500/20 text-yellow-400' : 'bg-yellow-100 text-yellow-700')
+                }`}>
+                  {currentChunkIndex + 1}/{chunkCount}
+                </span>
               )}
               {(text.length > 0 || selectedMedia.length > 0) && (
                 <span
@@ -1267,7 +1262,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                 // triggers the connect flow and should say "Post".
                 const wrongWallet = isConnected && !isTokenOwner && !hasActiveSession && activeToken?.tokenId
                 const tooltipText = wrongWallet ? 'Please switch to the correct wallet' : isSubmitting ? (isThreadMode ? 'Waiting for signatures...' : 'Waiting for signature...') : ''
-                const isDisabled = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isSubmitting
+                const threadTooLong = isThreadMode && chunkCount > 300
+                const isDisabled = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isSubmitting || threadTooLong
                 const btn = (
                   <button
                     ref={submitBtnRef}
@@ -1282,6 +1278,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               })()
             }
           </div>
+          {isThreadMode && chunkCount > 300 && (
+            <p className="text-xs text-red-500 mt-1 text-right">Thread exceeds 300 post limit. Shorten your text to continue.</p>
+          )}
 
         {/* Mobile Thread Info */}
         {isThreadMode && (
@@ -1626,7 +1625,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             {(() => {
                 const wrongWallet2 = isConnected && !isTokenOwner && !hasActiveSession && activeToken?.tokenId
                 const tooltipText2 = wrongWallet2 ? 'Please switch to the correct wallet' : hasNoToken ? '' : isSubmitting ? (isThreadMode ? 'Waiting for signatures...' : 'Waiting for signature...') : ''
-                const isDisabled2 = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isSubmitting
+                const threadTooLong2 = isThreadMode && chunkCount > 300
+                const isDisabled2 = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isSubmitting || threadTooLong2
                 const btn2 = (
                   <button
                     ref={submitBtnRef}
@@ -1641,6 +1641,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               })()
             }
           </div>
+          {isThreadMode && chunkCount > 300 && (
+            <p className="text-xs text-red-500 mt-1 text-right">Thread exceeds 300 post limit. Shorten your text to continue.</p>
+          )}
         </div>
 
         {/* Desktop Thread Info */}

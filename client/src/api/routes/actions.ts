@@ -868,8 +868,8 @@ router.post('/batch', async (req, res) => {
     if (!Array.isArray(actions) || actions.length === 0) {
       return res.status(400).json({ error: 'Expected non-empty actions array' })
     }
-    if (actions.length > 512) {
-      return res.status(400).json({ error: `Thread too long (${actions.length} posts). Maximum is 512.` })
+    if (actions.length > 300) {
+      return res.status(400).json({ error: `Thread too long (${actions.length} posts). Maximum is 300.` })
     }
 
     // Validate pendingDepositTxHash shape (same rules as single-action endpoint).
@@ -1137,7 +1137,7 @@ router.post('/batch', async (req, res) => {
     res.status(201).json({ results })
   } catch (err: any) {
     console.error('POST /api/actions/batch error', err)
-    res.status(500).json({ error: 'Internal error' })
+    res.status(500).json({ error: err.message || 'Internal error' })
   }
 })
 
