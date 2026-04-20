@@ -1060,7 +1060,8 @@ class MultiChainDeployer {
 
     console.log(`\nConnecting to ${config.name} (${chainKey})...`);
 
-    const provider = new ethers.JsonRpcProvider(config.rpc);
+    // Disable request batching to avoid Infura rate-limit errors on batch responses
+    const provider = new ethers.JsonRpcProvider(config.rpc, undefined, { batchMaxCount: 1 });
 
     await this.retry(async () => {
       const network = await provider.getNetwork();
@@ -1073,8 +1074,10 @@ class MultiChainDeployer {
     }
 
     const wallet = new ethers.Wallet(privateKeys[0], provider);
-    const balance = await provider.getBalance(wallet.address);
-    console.log(`   Wallet: ${wallet.address} (${ethers.formatEther(balance)} ETH)`);
+    await this.retry(async () => {
+      const balance = await provider.getBalance(wallet.address);
+      console.log(`   Wallet: ${wallet.address} (${ethers.formatEther(balance)} ETH)`);
+    });
 
     // Verify deployer address
     if (wallet.address.toLowerCase() !== EXPECTED_DEPLOYER.toLowerCase()) {
@@ -1402,7 +1405,11 @@ class MultiChainDeployer {
       allChainKeys.add(this.getChainKey(step.chain));
     }
     console.log(`\nPre-connecting to ${allChainKeys.size} chains...`);
-    await Promise.all([...allChainKeys].map(k => this.initChain(k)));
+    // Stagger connections to avoid RPC rate limiting
+    for (const k of allChainKeys) {
+      await this.initChain(k);
+      await new Promise(r => setTimeout(r, 3000)); // 3s between connections
+    }
 
     // Deploy in phases
     for (const phase of [1, 2, 3, 4, 5]) {
@@ -1421,7 +1428,11 @@ class MultiChainDeployer {
     for (const step of LINKING_STEPS) {
       allChainKeys.add(this.getChainKey(step.chain));
     }
-    await Promise.all([...allChainKeys].map(k => this.initChain(k)));
+    // Stagger connections to avoid RPC rate limiting
+    for (const k of allChainKeys) {
+      await this.initChain(k);
+      await new Promise(r => setTimeout(r, 1000));
+    }
 
     // Find all contracts that depend on this one (transitive closure).
     // A dep that is flagged `cascadeBreak` halts the propagation — its
@@ -1615,7 +1626,9 @@ After deployment, ABIs are automatically regenerated for the frontend.
   const { execSync } = require('child_process');
   try {
     execSync('npx hardhat compile --force', { cwd: __dirname + '/..', stdio: 'inherit' });
-    execSync('npx truffle compile --all', { cwd: __dirname + '/..', stdio: 'inherit' });
+    // Truffle compile skipped — uses Hardhat artifacts. Truffle compile starts ganache
+    // and can trigger RPC rate limiting on Infura.
+    // execSync('npx truffle compile --all', { cwd: __dirname + '/..', stdio: 'inherit' });
     console.log('Compilation complete.\n');
   } catch (err) {
     console.error('Compilation failed:', err.message);

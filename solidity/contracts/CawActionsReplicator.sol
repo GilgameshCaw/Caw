@@ -314,48 +314,46 @@ contract CawActionsReplicator is OApp {
    *      this contract's hash-chain gate together prove the payload matches
    *      what CawActions stored. See docs/CLIENT_REPLICATION_GUIDE.md.
    */
+  /// @notice Replicate a complete 128-action checkpoint to an archive chain.
+  ///         Accepts packed action bytes (same format as CawActions.processActions)
+  ///         plus r values for hash chain verification. The packed bytes are
+  ///         forwarded directly to LZ as the archive payload — no re-packing.
+  /// @param params Replication parameters (clientId, destEid, checkpointId, lzTokenAmount)
+  /// @param packedActions Packed action bytes (header + 128 variable-length actions)
+  /// @param r Signature r values (128 items) — for hash chain verification only
   function replicateBatch(
     ReplicationParams calldata params,
-    ICawActionsForReplicator.ActionData[] calldata actions,
+    bytes calldata packedActions,
     bytes32[] calldata r
   ) external payable {
     require(params.checkpointId > 0, "Invalid checkpoint");
-    require(actions.length == 128, "Must submit exactly 128 actions");
+    // Read action count from packed header
+    uint256 actionCount = (uint256(uint8(packedActions[0])) << 8) | uint256(uint8(packedActions[1]));
+    require(actionCount == 128, "Must submit exactly 128 actions");
     require(r.length == 128, "r array must be 128");
 
-    // Verify destination is valid
     require(isAvailableChain[params.destEid], "Chain not available");
     require(clientChainEnabled[params.clientId][params.destEid], "Client chain not enabled");
 
-    // No duplicate guard — re-submission is allowed. If LZ delivery failed
-    // (DVN stall, insufficient receiveGasLimit, etc.) anyone can resubmit the
-    // same checkpoint. The archive just emits the event again (idempotent),
-    // and the submitter pays gas + LZ fee so there's no griefing vector.
-    // The hash chain verification below is the real security gate.
+    // Verify the packed actions + r values chain to the on-chain checkpoint hash.
+    // Uses keccak256(packedSlice) per action — same hash format as CawActions.
+    _verifyCheckpointHashPacked(params.clientId, params.checkpointId, packedActions, r);
 
-    // Verify (actions, r) chain correctly to the on-chain checkpoint hash.
-    // This one call subsumes the previous _verifyActions (ecrecover + cawonce
-    // + clientId checks) because the hash chain commits to the full action
-    // struct, not just r.
-    _verifyCheckpointHash(params.clientId, params.checkpointId, actions, r);
-
-    // Mark as replicated before sending (checks-effects-interactions)
     checkpointReplicated[params.clientId][params.destEid][params.checkpointId] = true;
 
-    // Replicate to the destination. Payload is tight-packed actions only — r
-    // values are NOT forwarded. The hash chain was already verified above on
-    // the source chain; the archive is for data preservation, not re-verification.
-    // Dropping r saves 4KB (128×32) per checkpoint (~12-40% of payload).
-    bytes memory payload = _packPayload(actions);
-    _replicateToDestination(params.clientId, params.destEid, payload, params.lzTokenAmount);
+    // Forward packed bytes directly to LZ — no re-packing needed.
+    // r values are NOT forwarded (verified on source chain, not needed for recovery).
+    _replicateToDestination(params.clientId, params.destEid, packedActions, params.lzTokenAmount);
 
     emit BatchReplicated(params.checkpointId, params.clientId, params.destEid);
   }
 
-  function _verifyCheckpointHash(
+  /// @dev Walk the packed actions, hash each action's packed slice, and verify
+  ///      the hash chain matches the on-chain checkpoint.
+  function _verifyCheckpointHashPacked(
     uint32 clientId,
     uint256 checkpointId,
-    ICawActionsForReplicator.ActionData[] calldata actions,
+    bytes calldata packedActions,
     bytes32[] calldata r
   ) internal view {
     ICawActionsForReplicator cawActionsContract = ICawActionsForReplicator(cawActions);
@@ -364,10 +362,20 @@ contract CawActionsReplicator is OApp {
       ? bytes32(0)
       : cawActionsContract.clientHashAtCheckpoint(clientId, checkpointId - 1);
 
-    // Mirror the exact construction in CawActions._processAction:
-    //   H_i = keccak256(H_{i-1} || r_i || keccak256(abi.encode(action_i)))
+    uint256 pos = 2; // skip actionCount header
     for (uint i = 0; i < 128; i++) {
-      bytes32 actionHash = keccak256(abi.encode(actions[i]));
+      uint256 actionStart = pos;
+      // Skip one action to find its end offset:
+      //   1 actionType + 4*5 fixed fields = 21 bytes
+      pos += 21;
+      uint256 rc = uint256(uint8(packedActions[pos])); pos += 1;
+      uint256 ac = uint256(uint8(packedActions[pos])); pos += 1;
+      pos += rc * 4;          // recipients
+      pos += ac * 8;           // amounts
+      uint256 tl = (uint256(uint8(packedActions[pos])) << 8) | uint256(uint8(packedActions[pos + 1]));
+      pos += 2 + tl;          // textLength + text
+
+      bytes32 actionHash = keccak256(packedActions[actionStart:pos]);
       hash = keccak256(abi.encodePacked(hash, r[i], actionHash));
     }
     require(hash == cawActionsContract.clientHashAtCheckpoint(clientId, checkpointId), "Hash chain mismatch");
@@ -408,14 +416,13 @@ contract CawActionsReplicator is OApp {
     uint32 destEid,
     uint256 avgTextLength,
     uint256 avgRecipients,
-    uint256 avgAmounts,
     bool payInLzToken
   ) external view returns (MessagingFee memory fee) {
     // Estimate packed payload size for 128 actions.
-    // Packed layout per action: 21 fixed + 1+4*recipients + 1+8*amounts + 2+textLen
-    // Plus: 4-byte header + 128*32 r values
-    uint256 perAction = 21 + 1 + (4 * avgRecipients) + 1 + (8 * avgAmounts) + 2 + avgTextLength;
-    uint256 estimatedSize = 4 + (128 * perAction); // no r values in v2 format
+    // Per action: 21 fixed + 1 recipCount + 1 amtCount + 4*N recipients + 8*M amounts + 2 + textLen
+    // Most actions have 0 recipients and 0 amounts, so avgRecipients ≈ 0
+    uint256 perAction = 21 + 1 + 1 + (4 * avgRecipients) + (8 * avgRecipients) + 2 + avgTextLength;
+    uint256 estimatedSize = 2 + (128 * perAction); // 2-byte header
 
     // Mirror the dynamic gas formula used in _replicateToDestination
     uint128 dynamicGas = uint128((50_000 + estimatedSize * 8) * 125 / 100);
@@ -427,140 +434,4 @@ contract CawActionsReplicator is OApp {
     return _quote(destEid, dummyPayload, options, payInLzToken);
   }
 
-  // ============================================
-  // PAYLOAD PACKING
-  // ============================================
-
-  /// @dev Pack actions into a tight binary format for LZ transmission.
-  ///      Assembly-optimized: uses mstore to write 32 bytes at a time.
-  ///      r values are NOT included — hash-chain verification happens on the
-  ///      source chain before this is called; the archive is for data preservation.
-  ///
-  /// Layout (version 2):
-  ///   HEADER (4 bytes):
-  ///     uint16 actionCount
-  ///     uint8  version (2)
-  ///     uint8  flags   (0, reserved)
-  ///
-  ///   Per action (variable length):
-  ///     uint8   actionType
-  ///     uint32  senderId
-  ///     uint32  receiverId
-  ///     uint32  receiverCawonce
-  ///     uint32  clientId
-  ///     uint32  cawonce
-  ///     uint8   recipientCount
-  ///     uint32  recipients[recipientCount]
-  ///     uint8   amountCount
-  ///     uint64  amounts[amountCount]
-  ///     uint16  textLength
-  ///     bytes   text[textLength]       (no padding)
-  function _packPayload(
-    ICawActionsForReplicator.ActionData[] calldata actions
-  ) internal pure returns (bytes memory buf) {
-    uint256 n = actions.length;
-
-    // First pass: compute total size (Solidity — cheap, just length reads).
-    uint256 size = 4; // header
-    for (uint256 i = 0; i < n; i++) {
-      size += 25 + (actions[i].recipients.length * 4)
-                 + (actions[i].amounts.length * 8)
-                 + actions[i].text.length;
-    }
-
-    buf = new bytes(size);
-
-    assembly {
-      // `buf` points to the length slot; actual data starts at buf+32.
-      let ptr := add(buf, 32)
-
-      // --- Header (4 bytes) ---
-      // Pack [uint16 count, uint8 version=1, uint8 flags=0] into one word.
-      // count is at most 256, version=1, flags=0 → top bytes = 0x0080_0100
-      // for n=128. We shift into the top of a 32-byte word and mstore once.
-      mstore(ptr, shl(240, n))          // uint16 count at bytes 0-1
-      mstore8(add(ptr, 2), 2)           // version 2 (no r values)
-      // flags = 0, already zero from allocation
-      ptr := add(ptr, 4)
-    }
-
-    uint256 ptr;
-    assembly { ptr := add(buf, 36) } // buf + 32 (data start) + 4 (header)
-
-    // --- Actions ---
-    for (uint256 i = 0; i < n; i++) {
-      ICawActionsForReplicator.ActionData calldata a = actions[i];
-
-      assembly {
-        // actionType (1 byte)
-        mstore8(ptr, calldataload(a))
-        ptr := add(ptr, 1)
-
-        // 5 × uint32 big-endian: senderId, receiverId, receiverCawonce, clientId, cawonce
-        // Each is at a.offset + 32*fieldIndex in calldata.
-        // calldataload gives 32 bytes left-aligned; we want the low 4 bytes
-        // shifted to big-endian position. Since calldata uint32 is already
-        // right-aligned in its 32-byte slot, we shift left by 224 bits (28 bytes).
-        mstore(ptr, shl(224, calldataload(add(a, 0x20))))  // senderId
-        mstore(add(ptr, 4), shl(224, calldataload(add(a, 0x40))))  // receiverId
-        mstore(add(ptr, 8), shl(224, calldataload(add(a, 0x60))))  // receiverCawonce
-        mstore(add(ptr, 12), shl(224, calldataload(add(a, 0x80)))) // clientId
-        mstore(add(ptr, 16), shl(224, calldataload(add(a, 0xa0)))) // cawonce
-        ptr := add(ptr, 20)
-      }
-
-      // Recipients: count byte + 4 bytes each
-      uint32[] calldata recip = a.recipients;
-      uint256 rc = recip.length;
-      assembly {
-        mstore8(ptr, rc)
-        ptr := add(ptr, 1)
-      }
-      for (uint256 j = 0; j < rc; j++) {
-        uint32 v = recip[j];
-        assembly {
-          mstore(ptr, shl(224, v))
-          ptr := add(ptr, 4)
-        }
-      }
-
-      // Amounts: count byte + 8 bytes each
-      uint64[] calldata amts = a.amounts;
-      uint256 ac = amts.length;
-      assembly {
-        mstore8(ptr, ac)
-        ptr := add(ptr, 1)
-      }
-      for (uint256 j = 0; j < ac; j++) {
-        uint64 v = amts[j];
-        assembly {
-          mstore(ptr, shl(192, v))
-          ptr := add(ptr, 8)
-        }
-      }
-
-      // Text: uint16 length + raw bytes
-      bytes calldata text = a.text;
-      uint256 tl = text.length;
-      assembly {
-        mstore(ptr, shl(240, tl))  // uint16 length big-endian
-        ptr := add(ptr, 2)
-        // Copy text from calldata in 32-byte chunks. Overwrites past the end
-        // are harmless — they land in the next action's area (overwritten next
-        // iteration). The buffer was pre-allocated to exact size.
-        if tl {
-          let src := text.offset
-          let dst := ptr
-          let end := add(ptr, tl)
-          for {} lt(dst, end) {} {
-            mstore(dst, calldataload(src))
-            dst := add(dst, 32)
-            src := add(src, 32)
-          }
-        }
-        ptr := add(ptr, tl)
-      }
-    }
-
-  }
 }

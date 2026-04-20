@@ -5,6 +5,7 @@ import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
 import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import delay from '../../tools/delay'
 import SmlTxt from 'smltxt'
+import { unpackActions } from '../../utils/packActions'
 
 // smltxt singleton — events arrive with `bytes text` (compressed) but the
 // rest of the pipeline (ActionProcessor, hashtag/mention indexing, Caw.content
@@ -32,19 +33,7 @@ export type RawEventInput = {
 }
 
 const CONTRACT_ABI = [
-  'event ActionsProcessed(' +
-  'tuple(' +
-    'uint8 actionType,' +
-    'uint32 senderId,' +
-    'uint32 receiverId,' +
-    'uint32 receiverCawonce,' +
-    'uint32 clientId,' +
-    'uint32 cawonce,' +
-    'uint32[] recipients,' +
-    'uint64[] amounts,' +
-    'bytes text' +
-  ')[] actions' +
-  ')'
+  'event ActionsProcessed(bytes packedActions)'
 ]
 
 
@@ -119,19 +108,22 @@ export default async function listenForRawEvents(
         ev.topics
       )
       console.log("Will store: ", ev)
-      const actions = decoded.actions as any[]
+      // Decode packed bytes from ActionsProcessed(bytes packedActions)
+      const packedHex = decoded.packedActions as string
+      const packedBuf = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
+      const actions = unpackActions(packedBuf)
       for (let i = 0; i < actions.length; i++) {
-        const tuple = actions[i]
+        const a = actions[i]
         const action = {
-          actionType:      Number(tuple[0]),
-          senderId:        Number(tuple[1]),
-          receiverId:      Number(tuple[2]),
-          receiverCawonce: Number(tuple[3]),
-          clientId:        Number(tuple[4]),
-          cawonce:         Number(tuple[5]),
-          recipients:      tuple[6],
-          amounts:         tuple[7],
-          text:            decompressEventText(tuple[8])
+          actionType:      a.actionType,
+          senderId:        a.senderId,
+          receiverId:      a.receiverId,
+          receiverCawonce: a.receiverCawonce,
+          clientId:        a.clientId,
+          cawonce:         a.cawonce,
+          recipients:      a.recipients,
+          amounts:         a.amounts,
+          text:            decompressEventText(a.text)
         }
         // Offset logIndex by action position within the batch so each action
         // gets a unique (blockNumber, logIndex, transactionHash) key
@@ -178,21 +170,23 @@ export default async function listenForRawEvents(
       wsProvider = makeWebSocketProvider(config.rpcUrl)
       wsContract = new Contract(CAW_ACTIONS_ADDRESS, CONTRACT_ABI, wsProvider)
 
-      wsContract.on('ActionsProcessed', async (rawActions: any[], ev: ContractEventPayload) => {
-        console.log("[RawEventsGatherer] Raw event received via WebSocket", rawActions, ev)
+      wsContract.on('ActionsProcessed', async (packedHex: string, ev: ContractEventPayload) => {
+        console.log("[RawEventsGatherer] Raw event received via WebSocket", ev)
         try {
-          for (let i = 0; i < rawActions.length; i++) {
-            const tuple = rawActions[i]
+          const packedBuf = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
+          const wsActions = unpackActions(packedBuf)
+          for (let i = 0; i < wsActions.length; i++) {
+            const a = wsActions[i]
             const action = {
-              actionType:      Number(tuple[0]),
-              senderId:        Number(tuple[1]),
-              receiverId:      Number(tuple[2]),
-              receiverCawonce: Number(tuple[3]),
-              clientId:        Number(tuple[4]),
-              cawonce:         Number(tuple[5]),
-              recipients:      tuple[6],
-              amounts:         tuple[7],
-              text:            decompressEventText(tuple[8])
+              actionType:      a.actionType,
+              senderId:        a.senderId,
+              receiverId:      a.receiverId,
+              receiverCawonce: a.receiverCawonce,
+              clientId:        a.clientId,
+              cawonce:         a.cawonce,
+              recipients:      a.recipients,
+              amounts:         a.amounts,
+              text:            decompressEventText(a.text)
             }
             // Offset logIndex by action position within the batch
             const logIndex = (ev.log.index ?? 0) + i

@@ -17,15 +17,15 @@
     "CawActions_L1": "0x0fF6161AA6Db87C4834ad5fCBcbB354840e78d74",
     "CawActionsReplicator_L1": "0x3CC22c2EB2320f26063A719b60Df2cdd210746fe",
     "CawActions_L2b": "0xc64cDa55F5031282E5104da0fF301913CFc3C71b",
-    "CawActions_L2": "0x1886095c829265AA4ed43Ce65a99d88F5164caE4",
     "CawActionsReplicator_L2b": "0x89A3cd4F6372488b46f24595CC0E5DfeEf69f0ef",
-    "CawActionsReplicator_L2": "0x300Ae0b250508Ab5e5Ec2e305adFB06803B3c425",
     "CawActionsArchive_L2b": "0x4f3F6EDD55f9A9e5ee531d309Cc9e3F029B4570b",
-    "CawActionsArchive_L2": "0xb294E706170E4798d89566011CD3Ec31FC4abd23"
+    "CawActionsArchive_L2": "0xb294E706170E4798d89566011CD3Ec31FC4abd23",
+    "CawActions_L2": "0xFCd9bf0D24e5d609A9B82e1836200Cc92F72c907",
+    "CawActionsReplicator_L2": "0xdaFb0C86C9aB8a902F8F8a5127FFf9019E4FE582"
   },
   "linking": {
     "clientCreated": true
   },
   "deployerAddress": "0xF71338f3eAa483aA66125598B09BA1988e694a95",
-  "l2DeployBlock": 40367449
+  "l2DeployBlock": 40437227
 }

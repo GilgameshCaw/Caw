@@ -8,7 +8,7 @@ import getActionType from '../../abi/getActionType'
 import { cawActionsAbi } from '../../abi/generated'
 import { CAW_ACTIONS_ADDRESS, CAW_ACTIONS_REPLICATOR_L2_ADDRESS, CAW_ADDRESS, WETH_ADDRESS } from '../../abi/addresses'
 import { WebSocketProvider, JsonRpcProvider, Contract, Wallet, Interface, keccak256, solidityPacked, AbiCoder } from 'ethers'
-import { packActions, packSignatures, bytesToHex, getPackedActionSlices } from '../../utils/packActions'
+import { packActions, packSignatures, bytesToHex, getPackedActionSlices, unpackActions } from '../../utils/packActions'
 import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
@@ -939,8 +939,12 @@ export const validatorService: Service = {
           throw new Error('ActionsProcessed event missing')
         }
 
-        console.log("[submitProcessActions] ActionsProcessed event found:", evt.args)
-        const processed = (evt.args.actions as any[]).map(a => ({
+        console.log("[submitProcessActions] ActionsProcessed event found")
+        // Decode packed bytes from ActionsProcessed(bytes packedActions) event
+        const packedHex = evt.args.packedActions as string
+        const packedBuf = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
+        const decoded = unpackActions(packedBuf)
+        const processed = decoded.map(a => ({
           senderId:     Number(a.senderId),
           cawonce:      Number(a.cawonce)
         }))
@@ -2178,9 +2182,16 @@ console.log("succeededKeys", succeededKeys)
                 for (const ev of batch) {
                   const args: any = (ev as any).args
                   if (!args) continue
-                  const actionsArr = args[0] || args.actions || []
-                  for (const a of actionsArr) {
-                    if (Number(a.clientId) === client.id) scannedActions++
+                  // ActionsProcessed now emits packed bytes — decode to count client actions
+                  const packedHexEvt = args[0] || args.packedActions || ''
+                  if (packedHexEvt && typeof packedHexEvt === 'string' && packedHexEvt.length > 4) {
+                    try {
+                      const buf = new Uint8Array((packedHexEvt.startsWith('0x') ? packedHexEvt.slice(2) : packedHexEvt).match(/.{2}/g)!.map((b: string) => parseInt(b, 16)))
+                      const actionsArr = unpackActions(buf)
+                      for (const a of actionsArr) {
+                        if (Number(a.clientId) === client.id) scannedActions++
+                      }
+                    } catch { /* skip malformed events */ }
                   }
                 }
                 processedEvents = [...batch, ...processedEvents]
@@ -2216,16 +2227,15 @@ console.log("succeededKeys", succeededKeys)
                 const packedHex: string = decoded[1] // packedActions bytes
                 const sigsHex: string = decoded[2]  // sigs bytes
 
-                // Unpack the actions from the packed bytes
-                const { unpackReplicationPayload } = await import('../../utils/unpackReplicationPayload')
+                // Unpack the actions from the packed calldata bytes
                 const packedBytes = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
-                const unpacked = unpackReplicationPayload(packedBytes)
+                const unpackedActions = unpackActions(packedBytes)
 
                 // Extract signatures
                 const sigBytes = new Uint8Array((sigsHex.startsWith('0x') ? sigsHex.slice(2) : sigsHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
 
-                for (let i = 0; i < unpacked.actions.length; i++) {
-                  const a = unpacked.actions[i]
+                for (let i = 0; i < unpackedActions.length; i++) {
+                  const a = unpackedActions[i]
                   if (a.clientId !== client.id) continue
                   const sigOff = i * 65
                   orderedEntries.push({
@@ -2240,8 +2250,8 @@ console.log("succeededKeys", succeededKeys)
                       clientId: a.clientId,
                       cawonce: a.cawonce,
                       recipients: a.recipients,
-                      amounts: a.amounts,
-                      text: '0x' + Array.from(a.text).map(b => b.toString(16).padStart(2, '0')).join(''),
+                      amounts: a.amounts.map((x: any) => BigInt(x)),
+                      text: a.text,
                     },
                     v: sigBytes[sigOff],
                     r: '0x' + Array.from(sigBytes.slice(sigOff + 1, sigOff + 33)).map(b => b.toString(16).padStart(2, '0')).join(''),

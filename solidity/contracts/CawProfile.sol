@@ -124,7 +124,7 @@ contract CawProfile is
   }
 
   function mint(uint32 cawClientId, address owner, string memory username, uint32 newId, uint256 lzTokenAmount) public payable {
-    require(minter == _msgSender(), "caller is not the minter");
+    require(minter == _msgSender(), "Not minter");
     usernames.push(username);
     _mint(owner, newId);
 
@@ -141,7 +141,7 @@ contract CawProfile is
     uint32 cawClientId, address owner, string memory username, uint32 newId,
     uint256 depositAmount, uint32 lzDestId, uint256 lzTokenAmount
   ) public payable {
-    require(minter == _msgSender(), "caller is not the minter");
+    require(minter == _msgSender(), "Not minter");
     usernames.push(username);
     _mint(owner, newId);
 
@@ -228,7 +228,7 @@ contract CawProfile is
 
   function _withdrawFees(address feeAddress, uint256 minCawOut) internal {
     uint256 clientAmount = accruedFees[feeAddress];
-    require(clientAmount > 0, "No fees to withdraw");
+    require(clientAmount > 0, "No fees");
 
     uint256 protocolPool = accruedFees[address(buyAndBurn)];
     uint256 protocolAmount = clientAmount < protocolPool ? clientAmount : protocolPool;
@@ -291,7 +291,7 @@ contract CawProfile is
   }
 
   function authenticate(uint32 cawClientId, uint32 tokenId, uint32 lzDestId, uint256 lzTokenAmount) external payable {
-    require(ownerOf(tokenId) == msg.sender, "can not authenticate with a CawProfile that you do not own");
+    require(ownerOf(tokenId) == msg.sender, "Not owner");
 
     (uint256 fee, address feeAddress) = clientManager.getAuthFeeAndAddress(cawClientId);
     uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
@@ -343,7 +343,7 @@ contract CawProfile is
   }
 
   function deposit(uint32 cawClientId, uint32 tokenId, uint256 amount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
-    require(ownerOf(tokenId) == msg.sender, "can not deposit into a CawProfile that you do not own");
+    require(ownerOf(tokenId) == msg.sender, "Not owner");
     depositFor(cawClientId, tokenId, amount, lzDestId, lzTokenAmount);
   }
 
@@ -369,9 +369,9 @@ contract CawProfile is
 
   /// @notice Withdraw CAW to any address. Only callable by the token owner.
   function withdrawTo(uint32 cawClientId, uint32 tokenId, address recipient, uint256 lzTokenAmount) public payable {
-    require(ownerOf(tokenId) == msg.sender, "can not withdraw from a CawProfile that you do not own");
-    require(withdrawable[tokenId] > 0, "nothing to withdraw, you may need to withdraw from the L2 first");
-    require(recipient != address(0), "Cannot withdraw to zero address");
+    require(ownerOf(tokenId) == msg.sender, "Not owner");
+    require(withdrawable[tokenId] > 0, "Nothing to withdraw");
+    require(recipient != address(0), "Zero address");
 
     uint256 amount = withdrawable[tokenId];
     totalCaw -= withdrawable[tokenId];
@@ -417,7 +417,7 @@ contract CawProfile is
    * @param lzTokenAmount LZ token amount for fees (usually 0)
    */
   function syncTransfer(uint32 lzDestId, uint256 lzTokenAmount) external payable {
-    require(updatesNeededForPeer(lzDestId) > 0, "no pending transfers to sync");
+    require(updatesNeededForPeer(lzDestId) > 0, "No pending");
     _updateNewOwners(lzDestId, msg.value, lzTokenAmount);
   }
 
@@ -445,7 +445,7 @@ contract CawProfile is
    * @param lzTokenAmount LZ token amount for fees
    */
   function syncReplication(uint32 clientId, uint32 lzDestId, uint256 lzTokenAmount) external payable {
-    require(clientManager.getClientOwner(clientId) == msg.sender, "Not the client owner");
+    require(clientManager.getClientOwner(clientId) == msg.sender, "Not client owner");
     uint32[] memory destEids = clientManager.getClientChainEids(clientId);
     _syncClientChains(clientId, destEids, lzDestId, msg.value, lzTokenAmount);
   }
@@ -471,7 +471,7 @@ contract CawProfile is
   ///      fail. Both contracts are immutable post-deployment, so the construction invariant
   ///      cannot be broken by future code changes.
   function setWithdrawable(uint32[] memory tokenIds, uint256[] memory amounts) external {
-    require(fromLZ, "setWithdrawable only callable internally");
+    require(fromLZ, "Only LZ");
     for (uint256 i = 0; i < tokenIds.length; i++)
       withdrawable[tokenIds[i]] += amounts[i];
   }
@@ -585,7 +585,7 @@ contract CawProfile is
     }
 
     // Ensure the selector corresponds to an expected function to prevent unauthorized actions
-    require(isAuthorizedFunction(decodedSelector), "Unauthorized function call");
+    require(isAuthorizedFunction(decodedSelector), "Unauthorized");
 
     // Call the function using the selector and arguments.
     //
@@ -606,7 +606,7 @@ contract CawProfile is
     if (!success) {
       // If the returndata is empty, use a generic error message
       if (returnData.length == 0) {
-        revert("Delegatecall failed with no revert reason");
+        revert("Delegatecall failed");
       } else {
         // Bubble up the revert reason
         assembly {
@@ -671,7 +671,7 @@ contract CawProfile is
     if (selector == updateOwnersSelector)      return uint128( 25_000 + 19_000 * n);  // measured n=0: 18k
     if (selector == authSelector)              return uint128( 50_000 + 19_000 * n);  // measured n=0: 36k
     if (selector == setClientChainsSelector)   return uint128(150_000 + 25_000 * n);  // n=1 cold: 112k
-    revert("unexpected selector");
+    revert("Bad selector");
   }
 
   receive() external payable {}

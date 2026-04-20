@@ -15,6 +15,61 @@ const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
 
 const truffleAssert = require('truffle-assertions');
 
+// ============================================
+// Packed action format helpers
+// ============================================
+function packActionsForContract(signedActions) {
+  // Compute size
+  var size = 2; // actionCount header
+  for (var sa of signedActions) {
+    var a = sa.data.message;
+    var rc = a.recipients ? a.recipients.length : 0;
+    var ac = a.amounts ? a.amounts.length : 0;
+    var textBytes = a.text && a.text !== '0x' ? (a.text.startsWith('0x') ? a.text.slice(2) : a.text) : '';
+    size += 21 + 1 + 1 + (rc * 4) + (ac * 8) + 2 + (textBytes.length / 2);
+  }
+  var buf = Buffer.alloc(size);
+  var pos = 0;
+  // Header
+  buf.writeUInt16BE(signedActions.length, pos); pos += 2;
+  for (var sa of signedActions) {
+    var a = sa.data.message;
+    buf.writeUInt8(Number(a.actionType), pos); pos += 1;
+    buf.writeUInt32BE(Number(a.senderId), pos); pos += 4;
+    buf.writeUInt32BE(Number(a.receiverId), pos); pos += 4;
+    buf.writeUInt32BE(Number(a.receiverCawonce), pos); pos += 4;
+    buf.writeUInt32BE(Number(a.clientId), pos); pos += 4;
+    buf.writeUInt32BE(Number(a.cawonce), pos); pos += 4;
+    // Recipients
+    var recipients = a.recipients || [];
+    var amounts = a.amounts || [];
+    buf.writeUInt8(recipients.length, pos); pos += 1;
+    buf.writeUInt8(amounts.length, pos); pos += 1;
+    for (var r of recipients) { buf.writeUInt32BE(Number(r), pos); pos += 4; }
+    // Amounts: exact count as signed
+    for (var j = 0; j < amounts.length; j++) {
+      buf.writeBigUInt64BE(BigInt(amounts[j]), pos); pos += 8;
+    }
+    // Text
+    var textHex = a.text && a.text !== '0x' ? (a.text.startsWith('0x') ? a.text.slice(2) : a.text) : '';
+    var textLen = textHex.length / 2;
+    buf.writeUInt16BE(textLen, pos); pos += 2;
+    if (textLen > 0) { Buffer.from(textHex, 'hex').copy(buf, pos); pos += textLen; }
+  }
+  return '0x' + buf.toString('hex');
+}
+
+function packSigsForContract(signedActions) {
+  var buf = Buffer.alloc(signedActions.length * 65);
+  for (var i = 0; i < signedActions.length; i++) {
+    var off = i * 65;
+    buf.writeUInt8(signedActions[i].sigData.v, off);
+    Buffer.from(signedActions[i].sigData.r.slice(2), 'hex').copy(buf, off + 1);
+    Buffer.from(signedActions[i].sigData.s.slice(2), 'hex').copy(buf, off + 33);
+  }
+  return '0x' + buf.toString('hex');
+}
+
 // const MockLayerZeroEndpoint = artifacts.require("@layerzerolabs/test-devtools-evm-hardhat/contracts/mocks/EndpointV2Mock.sol");
 
 const {signTypedMessage} = require('@truffle/hdwallet-provider');
@@ -137,31 +192,33 @@ async function signData(user, data) {
   // var sig = await web3.eth.personal.sign(hash, user);
   // console.log("ABOUT TO SIGN sig", sig);
 
-function decodeActions(data) {
-return data;
-	const multiActionDataABI = {
-		"components": [
-			{ "internalType": "uint8", "name": "actionType", "type": "uint8" },
-			{ "internalType": "uint32", "name": "senderId", "type": "uint32" },
-			{ "internalType": "uint32", "name": "receiverId", "type": "uint32" },
-			{ "internalType": "uint32", "name": "receiverCawonce", "type": "uint32" },
-			{ "internalType": "uint32", "name": "clientId", "type": "uint32" },
-			{ "internalType": "uint32", "name": "cawonce", "type": "uint32" },
-			{ "internalType": "uint32[]", "name": "recipients", "type": "uint32[]" },
-			{ "internalType": "uint64[]", "name": "amounts", "type": "uint64[]" },
-			{ "internalType": "string", "name": "text", "type": "string" }
-		],
-		"internalType": "struct ActionData[]",
-		"name": "actions",
-		"type": "tuple[]"
-	};
-
-
-	const decodedData = web3.eth.abi.decodeParameter(multiActionDataABI, data);
-  return decodedData;
+function decodeActions(packedHex) {
+  // Decode packed bytes from ActionsProcessed event
+  var buf = Buffer.from(packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex, 'hex');
+  var pos = 0;
+  var actionCount = buf.readUInt16BE(pos); pos += 2;
+  var actions = [];
+  for (var i = 0; i < actionCount; i++) {
+    var actionType = buf.readUInt8(pos); pos += 1;
+    var senderId = buf.readUInt32BE(pos); pos += 4;
+    var receiverId = buf.readUInt32BE(pos); pos += 4;
+    var receiverCawonce = buf.readUInt32BE(pos); pos += 4;
+    var clientId = buf.readUInt32BE(pos); pos += 4;
+    var cawonce = buf.readUInt32BE(pos); pos += 4;
+    var rc = buf.readUInt8(pos); pos += 1;
+    var ac = buf.readUInt8(pos); pos += 1;
+    var recipients = [];
+    for (var j = 0; j < rc; j++) { recipients.push(buf.readUInt32BE(pos)); pos += 4; }
+    var amounts = [];
+    for (var j = 0; j < ac; j++) { amounts.push(buf.readBigUInt64BE(pos)); pos += 8; }
+    var tl = buf.readUInt16BE(pos); pos += 2;
+    var text = '0x' + buf.slice(pos, pos + tl).toString('hex'); pos += tl;
+    actions.push({ actionType, senderId, receiverId, receiverCawonce, clientId, cawonce, recipients, amounts, text });
+  }
+  return actions;
 }
 
- 
+
 async function safeProcessActions(actions, params) {
   console.log("---");
   console.log("SAFE PROCESS ACTIONS");
@@ -215,12 +272,8 @@ async function safeProcessActions(actions, params) {
 
 
 
-    var transactionData = {
-      v: signedActions.map(action => action.sigData.v),
-      r: signedActions.map(action => action.sigData.r),
-      s: signedActions.map(action => action.sigData.s),
-      actions: signedActions.map(action => action.data.message),
-    };
+    var packedActions = packActionsForContract(signedActions);
+    var packedSigs = packSigsForContract(signedActions);
 
     // Prepare the options for the transaction
     const txOptions = {
@@ -229,10 +282,10 @@ async function safeProcessActions(actions, params) {
 			value: quote?.nativeFee || '0',
     };
 
-  console.log("attempting to process", transactionData.actions.length, "actions");
+  console.log("attempting to process", signedActions.length, "actions");
 
   var withdrawFee = quote?.nativeFee || '0';
-  t = await cawActions.safeProcessActions(params.validatorId || 1, transactionData, withdrawFee, 0, txOptions);
+  t = await cawActions.safeProcessActions(params.validatorId || 1, packedActions, packedSigs, withdrawFee, 0, txOptions);
 
   var fullTx = await web3.eth.getTransaction(t.tx);
   console.log("processed", signedActions.length, "actions. GAS units:", BigInt(t.receipt.gasUsed));
@@ -299,12 +352,8 @@ async function processActions(actions, params) {
 
 
 
-    var transactionData = {
-      v: signedActions.map(action => action.sigData.v),
-      r: signedActions.map(action => action.sigData.r),
-      s: signedActions.map(action => action.sigData.s),
-      actions: signedActions.map(action => action.data.message),
-    };
+    var packedActions = packActionsForContract(signedActions);
+    var packedSigs = packSigsForContract(signedActions);
 
     // Prepare the options for the transaction
     const txOptions = {
@@ -313,37 +362,34 @@ async function processActions(actions, params) {
 			value: quote?.nativeFee || '0',
     };
 
-  console.log("attempting to process", transactionData.actions.length, "actions");
+  console.log("attempting to process", signedActions.length, "actions");
 
   var withdrawFee = quote?.nativeFee || '0';
     // simulate process actions to check which actions will be successful:
   result = await cawActions.safeProcessActions.call(
     params.validatorId || 1,
-    transactionData,
+    packedActions,
+    packedSigs,
     withdrawFee, // withdrawFee
     0, // withdrawLzTokenAmount
     txOptions
   );
 
   console.log("Simulation Result: ", result);
-  var ids = result[0].map(action => `${action.senderId}-${action.cawonce}`);
+  // result[0] = successCount, result[1] = rejections[]
+  var rejections = result[1];
+  // Filter to actions that weren't rejected (empty rejection string)
+  var filteredSignedActions = signedActions.filter((_, i) => !rejections[i] || rejections[i] === '');
+  var ids = filteredSignedActions.map(a => `${a.data.message.senderId}-${a.data.message.cawonce}`);
   console.log("successful IDS", ids);
-  var filteredSignedActions = signedActions.filter(action => ids.includes(`${action.data.message.senderId}-${action.data.message.cawonce}`));
-  console.log("filtered Signed Actions", filteredSignedActions);
-  transactionData = {
-    v: filteredSignedActions.map(action => action.sigData.v),
-    r: filteredSignedActions.map(action => action.sigData.r),
-    s: filteredSignedActions.map(action => action.sigData.s),
-    actions: filteredSignedActions.map(action => action.data.message),
-  };
-  console.log("going to actually process", transactionData.actions.length, "actions");
-
-
-
+  console.log("filtered Signed Actions", filteredSignedActions.length);
+  var filteredPacked = packActionsForContract(filteredSignedActions);
+  var filteredSigs = packSigsForContract(filteredSignedActions);
+  console.log("going to actually process", filteredSignedActions.length, "actions");
 
   var t;
-  if (transactionData.actions.length > 0) {
-    t = await cawActions.processActions(params.validatorId || 1, transactionData, withdrawFee, 0, txOptions);
+  if (filteredSignedActions.length > 0) {
+    t = await cawActions.processActions(params.validatorId || 1, filteredPacked, filteredSigs, withdrawFee, 0, txOptions);
 
     var fullTx = await web3.eth.getTransaction(t.tx);
     console.log("processed", signedActions.length, "actions. GAS units:", BigInt(t.receipt.gasUsed));
@@ -676,8 +722,7 @@ contract('CawProfiles', function(accounts, x) {
     console.log("FISRT CAW SENT!", result);
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-      var actions = decodeActions(args.actions)
-			console.log('actions', args.actions);
+      var actions = decodeActions(args.packedActions)
 			console.log('actions', actions, result.signedActions[0].data.message);
 			console.log('cawonce', actions[0].cawonce, result.signedActions[0].data.message.cawonce);
 			console.log('sender id', actions[0].senderId, result.signedActions[0].data.message.senderId);
@@ -725,7 +770,7 @@ contract('CawProfiles', function(accounts, x) {
     });
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-      var actions = decodeActions(args.actions)
+      var actions = decodeActions(args.packedActions)
       return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
 				actions[0].senderId == result.signedActions[0].data.message.senderId;
     });
@@ -947,7 +992,7 @@ contract('CawProfiles', function(accounts, x) {
     result = await processActions(actionsToProcess, { validator: accounts[1] });
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-      var actions = decodeActions(args.actions)
+      var actions = decodeActions(args.packedActions)
       return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
 				actions[0].senderId == result.signedActions[0].data.message.senderId;
     });
@@ -1020,7 +1065,7 @@ contract('CawProfiles', function(accounts, x) {
     result = await processActions(actionsToProcess, { validator: accounts[1] });
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-      var actions = decodeActions(args.actions)
+      var actions = decodeActions(args.packedActions)
       return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
 				actions[0].senderId == result.signedActions[0].data.message.senderId;
     });
@@ -1094,7 +1139,7 @@ contract('CawProfiles', function(accounts, x) {
     });
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-      var actions = decodeActions(args.actions)
+      var actions = decodeActions(args.packedActions)
       return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
 				actions[0].senderId == result.signedActions[0].data.message.senderId;
     });
@@ -1140,8 +1185,8 @@ contract('CawProfiles', function(accounts, x) {
     });
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-			console.log("Raw ACTION data: ", args.actions);
-      var actions = decodeActions(args.actions)
+			console.log("Raw ACTION data: ", args.packedActions);
+      var actions = decodeActions(args.packedActions)
       return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
 				actions[0].senderId == result.signedActions[0].data.message.senderId;
     });
@@ -1157,8 +1202,9 @@ contract('CawProfiles', function(accounts, x) {
       validator: accounts[2]
     });
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-			console.log("Raw ACTION data: ", args.actions.length);
-      return args.actions.length == 64;
+      var decoded = decodeActions(args.packedActions);
+			console.log("Decoded action count:", decoded.length);
+      return decoded.length == 64;
 		});
 
     // var result = await processActions(a, {
@@ -1166,7 +1212,7 @@ contract('CawProfiles', function(accounts, x) {
     // });
     //
     // truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-		// 	console.log("Raw ACTION data: ", args.actions);
+		// 	console.log("Raw ACTION data: ", args.packedActions);
     //   return true;
 		// });
 
@@ -1765,7 +1811,7 @@ contract("CawProfile - Transfer & Replication Gas", function(accounts) {
     } catch (e) {
       shouldFail = true;
       var errorMsg = e.reason || e.message || '';
-      expect(errorMsg).to.include('no pending transfers');
+      expect(errorMsg).to.include('No pending');
     }
     expect(shouldFail).to.equal(true, "syncTransfer should fail with no pending transfers");
 
@@ -1968,14 +2014,10 @@ contract("CawActionsReplicator - Full Integration", function(accounts) {
       });
     }
 
-    var transactionData = {
-      v: signedActions.map(action => action.sigData.v),
-      r: signedActions.map(action => action.sigData.r),
-      s: signedActions.map(action => action.sigData.s),
-      actions: signedActions.map(action => action.data.message),
-    };
+    var packedActions = packActionsForContract(signedActions);
+    var packedSigs = packSigsForContract(signedActions);
 
-    var tx = await cawActions.processActions(1, transactionData, 0, 0, {
+    var tx = await cawActions.processActions(1, packedActions, packedSigs, 0, 0, {
       from: validator,
     });
 
@@ -1990,10 +2032,6 @@ contract("CawActionsReplicator - Full Integration", function(accounts) {
     // and verifies clientCurrentHash matches after each action.
     var expectedHash = '0x' + '0'.repeat(64);
 
-    // ABI tuple type must match the Solidity struct order EXACTLY — any drift
-    // here will make the verification fail even though the contract is correct.
-    var actionTupleType = 'tuple(uint8 actionType, uint32 senderId, uint32 receiverId, uint32 receiverCawonce, uint32 clientId, uint32 cawonce, uint32[] recipients, uint64[] amounts, bytes text)';
-
     for (var i = 0; i < 3; i++) {
       var result = await processActionsWithSignatures([{
         actionType: 0,
@@ -2003,21 +2041,13 @@ contract("CawActionsReplicator - Full Integration", function(accounts) {
       }], accounts[2]);
 
       var r = result.signedActions[0].sigData.r;
-      var action = result.signedActions[0].data.message;
 
-      // Mirror `keccak256(abi.encode(action))` from CawActions._processAction
-      var actionEncoded = web3.eth.abi.encodeParameter(actionTupleType, [
-        action.actionType,
-        action.senderId,
-        action.receiverId,
-        action.receiverCawonce,
-        action.clientId,
-        action.cawonce,
-        action.recipients,
-        action.amounts,
-        action.text,
-      ]);
-      var actionHash = web3.utils.keccak256(actionEncoded);
+      // Mirror `keccak256(packedSlice)` from CawActions._processActionPacked
+      // Pack single action and hash the action slice (skip 2-byte header)
+      var packedSingle = packActionsForContract([result.signedActions[0]]);
+      var packedBuf = Buffer.from(packedSingle.slice(2), 'hex'); // remove 0x
+      var actionSlice = '0x' + packedBuf.slice(2).toString('hex'); // skip 2-byte actionCount header
+      var actionHash = web3.utils.keccak256(actionSlice);
 
       // Mirror `keccak256(abi.encodePacked(prev, r, actionHash))`
       expectedHash = web3.utils.soliditySha3(
@@ -2070,14 +2100,13 @@ contract("CawActionsReplicator - Full Integration", function(accounts) {
     // We process 3 real actions, then simulate an attack by swapping two
     // action bodies while keeping their r values in the original positions.
 
-    var actionTupleType = 'tuple(uint8 actionType, uint32 senderId, uint32 receiverId, uint32 receiverCawonce, uint32 clientId, uint32 cawonce, uint32[] recipients, uint64[] amounts, bytes text)';
-
+    // Hash action by packing it and hashing the packed slice (mirrors contract)
     function encodeActionHash(a) {
-      var encoded = web3.eth.abi.encodeParameter(actionTupleType, [
-        a.actionType, a.senderId, a.receiverId, a.receiverCawonce,
-        a.clientId, a.cawonce, a.recipients, a.amounts, a.text
-      ]);
-      return web3.utils.keccak256(encoded);
+      var fakeSignedAction = { data: { message: a }, sigData: { v: 0, r: '0x' + '0'.repeat(64), s: '0x' + '0'.repeat(64) } };
+      var packed = packActionsForContract([fakeSignedAction]);
+      var buf = Buffer.from(packed.slice(2), 'hex');
+      var slice = '0x' + buf.slice(2).toString('hex'); // skip 2-byte header
+      return web3.utils.keccak256(slice);
     }
 
     function chainExtend(prev, r, actionHash) {
@@ -2463,7 +2492,7 @@ contract("CawProfile - depositFor", function(accounts) {
         from: accounts[2],
         value: web3.utils.toWei('1', 'ether'),
       }),
-      "can not deposit into a CawProfile that you do not own"
+      "Not owner"
     );
 
     console.log("deposit() still rejects non-owner");
@@ -2933,7 +2962,7 @@ contract("CawProfile - Buy and Burn", function(accounts) {
       await localCawProfiles.withdrawFees(0, { from: accounts[2] });
       assert.fail("Should have reverted");
     } catch (err) {
-      assert(err.message.includes("No fees to withdraw"), "Expected revert but got: " + err.message);
+      assert(err.message.includes("No fees"), "Expected revert but got: " + err.message);
     }
     console.log("no-fees-reverts: PASS");
   });
