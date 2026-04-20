@@ -109,13 +109,29 @@ if (!isBrowser && logStream) {
     process.exit(0)
   })
 
-  process.on('uncaughtException', (error) => {
+  process.on('uncaughtException', (error: any) => {
+    const msg = error?.message || String(error)
+    const code = error?.code || ''
+
+    // Transient network errors (DNS failure, connection refused, socket hang up)
+    // should NOT kill the process — services have their own retry loops.
+    const isTransientNetwork =
+      code === 'ENOTFOUND' || code === 'ECONNREFUSED' || code === 'ECONNRESET' ||
+      code === 'ETIMEDOUT' || code === 'EPIPE' || code === 'EAI_AGAIN' ||
+      msg.includes('socket hang up') || msg.includes('ENOTFOUND') ||
+      msg.includes('getaddrinfo') || msg.includes('ECONNREFUSED')
+
+    if (isTransientNetwork) {
+      logger.error('Uncaught network error (non-fatal, services will retry):', msg)
+      return
+    }
+
     logger.error('Uncaught Exception:', error)
     logStream?.end()
     process.exit(1)
   })
 
-  process.on('unhandledRejection', (reason, promise) => {
+  process.on('unhandledRejection', (reason: any, promise) => {
     logger.error('Unhandled Rejection at:', promise, 'reason:', reason)
   })
 }
