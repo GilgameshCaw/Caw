@@ -1,18 +1,22 @@
 import { JsonRpcProvider, WebSocketProvider, Network } from 'ethers'
 
 /**
- * Convert a WebSocket RPC URL to its HTTP equivalent by swapping the scheme.
- * This is a best-effort fallback — prefer using an explicit HTTP URL from
- * env vars (L2_RPC_URL_HTTP, L1_RPC_URL_HTTP) when available.
+ * Convert a WebSocket RPC URL to its HTTP equivalent. Prefer using an
+ * explicit HTTP URL from env vars (L2_RPC_URL_HTTP, L1_RPC_URL_HTTP)
+ * when available — this is a best-effort fallback.
  *
- * Only the scheme is changed (wss→https, ws→http). We intentionally do NOT
- * strip path segments like `/ws/` — that pattern is Infura-specific and
- * would corrupt URLs from other providers (Alchemy, dRPC, QuickNode, etc.).
+ * Handles two transformations:
+ * 1. Scheme swap: wss→https, ws→http (safe for all providers)
+ * 2. Infura path: strips the `/ws/` segment that Infura inserts between
+ *    host and API key in their WebSocket URLs. Only applied when the URL
+ *    matches the Infura pattern (*.infura.io/ws/v3/...) so it won't
+ *    corrupt URLs from other providers.
  */
 export function wsToHttp(wsUrl: string): string {
   return wsUrl
     .replace(/^wss:\/\//, 'https://')
     .replace(/^ws:\/\//, 'http://')
+    .replace(/(\.infura\.io)\/ws\/(v\d+\/)/, '$1/$2')
 }
 
 /**

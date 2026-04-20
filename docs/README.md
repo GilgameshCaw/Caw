@@ -19,6 +19,8 @@ Welcome to the documentation for the CAW Protocol — a trustless and decentrali
 ### Features
 - **[Other Action Types](./OTHER_ACTION_TYPES.md)** - Beyond posts: likes, follows, profiles
 - **[Direct Messaging](./DIRECT_MESSAGING.md)** - E2E encrypted DM system (ECDH + AES-256-GCM)
+- **[Profile Marketplace](./MARKETPLACE.md)** - Trustless 0% fee NFT trading (fixed, Dutch, English auctions + offers)
+- **[Session Keys (Quick Sign)](./SESSION_KEYS.md)** - Scoped, spend-capped key delegation for gasless UX
 
 ### Standards
 - **[UI Consistency Standards](./UI_CONSISTENCY_STANDARD.md)** - Frontend development guidelines

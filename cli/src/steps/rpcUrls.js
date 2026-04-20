@@ -1,73 +1,126 @@
 import inquirer from 'inquirer'
-import { section, dim, tipBlock, brand, warn } from '../utils/ui.js'
+import { section, dim, tipBlock } from '../utils/ui.js'
+
+/**
+ * Infer the HTTP URL from a WebSocket URL.
+ * Handles Infura's /ws/ path segment; safe for other providers.
+ */
+function inferHttpFromWs(wsUrl) {
+  return wsUrl
+    .replace(/^wss:\/\//, 'https://')
+    .replace(/^ws:\/\//, 'http://')
+    .replace(/(\.infura\.io)\/ws\/(v\d+\/)/, '$1/$2')
+}
+
+function inferWsFromHttp(httpUrl) {
+  let ws = httpUrl
+    .replace(/^https:\/\//, 'wss://')
+    .replace(/^http:\/\//, 'ws://')
+  // Infura: insert /ws/ before the version segment
+  ws = ws.replace(/(\.infura\.io)\/(v\d+\/)/, '$1/ws/$2')
+  return ws
+}
+
+function isInfuraUrl(url) {
+  return /\.infura\.io[/]/.test(url)
+}
+
+/**
+ * Collect a WSS + HTTP RPC pair for a chain.
+ * If the user provides an Infura URL, the other format is auto-derived
+ * without prompting. For other providers, both are asked.
+ */
+async function collectRpcPair(label, required) {
+  const { url } = await inquirer.prompt([{
+    type: 'input',
+    name: 'url',
+    message: `${label} RPC URL (wss:// or https://):`,
+    validate: (input) => {
+      if (!input.trim()) {
+        return required ? `${label} RPC URL is required` : true
+      }
+      if (!input.startsWith('wss://') && !input.startsWith('ws://') &&
+          !input.startsWith('https://') && !input.startsWith('http://')) {
+        return 'URL must start with wss://, ws://, https://, or http://'
+      }
+      return true
+    }
+  }])
+
+  if (!url.trim()) return { wss: '', http: '' }
+
+  const isWs = url.startsWith('wss://') || url.startsWith('ws://')
+
+  if (isInfuraUrl(url)) {
+    const wss = isWs ? url : inferWsFromHttp(url)
+    const http = isWs ? inferHttpFromWs(url) : url
+    console.log(dim(`  ✓ Infura detected — derived both endpoints:`))
+    console.log(dim(`    WSS:  ${wss.slice(0, 55)}...`))
+    console.log(dim(`    HTTP: ${http.slice(0, 55)}...`))
+    return { wss, http }
+  }
+
+  // Not Infura — ask for the other format
+  if (isWs) {
+    const { http } = await inquirer.prompt([{
+      type: 'input',
+      name: 'http',
+      message: `${label} HTTP RPC URL (https://):`,
+      default: inferHttpFromWs(url),
+    }])
+    return { wss: url, http }
+  } else {
+    const { wss } = await inquirer.prompt([{
+      type: 'input',
+      name: 'wss',
+      message: `${label} WebSocket RPC URL (wss://):`,
+      default: inferWsFromHttp(url),
+    }])
+    return { wss, http: url }
+  }
+}
 
 export async function collectRpcUrls(nodeType) {
   section('RPC Endpoints')
 
   tipBlock([
-    'CAW uses Ethereum L1 (mainnet) and Base L2 for operations.',
-    'You need RPC endpoints to read/write blockchain data.',
+    'CAW uses Ethereum L1 (Sepolia) and Base L2 for operations.',
+    'You need both WebSocket (wss://) and HTTP (https://) endpoints.',
     '',
     'Free options: Infura, Alchemy, QuickNode (all have free tiers)',
-    'For validators: WebSocket (wss://) URLs are preferred for real-time events.',
-    'For API-only nodes: HTTP (https://) URLs work fine.',
+    'If you provide an Infura URL, the other format is auto-derived.',
   ])
 
   const needsL1 = ['full', 'validator'].includes(nodeType)
   const needsL2 = nodeType !== 'frontend-only'
 
-  const prompts = []
+  const answers = {}
 
   if (needsL2) {
-    prompts.push({
-      type: 'input',
-      name: 'l2RpcUrl',
-      message: 'L2 RPC URL (Base Sepolia — wss:// preferred for validators):',
-      validate: (input) => {
-        if (!input.trim()) return 'L2 RPC URL is required'
-        if (!input.startsWith('wss://') && !input.startsWith('https://') && !input.startsWith('http://')) {
-          return 'URL must start with wss://, https://, or http://'
-        }
-        return true
-      }
-    })
-
-    // Optional HTTP fallback if they gave a WebSocket URL
-    prompts.push({
-      type: 'input',
-      name: 'l2RpcUrlHttp',
-      message: `L2 HTTP RPC URL ${dim('(optional — for polling fallback, press Enter to auto-derive)')}:`,
-      default: '',
-    })
+    const l2 = await collectRpcPair('L2 (Base Sepolia)', true)
+    answers.l2RpcUrl = l2.wss
+    answers.l2RpcUrlHttp = l2.http
   }
 
   if (needsL1) {
-    prompts.push({
+    const l1 = await collectRpcPair('L1 (Ethereum Sepolia)', true)
+    answers.l1RpcUrl = l1.wss
+    answers.l1RpcUrlHttp = l1.http
+
+    // Mainnet RPC (for price feeds) — HTTP only
+    const { ethMainnetRpcUrl } = await inquirer.prompt([{
       type: 'input',
       name: 'ethMainnetRpcUrl',
-      message: `Ethereum L1 RPC URL ${dim('(mainnet — for Uniswap price feeds)')}:`,
+      message: `Ethereum Mainnet RPC URL ${dim('(for Uniswap price feeds — https://)')}:`,
       validate: (input) => {
-        if (!input.trim()) return 'L1 RPC URL is required for validators (used for CAW/ETH price conversion)'
-        if (!input.startsWith('https://') && !input.startsWith('http://') && !input.startsWith('wss://')) {
-          return 'URL must start with https://, http://, or wss://'
+        if (!input.trim()) return 'Mainnet RPC URL is required for validators (CAW/ETH price conversion)'
+        if (!input.startsWith('https://') && !input.startsWith('http://')) {
+          return 'URL must start with https:// or http://'
         }
         return true
       }
-    })
-  }
-
-  const answers = await inquirer.prompt(prompts)
-
-  // Auto-derive HTTP URL from WebSocket if not provided
-  if (answers.l2RpcUrl && !answers.l2RpcUrlHttp) {
-    answers.l2RpcUrlHttp = answers.l2RpcUrl
-      .replace(/^wss:\/\//, 'https://')
-      .replace(/^ws:\/\//, 'http://')
-      .replace(/\/ws\//, '/')
-  }
-
-  if (answers.l2RpcUrl?.startsWith('http') && !answers.l2RpcUrl?.startsWith('wss')) {
-    console.log(warn('  Note: HTTP RPC URLs work but WebSocket (wss://) is recommended for real-time event streaming.'))
+    }])
+    answers.ethMainnetRpcUrl = ethMainnetRpcUrl
   }
 
   return answers

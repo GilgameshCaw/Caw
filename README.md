@@ -32,6 +32,8 @@ CAW Protocol is a decentralized social network built on blockchain technology. A
 - **[Other Action Types](./docs/OTHER_ACTION_TYPES.md)** - Beyond posts: likes, follows, profiles
 - **[Elasticsearch Setup](./docs/ELASTICSEARCH_SETUP.md)** - Search functionality setup
 - **[Direct Messaging](./docs/DIRECT_MESSAGING.md)** - E2E encrypted DM system (ECDH + AES-256-GCM)
+- **[Profile Marketplace](./docs/MARKETPLACE.md)** - Trustless zero-fee profile NFT trading (fixed sales, Dutch auctions, English auctions, and purchase offers)
+- **[Session Keys (Quick Sign)](./docs/SESSION_KEYS.md)** - Scoped, spend-capped key delegation for gasless UX
 
 ### Standards
 - **[UI Consistency Standards](./docs/UI_CONSISTENCY_STANDARD.md)** - Frontend development guidelines

@@ -21,6 +21,8 @@ Solidity smart contracts for the CAW decentralized social network as described i
 
 Clients can deploy their own replication contracts to any chain and register them in `CawClientManager` using `addReplication(clientId, eid, targetAddress)`. It is recommended that the data replicated to at least one `CawActionsArchive` contract on another chain to ensure permanence.
 
+See the **[Client Replication Guide](./docs/CLIENT_REPLICATION_GUIDE.md)** for full setup instructions, cost estimation, historical migration, and troubleshooting.
+
 ## Deployment
 
 ### Prerequisites

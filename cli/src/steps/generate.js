@@ -129,6 +129,12 @@ function buildEnvVars(nodeType, config) {
   if (config.l2RpcUrlHttp) {
     env.L2_RPC_URL_HTTP = config.l2RpcUrlHttp
   }
+  if (config.l1RpcUrl) {
+    env.L1_RPC_URL = config.l1RpcUrl
+  }
+  if (config.l1RpcUrlHttp) {
+    env.L1_RPC_URL_HTTP = config.l1RpcUrlHttp
+  }
   if (config.ethMainnetRpcUrl) {
     env.ETH_MAINNET_RPC_URL = config.ethMainnetRpcUrl
   }
