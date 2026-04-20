@@ -2097,6 +2097,15 @@ console.log("succeededKeys", succeededKeys)
             const destEid = dest.eid
             if (!destEid) continue
 
+            // Skip destinations not registered on the replicator (e.g. self-chain)
+            try {
+              const available: boolean = await replicatorView.isAvailableChain(destEid)
+              if (!available) {
+                console.log(`[Replication] Skipping chain ${destEid} — not registered on replicator`)
+                continue
+              }
+            } catch { /* proceed with attempt */ }
+
             try {
               // Determine how many complete checkpoints exist on the source chain.
               const actionCount = Number(await cawActionsView.clientActionCount(client.id))
