@@ -868,8 +868,8 @@ router.post('/batch', async (req, res) => {
     if (!Array.isArray(actions) || actions.length === 0) {
       return res.status(400).json({ error: 'Expected non-empty actions array' })
     }
-    if (actions.length > 10000) {
-      return res.status(400).json({ error: 'Batch size exceeds 10,000 actions' })
+    if (actions.length > 512) {
+      return res.status(400).json({ error: 'Batch size exceeds 512 actions' })
     }
 
     // Validate pendingDepositTxHash shape (same rules as single-action endpoint).

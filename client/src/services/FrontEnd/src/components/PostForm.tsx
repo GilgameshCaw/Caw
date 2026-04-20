@@ -814,6 +814,12 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       }
     }
 
+    // Hard limit on thread length to prevent oversized API requests
+    if (chunks.length > 512) {
+      alert(`Thread too long (${chunks.length} posts). Maximum is 512 posts per thread.`)
+      return
+    }
+
     // Pre-check: verify the user has enough CAW budget (staked + pending deposit
     // - in-flight spend) to cover all thread chunks. Without this, a multi-post
     // thread would pass the single-post stake check on the first chunk and then
