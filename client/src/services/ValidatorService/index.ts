@@ -2312,8 +2312,7 @@ console.log("succeededKeys", succeededKeys)
 
               // Hash chain uses keccak256 of the packed action slice (NOT abi.encode).
               // Pack the actions, then slice each one for hashing.
-              const { packActions: packActionsForHash, getPackedActionSlices: getSlices, bytesToHex: toHex } = await import('../../utils/packActions')
-              const packedForHash = packActionsForHash(allActions.map(a => ({
+              const packedForHash = packActions(allActions.map(a => ({
                 actionType: a.actionType,
                 senderId: a.senderId,
                 receiverId: a.receiverId,
@@ -2324,11 +2323,11 @@ console.log("succeededKeys", succeededKeys)
                 amounts: a.amounts.map((x: any) => BigInt(x)),
                 text: a.text,
               })))
-              const actionSlices = getSlices(packedForHash)
+              const actionSlices = getPackedActionSlices(packedForHash)
 
               let computedHash = prevHash
               for (let i = 0; i < 128; i++) {
-                const actionHash = keccak256(toHex(actionSlices[i]))
+                const actionHash = keccak256(bytesToHex(actionSlices[i]))
                 computedHash = keccak256(solidityPacked(['bytes32', 'bytes32', 'bytes32'], [computedHash, allR[i], actionHash]))
               }
 
@@ -2392,7 +2391,7 @@ console.log("succeededKeys", succeededKeys)
                 console.warn(`[Replication] clientChainEnabled pre-check failed: ${e?.shortMessage || e?.message}`)
               }
 
-              const packedForReplication = toHex(packedForHash)
+              const packedForReplication = bytesToHex(packedForHash)
               try {
                 await replicatorWrite.replicateBatch.staticCall(
                   params, packedForReplication, allR,
