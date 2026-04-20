@@ -312,7 +312,7 @@ const Notifications: React.FC = () => {
 
     switch (actionType) {
       case 0: // caw (post or reply)
-        if (payload.receiverId != null) {
+        if (payload.receiverId && payload.receiverCawonce) {
           return {
             title: targetCaw ? `Reply to @${targetCaw.authorUsername} failed` : 'Reply failed',
             snippet: userSnippet || undefined,
@@ -320,7 +320,7 @@ const Notifications: React.FC = () => {
           }
         }
         return {
-          title: 'Post failed',
+          title: 'Posting failed',
           snippet: userSnippet || undefined,
           snippetLabel: userSnippet ? 'You tried to post' : undefined,
         }
@@ -376,6 +376,10 @@ const Notifications: React.FC = () => {
     if (lower.includes('cannot follow yourself')) return "You can't follow your own account."
     if (lower.includes('simulation') || lower.includes('internal error') || lower.includes('rpc')) {
       return 'Something went wrong while processing this action on-chain.'
+    }
+    // Catch raw JS/engine errors that aren't user-friendly
+    if (lower.includes('cannot read properties') || lower.includes('typeerror') || lower.includes('referenceerror') || lower.includes('undefined')) {
+      return 'Something went wrong.'
     }
     return raw || 'Something went wrong.'
   }
@@ -569,18 +573,15 @@ const Notifications: React.FC = () => {
       // Direct tip - navigate to tipper's profile
       navigate(`/users/${notification.actor.username}`)
     } else if (notification.type === 'ACTION_FAILED') {
-      // Navigate to the target of the failed action so the user has context.
-      // For a failed follow: the target user's profile (by tokenId — the
-      // profile route supports both username and numeric id). For a failed
-      // like / recaw / reply: the target user's profile, since we don't
-      // easily have the target caw's DB id at this layer. For a plain post
-      // or tip: no context navigation. The retry button below is the main
-      // affordance — navigation here is a nice-to-have orientation aid.
       const payload = notification.actionPayload
       if (!payload) return
-      if (payload.receiverId != null && payload.receiverId !== activeToken?.tokenId) {
+      // For replies/likes/recaws with a target user, navigate to their profile
+      if (payload.receiverId && payload.receiverCawonce && payload.receiverUsername) {
+        navigate(`/users/${payload.receiverUsername}`)
+      } else if (payload.receiverId && payload.receiverCawonce) {
         navigate(`/users/${payload.receiverId}`)
       }
+      // For plain posts: no navigation — retry button is the main affordance
     } else if (notification.caw) {
       navigate(`/caws/${notification.caw.id}`)
     }
@@ -757,7 +758,7 @@ const Notifications: React.FC = () => {
                 </div>
                 <div className="flex-1 min-w-0">
                   <p className={`text-sm flex items-center gap-1.5 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                    {notification.actor && (
+                    {notification.actor && notification.type !== 'ACTION_FAILED' && (
                       <img
                         src={getUserAvatar(notification.actor)}
                         alt=""
