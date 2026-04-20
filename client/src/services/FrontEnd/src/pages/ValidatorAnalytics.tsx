@@ -221,7 +221,9 @@ const ValidatorAnalytics: React.FC = () => {
         txHash: t.txHash,
         client: String(t.clientId),
         destChain: String(t.destEid),
-        checkpoint: String(t.checkpointId),
+        checkpoint: t.endCheckpointId && t.endCheckpointId !== t.checkpointId
+          ? `${t.checkpointId}-${t.endCheckpointId}`
+          : String(t.checkpointId),
         gasCostEth: t.ethCost || '0',
         lzFeeEth: t.lzFee || '0',
         totalCostEth: t.totalCost || '0',

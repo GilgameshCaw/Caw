@@ -603,8 +603,9 @@ model ReplicationTx {
   blockNumber  BigInt?
   clientId     Int
   destEid      Int                // LayerZero destination endpoint ID
-  checkpointId Int
-  actionCount  Int      @default(256)
+  checkpointId    Int              // start checkpoint ID
+  endCheckpointId Int?             // end checkpoint ID (for multibatch, null = single)
+  actionCount     Int    @default(256)
   gasUsed      String
   gasPrice     String
   ethCost      String             // Gas cost in wei

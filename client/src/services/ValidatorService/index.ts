@@ -2079,6 +2079,7 @@ console.log("succeededKeys", succeededKeys)
           'function checkpointReplicated(uint32,uint32,uint256) view returns (bool)',
           'function quoteReplicateBatch(uint32,uint256,uint256,uint256,bool) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
           'function getNextUnreplicatedCheckpoint(uint32,uint32) view returns (uint256 nextCheckpointId, uint256 totalCheckpoints)',
+          'function isAvailableChain(uint32) view returns (bool)',
         ]
         // Read clientActionCount from CawActions (not replicator) to know how
         // many complete checkpoints exist.
@@ -2516,6 +2517,7 @@ console.log("succeededKeys", succeededKeys)
                     clientId: client.id,
                     destEid,
                     checkpointId: startCheckpointId,
+                    endCheckpointId: actualEndCheckpointId,
                     actionCount: actualTotalActions,
                     gasUsed: receipt.gasUsed.toString(),
                     gasPrice: receipt.fee ? (receipt.fee / receipt.gasUsed).toString() : '0',
