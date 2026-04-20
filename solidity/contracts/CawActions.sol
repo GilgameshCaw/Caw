@@ -52,7 +52,13 @@ contract CawActions is Ownable {
   );
 
   /// @dev Checkpoint interval — a checkpoint is stored every N actions per client.
-  uint256 private constant CHECKPOINT_INTERVAL = 128;
+  /// @dev 32 actions per checkpoint. Small checkpoints enable flexible multibatch
+  ///      replication: the validator packs consecutive checkpoints into one LZ
+  ///      message up to the ~60KB limit. Worst case (32 actions, 420B text,
+  ///      10 recipients) = ~18KB — always fits. Typical case (50B text) =
+  ///      ~2.4KB — pack ~25 checkpoints (800 actions) per LZ message.
+  ///      Checkpoint SSTORE cost is ~690 gas/action — negligible on L2.
+  uint256 private constant CHECKPOINT_INTERVAL = 32;
 
   constructor(address _cawProfiles) {
     eip712DomainHash = generateDomainHash();
@@ -96,11 +102,12 @@ contract CawActions is Ownable {
     uint256 actionCount;
     assembly { actionCount := shr(240, calldataload(packedActions.offset)) }
     require(actionCount > 0, "No actions");
+    require(actionCount <= 256, "Too many actions");
     require(sigs.length == actionCount * 65, "Sigs length mismatch");
 
     uint32 firstClientId;
     uint16 withdrawCount;
-    uint256 withdrawBitmap;
+    uint256 withdrawBitmap; // safe: actionCount <= 256, bitmap fits uint256
     uint256 pos = 2; // skip actionCount header
 
     for (uint256 i = 0; i < actionCount; ) {
@@ -157,6 +164,7 @@ contract CawActions is Ownable {
     uint256 actionCount;
     assembly { actionCount := shr(240, calldataload(packedActions.offset)) }
     require(actionCount > 0, "No actions");
+    require(actionCount <= 256, "Too many actions");
     require(sigs.length == actionCount * 65, "Sigs length mismatch");
 
     rejections = new string[](actionCount);
@@ -187,6 +195,10 @@ contract CawActions is Ownable {
       unchecked { ++i; }
     }
 
+    // NOTE (audited 2026-04-20): emits the FULL packedActions including rejected
+    // actions, not just the successful ones. Indexers MUST cross-reference
+    // ActionRejected events to filter. Repacking only successful actions would
+    // cost gas and the validator pre-filters via simulation anyway.
     if (successCount > 0) {
       emit ActionsProcessed(packedActions);
     }
@@ -472,7 +484,10 @@ contract CawActions is Ownable {
         let ac := and(shr(72, w), 0xFF)
         // Skip: 23 fixed + rc*4 recipients
         let amtOff := add(add(cdOff, 23), mul(rc, 4))
-        // First amount (8 bytes)
+        // First amount (8 bytes). NOTE (audited 2026-04-20): when ac==0 this reads
+        // the textLength bytes, not an amount — but the value is only used when
+        // withdrawBitmap marks this action as WITHDRAW, and WITHDRAW actions always
+        // have amounts (enforced by _distributeAmountsMem). So the read is harmless.
         firstAmount := and(shr(192, calldataload(amtOff)), 0xFFFFFFFFFFFFFFFF)
         // Skip: amounts + textLength + text
         amtOff := add(amtOff, mul(ac, 8))

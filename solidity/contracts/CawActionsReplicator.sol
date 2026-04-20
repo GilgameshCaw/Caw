@@ -290,95 +290,98 @@ contract CawActionsReplicator is OApp {
   //
   // Anyone can call this - it's fully trustless since all data is verified on-chain.
 
+  /// @dev Checkpoint interval — must match CawActions.CHECKPOINT_INTERVAL.
+  uint256 private constant CHECKPOINT_INTERVAL = 32;
+
   struct ReplicationParams {
     uint32 clientId;
     uint32 destEid;
-    uint256 checkpointId;
+    uint256 startCheckpointId;   // first checkpoint in the range (inclusive)
+    uint256 endCheckpointId;     // last checkpoint in the range (inclusive)
     uint256 lzTokenAmount;
   }
 
-  /**
-   * @notice Replicate a complete 128-action checkpoint to an archive chain
-   * @param params Replication parameters (clientId, destEid, checkpointId, lzTokenAmount)
-   * @param actions All 128 actions for this checkpoint
-   * @param r Signature r values (128 items) — used for hash chain verification
-   *
-   * @dev Trust model: the on-chain hash chain `clientHashAtCheckpoint` in
-   *      CawActions commits to BOTH the r sequence AND a hash of each action
-   *      body (see CawActions._processAction). So if the hash chain check
-   *      below passes, both (actions, r) match EXACTLY what was processed.
-   *      No per-action ecrecover is needed on this side — the hash chain
-   *      IS the proof. v and s aren't needed on the source chain at all.
-   *      The archive also doesn't need v/s: it trusts (actions, r) arriving
-   *      from this contract because LZ's peer-authenticity guarantee plus
-   *      this contract's hash-chain gate together prove the payload matches
-   *      what CawActions stored. See docs/CLIENT_REPLICATION_GUIDE.md.
-   */
-  /// @notice Replicate a complete 128-action checkpoint to an archive chain.
-  ///         Accepts packed action bytes (same format as CawActions.processActions)
-  ///         plus r values for hash chain verification. The packed bytes are
-  ///         forwarded directly to LZ as the archive payload — no re-packing.
-  /// @param params Replication parameters (clientId, destEid, checkpointId, lzTokenAmount)
-  /// @param packedActions Packed action bytes (header + 128 variable-length actions)
-  /// @param r Signature r values (128 items) — for hash chain verification only
+  /// @notice Replicate one or more consecutive checkpoints to an archive chain.
+  ///         The validator packs as many checkpoints as fit in the ~60KB LZ limit.
+  ///
+  /// @dev Trust model: the on-chain hash chain in CawActions commits to BOTH the
+  ///      r sequence AND keccak256(packedSlice) per action. Verification only needs
+  ///      the hash at (startCheckpointId - 1) and endCheckpointId — intermediate
+  ///      checkpoint hashes are implicitly verified by the chain. No per-action
+  ///      ecrecover needed; the hash chain IS the proof.
+  ///
+  /// @param params Replication parameters (clientId, destEid, start/end checkpointId, lzTokenAmount)
+  /// @param packedActions Packed action bytes covering all actions in the checkpoint range
+  /// @param r Signature r values (CHECKPOINT_INTERVAL * numCheckpoints items)
   function replicateBatch(
     ReplicationParams calldata params,
     bytes calldata packedActions,
     bytes32[] calldata r
   ) external payable {
-    require(params.checkpointId > 0, "Invalid checkpoint");
+    require(params.startCheckpointId > 0, "Invalid start checkpoint");
+    require(params.endCheckpointId >= params.startCheckpointId, "Invalid range");
+
+    uint256 numCheckpoints = params.endCheckpointId - params.startCheckpointId + 1;
+    uint256 expectedActions = numCheckpoints * CHECKPOINT_INTERVAL;
+
     // Read action count from packed header
     uint256 actionCount = (uint256(uint8(packedActions[0])) << 8) | uint256(uint8(packedActions[1]));
-    require(actionCount == 128, "Must submit exactly 128 actions");
-    require(r.length == 128, "r array must be 128");
+    require(actionCount == expectedActions, "Action count mismatch");
+    require(r.length == expectedActions, "r array length mismatch");
 
     require(isAvailableChain[params.destEid], "Chain not available");
     require(clientChainEnabled[params.clientId][params.destEid], "Client chain not enabled");
 
-    // Verify the packed actions + r values chain to the on-chain checkpoint hash.
-    // Uses keccak256(packedSlice) per action — same hash format as CawActions.
-    _verifyCheckpointHashPacked(params.clientId, params.checkpointId, packedActions, r);
+    // Verify the hash chain from (startCheckpointId - 1) to endCheckpointId.
+    _verifyCheckpointHashPacked(
+      params.clientId, params.startCheckpointId, params.endCheckpointId,
+      packedActions, r
+    );
 
-    checkpointReplicated[params.clientId][params.destEid][params.checkpointId] = true;
+    // Mark all checkpoints in the range as replicated
+    for (uint256 cp = params.startCheckpointId; cp <= params.endCheckpointId; ) {
+      checkpointReplicated[params.clientId][params.destEid][cp] = true;
+      unchecked { ++cp; }
+    }
 
-    // Forward packed bytes directly to LZ — no re-packing needed.
-    // r values are NOT forwarded (verified on source chain, not needed for recovery).
+    // Forward packed bytes directly to LZ
     _replicateToDestination(params.clientId, params.destEid, packedActions, params.lzTokenAmount);
 
-    emit BatchReplicated(params.checkpointId, params.clientId, params.destEid);
+    emit BatchReplicated(params.startCheckpointId, params.clientId, params.destEid);
   }
 
-  /// @dev Walk the packed actions, hash each action's packed slice, and verify
-  ///      the hash chain matches the on-chain checkpoint.
+  /// @dev Walk all packed actions across a range of checkpoints, verify the hash
+  ///      chain from the checkpoint before startId to endId.
   function _verifyCheckpointHashPacked(
     uint32 clientId,
-    uint256 checkpointId,
+    uint256 startCheckpointId,
+    uint256 endCheckpointId,
     bytes calldata packedActions,
     bytes32[] calldata r
   ) internal view {
     ICawActionsForReplicator cawActionsContract = ICawActionsForReplicator(cawActions);
 
-    bytes32 hash = checkpointId == 1
+    bytes32 hash = startCheckpointId == 1
       ? bytes32(0)
-      : cawActionsContract.clientHashAtCheckpoint(clientId, checkpointId - 1);
+      : cawActionsContract.clientHashAtCheckpoint(clientId, startCheckpointId - 1);
 
+    uint256 totalActions = (endCheckpointId - startCheckpointId + 1) * CHECKPOINT_INTERVAL;
     uint256 pos = 2; // skip actionCount header
-    for (uint i = 0; i < 128; i++) {
+    for (uint i = 0; i < totalActions; ) {
       uint256 actionStart = pos;
-      // Skip one action to find its end offset:
-      //   1 actionType + 4*5 fixed fields = 21 bytes
       pos += 21;
       uint256 rc = uint256(uint8(packedActions[pos])); pos += 1;
       uint256 ac = uint256(uint8(packedActions[pos])); pos += 1;
-      pos += rc * 4;          // recipients
-      pos += ac * 8;           // amounts
+      pos += rc * 4;
+      pos += ac * 8;
       uint256 tl = (uint256(uint8(packedActions[pos])) << 8) | uint256(uint8(packedActions[pos + 1]));
-      pos += 2 + tl;          // textLength + text
+      pos += 2 + tl;
 
       bytes32 actionHash = keccak256(packedActions[actionStart:pos]);
       hash = keccak256(abi.encodePacked(hash, r[i], actionHash));
+      unchecked { ++i; }
     }
-    require(hash == cawActionsContract.clientHashAtCheckpoint(clientId, checkpointId), "Hash chain mismatch");
+    require(hash == cawActionsContract.clientHashAtCheckpoint(clientId, endCheckpointId), "Hash chain mismatch");
   }
 
   /**
@@ -394,7 +397,7 @@ contract CawActionsReplicator is OApp {
   {
     ICawActionsForReplicator cawActionsContract = ICawActionsForReplicator(cawActions);
     uint256 actionCount = cawActionsContract.clientActionCount(clientId);
-    totalCheckpoints = actionCount / 128;
+    totalCheckpoints = actionCount / CHECKPOINT_INTERVAL;
 
     for (uint256 i = 1; i <= totalCheckpoints; i++) {
       if (!checkpointReplicated[clientId][destEid][i]) {
@@ -412,17 +415,22 @@ contract CawActionsReplicator is OApp {
    * @param payInLzToken Whether to pay in LZ token
    * @return fee The messaging fee
    */
+  /// @notice Get a fee quote for replicating a multibatch to a destination.
+  /// @param destEid The destination chain endpoint ID
+  /// @param numCheckpoints Number of checkpoints in this batch (1 = single, N = multibatch)
+  /// @param avgTextLength Average text length per action (for payload size estimation)
+  /// @param avgRecipients Average recipients per action (usually 0)
+  /// @param payInLzToken Whether to pay in LZ token
   function quoteReplicateBatch(
     uint32 destEid,
+    uint256 numCheckpoints,
     uint256 avgTextLength,
     uint256 avgRecipients,
     bool payInLzToken
   ) external view returns (MessagingFee memory fee) {
-    // Estimate packed payload size for 128 actions.
-    // Per action: 21 fixed + 1 recipCount + 1 amtCount + 4*N recipients + 8*M amounts + 2 + textLen
-    // Most actions have 0 recipients and 0 amounts, so avgRecipients ≈ 0
-    uint256 perAction = 21 + 1 + 1 + (4 * avgRecipients) + (8 * avgRecipients) + 2 + avgTextLength;
-    uint256 estimatedSize = 2 + (128 * perAction); // 2-byte header
+    uint256 totalActions = numCheckpoints * CHECKPOINT_INTERVAL;
+    uint256 perAction = 25 + (4 * avgRecipients) + (8 * avgRecipients) + avgTextLength;
+    uint256 estimatedSize = 2 + (totalActions * perAction); // 2-byte header
 
     // Mirror the dynamic gas formula used in _replicateToDestination
     uint128 dynamicGas = uint128((50_000 + estimatedSize * 8) * 125 / 100);
