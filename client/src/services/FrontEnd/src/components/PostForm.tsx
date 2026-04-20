@@ -1278,9 +1278,10 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               })()
             }
           </div>
-          {isThreadMode && chunkCount > 300 && (
-            <p className="text-xs text-red-500 mt-1 text-right">Thread exceeds 300 post limit. Shorten your text to continue.</p>
-          )}
+
+        {isThreadMode && chunkCount > 300 && (
+          <p className="text-xs text-red-500 mt-1 text-right">Thread exceeds 300 post limit. Shorten your text to continue.</p>
+        )}
 
         {/* Mobile Thread Info */}
         {isThreadMode && (
@@ -1641,10 +1642,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               })()
             }
           </div>
-          {isThreadMode && chunkCount > 300 && (
-            <p className="text-xs text-red-500 mt-1 text-right">Thread exceeds 300 post limit. Shorten your text to continue.</p>
-          )}
         </div>
+
+        {isThreadMode && chunkCount > 300 && (
+          <p className="text-xs text-red-500 mt-1 text-right">Thread exceeds 300 post limit. Shorten your text to continue.</p>
+        )}
 
         {/* Desktop Thread Info */}
         {isThreadMode && (
