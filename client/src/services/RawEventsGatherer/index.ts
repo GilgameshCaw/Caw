@@ -64,7 +64,6 @@ export const rawEventsGathererService: Service = {
       }
 
       const store = async (e: RawEventInput) => {
-        console.log("STORE: ", e)
         return await prisma.rawEvent.upsert({
           where: {
             blockNumber_logIndex_transactionHash: {
