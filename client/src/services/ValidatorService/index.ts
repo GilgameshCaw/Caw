@@ -497,19 +497,18 @@ export const validatorService: Service = {
         take: 256,
       })
 
-      // Bound the batch by estimated calldata size. Each action's calldata cost
-      // is roughly: fixed struct overhead (~260 bytes) + text.length + arrays.
-      // Signatures add 65 bytes per action. We cap at 80KB to leave a safety
-      // margin below the 128KB protocol tx size limit.
-      const MAX_BATCH_CALLDATA_BYTES = 80_000
-      const PER_ACTION_OVERHEAD = 325 // struct fields + sig v/r/s
+      // Bound the batch by estimated calldata size. With packed format, each
+      // action is ~25 bytes fixed + 65 bytes sig = 90 bytes + text + arrays.
+      // Cap at 120KB to leave margin below the 128KB protocol tx size limit.
+      const MAX_BATCH_CALLDATA_BYTES = 120_000
+      const PER_ACTION_OVERHEAD = 90 // packed fixed fields (25) + sig (65)
       let runningSize = 500 // base overhead for the outer function call
       const bounded: typeof candidates = []
       for (const entry of candidates) {
         const data = (entry.payload as any)?.data
         const textLen = typeof data?.text === 'string' ? data.text.length : 0
-        const recipientsLen = Array.isArray(data?.recipients) ? data.recipients.length * 32 : 0
-        const amountsLen = Array.isArray(data?.amounts) ? data.amounts.length * 32 : 0
+        const recipientsLen = Array.isArray(data?.recipients) ? data.recipients.length * 4 : 0
+        const amountsLen = Array.isArray(data?.amounts) ? data.amounts.length * 8 : 0
         const entrySize = PER_ACTION_OVERHEAD + textLen + recipientsLen + amountsLen
         if (bounded.length > 0 && runningSize + entrySize > MAX_BATCH_CALLDATA_BYTES) {
           console.log(`[Validator] Batch size limit reached at ${bounded.length} entries (~${runningSize} bytes). Deferring ${candidates.length - bounded.length} entries to next poll.`)
