@@ -93,7 +93,8 @@ contract CawActions is Ownable {
     uint256 withdrawFee,
     uint256 withdrawLzTokenAmount
   ) external payable {
-    uint256 actionCount = _readU16(packedActions, 0);
+    uint256 actionCount;
+    assembly { actionCount := shr(240, calldataload(packedActions.offset)) }
     require(actionCount > 0, "No actions");
     require(sigs.length == actionCount * 65, "Sigs length mismatch");
 
@@ -153,7 +154,8 @@ contract CawActions is Ownable {
     uint256 withdrawFee,
     uint256 withdrawLzTokenAmount
   ) external payable returns (uint256 successCount, string[] memory rejections) {
-    uint256 actionCount = _readU16(packedActions, 0);
+    uint256 actionCount;
+    assembly { actionCount := shr(240, calldataload(packedActions.offset)) }
     require(actionCount > 0, "No actions");
     require(sigs.length == actionCount * 65, "Sigs length mismatch");
 
@@ -277,22 +279,30 @@ contract CawActions is Ownable {
   // SIGNATURE VERIFICATION
   // ============================================
 
-  /// @dev Compute struct hash from memory struct (used by packed calldata path)
-  function _computeStructHash(ActionData memory data) internal pure returns (bytes32) {
-    return keccak256(
-      abi.encode(
-        ACTIONDATA_TYPEHASH,
-        data.actionType,
-        data.senderId,
-        data.receiverId,
-        data.receiverCawonce,
-        data.clientId,
-        data.cawonce,
-        keccak256(abi.encodePacked(data.recipients)),
-        keccak256(abi.encodePacked(data.amounts)),
-        keccak256(data.text)
-      )
-    );
+  /// @dev Compute struct hash from memory struct. Uses assembly for the final
+  ///      abi.encode to avoid memory allocation, but keeps abi.encodePacked in
+  ///      Solidity for array hashing correctness.
+  function _computeStructHash(ActionData memory data) internal pure returns (bytes32 result) {
+    bytes32 recipHash = keccak256(abi.encodePacked(data.recipients));
+    bytes32 amtHash = keccak256(abi.encodePacked(data.amounts));
+    bytes32 textHash = keccak256(data.text);
+    bytes32 typeHash = ACTIONDATA_TYPEHASH;
+
+    // Build the abi.encode buffer in scratch memory (no allocation needed)
+    assembly {
+      let buf := mload(0x40)
+      mstore(buf,              typeHash)
+      mstore(add(buf, 0x20),   mload(data))              // actionType
+      mstore(add(buf, 0x40),   mload(add(data, 0x20)))   // senderId
+      mstore(add(buf, 0x60),   mload(add(data, 0x40)))   // receiverId
+      mstore(add(buf, 0x80),   mload(add(data, 0x60)))   // receiverCawonce
+      mstore(add(buf, 0xA0),   mload(add(data, 0x80)))   // clientId
+      mstore(add(buf, 0xC0),   mload(add(data, 0xA0)))   // cawonce
+      mstore(add(buf, 0xE0),   recipHash)
+      mstore(add(buf, 0x100),  amtHash)
+      mstore(add(buf, 0x120),  textHash)
+      result := keccak256(buf, 0x140)
+    }
   }
 
   function _verifySignatureMem(
@@ -352,67 +362,85 @@ contract CawActions is Ownable {
   // PACKED DATA READERS
   // ============================================
 
-  /// @dev Unpack one action from packed calldata at the given byte offset.
+  /// @dev Unpack one action from packed calldata using assembly for efficient
+  ///      calldataload reads instead of byte-by-byte Solidity indexing.
   function _unpackAction(bytes calldata packed, uint256 pos)
     internal pure returns (ActionData memory action, uint256 nextPos)
   {
-    action.actionType = ActionType(_readU8(packed, pos)); pos += 1;
-    action.senderId = _readU32(packed, pos);              pos += 4;
-    action.receiverId = _readU32(packed, pos);             pos += 4;
-    action.receiverCawonce = _readU32(packed, pos);        pos += 4;
-    action.clientId = _readU32(packed, pos);               pos += 4;
-    action.cawonce = _readU32(packed, pos);                pos += 4;
+    uint256 rc;
+    uint256 ac;
 
-    // Recipients
-    uint256 rc = _readU8(packed, pos); pos += 1;
-    // Amount count (as signed: 0, rc, or rc+1)
-    uint256 ac = _readU8(packed, pos); pos += 1;
+    assembly {
+      let cdOff := add(packed.offset, pos)
 
+      // Load first 32 bytes — contains all fixed fields (21 bytes) + rc + ac
+      let w := calldataload(cdOff)
+      // actionType: 1 byte at bits [255..248]
+      mstore(action, shr(248, w))
+      // senderId: 4 bytes at bits [247..216]
+      mstore(add(action, 0x20), and(shr(216, w), 0xFFFFFFFF))
+      // receiverId: 4 bytes at bits [215..184]
+      mstore(add(action, 0x40), and(shr(184, w), 0xFFFFFFFF))
+      // receiverCawonce: 4 bytes at bits [183..152]
+      mstore(add(action, 0x60), and(shr(152, w), 0xFFFFFFFF))
+      // clientId: 4 bytes at bits [151..120]
+      mstore(add(action, 0x80), and(shr(120, w), 0xFFFFFFFF))
+      // cawonce: 4 bytes at bits [119..88]
+      mstore(add(action, 0xA0), and(shr(88, w), 0xFFFFFFFF))
+      // rc: 1 byte at bits [87..80]
+      rc := and(shr(80, w), 0xFF)
+      // ac: 1 byte at bits [79..72]
+      ac := and(shr(72, w), 0xFF)
+
+      pos := add(pos, 23) // 21 fixed + 1 rc + 1 ac
+    }
+
+    // Allocate arrays in Solidity (safe memory management)
     action.recipients = new uint32[](rc);
-    for (uint256 j = 0; j < rc; ) {
-      action.recipients[j] = _readU32(packed, pos); pos += 4;
-      unchecked { ++j; }
-    }
-
-    // Amounts
     action.amounts = new uint64[](ac);
-    for (uint256 j = 0; j < ac; ) {
-      action.amounts[j] = _readU64(packed, pos); pos += 8;
-      unchecked { ++j; }
+
+    assembly {
+      // Fill recipients array from calldata
+      let recipPtr := mload(add(action, 0xC0)) // pointer to recipients array
+      let cdOff := add(packed.offset, pos)
+      for { let j := 0 } lt(j, rc) { j := add(j, 1) } {
+        let val := and(shr(224, calldataload(add(cdOff, mul(j, 4)))), 0xFFFFFFFF)
+        mstore(add(add(recipPtr, 0x20), mul(j, 0x20)), val)
+      }
+      pos := add(pos, mul(rc, 4))
+
+      // Fill amounts array from calldata
+      let amtPtr := mload(add(action, 0xE0))
+      cdOff := add(packed.offset, pos)
+      for { let j := 0 } lt(j, ac) { j := add(j, 1) } {
+        let val := and(shr(192, calldataload(add(cdOff, mul(j, 8)))), 0xFFFFFFFFFFFFFFFF)
+        mstore(add(add(amtPtr, 0x20), mul(j, 0x20)), val)
+      }
+      pos := add(pos, mul(ac, 8))
     }
 
-    // Text
-    uint256 tl = _readU16(packed, pos); pos += 2;
-    action.text = packed[pos : pos + tl]; pos += tl;
+    // Text: calldata slice (Solidity handles the memory copy)
+    uint256 tl;
+    assembly {
+      tl := shr(240, calldataload(add(packed.offset, pos)))
+      pos := add(pos, 2)
+    }
+    action.text = packed[pos : pos + tl];
+    pos += tl;
 
     nextPos = pos;
   }
 
-  /// @dev Read a signature (v, r, s) from concatenated sigs at action index i.
+  /// @dev Read a signature (v, r, s) from concatenated sigs using calldataload.
   function _readSig(bytes calldata sigs, uint256 i)
     internal pure returns (uint8 v, bytes32 r, bytes32 s)
   {
-    uint256 off = i * 65;
-    v = uint8(sigs[off]);
-    r = bytes32(sigs[off + 1 : off + 33]);
-    s = bytes32(sigs[off + 33 : off + 65]);
-  }
-
-  function _readU8(bytes calldata d, uint256 pos) internal pure returns (uint8) {
-    return uint8(d[pos]);
-  }
-  function _readU16(bytes calldata d, uint256 pos) internal pure returns (uint16) {
-    return (uint16(uint8(d[pos])) << 8) | uint16(uint8(d[pos + 1]));
-  }
-  function _readU32(bytes calldata d, uint256 pos) internal pure returns (uint32) {
-    return (uint32(uint8(d[pos])) << 24) | (uint32(uint8(d[pos+1])) << 16) |
-           (uint32(uint8(d[pos+2])) << 8) | uint32(uint8(d[pos+3]));
-  }
-  function _readU64(bytes calldata d, uint256 pos) internal pure returns (uint64) {
-    return (uint64(uint8(d[pos])) << 56) | (uint64(uint8(d[pos+1])) << 48) |
-           (uint64(uint8(d[pos+2])) << 40) | (uint64(uint8(d[pos+3])) << 32) |
-           (uint64(uint8(d[pos+4])) << 24) | (uint64(uint8(d[pos+5])) << 16) |
-           (uint64(uint8(d[pos+6])) << 8)  | uint64(uint8(d[pos+7]));
+    assembly {
+      let off := add(sigs.offset, mul(i, 65))
+      v := shr(248, calldataload(off))
+      r := calldataload(add(off, 1))
+      s := calldataload(add(off, 33))
+    }
   }
 
   // ============================================
@@ -432,18 +460,25 @@ contract CawActions is Ownable {
     uint256 pos = 2; // skip header
 
     for (uint256 i = 0; i < actionCount; ) {
-      // Read senderId (offset 1 from action start) and skip to amounts
-      uint32 senderId = _readU32(packedActions, pos + 1);
-      // Skip fixed fields: 1 + 4*5 = 21
-      uint256 aPos = pos + 21;
-      uint256 rc = _readU8(packedActions, aPos); aPos += 1;
-      uint256 ac = _readU8(packedActions, aPos); aPos += 1;
-      aPos += rc * 4; // skip recipients
-      // First amount (withdrawal amount for WITHDRAW actions)
-      uint64 firstAmount = _readU64(packedActions, aPos);
-      aPos += ac * 8; // skip all amounts
-      uint256 tl = _readU16(packedActions, aPos); aPos += 2;
-      aPos += tl; // skip text
+      uint32 senderId;
+      uint64 firstAmount;
+      assembly {
+        let cdOff := add(packedActions.offset, pos)
+        let w := calldataload(cdOff)
+        // senderId at offset 1 (bits 247..216)
+        senderId := and(shr(216, w), 0xFFFFFFFF)
+        // rc at offset 21 (bits 87..80), ac at offset 22 (bits 79..72)
+        let rc := and(shr(80, w), 0xFF)
+        let ac := and(shr(72, w), 0xFF)
+        // Skip: 23 fixed + rc*4 recipients
+        let amtOff := add(add(cdOff, 23), mul(rc, 4))
+        // First amount (8 bytes)
+        firstAmount := and(shr(192, calldataload(amtOff)), 0xFFFFFFFFFFFFFFFF)
+        // Skip: amounts + textLength + text
+        amtOff := add(amtOff, mul(ac, 8))
+        let tl := shr(240, calldataload(amtOff))
+        pos := sub(add(add(amtOff, 2), tl), packedActions.offset)
+      }
 
       if ((withdrawBitmap & (1 << i)) != 0) {
         withdrawIds[wIdx] = senderId;
@@ -451,7 +486,6 @@ contract CawActions is Ownable {
         unchecked { ++wIdx; }
       }
 
-      pos = aPos;
       unchecked { ++i; }
     }
 
