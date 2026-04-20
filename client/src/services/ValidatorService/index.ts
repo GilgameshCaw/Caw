@@ -3096,7 +3096,7 @@ console.log("succeededKeys", succeededKeys)
     // Loop lifecycle and scheduling
     // ================================================================
 
-    const useOptimisticReplication = process.env.REPLICATION_MODE === 'optimistic'
+    const useOptimisticReplication = process.env.REPLICATION_MODE !== 'lz'
 
     // Declare all loops with the watchdog. Timeouts are generous — 3x the
     // typical interval — so transient slowness doesn't trigger a restart,
