@@ -20,12 +20,12 @@
     "CawActionsReplicator_L2b": "0x89A3cd4F6372488b46f24595CC0E5DfeEf69f0ef",
     "CawActionsArchive_L2b": "0x4f3F6EDD55f9A9e5ee531d309Cc9e3F029B4570b",
     "CawActionsArchive_L2": "0xb294E706170E4798d89566011CD3Ec31FC4abd23",
-    "CawActions_L2": "0x9263184eaa68E440a11C43AA0A168db31B5E1517",
-    "CawActionsReplicator_L2": "0xaE2f5C275ed369dc0C4c8C186742cb0a08a9404d"
+    "CawActions_L2": "0x74dE2aCE81EC0be0b1DC7614679dc50254c4305f",
+    "CawActionsReplicator_L2": "0x075E737e599Da928748Ca4D4af31CaA7249803De"
   },
   "linking": {
     "clientCreated": true
   },
   "deployerAddress": "0xF71338f3eAa483aA66125598B09BA1988e694a95",
-  "l2DeployBlock": 40440682
+  "l2DeployBlock": 40449315
 }

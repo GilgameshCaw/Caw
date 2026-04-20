@@ -923,6 +923,7 @@ export const cawActionsReplicatorAbi = [
     type: 'function',
     inputs: [
       { name: 'destEid', internalType: 'uint32', type: 'uint32' },
+      { name: 'numCheckpoints', internalType: 'uint256', type: 'uint256' },
       { name: 'avgTextLength', internalType: 'uint256', type: 'uint256' },
       { name: 'avgRecipients', internalType: 'uint256', type: 'uint256' },
       { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
@@ -965,7 +966,12 @@ export const cawActionsReplicatorAbi = [
         components: [
           { name: 'clientId', internalType: 'uint32', type: 'uint32' },
           { name: 'destEid', internalType: 'uint32', type: 'uint32' },
-          { name: 'checkpointId', internalType: 'uint256', type: 'uint256' },
+          {
+            name: 'startCheckpointId',
+            internalType: 'uint256',
+            type: 'uint256',
+          },
+          { name: 'endCheckpointId', internalType: 'uint256', type: 'uint256' },
           { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
         ],
       },

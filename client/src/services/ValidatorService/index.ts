@@ -1935,8 +1935,8 @@ console.log("succeededKeys", succeededKeys)
     }
 
     /**
-     * Background replication loop. Checks for complete 128-action checkpoints
-     * and submits them to archive chains via replicateBatch.
+     * Background replication loop. Checks for complete 32-action checkpoints
+     * and submits them to archive chains via replicateBatch (multibatch).
      *
      * All data comes from on-chain: reads ActionsProcessed events to get actions,
      * decodes processActions calldata from the transactions to extract signatures.
@@ -2070,10 +2070,15 @@ console.log("succeededKeys", succeededKeys)
         const httpProvider = replicationHttpProvider
         const httpWallet = replicationHttpWallet
 
+        const CHECKPOINT_INTERVAL = 32
+        // ~60KB LZ message size limit — leave headroom for LZ framing overhead
+        const LZ_PAYLOAD_LIMIT = 58_000
+
         const replicatorViewAbi = [
           'function clientActionCount(uint32) view returns (uint256)',
           'function checkpointReplicated(uint32,uint32,uint256) view returns (bool)',
-          'function quoteReplicateBatch(uint32,uint256,uint256,bool) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
+          'function quoteReplicateBatch(uint32,uint256,uint256,uint256,bool) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
+          'function getNextUnreplicatedCheckpoint(uint32,uint32) view returns (uint256 nextCheckpointId, uint256 totalCheckpoints)',
         ]
         // Read clientActionCount from CawActions (not replicator) to know how
         // many complete checkpoints exist.
@@ -2085,7 +2090,7 @@ console.log("succeededKeys", succeededKeys)
           // `text` is `bytes` (smltxt-compressed), not `string`. Mismatched
           // ABI produces a different selector and the tx falls into the
           // contract's fallback path (revert with no data at ~2.87M gas).
-          'function replicateBatch(tuple(uint32 clientId, uint32 destEid, uint256 checkpointId, uint256 lzTokenAmount), bytes packedActions, bytes32[] r) payable',
+          'function replicateBatch(tuple(uint32 clientId, uint32 destEid, uint256 startCheckpointId, uint256 endCheckpointId, uint256 lzTokenAmount), bytes packedActions, bytes32[] r) payable',
         ]
         const replicatorWrite = new Contract(replicatorAddress, replicatorWriteAbi, httpWallet)
 
@@ -2109,33 +2114,47 @@ console.log("succeededKeys", succeededKeys)
             try {
               // Determine how many complete checkpoints exist on the source chain.
               const actionCount = Number(await cawActionsView.clientActionCount(client.id))
-              const total = Math.floor(actionCount / 128)
+              const total = Math.floor(actionCount / CHECKPOINT_INTERVAL)
               if (total === 0) continue
 
-              // Find the first checkpoint not yet submitted. The contract no
-              // longer rejects re-submissions, so `checkpointReplicated` is just
-              // a hint for the validator to skip work it's already done. If LZ
-              // delivery failed, the user can force-retry by resetting this flag
-              // (or a future version could track delivery status separately).
-              let checkpointId = 0
-              for (let cp = 1; cp <= total; cp++) {
-                const done = await replicatorView.checkpointReplicated(client.id, destEid, cp)
-                if (!done) { checkpointId = cp; break }
+              // Find the first unreplicated checkpoint. Use the on-chain helper
+              // when available, falling back to a sequential scan.
+              let startCheckpointId = 0
+              try {
+                const result = await replicatorView.getNextUnreplicatedCheckpoint(client.id, destEid)
+                startCheckpointId = Number(result.nextCheckpointId)
+              } catch {
+                // Fallback: sequential scan
+                for (let cp = 1; cp <= total; cp++) {
+                  const done = await replicatorView.checkpointReplicated(client.id, destEid, cp)
+                  if (!done) { startCheckpointId = cp; break }
+                }
               }
-              if (checkpointId === 0) {
+              if (startCheckpointId === 0) {
                 // All marked done. Check env flag for force-retry of specific checkpoint.
                 const forceRetry = Number(process.env.FORCE_REPLICATE_CHECKPOINT || 0)
                 if (forceRetry > 0 && forceRetry <= total) {
                   console.log(`[Replication] All checkpoints marked done, but FORCE_REPLICATE_CHECKPOINT=${forceRetry} — retrying`)
-                  checkpointId = forceRetry
+                  startCheckpointId = forceRetry
                 } else {
                   continue // Fully caught up
                 }
               }
 
-              console.log(`[Replication] Client ${client.id} → chain ${destEid}: checkpoint ${checkpointId}/${total} needs replication`)
+              // Find consecutive unreplicated checkpoints starting from startCheckpointId.
+              // We'll batch as many as fit within the ~60KB LZ payload limit.
+              let endCheckpointId = startCheckpointId
+              for (let cp = startCheckpointId + 1; cp <= total; cp++) {
+                const done = await replicatorView.checkpointReplicated(client.id, destEid, cp)
+                if (done) break // Non-consecutive — stop here
+                endCheckpointId = cp
+              }
 
-              // Reconstruct the 128 actions + signatures from on-chain data.
+              const numCheckpoints = endCheckpointId - startCheckpointId + 1
+              console.log(`[Replication] Client ${client.id} → chain ${destEid}: checkpoints ${startCheckpointId}..${endCheckpointId} (${numCheckpoints}) of ${total} need replication`)
+
+              // Reconstruct actions + signatures from on-chain data for the
+              // entire checkpoint range.
               //
               // The hash chain is built by CawActions._processAction in the exact
               // order actions appear in the calldata arrays. Within a block, multiple
@@ -2145,34 +2164,15 @@ console.log("succeededKeys", succeededKeys)
               // DB logIndex and rawEventId are NOT reliable for this ordering because
               // safeProcessActions makes external self-calls per action (producing
               // low logIndex events) before emitting the batch ActionsProcessed event.
-              const startPos = (checkpointId - 1) * 128
+              const rangeStartPos = (startCheckpointId - 1) * CHECKPOINT_INTERVAL
 
-              // Get tx hashes by querying ALL ActionsProcessed events from the
-              // contract's deploy block to now. We scan FORWARD (not backward)
-              // because reconstruction needs actions from the very beginning:
-              // checkpoint 4 requires actions [384..512), which are near the
-              // start of the contract's history. A backward walk finds the most
-              // recent actions first and stops too early.
-              //
-              // Scanning the full history sounds expensive, but in practice the
-              // contract has a known deploy block and the total event count is
-              // small (tens of events, each containing dozens of actions). A
-              // single queryFilter over the entire range is one RPC call.
-              const latestL2 = await httpProvider.getBlockNumber()
-              const eventsContract = new Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi as any, httpProvider)
-
-              // We only need events covering this checkpoint's 128 actions.
               // Walk backward from the latest block, accumulating client-
               // action counts per event until we've passed the start of the
               // checkpoint window. This is O(events-since-checkpoint) rather
               // than O(all-events-ever).
-              //
-              // actionCount on-chain tells us the total. Checkpoint N covers
-              // action positions [(N-1)*128, N*128). We scan backward until
-              // the cumulative count from the tail exceeds
-              //   actionCount - (checkpointId - 1) * 128
-              // i.e. we've reached back far enough to include position startPos.
-              const actionsNeededFromEnd = actionCount - startPos // how many from tail to cover startPos
+              const actionsNeededFromEnd = actionCount - rangeStartPos // how many from tail to cover rangeStartPos
+              const latestL2 = await httpProvider.getBlockNumber()
+              const eventsContract = new Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi as any, httpProvider)
 
               const CHUNK = 50_000
               let processedEvents: any[] = []
@@ -2210,7 +2210,7 @@ console.log("succeededKeys", succeededKeys)
               const txHashes = Array.from(new Set(processedEvents.map(e => e.transactionHash)))
 
               if (txHashes.length === 0) {
-                console.log(`[Replication] No ActionsProcessed events found for checkpoint ${checkpointId}, skipping`)
+                console.log(`[Replication] No ActionsProcessed events found for checkpoints ${startCheckpointId}..${endCheckpointId}, skipping`)
                 continue
               }
 
@@ -2279,22 +2279,23 @@ console.log("succeededKeys", succeededKeys)
                 return a.calldataPos - b.calldataPos
               })
 
-              // Slice the checkpoint window. orderedEntries is a PARTIAL list
-              // covering the last N actions (from the backward walk), not the
-              // full history. The first entry corresponds to action position
-              // (actionCount - orderedEntries.length) in the global ordering.
+              // Slice the full range of checkpoints from ordered entries.
+              // orderedEntries is a PARTIAL list covering the last N actions
+              // (from the backward walk), not the full history. The first entry
+              // corresponds to action position (actionCount - orderedEntries.length).
               const firstGlobalPos = actionCount - orderedEntries.length
-              const localStart = startPos - firstGlobalPos
-              const checkpoint = orderedEntries.slice(localStart, localStart + 128)
+              const totalActionsNeeded = numCheckpoints * CHECKPOINT_INTERVAL
+              const localStart = rangeStartPos - firstGlobalPos
+              const rangeEntries = orderedEntries.slice(localStart, localStart + totalActionsNeeded)
 
-              if (checkpoint.length !== 128) {
-                console.log(`[Replication] Only ${checkpoint.length}/128 actions reconstructed for checkpoint ${checkpointId} (localStart=${localStart}, entries=${orderedEntries.length}, firstGlobal=${firstGlobalPos}), skipping`)
+              if (rangeEntries.length !== totalActionsNeeded) {
+                console.log(`[Replication] Only ${rangeEntries.length}/${totalActionsNeeded} actions reconstructed for checkpoints ${startCheckpointId}..${endCheckpointId} (localStart=${localStart}, entries=${orderedEntries.length}, firstGlobal=${firstGlobalPos}), skipping`)
                 continue
               }
 
               // Deep-clone actions into plain objects — ethers v6 returns frozen
               // Result objects from decodeFunctionData that can't be re-encoded
-              const allActions = checkpoint.map(e => ({
+              const allActions = rangeEntries.map(e => ({
                 actionType: Number(e.action.actionType),
                 senderId: Number(e.action.senderId),
                 receiverId: Number(e.action.receiverId),
@@ -2305,23 +2306,12 @@ console.log("succeededKeys", succeededKeys)
                 amounts: Array.from(e.action.amounts).map((a: any) => BigInt(a)),
                 text: e.action.text,
               }))
-              const allR = checkpoint.map(e => e.r)
+              const allR = rangeEntries.map(e => e.r)
 
-              // Pre-flight hash chain verification: recompute the on-chain hash chain
-              // locally and compare to the stored checkpoint hash. The chain now
-              // commits to BOTH r AND keccak256(abi.encode(action)) — see
-              // CawActions._processAction. Catches ordering and action-body bugs
-              // before wasting gas on a revert.
-              const hashCheckAbi = ['function clientHashAtCheckpoint(uint32,uint256) view returns (bytes32)']
-              const actionsView = new Contract(CAW_ACTIONS_ADDRESS, hashCheckAbi, httpProvider)
-              const prevHash = checkpointId === 1
-                ? '0x' + '00'.repeat(32)
-                : await actionsView.clientHashAtCheckpoint(client.id, checkpointId - 1)
-              const expectedHash = await actionsView.clientHashAtCheckpoint(client.id, checkpointId)
-
-              // Hash chain uses keccak256 of the packed action slice (NOT abi.encode).
-              // Pack the actions, then slice each one for hashing.
-              const packedForHash = packActions(allActions.map(a => ({
+              // Pre-compute the packed payload size and trim endCheckpointId
+              // so the total stays under the ~60KB LZ limit. We pack the full
+              // range first, then shrink if needed.
+              let packedForHash = packActions(allActions.map(a => ({
                 actionType: a.actionType,
                 senderId: a.senderId,
                 receiverId: a.receiverId,
@@ -2332,30 +2322,80 @@ console.log("succeededKeys", succeededKeys)
                 amounts: a.amounts.map((x: any) => BigInt(x)),
                 text: a.text,
               })))
+
+              // Trim checkpoints from the end until we fit within the LZ payload limit
+              let actualEndCheckpointId = endCheckpointId
+              let actualNumCheckpoints = numCheckpoints
+              let actualTotalActions = totalActionsNeeded
+              let trimmedAllActions = allActions
+              let trimmedAllR = allR
+
+              while (packedForHash.length > LZ_PAYLOAD_LIMIT && actualNumCheckpoints > 1) {
+                actualEndCheckpointId--
+                actualNumCheckpoints = actualEndCheckpointId - startCheckpointId + 1
+                actualTotalActions = actualNumCheckpoints * CHECKPOINT_INTERVAL
+                trimmedAllActions = allActions.slice(0, actualTotalActions)
+                trimmedAllR = allR.slice(0, actualTotalActions)
+                packedForHash = packActions(trimmedAllActions.map(a => ({
+                  actionType: a.actionType,
+                  senderId: a.senderId,
+                  receiverId: a.receiverId,
+                  receiverCawonce: a.receiverCawonce,
+                  clientId: a.clientId,
+                  cawonce: a.cawonce,
+                  recipients: a.recipients,
+                  amounts: a.amounts.map((x: any) => BigInt(x)),
+                  text: a.text,
+                })))
+              }
+
+              if (actualEndCheckpointId !== endCheckpointId) {
+                console.log(`[Replication] Trimmed range to ${startCheckpointId}..${actualEndCheckpointId} (${actualNumCheckpoints} checkpoints, ${packedForHash.length} bytes) to fit LZ limit`)
+              } else {
+                console.log(`[Replication] Payload size: ${packedForHash.length} bytes for ${actualNumCheckpoints} checkpoint(s)`)
+              }
+
+              // Use the trimmed values from here on
+              trimmedAllActions = trimmedAllActions || allActions
+              trimmedAllR = trimmedAllR || allR
+
+              // Pre-flight hash chain verification: recompute the on-chain hash chain
+              // locally from (startCheckpointId - 1) to actualEndCheckpointId and compare
+              // to the stored checkpoint hash. The chain commits to BOTH r AND
+              // keccak256(packedSlice) per action — see CawActions._processAction.
+              // Catches ordering and action-body bugs before wasting gas on a revert.
+              const hashCheckAbi = ['function clientHashAtCheckpoint(uint32,uint256) view returns (bytes32)']
+              const actionsView = new Contract(CAW_ACTIONS_ADDRESS, hashCheckAbi, httpProvider)
+              const prevHash = startCheckpointId === 1
+                ? '0x' + '00'.repeat(32)
+                : await actionsView.clientHashAtCheckpoint(client.id, startCheckpointId - 1)
+              const expectedHash = await actionsView.clientHashAtCheckpoint(client.id, actualEndCheckpointId)
+
+              // Hash chain uses keccak256 of the packed action slice (NOT abi.encode).
+              // Pack the actions, then slice each one for hashing.
               const actionSlices = getPackedActionSlices(packedForHash)
 
               let computedHash = prevHash
-              for (let i = 0; i < 128; i++) {
+              for (let i = 0; i < actualTotalActions; i++) {
                 const actionHash = keccak256(bytesToHex(actionSlices[i]))
-                computedHash = keccak256(solidityPacked(['bytes32', 'bytes32', 'bytes32'], [computedHash, allR[i], actionHash]))
+                computedHash = keccak256(solidityPacked(['bytes32', 'bytes32', 'bytes32'], [computedHash, trimmedAllR[i], actionHash]))
               }
 
               if (computedHash !== expectedHash) {
-                console.error(`[Replication] Hash chain mismatch for checkpoint ${checkpointId}! Computed ${computedHash} but on-chain is ${expectedHash}.`)
-                console.error(`[Replication]   orderedEntries total: ${orderedEntries.length}, startPos: ${startPos}, first action cawonce: ${allActions[0]?.cawonce}, last: ${allActions[127]?.cawonce}`)
+                console.error(`[Replication] Hash chain mismatch for checkpoints ${startCheckpointId}..${actualEndCheckpointId}! Computed ${computedHash} but on-chain is ${expectedHash}.`)
+                console.error(`[Replication]   orderedEntries total: ${orderedEntries.length}, rangeStartPos: ${rangeStartPos}, first action cawonce: ${trimmedAllActions[0]?.cawonce}, last: ${trimmedAllActions[actualTotalActions - 1]?.cawonce}`)
                 continue
               }
-              console.log(`[Replication] Hash chain verified for checkpoint ${checkpointId}`)
+              console.log(`[Replication] Hash chain verified for checkpoints ${startCheckpointId}..${actualEndCheckpointId}`)
 
               // Get LZ fee quote — if the payload exceeds LZ's maxMessageSize,
-              // log a warning and skip this checkpoint instead of blocking all
-              // future checkpoints. The LZ_MessageLib_InvalidMessageSize error
-              // selector is 0xc667af3e.
+              // log a warning and skip instead of blocking all future checkpoints.
+              // The LZ_MessageLib_InvalidMessageSize error selector is 0xc667af3e.
               let nativeFee: bigint
               try {
-                const avgTextLength = Math.ceil(allActions.reduce((sum: number, a: any) => sum + (a.text?.length || 0), 0) / 128)
-                const avgRecipients = Math.ceil(allActions.reduce((sum: number, a: any) => sum + (a.recipients?.length || 0), 0) / 128)
-                const fee = await replicatorView.quoteReplicateBatch(destEid, avgTextLength, avgRecipients, false)
+                const avgTextLength = Math.ceil(trimmedAllActions.reduce((sum: number, a: any) => sum + (a.text?.length || 0), 0) / actualTotalActions)
+                const avgRecipients = Math.ceil(trimmedAllActions.reduce((sum: number, a: any) => sum + (a.recipients?.length || 0), 0) / actualTotalActions)
+                const fee = await replicatorView.quoteReplicateBatch(destEid, actualNumCheckpoints, avgTextLength, avgRecipients, false)
                 // 15% buffer — quoted fee is accurate to a few percent for a
                 // given block; 15% is plenty for inter-block drift. (Was 30%
                 // briefly; tuned down after confirming quote reliability.)
@@ -2363,23 +2403,17 @@ console.log("succeededKeys", succeededKeys)
               } catch (quoteErr: any) {
                 const errData = quoteErr?.data || quoteErr?.error?.data || ''
                 if (typeof errData === 'string' && errData.startsWith('0xc667af3e')) {
-                  console.error(`[Replication] Checkpoint ${checkpointId} payload exceeds LZ message size limit — skipping (will retry if limit is raised)`)
+                  console.error(`[Replication] Checkpoints ${startCheckpointId}..${actualEndCheckpointId} payload exceeds LZ message size limit — skipping (will retry if limit is raised)`)
                 } else {
-                  console.error(`[Replication] Fee quote failed for checkpoint ${checkpointId}:`, quoteErr.message)
+                  console.error(`[Replication] Fee quote failed for checkpoints ${startCheckpointId}..${actualEndCheckpointId}:`, quoteErr.message)
                 }
                 continue
               }
 
-              console.log(`[Replication] Submitting checkpoint ${checkpointId} for client ${client.id} → chain ${destEid} (fee: ${nativeFee} wei)`)
+              console.log(`[Replication] Submitting checkpoints ${startCheckpointId}..${actualEndCheckpointId} for client ${client.id} → chain ${destEid} (fee: ${nativeFee} wei)`)
 
-              const params = { clientId: client.id, destEid, checkpointId, lzTokenAmount: 0 }
+              const params = { clientId: client.id, destEid, startCheckpointId, endCheckpointId: actualEndCheckpointId, lzTokenAmount: 0 }
 
-              // Pre-flight staticCall: simulate the tx to surface a revert
-              // reason before spending gas. On-chain reverts from replicateBatch
-              // have no obvious message in the receipt; this catches contract
-              // requires (Action never processed, clientId mismatch, LZ peer
-              // not set, etc.) and logs the exact reason instead of the opaque
-              // "transaction execution reverted (no reason)".
               // Pre-flight: check that clientChainEnabled is true for this
               // (clientId, destEid). This flag is set on the replicator by a
               // LZ-delivered `setClientChains` message originating from L1.
@@ -2401,9 +2435,14 @@ console.log("succeededKeys", succeededKeys)
               }
 
               const packedForReplication = bytesToHex(packedForHash)
+              // Pre-flight staticCall: simulate the tx to surface a revert
+              // reason before spending gas. On-chain reverts from replicateBatch
+              // have no obvious message in the receipt; this catches contract
+              // requires and logs the exact reason instead of the opaque
+              // "transaction execution reverted (no reason)".
               try {
                 await replicatorWrite.replicateBatch.staticCall(
-                  params, packedForReplication, allR,
+                  params, packedForReplication, trimmedAllR,
                   { value: nativeFee }
                 )
               } catch (simErr: any) {
@@ -2420,13 +2459,13 @@ console.log("succeededKeys", succeededKeys)
                   (reason.includes('missing revert data') || simErr?.code === 'CALL_EXCEPTION')
 
                 if (decoded) {
-                  console.error(`[Replication] Pre-flight simulation failed for checkpoint ${checkpointId} → chain ${destEid}: ${decoded}`)
+                  console.error(`[Replication] Pre-flight simulation failed for checkpoints ${startCheckpointId}..${actualEndCheckpointId} → chain ${destEid}: ${decoded}`)
                   continue
                 } else if (isNoRevertData) {
                   console.warn(`[Replication] Pre-flight staticCall returned no data (likely RPC truncation on large calldata) — proceeding to estimateGas which will catch real reverts.`)
                   // Fall through to the estimateGas / submit path
                 } else {
-                  console.error(`[Replication] Pre-flight simulation failed for checkpoint ${checkpointId} → chain ${destEid}: ${reason}${errData ? ` (raw data: ${errData})` : ''} code=${simErr?.code}`)
+                  console.error(`[Replication] Pre-flight simulation failed for checkpoints ${startCheckpointId}..${actualEndCheckpointId} → chain ${destEid}: ${reason}${errData ? ` (raw data: ${errData})` : ''} code=${simErr?.code}`)
                   continue
                 }
               }
@@ -2438,7 +2477,7 @@ console.log("succeededKeys", succeededKeys)
               let gasLimit: bigint
               try {
                 const estimated = await replicatorWrite.replicateBatch.estimateGas(
-                  params, packedForReplication, allR,
+                  params, packedForReplication, trimmedAllR,
                   { value: nativeFee }
                 )
                 gasLimit = (estimated * 110n) / 100n
@@ -2449,7 +2488,7 @@ console.log("succeededKeys", succeededKeys)
                 gasLimit = 12_000_000n
               }
 
-              const tx = await replicatorWrite.replicateBatch(params, packedForReplication, allR, {
+              const tx = await replicatorWrite.replicateBatch(params, packedForReplication, trimmedAllR, {
                 value: nativeFee,
                 gasLimit,
               })
@@ -2466,7 +2505,7 @@ console.log("succeededKeys", succeededKeys)
                 }
                 throw waitErr
               }
-              console.log(`[Replication] Checkpoint ${checkpointId} replicated! tx: ${receipt?.hash} (gas used: ${receipt?.gasUsed}/${gasLimit})`)
+              console.log(`[Replication] Checkpoints ${startCheckpointId}..${actualEndCheckpointId} replicated! tx: ${receipt?.hash} (gas used: ${receipt?.gasUsed}/${gasLimit})`)
 
               // Record replication analytics
               if (receipt) {
@@ -2476,8 +2515,8 @@ console.log("succeededKeys", succeededKeys)
                     blockNumber: BigInt(receipt.blockNumber),
                     clientId: client.id,
                     destEid,
-                    checkpointId,
-                    actionCount: 128,
+                    checkpointId: startCheckpointId,
+                    actionCount: actualTotalActions,
                     gasUsed: receipt.gasUsed.toString(),
                     gasPrice: receipt.fee ? (receipt.fee / receipt.gasUsed).toString() : '0',
                     ethCost: receipt.fee.toString(),
