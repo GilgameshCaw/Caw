@@ -815,10 +815,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     }
 
     // Hard limit on thread length to prevent oversized API requests
-    if (chunks.length > 512) {
-      alert(`Thread too long (${chunks.length} posts). Maximum is 512 posts per thread.`)
-      return
-    }
+    if (chunks.length > 512) return
 
     // Pre-check: verify the user has enough CAW budget (staked + pending deposit
     // - in-flight spend) to cover all thread chunks. Without this, a multi-post
@@ -1170,11 +1167,18 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             {/* Character counter and thread indicator */}
             <div className="flex items-center space-x-2">
               {isThreadMode && (
-                <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
-                  isDark ? 'bg-yellow-500/20 text-yellow-400' : 'bg-yellow-100 text-yellow-700'
-                }`}>
-                  {currentChunkIndex + 1}/{chunkCount}
-                </span>
+                <>
+                  <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                    chunkCount > 512
+                      ? (isDark ? 'bg-red-500/20 text-red-400' : 'bg-red-100 text-red-700')
+                      : (isDark ? 'bg-yellow-500/20 text-yellow-400' : 'bg-yellow-100 text-yellow-700')
+                  }`}>
+                    {currentChunkIndex + 1}/{chunkCount}
+                  </span>
+                  {chunkCount > 512 && (
+                    <span className="text-xs text-red-500">Max 512 posts</span>
+                  )}
+                </>
               )}
               {(text.length > 0 || selectedMedia.length > 0) && (
                 <span

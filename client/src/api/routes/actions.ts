@@ -869,7 +869,7 @@ router.post('/batch', async (req, res) => {
       return res.status(400).json({ error: 'Expected non-empty actions array' })
     }
     if (actions.length > 512) {
-      return res.status(400).json({ error: 'Batch size exceeds 512 actions' })
+      return res.status(400).json({ error: `Thread too long (${actions.length} posts). Maximum is 512.` })
     }
 
     // Validate pendingDepositTxHash shape (same rules as single-action endpoint).
@@ -1003,11 +1003,17 @@ router.post('/batch', async (req, res) => {
         // Step 1: insert all TxQueue rows. Forward pendingDepositTxHash so
         // the validator parks them as waiting_for_deposit until LZ lands
         // client authentication on L2.
-        const txqRows = await Promise.all(
-          rowsToInsert.map(row => tx.txQueue.create({
-            data: { ...row, pendingDepositTxHash: sanitizedPendingDepositTxHash }
-          }))
-        )
+        // Insert in chunks of 50 to avoid overwhelming the connection pool
+        const txqRows: any[] = []
+        for (let chunk = 0; chunk < rowsToInsert.length; chunk += 50) {
+          const batch = rowsToInsert.slice(chunk, chunk + 50)
+          const created = await Promise.all(
+            batch.map(row => tx.txQueue.create({
+              data: { ...row, pendingDepositTxHash: sanitizedPendingDepositTxHash }
+            }))
+          )
+          txqRows.push(...created)
+        }
 
         // Step 2: build optimistic Caw records for CAW (0) / RECAW (3) actions.
         // Insert them sequentially so that thread replies (post 2, 3, ... → post 1)
