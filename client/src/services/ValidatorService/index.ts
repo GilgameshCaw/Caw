@@ -9,6 +9,7 @@ import { cawActionsAbi } from '../../abi/generated'
 import { CAW_ACTIONS_ADDRESS, CAW_ACTIONS_REPLICATOR_L2_ADDRESS, CAW_ADDRESS, WETH_ADDRESS } from '../../abi/addresses'
 import { WebSocketProvider, JsonRpcProvider, Contract, Wallet, Interface, keccak256, solidityPacked, AbiCoder } from 'ethers'
 import { packActions, packSignatures, bytesToHex, getPackedActionSlices, unpackActions } from '../../utils/packActions'
+import { buildCheckpointMerkleTree } from '../../utils/checkpointMerkle'
 import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
@@ -2537,11 +2538,575 @@ console.log("succeededKeys", succeededKeys)
       }
     }
 
-    // Declare both loops with the watchdog. Timeouts are generous — 3× the
+    // ================================================================
+    // Optimistic replication: direct L2b submission with stake + fraud proofs
+    // ================================================================
+
+    const OPTIMISTIC_ARCHIVE_ADDRESS = '0x360602c0dd788C18240249d4d9ED0451f8bD1ee5'
+    const CHALLENGE_RELAY_ADDRESS = '0xb3fF59926e50596C1563BB703455050256E70951'
+    const OPTIMISTIC_MIN_STAKE = BigInt('10000000000000000')     // 0.01 ETH
+    const OPTIMISTIC_INITIAL_DEPOSIT = BigInt('20000000000000000') // 0.02 ETH
+    const OPTIMISTIC_CHECKPOINT_INTERVAL = 32
+
+    const archiveAbi = [
+      'function stakes(address) view returns (uint256)',
+      'function pendingCount(address) view returns (uint256)',
+      'function deposit() payable',
+      'function withdraw(uint256)',
+      'function submitReplication(uint32 clientId, uint256 startCheckpointId, uint256 endCheckpointId, bytes packedActions, bytes32[] r, bytes32 merkleRoot)',
+      'function finalizeSubmission(uint256 submissionId)',
+      'function checkpointClaimed(uint32, uint256) view returns (uint256)',
+      'function isRangeAvailable(uint32 clientId, uint256 start, uint256 end) view returns (bool)',
+      'function getSubmission(uint256) view returns (address submitter, bytes32 merkleRoot, uint32 clientId, uint256 startCheckpointId, uint256 endCheckpointId, uint256 finalizedAt, uint8 status)',
+      'function nextSubmissionId() view returns (uint256)',
+      'event SubmissionCreated(uint256 indexed submissionId, address indexed submitter, uint32 indexed clientId, uint256 startCheckpointId, uint256 endCheckpointId, bytes32 merkleRoot)',
+      'event ActionsArchived(uint256 indexed submissionId, uint32 indexed clientId, bytes packedActions, bytes32[] r)',
+    ]
+
+    // Lazily initialized L2b provider + contracts (only when optimistic mode is enabled)
+    let l2bProvider: JsonRpcProvider | null = null
+    let l2bWallet: Wallet | null = null
+    let archiveRead: Contract | null = null
+    let archiveWrite: Contract | null = null
+
+    function getL2bContracts() {
+      if (l2bProvider && l2bWallet && archiveRead && archiveWrite) {
+        return { l2bProvider, l2bWallet, archiveRead, archiveWrite }
+      }
+      const l2bRpcUrl = process.env.RPC_ARBITRUM_SEPOLIA
+      if (!l2bRpcUrl) throw new Error('RPC_ARBITRUM_SEPOLIA not set — required for optimistic replication')
+
+      l2bProvider = makeJsonRpcProvider(l2bRpcUrl)
+      l2bWallet = new Wallet(privateKey!, l2bProvider)
+      archiveRead = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, archiveAbi, l2bProvider)
+      archiveWrite = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, archiveAbi, l2bWallet)
+
+      console.log(`[OptimisticReplication] L2b RPC: ${l2bRpcUrl.slice(0, 50)}...`)
+      console.log(`[OptimisticReplication] Archive: ${OPTIMISTIC_ARCHIVE_ADDRESS}`)
+      console.log(`[OptimisticReplication] Wallet: ${l2bWallet.address}`)
+
+      return { l2bProvider, l2bWallet, archiveRead, archiveWrite }
+    }
+
+    /**
+     * Shared helper: reconstruct ordered actions + r values from L2 events
+     * for a given client and checkpoint range. Reuses the exact same logic as
+     * the existing replicationLoop.
+     *
+     * Returns null if reconstruction fails (caller should skip/retry).
+     */
+    async function reconstructCheckpointData(
+      clientId: number,
+      startCheckpointId: number,
+      endCheckpointId: number,
+    ): Promise<{
+      allActions: any[]
+      allR: string[]
+      packedBytes: Uint8Array
+      checkpointHashes: string[]
+    } | null> {
+      const httpProvider = replicationHttpProvider
+      const numCheckpoints = endCheckpointId - startCheckpointId + 1
+      const totalActionsNeeded = numCheckpoints * OPTIMISTIC_CHECKPOINT_INTERVAL
+
+      // Read clientActionCount from CawActions to know total actions
+      const cawActionsViewAbi = ['function clientActionCount(uint32) view returns (uint256)']
+      const cawActionsView = new Contract(CAW_ACTIONS_ADDRESS, cawActionsViewAbi, httpProvider)
+      const actionCount = Number(await cawActionsView.clientActionCount(clientId))
+
+      const rangeStartPos = (startCheckpointId - 1) * OPTIMISTIC_CHECKPOINT_INTERVAL
+      const actionsNeededFromEnd = actionCount - rangeStartPos
+      const latestL2 = await httpProvider.getBlockNumber()
+      const eventsContract = new Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi as any, httpProvider)
+
+      const CHUNK = 50_000
+      let processedEvents: any[] = []
+      let scannedActions = 0
+      let toBlock = latestL2
+
+      while (scannedActions < actionsNeededFromEnd) {
+        const fromBlock = Math.max(0, toBlock - CHUNK + 1)
+        const batch = await eventsContract.queryFilter(
+          eventsContract.filters.ActionsProcessed(),
+          fromBlock,
+          toBlock,
+        )
+        for (const ev of batch) {
+          const args: any = (ev as any).args
+          if (!args) continue
+          const packedHexEvt = args[0] || args.packedActions || ''
+          if (packedHexEvt && typeof packedHexEvt === 'string' && packedHexEvt.length > 4) {
+            try {
+              const buf = new Uint8Array((packedHexEvt.startsWith('0x') ? packedHexEvt.slice(2) : packedHexEvt).match(/.{2}/g)!.map((b: string) => parseInt(b, 16)))
+              const actionsArr = unpackActions(buf)
+              for (const a of actionsArr) {
+                if (Number(a.clientId) === clientId) scannedActions++
+              }
+            } catch { /* skip malformed events */ }
+          }
+        }
+        processedEvents = [...batch, ...processedEvents]
+        if (fromBlock === 0) break
+        toBlock = fromBlock - 1
+      }
+
+      const txHashes = Array.from(new Set(processedEvents.map(e => e.transactionHash)))
+      if (txHashes.length === 0) return null
+
+      type OrderedEntry = {
+        blockNumber: number; txIndex: number; calldataPos: number
+        action: any; v: number; r: string; s: string
+      }
+      const orderedEntries: OrderedEntry[] = []
+
+      for (const txHash of txHashes) {
+        const tx = await httpProvider.getTransaction(txHash)
+        if (!tx) {
+          console.error(`[Reconstruct] Could not fetch tx ${txHash}`)
+          return null
+        }
+
+        const decoded = packedIface.decodeFunctionData('processActions', tx.data)
+        const packedHex: string = decoded[1]
+        const sigsHex: string = decoded[2]
+
+        const packedBuf = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
+        const unpackedActions = unpackActions(packedBuf)
+
+        const sigBytes = new Uint8Array((sigsHex.startsWith('0x') ? sigsHex.slice(2) : sigsHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
+
+        for (let i = 0; i < unpackedActions.length; i++) {
+          const a = unpackedActions[i]
+          if (a.clientId !== clientId) continue
+          const sigOff = i * 65
+          orderedEntries.push({
+            blockNumber: tx.blockNumber!,
+            txIndex: tx.index!,
+            calldataPos: i,
+            action: {
+              actionType: a.actionType,
+              senderId: a.senderId,
+              receiverId: a.receiverId,
+              receiverCawonce: a.receiverCawonce,
+              clientId: a.clientId,
+              cawonce: a.cawonce,
+              recipients: a.recipients,
+              amounts: a.amounts.map((x: any) => BigInt(x)),
+              text: a.text,
+            },
+            v: sigBytes[sigOff],
+            r: '0x' + Array.from(sigBytes.slice(sigOff + 1, sigOff + 33)).map(b => b.toString(16).padStart(2, '0')).join(''),
+            s: '0x' + Array.from(sigBytes.slice(sigOff + 33, sigOff + 65)).map(b => b.toString(16).padStart(2, '0')).join(''),
+          })
+        }
+      }
+
+      // Sort by (blockNumber, transactionIndex, calldataPosition)
+      orderedEntries.sort((a, b) => {
+        if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber
+        if (a.txIndex !== b.txIndex) return a.txIndex - b.txIndex
+        return a.calldataPos - b.calldataPos
+      })
+
+      const firstGlobalPos = actionCount - orderedEntries.length
+      const localStart = rangeStartPos - firstGlobalPos
+      const rangeEntries = orderedEntries.slice(localStart, localStart + totalActionsNeeded)
+
+      if (rangeEntries.length !== totalActionsNeeded) {
+        console.error(`[Reconstruct] Only ${rangeEntries.length}/${totalActionsNeeded} actions for checkpoints ${startCheckpointId}..${endCheckpointId}`)
+        return null
+      }
+
+      const allActions = rangeEntries.map(e => ({
+        actionType: Number(e.action.actionType),
+        senderId: Number(e.action.senderId),
+        receiverId: Number(e.action.receiverId),
+        receiverCawonce: Number(e.action.receiverCawonce),
+        clientId: Number(e.action.clientId),
+        cawonce: Number(e.action.cawonce),
+        recipients: Array.from(e.action.recipients).map(Number),
+        amounts: Array.from(e.action.amounts).map((a: any) => BigInt(a)),
+        text: e.action.text,
+      }))
+      const allR = rangeEntries.map(e => e.r)
+
+      // Pack the actions
+      const packed = packActions(allActions.map(a => ({
+        actionType: a.actionType,
+        senderId: a.senderId,
+        receiverId: a.receiverId,
+        receiverCawonce: a.receiverCawonce,
+        clientId: a.clientId,
+        cawonce: a.cawonce,
+        recipients: a.recipients,
+        amounts: a.amounts.map((x: any) => BigInt(x)),
+        text: a.text,
+      })))
+
+      // Verify and compute hash chain per checkpoint
+      const hashCheckAbi = ['function clientHashAtCheckpoint(uint32,uint256) view returns (bytes32)']
+      const actionsView = new Contract(CAW_ACTIONS_ADDRESS, hashCheckAbi, httpProvider)
+      const prevHash = startCheckpointId === 1
+        ? '0x' + '00'.repeat(32)
+        : await actionsView.clientHashAtCheckpoint(clientId, startCheckpointId - 1)
+      const expectedFinalHash = await actionsView.clientHashAtCheckpoint(clientId, endCheckpointId)
+
+      const actionSlices = getPackedActionSlices(packed)
+      const checkpointHashes: string[] = []
+      let computedHash = prevHash
+
+      for (let i = 0; i < totalActionsNeeded; i++) {
+        const actionHash = keccak256(bytesToHex(actionSlices[i]))
+        computedHash = keccak256(solidityPacked(['bytes32', 'bytes32', 'bytes32'], [computedHash, allR[i], actionHash]))
+
+        // Record hash at checkpoint boundaries
+        if ((i + 1) % OPTIMISTIC_CHECKPOINT_INTERVAL === 0) {
+          checkpointHashes.push(computedHash)
+        }
+      }
+
+      if (computedHash !== expectedFinalHash) {
+        console.error(`[Reconstruct] Hash chain mismatch! Computed ${computedHash} vs on-chain ${expectedFinalHash}`)
+        return null
+      }
+
+      return { allActions, allR, packedBytes: packed, checkpointHashes }
+    }
+
+    /**
+     * Optimistic replication loop: submits checkpoint data directly to L2b
+     * archive contract with stake-based security instead of LZ fees per batch.
+     */
+    async function optimisticReplicationLoop() {
+      try {
+        const { archiveRead: archive, archiveWrite: archiveW, l2bWallet: w } = getL2bContracts()
+
+        // 1. Check / ensure stake
+        const currentStake = BigInt(await archive.stakes(w.address))
+        if (currentStake < OPTIMISTIC_MIN_STAKE) {
+          console.log(`[OptimisticReplication] Stake ${currentStake} < MIN_STAKE ${OPTIMISTIC_MIN_STAKE}, depositing ${OPTIMISTIC_INITIAL_DEPOSIT}...`)
+          const tx = await archiveW.deposit({ value: OPTIMISTIC_INITIAL_DEPOSIT })
+          const receipt = await tx.wait()
+          console.log(`[OptimisticReplication] Deposited ${OPTIMISTIC_INITIAL_DEPOSIT} wei as stake. tx: ${receipt?.hash}`)
+        }
+
+        // 2. Find clients needing replication
+        const clients = await prisma.client.findMany({
+          where: { replicationEnabled: true, replicationCount: { gt: 0 } },
+          select: { id: true }
+        })
+
+        if (clients.length === 0) return
+
+        const httpProvider = replicationHttpProvider
+        const cawActionsViewAbi = ['function clientActionCount(uint32) view returns (uint256)']
+        const cawActionsView = new Contract(CAW_ACTIONS_ADDRESS, cawActionsViewAbi, httpProvider)
+
+        for (const client of clients) {
+          try {
+            const actionCount = Number(await cawActionsView.clientActionCount(client.id))
+            const totalCheckpoints = Math.floor(actionCount / OPTIMISTIC_CHECKPOINT_INTERVAL)
+            if (totalCheckpoints === 0) continue
+
+            // 3. Find unreplicated checkpoint range on L2b archive
+            let startCheckpointId = 0
+            for (let cp = 1; cp <= totalCheckpoints; cp++) {
+              const claimed = Number(await archive.checkpointClaimed(client.id, cp))
+              if (claimed === 0) {
+                startCheckpointId = cp
+                break
+              }
+            }
+
+            if (startCheckpointId === 0) continue // Fully caught up
+
+            // Find consecutive available checkpoints (max 256 per contract limit)
+            let endCheckpointId = startCheckpointId
+            const maxEnd = Math.min(totalCheckpoints, startCheckpointId + 255)
+            for (let cp = startCheckpointId + 1; cp <= maxEnd; cp++) {
+              const claimed = Number(await archive.checkpointClaimed(client.id, cp))
+              if (claimed !== 0) break
+              endCheckpointId = cp
+            }
+
+            // Verify range is still available (atomic check)
+            const rangeAvailable = await archive.isRangeAvailable(client.id, startCheckpointId, endCheckpointId)
+            if (!rangeAvailable) {
+              console.log(`[OptimisticReplication] Client ${client.id}: range ${startCheckpointId}..${endCheckpointId} no longer available, skipping`)
+              continue
+            }
+
+            const numCheckpoints = endCheckpointId - startCheckpointId + 1
+            console.log(`[OptimisticReplication] Client ${client.id}: submitting checkpoints ${startCheckpointId}..${endCheckpointId} (${numCheckpoints})`)
+
+            // 4. Reconstruct data from L2 events
+            const data = await reconstructCheckpointData(client.id, startCheckpointId, endCheckpointId)
+            if (!data) {
+              console.error(`[OptimisticReplication] Failed to reconstruct data for client ${client.id} checkpoints ${startCheckpointId}..${endCheckpointId}`)
+              continue
+            }
+
+            console.log(`[OptimisticReplication] Hash chain verified for client ${client.id} checkpoints ${startCheckpointId}..${endCheckpointId}`)
+
+            // 5. Build merkle tree over checkpoint hashes
+            const checkpointIds = Array.from(
+              { length: numCheckpoints },
+              (_, i) => startCheckpointId + i
+            )
+            const { root: merkleRoot } = buildCheckpointMerkleTree(checkpointIds, data.checkpointHashes)
+            console.log(`[OptimisticReplication] Merkle root: ${merkleRoot}`)
+
+            // 6. Submit to L2b archive
+            const packedHex = bytesToHex(data.packedBytes)
+
+            // Pre-flight simulation
+            try {
+              await archiveW.submitReplication.staticCall(
+                client.id, startCheckpointId, endCheckpointId,
+                packedHex, data.allR, merkleRoot
+              )
+            } catch (simErr: any) {
+              const reason = simErr?.revert?.args?.[0] || simErr?.reason || simErr?.shortMessage || simErr?.message || 'unknown'
+              console.error(`[OptimisticReplication] Pre-flight failed for client ${client.id}: ${reason}`)
+              continue
+            }
+
+            // Estimate gas and submit
+            let gasLimit: bigint
+            try {
+              const estimated = await archiveW.submitReplication.estimateGas(
+                client.id, startCheckpointId, endCheckpointId,
+                packedHex, data.allR, merkleRoot
+              )
+              gasLimit = (estimated * 120n) / 100n // 20% buffer for L2b
+              if (gasLimit > 30_000_000n) gasLimit = 30_000_000n
+            } catch (gasErr: any) {
+              console.warn(`[OptimisticReplication] estimateGas failed (${gasErr?.shortMessage || gasErr?.message}), using 15M fallback`)
+              gasLimit = 15_000_000n
+            }
+
+            const tx = await archiveW.submitReplication(
+              client.id, startCheckpointId, endCheckpointId,
+              packedHex, data.allR, merkleRoot,
+              { gasLimit }
+            )
+            const receipt = await tx.wait()
+            console.log(`[OptimisticReplication] Submitted! tx: ${receipt?.hash} (gas: ${receipt?.gasUsed}/${gasLimit})`)
+
+            // Record analytics
+            if (receipt) {
+              try {
+                await prisma.replicationTx.create({ data: {
+                  txHash: receipt.hash,
+                  blockNumber: BigInt(receipt.blockNumber),
+                  clientId: client.id,
+                  destEid: 0, // Direct L2b submission, no LZ dest
+                  checkpointId: startCheckpointId,
+                  endCheckpointId,
+                  actionCount: numCheckpoints * OPTIMISTIC_CHECKPOINT_INTERVAL,
+                  gasUsed: receipt.gasUsed.toString(),
+                  gasPrice: receipt.fee ? (receipt.fee / receipt.gasUsed).toString() : '0',
+                  ethCost: receipt.fee?.toString() || '0',
+                  lzFee: '0',
+                  totalCost: receipt.fee?.toString() || '0',
+                }})
+              } catch (e: any) { console.error('[Analytics] Failed to record optimistic replication:', e.message) }
+            }
+          } catch (err: any) {
+            console.error(`[OptimisticReplication] Failed for client ${client.id}: ${formatRpcError(err)}`)
+          }
+        }
+
+        // 7. Auto-finalize past submissions
+        await autoFinalizeSubmissions()
+
+        // 8. Auto-withdraw excess stake
+        await autoWithdrawExcessStake()
+
+      } catch (err: any) {
+        console.error(`[OptimisticReplication] Loop error: ${formatRpcError(err)}`)
+      }
+    }
+
+    /**
+     * Finalize submissions whose challenge period has expired.
+     */
+    async function autoFinalizeSubmissions() {
+      try {
+        const { archiveRead: archive, archiveWrite: archiveW, l2bProvider: provider, l2bWallet: w } = getL2bContracts()
+
+        // Query SubmissionCreated events from our address
+        const latestBlock = await provider!.getBlockNumber()
+        // Look back ~4 days of blocks (~12s/block on Arbitrum = ~28800 blocks/day)
+        const fromBlock = Math.max(0, latestBlock - 28800 * 4)
+
+        const events = await archive.queryFilter(
+          archive.filters.SubmissionCreated(null, w.address),
+          fromBlock,
+          latestBlock
+        )
+
+        for (const ev of events) {
+          const args: any = (ev as any).args
+          if (!args) continue
+          const submissionId = Number(args[0] || args.submissionId)
+
+          try {
+            const sub = await archive.getSubmission(submissionId)
+            const status = Number(sub[6]) // status enum: 0=PENDING, 1=FINALIZED, 2=SLASHED
+            if (status !== 0) continue // Not pending
+
+            const finalizedAt = Number(sub[5])
+            const now = Math.floor(Date.now() / 1000)
+            if (now < finalizedAt) continue // Challenge period still active
+
+            console.log(`[OptimisticReplication] Finalizing submission ${submissionId}...`)
+            const tx = await archiveW.finalizeSubmission(submissionId)
+            const receipt = await tx.wait()
+            console.log(`[OptimisticReplication] Finalized submission ${submissionId}. tx: ${receipt?.hash}`)
+          } catch (err: any) {
+            // Already finalized or slashed — not an error
+            if (err?.reason?.includes('Not pending')) continue
+            console.error(`[OptimisticReplication] Failed to finalize submission ${submissionId}: ${err?.shortMessage || err?.message}`)
+          }
+        }
+      } catch (err: any) {
+        console.error(`[OptimisticReplication] Auto-finalize error: ${err?.shortMessage || err?.message}`)
+      }
+    }
+
+    /**
+     * Withdraw excess stake when no pending submissions remain and stake > 3x minimum.
+     */
+    async function autoWithdrawExcessStake() {
+      try {
+        const { archiveRead: archive, archiveWrite: archiveW, l2bWallet: w } = getL2bContracts()
+
+        const pending = Number(await archive.pendingCount(w.address))
+        if (pending > 0) return // Can't withdraw with pending submissions
+
+        const currentStake = BigInt(await archive.stakes(w.address))
+        const threshold = OPTIMISTIC_MIN_STAKE * 3n
+
+        if (currentStake <= threshold) return
+
+        const withdrawAmount = currentStake - OPTIMISTIC_MIN_STAKE * 2n // Keep 2x MIN_STAKE as buffer
+        if (withdrawAmount <= 0n) return
+
+        console.log(`[OptimisticReplication] Withdrawing excess stake: ${withdrawAmount} wei (keeping ${currentStake - withdrawAmount} wei)`)
+        const tx = await archiveW.withdraw(withdrawAmount)
+        const receipt = await tx.wait()
+        console.log(`[OptimisticReplication] Withdrew ${withdrawAmount} wei. tx: ${receipt?.hash}`)
+      } catch (err: any) {
+        console.error(`[OptimisticReplication] Auto-withdraw error: ${err?.shortMessage || err?.message}`)
+      }
+    }
+
+    /**
+     * Monitor other validators' optimistic submissions for fraud.
+     * Checks that submitted checkpoint hashes match L2's on-chain hashes.
+     * Logs warnings on mismatch (actual challenge submission is a follow-up).
+     */
+    async function monitorOptimisticSubmissions() {
+      try {
+        const { archiveRead: archive, l2bProvider: provider, l2bWallet: w } = getL2bContracts()
+
+        const latestBlock = await provider!.getBlockNumber()
+        // Look back ~3 days of blocks
+        const fromBlock = Math.max(0, latestBlock - 28800 * 3)
+
+        // Query ALL SubmissionCreated events (not just ours)
+        const events = await archive.queryFilter(
+          archive.filters.SubmissionCreated(),
+          fromBlock,
+          latestBlock
+        )
+
+        const httpProvider = replicationHttpProvider
+        const hashCheckAbi = ['function clientHashAtCheckpoint(uint32,uint256) view returns (bytes32)']
+        const actionsView = new Contract(CAW_ACTIONS_ADDRESS, hashCheckAbi, httpProvider)
+
+        for (const ev of events) {
+          const args: any = (ev as any).args
+          if (!args) continue
+
+          const submissionId = Number(args[0] || args.submissionId)
+          const submitter = args[1] || args.submitter
+          const clientId = Number(args[2] || args.clientId)
+          const startCp = Number(args[3] || args.startCheckpointId)
+          const endCp = Number(args[4] || args.endCheckpointId)
+
+          // Skip our own submissions
+          if (submitter.toLowerCase() === w.address.toLowerCase()) continue
+
+          // Check if still pending
+          try {
+            const sub = await archive.getSubmission(submissionId)
+            const status = Number(sub[6])
+            if (status !== 0) continue // Already finalized or slashed
+          } catch { continue }
+
+          // Reconstruct data and verify checkpoint hashes against L2
+          try {
+            const data = await reconstructCheckpointData(clientId, startCp, endCp)
+            if (!data) {
+              console.warn(`[Monitor] Could not reconstruct data for submission ${submissionId} (client ${clientId}, ${startCp}..${endCp}) — skipping verification`)
+              continue
+            }
+
+            // Verify each checkpoint hash against L2's on-chain record
+            let fraudDetected = false
+            for (let i = 0; i < data.checkpointHashes.length; i++) {
+              const cpId = startCp + i
+              const localHash = data.checkpointHashes[i]
+
+              let onChainHash: string
+              try {
+                onChainHash = await actionsView.clientHashAtCheckpoint(clientId, cpId)
+              } catch {
+                console.warn(`[Monitor] Could not read L2 hash for checkpoint ${cpId}, skipping`)
+                continue
+              }
+
+              if (localHash.toLowerCase() !== onChainHash.toLowerCase()) {
+                console.error(
+                  `[Monitor] FRAUD DETECTED in submission ${submissionId}! ` +
+                  `Checkpoint ${cpId}: local=${localHash} vs L2=${onChainHash}. ` +
+                  `Submitter: ${submitter}. ` +
+                  `Challenge relay: ${CHALLENGE_RELAY_ADDRESS}`
+                )
+                fraudDetected = true
+                // TODO: call CawChallengeRelay.relayChallenge on L2, then resolveChallenge on L2b
+              }
+            }
+
+            if (!fraudDetected) {
+              console.log(`[Monitor] Submission ${submissionId} verified OK (client ${clientId}, ${startCp}..${endCp}, submitter ${submitter.slice(0, 10)}...)`)
+            }
+          } catch (err: any) {
+            console.warn(`[Monitor] Error verifying submission ${submissionId}: ${err?.shortMessage || err?.message}`)
+          }
+        }
+      } catch (err: any) {
+        console.error(`[Monitor] Loop error: ${err?.shortMessage || err?.message}`)
+      }
+    }
+
+    // ================================================================
+    // Loop lifecycle and scheduling
+    // ================================================================
+
+    const useOptimisticReplication = process.env.REPLICATION_MODE === 'optimistic'
+
+    // Declare all loops with the watchdog. Timeouts are generous — 3x the
     // typical interval — so transient slowness doesn't trigger a restart,
     // but a truly hung loop will be caught within a few minutes.
     ctx.declareLoop('poll', Math.max(checkInterval * 3, 60_000))
     ctx.declareLoop('replication', Math.max(60_000 * 3, 180_000))
+    if (useOptimisticReplication) {
+      ctx.declareLoop('optimisticReplication', Math.max(60_000 * 3, 180_000))
+      ctx.declareLoop('monitor', Math.max(60_000 * 5, 300_000))
+    }
 
     // start polling with overlap protection
     let isPolling = false
@@ -2561,7 +3126,7 @@ console.log("succeededKeys", succeededKeys)
       }
     }
 
-    // Start background replication loop
+    // Start background replication loop (LZ-based)
     let isReplicating = false
     let replicationTimer: ReturnType<typeof setInterval>
     const safeReplicationLoop = async () => {
@@ -2574,6 +3139,38 @@ console.log("succeededKeys", succeededKeys)
         console.error('[Replication] Unhandled error:', err)
       } finally {
         isReplicating = false
+      }
+    }
+
+    // Optimistic replication loop (stake-based, direct L2b)
+    let isOptimisticReplicating = false
+    let optimisticReplicationTimer: ReturnType<typeof setTimeout>
+    const safeOptimisticReplicationLoop = async () => {
+      if (isOptimisticReplicating) return
+      isOptimisticReplicating = true
+      try {
+        await optimisticReplicationLoop()
+        ctx.heartbeat('optimisticReplication')
+      } catch (err) {
+        console.error('[OptimisticReplication] Unhandled error:', err)
+      } finally {
+        isOptimisticReplicating = false
+      }
+    }
+
+    // Monitor loop (checks other validators' submissions for fraud)
+    let isMonitoring = false
+    let monitorTimer: ReturnType<typeof setTimeout>
+    const safeMonitorLoop = async () => {
+      if (isMonitoring) return
+      isMonitoring = true
+      try {
+        await monitorOptimisticSubmissions()
+        ctx.heartbeat('monitor')
+      } catch (err) {
+        console.error('[Monitor] Unhandled error:', err)
+      } finally {
+        isMonitoring = false
       }
     }
 
@@ -2591,6 +3188,7 @@ console.log("succeededKeys", succeededKeys)
       console.log(`  - Check Interval: ${liveSettings.checkInterval}ms`);
       console.log(`  - Base Tip: ${liveSettings.validatorBaseTip} CAW`);
       console.log(`  - Replication Interval: ${liveSettings.replicationInterval}ms`);
+      console.log(`  - Replication Mode: ${useOptimisticReplication ? 'optimistic (stake-based L2b)' : 'lz (LayerZero)'}`)
       console.log(`  - Wallet Address: ${wallet.address}`);
 
       // Use setTimeout chains instead of setInterval so updated settings take effect immediately
@@ -2606,10 +3204,34 @@ console.log("succeededKeys", succeededKeys)
           scheduleReplication()
         }, liveSettings.replicationInterval)
       }
+      function scheduleOptimisticReplication() {
+        optimisticReplicationTimer = setTimeout(async () => {
+          await safeOptimisticReplicationLoop()
+          scheduleOptimisticReplication()
+        }, liveSettings.replicationInterval)
+      }
+      function scheduleMonitor() {
+        // Monitor runs less frequently — 5x the replication interval
+        monitorTimer = setTimeout(async () => {
+          await safeMonitorLoop()
+          scheduleMonitor()
+        }, liveSettings.replicationInterval * 5)
+      }
+
       safePollLoop()
       schedulePoll()
-      safeReplicationLoop()
-      scheduleReplication()
+
+      // Start the appropriate replication mode(s)
+      if (useOptimisticReplication) {
+        console.log('[OptimisticReplication] Starting optimistic replication and monitor loops')
+        safeOptimisticReplicationLoop()
+        scheduleOptimisticReplication()
+        safeMonitorLoop()
+        scheduleMonitor()
+      } else {
+        safeReplicationLoop()
+        scheduleReplication()
+      }
     })
 
     return {
@@ -2617,6 +3239,8 @@ console.log("succeededKeys", succeededKeys)
       async stop() {
         clearTimeout(timer)
         clearTimeout(replicationTimer)
+        clearTimeout(optimisticReplicationTimer)
+        clearTimeout(monitorTimer)
         // No need to remove handler since it's managed globally
         if (provider) {
           try {
