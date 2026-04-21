@@ -84,7 +84,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
 
   // Default avatar cycling — changes defaultAvatarId, not avatarUrl.
   // Start with a random one if the user doesn't have one assigned yet.
-  const randomFallback = useRef(Math.floor(Math.random() * 100) + 1)
+  const randomFallback = useRef(activeToken?.tokenId ? (activeToken.tokenId % 100) + 1 : 1)
   const [selectedDefaultId, setSelectedDefaultId] = useState<number | null>(null)
   const currentDefaultId = selectedDefaultId ?? ((profileData as any)?.defaultAvatarId || randomFallback.current)
   // A "custom" avatar is one the user uploaded — not a default /images/avatars/ path
