@@ -162,6 +162,11 @@ function buildFrontendEnv(nodeType, config) {
 
   env.VITE_CLIENT_ID = String(config.clientId || 1)
 
+  // Frontend RPC URLs — use the same HTTP endpoints as the server so wagmi
+  // reads don't depend on free public RPCs.
+  if (config.l1RpcUrlHttp) env.VITE_L1_RPC_URL = config.l1RpcUrlHttp
+  if (config.l2RpcUrlHttp) env.VITE_L2_RPC_URL = config.l2RpcUrlHttp
+
   return env
 }
 

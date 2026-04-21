@@ -1,27 +1,26 @@
-import { WagmiProvider, http, webSocket } from "wagmi";
-import { sepolia, baseSepolia, hardhat, mainnet } from "wagmi/chains";
+import { WagmiProvider, http } from "wagmi";
+import { sepolia, baseSepolia } from "wagmi/chains";
 import { getDefaultConfig, RainbowKitProvider, darkTheme } from "@rainbow-me/rainbowkit";
 import { QueryClientProvider, QueryClient } from "@tanstack/react-query";
 
-const rpcs = {
-  HARDHAT: "ws://127.0.0.1:8545",
-  // Using environment variables for RPC URLs
-  ALCHEMY_MAINNET: import.meta.env.VITE_ALCHEMY_API_KEY
-    ? `https://eth-mainnet.g.alchemy.com/v2/${import.meta.env.VITE_ALCHEMY_API_KEY}`
-    : "https://mainnet.infura.io/v3/xxx",
-  SEPOLIA: "https://ethereum-sepolia-rpc.publicnode.com",
-  BASE_SEPOLIA: "https://base-sepolia-rpc.publicnode.com"
-};
+// RPC URLs — configurable via VITE_ env vars, falls back to free public endpoints.
+// Set VITE_L1_RPC_URL / VITE_L2_RPC_URL in the frontend .env to use the same
+// provider as the server (recommended). The optional _FRONTEND variants allow
+// a dedicated frontend RPC if needed (e.g. rate-limit separation).
+const L1_RPC = import.meta.env.VITE_L1_RPC_URL_FRONTEND
+  || import.meta.env.VITE_L1_RPC_URL
+  || "https://ethereum-sepolia-rpc.publicnode.com"
+const L2_RPC = import.meta.env.VITE_L2_RPC_URL_FRONTEND
+  || import.meta.env.VITE_L2_RPC_URL
+  || "https://base-sepolia-rpc.publicnode.com"
 
 export const wagmiConfig = getDefaultConfig({
   appName: "CAW",
   projectId: import.meta.env.VITE_PROJECT_ID || "your_project_id_here",
   chains: [sepolia, baseSepolia],
   transports: {
-    [sepolia.id]: http(rpcs.SEPOLIA),
-    [baseSepolia.id]: http(rpcs.BASE_SEPOLIA),
-    // [hardhat.id]: http(rpcs.HARDHAT),
-    // [mainnet.id]: http(rpcs.ALCHEMY_MAINNET),
+    [sepolia.id]: http(L1_RPC),
+    [baseSepolia.id]: http(L2_RPC),
   },
 });
 
