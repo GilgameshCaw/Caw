@@ -805,25 +805,16 @@ export const validatorService: Service = {
       multiData: { actions: any[]; v: number[]; r: string[]; s: string[]; packedActions: string; packedSigs: string },
       quote: { nativeFee: bigint; withdrawFee: bigint; withdrawLzTokenAmount: bigint }
     ) {
-      const calldata = packedIface.encodeFunctionData('processActions', [
-        validatorId,
-        multiData.packedActions,
-        multiData.packedSigs,
-        quote.withdrawFee,
-        quote.withdrawLzTokenAmount,
-      ])
-
-      const gasLimitRaw = await httpProvider.estimateGas({
-        from:  wallet.address,
-        to:    CAW_ACTIONS_ADDRESS,
-        data:  calldata,
-        value: quote.nativeFee
-      })
+      // Calculate gas cost from action count instead of estimateGas.
+      // Infura's estimateGas fails with "missing revert data" on large calldata
+      // even when eth_call succeeds. ~50K gas/action + 100K base, 30% buffer.
+      const actionCount = multiData.actions.length
+      const calculatedGas = BigInt(Math.ceil((100_000 + actionCount * 50_000) * 1.3))
 
       const feeData = await httpProvider.getFeeData()
       const gasPrice = feeData.gasPrice ?? BigInt(0)
 
-      return gasLimitRaw * gasPrice;
+      return calculatedGas * gasPrice;
     }
 
 
@@ -842,16 +833,11 @@ export const validatorService: Service = {
         quote.withdrawLzTokenAmount,
       ]);
 
-      // 2) Ask the provider directly for the gas estimate (via HTTP — WSS
-      //    estimateGas with large calldata is where we were seeing hangs too).
-      const estimate = await httpProvider.estimateGas({
-        from:           wallet.address,
-        to:             CAW_ACTIONS_ADDRESS,
-        data:           calldata,
-        value:          quote.nativeFee,
-      });
-
-      return estimate;
+      // Calculate gas limit from action count instead of estimateGas.
+      // Infura's estimateGas fails with "missing revert data" on large calldata
+      // even when eth_call succeeds. ~50K gas/action + 100K base, 30% buffer.
+      const actionCount = multiData.actions.length
+      return BigInt(Math.ceil((100_000 + actionCount * 50_000) * 1.3));
     }
 
 
