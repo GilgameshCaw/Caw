@@ -12,6 +12,7 @@ import { setFeedRefreshCallback, setFeedItemUpdateCallback, setFeedRefreshVisibl
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import SuggestedUsers from './SuggestedUsers'
 import { useHostVerification } from '~/hooks/useHostVerification'
+import { LoadingSpinner } from './Skeleton'
 import { useUserByUsername } from '~/hooks/useUserData'
 import { useQueryClient } from '@tanstack/react-query'
 
@@ -26,6 +27,21 @@ type Props = {
 type FeedResponse = {
   items: CawItem[]
   nextCursor?: number
+}
+
+// Module-level cache so feed data survives component unmount/remount (navigation).
+// Keyed by a string derived from feed parameters.
+interface FeedCache {
+  items: CawItem[]
+  nextCursor?: number
+  hasMore: boolean
+  ts: number // timestamp for staleness check
+}
+const feedCache = new Map<string, FeedCache>()
+const CACHE_TTL = 60_000 // 1 minute — background refresh if stale
+
+function feedCacheKey(filter: string, activeTokenId?: number, apiEndpoint?: string, username?: string): string {
+  return `${filter}|${activeTokenId ?? ''}|${apiEndpoint ?? ''}|${username ?? ''}`
 }
 
 export interface FeedRef {
@@ -43,16 +59,43 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   const { isDark } = useTheme()
   const { preferences } = useMutePreferences()
   const blockedUsers = useBlockedUsersStore(s => s.blockedUsers)
-  const [items,      setItems]      = useState<CawItem[]>([])
-  const [nextCursor, setNextCursor] = useState<number|undefined>(undefined)
-  const [hasMore,    setHasMore]    = useState(true)
+  const cacheKey = feedCacheKey(filter, activeTokenId, apiEndpoint, username)
+  const cached = feedCache.get(cacheKey)
+  const [items,      setItems]      = useState<CawItem[]>(cached?.items ?? [])
+  const [nextCursor, setNextCursor] = useState<number|undefined>(cached?.nextCursor)
+  const [hasMore,    setHasMore]    = useState(cached?.hasMore ?? true)
   const [loading,    setLoading]    = useState(false)
   const [error,      setError]      = useState<string>()
   const [followingCount, setFollowingCount] = useState<number | null>(null)
 
+  // Track which cache key the current items belong to. When props change
+  // (e.g. navigating between hashtags), immediately swap in cached data or
+  // clear stale items — don't wait for the effect to fire.
+  const activeCacheKeyRef = useRef(cacheKey)
+  if (cacheKey !== activeCacheKeyRef.current) {
+    activeCacheKeyRef.current = cacheKey
+    const c = feedCache.get(cacheKey)
+    if (c && c.items.length > 0) {
+      setItems(c.items)
+      setNextCursor(c.nextCursor)
+      setHasMore(c.hasMore)
+    } else {
+      setItems([])
+      setNextCursor(undefined)
+      setHasMore(true)
+    }
+  }
+
   // Ref to track current items without causing effect re-runs
   const itemsRef = useRef<CawItem[]>(items)
   useEffect(() => { itemsRef.current = items }, [items])
+
+  // Persist feed state to module-level cache so it survives navigation
+  useEffect(() => {
+    if (items.length > 0) {
+      feedCache.set(cacheKey, { items, nextCursor, hasMore, ts: Date.now() })
+    }
+  }, [items, nextCursor, hasMore, cacheKey])
 
   // Filter items based on mute preferences and blocked users
   const filteredItems = useMemo(() => {
@@ -125,12 +168,13 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   // Expose refresh method via ref
   useImperativeHandle(ref, () => ({
     refresh: () => {
+      feedCache.delete(cacheKey)
       setItems([])
       setNextCursor(undefined)
       setHasMore(true)
       loadPage(true)
     }
-  }), [])
+  }), [cacheKey])
 
   // Spot-check posts against on-chain data to detect dishonest API hosts
   // Memoize to avoid creating new arrays on every render
@@ -146,32 +190,43 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   const visibleCawIds = useMemo(() => filteredItems.map(item => item.id).filter(id => id != null), [filteredItems])
   useViewTracking(visibleCawIds)
 
-  // Ref for loadPage to use in callbacks
+  // Refs for loadPage to always read current props (avoids stale closures)
   const loadPageRef = useRef<((force?: boolean) => Promise<void>) | null>(null)
+  const apiEndpointRef = useRef(apiEndpoint)
+  apiEndpointRef.current = apiEndpoint
+  const filterRef = useRef(filter)
+  filterRef.current = filter
+  const usernameRef = useRef(username)
+  usernameRef.current = username
+  const loadingRef = useRef(false)
 
-  // load one "page" of results
+  // load one "page" of results — reads props from refs to avoid stale closures
   const loadPage = useCallback(async (force = false) => {
-    if (loading || (!hasMore && !force)) return
+    // When force is true (navigation/refresh), skip the loading guard —
+    // the previous fetch for a different endpoint is irrelevant.
+    if (!force && (loadingRef.current || !hasMore)) return
+    loadingRef.current = true
     setLoading(true)
     setError(undefined)
 
+    const currentApiEndpoint = apiEndpointRef.current
+    const currentFilter = filterRef.current
+    const currentUsername = usernameRef.current
     const cursorToUse = force ? undefined : nextCursor
 
     // Use custom API endpoint if provided (for hashtag feeds)
-    if (apiEndpoint) {
+    if (currentApiEndpoint) {
       const params = new URLSearchParams()
       if (cursorToUse != null) {
-        // Use 'offset' for search endpoints, 'cursor' for others
-        const paramName = apiEndpoint.includes('/search') ? 'offset' : 'cursor'
+        const paramName = currentApiEndpoint.includes('/search') ? 'offset' : 'cursor'
         params.set(paramName, String(cursorToUse))
       }
 
       try {
-        // Check if apiEndpoint already has query params
-        const separator = apiEndpoint.includes('?') ? '&' : '?'
+        const separator = currentApiEndpoint.includes('?') ? '&' : '?'
         const url = params.toString()
-          ? `${apiEndpoint}${separator}${params.toString()}`
-          : apiEndpoint
+          ? `${currentApiEndpoint}${separator}${params.toString()}`
+          : currentApiEndpoint
 
         const response = await apiFetch<FeedResponse>(url)
         const newItems = response.items || []
@@ -186,40 +241,29 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
         console.error('Custom feed load error', err)
         setError('Failed to load feed')
       } finally {
-        setLoading(false)
+        loadingRef.current = false; setLoading(false)
       }
       return
     }
 
     // Default caws API logic
     const params = new URLSearchParams()
-    if (filter === 'Following') {
+    if (currentFilter === 'Following') {
       params.set('filter', 'following')
     }
-    // new profile‐only:
-    if (filter === 'profile' && username) {
-      // Fetch only this user's posts
-      params.set('user', username)
+    if (currentFilter === 'profile' && currentUsername) {
+      params.set('user', currentUsername)
     }
-
-    // new profile‐likes:
-    if (filter === 'profile-likes' && username) {
-      // Fetch only this user's liked posts
-      params.set('user', username)
+    if (currentFilter === 'profile-likes' && currentUsername) {
+      params.set('user', currentUsername)
       params.set('filter', 'liked')
     }
-
-    // profile-media:
-    if (filter === 'profile-media' && username) {
-      // Fetch posts with images/videos by this user (including recaws)
-      params.set('user', username)
+    if (currentFilter === 'profile-media' && currentUsername) {
+      params.set('user', currentUsername)
       params.set('filter', 'media')
     }
-
-    // profile-replies:
-    if (filter === 'profile-replies' && username) {
-      // Fetch replies by this user
-      params.set('user', username)
+    if (currentFilter === 'profile-replies' && currentUsername) {
+      params.set('user', currentUsername)
       params.set('filter', 'replies')
     }
 
@@ -252,7 +296,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
     } finally {
       setLoading(false)
     }
-  }, [filter, nextCursor, hasMore, loading, apiEndpoint, username])
+  }, [nextCursor, hasMore])
 
   // Keep loadPage ref updated
   useEffect(() => {
@@ -310,14 +354,35 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
     }
   }, [filter])
 
-  // when filter or username changes, reset everything & load first page
+  // when filter, user, or endpoint changes, restore from cache if available,
+  // otherwise reset. Always refetch — reaction data (hasLiked, etc.) is per-user
+  // and may be stale even if the posts themselves haven't changed.
+  const prevTokenIdRef = useRef(activeTokenId)
   useEffect(() => {
-    setItems([])
-    setNextCursor(undefined)
-    setHasMore(true)
-    setLoading(false)
-    // setTimeout ensures the state resets flush before loadPage checks `loading`
-    setTimeout(() => loadPageRef.current?.(true), 0)
+    const userChanged = prevTokenIdRef.current !== activeTokenId
+    prevTokenIdRef.current = activeTokenId
+
+    const key = feedCacheKey(filter, activeTokenId, apiEndpoint, username)
+    const c = feedCache.get(key)
+    if (c && c.items.length > 0 && !userChanged) {
+      // Restore cached data — no skeleton flash
+      setItems(c.items)
+      setNextCursor(c.nextCursor)
+      setHasMore(c.hasMore)
+      setLoading(false)
+      // Background refresh if cache is stale
+      if (Date.now() - c.ts > CACHE_TTL) {
+        setTimeout(() => loadPageRef.current?.(true), 0)
+      }
+    } else {
+      // User changed or no cache — clear and refetch
+      if (userChanged) feedCache.delete(key)
+      setItems([])
+      setNextCursor(undefined)
+      setHasMore(true)
+      setLoading(false)
+      setTimeout(() => loadPageRef.current?.(true), 0)
+    }
   }, [filter, activeTokenId, apiEndpoint, username])
 
   // Fetch following count for current user when on Following or For You tab
@@ -437,13 +502,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   const showPending = (filter === 'For you' || filter === 'Following' || isOwnProfile) && pendingPosts.length > 0
   const hasPending = showPending
 
-  if (items.length === 0 && loading && !hasPending) return (
-    <div className="space-y-4 mt-4">
-      {[...Array(3)].map((_, i) => (
-        <div key={i} className={`animate-pulse rounded-lg h-32 ${isDark ? 'bg-gray-800' : 'bg-gray-200'}`}></div>
-      ))}
-    </div>
-  )
+  if (items.length === 0 && loading && !hasPending) return <LoadingSpinner />
   // Show suggested users on Following tab, or on For You tab when not following anyone
   const showSuggestedUsers = filter === 'Following' || (filter === 'For you' && followingCount === 0)
 
@@ -464,7 +523,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
     <div>
       {/* Show suggested users at top when following < 10 people */}
       {showSuggestedUsers && (
-        <div className={`mb-4 border-b ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+        <div className="mb-4">
           <SuggestedUsers onFollowChange={handleFollowChange} />
         </div>
       )}

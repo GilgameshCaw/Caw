@@ -4,6 +4,7 @@ import { useTokenDataStore } from '~/store/tokenDataStore'
 import { apiFetch } from '~/api/client'
 import PostMintOnboarding from '~/components/PostMintOnboarding'
 import BugReportModal from '~/components/modals/BugReportModal'
+import BugIcon from '~/components/icons/BugIcon'
 import BoidsBg from '~/components/BoidsBg'
 import { useTheme } from '~/hooks/useTheme'
 
@@ -219,9 +220,7 @@ const WelcomePage: React.FC = () => {
             onClick={() => setShowBugReport(true)}
             className="w-9 h-9 rounded-full flex items-center justify-center shadow-lg transition-all cursor-pointer opacity-60 hover:opacity-100 bg-zinc-800 hover:bg-zinc-700 text-white/70"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
+            <BugIcon />
           </button>
         </div>
         <BugReportModal isOpen={showBugReport} onClose={() => setShowBugReport(false)} />
@@ -248,9 +247,7 @@ const WelcomePage: React.FC = () => {
             onClick={() => setShowBugReport(true)}
             className="w-9 h-9 rounded-full flex items-center justify-center shadow-lg transition-all cursor-pointer opacity-60 hover:opacity-100 bg-zinc-800 hover:bg-zinc-700 text-white/70"
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
+            <BugIcon />
           </button>
         </div>
         <BugReportModal isOpen={showBugReport} onClose={() => setShowBugReport(false)} />

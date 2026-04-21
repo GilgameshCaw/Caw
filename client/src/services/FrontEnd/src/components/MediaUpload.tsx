@@ -178,13 +178,27 @@ const MediaGrid: React.FC<{
     )
   }
 
-  // 4+ images: 2x2 grid (show first 4)
+  if (count === 4) {
+    return (
+      <div className="grid grid-cols-2 grid-rows-2 gap-1.5 aspect-video rounded-lg overflow-hidden">
+        {cell(0, 'w-full h-full')}
+        {cell(1, 'w-full h-full')}
+        {cell(2, 'w-full h-full')}
+        {cell(3, 'w-full h-full')}
+      </div>
+    )
+  }
+
+  // 5 items (4 images + 1 video): 2x2 grid with bottom-right cell split vertically
   return (
     <div className="grid grid-cols-2 grid-rows-2 gap-1.5 aspect-video rounded-lg overflow-hidden">
       {cell(0, 'w-full h-full')}
       {cell(1, 'w-full h-full')}
       {cell(2, 'w-full h-full')}
-      {cell(3, 'w-full h-full')}
+      <div className="grid grid-cols-2 gap-1.5 w-full h-full">
+        {cell(3, 'w-full h-full')}
+        {cell(4, 'w-full h-full')}
+      </div>
     </div>
   )
 }

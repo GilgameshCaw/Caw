@@ -30,6 +30,7 @@ const persistOnboardingStep = (username: string, step: number) => {
   }).catch(() => {})
 }
 import BugReportModal from '~/components/modals/BugReportModal'
+import BugIcon from '~/components/icons/BugIcon'
 import LayerZeroStatus from '~/components/LayerZeroStatus'
 import StakingRewardsInfo from '~/components/StakingRewardsInfo'
 import QuickSignOptions from '~/components/QuickSignOptions'
@@ -139,7 +140,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
     textVeryFaint: isDark ? 'text-white/40' : 'text-black/50',
     textSemiFaint: isDark ? 'text-gray-300' : 'text-gray-700',
     inputBg: isDark ? 'bg-black text-white border-white/20' : 'bg-white text-black border-black/20',
-    skipButton: 'text-white/40 hover:text-white/60',
+    skipButton: isDark ? 'text-white/40 hover:text-white/60' : 'text-gray-400 hover:text-gray-600',
     stepperInactive: isDark ? 'bg-[#1A1A1A]/85' : 'bg-black/10',
     stepperSkipped: isDark ? 'bg-[#171202]/85' : 'bg-yellow-500/20',
     presetInactive: isDark
@@ -1285,22 +1286,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
           onClick={() => setShowBugReport(true)}
           className={`w-9 h-9 rounded-full flex items-center justify-center shadow-lg transition-all cursor-pointer opacity-60 hover:opacity-100 ${isDark ? 'bg-zinc-800 hover:bg-zinc-700 text-white/70' : 'bg-zinc-200 hover:bg-zinc-300 text-black/70'}`}
         >
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect width="8" height="14" x="8" y="6" rx="4" />
-            <path d="M19 10C19 10 20 10 21 12" />
-            <path d="M5 10C5 10 4 10 3 12" />
-            <path d="M19 14C19 14 20 14 21 12" />
-            <path d="M5 14C5 14 4 14 3 12" />
-            <path d="M12 6V2" />
-            <path d="M9 18L7 20" />
-            <path d="M15 18L17 20" />
-            <path d="M12 14V10" />
-            <path d="M17 17H20" />
-            <path d="M7 17H4" />
-            <path d="M17 10H20" />
-            <path d="M7 10H4" />
-            <path d="M17 17H20" />
-          </svg>
+          <BugIcon />
         </button>
       </Tooltip>
       </div>

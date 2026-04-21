@@ -74,7 +74,7 @@ export const Main: React.FC = () => {
           onChange={setActiveTab}
         />
         {/* PostForm - Always visible */}
-        <div className="border-b border-white/20">
+        <div className={`border-b ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
           <PostForm onSuccess={() => feedRef.current?.refresh()}/>
         </div>
         <div className="w-full">

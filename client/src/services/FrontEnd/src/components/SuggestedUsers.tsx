@@ -6,6 +6,7 @@ import { useTokenDataStore } from '~/store/tokenDataStore'
 import { FollowButton } from './FollowButton'
 import { HiOutlineX } from 'react-icons/hi'
 import { getUserAvatar } from '~/utils/defaultAvatar'
+import { LoadingSpinner } from '~/components/Skeleton'
 
 
 const DISMISSED_KEY = 'caw-dismissed-suggestions'
@@ -37,6 +38,10 @@ interface SuggestedUser {
   followPending: boolean
 }
 
+// Module-level cache so suggested users survive navigation
+let cachedUsers: SuggestedUser[] | null = null
+let cacheTokenId: number | undefined
+
 interface SuggestedUsersProps {
   onFollowChange?: () => void
 }
@@ -44,8 +49,9 @@ interface SuggestedUsersProps {
 const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
   const { isDark } = useTheme()
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
-  const [users, setUsers] = useState<SuggestedUser[]>([])
-  const [loading, setLoading] = useState(true)
+  const hasCachedData = cachedUsers !== null && cacheTokenId === activeTokenId
+  const [users, setUsers] = useState<SuggestedUser[]>(hasCachedData ? cachedUsers! : [])
+  const [loading, setLoading] = useState(!hasCachedData)
   // Track users that have been confirmed followed and are fading out
   const [fadingOutIds, setFadingOutIds] = useState<Set<number>>(new Set())
   // Track users that have been fully removed after fade-out
@@ -62,6 +68,8 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
         const response = await apiFetch<{ users: SuggestedUser[] }>('/api/users/top-followed?limit=10')
         const filtered = response.users.filter(u => u.tokenId !== activeTokenId)
         setUsers(filtered)
+        cachedUsers = filtered
+        cacheTokenId = activeTokenId
       } catch (err) {
         console.error('Failed to fetch suggested users:', err)
       } finally {
@@ -75,6 +83,10 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
   // Called when follow is fully confirmed (pending resolved to following)
   const handleFollowConfirmed = useCallback((tokenId: number) => {
     onFollowChange?.()
+    // Update cache so the followed user doesn't reappear on navigation
+    if (cachedUsers) {
+      cachedUsers = cachedUsers.map(u => u.tokenId === tokenId ? { ...u, isFollowing: true } : u)
+    }
     // Wait 2 seconds showing "Following" state, then start fade-out
     setTimeout(() => {
       setFadingOutIds(prev => new Set(prev).add(tokenId))
@@ -93,6 +105,10 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
   const handleDismiss = useCallback((tokenId: number) => {
     dismissUser(tokenId)
     setDismissedIds(prev => new Set(prev).add(tokenId))
+    // Update cache so dismissed user doesn't reappear on navigation
+    if (cachedUsers) {
+      cachedUsers = cachedUsers.filter(u => u.tokenId !== tokenId)
+    }
   }, [])
 
   const formatCount = (count: number) => {
@@ -102,31 +118,14 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
   }
 
   if (loading) {
-    return (
-      <div className="py-8">
-        <div className="flex gap-3 overflow-x-auto pb-2">
-          {[...Array(5)].map((_, i) => (
-            <div
-              key={i}
-              className={`animate-pulse rounded-xl p-4 shrink-0 w-[33%] min-w-[165px] ${
-                isDark ? 'bg-white/5' : 'bg-gray-100'
-              }`}
-            >
-              <div className={`w-16 h-16 rounded-full mx-auto mb-3 ${isDark ? 'bg-gray-600' : 'bg-gray-300'}`} />
-              <div className={`h-4 rounded w-3/4 mx-auto mb-2 ${isDark ? 'bg-gray-600' : 'bg-gray-300'}`} />
-              <div className={`h-3 rounded w-1/2 mx-auto ${isDark ? 'bg-gray-700' : 'bg-gray-200'}`} />
-            </div>
-          ))}
-        </div>
-      </div>
-    )
+    return <LoadingSpinner className="py-8" />
   }
 
   const visibleUsers = users.filter(u =>
-    u.tokenId !== activeTokenId && !removedIds.has(u.tokenId) && !dismissedIds.has(u.tokenId) && !u.isFollowing
+    u.tokenId !== activeTokenId && !removedIds.has(u.tokenId) && !dismissedIds.has(u.tokenId) && !u.isFollowing && !u.followPending
   )
 
-  if (visibleUsers.length === 0) {
+  if (visibleUsers.length <= 1) {
     return null
   }
 

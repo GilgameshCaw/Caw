@@ -1244,8 +1244,12 @@ export const Profile: React.FC = () => {
                           followPending ? 'opacity-90 cursor-not-allowed' : 'cursor-pointer'
                         } ${
                           isFollowing
-                            ? 'border-white bg-white text-black' + (!followPending ? ' hover:bg-black hover:text-white hover:border-black' : '')
-                            : 'border-white text-white' + (!followPending ? ' hover:bg-white hover:text-black' : '')
+                            ? (isDark
+                                ? 'border-white bg-white text-black' + (!followPending ? ' hover:bg-black hover:text-white hover:border-white' : '')
+                                : 'border-gray-800 bg-gray-800 text-white' + (!followPending ? ' hover:bg-white hover:text-gray-800 hover:border-gray-800' : ''))
+                            : (isDark
+                                ? 'border-white text-white' + (!followPending ? ' hover:bg-white hover:text-black' : '')
+                                : 'border-gray-800 text-gray-800' + (!followPending ? ' hover:bg-gray-800 hover:text-white' : ''))
                         }`}
                       >
                         {followPending ? followButtonText : (followButtonHovered && isFollowing ? followHoverText : followButtonText)}
