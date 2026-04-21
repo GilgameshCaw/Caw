@@ -1,4 +1,7 @@
 import { prisma } from '../prismaClient'
+import { PrismaClient } from '@prisma/client'
+
+type TxClient = Parameters<Parameters<PrismaClient['$transaction']>[0]>[0]
 
 /**
  * Extract hashtags from text content
@@ -26,7 +29,8 @@ export function extractHashtags(content: string): string[] {
  * Creates hashtag entries if they don't exist, creates caw-hashtag associations,
  * and updates usage counts
  */
-export async function processHashtagsForCaw(cawId: number, content: string): Promise<void> {
+export async function processHashtagsForCaw(cawId: number, content: string, txClient?: TxClient): Promise<void> {
+  const db = txClient || prisma
   console.log(`[processHashtagsForCaw] Called with cawId=${cawId}, content="${content}"`)
   const hashtags = extractHashtags(content)
   console.log(`[processHashtagsForCaw] Extracted hashtags:`, hashtags)
@@ -41,13 +45,13 @@ export async function processHashtagsForCaw(cawId: number, content: string): Pro
     try {
       // First, check if this caw-hashtag association already exists
       // to avoid double-counting when called multiple times for the same caw
-      const existingHashtag = await prisma.hashtag.findUnique({
+      const existingHashtag = await db.hashtag.findUnique({
         where: { name: hashtagName }
       })
 
       if (existingHashtag) {
         // Check if association already exists
-        const existingAssociation = await prisma.cawHashtag.findUnique({
+        const existingAssociation = await db.cawHashtag.findUnique({
           where: {
             cawId_hashtagId: {
               cawId: cawId,
@@ -62,7 +66,7 @@ export async function processHashtagsForCaw(cawId: number, content: string): Pro
         }
 
         // Association doesn't exist, increment count and create it
-        await prisma.hashtag.update({
+        await db.hashtag.update({
           where: { id: existingHashtag.id },
           data: {
             usageCount: { increment: 1 },
@@ -70,7 +74,7 @@ export async function processHashtagsForCaw(cawId: number, content: string): Pro
           }
         })
 
-        await prisma.cawHashtag.create({
+        await db.cawHashtag.create({
           data: {
             cawId: cawId,
             hashtagId: existingHashtag.id
@@ -78,7 +82,7 @@ export async function processHashtagsForCaw(cawId: number, content: string): Pro
         })
       } else {
         // Hashtag doesn't exist, create it with count 1
-        const newHashtag = await prisma.hashtag.create({
+        const newHashtag = await db.hashtag.create({
           data: {
             name: hashtagName,
             usageCount: 1
@@ -86,7 +90,7 @@ export async function processHashtagsForCaw(cawId: number, content: string): Pro
         })
 
         // Create caw-hashtag association
-        await prisma.cawHashtag.create({
+        await db.cawHashtag.create({
           data: {
             cawId: cawId,
             hashtagId: newHashtag.id

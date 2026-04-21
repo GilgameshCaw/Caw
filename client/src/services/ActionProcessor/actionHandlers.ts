@@ -118,7 +118,7 @@ export async function handleCawAction(
   // Process hashtags for the new caw
   try {
     console.log(`[handleCawAction] Processing hashtags for caw ${newCaw.id}, textContent: "${textContent}"`)
-    await processHashtagsForCaw(newCaw.id, textContent)
+    await processHashtagsForCaw(newCaw.id, textContent, tx)
     console.log(`[handleCawAction] Finished processing hashtags for caw ${newCaw.id}`)
   } catch (err) {
     console.error(`Failed to process hashtags for caw ${newCaw.id}:`, err)
@@ -698,7 +698,7 @@ export async function handleOtherAction(
   // Process hashtags for the text content
   if (textContent) {
     try {
-      await processHashtagsForCaw(newCaw.id, textContent)
+      await processHashtagsForCaw(newCaw.id, textContent, tx)
     } catch (err) {
       console.error(`Failed to process hashtags for caw ${newCaw.id}:`, err)
     }
