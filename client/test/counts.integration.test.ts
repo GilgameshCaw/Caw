@@ -21,9 +21,8 @@ import { prisma } from '../src/prismaClient'
 // TEST INFRASTRUCTURE
 // ============================================
 
-// Import the app factory from the server module
-// @ts-ignore — createApp is not in the TS export but exists at runtime
-const { createApp } = await import('../src/api/server')
+// Import the app factory
+import { createApp } from '../src/api/server'
 const app = createApp()
 
 // Test account — deterministic private key for reproducible signatures
