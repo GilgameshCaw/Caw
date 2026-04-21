@@ -39,6 +39,156 @@ const SIZE_LIMITS = {
   VIDEO_MAX: 100 * 1024 * 1024, // 100MB for videos
 }
 
+/** Single media cell with preview, remove button, and drag support */
+const MediaCell: React.FC<{
+  media: any
+  index: number
+  className?: string
+  isDark: boolean
+  draggable: boolean
+  draggedIndex: number | null
+  dragOverIndex: number | null
+  onReorderDragStart: (e: React.DragEvent, i: number) => void
+  onReorderDragEnd: (e: React.DragEvent) => void
+  onReorderDragOver: (e: React.DragEvent, i: number) => void
+  onReorderDragLeave: () => void
+  onReorderDrop: (e: React.DragEvent, i: number) => void
+  onRemove: (i: number) => void
+  formatDuration: (s: number) => string
+}> = ({ media, index, className = '', isDark, draggable, draggedIndex, dragOverIndex,
+        onReorderDragStart, onReorderDragEnd, onReorderDragOver, onReorderDragLeave,
+        onReorderDrop, onRemove, formatDuration }) => (
+  <div
+    draggable={draggable}
+    onDragStart={(e) => onReorderDragStart(e, index)}
+    onDragEnd={onReorderDragEnd}
+    onDragOver={(e) => onReorderDragOver(e, index)}
+    onDragLeave={onReorderDragLeave}
+    onDrop={(e) => onReorderDrop(e, index)}
+    className={`relative rounded-lg overflow-hidden border-2 transition-all ${
+      dragOverIndex === index
+        ? 'border-yellow-500 scale-[1.02]'
+        : draggedIndex === index
+          ? 'border-yellow-500/50 opacity-50'
+          : isDark ? 'border-gray-600 bg-gray-800' : 'border-gray-200 bg-gray-50'
+    } ${draggable ? 'cursor-grab active:cursor-grabbing' : ''} ${className}`}
+  >
+    <div className="relative w-full h-full bg-black">
+      {media.type === 'image' || media.type === 'gif' ? (
+        <>
+          <img
+            src={media.preview || media.originalUrl || media.url}
+            alt={`Selected ${index + 1}`}
+            className="w-full h-full object-cover"
+          />
+          {media.type === 'gif' && (
+            <span className={`absolute bottom-1 left-1 px-1 py-0.5 text-xs font-semibold rounded ${
+              isDark ? 'bg-black/70 text-white' : 'bg-white/70 text-black'
+            }`}>
+              GIPHY
+            </span>
+          )}
+        </>
+      ) : (
+        <>
+          <video src={media.preview} className="w-full h-full object-contain" />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <div className="bg-black/60 rounded-full p-2">
+              <HiOutlinePlay className="w-4 h-4 text-white" />
+            </div>
+          </div>
+          <span className={`absolute bottom-1 left-1 px-1 py-0.5 text-xs font-semibold rounded ${
+            isDark ? 'bg-black/70 text-white' : 'bg-white/70 text-black'
+          }`}>
+            VIDEO
+          </span>
+          {media.duration && (
+            <span className="absolute bottom-1 right-1 text-xs text-white bg-black/60 px-1 py-0.5 rounded">
+              {formatDuration(media.duration)}
+            </span>
+          )}
+        </>
+      )}
+    </div>
+    <button
+      onClick={() => onRemove(index)}
+      className="absolute top-1 right-1 p-0.5 rounded-full bg-black/50 hover:bg-black/70 transition-colors"
+      title="Remove"
+    >
+      <HiOutlineX className="h-3 w-3 text-white" />
+    </button>
+  </div>
+)
+
+/**
+ * Responsive media grid layout:
+ * 1 image: full width
+ * 2 images: side by side (50/50)
+ * 3 images: first image takes left half, other two stack on the right
+ * 4 images: 2x2 grid
+ */
+const MediaGrid: React.FC<{
+  selectedMedia: any[]
+  isDark: boolean
+  draggedIndex: number | null
+  dragOverIndex: number | null
+  onReorderDragStart: (e: React.DragEvent, i: number) => void
+  onReorderDragEnd: (e: React.DragEvent) => void
+  onReorderDragOver: (e: React.DragEvent, i: number) => void
+  onReorderDragLeave: () => void
+  onReorderDrop: (e: React.DragEvent, i: number) => void
+  onRemove: (i: number) => void
+  formatDuration: (s: number) => string
+}> = (props) => {
+  const { selectedMedia, ...cellProps } = props
+  const count = selectedMedia.length
+  const draggable = count > 1
+
+  const cell = (index: number, className?: string) => (
+    <MediaCell
+      key={index}
+      media={selectedMedia[index]}
+      index={index}
+      className={className}
+      draggable={draggable}
+      {...cellProps}
+    />
+  )
+
+  if (count === 1) {
+    return <div className="aspect-video rounded-lg overflow-hidden">{cell(0, 'w-full h-full')}</div>
+  }
+
+  if (count === 2) {
+    return (
+      <div className="grid grid-cols-2 gap-1.5 aspect-video rounded-lg overflow-hidden">
+        {cell(0, 'w-full h-full')}
+        {cell(1, 'w-full h-full')}
+      </div>
+    )
+  }
+
+  if (count === 3) {
+    return (
+      <div className="grid grid-cols-2 grid-rows-2 gap-1.5 aspect-video rounded-lg overflow-hidden">
+        {cell(0, 'row-span-2 w-full h-full')}
+        {cell(1, 'w-full h-full')}
+        {cell(2, 'w-full h-full')}
+      </div>
+    )
+  }
+
+  // 4+ images: 2x2 grid (show first 4)
+  return (
+    <div className="grid grid-cols-2 grid-rows-2 gap-1.5 aspect-video rounded-lg overflow-hidden">
+      {cell(0, 'w-full h-full')}
+      {cell(1, 'w-full h-full')}
+      {cell(2, 'w-full h-full')}
+      {cell(3, 'w-full h-full')}
+    </div>
+  )
+}
+
 const MediaUpload: React.FC<MediaUploadProps> = ({
   onMediaSelected,
   onMediaRemoved,
@@ -453,80 +603,19 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
 
       {/* Selected Media Display */}
       {selectedMedia.length > 0 && (
-        <div className="grid grid-cols-3 md:grid-cols-4 gap-2">
-          {selectedMedia.map((media, index) => (
-            <div
-              key={index}
-              draggable={selectedMedia.length > 1}
-              onDragStart={(e) => handleReorderDragStart(e, index)}
-              onDragEnd={handleReorderDragEnd}
-              onDragOver={(e) => handleReorderDragOver(e, index)}
-              onDragLeave={handleReorderDragLeave}
-              onDrop={(e) => handleReorderDrop(e, index)}
-              className={`relative rounded-lg overflow-hidden border-2 transition-all ${
-                dragOverIndex === index
-                  ? 'border-yellow-500 scale-105'
-                  : draggedIndex === index
-                    ? 'border-yellow-500/50 opacity-50'
-                    : isDark ? 'border-gray-600 bg-gray-800' : 'border-gray-200 bg-gray-50'
-              } ${selectedMedia.length > 1 ? 'cursor-grab active:cursor-grabbing' : ''}`}
-            >
-              {/* Media Preview - 1:1 aspect ratio */}
-              <div className="relative aspect-square bg-black">
-                {media.type === 'image' || media.type === 'gif' ? (
-                  <>
-                    <img
-                      src={(media as any).preview || (media as any).originalUrl || (media as any).url}
-                      alt={`Selected ${index + 1}`}
-                      className="w-full h-full object-cover"
-                    />
-                    {/* GIPHY label for GIFs */}
-                    {media.type === 'gif' && (
-                      <span className={`absolute bottom-1 left-1 px-1 py-0.5 text-xs font-semibold rounded ${
-                        isDark ? 'bg-black/70 text-white' : 'bg-white/70 text-black'
-                      }`}>
-                        GIPHY
-                      </span>
-                    )}
-                  </>
-                ) : (
-                  <>
-                    <video
-                      src={media.preview}
-                      className="w-full h-full object-contain"
-                    />
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="bg-black/60 rounded-full p-2">
-                        <HiOutlinePlay className="w-4 h-4 text-white" />
-                      </div>
-                    </div>
-                    {/* VIDEO label */}
-                    <span className={`absolute bottom-1 left-1 px-1 py-0.5 text-xs font-semibold rounded ${
-                      isDark ? 'bg-black/70 text-white' : 'bg-white/70 text-black'
-                    }`}>
-                      VIDEO
-                    </span>
-                    {media.duration && (
-                      <span className="absolute bottom-1 right-1 text-xs text-white bg-black/60 px-1 py-0.5 rounded">
-                        {formatDuration(media.duration)}
-                      </span>
-                    )}
-                  </>
-                )}
-
-              </div>
-
-              {/* Remove Button */}
-              <button
-                onClick={() => removeMedia(index)}
-                className="absolute top-1 right-1 p-0.5 rounded-full bg-black/50 hover:bg-black/70 transition-colors"
-                title="Remove"
-              >
-                <HiOutlineX className="h-3 w-3 text-white" />
-              </button>
-            </div>
-          ))}
-        </div>
+        <MediaGrid
+          selectedMedia={selectedMedia}
+          isDark={isDark}
+          draggedIndex={draggedIndex}
+          dragOverIndex={dragOverIndex}
+          onReorderDragStart={handleReorderDragStart}
+          onReorderDragEnd={handleReorderDragEnd}
+          onReorderDragOver={handleReorderDragOver}
+          onReorderDragLeave={handleReorderDragLeave}
+          onReorderDrop={handleReorderDrop}
+          onRemove={removeMedia}
+          formatDuration={formatDuration}
+        />
       )}
     </div>
   )

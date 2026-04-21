@@ -278,22 +278,21 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
 
   const [text, setText] = useState('')
   const [cursorPosition, setCursorPosition] = useState(0)
+  // Maps original URLs to their shortened versions. The user always sees their
+  // original text — short URLs are only used for character counting and on-chain submission.
+  const urlMappings = useRef<Map<string, string>>(new Map())
   // Tracks which URLs we've already attempted to shorten so we don't re-call the API
   const shortenedUrls = useRef<Set<string>>(new Set())
 
-  // Auto-shorten URLs as the user types. We only shorten URLs that are "finalized"
-  // (followed by whitespace or end-of-string) so we don't fire mid-typing.
-  // Short URLs already in the text are ignored.
+  // Auto-shorten URLs as the user types (background, no visible text change).
+  // We only shorten URLs that are "finalized" (followed by whitespace or end-of-string).
   useEffect(() => {
     if (!text) return
-    // Match URLs that are followed by whitespace or end-of-text (finalized).
-    // Same char class as URL_REGEX but with explicit terminator.
     const FINALIZED_URL = /(https?:\/\/[^\s<>"'{}|\\^`[\]]+[^\s<>"'{}|\\^`[\].,!?;:)\]])(?=\s|$)/g
     const toShorten: string[] = []
     let m: RegExpExecArray | null
     while ((m = FINALIZED_URL.exec(text)) !== null) {
       const url = m[1]
-      // Skip URLs that are already short URLs
       if (/\/s\/[a-zA-Z0-9]+/.test(url)) continue
       if (shortenedUrls.current.has(url)) continue
       toShorten.push(url)
@@ -307,21 +306,29 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           method: 'POST',
           body: JSON.stringify({ urls: toShorten }),
         }) as { results: Record<string, { shortUrl: string }> }
-        setText(current => {
-          let updated = current
-          for (const [originalUrl, data] of Object.entries(response.results)) {
-            updated = updated.split(originalUrl).join(data.shortUrl)
-          }
-          return updated
-        })
+        for (const [originalUrl, data] of Object.entries(response.results)) {
+          urlMappings.current.set(originalUrl, data.shortUrl)
+        }
       } catch {
-        // If shortening fails, leave the long URLs in place and let submit-time shortening handle it.
-        // Remove from attempted set so a later edit can retry.
         toShorten.forEach(u => shortenedUrls.current.delete(u))
       }
     }, 500)
     return () => clearTimeout(timer)
   }, [text])
+
+  /** Replace original URLs with short URLs for on-chain submission */
+  function getOnChainText(input: string): string {
+    let result = input
+    for (const [original, short] of urlMappings.current) {
+      result = result.split(original).join(short)
+    }
+    return result
+  }
+
+  /** Byte length of text as it will appear on-chain (with short URLs) */
+  function onChainByteLen(input: string): number {
+    return byteLen(getOnChainText(input))
+  }
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const submitBtnRef = useRef<HTMLButtonElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -602,8 +609,10 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           finalText = finalText + gifUrls
         }
 
-        // Shorten any URLs in the text (including GIF URLs)
-        finalText = await shortenUrlsInText(finalText)
+        // Replace original URLs with short URLs for on-chain submission.
+        // getOnChainText handles URLs pre-shortened during typing;
+        // shortenUrlsInText catches any remaining (e.g., GIF URLs appended above).
+        finalText = await shortenUrlsInText(getOnChainText(finalText))
 
         // Get current cawonce
         const currentCawonce = activeToken?.cawonce ?? 0
@@ -753,8 +762,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       }
     }
 
-    // Shorten any URLs in the text (including GIF URLs)
-    finalText = await shortenUrlsInText(finalText)
+    // Replace original URLs with short URLs for on-chain submission.
+    finalText = await shortenUrlsInText(getOnChainText(finalText))
 
     // effectiveTokenId is already defined at the start of handleSubmit
 
@@ -1059,9 +1068,13 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     return mediaCost
   }
 
+  const imageCount = selectedMedia.filter(m => m.type === 'image' || m.type === 'gif').length
+  const gifDisabled = imageCount >= 4
+
   // Thread splitting info — all length comparisons here are in BYTES (matches the on-chain check).
+  // Use on-chain byte length (with short URLs) for accurate counting.
   const mediaCost = getMediaCharCost() // already in bytes (media refs are ASCII)
-  const textBytes = byteLen(text)
+  const textBytes = onChainByteLen(text)
   const effectiveTextLength = textBytes + mediaCost
   const isThreadMode = effectiveTextLength > POST_CHAR_LIMIT
   const firstChunkMediaCost = (!isThreadMode || mediaPosition === 'start') ? mediaCost : 0
@@ -1081,7 +1094,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     return 0
   })()
 
-  // Calculate bytes remaining for the current chunk
+  // Calculate bytes remaining for the current chunk (uses on-chain byte lengths
+  // so the counter reflects the actual space available after URL shortening)
   const calculateCharCount = () => {
     if (!isThreadMode) {
       return POST_CHAR_LIMIT - effectiveTextLength
@@ -1091,7 +1105,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     const chunkEnd = currentChunkIndex < chunkBoundaries.length - 1
       ? chunkBoundaries[currentChunkIndex + 1]
       : text.length
-    const chunkLen = byteLen(text.slice(chunkStart, chunkEnd))
+    const chunkLen = onChainByteLen(text.slice(chunkStart, chunkEnd))
     // Add media cost to the chunk that will contain the media
     const isFirstChunk = currentChunkIndex === 0
     const isLastChunk = currentChunkIndex === chunkCount - 1
@@ -1216,15 +1230,18 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
 
               {/* GIF */}
               <button
-                onClick={() => setShowGifPicker(!showGifPicker)}
-                className={`px-3 py-1 rounded-full text-base font-medium transition-all duration-200 cursor-pointer ${
-                text.trim()
-                  ? (isDark
-                      ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
-                      : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
-                  : (isDark
-                      ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
-                      : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
+                onClick={() => !gifDisabled && setShowGifPicker(!showGifPicker)}
+                disabled={gifDisabled}
+                className={`px-3 py-1 rounded-full text-base font-medium transition-all duration-200 ${
+                gifDisabled
+                  ? 'opacity-30 cursor-not-allowed'
+                  : `cursor-pointer ${text.trim()
+                    ? (isDark
+                        ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
+                        : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
+                    : (isDark
+                        ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
+                        : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')}`
               }`}>
                 GIF
               </button>
@@ -1261,7 +1278,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                 // covering for it). If no wallet is connected, the button just
                 // triggers the connect flow and should say "Post".
                 const wrongWallet = isConnected && !isTokenOwner && !hasActiveSession && activeToken?.tokenId
-                const tooltipText = wrongWallet ? 'Please switch to the correct wallet' : isSubmitting ? (isThreadMode ? 'Waiting for signatures...' : 'Waiting for signature...') : ''
+                const tooltipText = wrongWallet ? 'Please switch to the correct wallet' : isSubmitting ? 'Signing...' : ''
                 const threadTooLong = isThreadMode && chunkCount > 300
                 const isDisabled = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isSubmitting || threadTooLong
                 const btn = (
@@ -1550,15 +1567,18 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
 
             {/* GIF */}
             <button
-              onClick={() => setShowGifPicker(!showGifPicker)}
-              className={`p-2 rounded-full transition-all duration-200 cursor-pointer ${
-              text.trim()
-                ? (isDark
-                    ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
-                    : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
-                : (isDark
-                    ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
-                    : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
+              onClick={() => !gifDisabled && setShowGifPicker(!showGifPicker)}
+              disabled={gifDisabled}
+              className={`p-2 rounded-full transition-all duration-200 ${
+              gifDisabled
+                ? 'opacity-30 cursor-not-allowed'
+                : `cursor-pointer ${text.trim()
+                  ? (isDark
+                      ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
+                      : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
+                  : (isDark
+                      ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
+                      : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')}`
             }`}>
               <span className="text-base font-medium">GIF</span>
             </button>
@@ -1625,7 +1645,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
 
             {(() => {
                 const wrongWallet2 = isConnected && !isTokenOwner && !hasActiveSession && activeToken?.tokenId
-                const tooltipText2 = wrongWallet2 ? 'Please switch to the correct wallet' : hasNoToken ? '' : isSubmitting ? (isThreadMode ? 'Waiting for signatures...' : 'Waiting for signature...') : ''
+                const tooltipText2 = wrongWallet2 ? 'Please switch to the correct wallet' : hasNoToken ? '' : isSubmitting ? 'Signing...' : ''
                 const threadTooLong2 = isThreadMode && chunkCount > 300
                 const isDisabled2 = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isSubmitting || threadTooLong2
                 const btn2 = (

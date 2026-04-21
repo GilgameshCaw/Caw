@@ -51,17 +51,18 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
     }
   }, [scrollTop])
 
-  // Parse text and apply highlighting
+  // Parse text and apply highlighting for @mentions, #hashtags, $cashtags, and URLs
   const getHighlightedText = (text: string) => {
     if (!text) return null
 
-    // Regex for @mentions, #hashtags, and $cashtags
-    const regex = /([@#$][a-zA-Z0-9_]+)/g
+    // Match @mentions, #hashtags, $cashtags, and URLs
+    const regex = /([@#$][a-zA-Z0-9_]+|https?:\/\/[^\s<>"'{}|\\^`[\]]+[^\s<>"'{}|\\^`[\].,!?;:)\]])/g
     const parts = text.split(regex)
-    const isMatch = /^[@#$][a-zA-Z0-9_]+$/
+    const isMentionOrTag = /^[@#$][a-zA-Z0-9_]+$/
+    const isUrl = /^https?:\/\//
 
     return parts.map((part, index) => {
-      if (isMatch.test(part)) {
+      if (isMentionOrTag.test(part) || isUrl.test(part)) {
         return (
           <span key={index} className={isDark ? 'text-yellow-400' : 'text-yellow-600'}>
             {part}
