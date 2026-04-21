@@ -884,7 +884,7 @@ export const Profile: React.FC = () => {
             <div
               className={`w-full h-full ${isDark
                 ? 'bg-gradient-to-b from-black via-gray-900 to-black'
-                : 'bg-gradient-to-b from-gray-200 via-gray-100 to-gray-200'
+                : 'bg-gradient-to-b from-white via-amber-100/60 to-white'
               }`}
             />
           )}

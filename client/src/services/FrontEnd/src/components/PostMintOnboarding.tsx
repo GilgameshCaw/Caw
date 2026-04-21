@@ -224,13 +224,14 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
     return Number(formatUnits(balance, 18))
   }, [balance])
 
-  const dollarPresets = [1, 5, 10, 25]
+  const dollarPresets = [10, 25, 50, 100]
 
-  const getDollarPresets = (maxBalance: number): { usd: number; caw: number }[] => {
+  const getDollarPresets = (): { usd: number; caw: number; affordable: boolean }[] => {
     if (!cawPrice || cawPrice <= 0) return []
-    return dollarPresets
-      .map(usd => ({ usd, caw: Math.round(usd / cawPrice) }))
-      .filter(p => p.caw <= maxBalance)
+    return dollarPresets.map(usd => {
+      const caw = Math.round(usd / cawPrice)
+      return { usd, caw, affordable: caw <= availableBalance }
+    })
   }
 
   const formatCawAmount = (value: number): string => {
@@ -912,9 +913,9 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                 <div className="space-y-4">
                   <div className="space-y-2">
                     <label className={`text-sm font-medium ${tc.textSemiFaint}`}>Amount to Deposit</label>
-                    {getDollarPresets(availableBalance).length > 0 && (
+                    {getDollarPresets().length > 0 && (
                       <div className="flex flex-wrap gap-2">
-                        {getDollarPresets(availableBalance).map(preset => (
+                        {getDollarPresets().map(preset => (
                           <button
                             key={preset.usd}
                             onClick={() => setAmount(preset.caw.toString())}
@@ -952,27 +953,28 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                     </div>
                   </div>
 
+                  {isConnected && amount && parseFloat(amount) > 0 && insufficientBalance && (
+                    <p className="text-sm text-red-400 text-center">
+                      Not enough CAW in your wallet.{' '}
+                      <a href="https://app.uniswap.org/#/swap?inputCurrency=ETH&outputCurrency=0xf3b9569F82B18aEf890De263B84189bd33EBe452" target="_blank" rel="noopener noreferrer" className="underline hover:text-red-300">Buy more on Uniswap</a>
+                    </p>
+                  )}
+
                   <button
                     onClick={handleStake}
-                    disabled={
-                      !isConnected ? false
-                      : wrongChainForStake ? false
-                      : !tokenId || (!isTokenOwner) || !amount || parseFloat(amount) === 0 || depositFee === 0n || isStakePending || isApprovePending
-                    }
+                    disabled={isStakePending || isApprovePending || (isConnected && (!amount || parseFloat(amount) === 0))}
                     className={`w-full py-3 rounded-full font-bold transition-all ${
-                      !isConnected || wrongChainForStake
-                        ? 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
-                        : isStakePending || isApprovePending
-                          ? 'bg-yellow-600 text-black cursor-not-allowed'
-                          : !amount || parseFloat(amount) === 0 || depositFee === 0n
-                            ? (isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-200 text-gray-400 cursor-not-allowed')
-                            : 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
+                      isStakePending || isApprovePending
+                        ? 'bg-yellow-600 text-black cursor-not-allowed'
+                        : isConnected && (!amount || parseFloat(amount) === 0)
+                          ? (isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-200 text-gray-400 cursor-not-allowed')
+                          : 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
                     }`}
                   >
-                    {isApprovePending ? 'Approving...'
+                    {!isConnected ? 'Connect Wallet'
+                      : isApprovePending ? 'Approving...'
                       : isStakePending ? 'Staking...'
                       : needsApproval ? 'Approve & Stake'
-                      : insufficientBalance ? 'Insufficient Balance'
                       : 'Stake CAW'}
                   </button>
 
