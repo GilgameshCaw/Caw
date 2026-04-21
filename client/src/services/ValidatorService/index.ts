@@ -507,7 +507,9 @@ export const validatorService: Service = {
       const bounded: typeof candidates = []
       for (const entry of candidates) {
         const data = (entry.payload as any)?.data
-        const textLen = typeof data?.text === 'string' ? data.text.length : 0
+        // text is a hex string (0x...) — actual byte length is (length - 2) / 2
+        const textHex = typeof data?.text === 'string' ? data.text : ''
+        const textLen = textHex.startsWith('0x') ? (textHex.length - 2) / 2 : textHex.length / 2
         const recipientsLen = Array.isArray(data?.recipients) ? data.recipients.length * 4 : 0
         const amountsLen = Array.isArray(data?.amounts) ? data.amounts.length * 8 : 0
         const entrySize = PER_ACTION_OVERHEAD + textLen + recipientsLen + amountsLen
