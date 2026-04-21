@@ -367,7 +367,8 @@ export class NotificationService {
           actorId: tipperId,
           type: NotificationType.TIP,
           cawId: cawId || undefined,
-          groupKey: cawId ? `tip_caw_${cawId}` : undefined
+          groupKey: cawId ? `tip_caw_${cawId}` : undefined,
+          actionPayload: amount ? JSON.stringify({ tipAmount: String(amount) }) : undefined,
         }
       })
     }

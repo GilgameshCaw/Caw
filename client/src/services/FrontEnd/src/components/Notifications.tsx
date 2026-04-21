@@ -22,6 +22,7 @@ import { useNotificationUnreadStore } from '~/store/notificationUnreadStore'
 import { useSignAndSubmitAction, decompressSignedText, type ActionTypeKey } from '~/api/actions'
 import { useAutoRetryStore } from '~/store/autoRetryStore'
 import { getUserAvatar } from '~/utils/defaultAvatar'
+import { LoadingSpinner } from '~/components/Skeleton'
 
 interface Actor {
   tokenId: number
@@ -58,15 +59,16 @@ interface Notification {
   // notifications route so the UI can render human-readable labels
   // without extra client lookups.
   actionPayload?: {
-    actionType: number
-    receiverId: number | null
-    receiverCawonce: number | null
-    text: string | null
-    recipients: number[] | null
-    amounts: (string | number)[] | null
-    originalTxQueueId: number
-    reason: string
+    actionType?: number
+    receiverId?: number | null
+    receiverCawonce?: number | null
+    text?: string | null
+    recipients?: number[] | null
+    amounts?: (string | number)[] | null
+    originalTxQueueId?: number
+    reason?: string
     receiverUsername?: string
+    tipAmount?: string
     targetCaw?: {
       content: string
       authorUsername: string
@@ -93,6 +95,9 @@ interface NotificationsResponse {
 }
 
 type TabType = 'all' | 'mentions'
+
+// Module-level cache so notifications survive navigation
+let notifCache: { items: Notification[]; tokenId: number; tab: TabType; unread: number; ts: number } | null = null
 
 // Helper function to format relative time
 function formatRelativeTime(timestamp: string): string {
@@ -147,10 +152,11 @@ const Notifications: React.FC = () => {
   const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
   const [activeTab, setActiveTab] = useState<TabType>('all')
-  const [notifications, setNotifications] = useState<Notification[]>([])
-  const [loading, setLoading] = useState(true)
+  const hasCached = notifCache !== null && notifCache.tokenId === activeToken?.tokenId && notifCache.tab === activeTab
+  const [notifications, setNotifications] = useState<Notification[]>(hasCached ? notifCache!.items : [])
+  const [loading, setLoading] = useState(!hasCached)
   const [error, setError] = useState<string | null>(null)
-  const [unreadCount, setUnreadCount] = useState(0)
+  const [unreadCount, setUnreadCount] = useState(hasCached ? notifCache!.unread : 0)
   // Tracks which ACTION_FAILED notifications are mid-manual-retry so the
   // button can show a spinner state and block double-taps. Keyed by
   // notification.id.
@@ -188,6 +194,11 @@ const Notifications: React.FC = () => {
       setUnreadCount(data.unreadCount)
       setHasMore(data.hasMore)
       setOffset(currentOffset + data.notifications.length)
+
+      // Update cache
+      if (reset && activeToken) {
+        notifCache = { items: data.notifications, tokenId: activeToken.tokenId, tab: activeTab, unread: data.unreadCount, ts: Date.now() }
+      }
 
       // Mark notifications as read after displaying them
       if (data.notifications.length > 0) {
@@ -433,8 +444,19 @@ const Notifications: React.FC = () => {
         return `${text} quoted your caw`
       case 'MENTION':
         return `${text} mentioned you`
-      case 'TIP':
-        return notification.caw ? `${text} tipped your caw` : `${text} tipped you`
+      case 'TIP': {
+        const tipAmt = notification.actionPayload?.tipAmount
+        let tipLabel = ''
+        if (tipAmt) {
+          const cawNum = Number(tipAmt) / 1e18
+          const formatted = cawNum >= 1_000_000 ? `${(cawNum / 1_000_000).toFixed(1)}M`
+            : cawNum >= 1_000 ? `${(cawNum / 1_000).toFixed(1)}K`
+            : cawNum.toFixed(0)
+          const usd = cawPrice > 0 ? ` (~$${(cawNum * cawPrice).toFixed(2)})` : ''
+          tipLabel = ` ${formatted} CAW${usd}`
+        }
+        return notification.caw ? `${text} tipped your caw${tipLabel}` : `${text} tipped you${tipLabel}`
+      }
       case 'OFFER': {
         // Build USD display
         let offerUsd = ''
@@ -588,6 +610,17 @@ const Notifications: React.FC = () => {
   }
 
   useEffect(() => {
+    // Restore from cache if available, background refresh if stale
+    const c = notifCache
+    if (c && c.tokenId === activeToken?.tokenId && c.tab === activeTab && c.items.length > 0) {
+      setNotifications(c.items)
+      setUnreadCount(c.unread)
+      setLoading(false)
+      if (Date.now() - c.ts > 60_000) {
+        fetchNotifications(true)
+      }
+      return
+    }
     setOffset(0)
     fetchNotifications(true)
   }, [activeTab, activeToken?.tokenId])
@@ -682,16 +715,7 @@ const Notifications: React.FC = () => {
 
       {/* Notifications List */}
       {loading && notifications.length === 0 ? (
-        <div className="space-y-4">
-          {[...Array(5)].map((_, i) => (
-            <div
-              key={i}
-              className={`animate-pulse h-20 rounded-lg ${
-                isDark ? 'bg-white/10' : 'bg-gray-100'
-              }`}
-            />
-          ))}
-        </div>
+        <LoadingSpinner />
       ) : error ? (
         <div className="text-center py-8">
           {error === 'auth' ? (

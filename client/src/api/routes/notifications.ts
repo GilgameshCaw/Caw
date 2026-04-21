@@ -158,6 +158,7 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
             actor: notification.actor,
             additionalActors: [],
             caw: notification.caw,
+            actionPayload: (notification as any).actionPayload ?? null,
             isRead: notification.isRead,
             createdAt: notification.createdAt,
             count: 1,
