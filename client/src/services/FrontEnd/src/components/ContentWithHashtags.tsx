@@ -66,7 +66,7 @@ const ShortUrlLink: React.FC<{ code: string; shortHref: string }> = ({ code, sho
       target="_blank"
       rel="noopener noreferrer"
       onClick={(e) => e.stopPropagation()}
-      className="text-yellow-500 hover:text-yellow-600 dark:text-yellow-400 dark:hover:text-yellow-300 hover:underline break-all"
+      className="text-amber-800 hover:text-amber-900 dark:text-yellow-400 dark:hover:text-yellow-300 hover:underline break-all"
     >
       {displayText}
     </a>
@@ -207,7 +207,7 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
               className={`
                 hover:underline cursor-pointer transition-colors duration-200
                 bg-transparent border-none p-0 m-0 font-inherit
-                text-yellow-500 hover:text-yellow-600 dark:text-yellow-400 dark:hover:text-yellow-300
+                text-amber-800 hover:text-amber-900 dark:text-yellow-400 dark:hover:text-yellow-300
               `}
             >
               {part}
@@ -225,7 +225,7 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
               className={`
                 hover:underline cursor-pointer transition-colors duration-200
                 bg-transparent border-none p-0 m-0 font-inherit
-                text-yellow-500 hover:text-yellow-600 dark:text-yellow-400 dark:hover:text-yellow-300
+                text-amber-800 hover:text-amber-900 dark:text-yellow-400 dark:hover:text-yellow-300
               `}
             >
               {part}

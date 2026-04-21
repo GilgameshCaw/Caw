@@ -30,8 +30,6 @@ const LayerZeroStatus: React.FC<LayerZeroStatusProps> = ({
           }`}>
             {message}
             <br />
-            Cross-chain transfers might be processing in the background.
-            <br />
             <br />
             <a
               href={scanUrl}

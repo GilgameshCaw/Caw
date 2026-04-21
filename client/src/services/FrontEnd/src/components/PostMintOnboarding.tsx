@@ -252,7 +252,6 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
     onSuccess: async () => {
       setIsApprovePending(false)
       refetchAllowance()
-      await new Promise(r => setTimeout(r, 500))
       setIsStakePending(true)
       await stake.call()
     },
@@ -873,7 +872,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                       </span>
                     </div>
                     {address && (
-                      <LayerZeroStatus address={address} isDark={isDark} message="Your deposit is being transferred cross-chain." />
+                      <LayerZeroStatus address={address} isDark={isDark} message="This deposit is being broadcasted cross-chain and may take a few minutes to complete." />
                     )}
                   </div>
                   <button
@@ -913,7 +912,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                         <span className="font-medium">Deposit submitted — waiting for confirmation...</span>
                       </div>
                       {address && (
-                        <LayerZeroStatus address={address} isDark={isDark} message="Your deposit is being transferred cross-chain." />
+                        <LayerZeroStatus address={address} isDark={isDark} message="This deposit is being broadcasted cross-chain and may take a few minutes to complete." />
                       )}
                     </div>
                   )}
@@ -986,11 +985,11 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                           : 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
                     }`}
                   >
-                    {!isConnected ? 'Connect Wallet'
+                    {!isConnected ? 'Deposit'
                       : isApprovePending ? 'Approving...'
-                      : isStakePending ? 'Staking...'
-                      : needsApproval ? 'Approve & Stake'
-                      : 'Stake CAW'}
+                      : isStakePending ? 'Depositing...'
+                      : needsApproval ? 'Approve & Deposit'
+                      : 'Deposit CAW'}
                   </button>
 
                   <div className="text-center">

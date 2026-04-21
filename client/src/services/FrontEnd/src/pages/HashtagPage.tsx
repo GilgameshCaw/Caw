@@ -42,7 +42,7 @@ export const HashtagPage: React.FC = () => {
             <HiArrowLeft className={`h-5 w-5 ${isDark ? 'text-gray-400' : 'text-gray-600'}`} />
           </button>
           <div className="flex items-center">
-            <HiHashtag className="h-6 w-6 text-yellow-500 mr-2" />
+            <HiHashtag className={`h-6 w-6 mr-2 ${isDark ? 'text-yellow-500' : 'text-amber-800'}`} />
             <h1 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
               {cleanHashtag}
             </h1>

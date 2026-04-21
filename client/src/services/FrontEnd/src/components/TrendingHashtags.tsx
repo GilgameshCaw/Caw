@@ -73,7 +73,7 @@ const TrendingHashtags: React.FC = () => {
               <span className={`text-xs transition-colors duration-200 ${
                 isDark
                   ? 'text-yellow-500/70 group-hover:text-yellow-400'
-                  : 'text-yellow-600/70 group-hover:text-yellow-500'
+                  : 'text-amber-800/70 group-hover:text-amber-900'
               }`}>
                 {item.usageCount === 1 ? '1 caw' : `${formatLargeNumber(item.usageCount)} caws`}
               </span>
