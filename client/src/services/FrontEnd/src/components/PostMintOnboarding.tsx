@@ -327,13 +327,28 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
 
   const handleStake = useCallback(async () => {
     await ensureWallet({ chainId: chains.l1.chainId }, async () => {
-      setStakedAmountBefore(activeToken?.stakedAmount ?? 0n)
-      if (needsApproval) {
-        setIsApprovePending(true)
-        await approve.call()
-      } else {
-        setIsStakePending(true)
-        await stake.call()
+      // After wallet connect, balance/allowance queries may still be loading.
+      // Wait briefly for them to settle before calling the contract.
+      for (let attempt = 0; attempt < 10; attempt++) {
+        try {
+          setStakedAmountBefore(activeToken?.stakedAmount ?? 0n)
+          if (needsApproval) {
+            setIsApprovePending(true)
+            await approve.call()
+          } else {
+            setIsStakePending(true)
+            await stake.call()
+          }
+          return
+        } catch (err: any) {
+          if (err?.message?.includes('disabled') && attempt < 9) {
+            await new Promise(r => setTimeout(r, 500))
+            continue
+          }
+          setIsApprovePending(false)
+          setIsStakePending(false)
+          throw err
+        }
       }
     })
   }, [needsApproval, approve, stake, ensureWallet, activeToken?.stakedAmount])
