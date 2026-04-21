@@ -38,7 +38,7 @@ import { prisma } from '../prismaClient'
 /**
  * natstat: build and configure Express app
  */
-function createApp() {
+export function createApp() {
   const app = express()
 
   const raw = process.env.ALLOWED_ORIGINS ?? ''

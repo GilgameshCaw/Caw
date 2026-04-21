@@ -1,0 +1,343 @@
+/**
+ * CountManager — the SINGLE source of truth for incrementing/decrementing
+ * counts on Caw records (commentCount, recawCount, likeCount) and User
+ * records (cawCount, recawCount, followerCount, followingCount, likeCount).
+ *
+ * PROBLEM: 27+ places across the codebase increment/decrement counts,
+ * leading to double-counting when:
+ *   1. The API batch endpoint creates optimistic pending records and increments counts
+ *   2. The ActionProcessor processes confirmed on-chain events and increments again
+ *   3. Failed actions retry, creating new pending records and incrementing again
+ *
+ * SOLUTION: All count mutations flow through this single service, which
+ * enforces consistent rules about WHEN counts should change:
+ *   - Optimistic: increment when pending record is created
+ *   - Confirmation: NO-OP (already counted)
+ *   - Failure: decrement (undo the optimistic increment)
+ *
+ * Every count change is logged with a reason tag for debugging.
+ *
+ * Usage:
+ *   import { countManager } from '../services/CountManager'
+ *
+ *   await prisma.$transaction(async (tx) => {
+ *     const caw = await tx.caw.create({ ... })
+ *     await countManager.onCawCreated(tx, { id: caw.id, userId, action: 'CAW', originalCawId: null, status: 'PENDING' })
+ *   })
+ */
+
+import { PrismaClient, Prisma } from '@prisma/client'
+
+type TxClient = Prisma.TransactionClient | PrismaClient
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const TAG = '[CountManager]'
+
+function log(message: string): void {
+  console.log(`${TAG} ${message}`)
+}
+
+function warn(message: string): void {
+  console.warn(`${TAG} ${message}`)
+}
+
+/**
+ * Atomically decrement a column but never below zero.
+ * Uses raw SQL with GREATEST to prevent negative counts.
+ */
+async function safeDecrement(
+  tx: TxClient,
+  table: 'Caw' | 'User',
+  column: string,
+  idColumn: string,
+  idValue: number,
+  amount: number = 1
+): Promise<void> {
+  // Prisma's $executeRaw is available on both PrismaClient and TransactionClient
+  await (tx as any).$executeRawUnsafe(
+    `UPDATE "${table}" SET "${column}" = GREATEST(0, "${column}" - $1) WHERE "${idColumn}" = $2`,
+    amount,
+    idValue
+  )
+}
+
+/**
+ * Atomically increment a column using Prisma's built-in atomic operation.
+ */
+async function safeIncrement(
+  tx: TxClient,
+  table: 'Caw' | 'User',
+  idColumn: string,
+  idValue: number,
+  column: string,
+  amount: number = 1
+): Promise<void> {
+  if (table === 'Caw') {
+    await (tx as any).caw.update({
+      where: { id: idValue },
+      data: { [column]: { increment: amount } }
+    })
+  } else {
+    await (tx as any).user.update({
+      where: { [idColumn]: idValue },
+      data: { [column]: { increment: amount } }
+    })
+  }
+}
+
+// ---------------------------------------------------------------------------
+// CountManager
+// ---------------------------------------------------------------------------
+
+const countManager = {
+
+  // =========================================================================
+  // onCawCreated
+  // Called when a new pending Caw record is created (post, reply, recaw).
+  // Only increments counts when the caw is in PENDING status — confirmed
+  // caws that arrive directly from the ActionProcessor (no prior pending
+  // record) also pass through here with status=SUCCESS.
+  // =========================================================================
+  async onCawCreated(
+    tx: TxClient,
+    caw: {
+      id: number
+      userId: number
+      action: string
+      originalCawId: number | null
+      status: string
+    }
+  ): Promise<void> {
+    if (caw.status !== 'PENDING' && caw.status !== 'SUCCESS') {
+      warn(`onCawCreated called with unexpected status="${caw.status}" for caw ${caw.id} — skipping`)
+      return
+    }
+
+    const label = caw.status === 'PENDING' ? 'optimistic' : 'confirmed-new'
+
+    // Determine if this is a plain recaw (no text — just a repost) vs a quote/caw
+    const isPlainRecaw = caw.action === 'RECAW'
+
+    if (isPlainRecaw) {
+      // Plain recaws increment user.recawCount
+      await safeIncrement(tx, 'User', 'tokenId', caw.userId, 'recawCount')
+      log(`recawCount +1 on user ${caw.userId} (${label} recaw created, caw ${caw.id})`)
+    } else {
+      // CAW posts and quotes increment user.cawCount
+      await safeIncrement(tx, 'User', 'tokenId', caw.userId, 'cawCount')
+      log(`cawCount +1 on user ${caw.userId} (${label} caw created, caw ${caw.id})`)
+    }
+
+    // If this is a RECAW with an originalCawId, increment the parent's recawCount
+    if (caw.action === 'RECAW' && caw.originalCawId) {
+      await safeIncrement(tx, 'Caw', 'id', caw.originalCawId, 'recawCount')
+      log(`recawCount +1 on caw ${caw.originalCawId} (${label} recaw ${caw.id})`)
+    }
+
+    // If this is a quote (CAW with originalCawId), increment the parent's recawCount
+    // Quotes are CAW-type actions that reference an original caw
+    if (caw.action === 'CAW' && caw.originalCawId) {
+      await safeIncrement(tx, 'Caw', 'id', caw.originalCawId, 'recawCount')
+      log(`recawCount +1 on caw ${caw.originalCawId} (${label} quote ${caw.id})`)
+    }
+  },
+
+  // =========================================================================
+  // onReplyCreated
+  // Called when a pending Reply record is created, linking a reply caw to its
+  // parent. Increments commentCount on the parent caw.
+  // =========================================================================
+  async onReplyCreated(
+    tx: TxClient,
+    reply: {
+      cawId: number
+      replyCawId: number
+      pending: boolean
+    }
+  ): Promise<void> {
+    await safeIncrement(tx, 'Caw', 'id', reply.cawId, 'commentCount')
+    log(`commentCount +1 on caw ${reply.cawId} (reply ${reply.replyCawId} created, pending=${reply.pending})`)
+  },
+
+  // =========================================================================
+  // onLikeCreated
+  // Called when a pending Like record is created. Increments likeCount on
+  // the target caw and likeCount on the user.
+  // =========================================================================
+  async onLikeCreated(
+    tx: TxClient,
+    like: {
+      cawId: number
+      userId: number
+      pending: boolean
+    }
+  ): Promise<void> {
+    await safeIncrement(tx, 'Caw', 'id', like.cawId, 'likeCount')
+    log(`likeCount +1 on caw ${like.cawId} (like by user ${like.userId}, pending=${like.pending})`)
+
+    await safeIncrement(tx, 'User', 'tokenId', like.userId, 'likeCount')
+    log(`likeCount +1 on user ${like.userId} (liked caw ${like.cawId})`)
+  },
+
+  // =========================================================================
+  // onFollowCreated
+  // Called when a Follow record is created (pending or confirmed).
+  // Increments followingCount on the follower and followerCount on the target.
+  // =========================================================================
+  async onFollowCreated(
+    tx: TxClient,
+    follow: {
+      followerId: number
+      followingId: number
+    }
+  ): Promise<void> {
+    await safeIncrement(tx, 'User', 'tokenId', follow.followerId, 'followingCount')
+    log(`followingCount +1 on user ${follow.followerId} (now follows user ${follow.followingId})`)
+
+    await safeIncrement(tx, 'User', 'tokenId', follow.followingId, 'followerCount')
+    log(`followerCount +1 on user ${follow.followingId} (new follower: user ${follow.followerId})`)
+  },
+
+  // =========================================================================
+  // onStatusChanged
+  // Called when any entity transitions between statuses.
+  //
+  // Rules:
+  //   PENDING -> SUCCESS : NO-OP (counts were already set optimistically)
+  //   PENDING -> FAILED  : DECREMENT (undo the optimistic increment)
+  //   All other transitions: log a warning
+  //
+  // The `meta` parameter carries entity-specific context needed to know
+  // WHICH counts to decrement. Shape depends on entity:
+  //   entity='caw':    meta = { userId, action, originalCawId }
+  //   entity='reply':  meta = { cawId, replyCawId }
+  //   entity='like':   meta = { cawId, userId }
+  //   entity='follow': meta = { followerId, followingId }
+  // =========================================================================
+  async onStatusChanged(
+    tx: TxClient,
+    entity: string,
+    id: number,
+    oldStatus: string,
+    newStatus: string,
+    meta?: any
+  ): Promise<void> {
+    // PENDING -> SUCCESS: no count change needed
+    if (oldStatus === 'PENDING' && newStatus === 'SUCCESS') {
+      log(`${entity} ${id}: PENDING -> SUCCESS (no-op, counts already set)`)
+      return
+    }
+
+    // PENDING -> FAILED: undo optimistic counts
+    if (oldStatus === 'PENDING' && newStatus === 'FAILED') {
+      log(`${entity} ${id}: PENDING -> FAILED — rolling back counts`)
+
+      switch (entity) {
+        case 'caw': {
+          if (!meta) { warn(`onStatusChanged caw ${id}: missing meta for rollback`); return }
+          const { userId, action, originalCawId } = meta
+
+          // Undo user count increment
+          if (action === 'RECAW') {
+            await safeDecrement(tx, 'User', 'recawCount', 'tokenId', userId)
+            log(`recawCount -1 on user ${userId} (caw ${id} failed)`)
+          } else {
+            await safeDecrement(tx, 'User', 'cawCount', 'tokenId', userId)
+            log(`cawCount -1 on user ${userId} (caw ${id} failed)`)
+          }
+
+          // Undo parent recawCount if applicable
+          if (originalCawId && (action === 'RECAW' || action === 'CAW')) {
+            await safeDecrement(tx, 'Caw', 'recawCount', 'id', originalCawId)
+            log(`recawCount -1 on caw ${originalCawId} (child ${id} failed)`)
+          }
+          break
+        }
+
+        case 'reply': {
+          if (!meta) { warn(`onStatusChanged reply ${id}: missing meta for rollback`); return }
+          const { cawId } = meta
+
+          await safeDecrement(tx, 'Caw', 'commentCount', 'id', cawId)
+          log(`commentCount -1 on caw ${cawId} (reply ${id} failed)`)
+          break
+        }
+
+        case 'like': {
+          if (!meta) { warn(`onStatusChanged like ${id}: missing meta for rollback`); return }
+          const { cawId: likeCawId, userId: likeUserId } = meta
+
+          await safeDecrement(tx, 'Caw', 'likeCount', 'id', likeCawId)
+          log(`likeCount -1 on caw ${likeCawId} (like ${id} failed)`)
+
+          await safeDecrement(tx, 'User', 'likeCount', 'tokenId', likeUserId)
+          log(`likeCount -1 on user ${likeUserId} (like ${id} failed)`)
+          break
+        }
+
+        case 'follow': {
+          if (!meta) { warn(`onStatusChanged follow ${id}: missing meta for rollback`); return }
+          const { followerId, followingId } = meta
+
+          await safeDecrement(tx, 'User', 'followingCount', 'tokenId', followerId)
+          log(`followingCount -1 on user ${followerId} (follow ${id} failed)`)
+
+          await safeDecrement(tx, 'User', 'followerCount', 'tokenId', followingId)
+          log(`followerCount -1 on user ${followingId} (follow ${id} failed)`)
+          break
+        }
+
+        default:
+          warn(`onStatusChanged: unknown entity "${entity}" for id ${id}`)
+      }
+      return
+    }
+
+    // Unexpected transition
+    warn(`${entity} ${id}: unexpected transition ${oldStatus} -> ${newStatus} — no count change`)
+  },
+
+  // =========================================================================
+  // onLikeRemoved
+  // Called when a like is deleted (unlike action). Decrements likeCount on
+  // the target caw and likeCount on the user.
+  // =========================================================================
+  async onLikeRemoved(
+    tx: TxClient,
+    like: {
+      cawId: number
+      userId: number
+    }
+  ): Promise<void> {
+    await safeDecrement(tx, 'Caw', 'likeCount', 'id', like.cawId)
+    log(`likeCount -1 on caw ${like.cawId} (unlike by user ${like.userId})`)
+
+    await safeDecrement(tx, 'User', 'likeCount', 'tokenId', like.userId)
+    log(`likeCount -1 on user ${like.userId} (unliked caw ${like.cawId})`)
+  },
+
+  // =========================================================================
+  // onFollowRemoved
+  // Called when a follow is deleted (unfollow action). Decrements
+  // followingCount on the follower and followerCount on the target.
+  // =========================================================================
+  async onFollowRemoved(
+    tx: TxClient,
+    follow: {
+      followerId: number
+      followingId: number
+    }
+  ): Promise<void> {
+    await safeDecrement(tx, 'User', 'followingCount', 'tokenId', follow.followerId)
+    log(`followingCount -1 on user ${follow.followerId} (unfollowed user ${follow.followingId})`)
+
+    await safeDecrement(tx, 'User', 'followerCount', 'tokenId', follow.followingId)
+    log(`followerCount -1 on user ${follow.followingId} (lost follower: user ${follow.followerId})`)
+  },
+}
+
+export { countManager }
+export default countManager
