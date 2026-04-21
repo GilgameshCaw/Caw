@@ -814,6 +814,7 @@ export const validatorService: Service = {
       ])
 
       const gasLimitRaw = await httpProvider.estimateGas({
+        from:  wallet.address,
         to:    CAW_ACTIONS_ADDRESS,
         data:  calldata,
         value: quote.nativeFee
@@ -844,6 +845,7 @@ export const validatorService: Service = {
       // 2) Ask the provider directly for the gas estimate (via HTTP — WSS
       //    estimateGas with large calldata is where we were seeing hangs too).
       const estimate = await httpProvider.estimateGas({
+        from:           wallet.address,
         to:             CAW_ACTIONS_ADDRESS,
         data:           calldata,
         value:          quote.nativeFee,
