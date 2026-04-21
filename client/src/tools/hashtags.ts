@@ -18,6 +18,7 @@ export function extractHashtags(content: string): string[] {
     .map(tag => tag.slice(1).toLowerCase())
     .filter((tag, index, array) => array.indexOf(tag) === index) // Remove duplicates
     .filter(tag => tag.length > 0 && tag.length <= 100) // Length validation
+    .filter(tag => !/^\d+$/.test(tag)) // Skip purely numeric "hashtags" like #18
 }
 
 /**
