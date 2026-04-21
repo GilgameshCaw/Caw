@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import LinkPreview from './LinkPreview'
 import Tooltip from '~/components/Tooltip'
 import { useCachedFetch } from '~/hooks/useCachedFetch'
+import { useTheme } from '~/hooks/useTheme'
 
 // Caches
 const shortUrlCache = new Map<string, string | null>()
@@ -46,6 +47,7 @@ const ShortUrlImage: React.FC<{
 // Component to render an inline short URL link — shows the original URL
 // (truncated) as link text, but the href points to the short URL for analytics.
 const ShortUrlLink: React.FC<{ code: string; shortHref: string }> = ({ code, shortHref }) => {
+  const { isDark } = useTheme()
   const { url: originalUrl, loading } = useCachedFetch(
     code,
     shortUrlCache,
@@ -66,7 +68,7 @@ const ShortUrlLink: React.FC<{ code: string; shortHref: string }> = ({ code, sho
       target="_blank"
       rel="noopener noreferrer"
       onClick={(e) => e.stopPropagation()}
-      className="text-amber-800 hover:text-amber-900 dark:text-yellow-400 dark:hover:text-yellow-300 hover:underline break-all"
+      className={`${isDark ? 'text-yellow-400 hover:text-yellow-300' : 'text-amber-800 hover:text-amber-900'} hover:underline break-all`}
     >
       {displayText}
     </a>
@@ -122,6 +124,10 @@ const SHORT_URL_REGEX = /^(?:https?:\/\/[^\/]+)?\/s\/([a-zA-Z0-9]+(?:\.[a-zA-Z0-
  */
 const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
   const navigate = useNavigate()
+  const { isDark } = useTheme()
+  const linkClass = isDark
+    ? 'text-yellow-400 hover:text-yellow-300'
+    : 'text-amber-800 hover:text-amber-900'
   const [imageErrors, setImageErrors] = useState<Set<string>>(new Set())
 
   const handleHashtagClick = (hashtag: string, event: React.MouseEvent) => {
@@ -207,7 +213,7 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
               className={`
                 hover:underline cursor-pointer transition-colors duration-200
                 bg-transparent border-none p-0 m-0 font-inherit
-                text-amber-800 hover:text-amber-900 dark:text-yellow-400 dark:hover:text-yellow-300
+                ${linkClass}
               `}
             >
               {part}
@@ -225,7 +231,7 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
               className={`
                 hover:underline cursor-pointer transition-colors duration-200
                 bg-transparent border-none p-0 m-0 font-inherit
-                text-amber-800 hover:text-amber-900 dark:text-yellow-400 dark:hover:text-yellow-300
+                ${linkClass}
               `}
             >
               {part}
