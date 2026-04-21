@@ -1221,7 +1221,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               >
                 <HiOutlineCurrencyDollar className="w-5 h-5 mb-[5px]" />
                 {(useItem.tipCount ?? 0) > 0 && (
-                  <span className="text-xs">{useItem.tipCount}</span>
+                  <span className="text-xs -translate-y-[3px]">{useItem.tipCount}</span>
                 )}
               </button></Tooltip>
 
