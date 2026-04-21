@@ -69,9 +69,10 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   const [followingCount, setFollowingCount] = useState<number | null>(null)
 
   // Track which cache key the current items belong to. When props change
-  // (e.g. navigating between hashtags), immediately swap in cached data or
-  // clear stale items — don't wait for the effect to fire.
+  // (e.g. navigating between hashtags or switching profile tabs), immediately
+  // swap in cached data or clear stale items and fetch fresh data.
   const activeCacheKeyRef = useRef(cacheKey)
+  const needsFetch = useRef(false)
   if (cacheKey !== activeCacheKeyRef.current) {
     activeCacheKeyRef.current = cacheKey
     const c = feedCache.get(cacheKey)
@@ -83,8 +84,17 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       setItems([])
       setNextCursor(undefined)
       setHasMore(true)
+      needsFetch.current = true
     }
   }
+
+  // Fetch when filter/tab changes and there's no cached data
+  useEffect(() => {
+    if (needsFetch.current) {
+      needsFetch.current = false
+      loadPageRef.current?.(true)
+    }
+  }, [cacheKey])
 
   // Ref to track current items without causing effect re-runs
   const itemsRef = useRef<CawItem[]>(items)
@@ -267,7 +277,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       params.set('filter', 'replies')
     }
 
-    if (nextCursor != null) {
+    if (cursorToUse != null) {
       params.set('cursor', String(cursorToUse))
     }
 
@@ -276,8 +286,9 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
         await apiFetch<FeedResponse>(`/api/caws?${params.toString()}`)
 
       setItems(current => {
+        const base = force ? [] : current
         const seen = new Set<string>()
-        return [...current, ...newItems]
+        return [...base, ...newItems]
           .filter(item => {
             if (seen.has(item.id)) return false
             seen.add(item.id)
