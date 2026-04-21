@@ -25,7 +25,7 @@ import { prisma } from '../src/prismaClient'
 import { createApp } from '../src/api/server'
 const app = createApp()
 
-// Test account — deterministic private key for reproducible signatures
+// Hardhat default account #1 — well-known test key, not a real secret
 const TEST_PRIVATE_KEY = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
 const TEST_WALLET = new ethers.Wallet(TEST_PRIVATE_KEY)
 const TEST_ADDRESS = TEST_WALLET.address.toLowerCase()
