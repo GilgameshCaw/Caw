@@ -156,6 +156,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   const [skippedSteps, setSkippedSteps] = useState<Set<StepId>>(new Set())
   const userNavigatedRef = useRef(false)
   const [showBugReport, setShowBugReport] = useState(false)
+  const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
   const setOnStake = useInsufficientStakeStore(s => s.setOnStake)
 
   // Register onStake handler so the insufficient stake modal jumps to stake step
@@ -223,15 +224,19 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
     return Number(formatUnits(balance, 18))
   }, [balance])
 
-  const getPresetAmounts = (maxBalance: number): number[] => {
-    const allPresets = [10_000, 100_000, 1_000_000, 10_000_000, 100_000_000, 1_000_000_000]
-    return allPresets.filter(v => v <= maxBalance).slice(-4)
+  const dollarPresets = [1, 5, 10, 25]
+
+  const getDollarPresets = (maxBalance: number): { usd: number; caw: number }[] => {
+    if (!cawPrice || cawPrice <= 0) return []
+    return dollarPresets
+      .map(usd => ({ usd, caw: Math.round(usd / cawPrice) }))
+      .filter(p => p.caw <= maxBalance)
   }
 
-  const formatPresetLabel = (value: number): string => {
-    if (value >= 1_000_000_000) return `${value / 1_000_000_000}B`
-    if (value >= 1_000_000) return `${value / 1_000_000}M`
-    if (value >= 1_000) return `${value / 1_000}K`
+  const formatCawAmount = (value: number): string => {
+    if (value >= 1_000_000_000) return `${(value / 1_000_000_000).toFixed(1)}B`
+    if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`
+    if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`
     return value.toString()
   }
 
@@ -830,7 +835,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                 </div>
                 <h2 className={`text-2xl font-bold ${tc.textPrimary}`}>Deposit CAW</h2>
                 <p className={`text-sm ${tc.textMuted}`}>
-                  Depositing CAW is required to interact on CAW. Every action on the protocol
+                  Depositing CAW is required to interact on the network. Every action on the protocol
                   generates fees that are distributed to depositors — the more you deposit, the more you earn.
                 </p>
               </div>
@@ -907,19 +912,19 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                 <div className="space-y-4">
                   <div className="space-y-2">
                     <label className={`text-sm font-medium ${tc.textSemiFaint}`}>Amount to Deposit</label>
-                    {getPresetAmounts(availableBalance).length > 0 && (
+                    {getDollarPresets(availableBalance).length > 0 && (
                       <div className="flex flex-wrap gap-2">
-                        {getPresetAmounts(availableBalance).map(preset => (
+                        {getDollarPresets(availableBalance).map(preset => (
                           <button
-                            key={preset}
-                            onClick={() => setAmount(preset.toString())}
+                            key={preset.usd}
+                            onClick={() => setAmount(preset.caw.toString())}
                             className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all cursor-pointer ${
-                              parseFloat(amount) === preset
+                              parseFloat(amount) === preset.caw
                                 ? 'bg-yellow-500 text-black'
                                 : tc.presetInactive
                             }`}
                           >
-                            {formatPresetLabel(preset)}
+                            ${preset.usd}
                           </button>
                         ))}
                       </div>
@@ -939,9 +944,12 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                         MAX
                       </button>
                     </div>
-                    <p className={`text-xs px-2 ${tc.textSubtle}`}>
-                      Available: {availableBalance.toLocaleString('en-US', { maximumFractionDigits: 2 })} CAW
-                    </p>
+                    <div className={`flex justify-between text-xs px-2 ${tc.textSubtle}`}>
+                      <span>Available: {availableBalance.toLocaleString('en-US', { maximumFractionDigits: 0 })} CAW</span>
+                      {amount && parseFloat(amount) > 0 && cawPrice > 0 && (
+                        <span>~${(parseFloat(amount) * cawPrice).toFixed(2)}</span>
+                      )}
+                    </div>
                   </div>
 
                   <button
