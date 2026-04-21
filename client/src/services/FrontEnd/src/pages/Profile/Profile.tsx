@@ -290,14 +290,13 @@ export const Profile: React.FC = () => {
           body: JSON.stringify({ tokenId: onChainTokenId }),
         })
         // Re-fetch the user — if sync succeeded, dbNotFound flips back to false
-        const res = await fetch(`/api/users/${displayUsername}`)
-        if (res.ok) {
-          const data = await res.json() as ProfileData
+        try {
+          const data = await apiFetch<ProfileData>(`/api/users/${displayUsername}`)
           setProfileData(data)
           setDbNotFound(false)
           setHasTipped(data.hasTipped || false)
           setTipPending(data.tipPending || false)
-        }
+        } catch { /* user not found yet */ }
       } catch (err) {
         console.warn('[Profile] ensure failed:', err)
       }

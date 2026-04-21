@@ -164,8 +164,7 @@ const Staking = () => {
       if (!activeToken?.username) return
 
       try {
-        const response = await fetch(`/api/users/${activeToken.username}`)
-        const data = await response.json()
+        const data = await apiFetch(`/api/users/${activeToken.username}`)
 
         if (data.lastStakedAt) {
           setLastStakedAt(new Date(data.lastStakedAt))
@@ -185,8 +184,7 @@ const Staking = () => {
     setLoadingWithdrawals(true)
     try {
       console.log('[Staking] Fetching withdrawal requests for user', tokenId)
-      const response = await fetch(`/api/withdrawals/${tokenId}`)
-      const data = await response.json()
+      const data = await apiFetch(`/api/withdrawals/${tokenId}`)
 
       if (data.success && data.withdrawals) {
         console.log('[Staking] Fetched withdrawal requests:', data.withdrawals)
