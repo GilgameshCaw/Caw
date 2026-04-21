@@ -68,13 +68,14 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   const [error,      setError]      = useState<string>()
   const [followingCount, setFollowingCount] = useState<number | null>(null)
 
-  // Track which cache key the current items belong to. When props change
-  // (e.g. navigating between hashtags or switching profile tabs), immediately
-  // swap in cached data or clear stale items and fetch fresh data.
-  const activeCacheKeyRef = useRef(cacheKey)
-  const needsFetch = useRef(false)
-  if (cacheKey !== activeCacheKeyRef.current) {
-    activeCacheKeyRef.current = cacheKey
+  // When the cache key changes (tab switch, navigation, etc.), restore from
+  // cache or fetch fresh data. Using a ref to track the previous key so we
+  // only act on actual changes, not re-renders.
+  const prevCacheKeyRef = useRef(cacheKey)
+  useEffect(() => {
+    if (cacheKey === prevCacheKeyRef.current) return
+    prevCacheKeyRef.current = cacheKey
+
     const c = feedCache.get(cacheKey)
     if (c && c.items.length > 0) {
       setItems(c.items)
@@ -84,15 +85,8 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       setItems([])
       setNextCursor(undefined)
       setHasMore(true)
-      needsFetch.current = true
-    }
-  }
-
-  // Fetch when filter/tab changes and there's no cached data
-  useEffect(() => {
-    if (needsFetch.current) {
-      needsFetch.current = false
-      loadPageRef.current?.(true)
+      // Defer fetch to next tick so state updates above are committed first
+      setTimeout(() => loadPageRef.current?.(true), 0)
     }
   }, [cacheKey])
 
