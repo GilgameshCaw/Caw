@@ -4,6 +4,7 @@ import { findOrCreateUser } from '../UserService'
 import { processHashtagsForCaw } from '../../tools/hashtags'
 import { NotificationService } from '../NotificationService'
 import { elasticsearchService } from '../ElasticsearchService'
+import { countManager } from '../CountManager'
 import type { PrismaTransactionClient } from './types'
 
 /**
@@ -163,17 +164,7 @@ export async function handleCawAction(
         console.error(`Failed to create reply notification for caw ${newCaw.id}:`, err)
       }
     } else {
-      // It's a quote — increment recaw count (skip if pending, already incremented) and send QUOTE notification
-      if (!wasPendingCaw) {
-        try {
-          await tx.caw.update({
-            where: { id: parentCawId },
-            data: { recawCount: { increment: 1 } }
-          })
-        } catch (err) {
-          console.error(`Failed to increment recawCount for quote on caw ${parentCawId}:`, err)
-        }
-      }
+      // It's a quote — recawCount on parent is handled by onCawCreated below
       try {
         await NotificationService.createQuoteNotification(parentCawId, newCaw.id, authorId)
       } catch (err) {
@@ -182,20 +173,37 @@ export async function handleCawAction(
     }
   }
 
-  // Increment user's caw count (skip if confirming a pending caw)
+  // Increment user's caw count + parent recawCount for quotes (skip if confirming a pending caw).
+  // For replies, do NOT pass originalCawId — onCawCreated would bump recawCount on the parent,
+  // but replies only affect commentCount (handled separately below).
+  const quoteOriginalCawId = (parentCawId && !isReplyNotQuote) ? parentCawId : null
   if (!wasPendingCaw) {
-    await tx.user.update({
-      where: { tokenId: rawAction.senderId },
-      data: { cawCount: { increment: 1 } }
+    await countManager.onCawCreated(tx, {
+      id: newCaw.id,
+      userId: authorId,
+      action: 'CAW',
+      originalCawId: quoteOriginalCawId,
+      status: 'SUCCESS',
+    })
+  } else {
+    // Was pending — counts already set optimistically, just log the no-op
+    await countManager.onStatusChanged(tx, 'caw', newCaw.id, 'PENDING', 'SUCCESS', {
+      userId: authorId, action: 'CAW', originalCawId: quoteOriginalCawId,
     })
   }
 
   // Only bump comment count for actual replies, not quotes
   // Skip if the reply was pending — commentCount was already optimistically incremented
   if (parentCawId && isReplyNotQuote && !replyWasPending) {
-    await tx.caw.update({
-      where: { id: parentCawId },
-      data: { commentCount: { increment: 1 } }
+    await countManager.onReplyCreated(tx, {
+      cawId: parentCawId,
+      replyCawId: newCaw.id,
+      pending: false,
+    })
+  } else if (parentCawId && isReplyNotQuote && replyWasPending) {
+    // Reply was pending — counts already set, log the no-op
+    await countManager.onStatusChanged(tx, 'reply', newCaw.id, 'PENDING', 'SUCCESS', {
+      cawId: parentCawId, replyCawId: newCaw.id,
     })
   }
 }
@@ -256,20 +264,17 @@ export async function handleRecawAction(
 
   // Increment counts only if this is truly new (no existing record).
   // If it was pending, counts were already optimistically incremented by the API.
+  const wasPendingRecaw = existingRecaw?.status === 'PENDING'
   if (!existingRecaw) {
-    // Quotes (recaw with text) count as caws; plain recaws get their own counter
+    // onCawCreated handles user.cawCount/recawCount and parent recawCount
     const isQuoteRecaw = rawAction.text && rawAction.text.trim().length > 0
-    await tx.user.update({
-      where: { tokenId: action.senderId },
-      data: isQuoteRecaw
-        ? { cawCount: { increment: 1 } }
-        : { recawCount: { increment: 1 } }
-    })
-
-    // Increment recaw count on the original caw
-    await tx.caw.update({
-      where: { id: originalCawId },
-      data: { recawCount: { increment: 1 } }
+    const recawCaw = await tx.caw.findUnique({ where: { userId_cawonce: { userId, cawonce: action.cawonce } } })
+    await countManager.onCawCreated(tx, {
+      id: recawCaw!.id,
+      userId,
+      action: isQuoteRecaw ? 'CAW' : 'RECAW',
+      originalCawId,
+      status: 'SUCCESS',
     })
     try {
       if (isQuoteRecaw) {
@@ -280,6 +285,15 @@ export async function handleRecawAction(
       }
     } catch (err) {
       console.error(`Failed to create repost/quote notification:`, err)
+    }
+  } else if (wasPendingRecaw) {
+    // Was pending — counts already set optimistically, log the no-op
+    const recawCaw = await tx.caw.findUnique({ where: { userId_cawonce: { userId, cawonce: action.cawonce } } })
+    if (recawCaw) {
+      const isQuoteRecaw = rawAction.text && rawAction.text.trim().length > 0
+      await countManager.onStatusChanged(tx, 'caw', recawCaw.id, 'PENDING', 'SUCCESS', {
+        userId, action: isQuoteRecaw ? 'CAW' : 'RECAW', originalCawId,
+      })
     }
   }
 }
@@ -322,7 +336,10 @@ export async function handleLikeAction(
         where: { userId_cawId: { userId, cawId: parentCawId } },
         data: { action: 'LIKE', pending: false }
       })
-      // likeCount was already optimistically incremented when the pending record was created
+      // likeCount was already optimistically incremented — log the no-op
+      await countManager.onStatusChanged(tx, 'like', existing.id, 'PENDING', 'SUCCESS', {
+        cawId: parentCawId, userId,
+      })
 
       // Create like notification for pending->confirmed transition
       try {
@@ -341,13 +358,14 @@ export async function handleLikeAction(
       })
     }
   } else {
-    // Create the like and bump the Caw.likeCount
+    // Create the like and bump counts via CountManager
     await tx.like.create({
       data: { userId, cawId: parentCawId, action: 'LIKE', pending: false }
     })
-    await tx.caw.update({
-      where: { id: parentCawId },
-      data: { likeCount: { increment: 1 } }
+    await countManager.onLikeCreated(tx, {
+      cawId: parentCawId,
+      userId,
+      pending: false,
     })
 
     // Create like notification
@@ -381,9 +399,9 @@ export async function handleUnlikeAction(
       where: { userId_cawId: { userId, cawId } }
     })
 
-    // If it wasn't pending, decrement the count (ensure not negative)
+    // If it wasn't pending, decrement the count via CountManager
     if (!existing.pending) {
-      await tx.$executeRaw`UPDATE "Caw" SET "likeCount" = GREATEST(0, "likeCount" - 1) WHERE "id" = ${cawId}`
+      await countManager.onLikeRemoved(tx, { cawId, userId })
     }
   }
 }
@@ -437,15 +455,8 @@ export async function handleFollowAction(
       }
     })
 
-    // Update counts: increment follower's followingCount and following's followerCount
-    await tx.user.update({
-      where: { tokenId: followerId },
-      data: { followingCount: { increment: 1 } }
-    })
-    await tx.user.update({
-      where: { tokenId: followingId },
-      data: { followerCount: { increment: 1 } }
-    })
+    // Update counts via CountManager
+    await countManager.onFollowCreated(tx, { followerId, followingId })
 
     console.log(`User ${followerId} now follows user ${followingId}`)
 
@@ -472,16 +483,14 @@ export async function handleFollowAction(
       }
     })
 
-    // Increment counts if this was an unfollow being re-followed, or a pending follow being confirmed
-    if (existingFollow.action !== 'FOLLOW' || existingFollow.status === 'PENDING') {
-      // Update counts: increment follower's followingCount and following's followerCount
-      await tx.user.update({
-        where: { tokenId: followerId },
-        data: { followingCount: { increment: 1 } }
-      })
-      await tx.user.update({
-        where: { tokenId: followingId },
-        data: { followerCount: { increment: 1 } }
+    // Increment counts if this was an unfollow being re-followed (not a pending confirmation)
+    if (existingFollow.action !== 'FOLLOW') {
+      // Re-follow after unfollow — increment counts
+      await countManager.onFollowCreated(tx, { followerId, followingId })
+    } else if (existingFollow.status === 'PENDING') {
+      // Pending follow being confirmed — counts already set, log no-op
+      await countManager.onStatusChanged(tx, 'follow', existingFollow.id, 'PENDING', 'SUCCESS', {
+        followerId, followingId,
       })
     }
 
@@ -519,10 +528,8 @@ export async function handleUnfollowAction(
   })
 
   if (deleted.count > 0) {
-    // Update counts: decrement follower's followingCount and following's followerCount
-    // Use raw SQL to ensure counts don't go negative
-    await tx.$executeRaw`UPDATE "User" SET "followingCount" = GREATEST(0, "followingCount" - 1) WHERE "tokenId" = ${followerId}`
-    await tx.$executeRaw`UPDATE "User" SET "followerCount" = GREATEST(0, "followerCount" - 1) WHERE "tokenId" = ${followingId}`
+    // Update counts via CountManager (uses safe decrement, never goes negative)
+    await countManager.onFollowRemoved(tx, { followerId, followingId })
 
     console.log(`User ${followerId} unfollowed user ${followingId}`)
   } else {
@@ -681,17 +688,24 @@ export async function handleOtherAction(
     }
   })
 
-  // Update counts same as regular caw
-  await tx.user.update({
-    where: { tokenId: rawAction.senderId },
-    data: { cawCount: { increment: 1 } }
+  // Update counts via CountManager (same as regular caw).
+  // For replies (parentCawId set), don't pass originalCawId — we don't want recawCount
+  // bumped on the parent; commentCount is handled separately below.
+  const otherOriginalCawId = (effectiveActionType === 'RECAW' && parentCawId) ? parentCawId : null
+  await countManager.onCawCreated(tx, {
+    id: newCaw.id,
+    userId: authorId,
+    action: effectiveActionType === 'RECAW' ? 'RECAW' : 'CAW',
+    originalCawId: otherOriginalCawId,
+    status: 'SUCCESS',
   })
 
   // If this was a comment/reply, bump the parent's comment count (once)
   if (parentCawId) {
-    await tx.caw.update({
-      where: { id: parentCawId },
-      data: { commentCount: { increment: 1 } }
+    await countManager.onReplyCreated(tx, {
+      cawId: parentCawId,
+      replyCawId: newCaw.id,
+      pending: false,
     })
   }
 }

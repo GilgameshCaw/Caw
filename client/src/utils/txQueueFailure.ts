@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client'
+import { countManager } from '../services/CountManager'
 
 /**
  * THE single choke point for marking a TxQueue row as failed.
@@ -98,10 +99,12 @@ async function cleanupOptimisticRows(
         })
         if (deleted.count > 0) {
           // Decrement the likeCount we optimistically incremented on submit
-          await prisma.caw.update({
-            where: { id: targetCaw.id },
-            data: { likeCount: { decrement: deleted.count } }
-          }).catch(() => {})
+          // Use CountManager's onStatusChanged for each removed pending like
+          for (let i = 0; i < deleted.count; i++) {
+            await countManager.onStatusChanged(prisma, 'like', 0, 'PENDING', 'FAILED', {
+              cawId: targetCaw.id, userId: senderId,
+            })
+          }
         }
       }
     }

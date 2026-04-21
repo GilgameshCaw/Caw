@@ -22,6 +22,7 @@ function decompressActionText(textField: unknown): string {
   try { return smlTxt().decompress(bytes) } catch { return '' }
 }
 import { findOrCreateUser } from '../../services/UserService'
+import { countManager } from '../../services/CountManager'
 import { getSession, addAuthorization, createSession } from '../sessionStore'
 import { cawProfileL2Abi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
@@ -453,16 +454,21 @@ router.post('/', async (req, res) => {
         // Note: Hashtags are processed later when the caw is confirmed (in ActionProcessor)
         // This prevents pending/failed caws from affecting trending hashtags
 
-        // Optimistically increment recawCount on the parent caw for recaws
-        if (isRecaw && originalCawId && !existingCaw) {
+        // Optimistically increment counts on the pending caw via CountManager.
+        // For replies, do NOT pass originalCawId — replies only affect commentCount
+        // (handled separately below), not recawCount on the parent.
+        const isReply = !!(originalCawId && !isQuote && !isRecaw)
+        if (!existingCaw) {
           try {
-            await prisma.caw.update({
-              where: { id: originalCawId },
-              data: { recawCount: { increment: 1 } }
+            await countManager.onCawCreated(prisma, {
+              id: caw.id,
+              userId: data.senderId,
+              action: isRecaw ? 'RECAW' : 'CAW',
+              originalCawId: isReply ? null : (originalCawId || null),
+              status: 'PENDING',
             })
-            console.log(`Optimistically incremented recawCount for caw: ${originalCawId}`)
           } catch (err) {
-            console.error('Failed to optimistically increment recawCount:', err)
+            console.error('Failed to optimistically increment counts via CountManager:', err)
           }
         }
 
@@ -506,11 +512,11 @@ router.post('/', async (req, res) => {
             })
             // Optimistically increment commentCount if this is a new pending reply
             if (!existingReply) {
-              await prisma.caw.update({
-                where: { id: originalCawId },
-                data: { commentCount: { increment: 1 } }
+              await countManager.onReplyCreated(prisma, {
+                cawId: originalCawId,
+                replyCawId: caw.id,
+                pending: true,
               })
-              console.log(`Optimistically incremented commentCount for caw: ${originalCawId}`)
             }
             console.log(`Created pending Reply record: userId=${data.senderId}, cawId=${originalCawId}, replyCawId=${caw.id}`)
           } catch (replyErr) {
@@ -575,11 +581,11 @@ router.post('/', async (req, res) => {
           })
           // Optimistically increment likeCount if this is a new pending like
           if (!existingLike) {
-            await prisma.caw.update({
-              where: { id: targetCaw.id },
-              data: { likeCount: { increment: 1 } }
+            await countManager.onLikeCreated(prisma, {
+              cawId: targetCaw.id,
+              userId: data.senderId,
+              pending: true,
             })
-            console.log('Optimistically incremented likeCount for caw:', targetCaw.id)
           }
           console.log('Successfully created/updated pending like:', pendingLike)
         } else {
@@ -1108,9 +1114,10 @@ router.post('/batch', async (req, res) => {
                 },
               })
               if (!existing) {
-                await tx.caw.update({
-                  where: { id: originalCawId },
-                  data: { commentCount: { increment: 1 } },
+                await countManager.onReplyCreated(tx, {
+                  cawId: originalCawId,
+                  replyCawId: caw.id,
+                  pending: true,
                 })
               }
             } catch (replyErr: any) {
