@@ -5,9 +5,11 @@ import { HiOutlineSearch, HiOutlineInformationCircle } from 'react-icons/hi'
 import FeedItem from '~/components/FeedItem'
 import type { CawItem } from '~/types'
 import { apiFetch } from '~/api/client'
+import { useTokenDataStore } from '~/store/tokenDataStore'
 
 const BookmarksPage: React.FC = () => {
   const { isDark } = useTheme()
+  const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const [searchQuery, setSearchQuery] = useState('')
   const [bookmarkedPosts, setBookmarkedPosts] = useState<CawItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -42,8 +44,10 @@ const BookmarksPage: React.FC = () => {
   }, [])
 
   useEffect(() => {
+    setBookmarkedPosts([])
+    setLoading(true)
     fetchBookmarks()
-  }, [fetchBookmarks])
+  }, [fetchBookmarks, activeTokenId])
 
   const loadMore = () => {
     if (!nextCursor || loadingMore) return

@@ -194,20 +194,6 @@ export const CawPage: React.FC = () => {
 
         {/* Main Post - Expanded View */}
         <div className="mb-6 relative">
-          {/* Show "Replying to" if this caw is a reply */}
-          {caw.parent && (
-            <div className="px-4 py-2 mb-2">
-              <Link
-                to={`/caws/${caw.parent.id}`}
-                className={`text-sm transition-colors duration-300 hover:underline ${
-                  isDark ? 'text-gray-400 hover:text-gray-300' : 'text-gray-600 hover:text-gray-700'
-                }`}
-              >
-                Replying to @{caw.parent.user.username}
-              </Link>
-            </div>
-          )}
-
           <div className="relative z-10">
             <FeedItem
               item={caw}

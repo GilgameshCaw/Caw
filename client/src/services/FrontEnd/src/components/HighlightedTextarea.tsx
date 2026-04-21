@@ -64,7 +64,7 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
     return parts.map((part, index) => {
       if (isMentionOrTag.test(part) || isUrl.test(part)) {
         return (
-          <span key={index} className={isDark ? 'text-yellow-400' : 'text-yellow-600'}>
+          <span key={index} className={isDark ? 'text-yellow-400' : 'text-amber-800'}>
             {part}
           </span>
         )
