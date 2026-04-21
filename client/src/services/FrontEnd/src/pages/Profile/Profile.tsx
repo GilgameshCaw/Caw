@@ -241,17 +241,15 @@ export const Profile: React.FC = () => {
       setDbNotFound(false)
 
       try {
-        const res = await fetch(`/api/users/${displayUsername}`)
-        if (res.status === 404) {
-          setDbNotFound(true)
-          return
-        }
-        if (!res.ok) throw new Error(`API ${res.status}`)
-        const data = await res.json() as ProfileData
+        const data = await apiFetch<ProfileData>(`/api/users/${displayUsername}`)
         setProfileData(data)
         setHasTipped(data.hasTipped || false)
         setTipPending(data.tipPending || false)
       } catch (err: any) {
+        if (err.message?.includes('404')) {
+          setDbNotFound(true)
+          return
+        }
         console.error('Failed to fetch profile:', err)
         setError('Failed to load profile')
       } finally {
