@@ -340,8 +340,12 @@ router.get('/:id', async (req, res) => {
   ;(raw as any).totalTipAmount = tipAgg._sum.amount || 0
 
   // 2) fetch comments (caws where originalCawId = cawId) with same visibility filter
+  //    Exclude plain recaws (RECAW without text) — only show replies and quotes
   const commentBlockedIds = currentUserId ? await getBlockedUserIds(currentUserId) : []
-  const commentWhere: any = { originalCawId: cawId }
+  const commentWhere: any = {
+    originalCawId: cawId,
+    NOT: { action: 'RECAW', content: '' },
+  }
 
   // Add status visibility filter for comments
   if (currentUserId) {
