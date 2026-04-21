@@ -19,9 +19,7 @@
     "CawActions_L2b": "0xc64cDa55F5031282E5104da0fF301913CFc3C71b",
     "CawActionsReplicator_L2b": "0x89A3cd4F6372488b46f24595CC0E5DfeEf69f0ef",
     "CawActionsArchive_L2b": "0x4f3F6EDD55f9A9e5ee531d309Cc9e3F029B4570b",
-    "CawActionsArchive_L2": "0xb294E706170E4798d89566011CD3Ec31FC4abd23",
-    "CawActions_L2": "0x74dE2aCE81EC0be0b1DC7614679dc50254c4305f",
-    "CawActionsReplicator_L2": "0x075E737e599Da928748Ca4D4af31CaA7249803De"
+    "CawActionsArchive_L2": "0xb294E706170E4798d89566011CD3Ec31FC4abd23"
   },
   "linking": {
     "clientCreated": true
