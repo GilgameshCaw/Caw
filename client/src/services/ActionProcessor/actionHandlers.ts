@@ -163,8 +163,35 @@ export async function handleCawAction(
       } catch (err) {
         console.error(`Failed to create reply notification for caw ${newCaw.id}:`, err)
       }
+    } else if (action.actionType === 'CAW' || action.actionType === 0) {
+      // No Reply record but actionType is CAW (not RECAW) — this is a reply
+      // that wasn't created optimistically (e.g. DB rebuild from on-chain events).
+      // Create the Reply record now.
+      isReplyNotQuote = true
+      try {
+        await tx.reply.create({
+          data: {
+            userId: authorId,
+            cawId: parentCawId,
+            replyCawId: newCaw.id,
+            pending: false,
+          }
+        })
+        console.log(`[handleCawAction] Created Reply record from on-chain event: replyCawId=${newCaw.id}, parentCawId=${parentCawId}`)
+      } catch (replyErr: any) {
+        // Unique constraint violation is fine — means it already exists
+        if (replyErr?.code !== 'P2002') {
+          console.error('Failed to create Reply record from event:', replyErr)
+        }
+      }
+
+      try {
+        await NotificationService.createReplyNotification(parentCawId, newCaw.id, authorId)
+      } catch (err) {
+        console.error(`Failed to create reply notification for caw ${newCaw.id}:`, err)
+      }
     } else {
-      // It's a quote — recawCount on parent is handled by onCawCreated below
+      // It's a quote (RECAW with parent) — recawCount on parent is handled by onCawCreated below
       try {
         await NotificationService.createQuoteNotification(parentCawId, newCaw.id, authorId)
       } catch (err) {
