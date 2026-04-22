@@ -904,9 +904,7 @@ const ValidatorAnalytics: React.FC = () => {
                   <th className="text-left p-2">Type</th>
                   <th className="text-left p-2">Checkpoint</th>
                   <th className="text-right p-2">Actions</th>
-                  <th className="text-right p-2">Gas</th>
-                  <th className="text-right p-2">LZ Fee</th>
-                  <th className="text-right p-2">Total</th>
+                  <th className="text-right p-2">Cost</th>
                 </tr>
               </thead>
               <tbody>
@@ -940,8 +938,6 @@ const ValidatorAnalytics: React.FC = () => {
                     </td>
                     <td className="p-2 font-mono">{tx.checkpoint}</td>
                     <td className="p-2 text-right font-mono">{tx.actionCount || '-'}</td>
-                    <td className="p-2 text-right font-mono" title={`${fmtEth(tx.gasCostEth)} ETH`}>{weiToUsd(tx.gasCostEth, p.ethUsd)}</td>
-                    <td className="p-2 text-right font-mono" title={`${fmtEth(tx.lzFeeEth)} ETH`}>{weiToUsd(tx.lzFeeEth, p.ethUsd)}</td>
                     <td className="p-2 text-right font-mono" title={`${fmtEth(tx.totalCostEth)} ETH`}>{weiToUsd(tx.totalCostEth, p.ethUsd)}</td>
                   </tr>
                   )
