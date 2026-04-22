@@ -76,7 +76,7 @@ router.get('/failed-cawonce/:senderId',
         updatedAt: true,
       },
       orderBy: { updatedAt: 'desc' },
-      take: 20,
+      take: 5,
     })
 
     // Only return entries from the last 24 hours — older ones are escalated
