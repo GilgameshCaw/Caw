@@ -39,6 +39,7 @@ import { useTheme } from '~/hooks/useTheme'
 import ContentWithHashtags from './ContentWithHashtags'
 import { formatEngagementCount } from '~/utils/numberFormat'
 import { apiFetch } from '~/api/client'
+import ConfirmModal from '~/components/modals/ConfirmModal'
 import MuteWordsModal from './modals/MuteWordsModal'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import Tooltip from '~/components/Tooltip'
@@ -103,6 +104,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const signAndSubmit     = useSignAndSubmitAction()
   const [showRecawMenu, setShowRecawMenu]   = useState(false)
   const [showOptionsMenu, setShowOptionsMenu] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showShareModal, setShowShareModal] = useState(false)
   const [showTipModal, setShowTipModal] = useState(false)
   const [imageCollapsed, setImageCollapsed] = useState(false)
@@ -715,9 +717,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
           {/* Recawed header */}
           {headline && (
-            <div className={`text-xs mb-3 transition-all duration-300 ${
-              isDark ? 'text-gray-400' : 'text-gray-600'
-            }`}>
+            <div className="text-xs mb-3 transition-all duration-300 text-yellow-500">
               {headline}
             </div>
           )}
@@ -765,16 +765,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       {useItem.user.displayName || useItem.user.username}
                     </Link>
                     {item.status === 'FAILED' && (
-                      <span className={`px-2 py-0.5 text-xs rounded-full ${isDark ? 'bg-red-500/20 text-red-400' : 'bg-red-100 text-red-600'}`}>Failed</span>
-                    )}
-                    {item.status === 'FAILED' && (
                       <>
                         <span className="relative group">
                           <span className="px-2 py-0.5 text-xs bg-red-500/20 text-red-600 dark:text-red-400 rounded-full cursor-help">
                             Failed
                           </span>
                           <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 z-50 bg-white text-black dark:bg-white dark:text-black">
-                            {item.reason || 'Transaction failed'}
+                            Something went wrong
                             <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-white"></span>
                           </span>
                         </span>
@@ -1503,24 +1500,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     isDark ? 'border-white/20' : 'border-gray-200'
                   }`}></div>
                   <button
-                    onMouseDown={async (e) => {
+                    onMouseDown={(e) => {
                       e.preventDefault()
                       e.stopPropagation()
                       setShowOptionsMenu(false)
-                      const effectiveTokenId = activeTokenId || activeToken?.tokenId
-                      if (!effectiveTokenId || !useItem.cawonce) return
-                      if (!confirm('Delete this post? It will be hidden for everyone.')) return
-                      try {
-                        await signAndSubmit({
-                          actionType: 'other',
-                          senderId: effectiveTokenId,
-                          receiverId: 0,
-                          receiverCawonce: 0,
-                          text: `hide:caw:${useItem.cawonce}`,
-                        })
-                      } catch (err) {
-                        console.error('Delete post failed:', err)
-                      }
+                      setShowDeleteConfirm(true)
                     }}
                     className={`w-full px-4 py-3 text-left text-sm transition-colors duration-200 flex items-center gap-3 cursor-pointer ${
                       isDark ? 'hover:bg-white/10 text-red-400' : 'hover:bg-red-50 text-red-600'
@@ -1662,6 +1646,31 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           })
           localStorage.setItem('reportedPosts', JSON.stringify(reportedPosts))
           window.dispatchEvent(new CustomEvent('mutePreferencesChanged'))
+        }}
+      />
+
+      {/* Delete Post Confirmation */}
+      <ConfirmModal
+        isOpen={showDeleteConfirm}
+        onClose={() => setShowDeleteConfirm(false)}
+        title="Delete post"
+        message="This post will be hidden for everyone. This action is recorded on-chain and cannot be undone."
+        confirmText="Delete"
+        destructive
+        onConfirm={async () => {
+          const effectiveTokenId = activeTokenId || activeToken?.tokenId
+          if (!effectiveTokenId || !useItem.cawonce) return
+          try {
+            await signAndSubmit({
+              actionType: 'other',
+              senderId: effectiveTokenId,
+              receiverId: 0,
+              receiverCawonce: 0,
+              text: `hide:caw:${useItem.cawonce}`,
+            })
+          } catch (err) {
+            console.error('Delete post failed:', err)
+          }
         }}
       />
     </>
