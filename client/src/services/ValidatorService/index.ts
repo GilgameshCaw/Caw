@@ -1520,7 +1520,11 @@ console.log("succeededKeys", succeededKeys)
                  lowerMsg.includes('network') ||
                  lowerMsg.includes('connection') ||
                  lowerMsg.includes('rpc') ||
-                 lowerMsg.includes('will retry')
+                 lowerMsg.includes('will retry') ||
+                 lowerMsg.includes('too many requests') ||
+                 lowerMsg.includes('429') ||
+                 lowerMsg.includes('rate limit') ||
+                 lowerMsg.includes('missing response')
         })
 
         if (hasTemporaryError) {

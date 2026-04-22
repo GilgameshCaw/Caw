@@ -30,6 +30,8 @@ export const useBlockedUsersStore = create<BlockedUsersState>()(
     initialized: false,
 
     fetchBlocks: async (userId: number) => {
+      if (get().initialized) return
+      set({ initialized: true }) // Claim immediately to prevent concurrent calls
       try {
         const data = await apiFetch<{ blockedUsers: BlockedUser[] }>(
           `/api/blocks?userId=${userId}`
