@@ -15,6 +15,7 @@ import {
   HiOutlineVolumeOff,
   HiOutlineFilter,
   HiOutlineEyeOff,
+  HiOutlineTrash,
   HiOutlineUserRemove,
   HiOutlineExclamation,
   HiOutlineCheck,
@@ -51,11 +52,17 @@ import { chains } from '~/config/chains'
 import { formatTimeAgo } from '~/utils/formatTimeAgo'
 
 const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; hideParentPreview?: boolean; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void; onLikeStateChange?: (cawId: string, likePending: boolean) => void; onRecawStateChange?: (cawId: string, recawPending: boolean) => void; onReplyStateChange?: (cawId: string, replyPending: boolean) => void; onTipStateChange?: (cawId: string, tipPending: boolean) => void }> = ({ item, isMainPost = false, isReply = false, hideParentPreview = false, onBookmarkUpdate, onLikeStateChange, onRecawStateChange, onReplyStateChange, onTipStateChange }) => {
+  // For plain recaws, pending states and counts should reflect the original post (parent),
+  // not the recaw wrapper. useItem is set to item.parent for recaws further below, but
+  // we need the right source for initial state here. Quotes act as their own posts.
+  const isPlainRecaw = item.content === "" && item.parent && !item.isQuote
+  const stateSource = isPlainRecaw ? item.parent : item
+
   // Local pending states (declared early so polling can use them)
-  const [likePending, setLikePending] = useState(item.likePending || false)
-  const [recawPending, setRecawPending] = useState(item.recawPending || false)
-  const [replyPending, setReplyPending] = useState(item.replyPending || false)
-  const [tipPending, setTipPending] = useState(item.tipPending || false)
+  const [likePending, setLikePending] = useState(stateSource.likePending || false)
+  const [recawPending, setRecawPending] = useState(stateSource.recawPending || false)
+  const [replyPending, setReplyPending] = useState(stateSource.replyPending || false)
+  const [tipPending, setTipPending] = useState(stateSource.tipPending || false)
 
   // Optimistic count adjustments (added when pending, removed on failure).
   // We also track the "base" server count at the moment the optimistic adj was applied,
@@ -207,26 +214,27 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     });
   }, [pendingLikeAction, isConnected, activeTokenId, activeToken, address, signAndSubmit, useItem.id])
 
-  // Sync local pending states with item from polling — reset adjustments when server confirms
+  // Sync local pending states with item from polling — reset adjustments when server confirms.
+  // For plain recaws, sync from the parent (stateSource) since actions target the original post.
   useEffect(() => {
-    setLikePending(item.likePending || false)
-    if (!item.likePending) { setLikeCountAdj(0); setLikeCountBase(null) }
-  }, [item.likePending])
+    setLikePending(stateSource.likePending || false)
+    if (!stateSource.likePending) { setLikeCountAdj(0); setLikeCountBase(null) }
+  }, [stateSource.likePending])
 
   useEffect(() => {
-    setRecawPending(item.recawPending || false)
-    if (!item.recawPending) { setRecawCountAdj(0); setRecawCountBase(null) }
-  }, [item.recawPending])
+    setRecawPending(stateSource.recawPending || false)
+    if (!stateSource.recawPending) { setRecawCountAdj(0); setRecawCountBase(null) }
+  }, [stateSource.recawPending])
 
   useEffect(() => {
-    setReplyPending(item.replyPending || false)
-    if (!item.replyPending) { setReplyCountAdj(0); setReplyCountBase(null) }
-  }, [item.replyPending])
+    setReplyPending(stateSource.replyPending || false)
+    if (!stateSource.replyPending) { setReplyCountAdj(0); setReplyCountBase(null) }
+  }, [stateSource.replyPending])
 
-  // Sync local tipPending state with item.tipPending from polling
+  // Sync local tipPending state from polling
   useEffect(() => {
-    setTipPending(item.tipPending || false)
-  }, [item.tipPending])
+    setTipPending(stateSource.tipPending || false)
+  }, [stateSource.tipPending])
 
   // Clear wrong wallet error when address changes
   useEffect(() => {
@@ -261,7 +269,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     if (isCaptive) { useSignInModalStore.getState().show('Create a profile to like posts.'); return }
 
     // Don't allow interactions with pending or failed caws
-    if (item.status === 'PENDING' || item.status === 'FAILED') {
+    if (item.status === 'FAILED') {
       return
     }
 
@@ -405,7 +413,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     if (isCaptive) { useSignInModalStore.getState().show('Create a profile to repost.'); return }
 
     // Don't allow interactions with pending or failed caws
-    if (item.status === 'PENDING' || item.status === 'FAILED') {
+    if (item.status === 'FAILED') {
       return
     }
 
@@ -483,7 +491,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     if (isCaptive) { useSignInModalStore.getState().show('Create a profile to reply.'); return }
 
     // Don't allow interactions with pending or failed caws
-    if (item.status === 'PENDING' || item.status === 'FAILED') {
+    if (item.status === 'FAILED') {
       return
     }
 
@@ -659,7 +667,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       return
     }
     // Don't navigate for pending or failed posts (they have tempIds, not real IDs)
-    if (item.status === 'PENDING' || item.status === 'FAILED') {
+    if (item.status === 'FAILED') {
       return
     }
     const url = `/caws/${useItem.id}`
@@ -680,7 +688,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         <div className={`p-4 transition-all duration-300 feed-item-hover cursor-pointer border-b ${
           isDark ? 'border-gray-800' : 'border-gray-200'
         } ${
-          (item.status === 'PENDING' || item.status === 'FAILED') ? 'opacity-60' : ''
+          item.status === 'FAILED' ? 'opacity-60' : ''
         }`}>
           {/* Replying to header - only for actual replies (not quotes or recaws) */}
           {item.parent && !isRecaw && !isQuote && item.parent.user && !hideParentPreview && (
@@ -749,16 +757,8 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     >
                       {useItem.user.displayName || useItem.user.username}
                     </Link>
-                    {item.status === 'PENDING' && (
-                      <span className="relative group">
-                        <span className="px-2 py-0.5 text-xs bg-gray-200 text-gray-500 dark:bg-yellow-500/20 dark:text-yellow-400 rounded-full cursor-help">
-                          Pending
-                        </span>
-                        <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 z-50 bg-white text-black dark:bg-white dark:text-black">
-                          Processing on-chain
-                          <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-white"></span>
-                        </span>
-                      </span>
+                    {item.status === 'FAILED' && (
+                      <span className={`px-2 py-0.5 text-xs rounded-full ${isDark ? 'bg-red-500/20 text-red-400' : 'bg-red-100 text-red-600'}`}>Failed</span>
                     )}
                     {item.status === 'FAILED' && (
                       <>
@@ -1059,9 +1059,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           <div className="flex items-center justify-between" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center space-x-6">
               {/* Comments/Replies */}
-              <Tooltip text={replyPending ? "Processing on-chain" : "Reply"} disabled={item.status === 'PENDING' || item.status === 'FAILED'}><button
+              <Tooltip text={replyPending ? "Processing on-chain" : "Reply"} disabled={item.status === 'FAILED'}><button
                 className={`flex items-center space-x-2 transition-colors duration-300 ${
-                  (item.status === 'PENDING' || item.status === 'FAILED')
+                  (item.status === 'FAILED')
                     ? 'cursor-not-allowed opacity-50'
                     : 'hover:text-blue-500 cursor-pointer'
                 } ${
@@ -1070,7 +1070,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     : isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
                 onClick={handleReply}
-                disabled={item.status === 'PENDING' || item.status === 'FAILED'}
+                disabled={item.status === 'FAILED'}
               >
                 <HiOutlineChat className="w-5 h-5" />
                 <span className={`text-sm ${(useItem.hasReplied || replyPending) ? 'text-blue-500' : ''}`}>
@@ -1080,9 +1080,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
               {/* Retweets */}
               <div className="relative">
-                <Tooltip text={recawPending ? "Processing on-chain" : "ReCaw"} disabled={item.status === 'PENDING' || item.status === 'FAILED'}><button
+                <Tooltip text={recawPending ? "Processing on-chain" : "ReCaw"} disabled={item.status === 'FAILED'}><button
                   className={`group flex items-center space-x-2 transition-colors duration-300 ${
-                    (item.status === 'PENDING' || item.status === 'FAILED')
+                    (item.status === 'FAILED')
                       ? 'cursor-not-allowed opacity-50'
                       : 'hover:text-green-500 cursor-pointer'
                   } ${
@@ -1097,7 +1097,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       setShowRecawMenu(show => !show)
                     }
                   }}
-                  disabled={item.status === 'PENDING' || item.status === 'FAILED'}
+                  disabled={item.status === 'FAILED'}
                 >
                   {busyRecaw ? (
                     <div className="relative w-5 h-5">
@@ -1131,14 +1131,20 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                         }`}
                         onClick={async e => {
                           e.preventDefault(); e.stopPropagation(); setShowRecawMenu(false)
+                          const effectiveTokenId = activeTokenId || activeToken?.tokenId
+                          if (!effectiveTokenId) return
                           try {
                             setBusyRecaw(true)
-                            await apiFetch(`/api/caws/${useItem.id}/recaw`, { method: 'DELETE' })
+                            await signAndSubmit({
+                              actionType: 'other',
+                              senderId: effectiveTokenId,
+                              receiverId: 0,
+                              receiverCawonce: 0,
+                              text: `hide:recaw:${useItem.user.tokenId}:${useItem.cawonce}`,
+                            })
                           } catch (err) {
-                            console.warn('Undo recaw request failed (clearing state anyway):', err)
+                            console.warn('Undo recaw failed:', err)
                           } finally {
-                            // Always clear the recaw state — if the delete failed because
-                            // there was nothing to delete, the UI should still revert.
                             setRecawPending(false)
                             setRecawCountAdj(-1)
                             setRecawCountBase(useItem.recawCount)
@@ -1182,18 +1188,18 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               </div>
 
               {/* Likes */}
-              <Tooltip text={(likePending || item.likePending) ? "Processing on-chain" : "Like"} disabled={item.status === 'PENDING' || item.status === 'FAILED'}><button
+              <Tooltip text={(likePending || stateSource.likePending) ? "Processing on-chain" : "Like"} disabled={item.status === 'FAILED'}><button
                 className={`flex items-center space-x-2 transition-colors duration-300 ${
-                  (item.status === 'PENDING' || item.status === 'FAILED')
+                  (item.status === 'FAILED')
                     ? 'cursor-not-allowed opacity-50'
                     : 'hover:text-red-500 cursor-pointer'
                 } ${
-                  (useItem.hasLiked || likePending || item.likePending)
-                    ? `text-red-500 ${(likePending || item.likePending) ? 'opacity-90' : ''}`
+                  (useItem.hasLiked || likePending || stateSource.likePending)
+                    ? `text-red-500 ${(likePending || stateSource.likePending) ? 'opacity-90' : ''}`
                     : isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
                 onClick={handleLike}
-                disabled={busyLike || likePending || item.status === 'PENDING' || item.status === 'FAILED'}
+                disabled={busyLike || likePending || item.status === 'FAILED'}
               >
                 {busyLike ? (
                   <div className="relative w-5 h-5">
@@ -1201,7 +1207,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     <HiOutlineCheck className="absolute inset-0 w-3 h-3 m-auto text-red-500" />
                   </div>
                 ) : (
-                  <HiOutlineHeart className={`w-5 h-5 ${(useItem.hasLiked || likePending || item.likePending) ? 'fill-current' : ''}`} />
+                  <HiOutlineHeart className={`w-5 h-5 ${(useItem.hasLiked || likePending || stateSource.likePending) ? 'fill-current' : ''}`} />
                 )}
                 <span className="text-sm">{formatEngagementCount(useItem.likeCount + effectiveLikeAdj)}</span>
               </button></Tooltip>
@@ -1219,11 +1225,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
             <div className="flex items-center space-x-4">
               {/* Bookmark */}
-              <Tooltip text={isBookmarked ? "Remove bookmark" : "Save"} disabled={item.status === 'PENDING' || item.status === 'FAILED'}><button
+              <Tooltip text={isBookmarked ? "Remove bookmark" : "Save"} disabled={item.status === 'FAILED'}><button
                 onClick={handleBookmark}
-                disabled={item.status === 'PENDING' || item.status === 'FAILED'}
+                disabled={item.status === 'FAILED'}
                 className={`flex items-center gap-1 transition-colors duration-300 ${
-                  (item.status === 'PENDING' || item.status === 'FAILED')
+                  (item.status === 'FAILED')
                     ? 'opacity-50 cursor-default'
                     : 'hover:text-yellow-500 cursor-pointer'
                 } ${
@@ -1243,15 +1249,15 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               </button></Tooltip>
 
               {/* Tip */}
-              <Tooltip text={tipPending ? 'Processing on-chain' : useItem.totalTipAmount ? `${(useItem.totalTipAmount).toLocaleString()} CAW tipped` : 'Tip'} disabled={item.status === 'PENDING' || item.status === 'FAILED'}><button
+              <Tooltip text={tipPending ? 'Processing on-chain' : useItem.totalTipAmount ? `${(useItem.totalTipAmount).toLocaleString()} CAW tipped` : 'Tip'} disabled={item.status === 'FAILED'}><button
                 onClick={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
                   setShowTipModal(true)
                 }}
-                disabled={item.status === 'PENDING' || item.status === 'FAILED'}
+                disabled={item.status === 'FAILED'}
                 className={`flex items-center gap-1 transition-colors duration-300 ${
-                  (item.status === 'PENDING' || item.status === 'FAILED')
+                  (item.status === 'FAILED')
                     ? 'opacity-50 cursor-default'
                     : 'hover:text-yellow-500 cursor-pointer'
                 } ${
@@ -1267,15 +1273,15 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               </button></Tooltip>
 
               {/* Share */}
-              <Tooltip text="Share" disabled={item.status === 'PENDING' || item.status === 'FAILED'}><button
+              <Tooltip text="Share" disabled={item.status === 'FAILED'}><button
                 onClick={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
                   setShowShareModal(true)
                 }}
-                disabled={item.status === 'PENDING' || item.status === 'FAILED'}
+                disabled={item.status === 'FAILED'}
                 className={`transition-colors duration-300 ${
-                  (item.status === 'PENDING' || item.status === 'FAILED')
+                  (item.status === 'FAILED')
                     ? 'opacity-50 cursor-default'
                     : 'hover:text-blue-500 cursor-pointer'
                 } ${
@@ -1423,6 +1429,37 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 Mute words and tags
               </button>
               
+              {/* Delete own post (on-chain hide) — only for the post author */}
+              {useItem.user.tokenId === (activeTokenId || activeToken?.tokenId) && useItem.cawonce != null && (
+                <button
+                  onMouseDown={async (e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    setShowOptionsMenu(false)
+                    const effectiveTokenId = activeTokenId || activeToken?.tokenId
+                    if (!effectiveTokenId || !useItem.cawonce) return
+                    if (!confirm('Delete this post? It will be hidden for everyone.')) return
+                    try {
+                      await signAndSubmit({
+                        actionType: 'other',
+                        senderId: effectiveTokenId,
+                        receiverId: 0,
+                        receiverCawonce: 0,
+                        text: `hide:caw:${useItem.cawonce}`,
+                      })
+                    } catch (err) {
+                      console.error('Delete post failed:', err)
+                    }
+                  }}
+                  className={`w-full px-4 py-3 text-left text-sm transition-colors duration-200 flex items-center gap-3 cursor-pointer ${
+                    isDark ? 'hover:bg-white/10 text-red-400' : 'hover:bg-red-50 text-red-600'
+                  }`}
+                >
+                  <HiOutlineTrash className="w-5 h-5" />
+                  Delete post
+                </button>
+              )}
+
               <button
                 onMouseDown={(e) => {
                   e.preventDefault()
