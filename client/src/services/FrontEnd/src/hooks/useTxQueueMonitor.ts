@@ -89,7 +89,11 @@ export function useTxQueueMonitor() {
           if (status.status === 'failed') {
             const reason = (status.reason || '').toLowerCase()
             console.log(`[TxQueueMonitor] TxQueue ID ${status.id} failed: ${status.reason}`)
-            removePendingPostByTxQueueId(status.id)
+            const willRetry = reason.includes('cawonce already used') && !cawonceRetries.has(status.id)
+            if (!willRetry) {
+              // Only remove pending post if we're NOT going to auto-retry
+              removePendingPostByTxQueueId(status.id)
+            }
             removeOptimisticLikeByTxQueueId(status.id)
             usePendingSpendStore.getState().removePendingSpend(status.id)
             processedIds.current.add(status.id)
@@ -168,10 +172,19 @@ export function useTxQueueMonitor() {
 
                     // Submit new action
                     const isQuote = status.payload?.isQuote || false
-                    await apiFetch('/api/actions', {
+                    const retryResult = await apiFetch<{ txQueueId?: number }>('/api/actions', {
                       method: 'POST',
                       body: JSON.stringify({ data: message, domain, types, signature, isQuote, retriedTxQueueId: status.id }),
                     })
+
+                    // Update the pending post to track the new txQueue ID
+                    if (retryResult?.txQueueId) {
+                      const store = usePendingPostsStore.getState()
+                      const pending = store.pendingPosts.find(p => p.txQueueId === status.id)
+                      if (pending) {
+                        store.updatePostWithTxQueueId(pending.tempId, retryResult.txQueueId)
+                      }
+                    }
 
                     console.log(`[TxQueueMonitor] Auto-retried TxQueue ${status.id} with cawonce ${freshCawonce}`)
                     cawonceRetries.delete(status.id)
