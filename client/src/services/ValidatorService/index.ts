@@ -3053,11 +3053,53 @@ console.log("succeededKeys", succeededKeys)
           if (submitter.toLowerCase() === w.address.toLowerCase()) continue
 
           // Check if still pending
+          let merkleRoot: string
           try {
             const sub = await archive.getSubmission(submissionId)
             const status = Number(sub[6])
             if (status !== 0) continue // Already finalized or slashed
+            merkleRoot = sub[1] // bytes32 merkleRoot
           } catch { continue }
+
+          // Check if we previously challenged this submission and LZ has delivered
+          // If so, resolve it now (slash!)
+          const resolveAbi = [
+            'function challengeDelivered(uint256, uint256) view returns (bool)',
+            'function challengeHash(uint256, uint256) view returns (bytes32)',
+            'function resolveChallenge(uint256 submissionId, uint256 checkpointId, bytes32 claimedHash, bytes32[] merkleProof)',
+          ]
+          const archiveW = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, resolveAbi, new Wallet(privateKey!, l2bProvider))
+          for (let cpId = startCp; cpId <= endCp; cpId++) {
+            try {
+              const delivered = await archive.challengeDelivered(submissionId, cpId)
+              if (!delivered) continue
+
+              // Challenge was delivered — compute merkle proof and resolve
+              const correctHash = await archive.challengeHash(submissionId, cpId)
+
+              // Reconstruct the claimed hash and merkle proof from the submission's merkle root
+              // We need the checkpoint hashes as the submitter claimed them — reconstruct from packed data
+              const data = await reconstructCheckpointData(clientId, startCp, endCp)
+              if (!data) continue
+
+              const checkpointIds = Array.from({ length: endCp - startCp + 1 }, (_, i) => startCp + i)
+              const tree = buildCheckpointMerkleTree(checkpointIds, data.checkpointHashes)
+              const cpIndex = cpId - startCp
+              const claimedHash = data.checkpointHashes[cpIndex]
+              const proof = tree.getProof(cpIndex)
+
+              if (correctHash.toLowerCase() !== claimedHash.toLowerCase()) {
+                console.log(`[Monitor] Resolving challenge for submission ${submissionId} checkpoint ${cpId}...`)
+                const resolveTx = await archiveW.resolveChallenge(submissionId, cpId, claimedHash, proof, { gasLimit: 500_000 })
+                const resolveReceipt = await resolveTx.wait()
+                console.log(`[Monitor] SLASHED submission ${submissionId}! tx: ${resolveReceipt?.hash}`)
+              } else {
+                console.log(`[Monitor] Challenge for submission ${submissionId} checkpoint ${cpId}: hashes match (false alarm)`)
+              }
+            } catch (resolveErr: any) {
+              console.warn(`[Monitor] Error resolving challenge for submission ${submissionId} cp ${cpId}: ${resolveErr?.shortMessage || resolveErr?.message}`)
+            }
+          }
 
           // Reconstruct data and verify checkpoint hashes against L2
           try {
@@ -3085,11 +3127,34 @@ console.log("succeededKeys", succeededKeys)
                 console.error(
                   `[Monitor] FRAUD DETECTED in submission ${submissionId}! ` +
                   `Checkpoint ${cpId}: local=${localHash} vs L2=${onChainHash}. ` +
-                  `Submitter: ${submitter}. ` +
-                  `Challenge relay: ${CHALLENGE_RELAY_ADDRESS}`
+                  `Submitter: ${submitter}. Initiating challenge...`
                 )
                 fraudDetected = true
-                // TODO: call CawChallengeRelay.relayChallenge on L2, then resolveChallenge on L2b
+
+                // Auto-challenge: relay correct hash from L2, then resolve on L2b
+                try {
+                  const L2B_EID = 40231 // Arbitrum Sepolia
+                  const relayAbi = [
+                    'function relayChallenge(uint32 destEid, uint256 submissionId, uint32 clientId, uint256 checkpointId) payable',
+                    'function quoteChallenge(uint32 destEid, uint256 submissionId, uint32 clientId, uint256 checkpointId, bool payInLzToken) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
+                  ]
+                  const relayContract = new Contract(CHALLENGE_RELAY_ADDRESS, relayAbi, new Wallet(privateKey!, replicationHttpProvider))
+
+                  // Quote and send the challenge relay
+                  const quote = await relayContract.quoteChallenge(L2B_EID, submissionId, clientId, cpId, false)
+                  const relayTx = await relayContract.relayChallenge(L2B_EID, submissionId, clientId, cpId, {
+                    value: quote.nativeFee * 120n / 100n, // 20% buffer for LZ fee fluctuation
+                    gasLimit: 200_000,
+                  })
+                  const relayReceipt = await relayTx.wait()
+                  console.log(`[Monitor] Challenge relayed for submission ${submissionId} checkpoint ${cpId}. tx: ${relayReceipt?.hash}`)
+                  console.log(`[Monitor] Waiting for LZ delivery to L2b... (will resolve on next monitor cycle)`)
+
+                  // Don't wait for LZ delivery here — the next monitor cycle will
+                  // check challengeDelivered and call resolveChallenge
+                } catch (challengeErr: any) {
+                  console.error(`[Monitor] Failed to relay challenge: ${challengeErr?.shortMessage || challengeErr?.message}`)
+                }
               }
             }
 
