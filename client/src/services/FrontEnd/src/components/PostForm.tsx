@@ -1004,7 +1004,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             content: chunks[chunkOffset + i],
             username: activeToken.username,
             tokenId: effectiveTokenId,
-            avatarUrl: avatars[effectiveTokenId] || getUserAvatar({ tokenId: effectiveTokenId })
+            avatarUrl: avatars[effectiveTokenId] || getUserAvatar({ tokenId: effectiveTokenId }),
+            cawonce: r.cawonce,
           })
           if (r.txQueueId) updatePostWithTxQueueId(tempId, r.txQueueId)
         }
@@ -1038,6 +1039,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           avatarUrl: avatars[effectiveTokenId] || getUserAvatar({ tokenId: effectiveTokenId }),
           replyToId: replyTo?.id,
           parent: replyTo || undefined,
+          cawonce: response.cawonce,
         })
         if (response.txQueueId) updatePostWithTxQueueId(tempId, response.txQueueId)
       }
@@ -1057,7 +1059,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                 content: chunks[i],
                 username: activeToken.username,
                 tokenId: effectiveTokenId,
-                avatarUrl: avatars[effectiveTokenId] || getUserAvatar({ tokenId: effectiveTokenId })
+                avatarUrl: avatars[effectiveTokenId] || getUserAvatar({ tokenId: effectiveTokenId }),
+                cawonce: replyResponse.cawonce,
               })
               if (replyResponse.txQueueId) updatePostWithTxQueueId(tempId, replyResponse.txQueueId)
             }

@@ -205,7 +205,6 @@ export type ActionParams = {
   recipients?:    number[]
   amounts?:       BigInt[]
   text?:          string
-  isQuote?:       boolean
   retriedTxQueueId?: number
 }
 
@@ -685,7 +684,6 @@ export function useSignAndSubmitAction() {
         method: 'POST',
         body: JSON.stringify({
           data: message, domain, types, signature,
-          isQuote: params.isQuote || false,
           ...(pendingDepositTxHash ? { pendingDepositTxHash } : {}),
           ...(params.retriedTxQueueId ? { retriedTxQueueId: params.retriedTxQueueId } : {}),
         })
@@ -759,7 +757,7 @@ export function useSignAndSubmitAction() {
         } catch {}
       }, 2000)
 
-      return response // Return the response which includes txQueueId
+      return { ...response, cawonce: useCawonce } // Include cawonce for pending post tracking
     } catch (error: any) {
       // If submission fails, we should ideally roll back the cawonce bump
       // but for now we'll leave it incremented to avoid conflicts
@@ -919,7 +917,6 @@ export function useSignAndSubmitAction() {
       domain: item.domain,
       types: item.types,
       signature: item.signature,
-      isQuote: item.params.isQuote || false,
     }))
 
     // Forward pending mint/deposit hint (same logic as single-action path) so
@@ -965,7 +962,7 @@ export function useSignAndSubmitAction() {
 
     for (let i = 0; i < allParams.length; i++) {
       const r = batchResponse?.results?.[i]
-      results[i] = r || { error: 'no response for action' }
+      results[i] = r ? { ...r, cawonce: signedItems[i]?.data?.cawonce } : { error: 'no response for action' }
       // Track pending spend for successful queues
       if (r?.txQueueId) {
         const costWholeTokens = (actionCostWei[signedItems[i].params.actionType] || 0n) + effectiveTip

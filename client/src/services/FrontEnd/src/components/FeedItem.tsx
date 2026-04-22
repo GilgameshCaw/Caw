@@ -391,6 +391,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           displayName: item.user?.displayName,
           image: item.user?.image,
           avatarUrl: getUserAvatar(item.user),
+          cawonce: result.cawonce,
         })
         if (result.txQueueId) {
           updatePostWithTxQueueId(tempId, result.txQueueId)
@@ -472,6 +473,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         tokenId: effectiveTokenId,
         avatarUrl: getUserAvatar({ tokenId: effectiveTokenId }),
         parent: useItem as CawItem,
+        cawonce: result.cawonce,
       })
       if (result.txQueueId) updatePostWithTxQueueId(tempId, result.txQueueId)
     } catch (err) {
