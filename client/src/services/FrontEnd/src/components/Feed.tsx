@@ -78,12 +78,10 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
 
     const c = feedCache.get(cacheKey)
     if (c && c.items.length > 0) {
-      itemsCacheKeyRef.current = cacheKey
       setItems(c.items)
       setNextCursor(c.nextCursor)
       setHasMore(c.hasMore)
     } else {
-      itemsCacheKeyRef.current = cacheKey
       setItems([])
       setNextCursor(undefined)
       setHasMore(true)
@@ -95,18 +93,6 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   const itemsRef = useRef<CawItem[]>(items)
   useEffect(() => { itemsRef.current = items }, [items])
 
-  // Track which cache key the current items actually belong to.
-  // Updated AFTER items are set — prevents the save effect from writing
-  // stale items under a new cache key during tab switches.
-  const itemsCacheKeyRef = useRef(cacheKey)
-
-  // Persist feed state to module-level cache so it survives navigation
-  useEffect(() => {
-    // Only save if items belong to the current cache key
-    if (items.length > 0 && itemsCacheKeyRef.current === cacheKey) {
-      feedCache.set(cacheKey, { items, nextCursor, hasMore, ts: Date.now() })
-    }
-  }, [items, nextCursor, hasMore, cacheKey])
 
   // Filter items based on mute preferences and blocked users
   const filteredItems = useMemo(() => {
@@ -223,6 +209,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
     const currentApiEndpoint = apiEndpointRef.current
     const currentFilter = filterRef.current
     const currentUsername = usernameRef.current
+    const currentTokenId = useTokenDataStore.getState().activeTokenId
     const cursorToUse = force ? undefined : nextCursor
 
     // Use custom API endpoint if provided (for hashtag feeds)
@@ -243,11 +230,15 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
         const newItems = response.items || []
         const newCursor = response.nextCursor
 
+        const finalHasMore = newCursor != null
         setItems(current => {
-          return force ? newItems : [...current, ...newItems]
+          const merged = force ? newItems : [...current, ...newItems]
+          const key = feedCacheKey(currentFilter, currentTokenId, currentApiEndpoint, currentUsername)
+          if (merged.length > 0) feedCache.set(key, { items: merged, nextCursor: newCursor, hasMore: finalHasMore, ts: Date.now() })
+          return merged
         })
         setNextCursor(newCursor)
-        setHasMore(newCursor != null)
+        setHasMore(finalHasMore)
       } catch (err: any) {
         console.error('Custom feed load error', err)
         setError('Failed to load feed')
@@ -286,15 +277,19 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       const { items: newItems, nextCursor: newCursor } =
         await apiFetch<FeedResponse>(`/api/caws?${params.toString()}`)
 
+      const finalHasMore = newCursor != null
       setItems(current => {
         const base = force ? [] : current
         const seen = new Set<string>()
-        return [...base, ...newItems]
+        const merged = [...base, ...newItems]
           .filter(item => {
             if (seen.has(item.id)) return false
             seen.add(item.id)
             return true
           })
+        const key = feedCacheKey(currentFilter, currentTokenId, currentApiEndpoint, currentUsername)
+        if (merged.length > 0) feedCache.set(key, { items: merged, nextCursor: newCursor, hasMore: finalHasMore, ts: Date.now() })
+        return merged
       })
 
       if (newCursor != null) {
