@@ -18,6 +18,30 @@ import { apiFetch } from '~/api/client'
 import { HiCalendar, HiClock } from 'react-icons/hi'
 import MentionAutocomplete from './MentionAutocomplete'
 import GifPicker from './GifPicker'
+
+/** Extract a short, meaningful search query from post text for GIF search.
+ *  Drops articles/prepositions/conjunctions, URLs, and @mentions,
+ *  then takes the last 5 remaining words. */
+function gifSearchQuery(text: string): string {
+  const stopWords = new Set([
+    'a','an','the','is','are','was','were','be','been','being',
+    'in','on','at','to','for','of','with','by','from','as',
+    'and','or','but','nor','so','yet','not','no','if','then',
+    'i','me','my','we','our','you','your','he','she','it','they',
+    'this','that','these','those','its','his','her','their',
+    'do','does','did','has','have','had','will','would','can','could',
+    'just','also','very','really','about','into','over','after','before',
+  ])
+  const words = text
+    .replace(/https?:\/\/\S+/g, '')   // drop URLs
+    .replace(/@\w+/g, '')             // drop mentions
+    .replace(/[#$]\w+/g, '')          // drop hashtags/cashtags
+    .replace(/[^\w\s]/g, ' ')         // strip punctuation
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(w => w.length > 1 && !stopWords.has(w))
+  return words.slice(-5).join(' ')
+}
 import HighlightedTextarea from './HighlightedTextarea'
 
 const POST_CHAR_LIMIT = 420 // bytes — matches the on-chain check `bytes(text).length <= 420`
@@ -1364,7 +1388,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         {showGifPicker && (
           <div className="mt-4">
             <GifPicker
-              initialQuery={text.trim()}
+              initialQuery={gifSearchQuery(text)}
               onSelect={handleGifSelected}
               onClose={() => setShowGifPicker(false)}
             />
@@ -1461,7 +1485,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         {showGifPicker && (
           <div className="mt-4">
             <GifPicker
-              initialQuery={text.trim()}
+              initialQuery={gifSearchQuery(text)}
               onSelect={handleGifSelected}
               onClose={() => setShowGifPicker(false)}
             />
