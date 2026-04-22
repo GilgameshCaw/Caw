@@ -168,6 +168,21 @@ export function getCawIncludeConfig(options: CawQueryOptions = {}) {
     parent: {
       include: {
         user: { select: { id: true, tokenId: true, username: true, displayName: true, image: true, avatarUrl: true, defaultAvatarId: true } },
+        likes: currentUserId
+          ? { where: { userId: currentUserId }, select: { userId: true, pending: true } }
+          : false,
+        recaws: currentUserId
+          ? { where: { userId: currentUserId }, select: { id: true, status: true, action: true, content: true } }
+          : false,
+        repliesOnThis: currentUserId
+          ? { where: { userId: currentUserId }, select: { userId: true, pending: true, replyCawId: true } }
+          : false,
+        tips: currentUserId
+          ? { where: { senderId: currentUserId }, select: { senderId: true, pending: true }, take: 1 }
+          : false,
+        bookmarks: currentUserId
+          ? { where: { userId: currentUserId }, select: { userId: true }, take: 1 }
+          : false,
         ...(includeHashtags && {
           hashtags: {
             include: { hashtag: { select: { name: true } } }

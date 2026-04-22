@@ -2,8 +2,50 @@ import React, { useState, useEffect, useCallback } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { apiFetch } from '~/api/client'
 import { useSearchParams, Link } from 'react-router-dom'
+import { decompressSignedText } from '~/api/actions'
 
 const PAGE_SIZE = 50
+
+const ACTION_TYPE_LABELS: Record<number, string> = {
+  0: 'CAW',
+  1: 'LIKE',
+  2: 'UNLIKE',
+  3: 'RECAW',
+  4: 'FOLLOW',
+  5: 'UNFOLLOW',
+  6: 'WITHDRAW',
+  7: 'OTHER',
+}
+
+/** For txQueue records, extract payload.data fields into flat columns for the list view. */
+function flattenTxQueueRecord(record: any): any {
+  const payload = record.payload
+  const data = payload?.data
+  if (!data) return { ...record, actionType: '-', receiverId: '-', receiverCawonce: '-', cawonce: '-', clientId: '-', recipients: '-', amounts: '-', text: '-' }
+  const actionCode = typeof data.actionType === 'number' ? data.actionType : parseInt(data.actionType)
+  const actionLabel = ACTION_TYPE_LABELS[actionCode] ?? String(data.actionType)
+  let text = '-'
+  if (data.text && data.text !== '0x') {
+    try { text = decompressSignedText(data.text) } catch { text = String(data.text).slice(0, 60) }
+  }
+  const amounts = Array.isArray(data.amounts) && data.amounts.length > 0
+    ? data.amounts.join(', ')
+    : '-'
+  const recipients = Array.isArray(data.recipients) && data.recipients.length > 0
+    ? data.recipients.join(', ')
+    : '-'
+  return {
+    ...record,
+    actionType: actionLabel,
+    receiverId: data.receiverId ?? '-',
+    receiverCawonce: data.receiverCawonce ?? '-',
+    cawonce: data.cawonce ?? '-',
+    clientId: data.clientId ?? '-',
+    recipients,
+    amounts,
+    text: text.length > 80 ? text.slice(0, 80) + '...' : text,
+  }
+}
 
 interface ModelMeta {
   name: string
@@ -155,7 +197,8 @@ const DatabaseAdmin: React.FC = () => {
 
     try {
       const data = await apiFetch(`/api/admin/db/${activeModel}?${params}`)
-      setRecords(data.records)
+      const records = activeModel === 'txQueue' ? data.records.map(flattenTxQueueRecord) : data.records
+      setRecords(records)
       setTotal(data.total)
     } catch (err: any) {
       setError(err.message || 'Failed to load data')
