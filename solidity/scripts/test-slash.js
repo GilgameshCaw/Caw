@@ -70,6 +70,10 @@ async function main() {
   const pk = process.env.PRIVATE_KEYS?.split(',')[0]
   if (!pk) throw new Error('PRIVATE_KEYS not set')
 
+  // Use a DIFFERENT wallet for the bad submission so the monitor treats it as foreign
+  // Hardhat test account #2 (well-known test key)
+  const badActorPk = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d'
+
   // Connect to both chains
   const l2Provider = new ethers.JsonRpcProvider(process.env.RPC_BASE_SEPOLIA, undefined, { batchMaxCount: 1 })
   const l2bProvider = new ethers.JsonRpcProvider(process.env.RPC_ARBITRUM_SEPOLIA, undefined, { batchMaxCount: 1 })
