@@ -13,6 +13,7 @@ import { BsWallet } from 'react-icons/bs'
 import MediaUpload from './MediaUpload'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
+import { useUserByUsername } from '~/hooks/useUserData'
 import Tooltip from '~/components/Tooltip'
 import { apiFetch } from '~/api/client'
 import { HiCalendar, HiClock } from 'react-icons/hi'
@@ -375,6 +376,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   const activeTokenId = useTokenDataStore(state => state.activeTokenId);
   const activeToken = useActiveToken();
   const avatars = useTokenDataStore(s => s.avatarsByTokenId);
+  const { data: activeUserData } = useUserByUsername(activeToken?.username);
   const signAndSubmit = useSignAndSubmitAction()
   const { signTypedDataAsync } = useSignTypedData()
   const bumpCawonce = useTokenDataStore(s => s.bumpCawonce)
@@ -1003,6 +1005,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           const tempId = addPendingPost({
             content: chunks[chunkOffset + i],
             username: activeToken.username,
+            displayName: activeUserData?.displayName,
             tokenId: effectiveTokenId,
             avatarUrl: avatars[effectiveTokenId] || getUserAvatar({ tokenId: effectiveTokenId }),
             cawonce: r.cawonce,
@@ -1035,6 +1038,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         const tempId = addPendingPost({
           content: chunks[0],
           username: activeToken.username,
+          displayName: activeUserData?.displayName,
           tokenId: effectiveTokenId,
           avatarUrl: avatars[effectiveTokenId] || getUserAvatar({ tokenId: effectiveTokenId }),
           replyToId: replyTo?.id,
@@ -1059,6 +1063,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               const tempId = addPendingPost({
                 content: chunks[i],
                 username: activeToken.username,
+                displayName: activeUserData?.displayName,
                 tokenId: effectiveTokenId,
                 avatarUrl: avatars[effectiveTokenId] || getUserAvatar({ tokenId: effectiveTokenId }),
                 cawonce: replyResponse.cawonce,

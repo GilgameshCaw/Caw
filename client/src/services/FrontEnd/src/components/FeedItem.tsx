@@ -1,6 +1,7 @@
 import { getUserAvatar } from "~/utils/defaultAvatar"
 // src/components/FeedItem.tsx - UPDATED FOR CONSISTENCY
 import React, { useState, useRef, useEffect } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { createPortal } from 'react-dom'
 import { useSignAndSubmitAction } from '~/api/actions'
 import { useAccount, useChainId } from 'wagmi'
@@ -93,6 +94,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const { openConnectModal } = useConnectModal()
   const hasActiveSession = useHasActiveSession()
   const { isDark } = useTheme()
+  const qc = useQueryClient()
   const navigate = useNavigate()
   const [busyLike, setBusyLike]     = useState(false)
   const [busyRecaw, setBusyRecaw]   = useState(false)
@@ -467,9 +469,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
       // Add a pending recaw to the feed so it shows immediately on the user's profile
       const { addPendingPost, updatePostWithTxQueueId } = usePendingPostsStore.getState()
+      // Read display name from react-query cache (already fetched by ProfileChooser)
+      const cachedUser = qc.getQueryData<any>(['user', activeToken?.username])
       const tempId = addPendingPost({
         content: '',
         username: activeToken?.username || '',
+        displayName: cachedUser?.displayName,
         tokenId: effectiveTokenId,
         avatarUrl: getUserAvatar({ tokenId: effectiveTokenId }),
         parent: useItem as CawItem,
@@ -1431,37 +1436,6 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 Mute words and tags
               </button>
               
-              {/* Delete own post (on-chain hide) — only for the post author */}
-              {useItem.user.tokenId === (activeTokenId || activeToken?.tokenId) && useItem.cawonce != null && (
-                <button
-                  onMouseDown={async (e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setShowOptionsMenu(false)
-                    const effectiveTokenId = activeTokenId || activeToken?.tokenId
-                    if (!effectiveTokenId || !useItem.cawonce) return
-                    if (!confirm('Delete this post? It will be hidden for everyone.')) return
-                    try {
-                      await signAndSubmit({
-                        actionType: 'other',
-                        senderId: effectiveTokenId,
-                        receiverId: 0,
-                        receiverCawonce: 0,
-                        text: `hide:caw:${useItem.cawonce}`,
-                      })
-                    } catch (err) {
-                      console.error('Delete post failed:', err)
-                    }
-                  }}
-                  className={`w-full px-4 py-3 text-left text-sm transition-colors duration-200 flex items-center gap-3 cursor-pointer ${
-                    isDark ? 'hover:bg-white/10 text-red-400' : 'hover:bg-red-50 text-red-600'
-                  }`}
-                >
-                  <HiOutlineTrash className="w-5 h-5" />
-                  Delete post
-                </button>
-              )}
-
               <button
                 onMouseDown={(e) => {
                   e.preventDefault()
@@ -1475,11 +1449,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 <HiOutlineEyeOff className="w-5 h-5" />
                 Hide post for me
               </button>
-              
+
               <div className={`border-t my-1 ${
                 isDark ? 'border-white/20' : 'border-gray-200'
               }`}></div>
-              
+
               <button
                 onMouseDown={(e) => {
                   e.preventDefault()
@@ -1521,6 +1495,42 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 <HiOutlineExclamation className="w-5 h-5" />
                 Report post
               </button>
+
+              {/* Delete own post — separate section at bottom, only for post author */}
+              {useItem.user.tokenId === (activeTokenId || activeToken?.tokenId) && useItem.cawonce != null && (
+                <>
+                  <div className={`border-t my-1 ${
+                    isDark ? 'border-white/20' : 'border-gray-200'
+                  }`}></div>
+                  <button
+                    onMouseDown={async (e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setShowOptionsMenu(false)
+                      const effectiveTokenId = activeTokenId || activeToken?.tokenId
+                      if (!effectiveTokenId || !useItem.cawonce) return
+                      if (!confirm('Delete this post? It will be hidden for everyone.')) return
+                      try {
+                        await signAndSubmit({
+                          actionType: 'other',
+                          senderId: effectiveTokenId,
+                          receiverId: 0,
+                          receiverCawonce: 0,
+                          text: `hide:caw:${useItem.cawonce}`,
+                        })
+                      } catch (err) {
+                        console.error('Delete post failed:', err)
+                      }
+                    }}
+                    className={`w-full px-4 py-3 text-left text-sm transition-colors duration-200 flex items-center gap-3 cursor-pointer ${
+                      isDark ? 'hover:bg-white/10 text-red-400' : 'hover:bg-red-50 text-red-600'
+                    }`}
+                  >
+                    <HiOutlineTrash className="w-5 h-5" />
+                    Delete post
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </>,
