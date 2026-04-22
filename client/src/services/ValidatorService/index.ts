@@ -372,7 +372,7 @@ export const validatorService: Service = {
 
       // Create new provider with error handling
       try {
-        provider = makeWebSocketProvider(l2RpcUrl)
+        provider = makeWebSocketProvider(l2RpcUrl, 84532) // Base Sepolia chainId
 
         // Add error handler to the WebSocket immediately to catch connection errors
         const ws = (provider as any)._websocket || (provider as any).websocket

@@ -118,21 +118,42 @@ export function makeJsonRpcProvider(url: string, chainId?: number): JsonRpcProvi
 }
 
 /**
- * Create a WebSocketProvider. Unlike JsonRpcProvider, we do NOT set
- * staticNetwork here — WebSocket providers need the normal startup
- * handshake to establish the connection before Contract.on() and other
- * subscription methods work. The "retry in 1s" spam is not an issue for
- * WebSocket providers since they have their own close/error event-driven
- * reconnection, not a polling loop.
+ * Create a WebSocketProvider with rate-limit awareness.
  *
- * If `chainId` is known, pass it as a hint to skip the initial eth_chainId call.
+ * If `chainId` is known, pass it so the provider skips the initial
+ * eth_chainId call (one less request on connect).
+ *
+ * The provider's internal send() is wrapped to respect the global
+ * rate-limit backoff, same as JsonRpcProvider.
  */
 export function makeWebSocketProvider(url: string, chainId?: number): WebSocketProvider {
+  let provider: WebSocketProvider
   if (chainId != null) {
     const network = Network.from(chainId)
-    return new WebSocketProvider(url, network)
+    provider = new WebSocketProvider(url, network)
+  } else {
+    provider = new WebSocketProvider(url)
   }
-  return new WebSocketProvider(url)
+
+  // Wrap send() to respect global rate limit (same as HTTP providers)
+  const originalSend = provider.send.bind(provider)
+  provider.send = async function(method: string, params: any[]) {
+    if (isRateLimited()) {
+      await waitForRateLimit()
+    }
+    try {
+      const result = await originalSend(method, params)
+      clearRateLimit()
+      return result
+    } catch (err: any) {
+      if (isRateLimitError(err)) {
+        recordRateLimit()
+      }
+      throw err
+    }
+  } as any
+
+  return provider
 }
 
 /**

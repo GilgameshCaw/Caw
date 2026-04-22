@@ -167,7 +167,7 @@ export default async function listenForRawEvents(
 
     try {
       console.log('[RawEventsGatherer] Setting up WebSocket connection...')
-      wsProvider = makeWebSocketProvider(config.rpcUrl)
+      wsProvider = makeWebSocketProvider(config.rpcUrl, config.chainId)
       wsContract = new Contract(CAW_ACTIONS_ADDRESS, CONTRACT_ABI, wsProvider)
 
       wsContract.on('ActionsProcessed', async (packedHex: string, ev: ContractEventPayload) => {
@@ -275,6 +275,9 @@ export default async function listenForRawEvents(
     setTimeout(async () => {
       isReconnecting = false
       if (!isStopped) {
+        // Wait for global rate limit to clear before reconnecting
+        const { waitForRateLimit } = await import('../../utils/rpcProvider')
+        await waitForRateLimit()
         await setupWebSocket()
       }
     }, delay)
