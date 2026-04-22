@@ -455,6 +455,17 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       if (onRecawStateChange) {
         onRecawStateChange(useItem.id, true)
       }
+
+      // Add a pending recaw to the feed so it shows immediately on the user's profile
+      const { addPendingPost, updatePostWithTxQueueId } = usePendingPostsStore.getState()
+      const tempId = addPendingPost({
+        content: '',
+        username: activeToken?.username || '',
+        tokenId: effectiveTokenId,
+        avatarUrl: getUserAvatar({ tokenId: effectiveTokenId }),
+        parent: useItem as CawItem,
+      })
+      if (result.txQueueId) updatePostWithTxQueueId(tempId, result.txQueueId)
     } catch (err) {
       console.error('Recaw failed', err)
       setRecawPending(false)
@@ -476,8 +487,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       return
     }
 
-    // Open modal with onSuccess callback to set pending state
-    openModal('comment', item, () => {
+    // Open modal with onSuccess callback to set pending state.
+    // For plain recaws, reply to the original post (useItem), not the recaw wrapper.
+    // Quotes act as their own posts, so reply to the quote itself (item).
+    const replyTarget = (isRecaw && !isQuote) ? useItem : item
+    openModal('comment', replyTarget, () => {
       setReplyPending(true)
       setReplyCountAdj(1)
       setReplyCountBase(useItem.commentCount)
