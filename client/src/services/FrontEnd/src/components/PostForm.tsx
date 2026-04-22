@@ -1038,8 +1038,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           tokenId: effectiveTokenId,
           avatarUrl: avatars[effectiveTokenId] || getUserAvatar({ tokenId: effectiveTokenId }),
           replyToId: replyTo?.id,
-          parent: replyTo || undefined,
+          parent: replyTo || quote || undefined,
           cawonce: response.cawonce,
+          isQuote: !!quote,
         })
         if (response.txQueueId) updatePostWithTxQueueId(tempId, response.txQueueId)
       }

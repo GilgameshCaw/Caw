@@ -14,7 +14,7 @@ interface PendingPost extends Partial<CawItem> {
 
 interface PendingPostsStore {
   pendingPosts: PendingPost[]
-  addPendingPost: (post: { content: string; username: string; tokenId: number; displayName?: string; image?: string; avatarUrl?: string; replyToId?: string; parent?: CawItem; cawonce?: number }) => string
+  addPendingPost: (post: { content: string; username: string; tokenId: number; displayName?: string; image?: string; avatarUrl?: string; replyToId?: string; parent?: CawItem; cawonce?: number; isQuote?: boolean; action?: string }) => string
   updatePostWithTxQueueId: (tempId: string, txQueueId: number) => void
   markPostAsFailed: (txQueueId: number) => void
   markPostAsConfirmed: (txQueueId: number) => void
@@ -52,6 +52,8 @@ export const usePendingPostsStore = create<PendingPostsStore>((set) => ({
       isPending: true,
       replyToId: post.replyToId,
       parent: post.parent,
+      isQuote: post.isQuote,
+      action: post.action,
     }
 
     set((state) => ({
