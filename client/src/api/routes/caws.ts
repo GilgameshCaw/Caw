@@ -439,6 +439,91 @@ router.post('/:id/dismiss', requireAuth({
 })
 
 /**
+ * DELETE /api/caws/:originalCawId/recaw
+ * Undo a repost. Deletes the caller's RECAW of the specified caw.
+ * Authenticated — only the recaw author can delete it.
+ */
+router.delete('/:originalCawId/recaw', requireAuth({
+  lookup: async (req) => {
+    // The caller must own the recaw, not the original caw.
+    // We look up by originalCawId + session's authorized tokenIds.
+    const originalCawId = parseInt(req.params.originalCawId)
+    if (isNaN(originalCawId)) return undefined
+    // Return any authorized tokenId — requireAuth will check that it matches
+    // the x-user-id / session. We'll verify ownership in the handler.
+    const userId = Number(req.header('x-user-id'))
+    return isNaN(userId) ? undefined : userId
+  }
+}), async (req, res) => {
+  const originalCawId = parseInt(req.params.originalCawId)
+  const userId = Number(req.header('x-user-id'))
+  if (isNaN(originalCawId) || isNaN(userId)) {
+    return res.status(400).json({ error: 'Invalid parameters' })
+  }
+
+  try {
+    // Look up the original caw to get its author + cawonce (needed for txqueue matching)
+    const originalCaw = await prisma.caw.findUnique({
+      where: { id: originalCawId },
+      select: { userId: true, cawonce: true }
+    })
+    if (!originalCaw) {
+      return res.status(404).json({ error: 'Original caw not found' })
+    }
+
+    // Find the user's recaw of this caw (confirmed or pending)
+    const recaw = await prisma.caw.findFirst({
+      where: { originalCawId, userId, action: 'RECAW' },
+      select: { id: true, cawonce: true }
+    })
+
+    if (recaw) {
+      // Delete the recaw, its txqueue entry, its action record,
+      // and decrement the parent's recawCount.
+      await prisma.$transaction([
+        prisma.txQueue.deleteMany({
+          where: { senderId: userId, payload: { path: ['data', 'cawonce'], equals: recaw.cawonce } }
+        }),
+        prisma.action.deleteMany({
+          where: { senderId: userId, cawonce: recaw.cawonce }
+        }),
+        prisma.caw.delete({ where: { id: recaw.id } }),
+        prisma.caw.update({
+          where: { id: originalCawId },
+          data: { recawCount: { decrement: 1 } }
+        })
+      ])
+    } else {
+      // No recaw row yet — might be a pending txqueue that hasn't been processed.
+      // Match by actionType=3 (RECAW) + receiverId + receiverCawonce.
+      const deleted = await prisma.txQueue.deleteMany({
+        where: {
+          senderId: userId,
+          status: { in: ['pending', 'failed'] },
+          AND: [
+            { payload: { path: ['data', 'actionType'], equals: 3 } },
+            { payload: { path: ['data', 'receiverId'], equals: originalCaw.userId } },
+            { payload: { path: ['data', 'receiverCawonce'], equals: originalCaw.cawonce } },
+          ]
+        }
+      })
+      // Also delete the pending Caw row if one was created optimistically
+      await prisma.caw.deleteMany({
+        where: { originalCawId, userId, action: 'RECAW', status: 'PENDING' }
+      })
+      if (deleted.count === 0) {
+        return res.status(404).json({ error: 'Recaw not found' })
+      }
+    }
+
+    res.json({ ok: true })
+  } catch (err: any) {
+    console.error('[API] Failed to undo recaw:', err?.message || err)
+    res.status(500).json({ error: 'Failed to undo repost' })
+  }
+})
+
+/**
  * GET /api/caws/verify/:userId/:cawonce
  * Returns the EIP-712 signature and action data for a post, enabling client-side verification.
  * The frontend can recover the signer from the signature and verify it matches the post author.

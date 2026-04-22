@@ -1103,25 +1103,52 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 {showRecawMenu && (
                   <div
                     ref={menuRef}
-                    className={`absolute z-10 text-bold rounded-lg p-2 space-y-1 shadow-lg transition-all duration-300 ${
+                    className={`absolute z-10 text-bold rounded-xl p-3 space-y-1 whitespace-nowrap transition-all duration-300 ${
                       isDark
-                        ? 'text-white bg-black/85 backdrop-blur-sm'
-                        : 'text-black bg-white border border-gray-200'
+                        ? 'text-white bg-black/90 backdrop-blur-sm shadow-[0_4px_24px_rgba(255,255,255,0.12)]'
+                        : 'text-black bg-white border border-gray-200 shadow-lg'
                     }`}
                     style={{ left: '-3px', top: '0' }}
                   >
+                    {(useItem.hasRecawed || isRecawByCurrentUser || recawPending) ? (
+                      <button
+                        className={`flex items-center gap-2 px-3 py-2 cursor-pointer rounded-lg transition-all duration-200 ${
+                          isDark ? 'hover:bg-gray-800 text-red-400' : 'hover:bg-red-50 text-red-600'
+                        }`}
+                        onClick={async e => {
+                          e.preventDefault(); e.stopPropagation(); setShowRecawMenu(false)
+                          try {
+                            setBusyRecaw(true)
+                            await apiFetch(`/api/caws/${useItem.id}/recaw`, { method: 'DELETE' })
+                          } catch (err) {
+                            console.warn('Undo recaw request failed (clearing state anyway):', err)
+                          } finally {
+                            // Always clear the recaw state — if the delete failed because
+                            // there was nothing to delete, the UI should still revert.
+                            setRecawPending(false)
+                            setRecawCountAdj(-1)
+                            setRecawCountBase(useItem.recawCount)
+                            if (onRecawStateChange) onRecawStateChange(useItem.id, false)
+                            setBusyRecaw(false)
+                          }
+                        }}
+                      >
+                        <Recaw className="w-5 h-5" /> Undo Repost
+                      </button>
+                    ) : (
+                      <button
+                        className={`flex items-center gap-2 px-3 py-2 cursor-pointer rounded-lg transition-all duration-200 ${
+                          isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-100'
+                        }`}
+                        onClick={e => { e.preventDefault(); e.stopPropagation(); setShowRecawMenu(false); handleRecaw(e) }}
+                      >
+                        <Recaw className={`w-5 h-5 transition-all duration-300 ${
+                          isDark ? 'text-white' : 'text-gray-600'
+                        }`} /> Repost
+                      </button>
+                    )}
                     <button
-                      className={`flex items-center gap-2 px-3 py-1 cursor-pointer rounded transition-all duration-200 ${
-                        isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-100'
-                      }`}
-                      onClick={e => { e.preventDefault(); e.stopPropagation(); setShowRecawMenu(false); handleRecaw(e) }}
-                    >
-                      <Recaw className={`w-4 h-4 transition-all duration-300 ${
-                        isDark ? 'text-white' : 'text-gray-600'
-                      }`} /> Repost
-                    </button>
-                    <button
-                      className={`flex items-center gap-2 px-3 py-1 cursor-pointer rounded transition-all duration-200 ${
+                      className={`flex items-center gap-2 px-3 py-2 cursor-pointer rounded-lg transition-all duration-200 ${
                         isDark ? 'hover:bg-gray-800' : 'hover:bg-gray-100'
                       }`}
                       onClick={e => {
@@ -1132,7 +1159,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                         })
                       }}
                     >
-                      <Pencil className={`w-4 h-4 transition-all duration-300 ${
+                      <Pencil className={`w-5 h-5 transition-all duration-300 ${
                         isDark ? 'fill-white' : 'fill-gray-600'
                       }`}/> Quote
                     </button>
