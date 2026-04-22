@@ -215,7 +215,12 @@ export function useTxQueueMonitor() {
           } else if (status.status === 'done') {
             console.log(`[TxQueueMonitor] TxQueue ID ${status.id} succeeded`)
             const wasPendingPost = usePendingPostsStore.getState().pendingPosts.some(p => p.txQueueId === status.id)
-            removePendingPostByTxQueueId(status.id)
+            if (!wasPendingPost) {
+              // Not a pending post (like, follow, etc.) — remove immediately
+              removePendingPostByTxQueueId(status.id)
+            }
+            // Pending posts are removed AFTER the feed refresh below
+            // so the confirmed version replaces them without a flash
             removeOptimisticLikeByTxQueueId(status.id)
             usePendingSpendStore.getState().removePendingSpend(status.id)
             processedIds.current.add(status.id)
@@ -237,6 +242,18 @@ export function useTxQueueMonitor() {
             console.log('[TxQueueMonitor] Triggering feed refresh (new post confirmed)')
             feedRefreshCallback()
           }
+          // Remove pending posts after a short delay so the feed refresh
+          // has time to fetch the confirmed versions from the API.
+          // The pending post deduplication in Feed already hides duplicates,
+          // so there's no visual overlap during the transition.
+          setTimeout(() => {
+            const store = usePendingPostsStore.getState()
+            for (const p of store.pendingPosts) {
+              if (p.txQueueId && processedIds.current.has(p.txQueueId)) {
+                removePendingPostByTxQueueId(p.txQueueId)
+              }
+            }
+          }, 3000)
         }
         // Refresh token data when any action completes (staked balance changes)
         if (anyCompleted) {
@@ -347,9 +364,25 @@ export function useTxQueueMonitor() {
     // Then poll every 2 seconds. Interval is stable — store reads happen
     // inside getAllTxQueueIds(), so changes to pending posts/likes/spend
     // don't restart the interval (and don't trigger a burst of immediate fetches).
-    const interval = setInterval(checkTxQueueStatus, 2000)
+    // Pause polling when the tab is hidden to reduce server load at scale.
+    let interval: ReturnType<typeof setInterval> | null = setInterval(checkTxQueueStatus, 2000)
 
-    return () => clearInterval(interval)
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        if (interval) { clearInterval(interval); interval = null }
+      } else {
+        if (!interval) {
+          checkTxQueueStatus()
+          interval = setInterval(checkTxQueueStatus, 2000)
+        }
+      }
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange)
+
+    return () => {
+      if (interval) clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 }
