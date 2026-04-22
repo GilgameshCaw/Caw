@@ -74,18 +74,27 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   const prevCacheKeyRef = useRef(cacheKey)
   useEffect(() => {
     if (cacheKey === prevCacheKeyRef.current) return
+    const oldKey = prevCacheKeyRef.current
     prevCacheKeyRef.current = cacheKey
 
     const c = feedCache.get(cacheKey)
+    console.log(`[Feed] cacheKey changed: "${oldKey}" → "${cacheKey}"`, {
+      hasCachedData: !!(c && c.items.length > 0),
+      cachedItemCount: c?.items?.length ?? 0,
+      currentItemCount: items.length,
+      allCacheKeys: Array.from(feedCache.keys()),
+    })
+
     if (c && c.items.length > 0) {
+      console.log(`[Feed] Restoring ${c.items.length} items from cache`)
       setItems(c.items)
       setNextCursor(c.nextCursor)
       setHasMore(c.hasMore)
     } else {
+      console.log(`[Feed] No cache, clearing and fetching`)
       setItems([])
       setNextCursor(undefined)
       setHasMore(true)
-      // Defer fetch to next tick so state updates above are committed first
       setTimeout(() => loadPageRef.current?.(true), 0)
     }
   }, [cacheKey])
@@ -97,6 +106,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   // Persist feed state to module-level cache so it survives navigation
   useEffect(() => {
     if (items.length > 0) {
+      console.log(`[Feed] Saving ${items.length} items to cache key "${cacheKey}" (first item: ${items[0]?.id})`)
       feedCache.set(cacheKey, { items, nextCursor, hasMore, ts: Date.now() })
     }
   }, [items, nextCursor, hasMore, cacheKey])
