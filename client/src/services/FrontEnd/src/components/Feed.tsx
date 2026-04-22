@@ -97,20 +97,18 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   // Filter items based on mute preferences and blocked users
   const filteredItems = useMemo(() => {
     const blockedUserIds = blockedUsers.map(u => u.tokenId)
-    // Build a set of pending post signatures (content + userId) to dedupe DB pending posts
-    const pendingPostSignatures = new Set(
-      pendingPosts.map(p => `${p.user?.tokenId}:${p.content?.trim()}`)
-    )
+    // Build a set of pending post signatures (content + userId + parentId) to dedupe DB pending posts
+    const pendingSig = (p: any) => `${p.user?.tokenId}:${(p.content || '').trim()}:${p.parent?.id || ''}`
+    const pendingPostSignatures = new Set(pendingPosts.map(pendingSig))
 
     const filtered = items.filter(item => {
       // Filter out muted content
       if (shouldFilterPost(item, preferences)) return false
       // Filter out blocked users
       if (blockedUserIds.includes(item.user.tokenId)) return false
-      // Filter out DB PENDING posts that match local pending posts (same user + content)
+      // Filter out DB PENDING posts that match local pending posts (same user + content + parent)
       if (item.status === 'PENDING') {
-        const signature = `${item.user.tokenId}:${item.content?.trim()}`
-        if (pendingPostSignatures.has(signature)) return false
+        if (pendingPostSignatures.has(pendingSig(item))) return false
       }
       return true
     })
@@ -539,14 +537,15 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       {title}
 
       {/* Show pending posts at the top — skip any that already have a
-          confirmed version in the feed (matched by content + userId) */}
+          confirmed version in the feed (matched by content + userId + parentId) */}
       {showPending && (() => {
+        const sig = (i: any) => `${i.user?.tokenId}:${(i.content || '').trim()}:${i.parent?.id || ''}`
         const confirmedSigs = new Set(
-          items.filter(i => i.status !== 'PENDING').map(i => `${i.user?.tokenId}:${i.content?.trim()}`)
+          items.filter(i => i.status !== 'PENDING').map(sig)
         )
         return pendingPosts
           .filter(p => filter === 'profile-replies' ? !!p.replyToId : !p.replyToId)
-          .filter(p => !confirmedSigs.has(`${p.user?.tokenId}:${p.content?.trim()}`))
+          .filter(p => !confirmedSigs.has(sig(p)))
           .map(post => (
             <FeedItem key={post.tempId} item={post as CawItem} />
           ))
