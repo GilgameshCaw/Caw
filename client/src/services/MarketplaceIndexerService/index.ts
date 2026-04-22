@@ -11,7 +11,7 @@ const Config = z.object({
   l1RpcUrl:            z.string().optional(),
   marketplaceAddress:  z.string().optional(),
   cawProfileAddress:      z.string().optional(),
-  pollIntervalMs:      z.number().int().positive().default(15000),
+  pollIntervalMs:      z.number().int().positive().default(60000),
 })
 
 type Config = z.infer<typeof Config>

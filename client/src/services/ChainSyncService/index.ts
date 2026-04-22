@@ -792,7 +792,7 @@ export const chainSyncService = {
     if (resolvedCfg.l2RpcUrl) {
       registerTask({
         name: 'L2Events',
-        interval: 15 * 1000, // 15 seconds
+        interval: 60 * 1000, // 60 seconds (was 15s — too aggressive for Infura rate limits)
         sync: syncL2Events,
       })
       ctx.declareLoop('ChainSync:L2Events', 60 * 1000) // 4× interval

@@ -312,7 +312,7 @@ export default async function listenForRawEvents(
       console.error('[RawEventsGatherer] Polling error:', err)
       // Don't update lastSyncedBlock on error, will retry next interval
     }
-  }, 15000) // Poll every 15 seconds (was 30s, now faster for better responsiveness)
+  }, 30000) // Poll every 30 seconds (WebSocket handles real-time; this is the fallback)
 
   return {
     stop() {
