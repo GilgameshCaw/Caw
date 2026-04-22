@@ -55,10 +55,10 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   const getHighlightedText = (text: string) => {
     if (!text) return null
 
-    // Match @mentions, #hashtags, $cashtags, and URLs
-    const regex = /([@#$][a-zA-Z0-9_]+|https?:\/\/[^\s<>"'{}|\\^`[\]]+[^\s<>"'{}|\\^`[\].,!?;:)\]])/g
+    // Match @mentions, #hashtags (must contain a letter), $cashtags (must contain a letter), and URLs
+    const regex = /(@[a-zA-Z0-9_]+|[#$][a-zA-Z0-9_]*[a-zA-Z_][a-zA-Z0-9_]*|https?:\/\/[^\s<>"'{}|\\^`[\]]+[^\s<>"'{}|\\^`[\].,!?;:)\]])/g
     const parts = text.split(regex)
-    const isMentionOrTag = /^[@#$][a-zA-Z0-9_]+$/
+    const isMentionOrTag = /^(@[a-zA-Z0-9_]+|[#$][a-zA-Z0-9_]*[a-zA-Z_][a-zA-Z0-9_]*)$/
     const isUrl = /^https?:\/\//
 
     return parts.map((part, index) => {
