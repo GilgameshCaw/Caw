@@ -94,6 +94,21 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   useEffect(() => { itemsRef.current = items }, [items])
 
 
+  // Clean up pending posts that now have a confirmed version in the feed
+  useEffect(() => {
+    if (pendingPosts.length === 0 || items.length === 0) return
+    const sig = (i: any) => `${i.user?.tokenId}:${(i.content || '').trim()}:${i.parent?.id || ''}`
+    const confirmedSigs = new Set(
+      items.filter(i => i.status !== 'PENDING').map(sig)
+    )
+    const { removePendingPost } = usePendingPostsStore.getState()
+    for (const p of pendingPosts) {
+      if (confirmedSigs.has(sig(p))) {
+        removePendingPost(p.tempId)
+      }
+    }
+  }, [items, pendingPosts])
+
   // Filter items based on mute preferences and blocked users
   const filteredItems = useMemo(() => {
     const blockedUserIds = blockedUsers.map(u => u.tokenId)
