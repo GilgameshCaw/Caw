@@ -1,5 +1,62 @@
 import { JsonRpcProvider, WebSocketProvider, Network } from 'ethers'
 
+// ============================================
+// GLOBAL RATE LIMIT BACKOFF
+// ============================================
+// When any service hits a 429, ALL services back off to avoid making it worse.
+// Shared across the process — every service checks this before making RPC calls.
+
+let rateLimitedUntil = 0
+let backoffMs = 5_000 // starts at 5s, doubles on each consecutive 429, caps at 60s
+const MAX_BACKOFF_MS = 60_000
+
+/**
+ * Record that a 429 rate limit was hit. All services should call this
+ * when they detect a rate-limit error from the RPC.
+ */
+export function recordRateLimit() {
+  rateLimitedUntil = Date.now() + backoffMs
+  console.log(`[RPC] Rate limited — all services backing off for ${(backoffMs / 1000).toFixed(0)}s`)
+  backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS)
+}
+
+/**
+ * Clear the backoff after a successful RPC call.
+ */
+export function clearRateLimit() {
+  if (backoffMs > 5_000) {
+    backoffMs = 5_000
+  }
+}
+
+/**
+ * Check if we're currently in a rate-limit backoff period.
+ * Services should call this before making RPC requests and skip/delay if true.
+ */
+export function isRateLimited(): boolean {
+  return Date.now() < rateLimitedUntil
+}
+
+/**
+ * Wait until the rate limit backoff period has passed.
+ * Returns immediately if not rate limited.
+ */
+export async function waitForRateLimit(): Promise<void> {
+  const remaining = rateLimitedUntil - Date.now()
+  if (remaining > 0) {
+    await new Promise(r => setTimeout(r, remaining))
+  }
+}
+
+/**
+ * Check if an error is a rate-limit (429) error from the RPC provider.
+ */
+export function isRateLimitError(err: any): boolean {
+  const msg = (err?.message || err?.reason || '').toLowerCase()
+  const code = err?.error?.code || err?.code
+  return code === -32005 || msg.includes('too many requests') || msg.includes('429') || msg.includes('rate limit')
+}
+
 /**
  * Convert a WebSocket RPC URL to its HTTP equivalent. Prefer using an
  * explicit HTTP URL from env vars (L2_RPC_URL_HTTP, L1_RPC_URL_HTTP)
@@ -50,11 +107,14 @@ export function getL1HttpRpcUrl(fallbackWsUrl?: string): string {
  * before the first successful RPC call.
  */
 export function makeJsonRpcProvider(url: string, chainId?: number): JsonRpcProvider {
+  let provider: JsonRpcProvider
   if (chainId != null) {
     const network = Network.from(chainId)
-    return new JsonRpcProvider(url, network, { staticNetwork: network })
+    provider = new JsonRpcProvider(url, network, { staticNetwork: network })
+  } else {
+    provider = new JsonRpcProvider(url, undefined, { staticNetwork: true })
   }
-  return new JsonRpcProvider(url, undefined, { staticNetwork: true })
+  return wrapProviderWithRateLimit(provider)
 }
 
 /**
@@ -73,4 +133,35 @@ export function makeWebSocketProvider(url: string, chainId?: number): WebSocketP
     return new WebSocketProvider(url, network)
   }
   return new WebSocketProvider(url)
+}
+
+/**
+ * Wrap a JsonRpcProvider to automatically handle rate limits.
+ * Intercepts the internal send() method to:
+ * 1. Wait if we're in a global rate-limit backoff
+ * 2. Record 429 errors and trigger backoff
+ * 3. Clear backoff on success
+ */
+function wrapProviderWithRateLimit<T extends JsonRpcProvider>(provider: T): T {
+  const originalSend = provider.send.bind(provider)
+
+  provider.send = async function(method: string, params: any[]) {
+    // Wait if globally rate-limited
+    if (isRateLimited()) {
+      await waitForRateLimit()
+    }
+
+    try {
+      const result = await originalSend(method, params)
+      clearRateLimit()
+      return result
+    } catch (err: any) {
+      if (isRateLimitError(err)) {
+        recordRateLimit()
+      }
+      throw err
+    }
+  } as any
+
+  return provider
 }
