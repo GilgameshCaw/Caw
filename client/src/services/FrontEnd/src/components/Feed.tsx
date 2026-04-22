@@ -538,12 +538,19 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       {/* Section title (rendered after suggested users) */}
       {title}
 
-      {/* Show pending posts at the top */}
-      {showPending && pendingPosts.filter(p =>
-        filter === 'profile-replies' ? !!p.replyToId : !p.replyToId
-      ).map(post => (
-        <FeedItem key={post.tempId} item={post as CawItem} />
-      ))}
+      {/* Show pending posts at the top — skip any that already have a
+          confirmed version in the feed (matched by content + userId) */}
+      {showPending && (() => {
+        const confirmedSigs = new Set(
+          items.filter(i => i.status !== 'PENDING').map(i => `${i.user?.tokenId}:${i.content?.trim()}`)
+        )
+        return pendingPosts
+          .filter(p => filter === 'profile-replies' ? !!p.replyToId : !p.replyToId)
+          .filter(p => !confirmedSigs.has(`${p.user?.tokenId}:${p.content?.trim()}`))
+          .map(post => (
+            <FeedItem key={post.tempId} item={post as CawItem} />
+          ))
+      })()}
 
       {/* Posts with consistent styling across all pages */}
       {filteredItems.map((caw, idx) => {

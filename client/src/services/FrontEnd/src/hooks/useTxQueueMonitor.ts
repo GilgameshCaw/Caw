@@ -228,12 +228,9 @@ export function useTxQueueMonitor() {
           } else if (status.status === 'done') {
             console.log(`[TxQueueMonitor] TxQueue ID ${status.id} succeeded`)
             const wasPendingPost = usePendingPostsStore.getState().pendingPosts.some(p => p.txQueueId === status.id)
-            if (!wasPendingPost) {
-              // Not a pending post (like, follow, etc.) — remove immediately
-              removePendingPostByTxQueueId(status.id)
-            }
-            // Pending posts are removed AFTER the feed refresh below
-            // so the confirmed version replaces them without a flash
+            // Remove pending post immediately — the Feed's dedup filter
+            // (pendingPostSignatures) will keep the confirmed version visible
+            removePendingPostByTxQueueId(status.id)
             removeOptimisticLikeByTxQueueId(status.id)
             usePendingSpendStore.getState().removePendingSpend(status.id)
             processedIds.current.add(status.id)
@@ -255,18 +252,6 @@ export function useTxQueueMonitor() {
             console.log('[TxQueueMonitor] Triggering feed refresh (new post confirmed)')
             feedRefreshCallback()
           }
-          // Remove pending posts after a short delay so the feed refresh
-          // has time to fetch the confirmed versions from the API.
-          // The pending post deduplication in Feed already hides duplicates,
-          // so there's no visual overlap during the transition.
-          setTimeout(() => {
-            const store = usePendingPostsStore.getState()
-            for (const p of store.pendingPosts) {
-              if (p.txQueueId && processedIds.current.has(p.txQueueId)) {
-                removePendingPostByTxQueueId(p.txQueueId)
-              }
-            }
-          }, 3000)
         }
         // Refresh token data when any action completes (staked balance changes)
         if (anyCompleted) {
