@@ -574,6 +574,12 @@ export async function handleOtherAction(
   authorId: number,
   parentCawId?: number
 ): Promise<void> {
+  // Check if this is a hide action (hide own post or undo recaw)
+  if (rawAction.text?.startsWith('hide:')) {
+    await handleHideAction(tx, action, rawAction, authorId)
+    return
+  }
+
   // Check if this is a tip action
   if (rawAction.text?.startsWith('tip:')) {
     await handleTipAction(tx, action, rawAction, authorId)
@@ -863,5 +869,79 @@ async function handleTipAction(
     await NotificationService.createTipNotification(recipientId, senderId, cawId || undefined, Number(tipAmount))
   } catch (err) {
     console.error('[handleTipAction] Failed to create tip notification:', err)
+  }
+}
+
+/**
+ * Handle hide actions — user hiding their own post or undoing a recaw.
+ *
+ * Text formats:
+ *   hide:caw:{cawonce}                        — hide own post
+ *   hide:recaw:{receiverId}:{receiverCawonce}  — undo own recaw
+ */
+async function handleHideAction(
+  tx: PrismaTransactionClient,
+  action: any,
+  rawAction: any,
+  senderId: number
+): Promise<void> {
+  const text: string = rawAction.text || ''
+  console.log('[handleHideAction] Processing:', { senderId, text })
+
+  if (text.startsWith('hide:caw:')) {
+    // Hide own post: hide:caw:{cawonce}
+    const cawonce = parseInt(text.replace('hide:caw:', ''))
+    if (isNaN(cawonce)) {
+      console.error('[handleHideAction] Invalid cawonce:', text)
+      return
+    }
+
+    const result = await tx.caw.updateMany({
+      where: { userId: senderId, cawonce, status: 'SUCCESS' },
+      data: { status: 'HIDDEN' }
+    })
+
+    if (result.count > 0) {
+      console.log(`[handleHideAction] Hidden caw: user=${senderId} cawonce=${cawonce}`)
+    } else {
+      console.warn(`[handleHideAction] No matching caw found: user=${senderId} cawonce=${cawonce}`)
+    }
+  } else if (text.startsWith('hide:recaw:')) {
+    // Undo recaw: hide:recaw:{receiverId}:{receiverCawonce}
+    const parts = text.replace('hide:recaw:', '').split(':')
+    const receiverId = parseInt(parts[0])
+    const receiverCawonce = parseInt(parts[1])
+    if (isNaN(receiverId) || isNaN(receiverCawonce)) {
+      console.error('[handleHideAction] Invalid recaw target:', text)
+      return
+    }
+
+    // Find the original caw being recawed
+    const originalCaw = await tx.caw.findFirst({
+      where: { userId: receiverId, cawonce: receiverCawonce },
+      select: { id: true }
+    })
+    if (!originalCaw) {
+      console.warn(`[handleHideAction] Original caw not found: user=${receiverId} cawonce=${receiverCawonce}`)
+      return
+    }
+
+    // Delete the sender's recaw of that post
+    const deleted = await tx.caw.deleteMany({
+      where: { userId: senderId, originalCawId: originalCaw.id, action: 'RECAW' }
+    })
+
+    if (deleted.count > 0) {
+      // Decrement the parent's recawCount
+      await tx.caw.update({
+        where: { id: originalCaw.id },
+        data: { recawCount: { decrement: deleted.count } }
+      })
+      console.log(`[handleHideAction] Deleted recaw: user=${senderId} of caw=${originalCaw.id}`)
+    } else {
+      console.warn(`[handleHideAction] No recaw found to delete: user=${senderId} originalCaw=${originalCaw.id}`)
+    }
+  } else {
+    console.warn('[handleHideAction] Unknown hide format:', text)
   }
 }

@@ -174,7 +174,7 @@ router.post('/', async (req, res) => {
   const timings: Record<string, number> = {}
   const mark = (label: string) => { timings[label] = Date.now() - reqStart }
   try {
-    const { data, domain, types, signature, isQuote, pendingDepositTxHash, retriedTxQueueId } = req.body
+    const { data, domain, types, signature, pendingDepositTxHash, retriedTxQueueId } = req.body
 
     // Validate pendingDepositTxHash shape if provided. The server does NOT verify
     // the hash synchronously (that would block the request path on an L1 RPC call).
@@ -364,6 +364,46 @@ router.post('/', async (req, res) => {
     }
     mark('passiveAuth')
 
+    // Handle hide actions optimistically — hide the caw or delete the recaw immediately
+    if ((data.actionType === 7 || data.actionType === 'other') && plaintext?.startsWith('hide:')) {
+      try {
+        if (plaintext.startsWith('hide:caw:')) {
+          const cawonce = parseInt(plaintext.replace('hide:caw:', ''))
+          if (!isNaN(cawonce)) {
+            await prisma.caw.updateMany({
+              where: { userId: data.senderId, cawonce, status: 'SUCCESS' },
+              data: { status: 'HIDDEN' }
+            })
+            console.log(`[Actions] Optimistic hide: user=${data.senderId} cawonce=${cawonce}`)
+          }
+        } else if (plaintext.startsWith('hide:recaw:')) {
+          const parts = plaintext.replace('hide:recaw:', '').split(':')
+          const receiverId = parseInt(parts[0])
+          const receiverCawonce = parseInt(parts[1])
+          if (!isNaN(receiverId) && !isNaN(receiverCawonce)) {
+            const originalCaw = await prisma.caw.findFirst({
+              where: { userId: receiverId, cawonce: receiverCawonce },
+              select: { id: true }
+            })
+            if (originalCaw) {
+              const deleted = await prisma.caw.deleteMany({
+                where: { userId: data.senderId, originalCawId: originalCaw.id, action: 'RECAW' }
+              })
+              if (deleted.count > 0) {
+                await prisma.caw.update({
+                  where: { id: originalCaw.id },
+                  data: { recawCount: { decrement: deleted.count } }
+                })
+                console.log(`[Actions] Optimistic undo recaw: user=${data.senderId} of caw=${originalCaw.id}`)
+              }
+            }
+          }
+        }
+      } catch (hideErr) {
+        console.error('[Actions] Failed to process optimistic hide:', hideErr)
+      }
+    }
+
     // Create optimistic pending state for profile updates
     if (data.actionType === 'other' && plaintext && (plaintext.startsWith('p:') || plaintext.startsWith('profile-update:'))) {
       try {
@@ -379,6 +419,7 @@ router.post('/', async (req, res) => {
 
     // Create optimistic pending caw for CAW and RECAW actions
     const isRecaw = data.actionType === 3 || data.actionType === 'recaw'
+    const isQuote = isRecaw && !!plaintext
     if (data.actionType === 0 || data.actionType === 'caw' || isRecaw) { // 0=caw, 3=recaw (plain or quote)
       try {
         // User was already verified above (sender.address is set); no need to
@@ -796,7 +837,7 @@ router.post('/', async (req, res) => {
         return tx.txQueue.create({
           data: {
             senderId: data.senderId,
-            payload: { data, domain, types, isQuote: isQuote || false },
+            payload: { data, domain, types },
             signedTx: signature,
             pendingDepositTxHash: sanitizedPendingDepositTxHash
           }
@@ -982,7 +1023,7 @@ router.post('/batch', async (req, res) => {
 
       rowsToInsert.push({
         senderId: a.data.senderId,
-        payload: { data: a.data, domain: a.domain, types: a.types, isQuote: a.isQuote || false },
+        payload: { data: a.data, domain: a.domain, types: a.types },
         signedTx: a.signature,
       })
       results.push({ index: i }) // placeholder, txQueueId filled after insert
@@ -1038,6 +1079,7 @@ router.post('/batch', async (req, res) => {
           // Strip media URLs from text content (same as single-action path).
           // d.text is smltxt-compressed hex — decompress for display/URL parsing.
           const dPlain = decompressActionText(d.text)
+          const isQuote = isRecaw && !!dPlain
           const imageUrlRegex = /(https?:\/\/[^\s]+\/uploads\/images\/[^\s]+\.(jpg|jpeg|png|gif|webp))/gi
           const imageUrls = dPlain.match(imageUrlRegex) || []
           const videoUrlRegex = /video:(https?:\/\/[^\s]+\/uploads\/videos\/[^\s]+\.(mp4|webm|mov|avi|mkv|ogg|ogv))/gi
@@ -1086,7 +1128,7 @@ router.post('/batch', async (req, res) => {
           cawByUserCawonce.set(`${d.senderId}:${d.cawonce}`, caw.id)
 
           // Create pending Reply record (CAW replies only — not RECAW quotes)
-          if (originalCawId && isCaw && !(a.isQuote === true)) {
+          if (originalCawId && isCaw && !isQuote) {
             try {
               const existing = await tx.reply.findUnique({
                 where: {

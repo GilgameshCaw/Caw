@@ -440,6 +440,7 @@ enum CawStatus {
   SUCCESS
   PENDING
   FAILED
+  HIDDEN
 }
 
 enum NotificationType {
