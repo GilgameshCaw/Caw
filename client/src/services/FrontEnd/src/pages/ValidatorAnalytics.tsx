@@ -80,6 +80,7 @@ interface ReplicationTx {
   client: string
   destChain: string
   checkpoint: string
+  actionCount: number
   gasCostEth: string
   lzFeeEth: string
   totalCostEth: string
@@ -224,6 +225,7 @@ const ValidatorAnalytics: React.FC = () => {
         checkpoint: t.endCheckpointId && t.endCheckpointId !== t.checkpointId
           ? `${t.checkpointId}-${t.endCheckpointId}`
           : String(t.checkpointId),
+        actionCount: t.actionCount || 0,
         gasCostEth: t.ethCost || '0',
         lzFeeEth: t.lzFee || '0',
         totalCostEth: t.totalCost || '0',
@@ -899,8 +901,9 @@ const ValidatorAnalytics: React.FC = () => {
                   <th className="text-left p-2">Time</th>
                   <th className="text-left p-2">Tx Hash</th>
                   <th className="text-left p-2">Client</th>
-                  <th className="text-left p-2">Dest Chain</th>
+                  <th className="text-left p-2">Type</th>
                   <th className="text-left p-2">Checkpoint</th>
+                  <th className="text-right p-2">Actions</th>
                   <th className="text-right p-2">Gas</th>
                   <th className="text-right p-2">LZ Fee</th>
                   <th className="text-right p-2">Total</th>
@@ -926,8 +929,17 @@ const ValidatorAnalytics: React.FC = () => {
                       </a>
                     </td>
                     <td className="p-2 font-mono">{tx.client}</td>
-                    <td className="p-2">{tx.destChain}</td>
+                    <td className="p-2">
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${
+                        tx.destChain === '0' || tx.destChain === 'Direct'
+                          ? (isDark ? 'bg-green-500/20 text-green-400' : 'bg-green-100 text-green-700')
+                          : (isDark ? 'bg-blue-500/20 text-blue-400' : 'bg-blue-100 text-blue-700')
+                      }`}>
+                        {tx.destChain === '0' || tx.destChain === 'Direct' ? 'Optimistic' : 'LZ'}
+                      </span>
+                    </td>
                     <td className="p-2 font-mono">{tx.checkpoint}</td>
+                    <td className="p-2 text-right font-mono">{tx.actionCount || '-'}</td>
                     <td className="p-2 text-right font-mono" title={`${fmtEth(tx.gasCostEth)} ETH`}>{weiToUsd(tx.gasCostEth, p.ethUsd)}</td>
                     <td className="p-2 text-right font-mono" title={`${fmtEth(tx.lzFeeEth)} ETH`}>{weiToUsd(tx.lzFeeEth, p.ethUsd)}</td>
                     <td className="p-2 text-right font-mono" title={`${fmtEth(tx.totalCostEth)} ETH`}>{weiToUsd(tx.totalCostEth, p.ethUsd)}</td>
