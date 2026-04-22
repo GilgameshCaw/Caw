@@ -228,16 +228,18 @@ export function useTxQueueMonitor() {
           } else if (status.status === 'done') {
             console.log(`[TxQueueMonitor] TxQueue ID ${status.id} succeeded`)
             const wasPendingPost = usePendingPostsStore.getState().pendingPosts.some(p => p.txQueueId === status.id)
+            if (wasPendingPost) {
+              // Mark as confirmed — stops showing "Pending" badge, keeps the
+              // post visible in the feed. Feed's cleanup effect will remove it
+              // once the real version arrives from the API.
+              usePendingPostsStore.getState().markPostAsConfirmed(status.id)
+            }
             removeOptimisticLikeByTxQueueId(status.id)
             usePendingSpendStore.getState().removePendingSpend(status.id)
+            processedIds.current.add(status.id)
             anyCompleted = true
             if (wasPendingPost) {
               needsFeedRefresh = true
-              // Don't add to processedIds yet — keep polling so feed refresh
-              // retries until the Feed's cleanup effect removes the pending post.
-              // Once removed from the store, getAllTxQueueIds() won't include it.
-            } else {
-              processedIds.current.add(status.id)
             }
             // When any action completes, refresh visible feed items to pick up
             // updated state (hasLiked, hasRecawed, etc.) without resetting scroll

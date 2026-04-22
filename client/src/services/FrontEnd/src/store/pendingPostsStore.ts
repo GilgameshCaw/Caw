@@ -5,8 +5,8 @@ interface PendingPost extends Partial<CawItem> {
   tempId: string
   content: string
   timestamp: string
-  status: 'PENDING' | 'FAILED'
-  isPending: true
+  status: 'PENDING' | 'FAILED' | 'SUCCESS'
+  isPending: boolean
   isFailed?: boolean // Track if the post failed to submit
   txQueueId?: number // Track the associated txQueue ID
   replyToId?: string
@@ -17,6 +17,7 @@ interface PendingPostsStore {
   addPendingPost: (post: { content: string; username: string; tokenId: number; displayName?: string; image?: string; avatarUrl?: string; replyToId?: string; parent?: CawItem }) => string
   updatePostWithTxQueueId: (tempId: string, txQueueId: number) => void
   markPostAsFailed: (txQueueId: number) => void
+  markPostAsConfirmed: (txQueueId: number) => void
   removePendingPost: (tempId: string) => void
   removePendingPostByTxQueueId: (txQueueId: number) => void
   clearPendingPosts: () => void
@@ -79,6 +80,16 @@ export const usePendingPostsStore = create<PendingPostsStore>((set) => ({
     set((state) => ({
       pendingPosts: state.pendingPosts.map(post =>
         post.txQueueId === txQueueId ? { ...post, isFailed: true } : post
+      )
+    }))
+  },
+
+  markPostAsConfirmed: (txQueueId) => {
+    set((state) => ({
+      pendingPosts: state.pendingPosts.map(post =>
+        post.txQueueId === txQueueId
+          ? { ...post, status: 'SUCCESS' as const, isPending: false }
+          : post
       )
     }))
   },
