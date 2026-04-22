@@ -2828,25 +2828,36 @@ console.log("succeededKeys", succeededKeys)
 
             let numCheckpoints = endCheckpointId - startCheckpointId + 1
 
-            // Cap batch size to fit L2b calldata limit (~120KB).
-            // Each action is ~200-400 bytes packed, 32 actions per checkpoint.
-            // At ~300 bytes avg per action: 120000 / 300 = 400 actions = ~12 checkpoints.
-            // Use 10 as a safe default.
-            const MAX_OPTIMISTIC_CHECKPOINTS = 10
-            if (numCheckpoints > MAX_OPTIMISTIC_CHECKPOINTS) {
-              endCheckpointId = startCheckpointId + MAX_OPTIMISTIC_CHECKPOINTS - 1
-              numCheckpoints = MAX_OPTIMISTIC_CHECKPOINTS
-              console.log(`[OptimisticReplication] Capped to ${numCheckpoints} checkpoints (${startCheckpointId}..${endCheckpointId}) to fit calldata limit`)
-            }
+            // Dynamic batch sizing: reconstruct incrementally and stop when payload
+            // would exceed L2b calldata limit (~110KB, leaving margin below 128KB).
+            // Start with all available checkpoints and trim if too large.
+            const L2B_CALLDATA_LIMIT = 110_000
 
-            console.log(`[OptimisticReplication] Client ${client.id}: submitting checkpoints ${startCheckpointId}..${endCheckpointId} (${numCheckpoints})`)
+            console.log(`[OptimisticReplication] Client ${client.id}: attempting checkpoints ${startCheckpointId}..${endCheckpointId} (${numCheckpoints})`)
 
-            // 4. Reconstruct data from L2 events
-            const data = await reconstructCheckpointData(client.id, startCheckpointId, endCheckpointId)
+            // 4. Reconstruct data from L2 events — try the full range first
+            let data = await reconstructCheckpointData(client.id, startCheckpointId, endCheckpointId)
             if (!data) {
               console.error(`[OptimisticReplication] Failed to reconstruct data for client ${client.id} checkpoints ${startCheckpointId}..${endCheckpointId}`)
               continue
             }
+
+            // Trim if payload is too large for L2b calldata
+            while (data.packedBytes.length > L2B_CALLDATA_LIMIT && numCheckpoints > 1) {
+              numCheckpoints = Math.max(1, Math.floor(numCheckpoints * 0.7)) // shrink by 30%
+              endCheckpointId = startCheckpointId + numCheckpoints - 1
+              console.log(`[OptimisticReplication] Trimming to ${numCheckpoints} checkpoints (${startCheckpointId}..${endCheckpointId}, payload was ${data.packedBytes.length} bytes)`)
+              data = await reconstructCheckpointData(client.id, startCheckpointId, endCheckpointId)
+              if (!data) break
+            }
+
+            if (!data) {
+              console.error(`[OptimisticReplication] Failed to reconstruct data after trimming for client ${client.id}`)
+              continue
+            }
+
+            const totalActions = numCheckpoints * OPTIMISTIC_CHECKPOINT_INTERVAL
+            console.log(`[OptimisticReplication] Client ${client.id}: submitting checkpoints ${startCheckpointId}..${endCheckpointId} (${numCheckpoints} checkpoints, ${totalActions} actions, ${data.packedBytes.length} bytes)`)
 
             console.log(`[OptimisticReplication] Hash chain verified for client ${client.id} checkpoints ${startCheckpointId}..${endCheckpointId}`)
 
