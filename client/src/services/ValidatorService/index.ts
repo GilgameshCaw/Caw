@@ -1719,14 +1719,27 @@ console.log("succeededKeys", succeededKeys)
         console.error("[Validator] Error code:", submitErr.code)
         console.error("[Validator] Error stack:", submitErr.stack)
 
-        // Check if this is a provider/network error that should be retried
-        if (submitErr.message?.includes('provider destroyed') ||
-            submitErr.message?.includes('UNSUPPORTED_OPERATION') ||
-            submitErr.message?.includes('cancelled request') ||
-            submitErr.code === 'UNSUPPORTED_OPERATION') {
-          console.log('[Validator] Provider/network error during submission - reinitializing connection')
+        // Check if this is a provider/network/rate-limit error that should be retried
+        const errMsg = (submitErr.message || '').toLowerCase()
+        const isTransient =
+          submitErr.code === 'UNSUPPORTED_OPERATION' ||
+          submitErr.code === 'BAD_DATA' ||
+          submitErr.code === 'UNKNOWN_ERROR' ||
+          errMsg.includes('provider destroyed') ||
+          errMsg.includes('cancelled request') ||
+          errMsg.includes('too many requests') ||
+          errMsg.includes('429') ||
+          errMsg.includes('rate limit') ||
+          errMsg.includes('missing response') ||
+          errMsg.includes('internal error') ||
+          errMsg.includes('could not coalesce') ||
+          errMsg.includes('timeout') ||
+          errMsg.includes('enotfound') ||
+          errMsg.includes('econnrefused') ||
+          errMsg.includes('econnreset')
+        if (isTransient) {
+          console.log('[Validator] Transient error during submission — keeping entries pending for retry:', errMsg.slice(0, 150))
           await initializeConnection()
-          // Don't mark as failed, just skip updating these entries so they can be retried
           return
         }
 
