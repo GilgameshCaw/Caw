@@ -74,24 +74,16 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   const prevCacheKeyRef = useRef(cacheKey)
   useEffect(() => {
     if (cacheKey === prevCacheKeyRef.current) return
-    const oldKey = prevCacheKeyRef.current
     prevCacheKeyRef.current = cacheKey
 
     const c = feedCache.get(cacheKey)
-    console.log(`[Feed] cacheKey changed: "${oldKey}" → "${cacheKey}"`, {
-      hasCachedData: !!(c && c.items.length > 0),
-      cachedItemCount: c?.items?.length ?? 0,
-      currentItemCount: items.length,
-      allCacheKeys: Array.from(feedCache.keys()),
-    })
-
     if (c && c.items.length > 0) {
-      console.log(`[Feed] Restoring ${c.items.length} items from cache`)
+      itemsCacheKeyRef.current = cacheKey
       setItems(c.items)
       setNextCursor(c.nextCursor)
       setHasMore(c.hasMore)
     } else {
-      console.log(`[Feed] No cache, clearing and fetching`)
+      itemsCacheKeyRef.current = cacheKey
       setItems([])
       setNextCursor(undefined)
       setHasMore(true)
@@ -103,10 +95,15 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   const itemsRef = useRef<CawItem[]>(items)
   useEffect(() => { itemsRef.current = items }, [items])
 
+  // Track which cache key the current items actually belong to.
+  // Updated AFTER items are set — prevents the save effect from writing
+  // stale items under a new cache key during tab switches.
+  const itemsCacheKeyRef = useRef(cacheKey)
+
   // Persist feed state to module-level cache so it survives navigation
   useEffect(() => {
-    if (items.length > 0) {
-      console.log(`[Feed] Saving ${items.length} items to cache key "${cacheKey}" (first item: ${items[0]?.id})`)
+    // Only save if items belong to the current cache key
+    if (items.length > 0 && itemsCacheKeyRef.current === cacheKey) {
       feedCache.set(cacheKey, { items, nextCursor, hasMore, ts: Date.now() })
     }
   }, [items, nextCursor, hasMore, cacheKey])
