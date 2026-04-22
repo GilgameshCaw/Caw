@@ -2826,7 +2826,19 @@ console.log("succeededKeys", succeededKeys)
               continue
             }
 
-            const numCheckpoints = endCheckpointId - startCheckpointId + 1
+            let numCheckpoints = endCheckpointId - startCheckpointId + 1
+
+            // Cap batch size to fit L2b calldata limit (~120KB).
+            // Each action is ~200-400 bytes packed, 32 actions per checkpoint.
+            // At ~300 bytes avg per action: 120000 / 300 = 400 actions = ~12 checkpoints.
+            // Use 10 as a safe default.
+            const MAX_OPTIMISTIC_CHECKPOINTS = 10
+            if (numCheckpoints > MAX_OPTIMISTIC_CHECKPOINTS) {
+              endCheckpointId = startCheckpointId + MAX_OPTIMISTIC_CHECKPOINTS - 1
+              numCheckpoints = MAX_OPTIMISTIC_CHECKPOINTS
+              console.log(`[OptimisticReplication] Capped to ${numCheckpoints} checkpoints (${startCheckpointId}..${endCheckpointId}) to fit calldata limit`)
+            }
+
             console.log(`[OptimisticReplication] Client ${client.id}: submitting checkpoints ${startCheckpointId}..${endCheckpointId} (${numCheckpoints})`)
 
             // 4. Reconstruct data from L2 events
