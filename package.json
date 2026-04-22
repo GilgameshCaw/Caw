@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "cd client && npm run dev",
-    "dev:stop": "cd client && npm run dev:stop",
+    "stop": "cd client && npm run stop",
     "start": "cd client && npm start",
     "test": "cd client && npm test",
     "web": "cd client && npm run web"
