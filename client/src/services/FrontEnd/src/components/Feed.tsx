@@ -314,6 +314,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       console.error(e)
       setError('Could not load feed')
     } finally {
+      loadingRef.current = false
       setLoading(false)
     }
   }, [nextCursor, hasMore])
