@@ -228,12 +228,7 @@ export function useTxQueueMonitor() {
           } else if (status.status === 'done') {
             console.log(`[TxQueueMonitor] TxQueue ID ${status.id} succeeded`)
             const wasPendingPost = usePendingPostsStore.getState().pendingPosts.some(p => p.txQueueId === status.id)
-            // Don't remove pending posts here — let the Feed's confirmedSigs
-            // filter hide them once the confirmed version appears in the feed.
-            // The store's 30s auto-remove timer handles memory cleanup.
-            if (!wasPendingPost) {
-              removePendingPostByTxQueueId(status.id)
-            }
+            removePendingPostByTxQueueId(status.id)
             removeOptimisticLikeByTxQueueId(status.id)
             usePendingSpendStore.getState().removePendingSpend(status.id)
             processedIds.current.add(status.id)
