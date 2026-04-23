@@ -373,6 +373,19 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   const [mediaPosition, setMediaPosition] = useState<'start' | 'end'>('start')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [signingProgress, setSigningProgress] = useState<{ current: number; total: number } | null>(null)
+  const [displayedSigningCurrent, setDisplayedSigningCurrent] = useState(0)
+  const signingTotal = signingProgress?.total ?? 0
+  useEffect(() => {
+    if (!signingTotal) { setDisplayedSigningCurrent(0); return }
+    setDisplayedSigningCurrent(1)
+    const id = setInterval(() => {
+      setDisplayedSigningCurrent(prev => {
+        if (prev >= signingTotal) { clearInterval(id); return signingTotal }
+        return prev + 1
+      })
+    }, 25)
+    return () => clearInterval(id)
+  }, [signingTotal])
   const activeTokenId = useTokenDataStore(state => state.activeTokenId);
   const activeToken = useActiveToken();
   const avatars = useTokenDataStore(s => s.avatarsByTokenId);
@@ -1349,7 +1362,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                     disabled={isDisabled}
                     onClick={handleSubmit}
                   >
-                    {wrongWallet ? 'Wrong Wallet' : signingProgress ? `Signing ${signingProgress.current}/${signingProgress.total}...` : isSubmitting ? 'Signing...' : isThreadMode ? `Thread (${chunkCount})` : replyTo ? 'Reply' : 'Post'}
+                    {wrongWallet ? 'Wrong Wallet' : signingProgress ? `Signing ${displayedSigningCurrent}/${signingProgress.total}...` : isSubmitting ? 'Signing...' : isThreadMode ? `Thread (${chunkCount})` : replyTo ? 'Reply' : 'Post'}
                   </button>
                 )
                 return tooltipText ? <Tooltip text={tooltipText}>{btn}</Tooltip> : btn
@@ -1716,7 +1729,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                     disabled={isDisabled2}
                     onClick={handleSubmit}
                   >
-                    {wrongWallet2 ? 'Wrong Wallet' : hasNoToken ? 'Create Account' : signingProgress ? `Signing ${signingProgress.current}/${signingProgress.total}...` : isSubmitting ? 'Signing...' : isThreadMode ? `Thread (${chunkCount})` : replyTo ? 'Reply' : 'Post'}
+                    {wrongWallet2 ? 'Wrong Wallet' : hasNoToken ? 'Create Account' : signingProgress ? `Signing ${displayedSigningCurrent}/${signingProgress.total}...` : isSubmitting ? 'Signing...' : isThreadMode ? `Thread (${chunkCount})` : replyTo ? 'Reply' : 'Post'}
                   </button>
                 )
                 return tooltipText2 ? <Tooltip text={tooltipText2}>{btn2}</Tooltip> : btn2
