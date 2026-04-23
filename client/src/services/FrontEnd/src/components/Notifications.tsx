@@ -22,6 +22,7 @@ import { useNotificationUnreadStore } from '~/store/notificationUnreadStore'
 import { useSignAndSubmitAction, decompressSignedText, type ActionTypeKey } from '~/api/actions'
 import { useAutoRetryStore } from '~/store/autoRetryStore'
 import { getUserAvatar } from '~/utils/defaultAvatar'
+import Avatar from '~/components/Avatar'
 import { LoadingSpinner } from '~/components/Skeleton'
 
 interface Actor {
@@ -783,10 +784,9 @@ const Notifications: React.FC = () => {
                 <div className="flex-1 min-w-0">
                   <p className={`text-sm flex items-center gap-1.5 ${isDark ? 'text-white' : 'text-gray-900'}`}>
                     {notification.actor && notification.type !== 'ACTION_FAILED' && (
-                      <img
+                      <Avatar
                         src={getUserAvatar(notification.actor)}
-                        alt=""
-                        className="w-[18px] h-[18px] rounded-full object-cover flex-shrink-0"
+                        className="w-[18px] h-[18px] rounded-full flex-shrink-0"
                       />
                     )}
                     <span className="font-semibold">

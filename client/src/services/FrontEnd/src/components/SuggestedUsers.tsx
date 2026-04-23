@@ -6,6 +6,7 @@ import { useTokenDataStore } from '~/store/tokenDataStore'
 import { FollowButton } from './FollowButton'
 import { HiOutlineX } from 'react-icons/hi'
 import { getUserAvatar } from '~/utils/defaultAvatar'
+import Avatar from '~/components/Avatar'
 import { LoadingSpinner } from '~/components/Skeleton'
 
 
@@ -172,11 +173,7 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
 
               <Link to={`/users/${user.username}`} className="block text-center">
                 <div className="w-16 h-16 rounded-full mx-auto mb-1 overflow-hidden">
-                  <img
-                    src={getUserAvatar(user)}
-                    alt={user.username}
-                    className="w-full h-full object-cover"
-                  />
+                  <Avatar src={getUserAvatar(user)} alt={user.username} />
                 </div>
 
                 <p className={`font-medium truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>

@@ -14,6 +14,7 @@ import { useHasActiveSession } from '~/hooks/useHasActiveSession';
 import { usePendingSpendStore } from '~/store/pendingSpendStore';
 import { useUserByUsername, useUserByToken } from '~/hooks/useUserData';
 import { getUserAvatar } from '~/utils/defaultAvatar';
+import Avatar from '~/components/Avatar';
 
 const ProfileChooser: React.FC = () => {
   const { isConnected, address } = useAccount();
@@ -321,7 +322,7 @@ const ProfileChooser: React.FC = () => {
         className="flex items-center p-1 cursor-pointer w-full min-w-0"
       >
         <div className="rounded-full overflow-hidden w-[50px] h-[50px] m-3 border border-gray-700 flex-shrink-0 aspect-square">
-          <img src={avatars[selectedToken.tokenId] || getUserAvatar({ tokenId: selectedToken.tokenId })} className="w-full h-full object-cover" />
+          <Avatar src={avatars[selectedToken.tokenId] || getUserAvatar({ tokenId: selectedToken.tokenId })} />
         </div>
         <div className="text-left flex-1 min-w-0">
           <div className="m-5">
@@ -438,7 +439,7 @@ const ProfileChooser: React.FC = () => {
                       }`}
                     >
                       <div className="rounded-full overflow-hidden w-8 h-8 mr-3 border border-gray-700">
-                        <img src={avatars[token.tokenId] || getUserAvatar({ tokenId: token.tokenId })} alt={token.username} className="w-full h-full object-cover" />
+                        <Avatar src={avatars[token.tokenId] || getUserAvatar({ tokenId: token.tokenId })} alt={token.username} />
                       </div>
                       <div>
                         <div className="font-bold">{token.username}</div>

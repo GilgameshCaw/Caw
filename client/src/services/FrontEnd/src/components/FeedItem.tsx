@@ -1,4 +1,5 @@
 import { getUserAvatar } from "~/utils/defaultAvatar"
+import Avatar from "~/components/Avatar"
 // src/components/FeedItem.tsx - UPDATED FOR CONSISTENCY
 import React, { useState, useRef, useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
@@ -744,10 +745,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 to={`/users/${useItem.user.username}`}
                 className="w-10 h-10 rounded-full cursor-pointer overflow-hidden border border-gray-700"
               >
-                <img
+                <Avatar
                   src={getUserAvatar(useItem.user)}
                   alt={`${useItem.user.username} avatar`}
-                  className="w-full h-full object-cover rounded-full hover:opacity-80 transition-opacity duration-200"
+                  className="w-full h-full rounded-full hover:opacity-80 transition-opacity duration-200"
                 />
               </Link>
               
@@ -1039,10 +1040,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               }`}
             >
               <div className="flex items-center gap-2 mb-1.5">
-                <img
+                <Avatar
                   src={getUserAvatar(item.parent.user)}
-                  alt=""
-                  className="w-5 h-5 rounded-full object-cover border border-gray-700"
+                  className="w-5 h-5 rounded-full border border-gray-700"
                 />
                 <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
                   {item.parent.user.displayName || item.parent.user.username}
