@@ -67,25 +67,33 @@ router.get('/', async (req, res) => {
 
     // Apply filter-specific conditions along with status visibility
     if (filter === 'following' && currentUserId) {
-      const follows = await prisma.follow.findMany({
-        where: { followerId: currentUserId, action: 'FOLLOW' },
-        select: { followingId: true }
-      })
-      // Include self in following feed (users should see their own posts)
-      const followingIds = follows.map(f => f.followingId)
-      followingIds.push(currentUserId) // Add self
+      // Express "posts by users I follow (or by me)" as a relation filter so
+      // Postgres joins the Follow table internally. Previously we loaded the
+      // full follow list into JS and passed it as an `IN (...)` clause — at 10k
+      // follows that's ~150KB of SQL text and no index help from the join.
+      // Relation names in schema.prisma are non-intuitive:
+      //   User.follows = Follow[] @relation("Following")
+      // where Follow.following is the "user being followed" side. So from a
+      // candidate author's perspective, `user.follows.some(...)` means "author
+      // appears in the Follow.following slot, and the corresponding follower
+      // is currentUserId" — exactly "currentUser follows this author."
+      const authorCondition = {
+        OR: [
+          { userId: currentUserId }, // always include own posts
+          {
+            user: {
+              follows: {
+                some: { followerId: currentUserId, action: 'FOLLOW' as const }
+              }
+            }
+          }
+        ]
+      }
 
-      // Combine status visibility with following filter using AND
       if (Array.isArray(statusConditions)) {
-        where.AND = [
-          { OR: statusConditions },
-          { userId: { in: followingIds } }
-        ]
+        where.AND = [{ OR: statusConditions }, authorCondition]
       } else {
-        where.AND = [
-          statusConditions,
-          { userId: { in: followingIds } }
-        ]
+        where.AND = [statusConditions, authorCondition]
       }
     } else if (filter === 'liked' && targetUserId) {
       // "profile-likes" mode: caws this user has liked
