@@ -855,6 +855,13 @@ export const validatorService: Service = {
       console.log("[submitProcessActions] Getting fee data..." + (retryCount > 0 ? ` (retry ${retryCount}/${maxRetries})` : ''))
       const feeData = await httpProvider.getFeeData();
 
+      // Small delay between RPC calls to avoid per-second rate limits
+      await new Promise(r => setTimeout(r, 300))
+
+      // Pre-fetch nonce so sendTransaction doesn't need to
+      const nonce = await httpProvider.getTransactionCount(wallet.address, 'pending')
+      await new Promise(r => setTimeout(r, 300))
+
       // Bump gas fees on retry to handle REPLACEMENT_UNDERPRICED errors
       let maxFeePerGas = feeData.maxFeePerGas ?? BigInt(0)
       let maxPriorityFeePerGas = feeData.maxPriorityFeePerGas ?? BigInt(0)
@@ -904,14 +911,17 @@ export const validatorService: Service = {
 
         console.log(`[submitProcessActions] Calldata encoded (${txData.length} chars), sending transaction...`)
 
-        // sendTransaction with full 5-argument signature
+        // All params pre-populated so ethers makes exactly 1 RPC call (eth_sendRawTransaction)
         const tx = await wallet.sendTransaction({
           to:    CAW_ACTIONS_ADDRESS,
           data:  txData,
           value: quote.nativeFee,
+          nonce,
           gasLimit: rawGasLimit,
           maxFeePerGas,
           maxPriorityFeePerGas,
+          chainId: 84532,
+          type: 2,
         })
         console.log("[submitProcessActions] Transaction sent! Hash:", tx.hash)
         console.log("[submitProcessActions] Waiting for confirmation...")
