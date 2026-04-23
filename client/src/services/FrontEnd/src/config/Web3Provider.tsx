@@ -14,13 +14,26 @@ const L2_RPC = import.meta.env.VITE_L2_RPC_URL_FRONTEND
   || import.meta.env.VITE_L2_RPC_URL
   || "https://base-sepolia-rpc.publicnode.com"
 
+// Shared transport options for both chains.
+// - `batch.wait: 16ms` — coalesces any eth_call issued in the same render cycle
+//   into a single JSON-RPC batch request. Drops the per-render RPC count
+//   roughly by N (number of contract reads on the page).
+// - `retryCount: 3` with `retryDelay: 1000` — retry 429s with a 1s base delay,
+//   doubled by viem's built-in exponential backoff. Infura gets 4 attempts
+//   over ~15s before failing for real instead of spamming.
+const transportOptions = {
+  batch: { wait: 16 },
+  retryCount: 3,
+  retryDelay: 1_000,
+}
+
 export const wagmiConfig = getDefaultConfig({
   appName: "CAW",
   projectId: import.meta.env.VITE_PROJECT_ID || "your_project_id_here",
   chains: [sepolia, baseSepolia],
   transports: {
-    [sepolia.id]: http(L1_RPC),
-    [baseSepolia.id]: http(L2_RPC),
+    [sepolia.id]: http(L1_RPC, transportOptions),
+    [baseSepolia.id]: http(L2_RPC, transportOptions),
   },
 });
 
