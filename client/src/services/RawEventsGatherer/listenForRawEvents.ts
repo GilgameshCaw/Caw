@@ -2,7 +2,7 @@
 import { ContractEventPayload, WebSocketProvider, Contract, keccak256, toUtf8Bytes, getBytes, concat } from 'ethers'
 import type { Log } from '@ethersproject/abstract-provider'
 import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
-import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
+import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, waitForRateLimit } from '../../utils/rpcProvider'
 import delay from '../../tools/delay'
 import SmlTxt from 'smltxt'
 import { unpackActions } from '../../utils/packActions'
@@ -207,14 +207,17 @@ export default async function listenForRawEvents(
         }
       })
 
-      // Monitor WebSocket connection health
-      (wsProvider.websocket as any).on('close', () => {
+      // Monitor WebSocket connection health.
+      // Leading semicolons guard against ASI — without them the parser reads
+      // `})` + `(wsProvider...` as a function call on the previous .on() return
+      // value, which in ethers v6 is Promise<Contract> (not callable).
+      ;(wsProvider.websocket as any).on('close', () => {
         if (!isStopped) {
           scheduleReconnect()
         }
       })
 
-      (wsProvider.websocket as any).on('error', (err: any) => {
+      ;(wsProvider.websocket as any).on('error', (err: any) => {
         // Suppress noisy stack traces for common RPC errors (rate limit, auth)
         const msg = err?.message || String(err)
         if (msg.includes('401') || msg.includes('429') || msg.includes('Too Many')) {
@@ -275,39 +278,56 @@ export default async function listenForRawEvents(
     setTimeout(async () => {
       isReconnecting = false
       if (!isStopped) {
-        // Wait for global rate limit to clear before reconnecting
-        const { waitForRateLimit } = await import('../../utils/rpcProvider')
         await waitForRateLimit()
         await setupWebSocket()
       }
     }, delay)
   }
 
-  // Initial WebSocket setup
-  await setupWebSocket()
+  // WebSocket is DISABLED by default. Infura (and most public RPCs) rate-limit
+  // `eth_subscribe` on a per-connection-attempt basis — when reconnects storm,
+  // every attempt 429s and throws unhandled rejections. The per-second burst
+  // from 3-5 near-simultaneous subscribe retries is the single biggest source
+  // of rate-limit pressure in this stack. HTTP polling is deterministic,
+  // bounded, and uses a quota we already have plenty of. Flip ENABLE_RAW_EVENTS_WS=1
+  // to re-enable if you ever need sub-5s event latency.
+  if (process.env.ENABLE_RAW_EVENTS_WS === '1') {
+    await setupWebSocket()
+  } else {
+    console.log('[RawEventsGatherer] WebSocket disabled — HTTP polling only (set ENABLE_RAW_EVENTS_WS=1 to re-enable)')
+  }
 
   // Track last synced block for polling - start from the latest processed event
   let lastSyncedBlock = past.length > 0 ? past[past.length - 1].blockNumber : startBlock
 
-  // Periodic polling using HTTP provider (more reliable than WebSocket)
+  // Cap each poll's range so a service waking up far behind can't request
+  // millions of logs in one call. Steady state stays well under this.
+  const MAX_POLL_BLOCKS = 10_000
+  const POLL_INTERVAL_MS = Number(process.env.RAW_EVENTS_POLL_MS) || 5000
+
   const pollInterval = setInterval(async () => {
     if (isStopped) return
 
     try {
       const currentBlock = await httpProvider.getBlockNumber()
       if (currentBlock > lastSyncedBlock) {
-        console.log(`[RawEventsGatherer] Polling for missed events from block ${lastSyncedBlock + 1} to ${currentBlock}`)
+        const toBlock = Math.min(currentBlock, lastSyncedBlock + MAX_POLL_BLOCKS)
+        if (toBlock < currentBlock) {
+          console.log(`[RawEventsGatherer] Catching up: polling ${lastSyncedBlock + 1}..${toBlock} (behind by ${currentBlock - toBlock} blocks)`)
+        } else {
+          console.log(`[RawEventsGatherer] Polling for events ${lastSyncedBlock + 1}..${toBlock}`)
+        }
         const events = await httpContract.queryFilter(
           httpContract.filters.ActionsProcessed(),
           lastSyncedBlock + 1,
-          currentBlock
+          toBlock
         ) as unknown as Log[]
 
         if (events.length > 0) {
           await processEvents(events, httpContract)
-          console.log(`[RawEventsGatherer] Polled ${events.length} missed event(s)`)
+          console.log(`[RawEventsGatherer] Polled ${events.length} event(s)`)
         }
-        lastSyncedBlock = currentBlock
+        lastSyncedBlock = toBlock
       }
       // Heartbeat: successful poll (even if there were no new events)
       config.onTick?.()
@@ -315,7 +335,7 @@ export default async function listenForRawEvents(
       console.error('[RawEventsGatherer] Polling error:', err)
       // Don't update lastSyncedBlock on error, will retry next interval
     }
-  }, 30000) // Poll every 30 seconds (WebSocket handles real-time; this is the fallback)
+  }, POLL_INTERVAL_MS)
 
   return {
     stop() {
