@@ -399,16 +399,23 @@ const Notifications: React.FC = () => {
   const getNotificationText = (notification: Notification): React.ReactNode => {
     const { type, actor, additionalActors, count = 1 } = notification
 
-    let text = ''
-
-    if (count > 1 && additionalActors && additionalActors.length > 0) {
-      // Grouped notification
-      const othersCount = count - 1
-      text = `${actor.displayName || actor.username} and ${othersCount} other${othersCount > 1 ? 's' : ''}`
-    } else {
-      // Single notification
-      text = actor.displayName || actor.username
-    }
+    const actorLabel = actor.displayName || actor.username
+    const actorLink = (
+      <span
+        onClick={e => {
+          e.stopPropagation()
+          navigate(`/users/${actor.username}`)
+        }}
+        className="hover:underline cursor-pointer"
+      >
+        {actorLabel}
+      </span>
+    )
+    const grouped = count > 1 && additionalActors && additionalActors.length > 0
+    const othersCount = grouped ? count - 1 : 0
+    const actorNode: React.ReactNode = grouped
+      ? <>{actorLink} and {othersCount} other{othersCount > 1 ? 's' : ''}</>
+      : actorLink
 
     switch (type) {
       case 'ACTION_FAILED': {
@@ -434,17 +441,17 @@ const Notifications: React.FC = () => {
         )
       }
       case 'FOLLOW':
-        return `${text} followed you`
+        return <>{actorNode} followed you</>
       case 'LIKE':
-        return `${text} liked your caw`
+        return <>{actorNode} liked your caw</>
       case 'REPLY':
-        return `${text} replied to your caw`
+        return <>{actorNode} replied to your caw</>
       case 'REPOST':
-        return `${text} recawed your caw`
+        return <>{actorNode} recawed your caw</>
       case 'QUOTE':
-        return `${text} quoted your caw`
+        return <>{actorNode} quoted your caw</>
       case 'MENTION':
-        return `${text} mentioned you`
+        return <>{actorNode} mentioned you</>
       case 'TIP': {
         const tipAmt = notification.actionPayload?.tipAmount
         let tipLabel = ''
@@ -456,7 +463,9 @@ const Notifications: React.FC = () => {
           const usd = cawPrice > 0 ? ` (~$${(cawNum * cawPrice).toFixed(2)})` : ''
           tipLabel = ` ${formatted} CAW${usd}`
         }
-        return notification.caw ? `${text} tipped your caw${tipLabel}` : `${text} tipped you${tipLabel}`
+        return notification.caw
+          ? <>{actorNode} tipped your caw{tipLabel}</>
+          : <>{actorNode} tipped you{tipLabel}</>
       }
       case 'OFFER': {
         // Build USD display
@@ -477,7 +486,7 @@ const Notifications: React.FC = () => {
         // Show actor username if they have one, otherwise fall back to address with etherscan link
         const addr = notification.offer?.offerer
         if (actor.username && actor.username !== `#${actor.tokenId}`) {
-          return `${text} made an offer on your profile${offerUsd}`
+          return <>{actorNode} made an offer on your profile{offerUsd}</>
         }
         if (addr) {
           const addrDisplay = `${addr.slice(0, 6)}...${addr.slice(-4)}`
@@ -496,7 +505,7 @@ const Notifications: React.FC = () => {
             </>
           )
         }
-        return `${text} made an offer on your profile${offerUsd}`
+        return <>{actorNode} made an offer on your profile{offerUsd}</>
       }
       case 'OUTBID': {
         const payload = notification.actionPayload
@@ -509,7 +518,7 @@ const Notifications: React.FC = () => {
         return `You won the auction for @${username}! Settle it to claim the username.`
       }
       default:
-        return text
+        return actorNode
     }
   }
 
