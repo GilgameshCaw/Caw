@@ -93,21 +93,36 @@ async function syncViewsToDatabase() {
   console.log('[ViewTracker] Syncing views to database...')
 
   try {
-    // Get all pending view counts
-    const pendingViews = await redis.hgetall('caw:views:pending')
-
-    if (Object.keys(pendingViews).length === 0) {
-      return // Nothing to sync
+    // Atomically rename the pending hash to a snapshot key. Any views that land
+    // AFTER this rename go into a fresh `caw:views:pending` — so we never lose
+    // views that arrive mid-sync. Previous impl did hgetall → db-write → del
+    // which dropped any view landing between hgetall and del.
+    //
+    // RENAME errors with "no such key" when the source doesn't exist; handle
+    // as "nothing to sync" rather than letting it bubble up.
+    const snapshotKey = `caw:views:syncing:${Date.now()}`
+    try {
+      await redis.rename('caw:views:pending', snapshotKey)
+    } catch (err: any) {
+      if (err?.message?.includes('no such key')) return // nothing pending
+      throw err
     }
 
-    // Batch update all caws with their view increments
+    const pendingViews = await redis.hgetall(snapshotKey)
+    if (Object.keys(pendingViews).length === 0) {
+      await redis.del(snapshotKey)
+      return
+    }
+
     const updates = Object.entries(pendingViews).map(([cawId, increment]) => ({
       cawId: parseInt(cawId),
       increment: parseInt(increment)
     }))
 
     // Update database in a transaction (use interactive form — the Prisma
-    // proxy doesn't produce PrismaPromise objects the array form requires)
+    // proxy doesn't produce PrismaPromise objects the array form requires).
+    // If this throws, the snapshot key remains and will be retried on the
+    // next sync tick (we look for orphan snapshots below).
     await prisma.$transaction(async (tx) => {
       for (const { cawId, increment } of updates) {
         await tx.caw.update({
@@ -117,10 +132,30 @@ async function syncViewsToDatabase() {
       }
     })
 
-    // Clear the pending views
-    await redis.del('caw:views:pending')
-
+    await redis.del(snapshotKey)
     console.log(`[ViewTracker] Synced ${updates.length} caw view counts to database`)
+
+    // Drain any snapshot keys left behind by previous crashed syncs so their
+    // counts don't get stranded in Redis forever.
+    const orphans = await redis.keys('caw:views:syncing:*')
+    for (const orphanKey of orphans) {
+      if (orphanKey === snapshotKey) continue
+      try {
+        const orphanData = await redis.hgetall(orphanKey)
+        if (Object.keys(orphanData).length > 0) {
+          console.warn(`[ViewTracker] Draining orphan snapshot ${orphanKey} with ${Object.keys(orphanData).length} rows`)
+          const orphanUpdates = Object.entries(orphanData).map(([cawId, inc]) => ({ cawId: parseInt(cawId), increment: parseInt(inc) }))
+          await prisma.$transaction(async (tx) => {
+            for (const { cawId, increment } of orphanUpdates) {
+              await tx.caw.update({ where: { id: cawId }, data: { viewCount: { increment } } })
+            }
+          })
+        }
+        await redis.del(orphanKey)
+      } catch (e: any) {
+        console.error(`[ViewTracker] Failed to drain orphan ${orphanKey}:`, e.message)
+      }
+    }
 
   } catch (error) {
     console.error('[ViewTracker] Error syncing views to database:', error)
