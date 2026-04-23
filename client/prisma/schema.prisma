@@ -103,6 +103,7 @@ model Caw {
 
   @@unique([userId, cawonce])
   @@index([userId, action, createdAt])
+  @@index([status, createdAt])
   @@index([originalCawId])
   @@index([originalCawId, action])
   @@index([status, userId])
@@ -204,6 +205,8 @@ model Action {
   rawEvent   RawEvent   @relation(fields: [rawEventId], references: [id])
 
   @@unique([chainId, senderId, cawonce])
+  @@index([senderId])
+  @@index([actionType, createdAt])
 }
 
 model Hashtag {
@@ -597,27 +600,28 @@ model ValidatorTx {
   @@index([txType, createdAt])
 }
 
-/// Tracks every replicateBatch submission
+/// Tracks every optimistic replication submission to the L2b archive.
+/// Status transitions: confirmed → challenged → slashed (on fraud).
 model ReplicationTx {
   id           Int      @id @default(autoincrement())
   txHash       String   @unique
   blockNumber  BigInt?
   clientId     Int
-  destEid      Int                // LayerZero destination endpoint ID
   checkpointId    Int              // start checkpoint ID
   endCheckpointId Int?             // end checkpoint ID (for multibatch, null = single)
   actionCount     Int    @default(256)
   gasUsed      String
   gasPrice     String
-  ethCost      String             // Gas cost in wei
-  lzFee        String             // LayerZero native fee paid (wei)
-  totalCost    String             // ethCost + lzFee
+  ethCost      String
+  totalCost    String
   status       String   @default("confirmed")
   failReason   String?
+  submitter    String?            // L2b address that submitted (lowercase hex)
   createdAt    DateTime @default(now())
 
   @@index([createdAt])
   @@index([clientId, createdAt])
+  @@index([submitter, createdAt])
 }
 
 /// Admin-configurable validator settings (DB-backed, overrides env vars)
