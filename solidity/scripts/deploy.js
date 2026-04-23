@@ -715,6 +715,26 @@ const LINKING_STEPS = [
       try { return await contract.allowedPaymentTokens(cawAddr); } catch { return false; }
     },
   },
+
+  // -----------------------------------------------------------------
+  // Phase 6: LZ DVN config — mainnet only, 3-of-3 required DVN set
+  // (LayerZero Labs + Nethermind + Google Cloud) on every cross-chain
+  // pathway. See scripts/lz-dvn-config.js for the rationale + address
+  // provenance. Idempotent: reads on-chain config first and only sends
+  // tx if a pathway is misconfigured.
+  //
+  // `chain: 'L1'` is just where the runner chooses to begin — the
+  // custom handler itself hops across all relevant chains internally
+  // via deployer.initChain(chainKey).
+  // -----------------------------------------------------------------
+  {
+    name: 'Configure LZ DVN set (3-of-3: LayerZero Labs + Nethermind + Google Cloud)',
+    chain: 'L1',
+    phase: 6,
+    custom: async (state, deployer, chainConfig) => {
+      await configureLzDvns(state, deployer, chainConfig, CHAINS);
+    },
+  },
 ];
 
 // ============================================
@@ -1128,8 +1148,9 @@ class MultiChainDeployer {
       await new Promise(r => setTimeout(r, 3000)); // 3s between connections
     }
 
-    // Deploy in phases
-    for (const phase of [1, 2, 3, 4, 5]) {
+    // Deploy in phases. Phase 6 is LZ DVN reconciliation (mainnet only,
+    // no-op on testnet/dev environments).
+    for (const phase of [1, 2, 3, 4, 5, 6]) {
       await this.deployPhase(phase);
     }
   }
