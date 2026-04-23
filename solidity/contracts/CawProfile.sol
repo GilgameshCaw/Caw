@@ -13,14 +13,16 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "./CawProfileURI.sol";
 import "./CawProfileL2.sol";
 import "./CawBuyAndBurn.sol";
+import "./OnlyOnce.sol";
 
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
-import { CawClientManager, ReplicationDestination } from "./CawClientManager.sol";
+import { CawClientManager } from "./CawClientManager.sol";
 
-contract CawProfile is 
+contract CawProfile is
   Context,
   ERC721Enumerable,
   Ownable,
+  OnlyOnce,
   OApp
 {
   using OptionsBuilder for bytes;
@@ -102,7 +104,12 @@ contract CawProfile is
     mainnetLzId = mainnetEid;
   }
 
-  function setL2Peer(uint32 _eid, address _peer) external onlyOwner {
+  function setL2Peer(uint32 _eid, address _peer)
+    external
+    onlyOwner
+    onlyOnce(keccak256(abi.encode("setL2Peer", _eid)))
+  {
+    require(_peer != address(0), "Zero address");
     if (_eid != mainnetLzId) {
       peerIds.add(uint256(_eid));
       setPeer(_eid, bytes32(uint256(uint160(_peer))));
@@ -110,12 +117,22 @@ contract CawProfile is
     emit L2PeerSet(_eid, _peer);
   }
 
-  function setMinter(address _minter) external onlyOwner {
+  function setMinter(address _minter)
+    external
+    onlyOwner
+    onlyOnce(keccak256("setMinter"))
+  {
+    require(_minter != address(0), "Zero address");
     minter = _minter;
     emit MinterSet(_minter);
   }
 
-  function setUriGenerator(address _gui) external onlyOwner {
+  function setUriGenerator(address _gui)
+    external
+    onlyOwner
+    onlyOnce(keccak256("setUriGenerator"))
+  {
+    require(_gui != address(0), "Zero address");
     uriGenerator = CawProfileURI(_gui);
   }
 

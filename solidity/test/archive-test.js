@@ -1,4 +1,4 @@
-const CawActionsArchiveOptimistic = artifacts.require("CawActionsArchiveOptimistic");
+const CawActionsArchive = artifacts.require("CawActionsArchive");
 const LzReceiveHelper = artifacts.require("LzReceiveHelper");
 const { time } = require('@openzeppelin/test-helpers');
 const truffleAssert = require('truffle-assertions');
@@ -41,7 +41,7 @@ function buildRValues(count) {
   );
 }
 
-contract("CawActionsArchiveOptimistic", function(accounts) {
+contract("CawActionsArchive", function(accounts) {
   const MIN_STAKE = web3.utils.toWei('0.01', 'ether');
   const CHALLENGE_PERIOD = 2 * 24 * 60 * 60;
   const L2_EID = 40245;
@@ -51,7 +51,7 @@ contract("CawActionsArchiveOptimistic", function(accounts) {
 
   before(async function() {
     lzHelper = await LzReceiveHelper.new();
-    archive = await CawActionsArchiveOptimistic.new(lzHelper.address);
+    archive = await CawActionsArchive.new(lzHelper.address);
     await archive.setPeer(L2_EID, RELAY_PEER);
   });
 

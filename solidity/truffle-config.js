@@ -243,7 +243,10 @@ module.exports = {
       settings: {          // See the solidity docs for advice about optimization and evmVersion
        optimizer: {
          enabled: true,
-         runs: 200
+         // runs=1 favors smaller deployed bytecode over runtime-call efficiency.
+         // Matches hardhat.config.js so tests and deploys produce identical binaries;
+         // required because CawProfile sits within ~400 bytes of the 24,576 EIP-170 cap.
+         runs: 1
        },
        viaIR: true,
        // evmVersion: "byzantium"

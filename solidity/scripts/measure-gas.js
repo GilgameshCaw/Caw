@@ -183,22 +183,8 @@ async function main() {
   await cawProfile.setL2Peer(L2_EID, await cawProfileL2.getAddress())
   await cawProfileL2.setL1Peer(L1_EID, await cawProfile.getAddress(), false)
 
-  // ----- Deploy a CawActionsReplicator so setClientChains has a real target -----
-  // CawActionsReplicator requires non-zero cawActions + cawProfileL2.
-  const replicator = await deploy('CawActionsReplicator', [
-    await l2Endpoint.getAddress(),
-    deployer,                         // dummy cawActions — only address matters
-    await cawProfileL2.getAddress(),
-  ])
-  await cawProfileL2.setCawActionsReplicator(await replicator.getAddress())
-
-  // Pre-register chains in the replicator so setClientChains doesn't revert on
-  // "Chain not available". We register up to 10 since that's our max n for this selector.
-  for (let i = 10; i < 20; i++) {
-    // addArchiveChain sets peers too — use a dummy non-zero target
-    const dummyTarget = '0x' + i.toString(16).padStart(40, '0')
-    await replicator.addArchiveChain(i, dummyTarget)
-  }
+  // `setClientChains` on CawProfileL2 is a plain event emitter in the optimistic
+  // flow — no replicator target is required. Legacy replicator setup removed.
 
   // ----- Grab selectors (avoids recomputing) -----
   const addToBalanceSelector = await cawProfile.addToBalanceSelector()

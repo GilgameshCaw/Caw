@@ -11,7 +11,7 @@ export default defineConfig({
       include: [
         "contracts/CawActions.sol/**",
         "contracts/CawActionsArchive.sol/**",
-        "contracts/CawActionsReplicator.sol/**",
+        "contracts/CawChallengeRelay.sol/**",
         "contracts/CawClientManager.sol/**",
         "contracts/CawProfile.sol/**",
         "contracts/CawProfileL2.sol/**",

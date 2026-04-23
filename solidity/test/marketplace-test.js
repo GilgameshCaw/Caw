@@ -27,7 +27,9 @@ contract("CawProfileMarketplace", (accounts) => {
     const l1Eid = 30101;
     lzEndpoint = await MockLayerZeroEndpoint.new(l1Eid);
     token = await MintableCaw.new();
-    uriGenerator = await CawProfileURI.new();
+    const fontA = await (artifacts.require("CawFontDataA")).new();
+    const fontB = await (artifacts.require("CawFontDataB")).new();
+    uriGenerator = await CawProfileURI.new(fontA.address, fontB.address);
     clientManager = await CawClientManager.new(deployer);
 
     cawProfiles = await CawProfile.new(

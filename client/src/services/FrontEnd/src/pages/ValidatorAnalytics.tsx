@@ -4,6 +4,7 @@ import { apiFetch } from '~/api/client'
 import { Link, useSearchParams } from 'react-router-dom'
 
 const BASESCAN = 'https://sepolia.basescan.org'
+const ARBISCAN = 'https://sepolia.arbiscan.io'
 
 // Wei string → ETH number
 const weiToEth = (wei: string | undefined): number => {
@@ -78,12 +79,13 @@ interface ReplicationTx {
   time: string
   txHash: string
   client: string
-  destChain: string
   checkpoint: string
   actionCount: number
   gasCostEth: string
-  lzFeeEth: string
   totalCostEth: string
+  status: string
+  failReason: string | null
+  submitter: string | null
 }
 
 interface ChartPoint {
@@ -221,14 +223,15 @@ const ValidatorAnalytics: React.FC = () => {
         time: t.createdAt,
         txHash: t.txHash,
         client: String(t.clientId),
-        destChain: String(t.destEid),
         checkpoint: t.endCheckpointId && t.endCheckpointId !== t.checkpointId
           ? `${t.checkpointId}-${t.endCheckpointId}`
           : String(t.checkpointId),
         actionCount: t.actionCount || 0,
         gasCostEth: t.ethCost || '0',
-        lzFeeEth: t.lzFee || '0',
         totalCostEth: t.totalCost || '0',
+        status: t.status || 'confirmed',
+        failReason: t.failReason || null,
+        submitter: t.submitter || null,
       })))
       setRepTotal(repData.total || 0)
       // Build padded chart using local dates
@@ -901,7 +904,8 @@ const ValidatorAnalytics: React.FC = () => {
                   <th className="text-left p-2">Time</th>
                   <th className="text-left p-2">Tx Hash</th>
                   <th className="text-left p-2">Client</th>
-                  <th className="text-left p-2">Type</th>
+                  <th className="text-left p-2">Status</th>
+                  <th className="text-left p-2">Submitter</th>
                   <th className="text-left p-2">Checkpoint</th>
                   <th className="text-right p-2">Actions</th>
                   <th className="text-right p-2">Cost</th>
@@ -910,15 +914,27 @@ const ValidatorAnalytics: React.FC = () => {
               <tbody>
                 {replication.map(tx => {
                   const p = summary?.prices || { ethUsd: 0, cawUsd: 0 }
+                  const rowTint =
+                    tx.status === 'slashed'
+                      ? (isDark ? 'bg-red-500/10' : 'bg-red-50')
+                      : tx.status === 'challenged'
+                      ? (isDark ? 'bg-yellow-500/10' : 'bg-yellow-50')
+                      : ''
+                  const statusChip =
+                    tx.status === 'slashed'
+                      ? (isDark ? 'bg-red-500/20 text-red-400' : 'bg-red-100 text-red-700')
+                      : tx.status === 'challenged'
+                      ? (isDark ? 'bg-yellow-500/20 text-yellow-400' : 'bg-yellow-100 text-yellow-700')
+                      : (isDark ? 'bg-green-500/20 text-green-400' : 'bg-green-100 text-green-700')
                   return (
                   <tr
                     key={tx.id}
-                    className={`border-t ${isDark ? 'border-white/5' : 'border-gray-100'}`}
+                    className={`border-t ${isDark ? 'border-white/5' : 'border-gray-100'} ${rowTint}`}
                   >
                     <td className="p-2 whitespace-nowrap">{fmtDate(tx.time)}</td>
                     <td className="p-2">
                       <a
-                        href={`${BASESCAN}/tx/${tx.txHash}`}
+                        href={`${ARBISCAN}/tx/${tx.txHash}`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-blue-500 hover:underline font-mono"
@@ -928,13 +944,26 @@ const ValidatorAnalytics: React.FC = () => {
                     </td>
                     <td className="p-2 font-mono">{tx.client}</td>
                     <td className="p-2">
-                      <span className={`text-xs px-1.5 py-0.5 rounded ${
-                        tx.destChain === '0' || tx.destChain === 'Direct'
-                          ? (isDark ? 'bg-green-500/20 text-green-400' : 'bg-green-100 text-green-700')
-                          : (isDark ? 'bg-blue-500/20 text-blue-400' : 'bg-blue-100 text-blue-700')
-                      }`}>
-                        {tx.destChain === '0' || tx.destChain === 'Direct' ? 'Optimistic' : 'LZ'}
+                      <span
+                        className={`text-xs px-1.5 py-0.5 rounded ${statusChip}`}
+                        title={tx.failReason || tx.status}
+                      >
+                        {tx.status}
                       </span>
+                    </td>
+                    <td className="p-2 font-mono">
+                      {tx.submitter ? (
+                        <a
+                          href={`${ARBISCAN}/address/${tx.submitter}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-500 hover:underline"
+                        >
+                          {truncHash(tx.submitter)}
+                        </a>
+                      ) : (
+                        <span className={isDark ? 'text-white/30' : 'text-gray-400'}>—</span>
+                      )}
                     </td>
                     <td className="p-2 font-mono">{tx.checkpoint}</td>
                     <td className="p-2 text-right font-mono">{tx.actionCount || '-'}</td>

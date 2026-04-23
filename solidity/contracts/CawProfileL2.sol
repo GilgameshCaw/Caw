@@ -9,16 +9,14 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "./interfaces/ICawActions.sol";
 import "./CawProfileURI.sol";
 import "./CawProfile.sol";
-
-interface ICawActionsReplicator {
-  function setClientChains(uint32 clientId, uint32[] calldata destEids) external;
-}
+import "./OnlyOnce.sol";
 
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
 
-contract CawProfileL2 is 
+contract CawProfileL2 is
   Context,
   Ownable,
+  OnlyOnce,
   OApp
 {
   using OptionsBuilder for bytes;
@@ -31,9 +29,6 @@ contract CawProfileL2 is
   uint256 public totalCaw;
 
   ICawActions public cawActions;
-
-  /// @notice The CawActionsReplicator contract for forwarding replication config
-  address public cawActionsReplicator;
 
   // SECURITY NOTE (audited 2026-04-06): Unlike standard ERC721, this ownerOf intentionally returns
   // address(0) for non-existent tokens instead of reverting. This is by design — CawProfileL2 is a
@@ -92,7 +87,6 @@ contract CawProfileL2 is
   event UsernameMinted(uint32 tokenId, address owner);
   event Authenticated(uint32 cawClientId, uint32 tokenId);
   event CawActionsSet(address cawActions);
-  event CawActionsReplicatorSet(address replicator);
   event SessionCreated(address indexed owner, address indexed sessionKey, uint64 expiry, uint8 scopeBitmap, uint256 spendLimit);
   event SessionRevoked(address indexed owner, address indexed sessionKey);
 
@@ -152,25 +146,28 @@ contract CawProfileL2 is
   /// @param _eid LayerZero EID of the L1 chain
   /// @param peer Address of the L1 CawProfile contract
   /// @param _bypassLZ True for mainnet co-deployment, false for cross-chain operation
-  function setL1Peer(uint32 _eid, address payable peer, bool _bypassLZ) external onlyOwner {
+  function setL1Peer(uint32 _eid, address payable peer, bool _bypassLZ)
+    external
+    onlyOwner
+    onlyOnce(keccak256("setL1Peer"))
+  {
+    require(peer != address(0), "Zero address");
     if (_bypassLZ) {
       bypassLZ = true;
       cawProfile = CawProfile(peer);
     } else setPeer(_eid, bytes32(uint256(uint160(address(peer)))));
   }
 
-  /// @notice Set the CawActions contract address. Owner-only.
+  /// @notice Set the CawActions contract address. Owner-only, one-shot.
   /// @dev CawActions is the only contract authorized to call spend/balance functions here.
-  function setCawActions(address _cawActions) external onlyOwner {
+  function setCawActions(address _cawActions)
+    external
+    onlyOwner
+    onlyOnce(keccak256("setCawActions"))
+  {
+    require(_cawActions != address(0), "Zero address");
     cawActions = ICawActions(_cawActions);
     emit CawActionsSet(_cawActions);
-  }
-
-  /// @notice Set the CawActionsReplicator contract address. Owner-only.
-  /// @dev The replicator is forwarded `setClientChains` calls from L1 via LayerZero.
-  function setCawActionsReplicator(address _replicator) external onlyOwner {
-    cawActionsReplicator = _replicator;
-    emit CawActionsReplicatorSet(_replicator);
   }
 
   /// @notice Get the CAW balance for a token, scaled by the global reward multiplier.
@@ -303,18 +300,14 @@ contract CawProfileL2 is
   event ClientChainsSet(uint32 indexed clientId, uint32[] destEids);
 
   /**
-   * @notice Set the chain list for a client. Called from L1 via LayerZero.
-   * @dev Forwards the config to CawActionsReplicator.
+   * @notice Record the destination chain list for a client. Called from L1 via LayerZero.
+   * @dev Replication is now consumed by off-chain indexers + the optimistic archive;
+   *      this function only emits an event so indexers can observe config changes.
    * @param clientId The client ID
    * @param destEids Array of destination chain EIDs the client replicates to
    */
   function setClientChains(uint32 clientId, uint32[] calldata destEids) public {
     require(fromLZ || (bypassLZ && msg.sender == address(cawProfile)), "only callable from L1");
-    require(cawActionsReplicator != address(0), "Replicator not set");
-
-    // Forward to replicator
-    ICawActionsReplicator(cawActionsReplicator).setClientChains(clientId, destEids);
-
     emit ClientChainsSet(clientId, destEids);
   }
 
@@ -665,8 +658,7 @@ contract CawProfileL2 is
     // SECURITY NOTE (audited 2026-04-06): The fromLZ + delegatecall pattern is intentional and safe.
     // - The OApp base class already verifies msg.sender == endpoint and the peer before _lzReceive runs.
     // - All authorized functions (depositAndUpdateOwners, authenticateAndUpdateOwners,
-    //   mintAndUpdateOwners, updateOwners, setClientChains) perform only storage writes, except
-    //   setClientChains which calls the owner-configured cawActionsReplicator (trusted, not user-supplied).
+    //   mintAndUpdateOwners, updateOwners, setClientChains) perform only storage writes.
     // - fromLZ cannot get stuck: on success it resets below; on revert the entire tx rolls back.
     // - The endpoint is immutable (set once in constructor, can never change).
     // - These contracts are immutable post-deployment, so no new authorized functions can be added.

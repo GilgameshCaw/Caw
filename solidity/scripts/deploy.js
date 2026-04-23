@@ -30,15 +30,17 @@
  * DEPLOYMENT PHASES:
  *   Phase 1: L2a + L2b - Deploy CawProfileL2 on both L2 chains
  *   Phase 2: L1 - Deploy all L1 contracts (CawProfile, CawClientManager, etc.)
- *   Phase 3: L2a + L2b - Deploy remaining L2 contracts (CawActions, Replicator)
- *   Phase 4: L2a + L2b - Deploy CawActionsArchive on each chain (for cross-replication)
- *   Phase 5: Cross-chain - Register archive chains, set LZ peers, addReplication
+ *   Phase 3: L2a + L2b - Deploy remaining L2 contracts (CawActions)
+ *   Phase 4: L2b - Deploy CawActionsArchive; L2 - Deploy CawChallengeRelay
+ *   Phase 5: Wire up the L2 challenge relay as an LZ peer of the L2b archive
  *
  * ARCHITECTURE (testnet):
  *   L1 (Sepolia): CawProfile, CawClientManager, CawProfileMinter, CawProfileQuoter
- *   L2 (Base Sepolia): CawProfileL2, CawActions, CawActionsReplicator, CawActionsArchive
- *   L2b (Arbitrum Sepolia): CawProfileL2, CawActions, CawActionsReplicator, CawActionsArchive
- *   Each L2's Replicator archives to the other L2's CawActionsArchive.
+ *   L2 (Base Sepolia): CawProfileL2, CawActions, CawChallengeRelay
+ *   L2b (Arbitrum Sepolia): CawProfileL2, CawActions, CawActionsArchive
+ *   Replication: validators submit checkpoint merkle roots directly to L2b's
+ *   CawActionsArchive with a stake. Fraud proofs go L2 → LZ → L2b
+ *   via CawChallengeRelay and are resolved on L2b.
  *
  * STATE FILE:
  *   Deployment state is saved to .deploy-state.json in the solidity directory.
@@ -287,18 +289,6 @@ const CONTRACTS = {
     dependencies: ['CawProfileL2_L1'],
     constructorArgs: (state) => [state.addresses.CawProfileL2_L1],
   },
-  CawActionsReplicator_L1: {
-    artifact: 'CawActionsReplicator',
-    chain: 'L1',
-    phase: 2,
-    dependencies: ['CawActions_L1', 'CawProfileL2_L1'],
-    constructorArgs: (state, chain) => [
-      CHAINS[chain].lzEndpoint,
-      state.addresses.CawActions_L1,
-      state.addresses.CawProfileL2_L1,
-    ],
-  },
-
   // Phase 3: Deploy remaining L2 contracts on both chains
   CawActions_L2: {
     artifact: 'CawActions',
@@ -307,17 +297,6 @@ const CONTRACTS = {
     dependencies: ['CawProfileL2_L2'],
     constructorArgs: (state) => [state.addresses.CawProfileL2_L2],
   },
-  CawActionsReplicator_L2: {
-    artifact: 'CawActionsReplicator',
-    chain: 'L2',
-    phase: 3,
-    dependencies: ['CawActions_L2', 'CawProfileL2_L2'],
-    constructorArgs: (state, chain) => [
-      CHAINS[chain].lzEndpoint,
-      state.addresses.CawActions_L2,
-      state.addresses.CawProfileL2_L2,
-    ],
-  },
   CawActions_L2b: {
     artifact: 'CawActions',
     chain: 'L2b',
@@ -325,32 +304,29 @@ const CONTRACTS = {
     dependencies: ['CawProfileL2_L2b'],
     constructorArgs: (state) => [state.addresses.CawProfileL2_L2b],
   },
-  CawActionsReplicator_L2b: {
-    artifact: 'CawActionsReplicator',
-    chain: 'L2b',
-    phase: 3,
-    dependencies: ['CawActions_L2b', 'CawProfileL2_L2b'],
-    constructorArgs: (state, chain) => [
-      CHAINS[chain].lzEndpoint,
-      state.addresses.CawActions_L2b,
-      state.addresses.CawProfileL2_L2b,
-    ],
-  },
 
-  // Phase 4: Deploy CawActionsArchive on each L2 (receives replications from the other)
-  CawActionsArchive_L2: {
-    artifact: 'CawActionsArchive',
-    chain: 'L2',
-    phase: 4,
-    dependencies: [],
-    constructorArgs: (state, chain) => [CHAINS[chain].lzEndpoint],
-  },
+  // Phase 4: Optimistic replication infrastructure
+  //   - L2b (Arbitrum Sepolia) hosts the stake-based archive that validators
+  //     write checkpoint merkle roots to.
+  //   - L2 (Base Sepolia) hosts the challenge relay that reads CawActions and
+  //     forwards the canonical hash via LayerZero to the L2b archive for
+  //     fraud resolution.
   CawActionsArchive_L2b: {
     artifact: 'CawActionsArchive',
     chain: 'L2b',
     phase: 4,
     dependencies: [],
     constructorArgs: (state, chain) => [CHAINS[chain].lzEndpoint],
+  },
+  CawChallengeRelay_L2: {
+    artifact: 'CawChallengeRelay',
+    chain: 'L2',
+    phase: 4,
+    dependencies: ['CawActions_L2'],
+    constructorArgs: (state, chain) => [
+      CHAINS[chain].lzEndpoint,
+      state.addresses.CawActions_L2,
+    ],
   },
 };
 
@@ -471,16 +447,6 @@ const LINKING_STEPS = [
     condition: (state) => state.addresses.CawProfileL2_L1 && state.addresses.CawActions_L1,
   },
   {
-    name: 'Link CawProfileL2_L1 to replicator',
-    chain: 'L1',
-    phase: 2,
-    contract: 'CawProfileL2_L1',
-    method: 'setCawActionsReplicator',
-    getter: 'cawActionsReplicator',
-    args: (state) => [state.addresses.CawActionsReplicator_L1],
-    condition: (state) => state.addresses.CawProfileL2_L1 && state.addresses.CawActionsReplicator_L1,
-  },
-  {
     name: 'Set CawProfile on BuyAndBurn',
     chain: 'L1',
     phase: 2,
@@ -538,17 +504,6 @@ const LINKING_STEPS = [
     args: (state) => [state.addresses.CawActions_L2],
     condition: (state) => state.addresses.CawProfileL2_L2 && state.addresses.CawActions_L2,
   },
-  {
-    name: 'Link CawProfileL2_L2 to replicator',
-    chain: 'L2',
-    phase: 3,
-    contract: 'CawProfileL2_L2',
-    method: 'setCawActionsReplicator',
-    getter: 'cawActionsReplicator',
-    args: (state) => [state.addresses.CawActionsReplicator_L2],
-    condition: (state) => state.addresses.CawProfileL2_L2 && state.addresses.CawActionsReplicator_L2,
-  },
-
   // Phase 3 linking (L2b - Arbitrum Sepolia)
   {
     name: 'Set L1 peer on CawProfileL2_L2b',
@@ -573,193 +528,65 @@ const LINKING_STEPS = [
     args: (state) => [state.addresses.CawActions_L2b],
     condition: (state) => state.addresses.CawProfileL2_L2b && state.addresses.CawActions_L2b,
   },
+  // Phase 5: Fraud-proof LZ wiring.
+  //   Archive ↔ relay are pinned as each other's sole LZ peers. Once these are
+  //   set, the archive owner can renounce — from then on every challenge MUST
+  //   come from the canonical CawChallengeRelay via LZ, nothing else is accepted.
   {
-    name: 'Link CawProfileL2_L2b to replicator',
-    chain: 'L2b',
-    phase: 3,
-    contract: 'CawProfileL2_L2b',
-    method: 'setCawActionsReplicator',
-    getter: 'cawActionsReplicator',
-    args: (state) => [state.addresses.CawActionsReplicator_L2b],
-    condition: (state) => state.addresses.CawProfileL2_L2b && state.addresses.CawActionsReplicator_L2b,
-  },
-
-  // Phase 5: Cross-chain replication setup
-  // L2's archive (on L2b) receives from L2's replicator
-  {
-    name: 'Set LZ peer on CawActionsArchive_L2b (accepts from L2 Replicator)',
+    name: 'Set LZ peer on CawActionsArchive_L2b (accepts from L2 CawChallengeRelay)',
     chain: 'L2b',
     phase: 5,
     contract: 'CawActionsArchive_L2b',
     method: 'setPeer',
     args: (state, chainConfig) => [
       CHAINS[chainConfig.env + 'L2'].lzEid,
-      ethers.zeroPadValue(state.addresses.CawActionsReplicator_L2, 32),
+      ethers.zeroPadValue(state.addresses.CawChallengeRelay_L2, 32),
     ],
-    condition: (state) => state.addresses.CawActionsArchive_L2b && state.addresses.CawActionsReplicator_L2,
+    condition: (state) => state.addresses.CawActionsArchive_L2b && state.addresses.CawChallengeRelay_L2,
     skipIf: async (state, deployer) => {
-      // Skip only if the peer already matches the CURRENT replicator address.
-      // A previous "skip if peer != ZeroHash" here left stale peers pointing
-      // at pre-redeploy replicators, silently breaking replication.
       const contract = deployer.getContract('CawActionsArchive_L2b');
       if (!contract) return false;
       const l2Eid = CHAINS[deployer.getChainKey('L2')].lzEid;
-      const expected = ethers.zeroPadValue(deployer.state.addresses.CawActionsReplicator_L2, 32);
+      const expected = ethers.zeroPadValue(deployer.state.addresses.CawChallengeRelay_L2, 32);
       try {
         const peer = await contract.peers(l2Eid);
         return peer.toLowerCase() === expected.toLowerCase();
       } catch { return false; }
     },
   },
-  // L2b's archive (on L2) receives from L2b's replicator
   {
-    name: 'Set LZ peer on CawActionsArchive_L2 (accepts from L2b Replicator)',
+    name: 'Set LZ peer on CawChallengeRelay_L2 (targets L2b CawActionsArchive)',
     chain: 'L2',
     phase: 5,
-    contract: 'CawActionsArchive_L2',
+    contract: 'CawChallengeRelay_L2',
     method: 'setPeer',
     args: (state, chainConfig) => [
       CHAINS[chainConfig.env + 'L2b'].lzEid,
-      ethers.zeroPadValue(state.addresses.CawActionsReplicator_L2b, 32),
+      ethers.zeroPadValue(state.addresses.CawActionsArchive_L2b, 32),
     ],
-    condition: (state) => state.addresses.CawActionsArchive_L2 && state.addresses.CawActionsReplicator_L2b,
+    condition: (state) => state.addresses.CawChallengeRelay_L2 && state.addresses.CawActionsArchive_L2b,
     skipIf: async (state, deployer) => {
-      // Skip only if already pointed at the current replicator — see note above.
-      const contract = deployer.getContract('CawActionsArchive_L2');
+      const contract = deployer.getContract('CawChallengeRelay_L2');
       if (!contract) return false;
       const l2bEid = CHAINS[deployer.getChainKey('L2b')].lzEid;
-      const expected = ethers.zeroPadValue(deployer.state.addresses.CawActionsReplicator_L2b, 32);
+      const expected = ethers.zeroPadValue(deployer.state.addresses.CawActionsArchive_L2b, 32);
       try {
         const peer = await contract.peers(l2bEid);
         return peer.toLowerCase() === expected.toLowerCase();
       } catch { return false; }
     },
   },
-  // Register L2b as archive chain on L2's replicator (L2 replicates TO L2b)
+
+  // Client replication registry. `CawClientManager.addReplication` records each
+  // destination chain on L1 and emits `ClientChainsSet` on L2 via LayerZero so
+  // indexers pick up the config. The new optimistic archive doesn't gate on this
+  // registry, but it's load-bearing metadata for the multi-chain replication
+  // roadmap and for any L2-side indexer.
+  // Register client 1's replication destinations. Each addReplication call fires
+  // a single L1 → L2-storage LZ message with the updated chain list so indexers
+  // on L2 see the change. msg.value funds that LZ message.
   {
-    name: 'Register L2b archive chain on CawActionsReplicator_L2',
-    chain: 'L2',
-    phase: 5,
-    contract: 'CawActionsReplicator_L2',
-    method: 'addArchiveChain',
-    args: (state, chainConfig) => [
-      CHAINS[chainConfig.env + 'L2b'].lzEid,
-      state.addresses.CawActionsArchive_L2b,
-    ],
-    condition: (state) => state.addresses.CawActionsReplicator_L2 && state.addresses.CawActionsArchive_L2b,
-    skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawActionsReplicator_L2');
-      if (!contract) return false;
-      const l2bEid = CHAINS[deployer.getChainKey('L2b')].lzEid;
-      try {
-        return await contract.isAvailableChain(l2bEid);
-      } catch { return false; }
-    },
-  },
-  // Register L2 as archive chain on L2b's replicator (L2b replicates TO L2)
-  {
-    name: 'Register L2 archive chain on CawActionsReplicator_L2b',
-    chain: 'L2b',
-    phase: 5,
-    contract: 'CawActionsReplicator_L2b',
-    method: 'addArchiveChain',
-    args: (state, chainConfig) => [
-      CHAINS[chainConfig.env + 'L2'].lzEid,
-      state.addresses.CawActionsArchive_L2,
-    ],
-    condition: (state) => state.addresses.CawActionsReplicator_L2b && state.addresses.CawActionsArchive_L2,
-    skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawActionsReplicator_L2b');
-      if (!contract) return false;
-      const l2Eid = CHAINS[deployer.getChainKey('L2')].lzEid;
-      try {
-        return await contract.isAvailableChain(l2Eid);
-      } catch { return false; }
-    },
-  },
-  // Bump LZ maxMessageSize on replicators so 256-action batches can be sent.
-  // Default is 10KB but a full checkpoint with text can be ~120KB.
-  {
-    name: 'Set LZ maxMessageSize on CawActionsReplicator_L2 → L2b',
-    chain: 'L2',
-    phase: 5,
-    custom: async (state, deployer, chainConfig) => {
-      const chainKey = deployer.getChainKey('L2');
-      const LZ_ENDPOINT = CHAINS[chainKey].lzEndpoint;
-      const replicator = state.addresses.CawActionsReplicator_L2;
-      const destEid = CHAINS[chainConfig.env + 'L2b'].lzEid;
-      const MAX_MESSAGE_SIZE = 300000; // 300KB — fits worst-case 256 actions with 420-char text + recipients arrays
-      const EXECUTOR_CONFIG_TYPE = 1;
-
-      const endpointAbi = [
-        'function getSendLibrary(address,uint32) view returns (address)',
-        'function getConfig(address,address,uint32,uint32) view returns (bytes)',
-        'function setConfig(address,address,tuple(uint32 eid,uint32 configType,bytes config)[]) external',
-      ];
-      const wallet = deployer.wallets[chainKey];
-      const endpoint = new ethers.Contract(LZ_ENDPOINT, endpointAbi, wallet);
-      const sendLib = await endpoint.getSendLibrary(replicator, destEid);
-
-      // Check current config
-      const currentBytes = await endpoint.getConfig(replicator, sendLib, destEid, EXECUTOR_CONFIG_TYPE);
-      const [currentMax, executor] = ethers.AbiCoder.defaultAbiCoder().decode(['uint32', 'address'], currentBytes);
-      if (Number(currentMax) >= MAX_MESSAGE_SIZE) {
-        console.log(`   Already ${currentMax} >= ${MAX_MESSAGE_SIZE}, skipping`);
-        return;
-      }
-
-      const newConfig = ethers.AbiCoder.defaultAbiCoder().encode(['uint32', 'address'], [MAX_MESSAGE_SIZE, executor]);
-      const tx = await endpoint.setConfig(replicator, sendLib, [{ eid: destEid, configType: EXECUTOR_CONFIG_TYPE, config: newConfig }]);
-      await tx.wait();
-      console.log(`   Set maxMessageSize to ${MAX_MESSAGE_SIZE} on L2 replicator → L2b`);
-    },
-    condition: (state) => state.addresses.CawActionsReplicator_L2,
-  },
-  {
-    name: 'Set LZ maxMessageSize on CawActionsReplicator_L2b → L2',
-    chain: 'L2b',
-    phase: 5,
-    custom: async (state, deployer, chainConfig) => {
-      const chainKey = deployer.getChainKey('L2b');
-      const LZ_ENDPOINT = CHAINS[chainKey].lzEndpoint;
-      const replicator = state.addresses.CawActionsReplicator_L2b;
-      const destEid = CHAINS[chainConfig.env + 'L2'].lzEid;
-      const MAX_MESSAGE_SIZE = 200000;
-      const EXECUTOR_CONFIG_TYPE = 1;
-
-      const endpointAbi = [
-        'function getSendLibrary(address,uint32) view returns (address)',
-        'function getConfig(address,address,uint32,uint32) view returns (bytes)',
-        'function setConfig(address,address,tuple(uint32 eid,uint32 configType,bytes config)[]) external',
-      ];
-      const wallet = deployer.wallets[chainKey];
-      const endpoint = new ethers.Contract(LZ_ENDPOINT, endpointAbi, wallet);
-      const sendLib = await endpoint.getSendLibrary(replicator, destEid);
-
-      const currentBytes = await endpoint.getConfig(replicator, sendLib, destEid, EXECUTOR_CONFIG_TYPE);
-      const [currentMax, executor] = ethers.AbiCoder.defaultAbiCoder().decode(['uint32', 'address'], currentBytes);
-      if (Number(currentMax) >= MAX_MESSAGE_SIZE) {
-        console.log(`   Already ${currentMax} >= ${MAX_MESSAGE_SIZE}, skipping`);
-        return;
-      }
-
-      const newConfig = ethers.AbiCoder.defaultAbiCoder().encode(['uint32', 'address'], [MAX_MESSAGE_SIZE, executor]);
-      const tx = await endpoint.setConfig(replicator, sendLib, [{ eid: destEid, configType: EXECUTOR_CONFIG_TYPE, config: newConfig }]);
-      await tx.wait();
-      console.log(`   Set maxMessageSize to ${MAX_MESSAGE_SIZE} on L2b replicator → L2`);
-    },
-    condition: (state) => state.addresses.CawActionsReplicator_L2b,
-  },
-  // Add replication for client 1 on L2 (syncs to L2 via LZ — client replicates to L2b's archive)
-  //
-  // This runs once when the client is first enrolled. The skipIf compares
-  // against the clientManager's state: if this client is already enrolled for
-  // the archive EID, we skip the enrollment. The separate "Force sync" step
-  // below handles the case where the REPLICATOR was just redeployed and needs
-  // a fresh `setClientChains` LZ message even though the clientManager's
-  // enrollment is unchanged.
-  {
-    name: 'Add replication for client 1 on L2 (archive to L2b)',
+    name: 'Add replication for client 1 → L2b (archive chain)',
     chain: 'L1',
     phase: 5,
     contract: 'CawClientManager',
@@ -768,52 +595,41 @@ const LINKING_STEPS = [
       1, // clientId
       CHAINS[chainConfig.env + 'L2b'].lzEid,
     ],
-    condition: (state) => state.addresses.CawClientManager && state.addresses.CawActionsArchive_L2b && state.addresses.CawProfile,
+    condition: (state) => state.addresses.CawClientManager
+      && state.addresses.CawActionsArchive_L2b
+      && state.addresses.CawProfile,
     skipIf: async (state, deployer, chainConfig) => {
       const cm = deployer.getContract('CawClientManager');
       if (!cm) return false;
       const l2bEid = CHAINS[chainConfig.env + 'L2b'].lzEid;
       try {
-        // Skip only if this SPECIFIC eid is already in the client's chain list.
-        // Previously compared only `clientReplicationEnabled(1)` (true if ANY
-        // eid is enrolled) which wrongly skipped on subsequent target chains.
         const eids = await cm.getClientChainEids(1);
         return eids.map(e => Number(e)).includes(l2bEid);
       } catch { return false; }
     },
     overrides: async (state, deployer, chainConfig) => {
       const quoter = deployer.getContract('CawProfileQuoter');
-      if (!quoter) {
-        console.log('   CawProfileQuoter not available, using 0.0002 ETH as fallback');
-        return { value: ethers.parseEther('0.0002') };
-      }
+      if (!quoter) return { value: ethers.parseEther('0.0002') };
       try {
         const l2bEid = CHAINS[chainConfig.env + 'L2b'].lzEid;
         const l2Eid = CHAINS[chainConfig.env + 'L2'].lzEid;
         const quote = await quoter.syncReplicationQuote(1, [l2bEid], l2Eid, false);
-        const feeWithBuffer = (quote.nativeFee * 120n) / 100n;
-        console.log(`   LZ fee quoted: ${ethers.formatEther(quote.nativeFee)} ETH (sending ${ethers.formatEther(feeWithBuffer)} with buffer)`);
-        return { value: feeWithBuffer };
-      } catch (e) {
-        console.log(`   Fee quote failed: ${e.message}, using 0.0002 ETH as fallback`);
+        return { value: (quote.nativeFee * 120n) / 100n };
+      } catch {
         return { value: ethers.parseEther('0.0002') };
       }
     },
   },
-  // Add the reverse direction: client 1 also replicates FROM L2b TO L2's archive.
-  // The ClientManager stores a global chain list; each replicator's setClientChains
-  // now skips EIDs it doesn't have registered (graceful filter instead of revert).
   {
-    name: 'Add replication for client 1 on L2b (archive to L2)',
+    name: 'Add replication for client 1 → L2 (storage chain)',
     chain: 'L1',
     phase: 5,
     contract: 'CawClientManager',
     method: 'addReplication',
-    args: (state, chainConfig) => [
-      1, // clientId
-      CHAINS[chainConfig.env + 'L2'].lzEid,
-    ],
-    condition: (state) => state.addresses.CawClientManager && state.addresses.CawActionsArchive_L2 && state.addresses.CawProfile,
+    args: (state, chainConfig) => [1, CHAINS[chainConfig.env + 'L2'].lzEid],
+    condition: (state) => state.addresses.CawClientManager
+      && state.addresses.CawActions_L2
+      && state.addresses.CawProfile,
     skipIf: async (state, deployer, chainConfig) => {
       const cm = deployer.getContract('CawClientManager');
       if (!cm) return false;
@@ -829,112 +645,7 @@ const LINKING_STEPS = [
       try {
         const l2Eid = CHAINS[chainConfig.env + 'L2'].lzEid;
         const quote = await quoter.syncReplicationQuote(1, [l2Eid], l2Eid, false);
-        const feeWithBuffer = (quote.nativeFee * 120n) / 100n;
-        return { value: feeWithBuffer };
-      } catch {
-        return { value: ethers.parseEther('0.0002') };
-      }
-    },
-  },
-  // Force-sync replication config to L2 when the replicator was redeployed.
-  // `clientManager.addReplication` already auto-syncs to L2 when called, but
-  // only fires when the CLIENT MANAGER's state needs updating. If we just
-  // redeployed the L2 replicator with the clientManager untouched, the new
-  // replicator has `clientChainEnabled[1][destEid] = false` until the next
-  // sync. This step checks the replicator directly and calls
-  // `CawProfile.syncReplication` on L1 if the flag isn't set.
-  {
-    name: 'Force syncReplication if new replicator missing clientChainEnabled',
-    chain: 'L1',
-    phase: 5,
-    contract: 'CawProfile',
-    method: 'syncReplication',
-    args: (state, chainConfig) => [
-      1, // clientId
-      CHAINS[chainConfig.env + 'L2'].lzEid, // storage chain — where CawProfileL2 lives
-      0, // lzTokenAmount
-    ],
-    condition: (state) => state.addresses.CawProfile && state.addresses.CawActionsReplicator_L2,
-    skipIf: async (state, deployer, chainConfig) => {
-      // Query the L2 replicator directly to see if the client/dest pair is
-      // already enabled there. If yes, skip — no LZ sync needed.
-      const chainKey = deployer.getChainKey('L2');
-      await deployer.initChain(chainKey);
-      const replicatorAddr = deployer.state.addresses.CawActionsReplicator_L2;
-      if (!replicatorAddr) return true; // Not yet deployed — earlier step will handle
-      const provider = deployer.wallets[chainKey].provider;
-      const replicator = new ethers.Contract(
-        replicatorAddr,
-        ['function clientChainEnabled(uint32,uint32) view returns (bool)'],
-        provider,
-      );
-      const l2bEid = CHAINS[chainConfig.env + 'L2b'].lzEid;
-      try {
-        const enabled = await replicator.clientChainEnabled(1, l2bEid);
-        if (enabled) console.log(`   clientChainEnabled(1, ${l2bEid}) = true on replicator — skipping sync`);
-        return enabled;
-      } catch { return false; }
-    },
-    overrides: async (state, deployer, chainConfig) => {
-      const quoter = deployer.getContract('CawProfileQuoter');
-      if (!quoter) return { value: ethers.parseEther('0.0002') };
-      try {
-        const l2bEid = CHAINS[chainConfig.env + 'L2b'].lzEid;
-        const l2Eid = CHAINS[chainConfig.env + 'L2'].lzEid;
-        const quote = await quoter.syncReplicationQuote(1, [l2bEid], l2Eid, false);
-        const feeWithBuffer = (quote.nativeFee * 120n) / 100n;
-        console.log(`   syncReplication LZ fee: ${ethers.formatEther(quote.nativeFee)} ETH (sending ${ethers.formatEther(feeWithBuffer)} with buffer)`);
-        return { value: feeWithBuffer };
-      } catch {
-        return { value: ethers.parseEther('0.0002') };
-      }
-    },
-  },
-  // Mirror of the Force sync above but targeting L2b's replicator. Client 1's
-  // storage chain is L2, but client 1 ALSO replicates FROM L2b (to L2's archive).
-  // After a L2b replicator redeploy, its clientChainEnabled mapping is empty.
-  // Sending syncReplication to L2b's CawProfileL2 makes it call setClientChains
-  // on the new L2b replicator.
-  {
-    name: 'Force syncReplication on L2b if new replicator missing clientChainEnabled',
-    chain: 'L1',
-    phase: 5,
-    contract: 'CawProfile',
-    method: 'syncReplication',
-    args: (state, chainConfig) => [
-      1, // clientId
-      CHAINS[chainConfig.env + 'L2b'].lzEid, // target L2b's CawProfileL2
-      0, // lzTokenAmount
-    ],
-    condition: (state) => state.addresses.CawProfile && state.addresses.CawActionsReplicator_L2b,
-    skipIf: async (state, deployer, chainConfig) => {
-      const chainKey = deployer.getChainKey('L2b');
-      await deployer.initChain(chainKey);
-      const replicatorAddr = deployer.state.addresses.CawActionsReplicator_L2b;
-      if (!replicatorAddr) return true;
-      const provider = deployer.wallets[chainKey].provider;
-      const replicator = new ethers.Contract(
-        replicatorAddr,
-        ['function clientChainEnabled(uint32,uint32) view returns (bool)'],
-        provider,
-      );
-      const l2Eid = CHAINS[chainConfig.env + 'L2'].lzEid;
-      try {
-        const enabled = await replicator.clientChainEnabled(1, l2Eid);
-        if (enabled) console.log(`   clientChainEnabled(1, ${l2Eid}) = true on L2b replicator — skipping sync`);
-        return enabled;
-      } catch { return false; }
-    },
-    overrides: async (state, deployer, chainConfig) => {
-      const quoter = deployer.getContract('CawProfileQuoter');
-      if (!quoter) return { value: ethers.parseEther('0.0002') };
-      try {
-        const l2Eid = CHAINS[chainConfig.env + 'L2'].lzEid;
-        const l2bEid = CHAINS[chainConfig.env + 'L2b'].lzEid;
-        const quote = await quoter.syncReplicationQuote(1, [l2Eid], l2bEid, false);
-        const feeWithBuffer = (quote.nativeFee * 120n) / 100n;
-        console.log(`   syncReplication L2b LZ fee: ${ethers.formatEther(quote.nativeFee)} ETH (sending ${ethers.formatEther(feeWithBuffer)} with buffer)`);
-        return { value: feeWithBuffer };
+        return { value: (quote.nativeFee * 120n) / 100n };
       } catch {
         return { value: ethers.parseEther('0.0002') };
       }
@@ -1286,12 +997,18 @@ class MultiChainDeployer {
       return;
     }
 
-    const args = step.args(this.state, chainConfig);
+    let args = step.args(this.state, chainConfig);
 
-    // Support async overrides (e.g. for payable calls that need fee quoting)
+    // Support async overrides (e.g. for payable calls that need fee quoting).
+    // `overrides` may also return `{ args }` to replace the step.args output —
+    // useful when args depend on async data (like an LZ fee quote).
     let overrides = {};
     if (step.overrides) {
-      overrides = await step.overrides(this.state, this, chainConfig);
+      const raw = await step.overrides(this.state, this, chainConfig);
+      if (raw && raw.args) { args = raw.args; }
+      overrides = {};
+      if (raw?.value !== undefined) overrides.value = raw.value;
+      if (raw?.gasLimit !== undefined) overrides.gasLimit = raw.gasLimit;
       console.log(`\n${step.name}...`);
       console.log(`   Calling ${step.contract}.${step.method}(${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(', ')}) with value=${overrides.value ? ethers.formatEther(overrides.value) + ' ETH' : '0'}`);
     } else {
@@ -1467,8 +1184,7 @@ class MultiChainDeployer {
       const forceInclude = [
         'CawProfileL2_L1', 'CawProfileL2_L2', 'CawProfileL2_L2b',
         'CawActions_L1', 'CawActions_L2', 'CawActions_L2b',
-        'CawActionsReplicator_L1', 'CawActionsReplicator_L2', 'CawActionsReplicator_L2b',
-        'CawActionsArchive_L2', 'CawActionsArchive_L2b',
+        'CawActionsArchive_L2b', 'CawChallengeRelay_L2',
         'CawProfileMinter', 'CawProfileQuoter', 'CawProfileMarketplace',
       ];
       for (const key of forceInclude) {
@@ -1502,7 +1218,7 @@ class MultiChainDeployer {
     // we redeployed just CawActions_L2 — the indexer then missed every action
     // from the new contract until someone manually bumped `config.json`.
     const l2IndexedContracts = [
-      'CawActions_L2', 'CawActionsReplicator_L2', 'CawProfileL2_L2', 'CawActionsArchive_L2',
+      'CawActions_L2', 'CawProfileL2_L2', 'CawChallengeRelay_L2',
     ];
     const isL2Redeploy = isNameRedeploy || l2IndexedContracts.some(c => toRedeploy.has(c));
     if (isL2Redeploy) {
@@ -1528,9 +1244,9 @@ class MultiChainDeployer {
     const phases = {
       1: 'L2 + L2b CawProfileL2 (Phase 1)',
       2: 'L1 (Phase 2)',
-      3: 'L2 + L2b Contracts (Phase 3)',
-      4: 'Archives (Phase 4)',
-      5: 'Cross-chain Linking (Phase 5)',
+      3: 'L2 + L2b CawActions (Phase 3)',
+      4: 'Optimistic replication (L2b archive, L2 challenge relay) (Phase 4)',
+      5: 'Cross-chain wiring + client replication registry (Phase 5)',
     };
     for (const phase of [1, 2, 3, 4, 5]) {
       const phaseContracts = Object.entries(CONTRACTS).filter(([_, c]) => c.phase === phase);
@@ -1606,14 +1322,14 @@ Options:
 Deployment Phases:
   Phase 1: Deploy CawProfileL2 on L2 + L2b (needed by L1 contracts)
   Phase 2: Deploy all L1 contracts and link them
-  Phase 3: Deploy remaining L2 + L2b contracts and link them
-  Phase 4: Deploy CawActionsArchive on each L2 chain
-  Phase 5: Cross-chain replication setup (archive peers, addArchiveChain, addReplication)
+  Phase 3: Deploy CawActions on L2 + L2b and link them to CawProfileL2
+  Phase 4: Deploy CawActionsArchive on L2b and CawChallengeRelay on L2
+  Phase 5: LZ peering between archive and relay + register client replication targets
 
 Architecture:
   L1 (Sepolia): CawProfile, CawClientManager, CawProfileMinter, CawProfileQuoter
-  L2 (Base Sepolia): Full L2 stack + CawActionsArchive (receives from L2b)
-  L2b (Arbitrum Sepolia): Full L2 stack + CawActionsArchive (receives from L2)
+  L2 (Base Sepolia): CawProfileL2, CawActions, CawChallengeRelay
+  L2b (Arbitrum Sepolia): CawProfileL2, CawActions, CawActionsArchive
 
 After deployment, ABIs are automatically regenerated for the frontend.
         `);
@@ -1685,10 +1401,8 @@ After deployment, ABIs are automatically regenerated for the frontend.
       CawProfileL2_L1: 'CAW_NAMES_L2_MAINNET_ADDRESS',
       CawActions_L1: 'CAW_ACTIONS_MAINNET_ADDRESS',
       CawActions_L2: 'CAW_ACTIONS_ADDRESS',
-      CawActionsReplicator_L1: 'CAW_ACTIONS_REPLICATOR_L1_ADDRESS',
-      CawActionsReplicator_L2: 'CAW_ACTIONS_REPLICATOR_L2_ADDRESS',
-      CawActionsArchive_L2: 'CAW_ACTIONS_ARCHIVE_L2_ADDRESS',
-      CawActionsArchive_L2b: 'CAW_ACTIONS_ARCHIVE_L2B_ADDRESS',
+      CawActionsArchive_L2b: 'CAW_ACTIONS_ARCHIVE_OPTIMISTIC_ADDRESS',
+      CawChallengeRelay_L2: 'CAW_CHALLENGE_RELAY_ADDRESS',
       CawProfileMarketplace: 'CAW_NAME_MARKETPLACE_ADDRESS',
     };
 

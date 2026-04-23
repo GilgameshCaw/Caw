@@ -18,6 +18,7 @@
     "truffle-plugin-verify": "^0.5.26"
   },
   "devDependencies": {
-    "ethers": "^6.16.0"
+    "ethers": "^6.16.0",
+    "hardhat": "^2.22.18"
   }
 }
