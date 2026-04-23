@@ -30,8 +30,8 @@ async function recordRateLimit(address: string) {
 // Tracks addresses with an in-flight tx to prevent concurrent submissions
 const inFlight = new Set<string>()
 
-// Max expiry: 30 days
-const MAX_EXPIRY_SECONDS = 30 * 24 * 60 * 60
+// Max expiry: 1 year
+const MAX_EXPIRY_SECONDS = 365 * 24 * 60 * 60
 
 // Track pending requests for polling
 type SessionRequest = {
@@ -256,7 +256,7 @@ router.post('/', async (req: any, res: any) => {
       return res.status(400).json({ error: 'Session already expired' })
     }
     if (expiry - nowSeconds > MAX_EXPIRY_SECONDS) {
-      return res.status(400).json({ error: 'Session expiry too far in the future (max 30 days)' })
+      return res.status(400).json({ error: 'Session expiry too far in the future (max 1 year)' })
     }
 
     // Recover signer from personal_sign
