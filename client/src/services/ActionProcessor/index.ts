@@ -47,28 +47,42 @@ export const actionProcessorService: Service = {
       let lastId = lastAction?.rawEventId ?? 0
       console.log(`[ActionProcessor] Resuming from lastId=${lastId}`)
 
-      const backlog = await prisma.rawEvent.findMany({
-        where: {
-          id: { gt: lastId },
-          contractAddress: CAW_ACTIONS_ADDRESS
-        },
-        orderBy: { id: 'asc' }
-      })
-      for (const raw of backlog) {
-        if (stopRequested) break
-        try {
-          await handleRawEvent(raw)
-          lastId = raw.id
-        } catch (err) {
-          if (err instanceof StaleTokenError) {
-            console.warn(`[ActionProcessor] Skipping stale event ${raw.id}: ${err.message}`)
+      // Page through the backlog in chunks so restart after a large gap doesn't
+      // load everything into memory at once. At 1M raw events this would OOM.
+      const BACKLOG_CHUNK = 1000
+      while (!stopRequested) {
+        const backlog = await prisma.rawEvent.findMany({
+          where: {
+            id: { gt: lastId },
+            contractAddress: CAW_ACTIONS_ADDRESS
+          },
+          orderBy: { id: 'asc' },
+          take: BACKLOG_CHUNK,
+        })
+        if (backlog.length === 0) break
+        const startOfChunk = lastId
+        for (const raw of backlog) {
+          if (stopRequested) break
+          try {
+            await handleRawEvent(raw)
             lastId = raw.id
-          } else {
-            console.error(`[ActionProcessor] Failed to process backlog event ${raw.id}:`, err)
-            // Don't advance lastId — retry this event on next restart
+          } catch (err) {
+            if (err instanceof StaleTokenError) {
+              console.warn(`[ActionProcessor] Skipping stale event ${raw.id}: ${err.message}`)
+              lastId = raw.id
+            } else {
+              console.error(`[ActionProcessor] Failed to process backlog event ${raw.id}:`, err)
+              // Don't advance lastId — the next restart will retry this event.
+            }
           }
+          ctx.heartbeat('listen')
         }
-        ctx.heartbeat('listen')
+        // If the entire chunk failed without advancing, stop — otherwise we'd
+        // re-fetch and re-fail the same rows forever. Next restart retries.
+        if (lastId === startOfChunk) {
+          console.warn('[ActionProcessor] Backlog stuck — no events processed in chunk, bailing out')
+          break
+        }
       }
 
       // now subscribe to the same "raws" channel your Gatherer is publishing
