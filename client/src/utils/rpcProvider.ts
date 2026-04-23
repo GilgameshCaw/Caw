@@ -9,17 +9,25 @@ import { JsonRpcProvider, WebSocketProvider, Network } from 'ethers'
 /** Minimum ms between consecutive RPC calls across ALL providers. */
 const MIN_CALL_GAP_MS = 150
 
-/** Timestamp of the last RPC call that was sent. */
-let lastCallAt = 0
+/**
+ * Serialized throttle: each caller reserves the NEXT slot in a shared timeline.
+ *
+ * The previous impl was racy — concurrent callers all read the same
+ * `lastCallAt`, all saw enough elapsed time, and all fired in the same tick.
+ * `Promise.all([...9 queryFilters])` would submit 9 simultaneous RPC requests,
+ * which Infura 429'd en masse (see MarketplaceIndexer:117, ChainSyncService:659).
+ *
+ * Each caller now bumps nextSlotAt forward by MIN_CALL_GAP_MS and sleeps
+ * until its slot — genuinely ≤1 call per gap regardless of concurrency.
+ */
+let nextSlotAt = 0
 
-/** Wait until MIN_CALL_GAP_MS has passed since the last call. */
 async function throttle(): Promise<void> {
   const now = Date.now()
-  const elapsed = now - lastCallAt
-  if (elapsed < MIN_CALL_GAP_MS) {
-    await new Promise(r => setTimeout(r, MIN_CALL_GAP_MS - elapsed))
-  }
-  lastCallAt = Date.now()
+  const slot = Math.max(now, nextSlotAt)
+  nextSlotAt = slot + MIN_CALL_GAP_MS
+  const wait = slot - now
+  if (wait > 0) await new Promise(r => setTimeout(r, wait))
 }
 
 // ============================================
@@ -29,16 +37,48 @@ async function throttle(): Promise<void> {
 
 let rateLimitedUntil = 0
 let backoffMs = 5_000
+let consecutiveSuccesses = 0
+let consecutiveMaxBackoffs = 0
 const MAX_BACKOFF_MS = 60_000
+const SUCCESSES_BEFORE_BACKOFF_RESET = 20
+// Circuit-breaker: after this many consecutive max-backoff hits, enter a long
+// penalty window. Infura escalates to persistent per-key enforcement when it
+// sees retry storms, and continuing to hammer during enforcement just prolongs
+// the block. 5 minutes of silence is usually enough for enforcement to clear.
+const MAX_BACKOFFS_BEFORE_CIRCUIT_OPEN = 3
+const CIRCUIT_OPEN_MS = 5 * 60_000
 
 export function recordRateLimit() {
   rateLimitedUntil = Date.now() + backoffMs
+  consecutiveSuccesses = 0
+
+  if (backoffMs >= MAX_BACKOFF_MS) {
+    consecutiveMaxBackoffs++
+    if (consecutiveMaxBackoffs >= MAX_BACKOFFS_BEFORE_CIRCUIT_OPEN) {
+      rateLimitedUntil = Date.now() + CIRCUIT_OPEN_MS
+      console.warn(`[RPC] ⚠️  Circuit breaker OPEN — pausing ALL RPC traffic for ${CIRCUIT_OPEN_MS / 60_000}min. ` +
+        `The RPC provider is persistently rate-limiting us; retrying just prolongs the block. ` +
+        `If this keeps firing, rotate your Infura API key or check the dashboard.`)
+      consecutiveMaxBackoffs = 0
+      return
+    }
+  }
+
   console.log(`[RPC] Rate limited — all services backing off for ${(backoffMs / 1000).toFixed(0)}s`)
   backoffMs = Math.min(backoffMs * 2, MAX_BACKOFF_MS)
 }
 
+// Only reset the backoff floor after a sustained streak of successes.
+// Resetting on a single success oscillates 5→10→20→60→5→… as unrelated
+// calls succeed briefly in the gaps between rate-limit windows.
 export function clearRateLimit() {
-  if (backoffMs > 5_000) backoffMs = 5_000
+  if (backoffMs <= 5_000 && consecutiveMaxBackoffs === 0) return
+  consecutiveSuccesses++
+  if (consecutiveSuccesses >= SUCCESSES_BEFORE_BACKOFF_RESET) {
+    backoffMs = 5_000
+    consecutiveSuccesses = 0
+    consecutiveMaxBackoffs = 0
+  }
 }
 
 export function isRateLimited(): boolean {
