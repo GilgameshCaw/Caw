@@ -656,11 +656,12 @@ async function syncL2Events(): Promise<void> {
     const toBlock = Math.min(cursor + L2_EVENT_CHUNK_SIZE - 1, latestBlock)
 
     try {
-      const [created, revoked, authed] = await Promise.all([
-        contract.queryFilter(contract.filters.SessionCreated(), cursor, toBlock),
-        contract.queryFilter(contract.filters.SessionRevoked(), cursor, toBlock),
-        contract.queryFilter(contract.filters.Authenticated(), cursor, toBlock),
-      ])
+      // Sequential to avoid ethers' RPC batching — see MarketplaceIndexer
+      // comment for rationale. Batched member-failures on rate limit are
+      // far more painful than a 300ms serial latency hit.
+      const created = await contract.queryFilter(contract.filters.SessionCreated(), cursor, toBlock)
+      const revoked = await contract.queryFilter(contract.filters.SessionRevoked(), cursor, toBlock)
+      const authed = await contract.queryFilter(contract.filters.Authenticated(), cursor, toBlock)
 
       // Process in block/logIndex order to handle a revoke+create in the same block correctly
       const combined = [

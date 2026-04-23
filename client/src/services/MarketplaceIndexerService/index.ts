@@ -114,17 +114,19 @@ export const marketplaceIndexerService: Service = {
 
           console.log(`[MarketplaceIndexer] Polling blocks ${fromBlock}–${toBlock}`)
 
-          const [listed, sales, bids, bidWithdrawals, cancelled, settled, offersCreated, offersAccepted, offersCancelled] = await Promise.all([
-            marketplace.queryFilter(listedFilter, fromBlock, toBlock),
-            marketplace.queryFilter(saleFilter, fromBlock, toBlock),
-            marketplace.queryFilter(bidFilter, fromBlock, toBlock),
-            marketplace.queryFilter(bidWithdrawnFilter, fromBlock, toBlock),
-            marketplace.queryFilter(cancelledFilter, fromBlock, toBlock),
-            marketplace.queryFilter(settledFilter, fromBlock, toBlock),
-            marketplace.queryFilter(offerCreatedFilter, fromBlock, toBlock),
-            marketplace.queryFilter(offerAcceptedFilter, fromBlock, toBlock),
-            marketplace.queryFilter(offerCancelledFilter, fromBlock, toBlock),
-          ])
+          // Sequential queryFilters — Promise.all lets ethers batch them
+          // into a single JSON-RPC request, and when one member 429s the
+          // partial-batch failure surfaces as a confusing "missing response"
+          // error. Sequential calls play nicer with the global throttle.
+          const listed = await marketplace.queryFilter(listedFilter, fromBlock, toBlock)
+          const sales = await marketplace.queryFilter(saleFilter, fromBlock, toBlock)
+          const bids = await marketplace.queryFilter(bidFilter, fromBlock, toBlock)
+          const bidWithdrawals = await marketplace.queryFilter(bidWithdrawnFilter, fromBlock, toBlock)
+          const cancelled = await marketplace.queryFilter(cancelledFilter, fromBlock, toBlock)
+          const settled = await marketplace.queryFilter(settledFilter, fromBlock, toBlock)
+          const offersCreated = await marketplace.queryFilter(offerCreatedFilter, fromBlock, toBlock)
+          const offersAccepted = await marketplace.queryFilter(offerAcceptedFilter, fromBlock, toBlock)
+          const offersCancelled = await marketplace.queryFilter(offerCancelledFilter, fromBlock, toBlock)
 
           if (listed.length || sales.length || bids.length || cancelled.length || settled.length || offersCreated.length || offersAccepted.length || offersCancelled.length) {
             console.log(`[MarketplaceIndexer] Found events: ${listed.length} listed, ${sales.length} sales, ${bids.length} bids, ${cancelled.length} cancelled, ${settled.length} settled, ${offersCreated.length} offers created, ${offersAccepted.length} offers accepted, ${offersCancelled.length} offers cancelled`)

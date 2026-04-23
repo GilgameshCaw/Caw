@@ -305,9 +305,17 @@ export default async function listenForRawEvents(
   const MAX_POLL_BLOCKS = 10_000
   const POLL_INTERVAL_MS = Number(process.env.RAW_EVENTS_POLL_MS) || 5000
 
-  const pollInterval = setInterval(async () => {
+  // setTimeout chain (NOT setInterval) so slow polls don't pile up. With
+  // setInterval, a 20s-slow iteration during a rate-limit window would let
+  // 4 parallel polls fire on top of each other, each making fresh RPC calls
+  // and compounding the throttle pressure.
+  let pollTimer: ReturnType<typeof setTimeout> | null = null
+  const scheduleNextPoll = () => {
     if (isStopped) return
-
+    pollTimer = setTimeout(poll, POLL_INTERVAL_MS)
+  }
+  async function poll() {
+    if (isStopped) return
     try {
       const currentBlock = await httpProvider.getBlockNumber()
       if (currentBlock > lastSyncedBlock) {
@@ -329,18 +337,20 @@ export default async function listenForRawEvents(
         }
         lastSyncedBlock = toBlock
       }
-      // Heartbeat: successful poll (even if there were no new events)
       config.onTick?.()
     } catch (err) {
       console.error('[RawEventsGatherer] Polling error:', err)
-      // Don't update lastSyncedBlock on error, will retry next interval
+      // Don't update lastSyncedBlock on error, will retry on next schedule
+    } finally {
+      scheduleNextPoll()
     }
-  }, POLL_INTERVAL_MS)
+  }
+  poll() // kick off the first iteration immediately
 
   return {
     stop() {
       isStopped = true
-      clearInterval(pollInterval)
+      if (pollTimer) clearTimeout(pollTimer)
       if (wsContract) {
         try { wsContract.removeAllListeners() } catch {}
       }
