@@ -202,6 +202,26 @@ export function startApi(port = Number(process.env.API_PORT) || 4000) {
   // Initialize WebSocket server for DMs
   DmWebSocketService.initialize(server)
 
+  // Retry once on EADDRINUSE — the previous process may still be releasing the
+  // socket (common when dev-api-runner.js restarts the API on a file change
+  // while the old child is still winding down). If it's still busy after the
+  // retry, exit cleanly with a clear fix hint instead of crash-looping with
+  // cryptic stack traces that mask the real cause.
+  let retried = false
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      if (!retried) {
+        retried = true
+        console.warn(`[API] Port ${port} busy, retrying in 2s…`)
+        setTimeout(() => server.listen(port), 2000)
+        return
+      }
+      console.error(`[API] Port ${port} still busy after retry. Kill the stale process: lsof -iTCP:${port} -sTCP:LISTEN -t | xargs kill -9`)
+      process.exit(1)
+    }
+    throw err
+  })
+
   server.listen(port, () =>
     console.log(`API listening on http://localhost:${port}`)
   )
