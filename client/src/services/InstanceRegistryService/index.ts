@@ -58,7 +58,7 @@ export const instanceRegistryService: Service = {
 
     const started = (async () => {
       try {
-        const provider = makeJsonRpcProvider(l1RpcUrl)
+        const provider = makeJsonRpcProvider(l1RpcUrl, 11155111)
         const wallet = new Wallet(privateKey, provider)
         const clientManager = new Contract(CLIENT_MANAGER_ADDRESS, cawClientManagerAbi, wallet)
 

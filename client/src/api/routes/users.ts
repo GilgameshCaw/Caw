@@ -17,8 +17,8 @@ function getL2ReadContract(): Contract | null {
   const rpcUrl = process.env.L2_RPC_URL_HTTP || process.env.L2_RPC_URL
   if (!rpcUrl) return null
   const provider = rpcUrl.startsWith('wss://') || rpcUrl.startsWith('ws://')
-    ? makeWebSocketProvider(rpcUrl)
-    : makeJsonRpcProvider(rpcUrl)
+    ? makeWebSocketProvider(rpcUrl, 84532)
+    : makeJsonRpcProvider(rpcUrl, 84532)
   _l2ReadContract = new Contract(CAW_NAMES_L2_ADDRESS, cawProfileL2Abi as any, provider)
   return _l2ReadContract
 }

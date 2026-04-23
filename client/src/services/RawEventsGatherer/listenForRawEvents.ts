@@ -66,7 +66,7 @@ export default async function listenForRawEvents(
 
   // HTTP provider for reliable polling (WebSocket can die silently)
   const httpRpcUrl = getL2HttpRpcUrl(config.rpcUrl)
-  const httpProvider = makeJsonRpcProvider(httpRpcUrl)
+  const httpProvider = makeJsonRpcProvider(httpRpcUrl, config.chainId)
   const httpContract = new Contract(CAW_ACTIONS_ADDRESS, CONTRACT_ABI, httpProvider)
 
   const last = await config.rawEventsProvider.getLastProcessedEvent()

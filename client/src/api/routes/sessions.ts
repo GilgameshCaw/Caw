@@ -54,8 +54,8 @@ function getContract() {
   const validatorKey = process.env.VALIDATOR_PRIVATE_KEY
   if (!validatorKey) throw new Error('Validator not configured')
   _provider = rpcUrl.startsWith('wss://') || rpcUrl.startsWith('ws://')
-    ? makeWebSocketProvider(rpcUrl)
-    : makeJsonRpcProvider(rpcUrl)
+    ? makeWebSocketProvider(rpcUrl, 84532)
+    : makeJsonRpcProvider(rpcUrl, 84532)
   _wallet = new Wallet(validatorKey, _provider)
   _contract = new Contract(CAW_NAMES_L2_ADDRESS, cawProfileL2Abi as any, _wallet)
   return _contract

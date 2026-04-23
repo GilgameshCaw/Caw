@@ -32,7 +32,7 @@ async function refreshPeerInstances(): Promise<void> {
   if (Date.now() - lastRefresh < REFRESH_INTERVAL) return
 
   try {
-    const provider = makeJsonRpcProvider(l1RpcUrl)
+    const provider = makeJsonRpcProvider(l1RpcUrl, 11155111)
     const clientManager = new Contract(CLIENT_MANAGER_ADDRESS, cawClientManagerAbi, provider)
 
     // Fetch InstanceRegistered events for our clientId

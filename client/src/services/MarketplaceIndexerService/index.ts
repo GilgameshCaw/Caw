@@ -79,7 +79,7 @@ export const marketplaceIndexerService: Service = {
       await prisma.$connect()
       console.log(`[MarketplaceIndexer] Started — marketplace=${marketplaceAddress}, cawProfile=${cawProfileAddress}, rpc=${rpcUrl.substring(0, 40)}...`)
 
-      const provider = makeJsonRpcProvider(rpcUrl)
+      const provider = makeJsonRpcProvider(rpcUrl, 11155111)
       const marketplace = new ethers.Contract(marketplaceAddress, MARKETPLACE_ABI, provider)
       const cawProfile = new ethers.Contract(cawProfileAddress, CAWNAME_TRANSFER_ABI, provider)
 

@@ -88,19 +88,19 @@ function initializeProviders(config: ChainSyncConfig) {
   if (!l1Provider && config.l1RpcUrl) {
     const l1Url = getL1HttpRpcUrl(config.l1RpcUrl)
     console.log('[ChainSync] L1 provider URL:', l1Url.slice(0, 40) + '...')
-    l1Provider = makeJsonRpcProvider(l1Url)
+    l1Provider = makeJsonRpcProvider(l1Url, 11155111)
     clientManager = new Contract(CLIENT_MANAGER_ADDRESS, cawClientManagerAbi, l1Provider)
   }
 
   if (!l2Provider && config.l2RpcUrl) {
     const l2Url = getL2HttpRpcUrl(config.l2RpcUrl)
     console.log('[ChainSync] L2 provider URL:', l2Url.slice(0, 40) + '...')
-    l2Provider = makeJsonRpcProvider(l2Url)
+    l2Provider = makeJsonRpcProvider(l2Url, 84532)
   }
 
   if (!mainnetProvider && config.ethMainnetRpcUrl) {
     console.log('[ChainSync] Mainnet provider URL:', config.ethMainnetRpcUrl.slice(0, 40) + '...')
-    mainnetProvider = makeJsonRpcProvider(config.ethMainnetRpcUrl)
+    mainnetProvider = makeJsonRpcProvider(config.ethMainnetRpcUrl, 1)
     uniswapRouter = new Contract(UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_ABI, mainnetProvider)
   }
 

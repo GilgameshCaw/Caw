@@ -16,8 +16,8 @@ function getCawProfileL2(): Contract {
   const rpcUrl = process.env.L2_RPC_URL_HTTP || process.env.L2_RPC_URL
   if (!rpcUrl) throw new Error('[DataCleaner] L2 RPC not configured')
   _l2Provider = rpcUrl.startsWith('wss://') || rpcUrl.startsWith('ws://')
-    ? makeWebSocketProvider(rpcUrl)
-    : makeJsonRpcProvider(rpcUrl)
+    ? makeWebSocketProvider(rpcUrl, 84532)
+    : makeJsonRpcProvider(rpcUrl, 84532)
   _cawProfileL2 = new Contract(CAW_NAMES_L2_ADDRESS, cawProfileL2Abi as any, _l2Provider)
   return _cawProfileL2
 }

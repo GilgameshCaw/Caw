@@ -81,7 +81,7 @@ let cachedMainnetProvider: JsonRpcProvider | null = null
  */
 function getUniswapRouter(mainnetRpcUrl: string): Contract {
   if (!cachedRouter || !cachedMainnetProvider) {
-    cachedMainnetProvider = makeJsonRpcProvider(mainnetRpcUrl)
+    cachedMainnetProvider = makeJsonRpcProvider(mainnetRpcUrl, 1)
     cachedRouter = new Contract(UNISWAP_V2_ROUTER, UNISWAP_V2_ROUTER_ABI, cachedMainnetProvider)
   }
   return cachedRouter
@@ -311,7 +311,7 @@ export const validatorService: Service = {
     // under large eth_call payloads (we routinely simulate 50+ actions in one
     // call). HTTP handles these reliably. Subscriptions can stay on WSS.
     const l2HttpRpcUrl = getL2HttpRpcUrl(l2RpcUrl)
-    const httpProvider = makeJsonRpcProvider(l2HttpRpcUrl)
+    const httpProvider = makeJsonRpcProvider(l2HttpRpcUrl, 84532)
     console.log(`[Validator] HTTP RPC (for eth_call / gas): ${l2HttpRpcUrl.slice(0, 50)}...`)
 
     // Note: Uncaught exception handling is done at the process level in programs/start.ts
@@ -855,12 +855,8 @@ export const validatorService: Service = {
       console.log("[submitProcessActions] Getting fee data..." + (retryCount > 0 ? ` (retry ${retryCount}/${maxRetries})` : ''))
       const feeData = await httpProvider.getFeeData();
 
-      // Small delay between RPC calls to avoid per-second rate limits
-      await new Promise(r => setTimeout(r, 300))
-
-      // Pre-fetch nonce so sendTransaction doesn't need to
+      // Pre-fetch nonce so sendTransaction doesn't need to (throttle handles spacing)
       const nonce = await httpProvider.getTransactionCount(wallet.address, 'pending')
-      await new Promise(r => setTimeout(r, 300))
 
       // Bump gas fees on retry to handle REPLACEMENT_UNDERPRICED errors
       let maxFeePerGas = feeData.maxFeePerGas ?? BigInt(0)
@@ -2067,7 +2063,7 @@ console.log("succeededKeys", succeededKeys)
     // WebSocket can fail on historical tx lookups; HTTP is more reliable
     // for the bulk data fetching the reconstruction needs.
     const replicationHttpRpcUrl = getL2HttpRpcUrl(l2RpcUrl)
-    const replicationHttpProvider = makeJsonRpcProvider(replicationHttpRpcUrl)
+    const replicationHttpProvider = makeJsonRpcProvider(replicationHttpRpcUrl, 84532)
     const replicationHttpWallet = new Wallet(privateKey!, replicationHttpProvider)
     console.log(`[Replication] HTTP RPC: ${replicationHttpRpcUrl.slice(0, 50)}...`)
 
@@ -2593,7 +2589,7 @@ console.log("succeededKeys", succeededKeys)
       const l2bRpcUrl = process.env.RPC_ARBITRUM_SEPOLIA
       if (!l2bRpcUrl) throw new Error('RPC_ARBITRUM_SEPOLIA not set — required for optimistic replication')
 
-      l2bProvider = makeJsonRpcProvider(l2bRpcUrl)
+      l2bProvider = makeJsonRpcProvider(l2bRpcUrl, 421614)
       l2bWallet = new Wallet(privateKey!, l2bProvider)
       archiveRead = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, archiveAbi, l2bProvider)
       archiveWrite = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, archiveAbi, l2bWallet)

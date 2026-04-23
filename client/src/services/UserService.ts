@@ -48,7 +48,7 @@ async function createWebSocketProvider(rpcUrl: string, name: string): Promise<We
     }, 30000)
 
     try {
-      provider = makeWebSocketProvider(rpcUrl)
+      provider = makeWebSocketProvider(rpcUrl, 11155111)
 
       // Handle connection errors via websocket
       const ws = (provider as any)._websocket || (provider as any).websocket
@@ -245,7 +245,7 @@ export async function findOrCreateUser(
         console.warn(`[UserService] WebSocket timed out, trying HTTP fallback...`)
         const httpUrl = getL1HttpRpcUrl()
         if (httpUrl) {
-          const httpProvider = makeJsonRpcProvider(httpUrl)
+          const httpProvider = makeJsonRpcProvider(httpUrl, 11155111)
           const httpContract = new Contract(CAW_NAMES_ADDRESS, CawProfileL1Abi, httpProvider)
           try {
             ;[ownerAddress, username] = await withTimeout(
