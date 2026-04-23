@@ -465,23 +465,42 @@ export function useSignAndSubmitAction() {
 
         // 2. If backend says no, verify via live RPC before showing the modal.
         //    The backend might just be behind the indexer.
+        //
+        // Retry the RPC up to 3 times with exponential backoff — cold-start
+        // transport races and transient 429s routinely make the first call
+        // return "0x" (AbiDecodingZeroDataError) or throw. A few hundred ms
+        // later the same call succeeds, so silent retries are far better UX
+        // than immediately surfacing a scary network error.
         if (!isAuthed) {
           let rpcFailed = false
-          try {
-            isAuthed = !!(await readContract(wagmiConfig, {
-              address: CAW_NAMES_L2_ADDRESS,
-              abi: cawProfileL2Abi,
-              functionName: 'authenticated',
-              args: [CLIENT_ID, activeTokenId],
-              chainId: baseSepolia.id,
-            }))
-          } catch (e) {
-            rpcFailed = true
-            console.warn('[Actions] RPC client-auth fallback failed:', e)
+          let lastErr: any = null
+          const RETRY_SCHEDULE_MS = [0, 500, 1500]
+          for (let attempt = 0; attempt < RETRY_SCHEDULE_MS.length; attempt++) {
+            if (RETRY_SCHEDULE_MS[attempt] > 0) {
+              await new Promise(r => setTimeout(r, RETRY_SCHEDULE_MS[attempt]))
+            }
+            try {
+              isAuthed = !!(await readContract(wagmiConfig, {
+                address: CAW_NAMES_L2_ADDRESS,
+                abi: cawProfileL2Abi,
+                functionName: 'authenticated',
+                args: [CLIENT_ID, activeTokenId],
+                chainId: baseSepolia.id,
+              }))
+              rpcFailed = false
+              break
+            } catch (e) {
+              rpcFailed = true
+              lastErr = e
+              if (attempt < RETRY_SCHEDULE_MS.length - 1) {
+                console.warn(`[Actions] client-auth RPC attempt ${attempt + 1} failed, retrying…`)
+              }
+            }
           }
 
           if (!isAuthed && rpcFailed) {
-            toast.error('Network error — please check your connection and try again.')
+            console.warn('[Actions] RPC client-auth fallback failed after retries:', lastErr)
+            toast.error('Network hiccup — please try again in a moment.')
             return null as any
           }
         }
