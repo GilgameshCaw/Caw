@@ -11,6 +11,7 @@ import { scheduledPostProcessorService } from './services/ScheduledPostProcessor
 import { instanceRegistryService } from './services/InstanceRegistryService';
 import { chainSyncService } from './services/ChainSyncService';
 import { marketplaceIndexerService } from './services/MarketplaceIndexerService';
+import { nftTransferWatcherService } from './services/NftTransferWatcher';
 
 import delay from './tools/delay';
 
@@ -50,6 +51,7 @@ const availableServiceList: Service[] = [
   instanceRegistryService,
   chainSyncService,
   marketplaceIndexerService,
+  nftTransferWatcherService,
 ];
 
 const availableServices = new Map<string, Service>();
