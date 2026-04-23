@@ -43,6 +43,13 @@
       "marketplaceAddress": "0x6A12511d6dff54D4633EaB49C72ceE7F8CfF3DBa",
       "cawNameAddress": "0xFdd1F50ACB3B76b46364DE84953E381faE163A9C"
     }
+  },
+  {
+    "service": "NftTransferWatcher",
+    "config": {
+      "l1RpcUrl": "${L1_RPC_URL}",
+      "chainId": 11155111
+    }
   }
 ]
 
