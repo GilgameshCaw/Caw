@@ -6,7 +6,7 @@ import { Service } from '../../Service'
 import { prisma }  from '../../prismaClient'
 import getActionType from '../../abi/getActionType'
 import { cawActionsAbi } from '../../abi/generated'
-import { CAW_ACTIONS_ADDRESS, CAW_ACTIONS_REPLICATOR_L2_ADDRESS, CAW_ADDRESS, WETH_ADDRESS } from '../../abi/addresses'
+import { CAW_ACTIONS_ADDRESS, CAW_ADDRESS, WETH_ADDRESS, CAW_ACTIONS_ARCHIVE_OPTIMISTIC_ADDRESS, CAW_CHALLENGE_RELAY_ADDRESS } from '../../abi/addresses'
 import { WebSocketProvider, JsonRpcProvider, Contract, Wallet, Interface, keccak256, solidityPacked, AbiCoder } from 'ethers'
 import { packActions, packSignatures, bytesToHex, getPackedActionSlices, unpackActions } from '../../utils/packActions'
 import { buildCheckpointMerkleTree } from '../../utils/checkpointMerkle'
@@ -317,8 +317,25 @@ export const validatorService: Service = {
     // Note: Uncaught exception handling is done at the process level in programs/start.ts
     // No need for service-specific handlers
 
+    // WebSocket is DISABLED by default. Infura rate-limits eth_subscribe very
+    // aggressively and reconnect storms were the biggest source of sustained
+    // 429s in the stack. The validator doesn't actually need WS — every
+    // read (simulation, gas, fee data) and write (tx submission) uses the
+    // httpProvider path. WS was only being used as the wallet's default
+    // provider. Re-enable with ENABLE_VALIDATOR_WS=1.
+    const USE_WS = process.env.ENABLE_VALIDATOR_WS === '1'
+
     // Function to initialize/reinitialize the WebSocket connection
     async function initializeConnection() {
+      if (!USE_WS) {
+        // No-WS path: bind wallet/contract to the HTTP provider instead.
+        provider = httpProvider as unknown as WebSocketProvider
+        wallet = new Wallet(privateKey!, httpProvider)
+        cawActions = new Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi, wallet)
+        iface = cawActions.interface
+        console.log('[Validator] WebSocket disabled — using HTTP provider (set ENABLE_VALIDATOR_WS=1 to re-enable)')
+        return
+      }
       console.log('[Validator] Initializing WebSocket connection...')
       if (provider) {
         try {
@@ -2064,499 +2081,15 @@ console.log("succeededKeys", succeededKeys)
     // for the bulk data fetching the reconstruction needs.
     const replicationHttpRpcUrl = getL2HttpRpcUrl(l2RpcUrl)
     const replicationHttpProvider = makeJsonRpcProvider(replicationHttpRpcUrl, 84532)
-    const replicationHttpWallet = new Wallet(privateKey!, replicationHttpProvider)
     console.log(`[Replication] HTTP RPC: ${replicationHttpRpcUrl.slice(0, 50)}...`)
 
-    async function replicationLoop() {
-      const replicatorAddress = CAW_ACTIONS_REPLICATOR_L2_ADDRESS
-
-      try {
-        // Find clients that have replication enabled (from DB — config synced by ChainSyncService)
-        const clients = await prisma.client.findMany({
-          where: { replicationEnabled: true, replicationCount: { gt: 0 } },
-          select: { id: true, replications: true }
-        })
-
-        console.log(`[Replication] Polling: ${clients.length} client(s) with replication enabled`)
-        if (clients.length === 0) return
-
-        const httpProvider = replicationHttpProvider
-        const httpWallet = replicationHttpWallet
-
-        const CHECKPOINT_INTERVAL = 32
-        // ~60KB LZ message size limit — leave headroom for LZ framing overhead
-        const LZ_PAYLOAD_LIMIT = 58_000
-
-        const replicatorViewAbi = [
-          'function clientActionCount(uint32) view returns (uint256)',
-          'function checkpointReplicated(uint32,uint32,uint256) view returns (bool)',
-          'function quoteReplicateBatch(uint32,uint256,uint256,uint256,bool) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
-          'function getNextUnreplicatedCheckpoint(uint32,uint32) view returns (uint256 nextCheckpointId, uint256 totalCheckpoints)',
-          'function isAvailableChain(uint32) view returns (bool)',
-        ]
-        // Read clientActionCount from CawActions (not replicator) to know how
-        // many complete checkpoints exist.
-        const cawActionsViewAbi = ['function clientActionCount(uint32) view returns (uint256)']
-        const cawActionsView = new Contract(CAW_ACTIONS_ADDRESS, cawActionsViewAbi, httpProvider)
-        const replicatorView = new Contract(replicatorAddress, replicatorViewAbi, httpProvider)
-
-        const replicatorWriteAbi = [
-          // `text` is `bytes` (smltxt-compressed), not `string`. Mismatched
-          // ABI produces a different selector and the tx falls into the
-          // contract's fallback path (revert with no data at ~2.87M gas).
-          'function replicateBatch(tuple(uint32 clientId, uint32 destEid, uint256 startCheckpointId, uint256 endCheckpointId, uint256 lzTokenAmount), bytes packedActions, bytes32[] r) payable',
-        ]
-        const replicatorWrite = new Contract(replicatorAddress, replicatorWriteAbi, httpWallet)
-
-        for (const client of clients) {
-          const replications = client.replications as any[]
-          if (!replications?.length) continue
-
-          for (const dest of replications) {
-            const destEid = dest.eid
-            if (!destEid) continue
-
-            // Skip destinations not registered on the replicator (e.g. self-chain)
-            try {
-              const available: boolean = await replicatorView.isAvailableChain(destEid)
-              if (!available) {
-                console.log(`[Replication] Skipping chain ${destEid} — not registered on replicator`)
-                continue
-              }
-            } catch { /* proceed with attempt */ }
-
-            try {
-              // Determine how many complete checkpoints exist on the source chain.
-              const actionCount = Number(await cawActionsView.clientActionCount(client.id))
-              const total = Math.floor(actionCount / CHECKPOINT_INTERVAL)
-              if (total === 0) continue
-
-              // Find the first unreplicated checkpoint. Use the on-chain helper
-              // when available, falling back to a sequential scan.
-              let startCheckpointId = 0
-              try {
-                const result = await replicatorView.getNextUnreplicatedCheckpoint(client.id, destEid)
-                startCheckpointId = Number(result.nextCheckpointId)
-              } catch {
-                // Fallback: sequential scan
-                for (let cp = 1; cp <= total; cp++) {
-                  const done = await replicatorView.checkpointReplicated(client.id, destEid, cp)
-                  if (!done) { startCheckpointId = cp; break }
-                }
-              }
-              if (startCheckpointId === 0) {
-                // All marked done. Check env flag for force-retry of specific checkpoint.
-                const forceRetry = Number(process.env.FORCE_REPLICATE_CHECKPOINT || 0)
-                if (forceRetry > 0 && forceRetry <= total) {
-                  console.log(`[Replication] All checkpoints marked done, but FORCE_REPLICATE_CHECKPOINT=${forceRetry} — retrying`)
-                  startCheckpointId = forceRetry
-                } else {
-                  continue // Fully caught up
-                }
-              }
-
-              // Find consecutive unreplicated checkpoints starting from startCheckpointId.
-              // We'll batch as many as fit within the ~60KB LZ payload limit.
-              let endCheckpointId = startCheckpointId
-              for (let cp = startCheckpointId + 1; cp <= total; cp++) {
-                const done = await replicatorView.checkpointReplicated(client.id, destEid, cp)
-                if (done) break // Non-consecutive — stop here
-                endCheckpointId = cp
-              }
-
-              const numCheckpoints = endCheckpointId - startCheckpointId + 1
-              console.log(`[Replication] Client ${client.id} → chain ${destEid}: checkpoints ${startCheckpointId}..${endCheckpointId} (${numCheckpoints}) of ${total} need replication`)
-
-              // Reconstruct actions + signatures from on-chain data for the
-              // entire checkpoint range.
-              //
-              // The hash chain is built by CawActions._processAction in the exact
-              // order actions appear in the calldata arrays. Within a block, multiple
-              // processActions txs are ordered by transactionIndex. Within a tx,
-              // actions are ordered by their position in the calldata array.
-              //
-              // DB logIndex and rawEventId are NOT reliable for this ordering because
-              // safeProcessActions makes external self-calls per action (producing
-              // low logIndex events) before emitting the batch ActionsProcessed event.
-              const rangeStartPos = (startCheckpointId - 1) * CHECKPOINT_INTERVAL
-
-              // Walk backward from the latest block, accumulating client-
-              // action counts per event until we've passed the start of the
-              // checkpoint window. This is O(events-since-checkpoint) rather
-              // than O(all-events-ever).
-              const actionsNeededFromEnd = actionCount - rangeStartPos // how many from tail to cover rangeStartPos
-              const latestL2 = await httpProvider.getBlockNumber()
-              const eventsContract = new Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi as any, httpProvider)
-
-              const CHUNK = 50_000
-              let processedEvents: any[] = []
-              let scannedActions = 0
-              let toBlock = latestL2
-
-              while (scannedActions < actionsNeededFromEnd) {
-                const fromBlock = Math.max(0, toBlock - CHUNK + 1)
-                const batch = await eventsContract.queryFilter(
-                  eventsContract.filters.ActionsProcessed(),
-                  fromBlock,
-                  toBlock,
-                )
-                // Count client actions in this batch (newest-first, but we
-                // prepend so the final array is oldest-first).
-                for (const ev of batch) {
-                  const args: any = (ev as any).args
-                  if (!args) continue
-                  // ActionsProcessed now emits packed bytes — decode to count client actions
-                  const packedHexEvt = args[0] || args.packedActions || ''
-                  if (packedHexEvt && typeof packedHexEvt === 'string' && packedHexEvt.length > 4) {
-                    try {
-                      const buf = new Uint8Array((packedHexEvt.startsWith('0x') ? packedHexEvt.slice(2) : packedHexEvt).match(/.{2}/g)!.map((b: string) => parseInt(b, 16)))
-                      const actionsArr = unpackActions(buf)
-                      for (const a of actionsArr) {
-                        if (Number(a.clientId) === client.id) scannedActions++
-                      }
-                    } catch { /* skip malformed events */ }
-                  }
-                }
-                processedEvents = [...batch, ...processedEvents]
-                if (fromBlock === 0) break
-                toBlock = fromBlock - 1
-              }
-              const txHashes = Array.from(new Set(processedEvents.map(e => e.transactionHash)))
-
-              if (txHashes.length === 0) {
-                console.log(`[Replication] No ActionsProcessed events found for checkpoints ${startCheckpointId}..${endCheckpointId}, skipping`)
-                continue
-              }
-
-              // Decode each tx's calldata and build a flat ordered list of actions
-              // sorted by (blockNumber, transactionIndex, calldataPosition)
-              type OrderedEntry = {
-                blockNumber: number; txIndex: number; calldataPos: number
-                action: any; v: number; r: string; s: string
-              }
-              const orderedEntries: OrderedEntry[] = []
-              let fetchFailed = false
-
-              for (const txHash of txHashes) {
-                const tx = await httpProvider.getTransaction(txHash)
-                if (!tx) {
-                  console.error(`[Replication] Could not fetch tx ${txHash}`)
-                  fetchFailed = true
-                  break
-                }
-
-                // Decode the packed processActions calldata
-                const decoded = packedIface.decodeFunctionData('processActions', tx.data)
-                const packedHex: string = decoded[1] // packedActions bytes
-                const sigsHex: string = decoded[2]  // sigs bytes
-
-                // Unpack the actions from the packed calldata bytes
-                const packedBytes = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
-                const unpackedActions = unpackActions(packedBytes)
-
-                // Extract signatures
-                const sigBytes = new Uint8Array((sigsHex.startsWith('0x') ? sigsHex.slice(2) : sigsHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
-
-                for (let i = 0; i < unpackedActions.length; i++) {
-                  const a = unpackedActions[i]
-                  if (a.clientId !== client.id) continue
-                  const sigOff = i * 65
-                  orderedEntries.push({
-                    blockNumber: tx.blockNumber!,
-                    txIndex: tx.index!,
-                    calldataPos: i,
-                    action: {
-                      actionType: a.actionType,
-                      senderId: a.senderId,
-                      receiverId: a.receiverId,
-                      receiverCawonce: a.receiverCawonce,
-                      clientId: a.clientId,
-                      cawonce: a.cawonce,
-                      recipients: a.recipients,
-                      amounts: a.amounts.map((x: any) => BigInt(x)),
-                      text: a.text,
-                    },
-                    v: sigBytes[sigOff],
-                    r: '0x' + Array.from(sigBytes.slice(sigOff + 1, sigOff + 33)).map(b => b.toString(16).padStart(2, '0')).join(''),
-                    s: '0x' + Array.from(sigBytes.slice(sigOff + 33, sigOff + 65)).map(b => b.toString(16).padStart(2, '0')).join(''),
-                  })
-                }
-              }
-
-              if (fetchFailed) continue
-
-              // Sort by (blockNumber, transactionIndex, calldataPosition) — this is
-              // the exact order the contract built the hash chain
-              orderedEntries.sort((a: any, b) => {
-                if (a.blockNumber !== b.blockNumber) return a.blockNumber - b.blockNumber
-                if (a.txIndex !== b.txIndex) return a.txIndex - b.txIndex
-                return a.calldataPos - b.calldataPos
-              })
-
-              // Slice the full range of checkpoints from ordered entries.
-              // orderedEntries is a PARTIAL list covering the last N actions
-              // (from the backward walk), not the full history. The first entry
-              // corresponds to action position (actionCount - orderedEntries.length).
-              const firstGlobalPos = actionCount - orderedEntries.length
-              const totalActionsNeeded = numCheckpoints * CHECKPOINT_INTERVAL
-              const localStart = rangeStartPos - firstGlobalPos
-              const rangeEntries = orderedEntries.slice(localStart, localStart + totalActionsNeeded)
-
-              if (rangeEntries.length !== totalActionsNeeded) {
-                console.log(`[Replication] Only ${rangeEntries.length}/${totalActionsNeeded} actions reconstructed for checkpoints ${startCheckpointId}..${endCheckpointId} (localStart=${localStart}, entries=${orderedEntries.length}, firstGlobal=${firstGlobalPos}), skipping`)
-                continue
-              }
-
-              // Deep-clone actions into plain objects — ethers v6 returns frozen
-              // Result objects from decodeFunctionData that can't be re-encoded
-              const allActions = rangeEntries.map(e => ({
-                actionType: Number(e.action.actionType),
-                senderId: Number(e.action.senderId),
-                receiverId: Number(e.action.receiverId),
-                receiverCawonce: Number(e.action.receiverCawonce),
-                clientId: Number(e.action.clientId),
-                cawonce: Number(e.action.cawonce),
-                recipients: Array.from(e.action.recipients).map(Number),
-                amounts: Array.from(e.action.amounts).map((a: any) => BigInt(a)),
-                text: e.action.text,
-              }))
-              const allR = rangeEntries.map(e => e.r)
-
-              // Pre-compute the packed payload size and trim endCheckpointId
-              // so the total stays under the ~60KB LZ limit. We pack the full
-              // range first, then shrink if needed.
-              let packedForHash = packActions(allActions.map(a => ({
-                actionType: a.actionType,
-                senderId: a.senderId,
-                receiverId: a.receiverId,
-                receiverCawonce: a.receiverCawonce,
-                clientId: a.clientId,
-                cawonce: a.cawonce,
-                recipients: a.recipients,
-                amounts: a.amounts.map((x: any) => BigInt(x)),
-                text: a.text,
-              })))
-
-              // Trim checkpoints from the end until we fit within the LZ payload limit
-              let actualEndCheckpointId = endCheckpointId
-              let actualNumCheckpoints = numCheckpoints
-              let actualTotalActions = totalActionsNeeded
-              let trimmedAllActions = allActions
-              let trimmedAllR = allR
-
-              while (packedForHash.length > LZ_PAYLOAD_LIMIT && actualNumCheckpoints > 1) {
-                actualEndCheckpointId--
-                actualNumCheckpoints = actualEndCheckpointId - startCheckpointId + 1
-                actualTotalActions = actualNumCheckpoints * CHECKPOINT_INTERVAL
-                trimmedAllActions = allActions.slice(0, actualTotalActions)
-                trimmedAllR = allR.slice(0, actualTotalActions)
-                packedForHash = packActions(trimmedAllActions.map(a => ({
-                  actionType: a.actionType,
-                  senderId: a.senderId,
-                  receiverId: a.receiverId,
-                  receiverCawonce: a.receiverCawonce,
-                  clientId: a.clientId,
-                  cawonce: a.cawonce,
-                  recipients: a.recipients,
-                  amounts: a.amounts.map((x: any) => BigInt(x)),
-                  text: a.text,
-                })))
-              }
-
-              if (actualEndCheckpointId !== endCheckpointId) {
-                console.log(`[Replication] Trimmed range to ${startCheckpointId}..${actualEndCheckpointId} (${actualNumCheckpoints} checkpoints, ${packedForHash.length} bytes) to fit LZ limit`)
-              } else {
-                console.log(`[Replication] Payload size: ${packedForHash.length} bytes for ${actualNumCheckpoints} checkpoint(s)`)
-              }
-
-              // Use the trimmed values from here on
-              trimmedAllActions = trimmedAllActions || allActions
-              trimmedAllR = trimmedAllR || allR
-
-              // Pre-flight hash chain verification: recompute the on-chain hash chain
-              // locally from (startCheckpointId - 1) to actualEndCheckpointId and compare
-              // to the stored checkpoint hash. The chain commits to BOTH r AND
-              // keccak256(packedSlice) per action — see CawActions._processAction.
-              // Catches ordering and action-body bugs before wasting gas on a revert.
-              const hashCheckAbi = ['function clientHashAtCheckpoint(uint32,uint256) view returns (bytes32)']
-              const actionsView = new Contract(CAW_ACTIONS_ADDRESS, hashCheckAbi, httpProvider)
-              const prevHash = startCheckpointId === 1
-                ? '0x' + '00'.repeat(32)
-                : await actionsView.clientHashAtCheckpoint(client.id, startCheckpointId - 1)
-              const expectedHash = await actionsView.clientHashAtCheckpoint(client.id, actualEndCheckpointId)
-
-              // Hash chain uses keccak256 of the packed action slice (NOT abi.encode).
-              // Pack the actions, then slice each one for hashing.
-              const actionSlices = getPackedActionSlices(packedForHash)
-
-              let computedHash = prevHash
-              for (let i = 0; i < actualTotalActions; i++) {
-                const actionHash = keccak256(bytesToHex(actionSlices[i]))
-                computedHash = keccak256(solidityPacked(['bytes32', 'bytes32', 'bytes32'], [computedHash, trimmedAllR[i], actionHash]))
-              }
-
-              if (computedHash !== expectedHash) {
-                console.error(`[Replication] Hash chain mismatch for checkpoints ${startCheckpointId}..${actualEndCheckpointId}! Computed ${computedHash} but on-chain is ${expectedHash}.`)
-                console.error(`[Replication]   orderedEntries total: ${orderedEntries.length}, rangeStartPos: ${rangeStartPos}, first action cawonce: ${trimmedAllActions[0]?.cawonce}, last: ${trimmedAllActions[actualTotalActions - 1]?.cawonce}`)
-                continue
-              }
-              console.log(`[Replication] Hash chain verified for checkpoints ${startCheckpointId}..${actualEndCheckpointId}`)
-
-              // Get LZ fee quote — if the payload exceeds LZ's maxMessageSize,
-              // log a warning and skip instead of blocking all future checkpoints.
-              // The LZ_MessageLib_InvalidMessageSize error selector is 0xc667af3e.
-              let nativeFee: bigint
-              try {
-                const avgTextLength = Math.ceil(trimmedAllActions.reduce((sum: number, a: any) => sum + (a.text?.length || 0), 0) / actualTotalActions)
-                const avgRecipients = Math.ceil(trimmedAllActions.reduce((sum: number, a: any) => sum + (a.recipients?.length || 0), 0) / actualTotalActions)
-                const fee = await replicatorView.quoteReplicateBatch(destEid, actualNumCheckpoints, avgTextLength, avgRecipients, false)
-                // 15% buffer — quoted fee is accurate to a few percent for a
-                // given block; 15% is plenty for inter-block drift. (Was 30%
-                // briefly; tuned down after confirming quote reliability.)
-                nativeFee = BigInt(fee.nativeFee) * 115n / 100n
-              } catch (quoteErr: any) {
-                const errData = quoteErr?.data || quoteErr?.error?.data || ''
-                if (typeof errData === 'string' && errData.startsWith('0xc667af3e')) {
-                  console.error(`[Replication] Checkpoints ${startCheckpointId}..${actualEndCheckpointId} payload exceeds LZ message size limit — skipping (will retry if limit is raised)`)
-                } else {
-                  console.error(`[Replication] Fee quote failed for checkpoints ${startCheckpointId}..${actualEndCheckpointId}:`, quoteErr.message)
-                }
-                continue
-              }
-
-              console.log(`[Replication] Submitting checkpoints ${startCheckpointId}..${actualEndCheckpointId} for client ${client.id} → chain ${destEid} (fee: ${nativeFee} wei)`)
-
-              const params = { clientId: client.id, destEid, startCheckpointId, endCheckpointId: actualEndCheckpointId, lzTokenAmount: 0 }
-
-              // Pre-flight: check that clientChainEnabled is true for this
-              // (clientId, destEid). This flag is set on the replicator by a
-              // LZ-delivered `setClientChains` message originating from L1.
-              // On testnet the LZ DVN queue can stall for hours-to-days, so we
-              // log this specifically instead of burying it under "no reason"
-              // reverts later in the flow.
-              try {
-                const enabledAbi = ['function clientChainEnabled(uint32,uint32) view returns (bool)']
-                const replEnabledView = new Contract(replicatorAddress, enabledAbi, httpProvider)
-                const enabled: boolean = await replEnabledView.clientChainEnabled(client.id, destEid)
-                if (!enabled) {
-                  console.warn(`[Replication] clientChainEnabled(${client.id}, ${destEid}) = false on replicator ${replicatorAddress}. ` +
-                    `Setup LZ message (addReplication → setClientChains) hasn't been delivered yet. ` +
-                    `This is typically LZ testnet DVN queue lag — no on-chain action fixes it.`)
-                  continue
-                }
-              } catch (e: any) {
-                console.warn(`[Replication] clientChainEnabled pre-check failed: ${e?.shortMessage || e?.message}`)
-              }
-
-              const packedForReplication = bytesToHex(packedForHash)
-              // Pre-flight staticCall: simulate the tx to surface a revert
-              // reason before spending gas. On-chain reverts from replicateBatch
-              // have no obvious message in the receipt; this catches contract
-              // requires and logs the exact reason instead of the opaque
-              // "transaction execution reverted (no reason)".
-              try {
-                await replicatorWrite.replicateBatch.staticCall(
-                  params, packedForReplication, trimmedAllR,
-                  { value: nativeFee }
-                )
-              } catch (simErr: any) {
-                const errData = simErr?.data || simErr?.error?.data || simErr?.info?.error?.data
-                const decoded = decodeCustomError(errData)
-                const reason = simErr?.revert?.args?.[0] || simErr?.reason || simErr?.shortMessage || simErr?.message || 'unknown'
-
-                // "missing revert data" + no errData means the RPC returned
-                // nothing useful — common on Infura when eth_call payload is
-                // large. Skipping the pre-flight and letting the real tx
-                // attempt is safer than blocking replication on an RPC quirk;
-                // estimateGas below will also surface any real revert.
-                const isNoRevertData = (!errData || errData === '0x') &&
-                  (reason.includes('missing revert data') || simErr?.code === 'CALL_EXCEPTION')
-
-                if (decoded) {
-                  console.error(`[Replication] Pre-flight simulation failed for checkpoints ${startCheckpointId}..${actualEndCheckpointId} → chain ${destEid}: ${decoded}`)
-                  continue
-                } else if (isNoRevertData) {
-                  console.warn(`[Replication] Pre-flight staticCall returned no data (likely RPC truncation on large calldata) — proceeding to estimateGas which will catch real reverts.`)
-                  // Fall through to the estimateGas / submit path
-                } else {
-                  console.error(`[Replication] Pre-flight simulation failed for checkpoints ${startCheckpointId}..${actualEndCheckpointId} → chain ${destEid}: ${reason}${errData ? ` (raw data: ${errData})` : ''} code=${simErr?.code}`)
-                  continue
-                }
-              }
-
-              // Estimate gas via HTTP and submit with a 10% buffer. Estimates
-              // for replicateBatch are deterministic (no oracle reads, no
-              // dynamic loops) so 10% is plenty for inter-block storage drift.
-              // Cap at 25M to stay below Base's 30M block gas limit.
-              let gasLimit: bigint
-              try {
-                const estimated = await replicatorWrite.replicateBatch.estimateGas(
-                  params, packedForReplication, trimmedAllR,
-                  { value: nativeFee }
-                )
-                gasLimit = (estimated * 110n) / 100n
-                if (gasLimit > 25_000_000n) gasLimit = 25_000_000n
-                console.log(`[Replication] Gas estimated: ${estimated} → using ${gasLimit} (10% buffer)`)
-              } catch (gasErr: any) {
-                console.warn(`[Replication] estimateGas failed (${gasErr?.shortMessage || gasErr?.message}), using 12M fallback`)
-                gasLimit = 12_000_000n
-              }
-
-              const tx = await replicatorWrite.replicateBatch(params, packedForReplication, trimmedAllR, {
-                value: nativeFee,
-                gasLimit,
-              })
-              let receipt
-              try {
-                receipt = await tx.wait()
-              } catch (waitErr: any) {
-                // Out-of-gas reverts arrive here with status=0 and no reason.
-                // Surface gasUsed vs gasLimit so it's obvious.
-                const r = waitErr?.receipt
-                if (r && r.status === 0) {
-                  const gasPct = Number((r.gasUsed * 100n) / gasLimit)
-                  console.error(`[Replication] Tx ${r.hash} reverted on-chain: status=0, gasUsed=${r.gasUsed}/${gasLimit} (${gasPct}%) — likely ${gasPct >= 95 ? 'OUT OF GAS (raise gasLimit)' : 'contract revert (no reason emitted)'}`)
-                }
-                throw waitErr
-              }
-              console.log(`[Replication] Checkpoints ${startCheckpointId}..${actualEndCheckpointId} replicated! tx: ${receipt?.hash} (gas used: ${receipt?.gasUsed}/${gasLimit})`)
-
-              // Record replication analytics
-              if (receipt) {
-                try {
-                  await prisma.replicationTx.create({ data: {
-                    txHash: receipt.hash,
-                    blockNumber: BigInt(receipt.blockNumber),
-                    clientId: client.id,
-                    destEid,
-                    checkpointId: startCheckpointId,
-                    endCheckpointId: actualEndCheckpointId,
-                    actionCount: actualTotalActions,
-                    gasUsed: receipt.gasUsed.toString(),
-                    gasPrice: receipt.fee ? (receipt.fee / receipt.gasUsed).toString() : '0',
-                    ethCost: receipt.fee.toString(),
-                    lzFee: nativeFee.toString(),
-                    totalCost: (receipt.fee + nativeFee).toString(),
-                  }})
-                } catch (e: any) { console.error('[Analytics] Failed to record replication:', e.message) }
-              }
-            } catch (err: any) {
-              console.error(err)
-              console.error(`[Replication] Failed for client ${client.id} → chain ${destEid}: ${formatRpcError(err)}`)
-            }
-          }
-        }
-      } catch (err: any) {
-        console.error(`[Replication] Loop error: ${formatRpcError(err)}`)
-      }
-    }
 
     // ================================================================
     // Optimistic replication: direct L2b submission with stake + fraud proofs
     // ================================================================
 
-    const OPTIMISTIC_ARCHIVE_ADDRESS = '0x360602c0dd788C18240249d4d9ED0451f8bD1ee5'
-    const CHALLENGE_RELAY_ADDRESS = '0xb3fF59926e50596C1563BB703455050256E70951'
+    const OPTIMISTIC_ARCHIVE_ADDRESS = CAW_ACTIONS_ARCHIVE_OPTIMISTIC_ADDRESS
+    const CHALLENGE_RELAY_ADDRESS = CAW_CHALLENGE_RELAY_ADDRESS
     const OPTIMISTIC_MIN_STAKE = BigInt('10000000000000000')     // 0.01 ETH
     const OPTIMISTIC_INITIAL_DEPOSIT = BigInt('20000000000000000') // 0.02 ETH
     const OPTIMISTIC_CHECKPOINT_INTERVAL = 32
@@ -2936,15 +2469,14 @@ console.log("succeededKeys", succeededKeys)
                   txHash: receipt.hash,
                   blockNumber: BigInt(receipt.blockNumber),
                   clientId: client.id,
-                  destEid: 0, // Direct L2b submission, no LZ dest
                   checkpointId: startCheckpointId,
                   endCheckpointId,
                   actionCount: numCheckpoints * OPTIMISTIC_CHECKPOINT_INTERVAL,
                   gasUsed: receipt.gasUsed.toString(),
                   gasPrice: receipt.fee ? (receipt.fee / receipt.gasUsed).toString() : '0',
                   ethCost: receipt.fee?.toString() || '0',
-                  lzFee: '0',
                   totalCost: receipt.fee?.toString() || '0',
+                  submitter: w.address.toLowerCase(),
                 }})
               } catch (e: any) { console.error('[Analytics] Failed to record optimistic replication:', e.message) }
             }
@@ -3197,17 +2729,12 @@ console.log("succeededKeys", succeededKeys)
     // Loop lifecycle and scheduling
     // ================================================================
 
-    const useOptimisticReplication = process.env.REPLICATION_MODE !== 'lz'
-
     // Declare all loops with the watchdog. Timeouts are generous — 3x the
     // typical interval — so transient slowness doesn't trigger a restart,
     // but a truly hung loop will be caught within a few minutes.
     ctx.declareLoop('poll', Math.max(checkInterval * 3, 60_000))
-    ctx.declareLoop('replication', Math.max(60_000 * 3, 180_000))
-    if (useOptimisticReplication) {
-      ctx.declareLoop('optimisticReplication', Math.max(60_000 * 3, 180_000))
-      ctx.declareLoop('monitor', Math.max(60_000 * 5, 300_000))
-    }
+    ctx.declareLoop('optimisticReplication', Math.max(60_000 * 3, 180_000))
+    ctx.declareLoop('monitor', Math.max(60_000 * 5, 300_000))
 
     // start polling with overlap protection
     let isPolling = false
@@ -3224,22 +2751,6 @@ console.log("succeededKeys", succeededKeys)
         console.error(err)
       } finally {
         isPolling = false
-      }
-    }
-
-    // Start background replication loop (LZ-based)
-    let isReplicating = false
-    let replicationTimer: ReturnType<typeof setInterval>
-    const safeReplicationLoop = async () => {
-      if (isReplicating) return
-      isReplicating = true
-      try {
-        await replicationLoop()
-        ctx.heartbeat('replication')
-      } catch (err) {
-        console.error('[Replication] Unhandled error:', err)
-      } finally {
-        isReplicating = false
       }
     }
 
@@ -3289,7 +2800,6 @@ console.log("succeededKeys", succeededKeys)
       console.log(`  - Check Interval: ${liveSettings.checkInterval}ms`);
       console.log(`  - Base Tip: ${liveSettings.validatorBaseTip} CAW`);
       console.log(`  - Replication Interval: ${liveSettings.replicationInterval}ms`);
-      console.log(`  - Replication Mode: ${useOptimisticReplication ? 'optimistic (stake-based L2b)' : 'lz (LayerZero)'}`)
       console.log(`  - Wallet Address: ${wallet.address}`);
 
       // Use setTimeout chains instead of setInterval so updated settings take effect immediately
@@ -3298,12 +2808,6 @@ console.log("succeededKeys", succeededKeys)
           await safePollLoop()
           schedulePoll()
         }, liveSettings.checkInterval)
-      }
-      function scheduleReplication() {
-        replicationTimer = setTimeout(async () => {
-          await safeReplicationLoop()
-          scheduleReplication()
-        }, liveSettings.replicationInterval)
       }
       function scheduleOptimisticReplication() {
         optimisticReplicationTimer = setTimeout(async () => {
@@ -3322,24 +2826,17 @@ console.log("succeededKeys", succeededKeys)
       safePollLoop()
       schedulePoll()
 
-      // Start the appropriate replication mode(s)
-      if (useOptimisticReplication) {
-        console.log('[OptimisticReplication] Starting optimistic replication and monitor loops')
-        safeOptimisticReplicationLoop()
-        scheduleOptimisticReplication()
-        safeMonitorLoop()
-        scheduleMonitor()
-      } else {
-        safeReplicationLoop()
-        scheduleReplication()
-      }
+      console.log('[OptimisticReplication] Starting optimistic replication and monitor loops')
+      safeOptimisticReplicationLoop()
+      scheduleOptimisticReplication()
+      safeMonitorLoop()
+      scheduleMonitor()
     })
 
     return {
       started: Promise.resolve(),
       async stop() {
         clearTimeout(timer)
-        clearTimeout(replicationTimer)
         clearTimeout(optimisticReplicationTimer)
         clearTimeout(monitorTimer)
         // No need to remove handler since it's managed globally
