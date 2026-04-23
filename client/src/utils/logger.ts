@@ -112,6 +112,7 @@ if (!isBrowser && logStream) {
   process.on('uncaughtException', (error: any) => {
     const msg = error?.message || String(error)
     const code = error?.code || ''
+    const innerCode = error?.error?.code
 
     // Transient network errors (DNS failure, connection refused, socket hang up)
     // should NOT kill the process — services have their own retry loops.
@@ -121,8 +122,19 @@ if (!isBrowser && logStream) {
       msg.includes('socket hang up') || msg.includes('ENOTFOUND') ||
       msg.includes('getaddrinfo') || msg.includes('ECONNREFUSED')
 
-    if (isTransientNetwork) {
-      logger.error('Uncaught network error (non-fatal, services will retry):', msg)
+    // RPC-layer errors (rate limits, malformed responses, missing response,
+    // ethers' 'could not coalesce error') should also NOT kill the process.
+    // These bubble up from WebSocket subscribe failures and provider retries;
+    // the service-level retry loops handle them.
+    const isTransientRpc =
+      code === 'UNKNOWN_ERROR' || code === 'BAD_DATA' || code === 'SERVER_ERROR' ||
+      innerCode === -32005 /* Infura: Too Many Requests */ ||
+      msg.includes('Too Many Requests') || msg.includes('429') ||
+      msg.includes('could not coalesce error') || msg.includes('missing response for request') ||
+      msg.includes('ERR_MODULE_NOT_FOUND')
+
+    if (isTransientNetwork || isTransientRpc) {
+      logger.error(`Uncaught transient error (non-fatal, services will retry): ${msg.slice(0, 200)}`)
       return
     }
 
