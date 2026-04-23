@@ -200,8 +200,11 @@ router.get('/', async (req, res) => {
       if (useES) {
         cawResults = await searchCawsWithES(query, cawLimit, cawOffset)
       }
-      // Fall back to Prisma if ES failed, not available, or returned no results
-      if (!cawResults || cawResults.items.length === 0) {
+      // Only fall back to Prisma when ES is truly unavailable. Previously we
+      // also fell back on 0 hits, but that re-scanned the Caw table on every
+      // "no results" query — O(N) cost for a query that should be O(1). At 1M
+      // caws a miss ran through the entire table with ILIKE.
+      if (!cawResults) {
         cawResults = await searchCawsWithPrisma(query, cawLimit, cawOffset)
       }
 
@@ -233,8 +236,9 @@ router.get('/', async (req, res) => {
       if (useES) {
         users = await searchUsersWithES(query, userLimit, userOffset)
       }
-      // Fall back to Prisma if ES failed, not available, or returned no results
-      if (!users || users.length === 0) {
+      // Only fall back to Prisma when ES is truly unavailable (see search-caws
+      // comment above). ES returning 0 hits is a legitimate "no results".
+      if (!users) {
         users = await prisma.user.findMany({
           where: {
             username: { contains: query, mode: 'insensitive' }
