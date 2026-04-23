@@ -19,19 +19,28 @@ function mintCostByLength(len: number): bigint {
   }
 }
 
-// Cache burned total for 5 minutes since it requires scanning all usernames
+// Cache burned total for 1 hour — the only input is username lengths, which
+// only change when someone mints a new name. 1-hour staleness is fine for
+// a stats page. Previous 5-min TTL was overkill and made cache misses expensive.
 let burnedCache: { value: string; expiry: number } | null = null
 
 async function getTotalCawBurned(): Promise<string> {
   if (burnedCache && Date.now() < burnedCache.expiry) return burnedCache.value
 
-  const users = await prisma.user.findMany({ select: { username: true } })
+  // Group by username length IN THE DATABASE. Returns at most ~20 rows (one
+  // per length). Previous approach did findMany({select:{username:true}}) and
+  // looped in JS — O(N) memory + time. Now O(distinct lengths).
+  const groups = await prisma.$queryRaw<Array<{ len: number; count: bigint }>>`
+    SELECT LENGTH(username)::int AS len, COUNT(*)::bigint AS count
+    FROM "User"
+    GROUP BY LENGTH(username)
+  `
   let total = 0n
-  for (const u of users) {
-    total += mintCostByLength(u.username.length)
+  for (const g of groups) {
+    total += mintCostByLength(g.len) * BigInt(g.count)
   }
   const result = total.toString()
-  burnedCache = { value: result, expiry: Date.now() + 5 * 60 * 1000 }
+  burnedCache = { value: result, expiry: Date.now() + 60 * 60 * 1000 }
   return result
 }
 
@@ -72,14 +81,14 @@ router.get('/', async (_req, res) => {
         }
       }),
 
-      // Active users this week (users who posted)
-      prisma.caw.groupBy({
-        by: ['userId'],
-        where: {
-          createdAt: { gte: weekAgo },
-          status: 'SUCCESS'
-        }
-      }).then(groups => groups.length),
+      // Active users this week (users who posted). Use COUNT(DISTINCT) in SQL
+      // instead of groupBy + .length — groupBy enumerates every user group
+      // into memory, the distinct count does not.
+      prisma.$queryRaw<Array<{ count: bigint }>>`
+        SELECT COUNT(DISTINCT "userId")::bigint AS count
+        FROM "Caw"
+        WHERE "createdAt" >= ${weekAgo} AND "status" = 'SUCCESS'
+      `.then(rows => Number(rows[0]?.count ?? 0)),
 
       // Total CAW burned through username minting
       getTotalCawBurned()
