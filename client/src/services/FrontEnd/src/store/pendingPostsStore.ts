@@ -16,6 +16,8 @@ interface PendingPostsStore {
   pendingPosts: PendingPost[]
   addPendingPost: (post: { content: string; username: string; tokenId: number; displayName?: string; image?: string; avatarUrl?: string; replyToId?: string; parent?: CawItem; cawonce?: number; isQuote?: boolean; action?: string }) => string
   updatePostWithTxQueueId: (tempId: string, txQueueId: number) => void
+  /** Update a pending post's id once the real caw ID is known */
+  updatePostId: (cawonce: number, userId: number, realId: string) => void
   markPostAsFailed: (txQueueId: number) => void
   markPostAsConfirmed: (txQueueId: number) => void
   removePendingPost: (tempId: string) => void
@@ -74,6 +76,16 @@ export const usePendingPostsStore = create<PendingPostsStore>((set) => ({
     set((state) => ({
       pendingPosts: state.pendingPosts.map(post =>
         post.tempId === tempId ? { ...post, txQueueId } : post
+      )
+    }))
+  },
+
+  updatePostId: (cawonce, userId, realId) => {
+    set((state) => ({
+      pendingPosts: state.pendingPosts.map(post =>
+        post.cawonce === cawonce && post.user?.tokenId === userId
+          ? { ...post, id: realId }
+          : post
       )
     }))
   },

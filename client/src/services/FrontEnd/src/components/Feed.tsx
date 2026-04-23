@@ -94,17 +94,30 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   useEffect(() => { itemsRef.current = items }, [items])
 
 
-  // Clean up pending posts that now have a confirmed version in the feed
+  // Match pending posts to real caw IDs and clean up confirmed ones
   useEffect(() => {
     if (pendingPosts.length === 0 || items.length === 0) return
     const sig = (i: any) => `${i.user?.tokenId}:${(i.content || '').trim()}:${i.parent?.id || ''}`
     const confirmedSigs = new Set(
       items.filter(i => i.status !== 'PENDING').map(sig)
     )
-    const { removePendingPost } = usePendingPostsStore.getState()
+    const { removePendingPost, updatePostId } = usePendingPostsStore.getState()
     for (const p of pendingPosts) {
+      // If the feed has the confirmed version, remove the pending post
       if (confirmedSigs.has(sig(p))) {
         removePendingPost(p.tempId)
+        continue
+      }
+      // If the pending post still has a temp ID, try to resolve it from
+      // the feed items (matched by cawonce + userId — the DB row exists
+      // immediately as PENDING, so the feed usually has it)
+      if (String(p.id).startsWith('pending-') && p.cawonce && p.user?.tokenId) {
+        const match = items.find(
+          i => i.cawonce === p.cawonce && i.user?.tokenId === p.user?.tokenId
+        )
+        if (match && !String(match.id).startsWith('pending-')) {
+          updatePostId(p.cawonce, p.user.tokenId, match.id)
+        }
       }
     }
   }, [items, pendingPosts])
