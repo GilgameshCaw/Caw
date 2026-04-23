@@ -5,7 +5,7 @@ import { makeJsonRpcProvider, makeWebSocketProvider } from '../../utils/rpcProvi
 import { cawProfileL2Abi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 import { prisma } from '../../prismaClient'
-import { refreshOwnership } from '../../services/UserService'
+import { syncTokensOwnedByWallet } from '../../services/UserService'
 import Redis from 'ioredis'
 
 const router = Router()
@@ -105,11 +105,23 @@ async function processSessionRequest(
     const sig = ethers.Signature.from(signature)
     const messageBytes = ethers.toUtf8Bytes(message)
 
+    // Pass an explicit gasLimit HINT (not a cap) to estimateGas. Infura's Base
+    // Sepolia endpoint rejects unbounded estimates with "intrinsic gas too high",
+    // which ethers surfaces as a generic `missing revert data` CALL_EXCEPTION
+    // that hides the real cause. A 2M hint comfortably covers the real cost
+    // (~265k measured) while satisfying Infura's need for a bounded estimate.
+    const estimated = await cawProfileL2.registerSessionPersonal.estimateGas(
+      messageBytes, sig.v, sig.r, sig.s,
+      { gasLimit: 2_000_000 }
+    )
+    const gasLimit = (estimated * 120n) / 100n // +20% headroom
+
     const tx = await cawProfileL2.registerSessionPersonal(
       messageBytes,
       sig.v,
       sig.r,
       sig.s,
+      { gasLimit }
     )
 
     // Parse values from message for DB pre-population
@@ -268,7 +280,7 @@ router.post('/', async (req: any, res: any) => {
     // If no match in DB, the NFT may have been transferred — check L2 on-chain
     if (!ownedName) {
       console.log(`[Sessions] No tokens found for ${recoveredAddress} in DB, checking on-chain ownership...`)
-      const refreshed = await refreshOwnership(recoveredAddress)
+      const refreshed = await syncTokensOwnedByWallet(recoveredAddress)
       if (refreshed.length > 0) {
         console.log(`[Sessions] Found ${refreshed.length} token(s) after ownership refresh:`, refreshed)
         ownedName = await prisma.user.findFirst({

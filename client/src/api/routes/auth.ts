@@ -3,7 +3,7 @@ import { ethers } from 'ethers'
 import { prisma } from '../../prismaClient'
 import { createSession, getSession, addAuthorization, deleteSession } from '../sessionStore'
 import { extractSession } from '../middleware/auth'
-import { refreshOwnership, verifyOwnershipOnChain, findOrCreateUser } from '../../services/UserService'
+import { syncTokensOwnedByWallet, verifyOwnershipOnChain, findOrCreateUser } from '../../services/UserService'
 import dmService from '../../services/DmService'
 
 const router = Router()
@@ -66,9 +66,9 @@ router.post('/verify', async (req, res) => {
     // If no tokens found, the NFT may have been transferred — check L2 on-chain
     if (tokenIds.length === 0) {
       console.log(`[Auth] No tokens found for ${recoveredAddress}, checking on-chain ownership...`)
-      const refreshed = await refreshOwnership(recoveredAddress)
+      const refreshed = await syncTokensOwnedByWallet(recoveredAddress)
       if (refreshed.length > 0) {
-        console.log(`[Auth] Found ${refreshed.length} token(s) after ownership refresh:`, refreshed)
+        console.log(`[Auth] Found ${refreshed.length} token(s) after ownership sync:`, refreshed)
         tokenIds = refreshed
       }
     }
@@ -149,10 +149,9 @@ router.post('/verify-dm', async (req, res) => {
     if (!user || user.address.toLowerCase() !== recoveredAddress) {
       const onChainMatch = await verifyOwnershipOnChain(tokenId, recoveredAddress)
       if (!onChainMatch) {
-        // Last resort: maybe the token was transferred and the DB is stale.
-        // refreshOwnership updates DB rows for any users whose on-chain owner
-        // has changed, which fixes future requests too.
-        const refreshed = await refreshOwnership(recoveredAddress)
+        // Last resort: the token may have been transferred and DB is stale.
+        // Targeted L1 sync — updates just this wallet's token rows.
+        const refreshed = await syncTokensOwnedByWallet(recoveredAddress)
         if (!refreshed.includes(tokenId)) {
           res.status(403).json({ error: 'Signature does not match the owner of this token' })
           return

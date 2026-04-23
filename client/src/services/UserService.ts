@@ -18,7 +18,11 @@ const CawProfileL2Abi = [
 
 const CawProfileL1Abi = [
   'function usernames(uint256 index) view returns (string)',
-  'function ownerOf(uint256 tokenId) view returns (address)'
+  'function ownerOf(uint256 tokenId) view returns (address)',
+  // L1 CawProfile is ERC721Enumerable — lets us go from wallet → tokens owned
+  // in O(tokensOwned) RPC calls instead of scanning every user row in the DB.
+  'function balanceOf(address owner) view returns (uint256)',
+  'function tokenOfOwnerByIndex(address owner, uint256 index) view returns (uint256)'
 ]
 
 // Lazy-initialized providers - only created when first needed
@@ -363,6 +367,62 @@ export async function refreshOwnership(walletAddress: string): Promise<number[]>
     return updated
   } catch (err: any) {
     console.error('[UserService] refreshOwnership failed:', err.message)
+    return []
+  }
+}
+
+/**
+ * syncTokensOwnedByWallet
+ * Targeted replacement for `refreshOwnership` — looks up tokens owned by a
+ * SPECIFIC wallet by asking L1 directly (balanceOf + tokenOfOwnerByIndex)
+ * instead of scanning every user in the DB.
+ *
+ * For each token the wallet owns:
+ *   - If the DB has it under a different address, update the row.
+ *   - If the DB doesn't have it (first time seeing it on this node),
+ *     ensure a User row exists via findOrCreateUser.
+ *
+ * Returns the list of tokenIds now confirmed as belonging to `walletAddress`.
+ *
+ * This is the interim fix until the NFT Transfer event watcher lands — the
+ * watcher will keep User.address current proactively, eliminating any need
+ * for just-in-time refresh.
+ */
+export async function syncTokensOwnedByWallet(walletAddress: string): Promise<number[]> {
+  const normalized = walletAddress.toLowerCase()
+
+  try {
+    const { contract: l1Contract } = await getL1Provider()
+    const balance = Number(await l1Contract.balanceOf(walletAddress))
+    if (balance === 0) return []
+
+    const tokenIds: number[] = []
+    for (let i = 0; i < balance; i++) {
+      try {
+        const tokenId = Number(await l1Contract.tokenOfOwnerByIndex(walletAddress, i))
+        tokenIds.push(tokenId)
+      } catch (err: any) {
+        console.warn(`[UserService] tokenOfOwnerByIndex(${walletAddress}, ${i}) failed:`, err.message)
+      }
+    }
+
+    for (const tokenId of tokenIds) {
+      const user = await prisma.user.findUnique({ where: { tokenId } })
+      if (!user) {
+        try {
+          await findOrCreateUser(tokenId)
+        } catch (err: any) {
+          console.warn(`[UserService] findOrCreateUser(${tokenId}) during ownership sync failed:`, err.message)
+        }
+      } else if (user.address.toLowerCase() !== normalized) {
+        console.log(`[UserService] Ownership changed for tokenId=${tokenId}: ${user.address} → ${normalized}`)
+        await prisma.user.update({ where: { tokenId }, data: { address: normalized } })
+      }
+    }
+
+    return tokenIds
+  } catch (err: any) {
+    console.error('[UserService] syncTokensOwnedByWallet failed:', err.message)
     return []
   }
 }
