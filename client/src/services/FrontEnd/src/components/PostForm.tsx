@@ -993,6 +993,10 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       } catch { return false }
     }
 
+    // Track the first pending post so thread replies can reference it as parent
+    let firstPendingId: string | undefined
+    let firstPendingPost: CawItem | undefined
+
     // Batch-submit a set of chunk params via .many(), adding pending posts for each
     const batchSubmitChunks = async (params: ActionParams[], chunkOffset: number) => {
       const responses = await (signAndSubmit as any).many(params, (p: any) => {
@@ -1002,6 +1006,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         for (let i = 0; i < params.length; i++) {
           const r = responses[i]
           if (!r || r.error) continue
+          const isFirstChunk = chunkOffset + i === 0
           const tempId = addPendingPost({
             content: chunks[chunkOffset + i],
             username: activeToken.username,
@@ -1009,8 +1014,24 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
             tokenId: effectiveTokenId,
             avatarUrl: avatars[effectiveTokenId] || getUserAvatar({ tokenId: effectiveTokenId }),
             cawonce: r.cawonce,
+            ...(isFirstChunk ? {
+              replyToId: replyTo?.id,
+              parent: replyTo || quote || undefined,
+              isQuote: !!quote,
+            } : {
+              replyToId: firstPendingId,
+              parent: firstPendingPost,
+            }),
           })
           if (r.txQueueId) updatePostWithTxQueueId(tempId, r.txQueueId)
+          if (isFirstChunk) {
+            firstPendingId = tempId
+            firstPendingPost = {
+              id: tempId, content: chunks[0], cawonce: r.cawonce,
+              user: { tokenId: effectiveTokenId, username: activeToken.username, displayName: activeUserData?.displayName, id: effectiveTokenId },
+              timestamp: new Date().toISOString(), status: 'PENDING',
+            } as CawItem
+          }
         }
       }
     }
@@ -1035,7 +1056,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       if (!response) return
 
       if (activeToken) {
-        const tempId = addPendingPost({
+        firstPendingId = addPendingPost({
           content: chunks[0],
           username: activeToken.username,
           displayName: activeUserData?.displayName,
@@ -1046,7 +1067,12 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           cawonce: response.cawonce,
           isQuote: !!quote,
         })
-        if (response.txQueueId) updatePostWithTxQueueId(tempId, response.txQueueId)
+        if (response.txQueueId) updatePostWithTxQueueId(firstPendingId, response.txQueueId)
+        firstPendingPost = {
+          id: firstPendingId, content: chunks[0], cawonce: response.cawonce,
+          user: { tokenId: effectiveTokenId, username: activeToken.username, displayName: activeUserData?.displayName, id: effectiveTokenId },
+          timestamp: new Date().toISOString(), status: 'PENDING',
+        } as CawItem
       }
 
       // Remaining chunks: re-check for session (user may have just enabled Quick Sign)
@@ -1067,6 +1093,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                 tokenId: effectiveTokenId,
                 avatarUrl: avatars[effectiveTokenId] || getUserAvatar({ tokenId: effectiveTokenId }),
                 cawonce: replyResponse.cawonce,
+                replyToId: firstPendingId,
+                parent: firstPendingPost,
               })
               if (replyResponse.txQueueId) updatePostWithTxQueueId(tempId, replyResponse.txQueueId)
             }

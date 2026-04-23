@@ -680,6 +680,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     if (item.status === 'FAILED') {
       return
     }
+    // Don't navigate to pending posts (they don't have a real ID yet)
+    if (item.status === 'PENDING' || String(useItem.id).startsWith('pending-')) {
+      return
+    }
     const url = `/caws/${useItem.id}`
     // Open in new tab if command+click (Mac) or ctrl+click (Windows/Linux)
     if (e.metaKey || e.ctrlKey) {
