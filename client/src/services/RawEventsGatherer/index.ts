@@ -92,6 +92,57 @@ export const rawEventsGathererService: Service = {
         await redis.publish('raws', event.id.toString())
       }
 
+      // Bulk variant — single createMany + single findMany, one publish per
+      // resulting row (ActionProcessor's consumer expects per-row messages).
+      // An on-chain ActionsProcessed event with 24 packed actions previously
+      // did 24 sequential UPSERTs here; now it does one INSERT and one lookup.
+      //
+      // Idempotency: `skipDuplicates: true` handles redelivery (same rows
+      // inserted twice are a no-op on the second call, matching the old
+      // upsert-update:{} semantics).
+      //
+      // Double-publish safety: if two gatherer instances race briefly during
+      // a watchdog-restart, one might include rows the other just inserted
+      // in its "newly after maxBefore" window. ActionProcessor dedupes on
+      // rawEventId > lastId (index.ts:94), so a double-publish is harmless.
+      const storeBatchAndPublish = async (events: RawEventInput[]) => {
+        if (events.length === 0) return
+
+        // Watermark the current max id so we can identify what we just
+        // inserted. Reads the max from the indexed primary key — cheap.
+        const before = await prisma.rawEvent.findFirst({
+          orderBy: { id: 'desc' },
+          select: { id: true },
+        })
+        const maxBefore = before?.id ?? 0
+
+        await prisma.rawEvent.createMany({
+          data: events.map(e => ({
+            blockNumber:     e.blockNumber,
+            chainId:         e.chainId,
+            logIndex:        e.logIndex,
+            transactionHash: e.transactionHash,
+            parentHash:      e.parentHash,
+            data:            convertBigIntsToStrings(e.data),
+            topics:          e.topics,
+            contractAddress: CAW_ACTIONS_ADDRESS,
+          })),
+          skipDuplicates: true,
+        })
+
+        // Fetch new rows in id order so downstream ActionProcessor sees them
+        // in the same sequence we computed the parentHash chain in.
+        const created = await prisma.rawEvent.findMany({
+          where: { id: { gt: maxBefore }, chainId, contractAddress: CAW_ACTIONS_ADDRESS },
+          orderBy: { id: 'asc' },
+          select: { id: true },
+        })
+
+        for (const { id } of created) {
+          await redis.publish('raws', id.toString())
+        }
+      }
+
       const listener = await listenForRawEvents({
         rpcUrl,
         chainId,
@@ -99,7 +150,8 @@ export const rawEventsGathererService: Service = {
         startBlock: cfg.startBlock,
         rawEventsProvider: {
           getLastProcessedEvent: getLast,
-          storeEvent:            storeAndPublish
+          storeEvent:            storeAndPublish,
+          storeBatch:            storeBatchAndPublish,
         },
         onTick: () => ctx.heartbeat('poll'),
       })

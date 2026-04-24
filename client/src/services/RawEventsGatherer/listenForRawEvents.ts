@@ -54,6 +54,12 @@ export default async function listenForRawEvents(
         parentHash: string
       } | null>
       storeEvent(e: RawEventInput): Promise<void>
+      /**
+       * Optional bulk variant. When present, processEvents uses this for the
+       * N packed actions inside a single on-chain ActionsProcessed event —
+       * one INSERT instead of N. Falls back to storeEvent when absent.
+       */
+      storeBatch?(events: RawEventInput[]): Promise<void>
     }
     /** Optional callback to signal liveness — called at the end of each successful poll */
     onTick?: () => void
@@ -98,7 +104,13 @@ export default async function listenForRawEvents(
     return keccak256(input)
   }
 
-  // Process events from a Log array (used by both historical fetch and polling)
+  // Process events from a Log array (used by both historical fetch and polling).
+  //
+  // Each on-chain ActionsProcessed event carries N packed actions. We unpack
+  // them, compute the parentHash chain SEQUENTIALLY (each depends on the prior
+  // one), then hand the full batch to the provider. When the provider exposes
+  // storeBatch, a single INSERT replaces what used to be N sequential UPSERTs
+  // per event. Falls back to one-by-one storeEvent if no batch method.
   async function processEvents(events: Log[], contract: Contract) {
     for (const ev of events) {
       const rawData = ev.data ?? '0x'
@@ -107,11 +119,14 @@ export default async function listenForRawEvents(
         rawData,
         ev.topics
       )
-      console.log("Will store: ", ev)
       // Decode packed bytes from ActionsProcessed(bytes packedActions)
       const packedHex = decoded.packedActions as string
       const packedBuf = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
       const actions = unpackActions(packedBuf)
+
+      // Build the full batch in one pass. parentHash must chain sequentially,
+      // but the inserts themselves don't need to.
+      const batch: RawEventInput[] = []
       for (let i = 0; i < actions.length; i++) {
         const a = actions[i]
         const action = {
@@ -126,10 +141,10 @@ export default async function listenForRawEvents(
           text:            decompressEventText(a.text)
         }
         // Offset logIndex by action position within the batch so each action
-        // gets a unique (blockNumber, logIndex, transactionHash) key
+        // gets a unique (blockNumber, logIndex, transactionHash) key.
         const logIndex = (ev.logIndex ?? 0) + i
         lastHash = hashNext(lastHash, action)
-        await config.rawEventsProvider.storeEvent({
+        batch.push({
           chainId:         config.chainId,
           blockNumber:     ev.blockNumber,
           logIndex,
@@ -139,6 +154,14 @@ export default async function listenForRawEvents(
           topics:          ev.topics,
           contractAddress: ev.address
         })
+      }
+
+      if (config.rawEventsProvider.storeBatch) {
+        await config.rawEventsProvider.storeBatch(batch)
+      } else {
+        for (const entry of batch) {
+          await config.rawEventsProvider.storeEvent(entry)
+        }
       }
     }
   }
@@ -175,6 +198,10 @@ export default async function listenForRawEvents(
         try {
           const packedBuf = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
           const wsActions = unpackActions(packedBuf)
+
+          // Build batch, then either bulk-store or fall back to per-row.
+          // Same pattern as processEvents() — parentHash chain stays sequential.
+          const batch: RawEventInput[] = []
           for (let i = 0; i < wsActions.length; i++) {
             const a = wsActions[i]
             const action = {
@@ -188,10 +215,9 @@ export default async function listenForRawEvents(
               amounts:         a.amounts,
               text:            decompressEventText(a.text)
             }
-            // Offset logIndex by action position within the batch
             const logIndex = (ev.log.index ?? 0) + i
             lastHash = hashNext(lastHash, action)
-            await config.rawEventsProvider.storeEvent({
+            batch.push({
               chainId:         config.chainId,
               blockNumber:     ev.log.blockNumber,
               logIndex,
@@ -201,6 +227,14 @@ export default async function listenForRawEvents(
               topics:          [ ...ev.log.topics ] ,
               contractAddress: ev.log.address
             })
+          }
+
+          if (config.rawEventsProvider.storeBatch) {
+            await config.rawEventsProvider.storeBatch(batch)
+          } else {
+            for (const entry of batch) {
+              await config.rawEventsProvider.storeEvent(entry)
+            }
           }
         } catch (err) {
           console.error("[RawEventsGatherer] FAILED to process raw event from WebSocket", err)
