@@ -11,6 +11,7 @@ import { WebSocketProvider, JsonRpcProvider, Contract, Wallet, Interface, keccak
 import { packActions, packSignatures, bytesToHex, getPackedActionSlices, unpackActions } from '../../utils/packActions'
 import { buildCheckpointMerkleTree } from '../../utils/checkpointMerkle'
 import { tryClaimChallengeLock, releaseChallengeLock } from '../../utils/challengeLock'
+import { foldCheckpointHashes } from '../../utils/foldCheckpointHashes'
 import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
@@ -2650,153 +2651,172 @@ console.log("succeededKeys", succeededKeys)
             merkleRoot = sub[1] // bytes32 merkleRoot
           } catch { continue }
 
-          // Check if we previously challenged this submission and LZ has delivered
-          // If so, resolve it now (slash!)
+          // Set up contract handles once per submission.
           const resolveAbi = [
             'function challengeDelivered(uint256, uint256) view returns (bool)',
             'function challengeHash(uint256, uint256) view returns (bytes32)',
             'function resolveChallenge(uint256 submissionId, uint256 checkpointId, bytes32 claimedHash, bytes32[] merkleProof)',
           ]
           const archiveW = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, resolveAbi, new Wallet(privateKey!, l2bProvider))
-          // Read-only instance bound to the resolve ABI (the cached `archive` doesn't expose these).
           const archiveResolveRead = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, resolveAbi, l2bProvider)
+
+          // --- Build the SUBMITTER'S OWN claimed view of this range ------
+          //
+          // For Mode B detection: an honest-looking submission's packedActions
+          // hash up to its committed merkle root. If those hashes don't match
+          // L2's canonical clientHashAtCheckpoint, the submitter committed to
+          // invented actions — which we can prove by supplying their own
+          // claimedHash + a valid proof in their own tree.
+          //
+          // If rebuilding from ActionsArchived produces a root that DOESN'T
+          // match sub.merkleRoot, this is Mode A (incoherent root). Current
+          // resolveChallenge cannot slash it; flagged for the dedicated
+          // slashIncoherentRoot path.
+          let submitterHashes: string[] | null = null
+          let submitterTree: ReturnType<typeof buildCheckpointMerkleTree> | null = null
+          let modeA = false
+          try {
+            const numCp = endCp - startCp + 1
+            const archivedEvents = await archive.queryFilter(
+              archive.filters.ActionsArchived(submissionId),
+              fromBlock, latestBlock,
+            )
+            const archivedArgs: any = (archivedEvents[0] as any)?.args
+            if (!archivedArgs) throw new Error('ActionsArchived event missing')
+            const submitterPackedHex = archivedArgs[2] as string
+            const submitterR = (archivedArgs[3] as string[]).map(x => String(x))
+
+            const entryHash = startCp === 1
+              ? '0x' + '00'.repeat(32)
+              : await actionsView.clientHashAtCheckpoint(clientId, startCp - 1)
+
+            const packedBytes = Buffer.from(submitterPackedHex.slice(2), 'hex')
+            submitterHashes = foldCheckpointHashes(
+              new Uint8Array(packedBytes), submitterR, entryHash, startCp, endCp, OPTIMISTIC_CHECKPOINT_INTERVAL,
+            )
+            if (!submitterHashes) throw new Error('submitter action count mismatch')
+
+            const checkpointIds = Array.from({ length: numCp }, (_, i) => startCp + i)
+            submitterTree = buildCheckpointMerkleTree(checkpointIds, submitterHashes)
+            if (submitterTree.root.toLowerCase() !== merkleRoot.toLowerCase()) {
+              modeA = true
+            }
+          } catch (e: any) {
+            console.warn(`[Monitor] Could not rebuild submitter tree for submission ${submissionId}: ${e?.message}`)
+          }
+
+          // --- Resolve previously-relayed challenges -------------------
+          // LZ has delivered correctHash into the archive; we now need to
+          // provide the submitter's claimedHash + a merkle proof in their
+          // tree. If submitterTree is null (couldn't rebuild) we can't
+          // proceed — this cycle will retry next round.
           for (let cpId = startCp; cpId <= endCp; cpId++) {
             try {
               const delivered = await archiveResolveRead.challengeDelivered(submissionId, cpId)
               if (!delivered) continue
+              if (!submitterHashes || !submitterTree) continue
 
-              // Challenge was delivered — compute merkle proof and resolve
               const correctHash = await archiveResolveRead.challengeHash(submissionId, cpId)
-
-              // Reconstruct the claimed hash and merkle proof from the submission's merkle root
-              // We need the checkpoint hashes as the submitter claimed them — reconstruct from packed data
-              const data = await reconstructCheckpointData(clientId, startCp, endCp)
-              if (!data) continue
-
-              const checkpointIds = Array.from({ length: endCp - startCp + 1 }, (_, i) => startCp + i)
-              const tree = buildCheckpointMerkleTree(checkpointIds, data.checkpointHashes)
               const cpIndex = cpId - startCp
-              const claimedHash = data.checkpointHashes[cpIndex]
-              const proof = tree.getProof(cpIndex)
+              const claimedHash = submitterHashes[cpIndex]
+              const proof = submitterTree.getProof(cpIndex)
 
-              if (correctHash.toLowerCase() !== claimedHash.toLowerCase()) {
-                // Cross-node dedup: only one monitor submits resolveChallenge.
-                // Once slashed, all subsequent resolves revert with "Not pending"
-                // which still wastes gas; the lock avoids even trying.
-                const claimed = await tryClaimChallengeLock('resolve', submissionId, cpId, w.address.toLowerCase(), 10 * 60 * 1000)
-                if (!claimed) continue
-                console.log(`[Monitor] Resolving challenge for submission ${submissionId} checkpoint ${cpId}...`)
-                try {
-                  const resolveTx = await archiveW.resolveChallenge(submissionId, cpId, claimedHash, proof, { gasLimit: 500_000 })
-                  const resolveReceipt = await resolveTx.wait()
-                  console.log(`[Monitor] SLASHED submission ${submissionId}! tx: ${resolveReceipt?.hash}`)
-                  await releaseChallengeLock('resolve', submissionId, cpId, 'success', resolveReceipt?.hash)
-                } catch (e) {
-                  await releaseChallengeLock('resolve', submissionId, cpId, 'error')
-                  throw e
-                }
-              } else {
-                console.log(`[Monitor] Challenge for submission ${submissionId} checkpoint ${cpId}: hashes match (false alarm)`)
+              if (correctHash.toLowerCase() === claimedHash.toLowerCase()) {
+                console.log(`[Monitor] Challenge for submission ${submissionId} cp ${cpId}: submitter's hash matches L2 (no fraud on this cp)`)
+                continue
+              }
+
+              const claimedLock = await tryClaimChallengeLock('resolve', submissionId, cpId, w.address.toLowerCase(), 10 * 60 * 1000)
+              if (!claimedLock) continue
+
+              console.log(`[Monitor] Resolving challenge for submission ${submissionId} checkpoint ${cpId}...`)
+              try {
+                const resolveTx = await archiveW.resolveChallenge(submissionId, cpId, claimedHash, proof, { gasLimit: 500_000 })
+                const resolveReceipt = await resolveTx.wait()
+                console.log(`[Monitor] SLASHED submission ${submissionId}! tx: ${resolveReceipt?.hash}`)
+                await releaseChallengeLock('resolve', submissionId, cpId, 'success', resolveReceipt?.hash)
+              } catch (e) {
+                await releaseChallengeLock('resolve', submissionId, cpId, 'error')
+                throw e
               }
             } catch (resolveErr: any) {
               console.warn(`[Monitor] Error resolving challenge for submission ${submissionId} cp ${cpId}: ${resolveErr?.shortMessage || resolveErr?.message}`)
             }
           }
 
-          // Verify the submission by comparing its committed merkle root to the
-          // canonical root we can build from the honest L2 events. This is the
-          // check that actually catches corrupt merkle roots — an earlier
-          // per-checkpoint L2-vs-canonical check was tautological because both
-          // sides came from L2 state.
+          // --- Detect & relay new fraud challenges ---------------------
+          const challengeCheckpoint = async (cpId: number, reason: string) => {
+            const L2B_EID = 40231 // Arbitrum Sepolia
+            try {
+              const delivered = await archiveResolveRead.challengeDelivered(submissionId, cpId)
+              if (delivered) return
+            } catch { /* fall through if view reverts */ }
+
+            const holder = w.address.toLowerCase()
+            const claimed = await tryClaimChallengeLock('relay', submissionId, cpId, holder, 10 * 60 * 1000)
+            if (!claimed) return
+
+            const relayAbi = [
+              'function relayChallenge(uint32 destEid, uint256 submissionId, uint32 clientId, uint256 checkpointId) payable',
+              'function quoteChallenge(uint32 destEid, uint256 submissionId, uint32 clientId, uint256 checkpointId, bool payInLzToken) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
+            ]
+            const relayContract = new Contract(CHALLENGE_RELAY_ADDRESS, relayAbi, new Wallet(privateKey!, replicationHttpProvider))
+
+            try {
+              const quote = await relayContract.quoteChallenge(L2B_EID, submissionId, clientId, cpId, false)
+              const relayTx = await relayContract.relayChallenge(L2B_EID, submissionId, clientId, cpId, {
+                value: quote.nativeFee * 120n / 100n,
+                gasLimit: 500_000,
+              })
+              const relayReceipt = await relayTx.wait()
+              console.log(`[Monitor] Challenge relayed (${reason}) for submission ${submissionId} checkpoint ${cpId}. tx: ${relayReceipt?.hash}`)
+              await releaseChallengeLock('relay', submissionId, cpId, 'success', relayReceipt?.hash)
+            } catch (e) {
+              await releaseChallengeLock('relay', submissionId, cpId, 'error')
+              throw e
+            }
+          }
+
           try {
-            const data = await reconstructCheckpointData(clientId, startCp, endCp)
-            if (!data) {
-              console.warn(`[Monitor] Could not reconstruct data for submission ${submissionId} (client ${clientId}, ${startCp}..${endCp}) — skipping verification`)
+            if (modeA) {
+              // Mode A: committed root doesn't even commit to the submitter's
+              // own packedActions. No valid merkle proof exists for any leaf
+              // under sub.merkleRoot, so resolveChallenge can't slash this.
+              // Flagged for slashIncoherentRoot (separate contract function).
+              console.error(
+                `[Monitor] MODE A FRAUD (incoherent root) in submission ${submissionId}: ` +
+                `committedRoot=${merkleRoot} does not match root built from submitter's own packedActions. ` +
+                `Requires slashIncoherentRoot contract function (pending redeploy).`
+              )
               continue
             }
 
-            const checkpointIds = Array.from({ length: endCp - startCp + 1 }, (_, i) => startCp + i)
-            const { root: canonicalRoot } = buildCheckpointMerkleTree(checkpointIds, data.checkpointHashes)
-            const rootMismatch = canonicalRoot.toLowerCase() !== merkleRoot.toLowerCase()
-
-            const challengeCheckpoint = async (cpId: number, reason: string) => {
-              const L2B_EID = 40231 // Arbitrum Sepolia
-
-              // On-chain dedup: if LZ has already delivered the correct hash,
-              // relaying again only burns LZ fees (_lzReceive would overwrite
-              // with the same value). Short-circuit.
-              try {
-                const delivered = await archiveResolveRead.challengeDelivered(submissionId, cpId)
-                if (delivered) return
-              } catch { /* if the view reverts, fall through and try anyway */ }
-
-              // Cross-node dedup: first monitor to claim the lock does the
-              // relay; other instances skip. 10-minute TTL covers LZ latency
-              // plus RPC slowness.
-              const holder = w.address.toLowerCase()
-              const claimed = await tryClaimChallengeLock('relay', submissionId, cpId, holder, 10 * 60 * 1000)
-              if (!claimed) return
-
-              const relayAbi = [
-                'function relayChallenge(uint32 destEid, uint256 submissionId, uint32 clientId, uint256 checkpointId) payable',
-                'function quoteChallenge(uint32 destEid, uint256 submissionId, uint32 clientId, uint256 checkpointId, bool payInLzToken) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
-              ]
-              const relayContract = new Contract(CHALLENGE_RELAY_ADDRESS, relayAbi, new Wallet(privateKey!, replicationHttpProvider))
-
-              try {
-                const quote = await relayContract.quoteChallenge(L2B_EID, submissionId, clientId, cpId, false)
-                // LZ OApp sends do ~200k-350k of work on the source chain
-                // (endpoint call, DVN/executor callbacks, SSTOREs). 500k
-                // leaves headroom.
-                const relayTx = await relayContract.relayChallenge(L2B_EID, submissionId, clientId, cpId, {
-                  value: quote.nativeFee * 120n / 100n,
-                  gasLimit: 500_000,
-                })
-                const relayReceipt = await relayTx.wait()
-                console.log(`[Monitor] Challenge relayed (${reason}) for submission ${submissionId} checkpoint ${cpId}. tx: ${relayReceipt?.hash}`)
-                await releaseChallengeLock('relay', submissionId, cpId, 'success', relayReceipt?.hash)
-              } catch (e) {
-                await releaseChallengeLock('relay', submissionId, cpId, 'error')
-                throw e
-              }
+            if (!submitterHashes) {
+              console.warn(`[Monitor] Submission ${submissionId}: no submitter view available — skipping`)
+              continue
             }
 
+            // Mode B detection: compare each submitter-claimed checkpoint
+            // hash to the canonical L2 value.
             let fraudDetected = false
-            if (rootMismatch) {
-              console.error(
-                `[Monitor] FRAUD DETECTED in submission ${submissionId}! ` +
-                `committed=${merkleRoot} canonical=${canonicalRoot} submitter=${submitter}`
-              )
-              fraudDetected = true
-              // We don't know which specific checkpoint diverged, so challenge all of them.
-              // resolveChallenge will pinpoint via the LZ-delivered correctHash.
-              for (const cpId of checkpointIds) {
-                try {
-                  await challengeCheckpoint(cpId, 'root mismatch')
-                } catch (challengeErr: any) {
-                  console.error(`[Monitor] Failed to relay challenge for cp ${cpId}: ${challengeErr?.shortMessage || challengeErr?.message}`)
-                }
+            for (let i = 0; i < submitterHashes.length; i++) {
+              const cpId = startCp + i
+              const claimedHash = submitterHashes[i]
+              let l2Hash: string
+              try {
+                l2Hash = await actionsView.clientHashAtCheckpoint(clientId, cpId)
+              } catch {
+                console.warn(`[Monitor] Could not read L2 hash for checkpoint ${cpId}, skipping`)
+                continue
               }
-            } else {
-              // Secondary safety net: canonical vs on-chain L2 should always
-              // match (they're both the honest view) — only fires if L2 state
-              // diverged from its own event log, which would be a real bug.
-              for (let i = 0; i < data.checkpointHashes.length; i++) {
-                const cpId = startCp + i
-                const localHash = data.checkpointHashes[i]
-                let onChainHash: string
-                try {
-                  onChainHash = await actionsView.clientHashAtCheckpoint(clientId, cpId)
-                } catch {
-                  console.warn(`[Monitor] Could not read L2 hash for checkpoint ${cpId}, skipping`)
-                  continue
-                }
-                if (localHash.toLowerCase() !== onChainHash.toLowerCase()) {
-                  console.error(`[Monitor] L2-state divergence sub ${submissionId} cp ${cpId}: canonical=${localHash} L2=${onChainHash}`)
-                  fraudDetected = true
-                  try { await challengeCheckpoint(cpId, 'L2 divergence') }
-                  catch (e: any) { console.error(`[Monitor] Failed to relay: ${e?.shortMessage || e?.message}`) }
-                }
+              if (claimedHash.toLowerCase() !== l2Hash.toLowerCase()) {
+                console.error(
+                  `[Monitor] MODE B FRAUD in submission ${submissionId} cp ${cpId}: ` +
+                  `submitterClaimed=${claimedHash} L2=${l2Hash} submitter=${submitter}`
+                )
+                fraudDetected = true
+                try { await challengeCheckpoint(cpId, 'mode B') }
+                catch (e: any) { console.error(`[Monitor] Failed to relay cp ${cpId}: ${e?.shortMessage || e?.message}`) }
               }
             }
 
