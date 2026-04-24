@@ -51,7 +51,7 @@ export class DmService {
             identity: {
               include: {
                 user: {
-                  select: { username: true, displayName: true, avatarUrl: true, address: true, tokenId: true }
+                  select: { username: true, displayName: true, avatarUrl: true, defaultAvatarId: true, image: true, address: true, tokenId: true }
                 }
               }
             }
@@ -80,7 +80,7 @@ export class DmService {
             identity: {
               include: {
                 user: {
-                  select: { username: true, displayName: true, avatarUrl: true, address: true, tokenId: true }
+                  select: { username: true, displayName: true, avatarUrl: true, defaultAvatarId: true, image: true, address: true, tokenId: true }
                 }
               }
             }
@@ -117,7 +117,7 @@ export class DmService {
       include: {
         sender: {
           include: {
-            user: { select: { username: true, displayName: true, avatarUrl: true, tokenId: true } }
+            user: { select: { username: true, displayName: true, avatarUrl: true, defaultAvatarId: true, image: true, tokenId: true } }
           }
         }
       }
@@ -176,7 +176,7 @@ export class DmService {
       include: {
         sender: {
           include: {
-            user: { select: { username: true, displayName: true, avatarUrl: true, tokenId: true } }
+            user: { select: { username: true, displayName: true, avatarUrl: true, defaultAvatarId: true, image: true, tokenId: true } }
           }
         }
       }
@@ -210,7 +210,7 @@ export class DmService {
                 identity: {
                   include: {
                     user: {
-                      select: { username: true, displayName: true, avatarUrl: true, address: true, tokenId: true }
+                      select: { username: true, displayName: true, avatarUrl: true, defaultAvatarId: true, image: true, address: true, tokenId: true }
                     }
                   }
                 }

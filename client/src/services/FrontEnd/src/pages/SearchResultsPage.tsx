@@ -6,6 +6,7 @@ import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { HiUsers, HiHashtag, HiCollection } from 'react-icons/hi'
 import { useMutePreferences } from '~/hooks/useMutePreferences'
+import { getUserAvatar } from '~/utils/defaultAvatar'
 
 interface SearchResults {
   caws: any[]
@@ -193,17 +194,11 @@ const SearchResultsPage: React.FC<SearchResultsPageProps> = ({ defaultTab = 'all
                     }`}
                   >
                     <div className="flex items-center space-x-3">
-                      {user.image || user.avatarUrl ? (
-                        <img
-                          src={user.image || user.avatarUrl}
-                          alt={user.username}
-                          className="w-10 h-10 rounded-full object-cover"
-                        />
-                      ) : (
-                        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center text-white font-bold">
-                          {user.username?.charAt(0).toUpperCase()}
-                        </div>
-                      )}
+                      <img
+                        src={getUserAvatar(user)}
+                        alt={user.username}
+                        className="w-10 h-10 rounded-full object-cover"
+                      />
                       <div className="flex-1">
                         <div className="flex items-center space-x-2">
                           <span className={`font-semibold ${

@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useTheme } from '~/hooks/useTheme'
+import { getUserAvatar } from '~/utils/defaultAvatar'
 
 interface User {
   tokenId: number
@@ -226,7 +227,7 @@ const MentionAutocomplete: React.FC<MentionAutocompleteProps> = ({
             }`}
           >
             <img
-              src={user.avatarUrl || user.image || '/images/logo.jpeg'}
+              src={getUserAvatar(user)}
               alt={user.username}
               className="w-8 h-8 rounded-full object-cover"
             />
