@@ -426,21 +426,35 @@ class ElasticsearchService {
                      type === 'hashtags' ? ['caws'] :
                      [type]
 
+      // For user search, combine fuzzy full-token matching with prefix matching
+      // so short queries like "gilg" can find "gilgatwo" (fuzziness alone caps
+      // at edit-distance 2 for longer terms, which isn't enough for prefix hits).
+      const queryDsl: any = type === 'users'
+        ? {
+            bool: {
+              should: [
+                { multi_match: { query, fields: ['username^2', 'displayName', 'bio'], type: 'best_fields', fuzziness: 'AUTO' } },
+                { match_phrase_prefix: { username: { query, boost: 3 } } },
+                { match_phrase_prefix: { displayName: { query } } },
+              ],
+              minimum_should_match: 1
+            }
+          }
+        : {
+            multi_match: {
+              query,
+              fields: type === 'hashtags'
+                ? ['hashtags']
+                : ['content^2', 'username', 'displayName', 'hashtags', 'mentions'],
+              type: 'best_fields',
+              fuzziness: 'AUTO'
+            }
+          }
+
       const searchBody: any = {
         from: offset,
         size: limit,
-        query: {
-          multi_match: {
-            query,
-            fields: type === 'hashtags'
-              ? ['hashtags']
-              : type === 'users'
-              ? ['username^2', 'displayName', 'bio']
-              : ['content^2', 'username', 'displayName', 'hashtags', 'mentions'],
-            type: 'best_fields',
-            fuzziness: 'AUTO'
-          }
-        },
+        query: queryDsl,
         highlight: {
           fields: {
             content: {},
