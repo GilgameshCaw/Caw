@@ -322,15 +322,81 @@ export const cawActionsArchiveAbi = [
     anonymous: false,
     inputs: [
       {
-        name: 'sourceChainId',
+        name: 'submissionId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: true,
+      },
+      {
+        name: 'clientId',
         internalType: 'uint32',
         type: 'uint32',
         indexed: true,
       },
-      { name: 'guid', internalType: 'bytes32', type: 'bytes32', indexed: true },
-      { name: 'data', internalType: 'bytes', type: 'bytes', indexed: false },
+      {
+        name: 'packedActions',
+        internalType: 'bytes',
+        type: 'bytes',
+        indexed: false,
+      },
+      {
+        name: 'r',
+        internalType: 'bytes32[]',
+        type: 'bytes32[]',
+        indexed: false,
+      },
     ],
     name: 'ActionsArchived',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'submissionId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: true,
+      },
+      {
+        name: 'checkpointId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'correctHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+    ],
+    name: 'ChallengeHashDelivered',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'validator',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'amount',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'totalStake',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'Deposited',
   },
   {
     type: 'event',
@@ -366,6 +432,152 @@ export const cawActionsArchiveAbi = [
     name: 'PeerSet',
   },
   {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'submissionId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: true,
+      },
+      {
+        name: 'submitter',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'clientId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      {
+        name: 'startCheckpointId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'endCheckpointId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'merkleRoot',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+    ],
+    name: 'SubmissionCreated',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'submissionId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: true,
+      },
+    ],
+    name: 'SubmissionFinalized',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'validator',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'challenger',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'submissionId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'checkpointId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'reward',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'ValidatorSlashed',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'validator',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'amount',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
+        name: 'remaining',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+    ],
+    name: 'Withdrawn',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'CHALLENGE_PERIOD',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'CHECKPOINT_INTERVAL',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'MAX_CHECKPOINTS_PER_SUBMISSION',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'MIN_STAKE',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
     type: 'function',
     inputs: [
       {
@@ -385,6 +597,43 @@ export const cawActionsArchiveAbi = [
   },
   {
     type: 'function',
+    inputs: [
+      { name: '', internalType: 'uint256', type: 'uint256' },
+      { name: '', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'challengeDelivered',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '', internalType: 'uint256', type: 'uint256' },
+      { name: '', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'challengeHash',
+    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: '', internalType: 'uint32', type: 'uint32' },
+      { name: '', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'checkpointClaimed',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'deposit',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
     inputs: [],
     name: 'endpoint',
     outputs: [
@@ -394,6 +643,43 @@ export const cawActionsArchiveAbi = [
         type: 'address',
       },
     ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'submissionId', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'finalizeSubmission',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'submissionId', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'getSubmission',
+    outputs: [
+      { name: 'submitter', internalType: 'address', type: 'address' },
+      { name: 'merkleRoot', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'startCheckpointId', internalType: 'uint256', type: 'uint256' },
+      { name: 'endCheckpointId', internalType: 'uint256', type: 'uint256' },
+      { name: 'finalizedAt', internalType: 'uint256', type: 'uint256' },
+      {
+        name: 'status',
+        internalType: 'enum CawActionsArchive.Status',
+        type: 'uint8',
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'validator', internalType: 'address', type: 'address' }],
+    name: 'getValidatorSubmissionCount',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
     stateMutability: 'view',
   },
   {
@@ -413,6 +699,17 @@ export const cawActionsArchiveAbi = [
       { name: '_sender', internalType: 'address', type: 'address' },
     ],
     name: 'isComposeMsgSender',
+    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'start', internalType: 'uint256', type: 'uint256' },
+      { name: 'end', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'isRangeAvailable',
     outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
     stateMutability: 'view',
   },
@@ -451,6 +748,13 @@ export const cawActionsArchiveAbi = [
   {
     type: 'function',
     inputs: [],
+    name: 'nextSubmissionId',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [],
     name: 'oAppVersion',
     outputs: [
       { name: 'senderVersion', internalType: 'uint64', type: 'uint64' },
@@ -474,8 +778,27 @@ export const cawActionsArchiveAbi = [
   },
   {
     type: 'function',
+    inputs: [{ name: '', internalType: 'address', type: 'address' }],
+    name: 'pendingCount',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
     inputs: [],
     name: 'renounceOwnership',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'submissionId', internalType: 'uint256', type: 'uint256' },
+      { name: 'checkpointId', internalType: 'uint256', type: 'uint256' },
+      { name: 'claimedHash', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'merkleProof', internalType: 'bytes32[]', type: 'bytes32[]' },
+    ],
+    name: 'resolveChallenge',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -498,24 +821,81 @@ export const cawActionsArchiveAbi = [
   },
   {
     type: 'function',
+    inputs: [{ name: '', internalType: 'address', type: 'address' }],
+    name: 'stakes',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    name: 'submissions',
+    outputs: [
+      { name: 'submitter', internalType: 'address', type: 'address' },
+      { name: 'merkleRoot', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'startCheckpointId', internalType: 'uint64', type: 'uint64' },
+      { name: 'endCheckpointId', internalType: 'uint64', type: 'uint64' },
+      { name: 'finalizedAt', internalType: 'uint64', type: 'uint64' },
+      {
+        name: 'status',
+        internalType: 'enum CawActionsArchive.Status',
+        type: 'uint8',
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'startCheckpointId', internalType: 'uint256', type: 'uint256' },
+      { name: 'endCheckpointId', internalType: 'uint256', type: 'uint256' },
+      { name: 'packedActions', internalType: 'bytes', type: 'bytes' },
+      { name: 'r', internalType: 'bytes32[]', type: 'bytes32[]' },
+      { name: 'merkleRoot', internalType: 'bytes32', type: 'bytes32' },
+    ],
+    name: 'submitReplication',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
     inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
     name: 'transferOwnership',
     outputs: [],
     stateMutability: 'nonpayable',
   },
+  {
+    type: 'function',
+    inputs: [
+      { name: '', internalType: 'address', type: 'address' },
+      { name: '', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'validatorSubmissions',
+    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'amount', internalType: 'uint256', type: 'uint256' }],
+    name: 'withdraw',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  { type: 'receive', stateMutability: 'payable' },
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// CawActionsReplicator
+// CawChallengeRelay
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-export const cawActionsReplicatorAbi = [
+export const cawChallengeRelayAbi = [
   {
     type: 'constructor',
     inputs: [
       { name: '_endpoint', internalType: 'address', type: 'address' },
       { name: '_cawActions', internalType: 'address', type: 'address' },
-      { name: '_cawProfileL2', internalType: 'address', type: 'address' },
     ],
     stateMutability: 'nonpayable',
   },
@@ -554,22 +934,8 @@ export const cawActionsReplicatorAbi = [
     type: 'event',
     anonymous: false,
     inputs: [
-      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: true },
       {
-        name: 'target',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-    ],
-    name: 'ArchiveChainAdded',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'checkpointId',
+        name: 'submissionId',
         internalType: 'uint256',
         type: 'uint256',
         indexed: true,
@@ -581,32 +947,25 @@ export const cawActionsReplicatorAbi = [
         indexed: true,
       },
       {
+        name: 'checkpointId',
+        internalType: 'uint256',
+        type: 'uint256',
+        indexed: false,
+      },
+      {
         name: 'destEid',
         internalType: 'uint32',
         type: 'uint32',
-        indexed: true,
-      },
-    ],
-    name: 'BatchReplicated',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'clientId',
-        internalType: 'uint32',
-        type: 'uint32',
-        indexed: true,
+        indexed: false,
       },
       {
-        name: 'destEids',
-        internalType: 'uint32[]',
-        type: 'uint32[]',
+        name: 'correctHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
         indexed: false,
       },
     ],
-    name: 'ClientChainsUpdated',
+    name: 'ChallengeRelayed',
   },
   {
     type: 'event',
@@ -642,65 +1001,11 @@ export const cawActionsReplicatorAbi = [
     name: 'PeerSet',
   },
   {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'oldLimit',
-        internalType: 'uint128',
-        type: 'uint128',
-        indexed: false,
-      },
-      {
-        name: 'newLimit',
-        internalType: 'uint128',
-        type: 'uint128',
-        indexed: false,
-      },
-    ],
-    name: 'ReceiveGasLimitUpdated',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'destEid',
-        internalType: 'uint32',
-        type: 'uint32',
-        indexed: true,
-      },
-      {
-        name: 'payloadSize',
-        internalType: 'uint256',
-        type: 'uint256',
-        indexed: false,
-      },
-      {
-        name: 'clientId',
-        internalType: 'uint32',
-        type: 'uint32',
-        indexed: true,
-      },
-    ],
-    name: 'Replicated',
-  },
-  {
     type: 'function',
     inputs: [],
-    name: 'MAX_RECEIVE_GAS_LIMIT',
+    name: 'CHALLENGE_GAS_LIMIT',
     outputs: [{ name: '', internalType: 'uint128', type: 'uint128' }],
     stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'destEid', internalType: 'uint32', type: 'uint32' },
-      { name: 'target', internalType: 'address', type: 'address' },
-    ],
-    name: 'addArchiveChain',
-    outputs: [],
-    stateMutability: 'nonpayable',
   },
   {
     type: 'function',
@@ -722,61 +1027,15 @@ export const cawActionsReplicatorAbi = [
   },
   {
     type: 'function',
-    inputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    name: 'availableChains',
-    outputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
     inputs: [],
     name: 'cawActions',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'cawProfileL2',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '', internalType: 'uint32', type: 'uint32' },
-      { name: '', internalType: 'uint32', type: 'uint32' },
-      { name: '', internalType: 'uint256', type: 'uint256' },
+    outputs: [
+      {
+        name: '',
+        internalType: 'contract ICawActionsCheckpoints',
+        type: 'address',
+      },
     ],
-    name: 'checkpointReplicated',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '', internalType: 'uint32', type: 'uint32' },
-      { name: '', internalType: 'uint32', type: 'uint32' },
-    ],
-    name: 'clientChainEnabled',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '', internalType: 'uint32', type: 'uint32' },
-      { name: '', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'clientChains',
-    outputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
-    name: 'clientReplicationEnabled',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
     stateMutability: 'view',
   },
   {
@@ -790,57 +1049,6 @@ export const cawActionsReplicatorAbi = [
         type: 'address',
       },
     ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'getAvailableChains',
-    outputs: [{ name: '', internalType: 'uint32[]', type: 'uint32[]' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
-      { name: 'destEid', internalType: 'uint32', type: 'uint32' },
-    ],
-    name: 'getNextUnreplicatedCheckpoint',
-    outputs: [
-      { name: 'nextCheckpointId', internalType: 'uint256', type: 'uint256' },
-      { name: 'totalCheckpoints', internalType: 'uint256', type: 'uint256' },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'clientId', internalType: 'uint32', type: 'uint32' }],
-    name: 'getReplicationCount',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'clientId', internalType: 'uint32', type: 'uint32' }],
-    name: 'getReplicationDestinations',
-    outputs: [
-      {
-        name: '',
-        internalType: 'struct ReplicationDestination[]',
-        type: 'tuple[]',
-        components: [
-          { name: 'target', internalType: 'address', type: 'address' },
-          { name: 'eid', internalType: 'uint32', type: 'uint32' },
-        ],
-      },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
-    name: 'isAvailableChain',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
     stateMutability: 'view',
   },
   {
@@ -923,15 +1131,15 @@ export const cawActionsReplicatorAbi = [
     type: 'function',
     inputs: [
       { name: 'destEid', internalType: 'uint32', type: 'uint32' },
-      { name: 'numCheckpoints', internalType: 'uint256', type: 'uint256' },
-      { name: 'avgTextLength', internalType: 'uint256', type: 'uint256' },
-      { name: 'avgRecipients', internalType: 'uint256', type: 'uint256' },
+      { name: 'submissionId', internalType: 'uint256', type: 'uint256' },
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'checkpointId', internalType: 'uint256', type: 'uint256' },
       { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
     ],
-    name: 'quoteReplicateBatch',
+    name: 'quoteChallenge',
     outputs: [
       {
-        name: 'fee',
+        name: '',
         internalType: 'struct MessagingFee',
         type: 'tuple',
         components: [
@@ -944,51 +1152,20 @@ export const cawActionsReplicatorAbi = [
   },
   {
     type: 'function',
-    inputs: [],
-    name: 'receiveGasLimit',
-    outputs: [{ name: '', internalType: 'uint128', type: 'uint128' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'renounceOwnership',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
     inputs: [
-      {
-        name: 'params',
-        internalType: 'struct CawActionsReplicator.ReplicationParams',
-        type: 'tuple',
-        components: [
-          { name: 'clientId', internalType: 'uint32', type: 'uint32' },
-          { name: 'destEid', internalType: 'uint32', type: 'uint32' },
-          {
-            name: 'startCheckpointId',
-            internalType: 'uint256',
-            type: 'uint256',
-          },
-          { name: 'endCheckpointId', internalType: 'uint256', type: 'uint256' },
-          { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
-        ],
-      },
-      { name: 'packedActions', internalType: 'bytes', type: 'bytes' },
-      { name: 'r', internalType: 'bytes32[]', type: 'bytes32[]' },
+      { name: 'destEid', internalType: 'uint32', type: 'uint32' },
+      { name: 'submissionId', internalType: 'uint256', type: 'uint256' },
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'checkpointId', internalType: 'uint256', type: 'uint256' },
     ],
-    name: 'replicateBatch',
+    name: 'relayChallenge',
     outputs: [],
     stateMutability: 'payable',
   },
   {
     type: 'function',
-    inputs: [
-      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
-      { name: 'destEids', internalType: 'uint32[]', type: 'uint32[]' },
-    ],
-    name: 'setClientChains',
+    inputs: [],
+    name: 'renounceOwnership',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -1006,13 +1183,6 @@ export const cawActionsReplicatorAbi = [
       { name: '_peer', internalType: 'bytes32', type: 'bytes32' },
     ],
     name: 'setPeer',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'newLimit', internalType: 'uint128', type: 'uint128' }],
-    name: 'setReceiveGasLimit',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -1213,6 +1383,25 @@ export const cawClientManagerAbi = [
       },
     ],
     name: 'InstanceUpdated',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
+      {
+        name: 'previousOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+      {
+        name: 'newOwner',
+        internalType: 'address',
+        type: 'address',
+        indexed: true,
+      },
+    ],
+    name: 'OwnershipTransferred',
   },
   {
     type: 'function',
@@ -1518,23 +1707,6 @@ export const cawClientManagerAbi = [
   },
   {
     type: 'function',
-    inputs: [{ name: 'clientId', internalType: 'uint32', type: 'uint32' }],
-    name: 'replicationSyncQuote',
-    outputs: [
-      {
-        name: '',
-        internalType: 'struct MessagingFee',
-        type: 'tuple',
-        components: [
-          { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
-          { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
-        ],
-      },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
     inputs: [
       { name: 'clientId', internalType: 'uint32', type: 'uint32' },
       { name: 'fee', internalType: 'uint256', type: 'uint256' },
@@ -1610,6 +1782,13 @@ export const cawClientManagerAbi = [
       { name: 'fee', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'setWithdrawFee',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
+    name: 'transferOwnership',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -2726,19 +2905,6 @@ export const cawProfileL2Abi = [
     anonymous: false,
     inputs: [
       {
-        name: 'replicator',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-    ],
-    name: 'CawActionsReplicatorSet',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
         name: 'cawActions',
         internalType: 'address',
         type: 'address',
@@ -2977,13 +3143,6 @@ export const cawProfileL2Abi = [
     outputs: [
       { name: '', internalType: 'contract ICawActions', type: 'address' },
     ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'cawActionsReplicator',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
     stateMutability: 'view',
   },
   {
@@ -3327,13 +3486,6 @@ export const cawProfileL2Abi = [
     type: 'function',
     inputs: [{ name: '_cawActions', internalType: 'address', type: 'address' }],
     name: 'setCawActions',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_replicator', internalType: 'address', type: 'address' }],
-    name: 'setCawActionsReplicator',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -4434,24 +4586,10 @@ export const cawProfileUriAbi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ICawActionsForReplicator
+// ICawActionsCheckpoints
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-export const iCawActionsForReplicatorAbi = [
-  {
-    type: 'function',
-    inputs: [{ name: 'clientId', internalType: 'uint32', type: 'uint32' }],
-    name: 'clientActionCount',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'clientId', internalType: 'uint32', type: 'uint32' }],
-    name: 'clientCurrentHash',
-    outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
-    stateMutability: 'view',
-  },
+export const iCawActionsCheckpointsAbi = [
   {
     type: 'function',
     inputs: [
@@ -4461,60 +4599,6 @@ export const iCawActionsForReplicatorAbi = [
     name: 'clientHashAtCheckpoint',
     outputs: [{ name: '', internalType: 'bytes32', type: 'bytes32' }],
     stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'senderId', internalType: 'uint32', type: 'uint32' },
-      { name: 'cawonce', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'isCawonceUsed',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'v', internalType: 'uint8', type: 'uint8' },
-      { name: 'r', internalType: 'bytes32', type: 'bytes32' },
-      { name: 's', internalType: 'bytes32', type: 'bytes32' },
-      {
-        name: 'data',
-        internalType: 'struct ICawActionsForReplicator.ActionData',
-        type: 'tuple',
-        components: [
-          { name: 'actionType', internalType: 'uint8', type: 'uint8' },
-          { name: 'senderId', internalType: 'uint32', type: 'uint32' },
-          { name: 'receiverId', internalType: 'uint32', type: 'uint32' },
-          { name: 'receiverCawonce', internalType: 'uint32', type: 'uint32' },
-          { name: 'clientId', internalType: 'uint32', type: 'uint32' },
-          { name: 'cawonce', internalType: 'uint32', type: 'uint32' },
-          { name: 'recipients', internalType: 'uint32[]', type: 'uint32[]' },
-          { name: 'amounts', internalType: 'uint64[]', type: 'uint64[]' },
-          { name: 'text', internalType: 'bytes', type: 'bytes' },
-        ],
-      },
-    ],
-    name: 'verifySignature',
-    outputs: [],
-    stateMutability: 'view',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ICawActionsReplicator
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const iCawActionsReplicatorAbi = [
-  {
-    type: 'function',
-    inputs: [
-      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
-      { name: 'destEids', internalType: 'uint32[]', type: 'uint32[]' },
-    ],
-    name: 'setClientChains',
-    outputs: [],
-    stateMutability: 'nonpayable',
   },
 ] as const
 
@@ -4547,28 +4631,6 @@ export const iCawProfileAbi = [
     name: 'syncReplicationInternal',
     outputs: [],
     stateMutability: 'payable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
-      { name: 'destEids', internalType: 'uint32[]', type: 'uint32[]' },
-      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
-      { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
-    ],
-    name: 'syncReplicationQuote',
-    outputs: [
-      {
-        name: '',
-        internalType: 'struct MessagingFee',
-        type: 'tuple',
-        components: [
-          { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
-          { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
-        ],
-      },
-    ],
-    stateMutability: 'view',
   },
 ] as const
 
