@@ -541,36 +541,39 @@ console.log("BALANCE:", balance)
         <div className={isCaptive ? 'flex flex-col md:flex-row gap-8 md:gap-0 items-start md:divide-x md:divide-white/10 pt-12 md:pt-20' : ''}>
           {/* Left column (captive) or full-width header (normal) */}
           <div className={isCaptive ? 'w-full md:w-1/2 md:sticky md:top-8 md:pr-10' : ''}>
-            <div className="text-center space-y-3">
-              <h1 className="text-4xl font-bold">Create a Profile</h1>
-              <p className="text-gray-400 text-sm mx-auto" style={{ width: '85%' }}>
-                Your username is a tradeable NFT that will be used to access your account and posts. Creating a profile requires CAW tokens to be burnt, fewer characters increase in cost and rarity.
-              </p>
-            </div>
+            <div className={isCaptive ? `px-6 py-6 rounded-2xl backdrop-blur-sm ${isDark ? 'bg-white/[0.04] border border-white/10' : 'bg-black/[0.03] border border-black/10'}` : ''}>
+              <div className="text-center space-y-3">
+                <h1 className="text-4xl font-bold">Create a Profile</h1>
+                <p className="text-gray-400 text-sm mx-auto" style={{ width: '85%' }}>
+                  Your username is a tradeable NFT that will be used to access your account and posts. Creating a profile requires CAW tokens to be burnt, fewer characters increase in cost and rarity.
+                </p>
+              </div>
 
-            {/* Username SVG preview */}
-            <div className={`flex justify-center items-center mb-6 ${isCaptive ? 'mt-6' : 'mt-16'}`}>
-                <div className="w-64 h-64 overflow-hidden" style={{ borderRadius: '22px' }}>
-                    <UsernameSvg username={username || 'username'} textOpacity={username ? 1 : 0.5} />
-                </div>
-            </div>
-            <div className="text-center">
-              <a
-                href="https://app.uniswap.org/#/swap?inputCurrency=ETH&outputCurrency=0xf3b9569F82B18aEf890De263B84189bd33EBe452"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="text-sm text-yellow-500/70 hover:text-yellow-500 transition-colors cursor-pointer"
-              >
-                Need more CAW? Click here.
-              </a>
-              <Link to="/usernames" className="block mt-2 text-sm text-gray-400 hover:text-gray-300 transition-colors">
-                Username Marketplace &rarr;
-              </Link>
+              {/* Username SVG preview */}
+              <div className={`flex justify-center items-center mb-6 ${isCaptive ? 'mt-6' : 'mt-16'}`}>
+                  <div className="w-64 h-64 overflow-hidden" style={{ borderRadius: '22px' }}>
+                      <UsernameSvg username={username || 'username'} textOpacity={username ? 1 : 0.5} />
+                  </div>
+              </div>
+              <div className="text-center">
+                <a
+                  href="https://app.uniswap.org/#/swap?inputCurrency=ETH&outputCurrency=0xf3b9569F82B18aEf890De263B84189bd33EBe452"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-sm text-yellow-500/70 hover:text-yellow-500 transition-colors cursor-pointer"
+                >
+                  Need more CAW? Click here.
+                </a>
+                <Link to="/usernames" className="block mt-2 text-sm text-gray-400 hover:text-gray-300 transition-colors">
+                  Username Marketplace &rarr;
+                </Link>
+              </div>
             </div>
           </div>
 
           {/* Right column (captive) or continuation (normal) */}
           <div className={isCaptive ? 'w-full md:w-1/2 md:pl-[55px]' : ''}>
+            <div className={isCaptive ? `px-6 py-6 rounded-2xl backdrop-blur-sm ${isDark ? 'bg-white/[0.04] border border-white/10' : 'bg-black/[0.03] border border-black/10'}` : ''}>
             {isCaptive && (
               <h2 className="text-2xl font-bold text-center md:text-left mb-4 mt-2.5">Choose Your Username</h2>
             )}
@@ -821,6 +824,7 @@ console.log("BALANCE:", balance)
                 )
             })()}
         </div>
+            </div>
           </div>
         </div>
       </div>
