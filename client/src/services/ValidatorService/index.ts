@@ -2410,10 +2410,16 @@ console.log("succeededKeys", succeededKeys)
 
             let numCheckpoints = endCheckpointId - startCheckpointId + 1
 
-            // Dynamic batch sizing: reconstruct incrementally and stop when payload
-            // would exceed L2b calldata limit (~110KB, leaving margin below 128KB).
-            // Start with all available checkpoints and trim if too large.
-            const L2B_CALLDATA_LIMIT = 110_000
+            // Dynamic batch sizing. Budget applies to packedActions bytes only.
+            // The actual submission tx carries packed + r[] + entryHash + ABI
+            // overhead ≈ packed * 1.5. More importantly, `slashIncoherentRoot`
+            // (the Mode A slash) ALSO echoes the same data back in its
+            // calldata, so the slash tx is as big as the submission tx. RPC
+            // providers (Infura, Arbitrum public) typically reject single-tx
+            // bodies above ~50-60KB as "oversized"/"unparseable". Stay well
+            // under so both submit AND slash txs fit.
+            //   packed(30KB) * 1.5 ≈ 45KB tx → fits
+            const L2B_CALLDATA_LIMIT = 30_000
 
             console.log(`[OptimisticReplication] Client ${client.id}: attempting checkpoints ${startCheckpointId}..${endCheckpointId} (${numCheckpoints})`)
 
@@ -2852,9 +2858,12 @@ console.log("succeededKeys", succeededKeys)
                   : await actionsView.clientHashAtCheckpoint(clientId, startCp - 1)
 
                 console.log(`[Monitor] Calling slashIncoherentRoot(${submissionId})...`)
+                // slashIncoherentRoot does: keccak check, full hash-chain
+                // fold (per-action), build merkle root. 256 actions → ~5M gas
+                // observed; 10M leaves margin for larger batches.
                 const slashTx = await archiveW.slashIncoherentRoot(
                   submissionId, submitterPackedHex, submitterR, entryHash,
-                  { gasLimit: 2_000_000 },
+                  { gasLimit: 10_000_000 },
                 )
                 const slashReceipt = await slashTx.wait()
                 console.log(`[Monitor] Mode A SLASHED submission ${submissionId}! tx: ${slashReceipt?.hash}`)
