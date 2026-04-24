@@ -117,9 +117,7 @@ export async function handleCawAction(
 
   // Process hashtags for the new caw
   try {
-    console.log(`[handleCawAction] Processing hashtags for caw ${newCaw.id}, textContent: "${textContent}"`)
     await processHashtagsForCaw(newCaw.id, textContent, tx)
-    console.log(`[handleCawAction] Finished processing hashtags for caw ${newCaw.id}`)
   } catch (err) {
     console.error(`Failed to process hashtags for caw ${newCaw.id}:`, err)
     // Don't fail the entire transaction if hashtag processing fails
@@ -351,14 +349,8 @@ export async function handleLikeAction(
     where: { userId_cawId: { userId, cawId: parentCawId } }
   })
 
-  console.log("Create like: ", existing, "parentCawId:", parentCawId, "userId:", userId)
-
   if (existing) {
-    // Update the action field and clear pending status
-    // If it was pending, we need to increment the counter
-    console.log("[handleLikeAction] Existing like found, pending:", existing.pending)
     if (existing.pending) {
-      console.log("[handleLikeAction] Confirming pending like, will create notification")
       await tx.like.update({
         where: { userId_cawId: { userId, cawId: parentCawId } },
         data: { action: 'LIKE', pending: false }
@@ -370,14 +362,11 @@ export async function handleLikeAction(
 
       // Create like notification for pending->confirmed transition
       try {
-        console.log("[handleLikeAction] Creating like notification for caw", parentCawId, "from user", userId)
         await NotificationService.createLikeNotification(parentCawId, userId)
-        console.log("[handleLikeAction] Like notification created successfully")
       } catch (err) {
         console.error(`Failed to create like notification for confirmed pending like:`, err)
       }
     } else {
-      console.log("[handleLikeAction] Like already confirmed, skipping notification")
       // Already processed, just ensure it's marked as LIKE
       await tx.like.update({
         where: { userId_cawId: { userId, cawId: parentCawId } },
@@ -447,8 +436,6 @@ export async function handleFollowAction(
   const followerId = await findOrCreateUser(action.senderId)
   const followingId = await findOrCreateUser(rawAction.receiverId)
 
-  console.log(`[ActionProcessor] handleFollowAction: ${followerId} -> ${followingId}`)
-
   // Check if follow already exists
   const existingFollow = await tx.follow.findUnique({
     where: {
@@ -458,8 +445,6 @@ export async function handleFollowAction(
       }
     }
   })
-
-  console.log(`[ActionProcessor] existingFollow:`, existingFollow ? `action=${existingFollow.action} status=${existingFollow.status}` : 'null')
 
   if (!existingFollow) {
     // Create new follow relationship or update pending to success

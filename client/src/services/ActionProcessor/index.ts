@@ -5,7 +5,7 @@ import { Service } from '../../Service'
 import Redis from 'ioredis'
 import { z } from 'zod'
 import { createOrFindAction, ensureActionExists } from './actionCreation'
-import { processDomainEffects } from './domainProcessor'
+import { processDomainEffects, resolveActionUsers } from './domainProcessor'
 import type { RawAction } from './types'
 import { StaleTokenError } from '../UserService'
 import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
@@ -88,7 +88,6 @@ export const actionProcessorService: Service = {
       // now subscribe to the same "raws" channel your Gatherer is publishing
       await redis.subscribe('raws')
       redis.on('message', async (_channel, msg) => {
-        console.log("ActionProcessor received new message")
         const rawEventId = Number(msg)
         // ignore duplicates or out‑of‑order
         if (rawEventId > lastId) {
@@ -141,36 +140,30 @@ async function handleRawEvent(raw: { id: number, chainId: number, data: any }) {
 
 async function handleRawAction(rawId: number, chainId: number, rawAction: RawAction): Promise<void> {
   try {
+    // Resolve users BEFORE opening the interactive transaction. Prisma's
+    // default 5s tx timeout was tripping when a batch of N actions opened
+    // N parallel transactions and each called findOrCreateUser inside —
+    // Postgres row-locks on the same user serialized them past 5s. User
+    // creation is idempotent, so it doesn't need tx semantics anyway.
+    const resolved = await resolveActionUsers(rawAction)
+
     await prisma.$transaction(async (tx) => {
-      // Create or find existing action, determine if domain processing is needed
       const { action, shouldProcessDomain } = await createOrFindAction(tx, rawId, chainId, rawAction)
-
-      if (!shouldProcessDomain) {
-        return // Domain objects already exist, nothing to do
-      }
-
-      // Ensure we have a valid action before processing
+      if (!shouldProcessDomain) return
       const validAction = await ensureActionExists(tx, rawId, action)
-
-      // Process domain effects based on action type
-      await processDomainEffects(tx, validAction, rawAction)
+      await processDomainEffects(tx, validAction, rawAction, resolved)
     })
   } catch (err: any) {
     // If we hit a race condition, retry once to process the action created by another process
     if (err.message?.includes('Action already exists (race condition)')) {
       console.log('[ActionProcessor] Race condition detected, retrying to process existing action...')
       try {
+        const resolved = await resolveActionUsers(rawAction)
         await prisma.$transaction(async (tx) => {
-          // This time we should find the existing action
           const { action, shouldProcessDomain } = await createOrFindAction(tx, rawId, chainId, rawAction)
-
-          if (!shouldProcessDomain) {
-            console.log('[ActionProcessor] Action and domain objects already exist after retry')
-            return
-          }
-
+          if (!shouldProcessDomain) return
           const validAction = await ensureActionExists(tx, rawId, action)
-          await processDomainEffects(tx, validAction, rawAction)
+          await processDomainEffects(tx, validAction, rawAction, resolved)
         })
         console.log('[ActionProcessor] Successfully processed action after race condition retry')
       } catch (retryErr) {

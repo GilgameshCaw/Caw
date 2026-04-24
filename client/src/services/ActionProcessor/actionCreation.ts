@@ -1,5 +1,4 @@
 // src/services/ActionProcessor/actionCreation.ts
-import { prisma } from '../../prismaClient'
 import getActionType from '../../abi/getActionType'
 import { checkDomainObjectExists } from './domainObjectChecks'
 import type { PrismaTransactionClient, RawAction, ProcessedAction } from './types'
@@ -29,8 +28,6 @@ export async function createOrFindAction(
   })
 
   if (existingAction) {
-    console.log(`Action already exists (id=${existingAction.id}, type=${existingAction.actionType}, sender=${existingAction.senderId}, cawonce=${existingAction.cawonce}), checking domain objects`)
-
     // Check if domain objects already exist for this action
     const actionType = getActionType(Number(rawAction.actionType))
     const domainObjectExists = await checkDomainObjectExists(
@@ -41,17 +38,14 @@ export async function createOrFindAction(
     )
 
     if (domainObjectExists) {
-      console.log("Domain object already exists, skipping")
       return { action: existingAction, shouldProcessDomain: false }
     }
 
-    console.log("Action exists but domain object missing, proceeding to create it")
     return { action: existingAction, shouldProcessDomain: true }
   }
 
   // Action doesn't exist, create it
   try {
-    console.log("Creating new action")
     const action = await tx.action.create({
       data: {
         rawEventId: rawId,

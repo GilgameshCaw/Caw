@@ -11,7 +11,29 @@ import {
   handleOtherAction,
   handleWithdrawAction
 } from './actionHandlers'
-import type { PrismaTransactionClient, RawAction, ProcessedAction } from './types'
+import type { PrismaTransactionClient, RawAction } from './types'
+
+export interface ResolvedUsers {
+  authorId: number
+  receiverId?: number
+}
+
+/**
+ * Resolve sender (and, when relevant, receiver) users BEFORE the interactive
+ * transaction opens. Prevents `findOrCreateUser` from eating into the 5s tx
+ * timeout when a batch of same-sender actions arrives in parallel.
+ */
+export async function resolveActionUsers(rawAction: RawAction): Promise<ResolvedUsers> {
+  const authorId = await findOrCreateUser(rawAction.senderId)
+  let receiverId: number | undefined
+  // FOLLOW(4) / UNFOLLOW(5) both sides are users; LIKE/RECAW target a caw,
+  // not a user, so the receiverId there is a cawonce, not a token.
+  const type = Number(rawAction.actionType)
+  if ((type === 4 || type === 5) && rawAction.receiverId) {
+    receiverId = await findOrCreateUser(rawAction.receiverId)
+  }
+  return { authorId, receiverId }
+}
 
 /**
  * Process domain effects for a given action
@@ -19,24 +41,21 @@ import type { PrismaTransactionClient, RawAction, ProcessedAction } from './type
  */
 export async function processDomainEffects(
   tx: PrismaTransactionClient,
-  action: ProcessedAction,
-  rawAction: RawAction
+  action: any,
+  rawAction: RawAction,
+  resolved: ResolvedUsers
 ): Promise<void> {
-  console.log("TYPE", action.actionType)
-
-  const authorId = await findOrCreateUser(action.senderId)
+  const { authorId } = resolved
 
   // Determine parent caw for comment/reply actions
   let parentCawId: number | undefined
   if (rawAction.receiverId) {
-    console.log("Searching for original caw id...", rawAction.receiverCawonce, rawAction.receiverId)
     try {
       parentCawId = await findCawId(
         rawAction.receiverCawonce || 0,
         rawAction.receiverId
       )
     } catch (err) {
-      console.warn("Could not find parent caw:", err)
       // For some actions like FOLLOW, not finding a parent caw is acceptable
     }
   }
@@ -52,19 +71,15 @@ export async function processDomainEffects(
       break
 
     case 'LIKE':
-      console.log(`[domainProcessor] Processing LIKE action, parentCawId=${parentCawId}, receiverCawonce=${rawAction.receiverCawonce}, receiverId=${rawAction.receiverId}`)
       // For likes, we need to find the caw being liked
       if (!parentCawId && rawAction.receiverCawonce) {
         // The receiverId in a like might be 0, so we search by cawonce only
-        console.log(`[domainProcessor] Searching for caw by cawonce=${rawAction.receiverCawonce}`)
         const targetCaw = await tx.caw.findFirst({
           where: { cawonce: rawAction.receiverCawonce },
           orderBy: { createdAt: 'asc' }
         })
         parentCawId = targetCaw?.id
-        console.log(`[domainProcessor] Found targetCaw:`, targetCaw?.id)
       }
-      console.log(`[domainProcessor] Calling handleLikeAction with parentCawId=${parentCawId}`)
       await handleLikeAction(tx, action, rawAction, parentCawId)
       break
 
@@ -90,7 +105,6 @@ export async function processDomainEffects(
 
     default:
       console.warn(`Unknown action type: ${action.actionType}`)
-      // For unknown action types, we can choose to either skip or throw
       break
   }
 }

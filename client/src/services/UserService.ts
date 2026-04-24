@@ -185,6 +185,29 @@ async function getL1Provider() {
   return { provider: l1Provider, contract: l1NameContract! }
 }
 
+// In-memory cache for findOrCreateUser so a batch of N actions from the same
+// sender doesn't hit Postgres N times. A 32-caw thread previously caused 32
+// parallel `user.findUnique` calls plus 32 parallel `$transaction` opens,
+// serializing on row locks long enough to blow past Prisma's 5s interactive
+// timeout. One shared in-flight Promise per tokenId collapses that to 1 DB hit.
+//
+// TTL is short: users can be renamed off-chain (profile updates) or have their
+// on-chain owner transfer. 30s is long enough to absorb a burst and short
+// enough that stale data can't linger across meaningful state changes.
+type UserCacheEntry = { tokenId: number; promise: Promise<number>; expiresAt: number }
+const USER_CACHE_TTL_MS = 30_000
+const userCache = new Map<number, UserCacheEntry>()
+
+function getCachedUser(tokenId: number): Promise<number> | undefined {
+  const entry = userCache.get(tokenId)
+  if (!entry) return undefined
+  if (Date.now() > entry.expiresAt) {
+    userCache.delete(tokenId)
+    return undefined
+  }
+  return entry.promise
+}
+
 /**
  * findOrCreateUser
  * - uses on‑chain senderId as both L2 address and NFT tokenId
@@ -192,30 +215,49 @@ async function getL1Provider() {
 export async function findOrCreateUser(
   senderId: number,
   opts: { onboardingStep?: number } = {},
-) {
-  const startTime = Date.now()
+): Promise<number> {
   const tokenId = senderId;
-  console.log(`[UserService] findOrCreateUser START tokenId=${tokenId}`)
-
   if (tokenId === 0) {
     throw new Error("senderId cannot be zero");
   }
 
-  console.log(`[UserService] Checking if user exists in DB...`)
+  // Skip cache when caller has onboarding semantics (fresh mint flow needs a
+  // fresh write, not a shared promise from a prior request).
+  if (!opts.onboardingStep) {
+    const cached = getCachedUser(tokenId)
+    if (cached) return cached
+  }
+
+  const promise = doFindOrCreateUser(tokenId, opts).catch(err => {
+    // On failure, drop the cached rejection immediately so retries can
+    // proceed — otherwise a transient L1 blip would poison the cache for 30s.
+    userCache.delete(tokenId)
+    throw err
+  })
+
+  if (!opts.onboardingStep) {
+    userCache.set(tokenId, {
+      tokenId,
+      promise,
+      expiresAt: Date.now() + USER_CACHE_TTL_MS,
+    })
+  }
+  return promise
+}
+
+async function doFindOrCreateUser(
+  tokenId: number,
+  opts: { onboardingStep?: number },
+): Promise<number> {
   let user = await prisma.user.findUnique({
-    where: { tokenId: senderId }
+    where: { tokenId }
   })
 
   if (!user) {
-    console.log(`[UserService] User not in DB, querying L1 blockchain...`)
-
     // Get providers lazily - only created when needed (with rate limit handling)
-    const providerStart = Date.now()
     const { contract: l1Contract } = await getL1Provider()
-    console.log(`[UserService] L1 provider ready in ${Date.now() - providerStart}ms`)
 
     // Query L1 for owner address and username (L1 is authoritative — L2 may not have the token yet)
-    console.log(`[UserService] Querying L1 for tokenId=${tokenId}...`)
     const queryStart = Date.now()
     let ownerAddress: string
     let username: string
@@ -286,17 +328,16 @@ export async function findOrCreateUser(
       throw new Error(`Username not set on L1 contract for tokenId ${tokenId}. Cannot create user without username.`);
     }
 
-    console.log(`[UserService] Creating user in DB: tokenId=${tokenId}, owner=${ownerAddress}, username=${username}`);
-
     // atomic create‑or‑return (id = tokenId)
     // Default onboardingStep=5 (complete) since the user already minted and
     // has a username on-chain — if we're finding them via this helper, they
     // exist on-chain already. Callers doing fresh-mint onboarding (e.g.
     // /api/users/ensure from PostMintOnboarding) can override with step 0.
     const dbStart = Date.now()
-    // Assign a random default avatar (1-100) for the placeholder shown when
-    // the user hasn't uploaded a custom avatar. avatarUrl stays null.
-    const randomAvatarId = Math.floor(Math.random() * 100) + 1
+    // Deterministic default avatar (1-100) derived from tokenId; matches the
+    // frontend's getUserAvatar fallback so the placeholder is stable across
+    // clients until the user explicitly picks a different one.
+    const defaultAvatarId = (tokenId % 100) + 1
 
     user = await prisma.user.upsert({
       where:  { tokenId },
@@ -307,17 +348,13 @@ export async function findOrCreateUser(
         tokenId,
         username: username.trim(),
         image: '',  // L2 contract doesn't store images
-        defaultAvatarId: randomAvatarId,
+        defaultAvatarId,
         onboardingStep: opts.onboardingStep ?? 5,
       },
     });
-    console.log(`[UserService] User created in DB in ${Date.now() - dbStart}ms`)
-  } else {
-    console.log(`[UserService] User already exists in DB: tokenId=${user.tokenId}, username=${user.username}`)
+    console.log(`[UserService] Created user tokenId=${tokenId} username=${username} (${Date.now() - dbStart}ms)`)
   }
 
-  const totalDuration = Date.now() - startTime
-  console.log(`[UserService] findOrCreateUser COMPLETE in ${totalDuration}ms, returning tokenId=${user.tokenId}`)
   return user.tokenId;
 }
 

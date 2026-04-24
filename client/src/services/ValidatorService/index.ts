@@ -870,8 +870,6 @@ export const validatorService: Service = {
       const maxRetries = 3
       const gasBumpPercent = 15 // Increase gas by 15% on each retry
 
-      console.log("will submit ", multiData.actions.length, multiData)
-      console.log("[submitProcessActions] Getting fee data..." + (retryCount > 0 ? ` (retry ${retryCount}/${maxRetries})` : ''))
       const feeData = await httpProvider.getFeeData();
 
       // Pre-fetch nonce so sendTransaction doesn't need to (throttle handles spacing)
@@ -885,23 +883,8 @@ export const validatorService: Service = {
         const multiplier = BigInt(100 + (gasBumpPercent * retryCount))
         maxFeePerGas = (maxFeePerGas * multiplier) / BigInt(100)
         maxPriorityFeePerGas = (maxPriorityFeePerGas * multiplier) / BigInt(100)
-        console.log(`[submitProcessActions] Bumped gas fees by ${gasBumpPercent * retryCount}% for retry`)
+        console.log(`[submitProcessActions] Retry ${retryCount}/${maxRetries}, bumped gas by ${gasBumpPercent * retryCount}%`)
       }
-
-      console.log("[submitProcessActions] Fee data:", {
-        maxFeePerGas: maxFeePerGas.toString(),
-        maxPriorityFeePerGas: maxPriorityFeePerGas.toString(),
-        retryCount
-      })
-
-      console.log("[submitProcessActions] Sending transaction with params:", {
-        to: CAW_ACTIONS_ADDRESS,
-        validatorId,
-        actionsCount: multiData.actions.length,
-        totalNativeFee: quote.nativeFee.toString(),
-        withdrawFee: quote.withdrawFee.toString(),
-        gasLimit: rawGasLimit.toString()
-      })
 
       try {
         // Encode calldata and validate before sending
@@ -924,8 +907,6 @@ export const validatorService: Service = {
           throw new Error(`encodeFunctionData produced invalid calldata: "${txData}"`)
         }
 
-        console.log(`[submitProcessActions] Calldata encoded (${txData.length} chars), sending transaction...`)
-
         // All params pre-populated so ethers makes exactly 1 RPC call (eth_sendRawTransaction)
         const tx = await wallet.sendTransaction({
           to:    CAW_ACTIONS_ADDRESS,
@@ -938,11 +919,9 @@ export const validatorService: Service = {
           chainId: 84532,
           type: 2,
         })
-        console.log("[submitProcessActions] Transaction sent! Hash:", tx.hash)
-        console.log("[submitProcessActions] Waiting for confirmation...")
+        console.log(`[submitProcessActions] Sent ${multiData.actions.length} action(s), tx=${tx.hash}`)
 
         const receipt = await tx.wait()
-        console.log("[submitProcessActions] Transaction confirmed! Block:", receipt?.blockNumber, "Status:", receipt?.status)
 
         const evt = receipt?.logs
           ?.map(log => { try { return iface.parseLog(log) } catch { return null } })
@@ -954,7 +933,6 @@ export const validatorService: Service = {
           throw new Error('ActionsProcessed event missing')
         }
 
-        console.log("[submitProcessActions] ActionsProcessed event found")
         // Decode packed bytes from ActionsProcessed(bytes packedActions) event
         const packedHex = evt.args.packedActions as string
         const packedBuf = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
@@ -963,7 +941,7 @@ export const validatorService: Service = {
           senderId:     Number(a.senderId),
           cawonce:      Number(a.cawonce)
         }))
-        console.log("[submitProcessActions] Processed actions:", processed)
+        console.log(`[submitProcessActions] Confirmed in block ${receipt?.blockNumber} (${processed.length} action(s))`)
         return { processed, receipt }
       } catch (err: any) {
         // Handle "oversized data" — tx calldata exceeds the 128KB protocol limit.
@@ -1710,11 +1688,7 @@ console.log("succeededKeys", succeededKeys)
          )
         finalized = submitResult.processed
         const txReceipt = submitResult.receipt
-        console.log("[Validator] ========== TRANSACTION SUBMISSION SUCCESSFUL ==========")
-        console.log(`[Validator] ${finalized.length} actions finalized on chain`)
-        finalized.forEach((f: any) => {
-          console.log(`  - Sender ${f.senderId} cawonce ${f.cawonce}: ${getActionType(f.actionType)}`)
-        })
+        console.log(`[Validator] ✓ ${finalized.length} action(s) finalized on chain`)
 
         // Record analytics
         if (txReceipt) {
@@ -1798,27 +1772,25 @@ console.log("succeededKeys", succeededKeys)
         }
       })
 
-      // Update each entry with its actual status
-      console.log("[Validator] ========== UPDATING TXQUEUE STATUSES ==========")
+      // Update each entry with its actual status. Logs only anomalies
+      // (failures, already-done skips) per-row; the summary at the end
+      // reports the success count.
+      let txSuccess = 0
+      let txFailed = 0
       await Promise.all(validatedEntries.map(async (entry, index) => {
         const { succeeded, reason } = finalStatuses[index]
         const data = (entry.payload as any).data
 
-        // Before marking as failed, reload from database to check if another process marked it as done
         if (!succeeded) {
           const currentEntry = await prisma.txQueue.findUnique({
             where: { id: entry.id },
             select: { status: true }
           })
-
-          // If it's already done, skip marking as failed
           if (currentEntry?.status === 'done') {
-            console.log(`[Validator] TxQueue #${entry.id} already marked as 'done', skipping failed update`)
+            // Another path already marked this done — nothing to do, quiet skip.
             return
           }
         }
-
-        console.log(`[Validator] TxQueue #${entry.id} (${getActionType(data.actionType)} from ${data.senderId}): ${succeeded ? 'SUCCESS' : 'FAILED'} ${reason ? `- ${reason}` : ''}`)
 
         if (succeeded) {
           await prisma.txQueue.update({
@@ -1829,13 +1801,19 @@ console.log("succeededKeys", succeededKeys)
           // /api/actions fast-path spend-limit check stays accurate without
           // a live sessionSpent() RPC call per submission.
           await incrementSessionSpent(prisma as any, entry.payload as any, entry.signedTx)
+          txSuccess++
         } else {
           await markTxQueueFailed(entry.id, reason || 'Transaction failed', data.senderId, data)
+          txFailed++
+          console.warn(`[Validator] TxQueue #${entry.id} (${getActionType(data.actionType)} from ${data.senderId}) FAILED: ${reason || 'unknown'}`)
         }
       }))
-      console.log("[Validator] ========== TXQUEUE UPDATE COMPLETE ==========\n")
+      if (txFailed > 0) {
+        console.log(`[Validator] TxQueue updated: ${txSuccess} success, ${txFailed} failed`)
+      }
 
-      // Update caw status for CAW actions that were processed
+      // Update caw status for CAW actions that were processed. Like the
+      // TxQueue loop above: log only anomalies (failures), not successes.
       await Promise.all(validatedEntries.map(async (entry, index) => {
         const { succeeded, reason } = finalStatuses[index]
         const data = (entry.payload as any).data
@@ -1843,9 +1821,6 @@ console.log("succeededKeys", succeededKeys)
         // Check if this is a CAW action
         if (data.actionType === 0 || data.actionType === 'caw') {
           if (succeeded) {
-            // Mark caw as SUCCESS and process hashtags
-            // Mark caw as SUCCESS
-            // Note: Hashtags are processed by ActionProcessor when it receives the on-chain event
             try {
               await prisma.caw.update({
                 where: {
@@ -1854,14 +1829,10 @@ console.log("succeededKeys", succeededKeys)
                     cawonce: data.cawonce
                   }
                 },
-                data: {
-                  status: 'SUCCESS'
-                }
+                data: { status: 'SUCCESS' }
               })
-              console.log(`Marked caw as SUCCESS for user ${data.senderId} cawonce ${data.cawonce}`)
             } catch (cawUpdateErr) {
-              console.error('Failed to update caw status to SUCCESS:', cawUpdateErr)
-              // Continue even if caw update fails (might not exist)
+              console.error(`Failed to mark caw SUCCESS (user ${data.senderId} cawonce ${data.cawonce}):`, cawUpdateErr)
             }
           } else {
             // Before marking as FAILED, check if it's already SUCCESS
@@ -1876,7 +1847,6 @@ console.log("succeededKeys", succeededKeys)
                 select: { status: true }
               })
 
-              // Only mark as failed if it's not already successful
               if (existingCaw && existingCaw.status !== 'SUCCESS') {
                 await prisma.caw.update({
                   where: {
@@ -1890,13 +1860,12 @@ console.log("succeededKeys", succeededKeys)
                     reason: reason || 'Transaction failed'
                   }
                 })
-                console.log(`Marked caw as FAILED for user ${data.senderId} cawonce ${data.cawonce}: ${reason}`)
-              } else if (existingCaw?.status === 'SUCCESS') {
-                console.log(`Caw for user ${data.senderId} cawonce ${data.cawonce} already marked as SUCCESS, skipping failed update`)
+                console.log(`[Validator] Marked caw FAILED (user ${data.senderId} cawonce ${data.cawonce}): ${reason}`)
               }
+              // If existingCaw?.status === 'SUCCESS', another path already
+              // confirmed it — quiet no-op.
             } catch (cawUpdateErr) {
-              console.error('Failed to update caw status to FAILED:', cawUpdateErr)
-              // Continue even if caw update fails (might not exist)
+              console.error('Failed to mark caw FAILED:', cawUpdateErr)
             }
           }
         }
@@ -2353,9 +2322,16 @@ console.log("succeededKeys", succeededKeys)
       try {
         const { archiveRead: archive, archiveWrite: archiveW, l2bWallet: w } = getL2bContracts()
 
-        // 1. Check / ensure stake
+        // 1. Check / ensure stake. Auto-restake can be disabled with
+        //    AUTO_RESTAKE=false — useful during fraud testing, where you
+        //    want the submitter to stop submitting after the first slash
+        //    instead of silently re-depositing forever.
         const currentStake = BigInt(await archive.stakes(w.address))
         if (currentStake < OPTIMISTIC_MIN_STAKE) {
+          if (process.env.AUTO_RESTAKE === 'false') {
+            console.warn(`[OptimisticReplication] Stake ${currentStake} < MIN_STAKE but AUTO_RESTAKE=false — skipping deposit`)
+            return
+          }
           console.log(`[OptimisticReplication] Stake ${currentStake} < MIN_STAKE ${OPTIMISTIC_MIN_STAKE}, depositing ${OPTIMISTIC_INITIAL_DEPOSIT}...`)
           const tx = await archiveW.deposit({ value: OPTIMISTIC_INITIAL_DEPOSIT })
           const receipt = await tx.wait()
@@ -2757,11 +2733,18 @@ console.log("succeededKeys", succeededKeys)
           // provide the submitter's claimedHash + a merkle proof in their
           // tree. If submitterTree is null (couldn't rebuild) we can't
           // proceed — this cycle will retry next round.
-          for (let cpId = startCp; cpId <= endCp; cpId++) {
+          //
+          // Run per-cp resolve in parallel. Once any resolveChallenge
+          // lands, the archive flips the submission to SLASHED and all
+          // later resolves in this batch revert with "Not pending" —
+          // harmless, just caught and logged. This is still vastly
+          // better than serial: one honest monitor race can win in
+          // ~1 block instead of waiting through a serial queue.
+          const resolveOne = async (cpId: number) => {
             try {
               const delivered = await archiveResolveRead.challengeDelivered(submissionId, cpId)
-              if (!delivered) continue
-              if (!submitterHashes || !submitterTree) continue
+              if (!delivered) return
+              if (!submitterHashes || !submitterTree) return
 
               const correctHash = await archiveResolveRead.challengeHash(submissionId, cpId)
               const cpIndex = cpId - startCp
@@ -2770,11 +2753,11 @@ console.log("succeededKeys", succeededKeys)
 
               if (correctHash.toLowerCase() === claimedHash.toLowerCase()) {
                 console.log(`[Monitor] Challenge for submission ${submissionId} cp ${cpId}: submitter's hash matches L2 (no fraud on this cp)`)
-                continue
+                return
               }
 
               const claimedLock = await tryClaimChallengeLock('resolve', submissionId, cpId, w.address.toLowerCase(), 10 * 60 * 1000)
-              if (!claimedLock) continue
+              if (!claimedLock) return
 
               console.log(`[Monitor] Resolving challenge for submission ${submissionId} checkpoint ${cpId}...`)
               try {
@@ -2790,36 +2773,54 @@ console.log("succeededKeys", succeededKeys)
               console.warn(`[Monitor] Error resolving challenge for submission ${submissionId} cp ${cpId}: ${resolveErr?.shortMessage || resolveErr?.message}`)
             }
           }
+          const cpIds: number[] = []
+          for (let cpId = startCp; cpId <= endCp; cpId++) cpIds.push(cpId)
+          await Promise.all(cpIds.map(resolveOne))
 
           // --- Detect & relay new fraud challenges ---------------------
-          const challengeCheckpoint = async (cpId: number, reason: string) => {
-            const L2B_EID = 40231 // Arbitrum Sepolia
-            try {
-              const delivered = await archiveResolveRead.challengeDelivered(submissionId, cpId)
-              if (delivered) return
-            } catch { /* fall through if view reverts */ }
+          // Collect all fraudulent cps then relay them in one batch LZ
+          // message via relayChallengeBatch. The submission-scoped lock
+          // ('relayBatch') prevents multiple monitor nodes from each
+          // sending their own batch for the same submission.
+          const relayBatch = async (cps: number[], reason: string) => {
+            if (cps.length === 0) return
+
+            // Filter out cps that already have a challenge delivered.
+            const notYetDelivered: number[] = []
+            for (const cp of cps) {
+              try {
+                const delivered = await archiveResolveRead.challengeDelivered(submissionId, cp)
+                if (!delivered) notYetDelivered.push(cp)
+              } catch { notYetDelivered.push(cp) /* if view fails, try */ }
+            }
+            if (notYetDelivered.length === 0) return
 
             const holder = w.address.toLowerCase()
-            const claimed = await tryClaimChallengeLock('relay', submissionId, cpId, holder, 10 * 60 * 1000)
-            if (!claimed) return
+            const lockClaimed = await tryClaimChallengeLock('relayBatch', submissionId, 0, holder, 10 * 60 * 1000)
+            if (!lockClaimed) return
 
+            const L2B_EID = 40231
             const relayAbi = [
-              'function relayChallenge(uint32 destEid, uint256 submissionId, uint32 clientId, uint256 checkpointId) payable',
-              'function quoteChallenge(uint32 destEid, uint256 submissionId, uint32 clientId, uint256 checkpointId, bool payInLzToken) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
+              'function relayChallengeBatch(uint32 destEid, uint256 submissionId, uint32 clientId, uint256[] checkpointIds) payable',
+              'function quoteChallengeBatch(uint32 destEid, uint256 submissionId, uint32 clientId, uint256[] checkpointIds, bool payInLzToken) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
             ]
             const relayContract = new Contract(CHALLENGE_RELAY_ADDRESS, relayAbi, new Wallet(privateKey!, replicationHttpProvider))
 
             try {
-              const quote = await relayContract.quoteChallenge(L2B_EID, submissionId, clientId, cpId, false)
-              const relayTx = await relayContract.relayChallenge(L2B_EID, submissionId, clientId, cpId, {
-                value: quote.nativeFee * 120n / 100n,
-                gasLimit: 500_000,
-              })
+              const quote = await relayContract.quoteChallengeBatch(L2B_EID, submissionId, clientId, notYetDelivered, false)
+              // Gas scales with cp count: ~100k base + ~40k per cp on the
+              // source chain (endpoint + payload encoding). 200k + 60k/cp
+              // with a buffer.
+              const gasLimit = 200_000n + 60_000n * BigInt(notYetDelivered.length)
+              const relayTx = await relayContract.relayChallengeBatch(
+                L2B_EID, submissionId, clientId, notYetDelivered,
+                { value: quote.nativeFee * 120n / 100n, gasLimit },
+              )
               const relayReceipt = await relayTx.wait()
-              console.log(`[Monitor] Challenge relayed (${reason}) for submission ${submissionId} checkpoint ${cpId}. tx: ${relayReceipt?.hash}`)
-              await releaseChallengeLock('relay', submissionId, cpId, 'success', relayReceipt?.hash)
+              console.log(`[Monitor] Challenge batch relayed (${reason}) for submission ${submissionId} cps=[${notYetDelivered.join(',')}]. tx: ${relayReceipt?.hash}`)
+              await releaseChallengeLock('relayBatch', submissionId, 0, 'success', relayReceipt?.hash)
             } catch (e) {
-              await releaseChallengeLock('relay', submissionId, cpId, 'error')
+              await releaseChallengeLock('relayBatch', submissionId, 0, 'error')
               throw e
             }
           }
@@ -2881,8 +2882,9 @@ console.log("succeededKeys", succeededKeys)
             }
 
             // Mode B detection: compare each submitter-claimed checkpoint
-            // hash to the canonical L2 value.
-            let fraudDetected = false
+            // hash to the canonical L2 value. Collect all mismatches then
+            // challenge them in one batch LZ message.
+            const fraudulentCps: number[] = []
             for (let i = 0; i < submitterHashes.length; i++) {
               const cpId = startCp + i
               const claimedHash = submitterHashes[i]
@@ -2898,13 +2900,14 @@ console.log("succeededKeys", succeededKeys)
                   `[Monitor] MODE B FRAUD in submission ${submissionId} cp ${cpId}: ` +
                   `submitterClaimed=${claimedHash} L2=${l2Hash} submitter=${submitter}`
                 )
-                fraudDetected = true
-                try { await challengeCheckpoint(cpId, 'mode B') }
-                catch (e: any) { console.error(`[Monitor] Failed to relay cp ${cpId}: ${e?.shortMessage || e?.message}`) }
+                fraudulentCps.push(cpId)
               }
             }
 
-            if (!fraudDetected) {
+            if (fraudulentCps.length > 0) {
+              try { await relayBatch(fraudulentCps, 'mode B') }
+              catch (e: any) { console.error(`[Monitor] Failed to relay batch for submission ${submissionId}: ${e?.shortMessage || e?.message}`) }
+            } else {
               console.log(`[Monitor] Submission ${submissionId} verified OK (client ${clientId}, ${startCp}..${endCp}, submitter ${submitter.slice(0, 10)}...)`)
             }
           } catch (err: any) {
@@ -2925,7 +2928,13 @@ console.log("succeededKeys", succeededKeys)
     // but a truly hung loop will be caught within a few minutes.
     ctx.declareLoop('poll', Math.max(checkInterval * 3, 60_000))
     ctx.declareLoop('optimisticReplication', Math.max(60_000 * 3, 180_000))
-    ctx.declareLoop('monitor', Math.max(60_000 * 5, 300_000))
+    // Monitor can do a lot of work in one cycle: fetch events, rebuild
+    // submitter trees, batch-relay challenges, call resolveChallenge, or
+    // slashIncoherentRoot. Batch relay is one tx but resolveChallenge
+    // still runs per-cp (in parallel). 15-minute timeout covers a burst
+    // of several submissions during a live fraud storm without false-
+    // positive restarts.
+    ctx.declareLoop('monitor', 15 * 60_000)
 
     // start polling with overlap protection
     let isPolling = false

@@ -311,23 +311,10 @@ router.get('/:id', async (req, res) => {
   const userIdHeader = req.header('x-user-id')
   const currentUserId = userIdHeader ? Number(userIdHeader) : undefined
 
-  console.log(`[API /caws/${cawId}] currentUserId:`, currentUserId)
-
   const raw = await prisma.caw.findUnique({
     where: { id: cawId },
     include: getCawIncludeConfig({ currentUserId })
   })
-
-  // Debug: Log the raw recaws data
-  console.log(`[API /caws/${cawId}] raw.recaws:`, raw?.recaws)
-  console.log(`[API /caws/${cawId}] raw.recawCount:`, raw?.recawCount)
-
-  // Also check if there are ANY recaws for this caw
-  const allRecaws = await prisma.caw.findMany({
-    where: { originalCawId: cawId, action: 'RECAW' },
-    select: { id: true, userId: true, status: true }
-  })
-  console.log(`[API /caws/${cawId}] All recaws for this caw:`, allRecaws)
 
   if (!raw) return res.status(404).end()
 
@@ -398,11 +385,6 @@ router.get('/:id', async (req, res) => {
 
   // shape into your CawItem shape…
   const shapedCaw = shapeCaw(raw)
-  console.log(`[API /caws/${cawId}] Sending response:`, {
-    hasRecawed: shapedCaw.hasRecawed,
-    recawPending: shapedCaw.recawPending,
-    recawCount: shapedCaw.recawCount
-  })
   res.json({
     caw:     shapedCaw,
     comments: rawComments.map(shapeCaw),
