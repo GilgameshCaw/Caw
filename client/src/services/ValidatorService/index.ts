@@ -2376,6 +2376,20 @@ console.log("succeededKeys", succeededKeys)
           underStakedWarned = false
         }
 
+        // Backpressure: don't submit more while we already have pending
+        // submissions — if an earlier one turns out to be fraudulent, a slash
+        // will cascade through ALL pending and cost the stake regardless of
+        // how many we queued. For honest operation this bounds exposure
+        // during LZ/monitor latency windows; for fraud-testing it prevents
+        // the runaway "pre-slash spam" we kept observing.
+        const maxPending = Number(process.env.MAX_PENDING_SUBMISSIONS || '1')
+        const pending = Number(await archive.pendingCount(w.address))
+        if (pending >= maxPending) {
+          console.log(`[OptimisticReplication] pendingCount=${pending} >= MAX_PENDING_SUBMISSIONS=${maxPending} — waiting for existing submission(s) to finalize or slash before queueing more`)
+          return
+        }
+
+
         const httpProvider = replicationHttpProvider
         const cawActionsViewAbi = ['function clientActionCount(uint32) view returns (uint256)']
         const cawActionsView = new Contract(CAW_ACTIONS_ADDRESS, cawActionsViewAbi, httpProvider)
@@ -2803,9 +2817,22 @@ console.log("succeededKeys", succeededKeys)
               console.warn(`[Monitor] Error resolving challenge for submission ${submissionId} cp ${cpId}: ${resolveErr?.shortMessage || resolveErr?.message}`)
             }
           }
-          const cpIds: number[] = []
-          for (let cpId = startCp; cpId <= endCp; cpId++) cpIds.push(cpId)
-          await Promise.all(cpIds.map(resolveOne))
+          // Resolve sequentially. Parallel sends collided on nonces (ethers's
+          // provider caches the nonce, so Promise.all-fired txs all grabbed
+          // the same one), and anyway the FIRST successful resolve flips the
+          // submission to SLASHED and invalidates all of this validator's
+          // pending submissions — the remaining cps would revert with
+          // "Not pending" regardless. Serial + early exit on slash is both
+          // correct and cheaper.
+          for (let cpId = startCp; cpId <= endCp; cpId++) {
+            await resolveOne(cpId)
+            // Re-check status: if the submission flipped to SLASHED, the
+            // remaining cps are no-ops. Save the RPC round-trip.
+            try {
+              const sub2 = await archive.getSubmission(submissionId)
+              if (Number(sub2[6]) !== 0) break
+            } catch { /* ignore, continue loop */ }
+          }
 
           // --- Detect & relay new fraud challenges ---------------------
           // Collect all fraudulent cps then relay them in one batch LZ
