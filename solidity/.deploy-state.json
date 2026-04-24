@@ -17,8 +17,8 @@
     "CawActions_L1": "0xaEE8a40EEDe3c17dA85339F97472c32618AEa905",
     "CawActions_L2": "0x701Cae1460569acc64d69B0B757AE847E1565B94",
     "CawActions_L2b": "0xFa22Bd6811d204beba9388549D1d7BFe485d9903",
-    "CawActionsArchive_L2b": "0xF0A0f39DaBF69D547565b9a27452217ecB48A980",
-    "CawChallengeRelay_L2": "0x78A30ba4b1b36b358522fFdFDC32080675fEC13e"
+    "CawChallengeRelay_L2": "0x78A30ba4b1b36b358522fFdFDC32080675fEC13e",
+    "CawActionsArchive_L2b": "0xfbDf27f470be1299D782473cDcB0C43c51874b57"
   },
   "linking": {
     "clientCreated": true

@@ -17,6 +17,6 @@ export const CAW_ACTIONS_ADDRESS = "0x701Cae1460569acc64d69B0B757AE847E1565B94" 
 // Optimistic replication: stake-based L2b archive + L2 challenge relay.
 // `ARCHIVE_OPTIMISTIC` lives on Arbitrum Sepolia; `CHALLENGE_RELAY` lives on Base
 // Sepolia and forwards challenges via LayerZero to the archive's _lzReceive.
-export const CAW_ACTIONS_ARCHIVE_OPTIMISTIC_ADDRESS = '0xF0A0f39DaBF69D547565b9a27452217ecB48A980' as const;
+export const CAW_ACTIONS_ARCHIVE_OPTIMISTIC_ADDRESS = '0xfbDf27f470be1299D782473cDcB0C43c51874b57' as const;
 export const CAW_CHALLENGE_RELAY_ADDRESS = '0x78A30ba4b1b36b358522fFdFDC32080675fEC13e' as const;
 export const CAW_NAME_MARKETPLACE_ADDRESS = '0x5696675aB8e8E82cBe46C805F47875CF836bFd2A' as const; // Updated after deployment
