@@ -243,10 +243,23 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OApp {
   // CHALLENGE - LZ RECEIVE
   // ============================================
 
+  /// @dev Emitted when an LZ challenge message could not be processed — kept
+  ///      so the channel stays alive. Off-chain tooling can resubmit via a
+  ///      fresh relayChallenge call once the cause is identified.
+  event ChallengeDeliveryFailed(bytes payload, bytes reason);
+
   /// @dev Receives correct checkpoint hash from CawChallengeRelay via LZ.
   ///      The default OAppReceiver peer check (msg.sender == endpoint, and
   ///      origin.sender == peers[srcEid]) restricts this to the canonical relay
   ///      the archive owner peered at deploy time.
+  ///
+  ///      SAFETY: the body runs inside a try/catch self-call so that any
+  ///      revert (bad abi.decode, malformed payload, future-added check)
+  ///      does NOT stall the LZ channel nonce. A reverting _lzReceive in
+  ///      LZ V2 blocks every subsequent challenge from that source chain
+  ///      until someone manually retries the stuck nonce. With this
+  ///      isolation, a single bad message is a logged failure, not an
+  ///      infrastructure outage.
   function _lzReceive(
     Origin calldata,
     bytes32,
@@ -254,6 +267,19 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OApp {
     address,
     bytes calldata
   ) internal override {
+    try this._processChallenge(payload) {
+      // ok
+    } catch (bytes memory reason) {
+      emit ChallengeDeliveryFailed(payload, reason);
+    }
+  }
+
+  /// @dev Isolated body of _lzReceive. External so _lzReceive can try/catch
+  ///      it, but restricted to self-calls only — the explicit check plus
+  ///      the fact that _lzReceive is the only caller make this safe.
+  function _processChallenge(bytes calldata payload) external {
+    require(msg.sender == address(this), "only self");
+
     // Payload is always the batch shape: (submissionId, clientId, cps[], hashes[]).
     // Single-cp callers send arrays of length 1; the relay's two public
     // entrypoints (relayChallenge / relayChallengeBatch) produce identical
