@@ -2322,14 +2322,18 @@ console.log("succeededKeys", succeededKeys)
       try {
         const { archiveRead: archive, archiveWrite: archiveW, l2bWallet: w } = getL2bContracts()
 
-        // 1. Check / ensure stake. Auto-restake can be disabled with
-        //    AUTO_RESTAKE=false — useful during fraud testing, where you
-        //    want the submitter to stop submitting after the first slash
-        //    instead of silently re-depositing forever.
+        // 1. Check / ensure stake.
+        //    Auto-restake is OFF BY DEFAULT: a validator whose stake drops
+        //    below MIN_STAKE in live operation was almost certainly slashed
+        //    for fraud, and silently re-depositing just keeps bleeding funds
+        //    while the underlying bug (or compromised key) stays hidden.
+        //    First-time setup needs a one-shot manual deposit — see README.
+        //    Opt in to automatic top-ups by setting AUTO_RESTAKE=true if
+        //    you really want it (e.g. local dev / a known-honest test).
         const currentStake = BigInt(await archive.stakes(w.address))
         if (currentStake < OPTIMISTIC_MIN_STAKE) {
-          if (process.env.AUTO_RESTAKE === 'false') {
-            console.warn(`[OptimisticReplication] Stake ${currentStake} < MIN_STAKE but AUTO_RESTAKE=false — skipping deposit`)
+          if (process.env.AUTO_RESTAKE !== 'true') {
+            console.warn(`[OptimisticReplication] Stake ${currentStake} < MIN_STAKE — skipping deposit (set AUTO_RESTAKE=true to auto-top-up)`)
             return
           }
           console.log(`[OptimisticReplication] Stake ${currentStake} < MIN_STAKE ${OPTIMISTIC_MIN_STAKE}, depositing ${OPTIMISTIC_INITIAL_DEPOSIT}...`)
