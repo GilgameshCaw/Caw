@@ -202,31 +202,47 @@ export function startApi(port = Number(process.env.API_PORT) || 4000) {
   // Initialize WebSocket server for DMs
   DmWebSocketService.initialize(server)
 
-  // EADDRINUSE: retry indefinitely with a backoff. The previous version
-  // `process.exit(1)`'d after one retry, which killed ALL services in this
-  // process (Validator, ActionProcessor, etc.) whenever a stale process was
-  // holding port 4000 — then dev-api-runner respawned us, same zombie still
-  // held the port, same crash, infinite thrash.
+  // EADDRINUSE: retry a few times with short backoff for the common race
+  // where a previous child is still releasing the socket. If after
+  // MAX_RETRIES the port is still busy, throw — letting the watchdog
+  // restart us, or in the worst case the dev-api-runner respawn.
   //
-  // New behaviour: log the stale-process hint, keep retrying every 10s. The
-  // API stays offline until the port frees up (either the zombie finally
-  // exits, or someone kills it), but every other service keeps running.
-  // `npm run stop` still cleans everything if the user wants a reset.
+  // Why bounded: a previous version retried FOREVER in-process. When the
+  // watchdog's stale-heartbeat restart then called start() again in the
+  // SAME process, a second http.Server would try to bind the same port,
+  // EADDRINUSE against the first, retry forever too, and the watchdog
+  // would keep restarting — spawning a growing pile of zombie servers
+  // all inside one Node process.
+  //
+  // Retry timer is tracked on the server instance so stopApi() can cancel
+  // it — prevents a stopped service's retry from firing after teardown.
+  const MAX_RETRIES = 3
   let retryAttempt = 0
+  let retryTimer: NodeJS.Timeout | null = null
+  ;(server as any).__retryTimer = null
+
   server.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') {
       retryAttempt++
-      const delayMs = Math.min(2_000 * retryAttempt, 30_000)
-      if (retryAttempt === 1) {
-        console.warn(`[API] Port ${port} busy, retrying in ${delayMs / 1000}s…`)
-      } else if (retryAttempt % 3 === 0) {
-        console.warn(
-          `[API] Port ${port} still busy after ${retryAttempt} attempts. ` +
-          `A zombie process is holding it. Kill it with: ` +
-          `lsof -iTCP:${port} -sTCP:LISTEN -t | xargs kill -9`
+      if (retryAttempt > MAX_RETRIES) {
+        console.error(
+          `[API] Port ${port} still busy after ${MAX_RETRIES} retries. ` +
+          `Kill the stale listener: lsof -iTCP:${port} -sTCP:LISTEN -t | xargs kill -9`
         )
+        // Emit 'error' synchronously to signal failure to the service layer.
+        // Throwing here would bubble as an uncaught exception; instead we
+        // process.exit so dev-api-runner respawns us cleanly (and its port
+        // sweep kills the zombie before the new process starts).
+        process.exit(1)
       }
-      setTimeout(() => server.listen(port), delayMs)
+      const delayMs = 1_000 * retryAttempt
+      console.warn(`[API] Port ${port} busy (attempt ${retryAttempt}/${MAX_RETRIES}), retrying in ${delayMs / 1000}s…`)
+      retryTimer = setTimeout(() => {
+        retryTimer = null
+        ;(server as any).__retryTimer = null
+        server.listen(port)
+      }, delayMs)
+      ;(server as any).__retryTimer = retryTimer
       return
     }
     throw err
@@ -242,6 +258,13 @@ export function startApi(port = Number(process.env.API_PORT) || 4000) {
  * natstat: stop the HTTP server
  */
 export function stopApi(server: http.Server) {
+  // Cancel any pending EADDRINUSE retry so a stopped server doesn't
+  // wake up later and try to listen again in a recycled process.
+  const pending = (server as any).__retryTimer
+  if (pending) {
+    clearTimeout(pending)
+    ;(server as any).__retryTimer = null
+  }
   return new Promise<void>(res => server.close(() => res()))
 }
 
