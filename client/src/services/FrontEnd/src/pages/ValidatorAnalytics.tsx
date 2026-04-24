@@ -770,6 +770,7 @@ const ValidatorAnalytics: React.FC = () => {
                   <th className="text-right p-2">Gas</th>
                   <th className="text-right p-2">Gas/Action</th>
                   <th className="text-right p-2">Tip</th>
+                  <th className="text-right p-2">Tip/Action</th>
                   <th className="text-right p-2">Profit</th>
                   <th className="text-right p-2">Wait</th>
                   <th className="text-left p-2">Status</th>
@@ -837,6 +838,14 @@ const ValidatorAnalytics: React.FC = () => {
                       <td className="p-2 text-right font-mono" title={`${fmtCaw(tx.tipCaw)} CAW`}>
                         {cawToUsd(tx.tipCaw, p.cawUsd)}
                       </td>
+                      <td
+                        className="p-2 text-right font-mono"
+                        title={tx.actions > 0 ? `${fmtCaw((BigInt(tx.tipCaw || '0') / BigInt(tx.actions)).toString())} CAW/action` : ''}
+                      >
+                        {tx.actions > 0
+                          ? cawToUsd((BigInt(tx.tipCaw || '0') / BigInt(tx.actions)).toString(), p.cawUsd)
+                          : '—'}
+                      </td>
                       <td className={`p-2 text-right font-mono ${profitNeg ? 'text-red-500' : 'text-green-500'}`} title={`${fmtEth(tx.profitEth)} ETH`}>
                         {weiToUsd(tx.profitEth, p.ethUsd)}
                       </td>
@@ -857,7 +866,7 @@ const ValidatorAnalytics: React.FC = () => {
                 })}
                 {transactions.length === 0 && (
                   <tr>
-                    <td colSpan={11} className={`p-4 text-center ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
+                    <td colSpan={12} className={`p-4 text-center ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
                       No transactions found
                     </td>
                   </tr>
