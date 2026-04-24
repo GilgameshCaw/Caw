@@ -236,12 +236,18 @@ router.get('/', async (req, res) => {
       if (useES) {
         users = await searchUsersWithES(query, userLimit, userOffset)
       }
-      // Only fall back to Prisma when ES is truly unavailable (see search-caws
-      // comment above). ES returning 0 hits is a legitimate "no results".
-      if (!users) {
+      // Fall back to Prisma when ES is unavailable OR returns zero hits for
+      // a user search. User search is bounded (limit <= 50) and the username
+      // column is small + indexed, so the substring scan is cheap. This keeps
+      // short prefix queries working when the ES users index is under-populated
+      // or lags real user creation.
+      if (!users || users.length === 0) {
         users = await prisma.user.findMany({
           where: {
-            username: { contains: query, mode: 'insensitive' }
+            OR: [
+              { username: { contains: query, mode: 'insensitive' } },
+              { displayName: { contains: query, mode: 'insensitive' } },
+            ]
           },
           take: userLimit,
           skip: userOffset,
