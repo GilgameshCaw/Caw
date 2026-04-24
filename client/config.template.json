@@ -1,8 +1,7 @@
 [
   {
     "service": "FrontEnd",
-    "config": {
-    }
+    "config": {}
   },
   {
     "service": "Api",
@@ -31,23 +30,33 @@
     "service": "RawEventsGatherer",
     "config": {
       "chainId": 84532,
-      "rpcUrl": "${L2_RPC_URL}"
+      "rpcUrl":  "${L2_RPC_URL}"
+    }
+  },
+  {
+    "service": "DataCleaner",
+    "config": {}
+  },
+  {
+    "service": "ScheduledPostProcessor",
+    "config": {}
+  },
+  {
+    "service": "ChainSyncService",
+    "config": {
+      "l1RpcUrl":         "${L1_RPC_URL}",
+      "ethMainnetRpcUrl": "${ETH_MAINNET_RPC_URL}"
     }
   },
   {
     "service": "MarketplaceIndexer",
-    "config": {
-      "l1RpcUrl": "${L1_RPC_URL}",
-      "marketplaceAddress": "0x6A12511d6dff54D4633EaB49C72ceE7F8CfF3DBa",
-      "cawNameAddress": "0xFdd1F50ACB3B76b46364DE84953E381faE163A9C"
-    }
+    "config": {}
   },
   {
     "service": "NftTransferWatcher",
     "config": {
       "l1RpcUrl": "${L1_RPC_URL}",
-      "chainId": 11155111
+      "chainId":  11155111
     }
   }
 ]
-
