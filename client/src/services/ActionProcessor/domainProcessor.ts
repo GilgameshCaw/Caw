@@ -1,5 +1,6 @@
 // src/services/ActionProcessor/domainProcessor.ts
 import { findOrCreateUser } from '../UserService'
+import getActionType from '../../abi/getActionType'
 import {
   findCawId,
   handleCawAction,
@@ -26,10 +27,16 @@ export interface ResolvedUsers {
 export async function resolveActionUsers(rawAction: RawAction): Promise<ResolvedUsers> {
   const authorId = await findOrCreateUser(rawAction.senderId)
   let receiverId: number | undefined
-  // FOLLOW(4) / UNFOLLOW(5) both sides are users; LIKE/RECAW target a caw,
-  // not a user, so the receiverId there is a cawonce, not a token.
-  const type = Number(rawAction.actionType)
-  if ((type === 4 || type === 5) && rawAction.receiverId) {
+  // rawAction.actionType is the raw enum *number* from the unpacked on-chain
+  // event (see packActions.ts). Convert once to the Prisma string form so
+  // comparisons here match the 'CAW'/'FOLLOW'/... switch in processDomainEffects
+  // just below — keeps the two sibling functions working off the same vocabulary.
+  const type = getActionType(Number(rawAction.actionType))
+  // For FOLLOW/UNFOLLOW, receiverId is the followed user's tokenId — pre-resolve
+  // it so the handler's findOrCreateUser(receiverId) call inside the tx is a
+  // cache hit. For LIKE/RECAW, receiverId is the caw *owner*'s tokenId; we
+  // don't pre-resolve that because findCawId handles it inside the tx.
+  if ((type === 'FOLLOW' || type === 'UNFOLLOW') && rawAction.receiverId) {
     receiverId = await findOrCreateUser(rawAction.receiverId)
   }
   return { authorId, receiverId }
