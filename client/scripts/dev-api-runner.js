@@ -52,10 +52,11 @@ function startServer() {
     child = null
     if (stopping) return
     if (signal === 'SIGTERM' || signal === 'SIGINT') return // intentional kill (file change restart)
-    if (code !== 0) {
-      console.error(`[dev-api] Server crashed (code=${code}), restarting in ${RESTART_DELAY_MS / 1000}s...`)
-      setTimeout(startServer, RESTART_DELAY_MS)
-    }
+    // Log the signal as well as code — `code=null, signal=SIGKILL/SIGHUP/etc`
+    // tells us WHO killed the API when something goes wrong (file watcher,
+    // parent supervisor, OOM killer, etc.).
+    console.error(`[dev-api] Server crashed (code=${code}, signal=${signal}), restarting in ${RESTART_DELAY_MS / 1000}s...`)
+    setTimeout(startServer, RESTART_DELAY_MS)
   })
 }
 

@@ -43,6 +43,13 @@ function startConcurrently() {
 
   sweepStaleListeners()
 
+  // NOTE: `npm run web` is intentionally NOT in this list. The FrontEnd
+  // service inside programs/start.ts (via config.json's "FrontEnd" entry)
+  // already spawns `yarn dev` in src/services/FrontEnd/. Running both
+  // supervisors launched TWO vites that fought over port 5273, each one's
+  // failure cascading back through concurrently/watchdog/dev-api-runner
+  // into a stack-wide restart storm. If you need vite without the full
+  // server stack, run `npm run web` standalone in a separate terminal.
   child = spawn('npx', [
     'concurrently',
     '--restart-tries', '-1',
@@ -51,7 +58,6 @@ function startConcurrently() {
     'npm run elasticsearch',
     'npm run redis',
     'npm run dev:api',
-    'npm run web',
   ], {
     cwd: CLIENT_DIR,
     stdio: ['ignore', 'inherit', 'inherit'],
