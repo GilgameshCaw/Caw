@@ -254,18 +254,27 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OApp {
     address,
     bytes calldata
   ) internal override {
-    (uint256 submissionId, uint32 clientId, uint256 checkpointId, bytes32 correctHash) =
-      abi.decode(payload, (uint256, uint32, uint256, bytes32));
+    // Payload is always the batch shape: (submissionId, clientId, cps[], hashes[]).
+    // Single-cp callers send arrays of length 1; the relay's two public
+    // entrypoints (relayChallenge / relayChallengeBatch) produce identical
+    // payloads, so there's one decode path here.
+    (uint256 submissionId, uint32 clientId, uint256[] memory cps, bytes32[] memory hashes) =
+      abi.decode(payload, (uint256, uint32, uint256[], bytes32[]));
 
     Submission storage sub = submissions[submissionId];
     if (sub.status != Status.PENDING) return;
     if (sub.clientId != clientId) return;
-    if (checkpointId < sub.startCheckpointId || checkpointId > sub.endCheckpointId) return;
+    if (cps.length != hashes.length) return;
 
-    challengeHash[submissionId][checkpointId] = correctHash;
-    challengeDelivered[submissionId][checkpointId] = true;
-
-    emit ChallengeHashDelivered(submissionId, checkpointId, correctHash);
+    uint256 start = sub.startCheckpointId;
+    uint256 end = sub.endCheckpointId;
+    for (uint256 i = 0; i < cps.length; i++) {
+      uint256 cpId = cps[i];
+      if (cpId < start || cpId > end) continue; // out-of-range entries are silently dropped
+      challengeHash[submissionId][cpId] = hashes[i];
+      challengeDelivered[submissionId][cpId] = true;
+      emit ChallengeHashDelivered(submissionId, cpId, hashes[i]);
+    }
   }
 
   // ============================================

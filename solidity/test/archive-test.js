@@ -185,11 +185,11 @@ contract("CawActionsArchive", function(accounts) {
     await archive.submitReplication(1, 4, 5, buildPackedActions(64), buildRValues(64), badRoot, '0x' + '00'.repeat(32), { from: accounts[2] });
     const submissionId = (await archive.nextSubmissionId()).toNumber() - 1;
 
-    // Deliver correct hash via LZ
+    // Deliver correct hash via LZ (batch payload with one entry)
     const correctHash = web3.utils.soliditySha3({ type: 'string', value: 'correct4' });
     const payload = web3.eth.abi.encodeParameters(
-      ['uint256', 'uint32', 'uint256', 'bytes32'],
-      [submissionId, 1, 4, correctHash]
+      ['uint256', 'uint32', 'uint256[]', 'bytes32[]'],
+      [submissionId, 1, [4], [correctHash]]
     );
     await lzHelper.deliver(archive.address, L2_EID, RELAY_PEER, 1, web3.utils.randomHex(32), payload);
 
@@ -234,11 +234,11 @@ contract("CawActionsArchive", function(accounts) {
 
     assert.equal((await archive.pendingCount(accounts[4])).toNumber(), 2);
 
-    // Challenge batch 2
+    // Challenge batch 2 (batch payload with one entry)
     const correctHash = web3.utils.soliditySha3({ type: 'string', value: 'correct7' });
     const payload = web3.eth.abi.encodeParameters(
-      ['uint256', 'uint32', 'uint256', 'bytes32'],
-      [badSubId, 1, 7, correctHash]
+      ['uint256', 'uint32', 'uint256[]', 'bytes32[]'],
+      [badSubId, 1, [7], [correctHash]]
     );
     await lzHelper.deliver(archive.address, L2_EID, RELAY_PEER, 2, web3.utils.randomHex(32), payload);
 
@@ -270,10 +270,10 @@ contract("CawActionsArchive", function(accounts) {
       '0x' + tree.getRoot().toString('hex'), '0x' + '00'.repeat(32), { from: accounts[0] });
     const subId = (await archive.nextSubmissionId()).toNumber() - 1;
 
-    // Deliver the SAME hash (no fraud)
+    // Deliver the SAME hash (no fraud) — batch payload with one entry
     const payload = web3.eth.abi.encodeParameters(
-      ['uint256', 'uint32', 'uint256', 'bytes32'],
-      [subId, 1, 8, h[0]]
+      ['uint256', 'uint32', 'uint256[]', 'bytes32[]'],
+      [subId, 1, [8], [h[0]]]
     );
     await lzHelper.deliver(archive.address, L2_EID, RELAY_PEER, 3, web3.utils.randomHex(32), payload);
 
