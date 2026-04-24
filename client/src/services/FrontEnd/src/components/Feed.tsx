@@ -40,6 +40,13 @@ interface FeedCache {
 const feedCache = new Map<string, FeedCache>()
 const CACHE_TTL = 60_000 // 1 minute — background refresh if stale
 
+// Session-scoped pins: replies the current user authored this session, keyed
+// by parent id → confirmed reply ids. Used to keep an author's reply visually
+// anchored below its parent even after the pending post transitions to a
+// confirmed feed item. Fresh page loads clear this, restoring chronological
+// order for everyone else.
+const authoredInlineReplies = new Map<string, Set<string>>()
+
 function feedCacheKey(filter: string, activeTokenId?: number, apiEndpoint?: string, username?: string): string {
   return `${filter}|${activeTokenId ?? ''}|${apiEndpoint ?? ''}|${username ?? ''}`
 }
@@ -67,6 +74,8 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   const [loading,    setLoading]    = useState(false)
   const [error,      setError]      = useState<string>()
   const [followingCount, setFollowingCount] = useState<number | null>(null)
+  // Bump to force re-render when authoredInlineReplies is updated
+  const [authoredPinVersion, setAuthoredPinVersion] = useState(0)
 
   // When the cache key changes (tab switch, navigation, etc.), restore from
   // cache or fetch fresh data. Using a ref to track the previous key so we
@@ -102,9 +111,25 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       items.filter(i => i.status !== 'PENDING').map(sig)
     )
     const { removePendingPost, updatePostId } = usePendingPostsStore.getState()
+    let pinnedAdded = false
     for (const p of pendingPosts) {
-      // If the feed has the confirmed version, remove the pending post
+      const parentId = p.replyToId || p.parent?.id
+      // If the feed has the confirmed version, remove the pending post.
+      // Before removing, pin the confirmed reply under its parent so the
+      // author's own fresh reply stays visually anchored instead of
+      // teleporting to the top of the feed.
       if (confirmedSigs.has(sig(p))) {
+        if (parentId) {
+          const confirmed = items.find(i => i.status !== 'PENDING' && sig(i) === sig(p))
+          if (confirmed) {
+            const set = authoredInlineReplies.get(parentId) || new Set<string>()
+            if (!set.has(confirmed.id)) {
+              set.add(confirmed.id)
+              authoredInlineReplies.set(parentId, set)
+              pinnedAdded = true
+            }
+          }
+        }
         removePendingPost(p.tempId)
         continue
       }
@@ -120,6 +145,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
         }
       }
     }
+    if (pinnedAdded) setAuthoredPinVersion(v => v + 1)
   }, [items, pendingPosts])
 
   // Filter items based on mute preferences and blocked users
@@ -533,7 +559,8 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
     </div>
   )
   const isOwnProfile = (filter === 'profile' || filter === 'profile-replies') && username && activeToken?.username === username
-  const showPending = (filter === 'For you' || filter === 'Following' || isOwnProfile) && pendingPosts.length > 0
+  const hashtagFilter = typeof filter === 'string' && filter.startsWith('hashtag:') ? filter.slice('hashtag:'.length).toLowerCase() : null
+  const showPending = (filter === 'For you' || filter === 'Following' || isOwnProfile || !!hashtagFilter) && pendingPosts.length > 0
   const hasPending = showPending
 
   if (items.length === 0 && loading && !hasPending) return <LoadingSpinner />
@@ -565,45 +592,111 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       {/* Section title (rendered after suggested users) */}
       {title}
 
-      {/* Show pending posts at the top — skip any that already have a
-          confirmed version in the feed (matched by content + userId + parentId) */}
-      {showPending && (() => {
+      {/* Render pending posts. Top-level pending posts (no parent) render at
+          the top of the feed. Pending replies render inline beneath their
+          parent if the parent is in the feed; otherwise fall back to the top.
+          Confirmed replies the author pinned this session (authoredInlineReplies)
+          also render inline and are hoisted out of their chronological slot. */}
+      {((_v: number) => {
         const sig = (i: any) => `${i.user?.tokenId}:${(i.content || '').trim()}:${i.parent?.id || ''}`
-        const confirmedSigs = new Set(
-          items.filter(i => i.status !== 'PENDING').map(sig)
-        )
-        return pendingPosts
-          .filter(p => filter === 'profile-replies' ? !!p.replyToId : !p.replyToId)
-          .filter(p => !confirmedSigs.has(sig(p)))
-          .map(post => (
-            <FeedItem key={post.tempId} item={post as CawItem} />
-          ))
-      })()}
+        const confirmedSigs = new Set(items.filter(i => i.status !== 'PENDING').map(sig))
+        const feedIds = new Set(filteredItems.map(i => i.id))
 
-      {/* Posts with consistent styling across all pages */}
-      {filteredItems.map((caw, idx) => {
-        // Hide parent preview if the previous item is the parent post itself,
-        // or another reply to the same parent
-        const prevItem = idx > 0 ? filteredItems[idx - 1] : null
-        const parentIsAbove = !!(caw.parent?.id && prevItem?.id === caw.parent.id)
-        const sameParentAsPrev = !!(
-          caw.parent?.id &&
-          prevItem?.parent?.id &&
-          caw.parent.id === prevItem.parent.id
-        )
-        const hidePreview = parentIsAbove || sameParentAsPrev
+        // Collect confirmed replies that should pin inline under their parent
+        const pinnedInlineByParent = new Map<string, CawItem[]>()
+        const hoistedIds = new Set<string>()
+        for (const [parentId, replyIdSet] of authoredInlineReplies.entries()) {
+          if (!feedIds.has(parentId)) continue
+          const arr: CawItem[] = []
+          for (const rid of replyIdSet) {
+            const match = filteredItems.find(i => i.id === rid)
+            if (match) { arr.push(match); hoistedIds.add(rid) }
+          }
+          if (arr.length) pinnedInlineByParent.set(parentId, arr)
+        }
+
+        const visiblePending = showPending
+          ? pendingPosts
+              .filter(p => filter === 'profile-replies' ? !!p.replyToId : true)
+              .filter(p => {
+                if (!hashtagFilter) return true
+                const tag = '#' + hashtagFilter
+                const content = (p.content || '').toLowerCase()
+                return content.split(/\s+/).some(w => w.replace(/[.,!?;:)]+$/, '') === tag)
+              })
+              .filter(p => !confirmedSigs.has(sig(p)))
+          : []
+        const parentOf = (p: any) => p.replyToId || p.parent?.id
+        // Group pending replies by the parent id that lives in this feed
+        const pendingRepliesByParent = new Map<string, any[]>()
+        const pendingAtTop: any[] = []
+        for (const p of visiblePending) {
+          const pid = parentOf(p)
+          if (pid && feedIds.has(pid)) {
+            const arr = pendingRepliesByParent.get(pid) || []
+            arr.push(p)
+            pendingRepliesByParent.set(pid, arr)
+          } else if (!pid) {
+            // Top-level pending post
+            pendingAtTop.push(p)
+          } else {
+            // Reply whose parent isn't visible — keep legacy behavior, show at top
+            pendingAtTop.push(p)
+          }
+        }
+
         return (
-        <FeedItem
-          key={caw.id}
-          item={caw}
-          hideParentPreview={hidePreview}
-          onLikeStateChange={handleLikeStateChange}
-          onRecawStateChange={handleRecawStateChange}
-          onReplyStateChange={handleReplyStateChange}
-          onTipStateChange={handleTipStateChange}
-        />
+          <>
+            {pendingAtTop.map(post => (
+              <FeedItem key={post.tempId} item={post as CawItem} />
+            ))}
+
+            {/* Posts with consistent styling across all pages */}
+            {filteredItems.map((caw, idx) => {
+              // Skip items hoisted inline under a parent elsewhere in the feed
+              if (hoistedIds.has(caw.id)) return null
+              // Hide parent preview if the previous item is the parent post itself,
+              // or another reply to the same parent
+              const prevItem = idx > 0 ? filteredItems[idx - 1] : null
+              const parentIsAbove = !!(caw.parent?.id && prevItem?.id === caw.parent.id)
+              const sameParentAsPrev = !!(
+                caw.parent?.id &&
+                prevItem?.parent?.id &&
+                caw.parent.id === prevItem.parent.id
+              )
+              const hidePreview = parentIsAbove || sameParentAsPrev
+              const inlinePending = pendingRepliesByParent.get(caw.id) || []
+              const inlinePinned = pinnedInlineByParent.get(caw.id) || []
+              return (
+                <React.Fragment key={caw.id}>
+                  <FeedItem
+                    item={caw}
+                    hideParentPreview={hidePreview}
+                    onLikeStateChange={handleLikeStateChange}
+                    onRecawStateChange={handleRecawStateChange}
+                    onReplyStateChange={handleReplyStateChange}
+                    onTipStateChange={handleTipStateChange}
+                  />
+                  {inlinePinned.map(reply => (
+                    <FeedItem
+                      key={reply.id}
+                      item={reply}
+                      hideParentPreview
+                      onLikeStateChange={handleLikeStateChange}
+                      onRecawStateChange={handleRecawStateChange}
+                      onReplyStateChange={handleReplyStateChange}
+                      onTipStateChange={handleTipStateChange}
+                    />
+                  ))}
+                  {inlinePending.map(post => (
+                    <FeedItem key={post.tempId} item={post as CawItem} hideParentPreview />
+                  ))}
+                </React.Fragment>
+              )
+            })}
+          </>
         )
-      })}
+      })(authoredPinVersion)}
 
       {loading && <div className="py-4 text-center text-gray-400">Loading more…</div>}
       {!hasMore && <div className="py-4 text-center text-gray-500">You've reached the end.</div>}
