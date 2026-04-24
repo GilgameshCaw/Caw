@@ -202,22 +202,32 @@ export function startApi(port = Number(process.env.API_PORT) || 4000) {
   // Initialize WebSocket server for DMs
   DmWebSocketService.initialize(server)
 
-  // Retry once on EADDRINUSE — the previous process may still be releasing the
-  // socket (common when dev-api-runner.js restarts the API on a file change
-  // while the old child is still winding down). If it's still busy after the
-  // retry, exit cleanly with a clear fix hint instead of crash-looping with
-  // cryptic stack traces that mask the real cause.
-  let retried = false
+  // EADDRINUSE: retry indefinitely with a backoff. The previous version
+  // `process.exit(1)`'d after one retry, which killed ALL services in this
+  // process (Validator, ActionProcessor, etc.) whenever a stale process was
+  // holding port 4000 — then dev-api-runner respawned us, same zombie still
+  // held the port, same crash, infinite thrash.
+  //
+  // New behaviour: log the stale-process hint, keep retrying every 10s. The
+  // API stays offline until the port frees up (either the zombie finally
+  // exits, or someone kills it), but every other service keeps running.
+  // `npm run stop` still cleans everything if the user wants a reset.
+  let retryAttempt = 0
   server.on('error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EADDRINUSE') {
-      if (!retried) {
-        retried = true
-        console.warn(`[API] Port ${port} busy, retrying in 2s…`)
-        setTimeout(() => server.listen(port), 2000)
-        return
+      retryAttempt++
+      const delayMs = Math.min(2_000 * retryAttempt, 30_000)
+      if (retryAttempt === 1) {
+        console.warn(`[API] Port ${port} busy, retrying in ${delayMs / 1000}s…`)
+      } else if (retryAttempt % 3 === 0) {
+        console.warn(
+          `[API] Port ${port} still busy after ${retryAttempt} attempts. ` +
+          `A zombie process is holding it. Kill it with: ` +
+          `lsof -iTCP:${port} -sTCP:LISTEN -t | xargs kill -9`
+        )
       }
-      console.error(`[API] Port ${port} still busy after retry. Kill the stale process: lsof -iTCP:${port} -sTCP:LISTEN -t | xargs kill -9`)
-      process.exit(1)
+      setTimeout(() => server.listen(port), delayMs)
+      return
     }
     throw err
   })
