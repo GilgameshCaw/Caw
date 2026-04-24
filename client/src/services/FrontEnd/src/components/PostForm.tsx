@@ -365,6 +365,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   const [scheduledDate, setScheduledDate] = useState('')
   const [scheduledTime, setScheduledTime] = useState('')
   const [isScheduling, setIsScheduling] = useState(false)
+  const [scheduleError, setScheduleError] = useState<string | null>(null)
   const [showMediaUpload, setShowMediaUpload] = useState(false)
   const [showMediaOverlay, setShowMediaOverlay] = useState(false)
   const [showScheduledSuccessModal, setShowScheduledSuccessModal] = useState(false)
@@ -645,6 +646,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
     if (showScheduler && scheduledDate && scheduledTime) {
 
       setIsScheduling(true)
+      setScheduleError(null)
       try {
         const scheduledAt = new Date(`${scheduledDate}T${scheduledTime}`)
 
@@ -741,7 +743,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         console.error('[Schedule] Failed:', error)
         const isUserRejection = error?.code === 4001 || /rejected|denied|cancelled/i.test(error?.message || '')
         if (!isUserRejection) {
-          alert(`Couldn't schedule the post: ${error?.message || 'Unknown error'}`)
+          setScheduleError(error?.message || 'Something went wrong scheduling this post.')
         }
       } finally {
         setIsScheduling(false)
@@ -849,6 +851,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
 
     // Split into thread chunks if text exceeds the limit
     const chunks = splitTextIntoChunks(finalText, includePageIndicators)
+
+    // Show the count-up immediately so the button goes straight from "Post" to
+    // "Signing 1/N" instead of showing a transient "Signing..." while budget /
+    // cawonce prep runs. Progress updates later in the signing loop still win.
+    if (chunks.length > 1) setSigningProgress({ current: 1, total: chunks.length })
 
     // If media goes at end of thread, check if it fits in the last chunk or needs its own
     if (isThreadMode && mediaPosition === 'end' && mediaBlock && chunks.length > 1) {
@@ -1027,8 +1034,6 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         amounts: [totalCawCost]
       })
     }
-
-    if (chunks.length > 1) setSigningProgress({ current: 1, total: chunks.length })
 
     const firstPostCawonce = threadCawonces[0]
 
@@ -1621,7 +1626,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                 <input
                   type="date"
                   value={scheduledDate}
-                  onChange={(e) => setScheduledDate(e.target.value)}
+                  onChange={(e) => { setScheduledDate(e.target.value); setScheduleError(null) }}
                   min={new Date().toISOString().split('T')[0]}
                   className={`w-full px-3 py-2 rounded-lg border transition-colors ${
                     isDark
@@ -1637,7 +1642,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                 <input
                   type="time"
                   value={scheduledTime}
-                  onChange={(e) => setScheduledTime(e.target.value)}
+                  onChange={(e) => { setScheduledTime(e.target.value); setScheduleError(null) }}
                   className={`w-full px-3 py-2 rounded-lg border transition-colors ${
                     isDark
                       ? 'bg-gray-700 border-gray-600 text-white focus:border-yellow-400'
@@ -1650,6 +1655,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               <p className={`mt-2 text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                 <HiClock className="inline-block w-4 h-4 mr-1" />
                 Scheduled for {new Date(`${scheduledDate}T${scheduledTime}`).toLocaleString()}
+              </p>
+            )}
+            {scheduleError && (
+              <p className="mt-2 text-sm text-red-400">
+                {scheduleError}
               </p>
             )}
           </div>
