@@ -9,7 +9,7 @@ import { CAW_NAMES_L2_ADDRESS } from '~/../../../abi/addresses'
 import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
 import { encryptPrivateKey, getEncryptionSignMessage, setDecryptedKey } from '~/services/sessionKeyEncryption'
 
-export const DEFAULT_SESSION_DURATION = 30 * 24 * 60 * 60 // 1 month
+export const DEFAULT_SESSION_DURATION = 180 * 24 * 60 * 60 // 6 months
 
 export const SESSION_DURATION_OPTIONS = [
   { label: '1 week',    value: 7 * 24 * 60 * 60 },
