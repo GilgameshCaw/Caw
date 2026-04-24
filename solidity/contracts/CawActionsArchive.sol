@@ -41,6 +41,11 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OApp {
     uint64  endCheckpointId;
     uint64  finalizedAt;
     Status  status;
+    // Commitment to the submitter-supplied packedActions + r[]. Lets
+    // slashIncoherentRoot verify that the data a caller re-hashes is the
+    // exact data that was originally submitted — without storing the full
+    // bytes on-chain (they live in the ActionsArchived event log).
+    bytes32 dataCommitment;
   }
 
   // ============================================
@@ -151,13 +156,19 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OApp {
   // ============================================
 
   /// @notice Submit checkpoint data for archival. Requires sufficient stake.
+  /// @param entryHash  The clientCurrentHash on the source L2 at
+  ///                   checkpoint (startCheckpointId - 1). This is the
+  ///                   value fed into the hash chain as the initial
+  ///                   "prev" hash — committing it lets slashIncoherentRoot
+  ///                   verify the full fold deterministically.
   function submitReplication(
     uint32 clientId,
     uint256 startCheckpointId,
     uint256 endCheckpointId,
     bytes calldata packedActions,
     bytes32[] calldata r,
-    bytes32 merkleRoot
+    bytes32 merkleRoot,
+    bytes32 entryHash
   ) external {
     require(stakes[msg.sender] >= MIN_STAKE, "Insufficient stake");
     require(startCheckpointId > 0, "Invalid start");
@@ -181,6 +192,15 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OApp {
 
     uint256 submissionId = nextSubmissionId++;
 
+    // Commit to the submitted packedActions + r + entryHash so
+    // slashIncoherentRoot can verify a later caller is re-supplying the
+    // exact bytes that were submitted.
+    bytes32 dataCommitment = keccak256(abi.encodePacked(
+      keccak256(packedActions),
+      keccak256(abi.encodePacked(r)),
+      entryHash
+    ));
+
     submissions[submissionId] = Submission({
       submitter: msg.sender,
       merkleRoot: merkleRoot,
@@ -188,7 +208,8 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OApp {
       startCheckpointId: uint64(startCheckpointId),
       endCheckpointId: uint64(endCheckpointId),
       finalizedAt: uint64(block.timestamp + CHALLENGE_PERIOD),
-      status: Status.PENDING
+      status: Status.PENDING,
+      dataCommitment: dataCommitment
     });
 
     for (uint256 cp = startCheckpointId; cp <= endCheckpointId; ) {
@@ -303,6 +324,125 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OApp {
     }
 
     emit ValidatorSlashed(validator, msg.sender, submissionId, checkpointId, reward);
+  }
+
+  // ============================================
+  // CHALLENGE - INCOHERENT ROOT (Mode A)
+  // ============================================
+
+  /// @notice Slash a submitter whose committed merkleRoot does not match the
+  ///         root computed from their own packedActions + r + entryHash.
+  /// @dev This catches a class of fraud resolveChallenge cannot:
+  ///      submitter committed a merkleRoot that isn't even derivable from
+  ///      the data they published, so no valid merkle proof exists for any
+  ///      leaf. The caller re-supplies the submitter's own bytes, the
+  ///      contract verifies they match the at-submit-time dataCommitment,
+  ///      re-folds the hash chain, rebuilds the root, and slashes if
+  ///      (and only if) the rebuilt root differs from the committed one.
+  function slashIncoherentRoot(
+    uint256 submissionId,
+    bytes calldata packedActions,
+    bytes32[] calldata r,
+    bytes32 entryHash
+  ) external nonReentrant {
+    Submission storage sub = submissions[submissionId];
+    require(sub.status == Status.PENDING, "Not pending");
+
+    // Verify caller is re-supplying the exact data the submitter committed to.
+    bytes32 expected = keccak256(abi.encodePacked(
+      keccak256(packedActions),
+      keccak256(abi.encodePacked(r)),
+      entryHash
+    ));
+    require(expected == sub.dataCommitment, "Data does not match commitment");
+
+    // Decode checkpoint range + expected action count.
+    uint256 startCp = sub.startCheckpointId;
+    uint256 endCp = sub.endCheckpointId;
+    uint256 numCp = endCp - startCp + 1;
+    uint256 expectedActions = numCp * CHECKPOINT_INTERVAL;
+
+    // Fold the hash chain over submitter's data, collecting checkpoint hashes.
+    bytes32[] memory cpHashes = new bytes32[](numCp);
+    bytes32 h = entryHash;
+    for (uint256 i = 0; i < expectedActions; ) {
+      // packedActions layout: [uint16 count][action0 25B][action1 25B]...
+      // action slice for index i lives at offset 2 + i*25, length 25.
+      bytes calldata slice = packedActions[2 + i * 25 : 2 + i * 25 + 25];
+      bytes32 actionHash = keccak256(slice);
+      h = keccak256(abi.encodePacked(h, r[i], actionHash));
+      unchecked {
+        uint256 nextI = i + 1;
+        if (nextI % CHECKPOINT_INTERVAL == 0) {
+          cpHashes[(nextI / CHECKPOINT_INTERVAL) - 1] = h;
+        }
+        i = nextI;
+      }
+    }
+
+    // Rebuild the merkle root from checkpoint hashes (matches off-chain
+    // buildCheckpointMerkleTree: double-hash leaves + sorted pairs).
+    bytes32 computedRoot = _buildMerkleRoot(startCp, cpHashes);
+    require(computedRoot != sub.merkleRoot, "Root matches, no fraud");
+
+    // Same slash flow as resolveChallenge.
+    address validator = sub.submitter;
+    uint256 reward = stakes[validator];
+    stakes[validator] = 0;
+
+    uint256[] storage subIds = validatorSubmissions[validator];
+    for (uint256 i = 0; i < subIds.length; ) {
+      uint256 sid = subIds[i];
+      Submission storage s = submissions[sid];
+      if (s.status == Status.PENDING) {
+        s.status = Status.SLASHED;
+        for (uint256 cp = s.startCheckpointId; cp <= s.endCheckpointId; ) {
+          checkpointClaimed[s.clientId][cp] = 0;
+          unchecked { ++cp; }
+        }
+      }
+      unchecked { ++i; }
+    }
+    pendingCount[validator] = 0;
+    delete validatorSubmissions[validator];
+
+    if (reward > 0) {
+      (bool ok,) = msg.sender.call{value: reward}("");
+      require(ok, "Transfer failed");
+    }
+
+    emit ValidatorSlashed(validator, msg.sender, submissionId, 0, reward);
+  }
+
+  /// @dev Rebuild merkle root from an ordered list of checkpoint hashes.
+  ///      Leaves are double-hashed (OZ convention) and internal nodes are
+  ///      sorted-pair keccak256.
+  function _buildMerkleRoot(uint256 startCp, bytes32[] memory cpHashes) internal pure returns (bytes32) {
+    uint256 n = cpHashes.length;
+    bytes32[] memory layer = new bytes32[](n);
+    for (uint256 i = 0; i < n; i++) {
+      layer[i] = keccak256(bytes.concat(keccak256(abi.encode(startCp + i, cpHashes[i]))));
+    }
+    while (n > 1) {
+      uint256 m = (n + 1) / 2;
+      bytes32[] memory next = new bytes32[](m);
+      for (uint256 i = 0; i < m; i++) {
+        uint256 l = 2 * i;
+        uint256 rIdx = l + 1;
+        if (rIdx >= n) {
+          // Odd-out leaf: bubble up unchanged. merkletreejs with
+          // sortPairs has the same behavior when no pair exists.
+          next[i] = layer[l];
+        } else {
+          bytes32 a = layer[l];
+          bytes32 b = layer[rIdx];
+          next[i] = a < b ? keccak256(abi.encodePacked(a, b)) : keccak256(abi.encodePacked(b, a));
+        }
+      }
+      layer = next;
+      n = m;
+    }
+    return layer[0];
   }
 
   // ============================================

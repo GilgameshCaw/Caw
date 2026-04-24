@@ -86,7 +86,7 @@ contract("CawActionsArchive", function(accounts) {
     const { tree } = buildMerkleTree([1, 2], hashes);
     const root = '0x' + tree.getRoot().toString('hex');
 
-    const tx = await archive.submitReplication(1, 1, 2, buildPackedActions(64), buildRValues(64), root, {
+    const tx = await archive.submitReplication(1, 1, 2, buildPackedActions(64), buildRValues(64), root, '0x' + '00'.repeat(32), {
       from: accounts[0],
     });
     truffleAssert.eventEmitted(tx, 'SubmissionCreated');
@@ -100,7 +100,7 @@ contract("CawActionsArchive", function(accounts) {
   it("should reject submission from unstaked validator", async function() {
     try {
       await archive.submitReplication(1, 10, 10, buildPackedActions(32), buildRValues(32),
-        web3.utils.soliditySha3('x'), { from: accounts[5] });
+        web3.utils.soliditySha3('x'), '0x' + '00'.repeat(32), { from: accounts[5] });
       assert.fail("Should revert");
     } catch (err) { assert(err.message.includes("Insufficient stake")); }
     console.log("Unstaked submission rejected: PASS");
@@ -109,7 +109,7 @@ contract("CawActionsArchive", function(accounts) {
   it("should reject duplicate checkpoint claims", async function() {
     try {
       await archive.submitReplication(1, 1, 2, buildPackedActions(64), buildRValues(64),
-        web3.utils.soliditySha3('y'), { from: accounts[0] });
+        web3.utils.soliditySha3('y'), '0x' + '00'.repeat(32), { from: accounts[0] });
       assert.fail("Should revert");
     } catch (err) { assert(err.message.includes("Checkpoint already claimed")); }
     console.log("Duplicate claim rejected: PASS");
@@ -156,7 +156,7 @@ contract("CawActionsArchive", function(accounts) {
     const hashes = [web3.utils.soliditySha3({ type: 'string', value: 'cp3' })];
     const { tree } = buildMerkleTree([3], hashes);
     const root = '0x' + tree.getRoot().toString('hex');
-    await archive.submitReplication(1, 3, 3, buildPackedActions(32), buildRValues(32), root, { from: accounts[0] });
+    await archive.submitReplication(1, 3, 3, buildPackedActions(32), buildRValues(32), root, '0x' + '00'.repeat(32), { from: accounts[0] });
 
     try { await archive.withdraw(0, { from: accounts[0] }); assert.fail("Should revert"); }
     catch (err) { assert(err.message.includes("Has pending submissions")); }
@@ -182,7 +182,7 @@ contract("CawActionsArchive", function(accounts) {
     const { tree, leaves } = buildMerkleTree([4, 5], badHashes);
     const badRoot = '0x' + tree.getRoot().toString('hex');
 
-    await archive.submitReplication(1, 4, 5, buildPackedActions(64), buildRValues(64), badRoot, { from: accounts[2] });
+    await archive.submitReplication(1, 4, 5, buildPackedActions(64), buildRValues(64), badRoot, '0x' + '00'.repeat(32), { from: accounts[2] });
     const submissionId = (await archive.nextSubmissionId()).toNumber() - 1;
 
     // Deliver correct hash via LZ
@@ -223,13 +223,13 @@ contract("CawActionsArchive", function(accounts) {
     const h1 = [web3.utils.soliditySha3({ type: 'string', value: 'honest6' })];
     const { tree: t1 } = buildMerkleTree([6], h1);
     await archive.submitReplication(1, 6, 6, buildPackedActions(32), buildRValues(32),
-      '0x' + t1.getRoot().toString('hex'), { from: accounts[4] });
+      '0x' + t1.getRoot().toString('hex'), '0x' + '00'.repeat(32), { from: accounts[4] });
 
     // Batch 2 (bad)
     const h2 = [web3.utils.soliditySha3({ type: 'string', value: 'bad7' })];
     const { tree: t2, leaves: l2 } = buildMerkleTree([7], h2);
     await archive.submitReplication(1, 7, 7, buildPackedActions(32), buildRValues(32),
-      '0x' + t2.getRoot().toString('hex'), { from: accounts[4] });
+      '0x' + t2.getRoot().toString('hex'), '0x' + '00'.repeat(32), { from: accounts[4] });
     const badSubId = (await archive.nextSubmissionId()).toNumber() - 1;
 
     assert.equal((await archive.pendingCount(accounts[4])).toNumber(), 2);
@@ -267,7 +267,7 @@ contract("CawActionsArchive", function(accounts) {
     const h = [web3.utils.soliditySha3({ type: 'string', value: 'honest8' })];
     const { tree, leaves } = buildMerkleTree([8], h);
     await archive.submitReplication(1, 8, 8, buildPackedActions(32), buildRValues(32),
-      '0x' + tree.getRoot().toString('hex'), { from: accounts[0] });
+      '0x' + tree.getRoot().toString('hex'), '0x' + '00'.repeat(32), { from: accounts[0] });
     const subId = (await archive.nextSubmissionId()).toNumber() - 1;
 
     // Deliver the SAME hash (no fraud)

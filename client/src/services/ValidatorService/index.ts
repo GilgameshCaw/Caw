@@ -2101,7 +2101,7 @@ console.log("succeededKeys", succeededKeys)
       'function pendingCount(address) view returns (uint256)',
       'function deposit() payable',
       'function withdraw(uint256)',
-      'function submitReplication(uint32 clientId, uint256 startCheckpointId, uint256 endCheckpointId, bytes packedActions, bytes32[] r, bytes32 merkleRoot)',
+      'function submitReplication(uint32 clientId, uint256 startCheckpointId, uint256 endCheckpointId, bytes packedActions, bytes32[] r, bytes32 merkleRoot, bytes32 entryHash)',
       'function finalizeSubmission(uint256 submissionId)',
       'function checkpointClaimed(uint32, uint256) view returns (uint256)',
       'function isRangeAvailable(uint32 clientId, uint256 start, uint256 end) view returns (bool)',
@@ -2168,6 +2168,7 @@ console.log("succeededKeys", succeededKeys)
       allR: string[]
       packedBytes: Uint8Array
       checkpointHashes: string[]
+      entryHash: string
     } | null> {
       const httpProvider = replicationHttpProvider
       const numCheckpoints = endCheckpointId - startCheckpointId + 1
@@ -2334,7 +2335,7 @@ console.log("succeededKeys", succeededKeys)
         return null
       }
 
-      return { allActions, allR, packedBytes: packed, checkpointHashes }
+      return { allActions, allR, packedBytes: packed, checkpointHashes, entryHash: prevHash }
     }
 
     /**
@@ -2464,7 +2465,7 @@ console.log("succeededKeys", succeededKeys)
             try {
               await archiveW.submitReplication.staticCall(
                 client.id, startCheckpointId, endCheckpointId,
-                packedHex, data.allR, merkleRoot
+                packedHex, data.allR, merkleRoot, data.entryHash
               )
             } catch (simErr: any) {
               const reason = simErr?.revert?.args?.[0] || simErr?.reason || simErr?.shortMessage || simErr?.message || 'unknown'
@@ -2477,7 +2478,7 @@ console.log("succeededKeys", succeededKeys)
             try {
               const estimated = await archiveW.submitReplication.estimateGas(
                 client.id, startCheckpointId, endCheckpointId,
-                packedHex, data.allR, merkleRoot
+                packedHex, data.allR, merkleRoot, data.entryHash
               )
               gasLimit = (estimated * 120n) / 100n // 20% buffer for L2b
               if (gasLimit > 30_000_000n) gasLimit = 30_000_000n
@@ -2488,7 +2489,7 @@ console.log("succeededKeys", succeededKeys)
 
             const tx = await archiveW.submitReplication(
               client.id, startCheckpointId, endCheckpointId,
-              packedHex, data.allR, merkleRoot,
+              packedHex, data.allR, merkleRoot, data.entryHash,
               { gasLimit }
             )
             const receipt = await tx.wait()
@@ -2656,6 +2657,7 @@ console.log("succeededKeys", succeededKeys)
             'function challengeDelivered(uint256, uint256) view returns (bool)',
             'function challengeHash(uint256, uint256) view returns (bytes32)',
             'function resolveChallenge(uint256 submissionId, uint256 checkpointId, bytes32 claimedHash, bytes32[] merkleProof)',
+            'function slashIncoherentRoot(uint256 submissionId, bytes packedActions, bytes32[] r, bytes32 entryHash)',
           ]
           const archiveW = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, resolveAbi, new Wallet(privateKey!, l2bProvider))
           const archiveResolveRead = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, resolveAbi, l2bProvider)
@@ -2780,14 +2782,48 @@ console.log("succeededKeys", succeededKeys)
           try {
             if (modeA) {
               // Mode A: committed root doesn't even commit to the submitter's
-              // own packedActions. No valid merkle proof exists for any leaf
-              // under sub.merkleRoot, so resolveChallenge can't slash this.
-              // Flagged for slashIncoherentRoot (separate contract function).
+              // own packedActions. Call slashIncoherentRoot which re-hashes
+              // the data on-chain and slashes if the rebuilt root differs.
               console.error(
                 `[Monitor] MODE A FRAUD (incoherent root) in submission ${submissionId}: ` +
-                `committedRoot=${merkleRoot} does not match root built from submitter's own packedActions. ` +
-                `Requires slashIncoherentRoot contract function (pending redeploy).`
+                `committedRoot=${merkleRoot} does not match root built from submitter's own packedActions.`
               )
+
+              const lockHolder = w.address.toLowerCase()
+              const claimed = await tryClaimChallengeLock('slashIncoherent', submissionId, 0, lockHolder, 10 * 60 * 1000)
+              if (!claimed) continue
+
+              try {
+                // Fetch submitter's packedActions + r from ActionsArchived
+                // (we already did this above; re-use the captured values).
+                const archivedEvents = await archive.queryFilter(
+                  archive.filters.ActionsArchived(submissionId),
+                  fromBlock, latestBlock,
+                )
+                const archivedArgs: any = (archivedEvents[0] as any)?.args
+                const submitterPackedHex = archivedArgs[2] as string
+                const submitterR = (archivedArgs[3] as string[]).map((x: string) => String(x))
+
+                // entryHash: honest L2's clientHashAtCheckpoint at startCp-1.
+                // If submitter lied about entryHash, the contract's
+                // dataCommitment check will fail — but that's Mode B which
+                // was caught above, so reaching here means entryHash matched.
+                const entryHash = startCp === 1
+                  ? '0x' + '00'.repeat(32)
+                  : await actionsView.clientHashAtCheckpoint(clientId, startCp - 1)
+
+                console.log(`[Monitor] Calling slashIncoherentRoot(${submissionId})...`)
+                const slashTx = await archiveW.slashIncoherentRoot(
+                  submissionId, submitterPackedHex, submitterR, entryHash,
+                  { gasLimit: 2_000_000 },
+                )
+                const slashReceipt = await slashTx.wait()
+                console.log(`[Monitor] Mode A SLASHED submission ${submissionId}! tx: ${slashReceipt?.hash}`)
+                await releaseChallengeLock('slashIncoherent', submissionId, 0, 'success', slashReceipt?.hash)
+              } catch (e: any) {
+                console.error(`[Monitor] slashIncoherentRoot failed for ${submissionId}: ${e?.shortMessage || e?.message}`)
+                await releaseChallengeLock('slashIncoherent', submissionId, 0, 'error')
+              }
               continue
             }
 
