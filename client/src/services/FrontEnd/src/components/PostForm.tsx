@@ -674,22 +674,46 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           cawonce: currentCawonce
         })
 
-        // Sign the action (user will see the signature request)
-        const signature = await signTypedDataAsync({
-          domain,
-          types: { ActionData: TYPES.ActionData },
-          primaryType,
-          message
-        })
+        // Prefer signing with the Quick Sign session key when one covers this
+        // action — matches the live-post flow and avoids needing a connected wallet.
+        const { useSessionKeyStore } = await import('~/store/sessionKeyStore')
+        const { privateKeyToAccount } = await import('viem/accounts')
+        const tokenOwner = activeToken?.owner
+        const session = tokenOwner
+          ? useSessionKeyStore.getState().getActiveSessionForAddress(tokenOwner)
+          : useSessionKeyStore.getState().getActiveSession()
+        const cawActionBit = 0 // bit 0 = 'caw' in ActionTypeMap
+        const canUseSession = !!session && (session.scopeBitmap & (1 << cawActionBit)) !== 0
+
+        let signature: `0x${string}`
+        if (canUseSession) {
+          const sessionAccount = privateKeyToAccount(session!.privateKey)
+          signature = await sessionAccount.signTypedData({
+            domain,
+            types: { ActionData: TYPES.ActionData },
+            primaryType,
+            message,
+          })
+        } else {
+          signature = await signTypedDataAsync({
+            domain,
+            types: { ActionData: TYPES.ActionData },
+            primaryType,
+            message,
+          })
+        }
 
         // Bump cawonce after successful signature
         bumpCawonce(effectiveTokenId)
 
-        // Send to scheduled API with the signed data
+        // Send to scheduled API with the signed data. Use finalText so
+        // media-only posts (where the user typed no text but attached a GIF)
+        // still pass the server's content validation — finalText has the GIF
+        // URLs appended and is what gets posted on-chain.
         await apiFetch('/api/scheduled', {
           method: 'POST',
           body: JSON.stringify({
-            content: text,
+            content: finalText,
             scheduledAt: scheduledAt.toISOString(),
             // Include signed action data for later processing
             signedAction: {
@@ -714,7 +738,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         setShowScheduledSuccessModal(true)
         if (onSuccess) onSuccess()
       } catch (error: any) {
-        // Ignore errors (user may have rejected signature)
+        console.error('[Schedule] Failed:', error)
+        const isUserRejection = error?.code === 4001 || /rejected|denied|cancelled/i.test(error?.message || '')
+        if (!isUserRejection) {
+          alert(`Couldn't schedule the post: ${error?.message || 'Unknown error'}`)
+        }
       } finally {
         setIsScheduling(false)
       }

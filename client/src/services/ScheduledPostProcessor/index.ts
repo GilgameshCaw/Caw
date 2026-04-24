@@ -1,6 +1,23 @@
 import { prisma } from '../../prismaClient'
 import { scheduledPostLogger as logger } from '../../utils/scheduledPostLogger'
 import { processHashtagsForCaw } from '../../tools/hashtags'
+import SmlTxt from 'smltxt'
+
+// data.text arrives as smltxt-compressed hex (signed bytes); decompress for
+// storage/display. Matches the helper in api/routes/actions.ts.
+let _smlTxt: SmlTxt | undefined
+function smlTxt(): SmlTxt {
+  if (!_smlTxt) _smlTxt = SmlTxt.fromPkg()
+  return _smlTxt
+}
+function decompressActionText(textField: unknown): string {
+  if (typeof textField !== 'string' || !textField || textField === '0x') return ''
+  const hex = textField.startsWith('0x') ? textField.slice(2) : textField
+  if (!/^[0-9a-fA-F]*$/.test(hex) || hex.length % 2 !== 0) return ''
+  const bytes = new Uint8Array(hex.length / 2)
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
+  try { return smlTxt().decompress(bytes) } catch { return '' }
+}
 
 /**
  * Process a single scheduled post
@@ -66,15 +83,20 @@ async function processScheduledPost(scheduledPost: any): Promise<boolean> {
         })
       }
 
+      // data.text is smltxt-compressed hex (the signed bytes); decompress for
+      // storage and URL extraction. The on-chain submission still uses the
+      // original compressed data.text — the signature was over those bytes.
+      const plaintext = decompressActionText(data.text)
+
       // Extract image URLs if present
       const imageUrlRegex = /(https?:\/\/[^\s]+\/uploads\/images\/[^\s]+\.(jpg|jpeg|png|gif|webp))/gi
-      const imageUrls = data.text?.match(imageUrlRegex) || []
+      const imageUrls = plaintext.match(imageUrlRegex) || []
       const videoUrlRegex = /video:(https?:\/\/[^\s]+\/uploads\/videos\/[^\s]+\.(mp4|webm|mov|avi|mkv|ogg|ogv))/gi
-      const videoMatches = [...(data.text?.matchAll(videoUrlRegex) || [])]
+      const videoMatches = [...plaintext.matchAll(videoUrlRegex)]
       const videoUrls = videoMatches.map((match: RegExpMatchArray) => match[1])
 
       // Remove URLs from text content
-      let textContent = data.text || ''
+      let textContent = plaintext
       imageUrls.forEach((url: string) => {
         textContent = textContent.replace(url, '').trim()
       })
