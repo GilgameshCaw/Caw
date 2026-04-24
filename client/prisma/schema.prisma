@@ -639,6 +639,29 @@ model ValidatorSetting {
   updatedAt DateTime @updatedAt
 }
 
+/// Coordinates the fraud-challenge pipeline across multiple validator nodes
+/// that share a database. A lock is claimed via INSERT...ON CONFLICT DO NOTHING
+/// before sending a challenge or calling resolveChallenge, so only one node
+/// does the work. `expiresAt` lets stale locks (node crashed mid-call) be
+/// reclaimed. `kind` scopes the lock to a specific pipeline stage so, for
+/// example, the relay stage doesn't block the resolve stage.
+model ChallengeLock {
+  /// Composite natural key built as "{kind}:{submissionId}:{checkpointId}"
+  /// so a single INSERT can claim atomically.
+  key         String   @id
+  kind        String   // e.g. "relay", "resolve", "slashIncoherent"
+  submissionId BigInt
+  checkpointId BigInt  // unused for submission-level locks; stored as 0
+  holder      String   // validator address or instance ID
+  claimedAt   DateTime @default(now())
+  expiresAt   DateTime
+  outcome     String?  // "success", "error", null while in-flight
+  txHash      String?
+
+  @@index([kind, submissionId])
+  @@index([expiresAt])
+}
+
 // ============================================
 // MARKETPLACE
 // ============================================

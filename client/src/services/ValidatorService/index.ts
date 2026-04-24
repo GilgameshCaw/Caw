@@ -10,6 +10,7 @@ import { CAW_ACTIONS_ADDRESS, CAW_ADDRESS, WETH_ADDRESS, CAW_ACTIONS_ARCHIVE_OPT
 import { WebSocketProvider, JsonRpcProvider, Contract, Wallet, Interface, keccak256, solidityPacked, AbiCoder } from 'ethers'
 import { packActions, packSignatures, bytesToHex, getPackedActionSlices, unpackActions } from '../../utils/packActions'
 import { buildCheckpointMerkleTree } from '../../utils/checkpointMerkle'
+import { tryClaimChallengeLock, releaseChallengeLock } from '../../utils/challengeLock'
 import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
@@ -2111,27 +2112,43 @@ console.log("succeededKeys", succeededKeys)
 
     // Lazily initialized L2b provider + contracts (only when optimistic mode is enabled)
     let l2bProvider: JsonRpcProvider | null = null
-    let l2bWallet: Wallet | null = null
+    let l2bWallet: Wallet | null = null          // SUBMITTER — may be REPLICATOR_PRIVATE_KEY in test mode
+    let l2bMonitorWallet: Wallet | null = null   // MONITOR/challenger — always the main validator key
     let archiveRead: Contract | null = null
-    let archiveWrite: Contract | null = null
+    let archiveWrite: Contract | null = null     // bound to l2bWallet (submitter)
+
+    // Slash-test knobs. When both are set, submissions fire from a separate
+    // wallet (so slashed ETH visibly moves to the main validator who challenges)
+    // and deliberately commit a bad merkle root so the monitor can catch them.
+    const CORRUPT_REPLICATION = process.env.CORRUPT_REPLICATION === 'true'
+    const REPLICATOR_PRIVATE_KEY = process.env.REPLICATOR_PRIVATE_KEY
 
     function getL2bContracts() {
-      if (l2bProvider && l2bWallet && archiveRead && archiveWrite) {
-        return { l2bProvider, l2bWallet, archiveRead, archiveWrite }
+      if (l2bProvider && l2bWallet && l2bMonitorWallet && archiveRead && archiveWrite) {
+        return { l2bProvider, l2bWallet, l2bMonitorWallet, archiveRead, archiveWrite }
       }
       const l2bRpcUrl = process.env.RPC_ARBITRUM_SEPOLIA
       if (!l2bRpcUrl) throw new Error('RPC_ARBITRUM_SEPOLIA not set — required for optimistic replication')
 
       l2bProvider = makeJsonRpcProvider(l2bRpcUrl, 421614)
-      l2bWallet = new Wallet(privateKey!, l2bProvider)
+
+      // Submitter uses REPLICATOR_PRIVATE_KEY if present (test mode), else main validator.
+      const submitterKey = REPLICATOR_PRIVATE_KEY || privateKey!
+      l2bWallet = new Wallet(submitterKey, l2bProvider)
+      l2bMonitorWallet = new Wallet(privateKey!, l2bProvider)
+
       archiveRead = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, archiveAbi, l2bProvider)
       archiveWrite = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, archiveAbi, l2bWallet)
 
       console.log(`[OptimisticReplication] L2b RPC: ${l2bRpcUrl.slice(0, 50)}...`)
       console.log(`[OptimisticReplication] Archive: ${OPTIMISTIC_ARCHIVE_ADDRESS}`)
-      console.log(`[OptimisticReplication] Wallet: ${l2bWallet.address}`)
+      console.log(`[OptimisticReplication] Submitter: ${l2bWallet.address}${REPLICATOR_PRIVATE_KEY ? ' (REPLICATOR test key)' : ''}`)
+      console.log(`[OptimisticReplication] Monitor:   ${l2bMonitorWallet.address}`)
+      if (CORRUPT_REPLICATION) {
+        console.warn(`[OptimisticReplication] ⚠️  CORRUPT_REPLICATION=true — next submission will commit a bad merkle root`)
+      }
 
-      return { l2bProvider, l2bWallet, archiveRead, archiveWrite }
+      return { l2bProvider, l2bWallet, l2bMonitorWallet, archiveRead, archiveWrite }
     }
 
     /**
@@ -2422,8 +2439,22 @@ console.log("succeededKeys", succeededKeys)
               { length: numCheckpoints },
               (_, i) => startCheckpointId + i
             )
-            const { root: merkleRoot } = buildCheckpointMerkleTree(checkpointIds, data.checkpointHashes)
+            let { root: merkleRoot } = buildCheckpointMerkleTree(checkpointIds, data.checkpointHashes)
             console.log(`[OptimisticReplication] Merkle root: ${merkleRoot}`)
+
+            // TEST MODE: swap the first checkpoint hash for a deterministic bad
+            // value and rebuild the tree. The merkle proof still verifies, but
+            // resolveChallenge will find claimedHash != correctHash and slash.
+            if (CORRUPT_REPLICATION) {
+              const badHashes = [...data.checkpointHashes]
+              // keccak256("CORRUPTED_REPLICATION_FOR_SLASH_TEST") as a hex preimage
+              badHashes[0] = keccak256('0x434f525255505445445f5245504c49434154494f4e5f464f525f534c4153485f54455354')
+              const corrupted = buildCheckpointMerkleTree(checkpointIds, badHashes)
+              console.warn(`[OptimisticReplication] ⚠️  CORRUPTING: cp ${startCheckpointId} hash ${data.checkpointHashes[0]} → ${badHashes[0]}`)
+              console.warn(`[OptimisticReplication] ⚠️  merkleRoot ${merkleRoot} → ${corrupted.root}`)
+              data.checkpointHashes = badHashes
+              merkleRoot = corrupted.root
+            }
 
             // 6. Submit to L2b archive
             const packedHex = bytesToHex(data.packedBytes)
@@ -2577,7 +2608,10 @@ console.log("succeededKeys", succeededKeys)
      */
     async function monitorOptimisticSubmissions() {
       try {
-        const { archiveRead: archive, l2bProvider: provider, l2bWallet: w } = getL2bContracts()
+        // Use the MONITOR wallet here so that a separate REPLICATOR_PRIVATE_KEY
+        // submitter's submissions are not skipped as "our own" — the monitor
+        // wants to challenge them during the slash test.
+        const { archiveRead: archive, l2bProvider: provider, l2bMonitorWallet: w } = getL2bContracts()
 
         const latestBlock = await provider!.getBlockNumber()
         // Look back ~3 days of blocks
@@ -2624,13 +2658,15 @@ console.log("succeededKeys", succeededKeys)
             'function resolveChallenge(uint256 submissionId, uint256 checkpointId, bytes32 claimedHash, bytes32[] merkleProof)',
           ]
           const archiveW = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, resolveAbi, new Wallet(privateKey!, l2bProvider))
+          // Read-only instance bound to the resolve ABI (the cached `archive` doesn't expose these).
+          const archiveResolveRead = new Contract(OPTIMISTIC_ARCHIVE_ADDRESS, resolveAbi, l2bProvider)
           for (let cpId = startCp; cpId <= endCp; cpId++) {
             try {
-              const delivered = await archive.challengeDelivered(submissionId, cpId)
+              const delivered = await archiveResolveRead.challengeDelivered(submissionId, cpId)
               if (!delivered) continue
 
               // Challenge was delivered — compute merkle proof and resolve
-              const correctHash = await archive.challengeHash(submissionId, cpId)
+              const correctHash = await archiveResolveRead.challengeHash(submissionId, cpId)
 
               // Reconstruct the claimed hash and merkle proof from the submission's merkle root
               // We need the checkpoint hashes as the submitter claimed them — reconstruct from packed data
@@ -2644,10 +2680,21 @@ console.log("succeededKeys", succeededKeys)
               const proof = tree.getProof(cpIndex)
 
               if (correctHash.toLowerCase() !== claimedHash.toLowerCase()) {
+                // Cross-node dedup: only one monitor submits resolveChallenge.
+                // Once slashed, all subsequent resolves revert with "Not pending"
+                // which still wastes gas; the lock avoids even trying.
+                const claimed = await tryClaimChallengeLock('resolve', submissionId, cpId, w.address.toLowerCase(), 10 * 60 * 1000)
+                if (!claimed) continue
                 console.log(`[Monitor] Resolving challenge for submission ${submissionId} checkpoint ${cpId}...`)
-                const resolveTx = await archiveW.resolveChallenge(submissionId, cpId, claimedHash, proof, { gasLimit: 500_000 })
-                const resolveReceipt = await resolveTx.wait()
-                console.log(`[Monitor] SLASHED submission ${submissionId}! tx: ${resolveReceipt?.hash}`)
+                try {
+                  const resolveTx = await archiveW.resolveChallenge(submissionId, cpId, claimedHash, proof, { gasLimit: 500_000 })
+                  const resolveReceipt = await resolveTx.wait()
+                  console.log(`[Monitor] SLASHED submission ${submissionId}! tx: ${resolveReceipt?.hash}`)
+                  await releaseChallengeLock('resolve', submissionId, cpId, 'success', resolveReceipt?.hash)
+                } catch (e) {
+                  await releaseChallengeLock('resolve', submissionId, cpId, 'error')
+                  throw e
+                }
               } else {
                 console.log(`[Monitor] Challenge for submission ${submissionId} checkpoint ${cpId}: hashes match (false alarm)`)
               }
@@ -2656,7 +2703,11 @@ console.log("succeededKeys", succeededKeys)
             }
           }
 
-          // Reconstruct data and verify checkpoint hashes against L2
+          // Verify the submission by comparing its committed merkle root to the
+          // canonical root we can build from the honest L2 events. This is the
+          // check that actually catches corrupt merkle roots — an earlier
+          // per-checkpoint L2-vs-canonical check was tautological because both
+          // sides came from L2 state.
           try {
             const data = await reconstructCheckpointData(clientId, startCp, endCp)
             if (!data) {
@@ -2664,51 +2715,87 @@ console.log("succeededKeys", succeededKeys)
               continue
             }
 
-            // Verify each checkpoint hash against L2's on-chain record
-            let fraudDetected = false
-            for (let i = 0; i < data.checkpointHashes.length; i++) {
-              const cpId = startCp + i
-              const localHash = data.checkpointHashes[i]
+            const checkpointIds = Array.from({ length: endCp - startCp + 1 }, (_, i) => startCp + i)
+            const { root: canonicalRoot } = buildCheckpointMerkleTree(checkpointIds, data.checkpointHashes)
+            const rootMismatch = canonicalRoot.toLowerCase() !== merkleRoot.toLowerCase()
 
-              let onChainHash: string
+            const challengeCheckpoint = async (cpId: number, reason: string) => {
+              const L2B_EID = 40231 // Arbitrum Sepolia
+
+              // On-chain dedup: if LZ has already delivered the correct hash,
+              // relaying again only burns LZ fees (_lzReceive would overwrite
+              // with the same value). Short-circuit.
               try {
-                onChainHash = await actionsView.clientHashAtCheckpoint(clientId, cpId)
-              } catch {
-                console.warn(`[Monitor] Could not read L2 hash for checkpoint ${cpId}, skipping`)
-                continue
+                const delivered = await archiveResolveRead.challengeDelivered(submissionId, cpId)
+                if (delivered) return
+              } catch { /* if the view reverts, fall through and try anyway */ }
+
+              // Cross-node dedup: first monitor to claim the lock does the
+              // relay; other instances skip. 10-minute TTL covers LZ latency
+              // plus RPC slowness.
+              const holder = w.address.toLowerCase()
+              const claimed = await tryClaimChallengeLock('relay', submissionId, cpId, holder, 10 * 60 * 1000)
+              if (!claimed) return
+
+              const relayAbi = [
+                'function relayChallenge(uint32 destEid, uint256 submissionId, uint32 clientId, uint256 checkpointId) payable',
+                'function quoteChallenge(uint32 destEid, uint256 submissionId, uint32 clientId, uint256 checkpointId, bool payInLzToken) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
+              ]
+              const relayContract = new Contract(CHALLENGE_RELAY_ADDRESS, relayAbi, new Wallet(privateKey!, replicationHttpProvider))
+
+              try {
+                const quote = await relayContract.quoteChallenge(L2B_EID, submissionId, clientId, cpId, false)
+                // LZ OApp sends do ~200k-350k of work on the source chain
+                // (endpoint call, DVN/executor callbacks, SSTOREs). 500k
+                // leaves headroom.
+                const relayTx = await relayContract.relayChallenge(L2B_EID, submissionId, clientId, cpId, {
+                  value: quote.nativeFee * 120n / 100n,
+                  gasLimit: 500_000,
+                })
+                const relayReceipt = await relayTx.wait()
+                console.log(`[Monitor] Challenge relayed (${reason}) for submission ${submissionId} checkpoint ${cpId}. tx: ${relayReceipt?.hash}`)
+                await releaseChallengeLock('relay', submissionId, cpId, 'success', relayReceipt?.hash)
+              } catch (e) {
+                await releaseChallengeLock('relay', submissionId, cpId, 'error')
+                throw e
               }
+            }
 
-              if (localHash.toLowerCase() !== onChainHash.toLowerCase()) {
-                console.error(
-                  `[Monitor] FRAUD DETECTED in submission ${submissionId}! ` +
-                  `Checkpoint ${cpId}: local=${localHash} vs L2=${onChainHash}. ` +
-                  `Submitter: ${submitter}. Initiating challenge...`
-                )
-                fraudDetected = true
-
-                // Auto-challenge: relay correct hash from L2, then resolve on L2b
+            let fraudDetected = false
+            if (rootMismatch) {
+              console.error(
+                `[Monitor] FRAUD DETECTED in submission ${submissionId}! ` +
+                `committed=${merkleRoot} canonical=${canonicalRoot} submitter=${submitter}`
+              )
+              fraudDetected = true
+              // We don't know which specific checkpoint diverged, so challenge all of them.
+              // resolveChallenge will pinpoint via the LZ-delivered correctHash.
+              for (const cpId of checkpointIds) {
                 try {
-                  const L2B_EID = 40231 // Arbitrum Sepolia
-                  const relayAbi = [
-                    'function relayChallenge(uint32 destEid, uint256 submissionId, uint32 clientId, uint256 checkpointId) payable',
-                    'function quoteChallenge(uint32 destEid, uint256 submissionId, uint32 clientId, uint256 checkpointId, bool payInLzToken) view returns (tuple(uint256 nativeFee, uint256 lzTokenFee))',
-                  ]
-                  const relayContract = new Contract(CHALLENGE_RELAY_ADDRESS, relayAbi, new Wallet(privateKey!, replicationHttpProvider))
-
-                  // Quote and send the challenge relay
-                  const quote = await relayContract.quoteChallenge(L2B_EID, submissionId, clientId, cpId, false)
-                  const relayTx = await relayContract.relayChallenge(L2B_EID, submissionId, clientId, cpId, {
-                    value: quote.nativeFee * 120n / 100n, // 20% buffer for LZ fee fluctuation
-                    gasLimit: 200_000,
-                  })
-                  const relayReceipt = await relayTx.wait()
-                  console.log(`[Monitor] Challenge relayed for submission ${submissionId} checkpoint ${cpId}. tx: ${relayReceipt?.hash}`)
-                  console.log(`[Monitor] Waiting for LZ delivery to L2b... (will resolve on next monitor cycle)`)
-
-                  // Don't wait for LZ delivery here — the next monitor cycle will
-                  // check challengeDelivered and call resolveChallenge
+                  await challengeCheckpoint(cpId, 'root mismatch')
                 } catch (challengeErr: any) {
-                  console.error(`[Monitor] Failed to relay challenge: ${challengeErr?.shortMessage || challengeErr?.message}`)
+                  console.error(`[Monitor] Failed to relay challenge for cp ${cpId}: ${challengeErr?.shortMessage || challengeErr?.message}`)
+                }
+              }
+            } else {
+              // Secondary safety net: canonical vs on-chain L2 should always
+              // match (they're both the honest view) — only fires if L2 state
+              // diverged from its own event log, which would be a real bug.
+              for (let i = 0; i < data.checkpointHashes.length; i++) {
+                const cpId = startCp + i
+                const localHash = data.checkpointHashes[i]
+                let onChainHash: string
+                try {
+                  onChainHash = await actionsView.clientHashAtCheckpoint(clientId, cpId)
+                } catch {
+                  console.warn(`[Monitor] Could not read L2 hash for checkpoint ${cpId}, skipping`)
+                  continue
+                }
+                if (localHash.toLowerCase() !== onChainHash.toLowerCase()) {
+                  console.error(`[Monitor] L2-state divergence sub ${submissionId} cp ${cpId}: canonical=${localHash} L2=${onChainHash}`)
+                  fraudDetected = true
+                  try { await challengeCheckpoint(cpId, 'L2 divergence') }
+                  catch (e: any) { console.error(`[Monitor] Failed to relay: ${e?.shortMessage || e?.message}`) }
                 }
               }
             }
