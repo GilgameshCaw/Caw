@@ -10,6 +10,7 @@ import ConnectButton from '~/components/buttons/ConnectButton'
 import Tooltip from '~/components/Tooltip'
 import ModalWrapper from '~/components/modals/ModalWrapper'
 import { apiFetch, API_HOST } from '~/api/client'
+import { getUserAvatar } from '~/utils/defaultAvatar'
 import {
   HiOutlineCog,
   HiOutlineMail,
@@ -258,6 +259,7 @@ const MessagesPage: React.FC = () => {
     resetModal()
   }
 
+
   // Handle selecting a user to message
   const handleSelectUserToMessage = async (user: { tokenId: number, username: string, displayName?: string, avatarUrl?: string }) => {
     console.log('[Messages] User selected to message:', user)
@@ -267,7 +269,7 @@ const MessagesPage: React.FC = () => {
     setSelectedUser({
       name: user.displayName || user.username,
       handle: user.username,
-      avatar: user.avatarUrl || '/images/logo.jpeg'
+      avatar: getUserAvatar(user)
     })
     setTargetUser({ tokenId: user.tokenId, username: user.username })
 
@@ -493,14 +495,18 @@ const MessagesPage: React.FC = () => {
     }
   }, [searchParams, navigate])
 
-  // Handle /messages/:username URL param — open conversation with that user
+
+  // Handle /messages/:username URL param — open conversation with that user.
+  // We must wait for conversationsLoaded before deciding existing-vs-new,
+  // otherwise a refresh lands before conversations arrive, we go down the
+  // "create" path for one that already exists, and on success we'd no-op.
+  // Only mark as attempted AFTER we actually make the create call, so the
+  // guard doesn't poison subsequent re-runs triggered by conversations loading.
   useEffect(() => {
     if (!urlUsername || !currentUser || !identity || identityLoading) return
-    if (attemptedConversations.has(urlUsername)) return
+    if (!conversationsLoaded) return
 
-    setAttemptedConversations(prev => new Set(prev).add(urlUsername))
-
-    // Check if we already have this conversation open
+    // Check if we already have this conversation (now that we know for sure)
     const existingConv = conversations.find(c =>
       c.type === 'DM' &&
       c.participants.some(p => p.identity?.user?.username?.toLowerCase() === urlUsername.toLowerCase())
@@ -513,33 +519,45 @@ const MessagesPage: React.FC = () => {
         setCurrentView('chat')
         joinConversation(existingConv.id)
       }
-    } else {
-      // Fetch user and create conversation
-      fetch(`/api/users/${urlUsername}`)
-        .then(res => res.json())
-        .then(userData => {
-          if (userData && !userData.error) {
-            setTargetUser({ tokenId: userData.tokenId, username: userData.username })
-            dmStartConversation(userData.tokenId)
-              .then((newConv: any) => {
-                setSelectedConversationId(newConv.id)
-                setCurrentView('chat')
-                joinConversation(newConv.id)
-              })
-              .catch((err: any) => {
-                console.error('Failed to create conversation:', err)
-                if (err.code === 'DM_PRIVACY') {
-                  setDmPrivacyError({ message: err.message, reason: err.reason, peer: err.peer })
-                }
-                navigate('/messages', { replace: true })
-              })
-          } else {
-            navigate('/messages', { replace: true })
-          }
-        })
-        .catch(() => navigate('/messages', { replace: true }))
+      return
     }
-  }, [urlUsername, currentUser, identity, identityLoading, conversations, attemptedConversations, dmStartConversation, selectedConversationId])
+
+    // No existing conversation — create one. Guard so we don't spam the API
+    // if the effect re-runs (e.g. conversations list updates again).
+    if (attemptedConversations.has(urlUsername)) return
+    setAttemptedConversations(prev => new Set(prev).add(urlUsername))
+
+    apiFetch<{ tokenId: number; username: string; displayName?: string; avatarUrl?: string; error?: string }>(
+      `/api/users/${urlUsername}`
+    )
+      .then(userData => {
+        if (!userData || userData.error) {
+          setErrorModal({ title: 'User Not Found', message: `We couldn't find @${urlUsername}.` })
+          return
+        }
+        setTargetUser({ tokenId: userData.tokenId, username: userData.username })
+        return dmStartConversation(userData.tokenId)
+          .then((newConv: any) => {
+            setSelectedConversationId(newConv.id)
+            setCurrentView('chat')
+            joinConversation(newConv.id)
+          })
+          .catch((err: any) => {
+            console.error('Failed to create conversation:', err)
+            if (err.code === 'DM_PRIVACY') {
+              setDmPrivacyError({ message: err.message, reason: err.reason, peer: err.peer })
+            } else if (/DM/i.test(err?.message || '') && /enabled/i.test(err?.message || '')) {
+              setErrorModal({ title: 'DMs Not Enabled', message: `@${userData.username} hasn't enabled DMs yet. They need to enable DMs before you can message them.` })
+            } else {
+              setErrorModal({ title: 'Conversation Failed', message: err?.message || 'Failed to start conversation.' })
+            }
+          })
+      })
+      .catch(err => {
+        console.error('Failed to fetch user for DM:', err)
+        setErrorModal({ title: 'Could Not Open DM', message: err?.message || 'Something went wrong loading that user.' })
+      })
+  }, [urlUsername, currentUser, identity, identityLoading, conversationsLoaded, conversations, attemptedConversations, dmStartConversation, selectedConversationId])
 
   // When URL changes to /messages (no username), reset to inbox
   useEffect(() => {
@@ -553,8 +571,15 @@ const MessagesPage: React.FC = () => {
     }
   }, [urlUsername])
 
-  // Reset to inbox when user switches
+  // Reset to inbox when user switches accounts mid-session. Skips the
+  // initial mount (when currentUser goes null→real) so refreshing on
+  // /messages/:username doesn't get yanked back to /messages.
+  const previousUserIdRef = useRef<number | null | undefined>(undefined)
   useEffect(() => {
+    const prev = previousUserIdRef.current
+    previousUserIdRef.current = currentUser?.id
+    if (prev === undefined) return // first mount
+    if (prev === currentUser?.id) return
     setCurrentView('inbox')
     setSelectedConversationId(null)
     setAttemptedConversations(new Set())
@@ -766,19 +791,11 @@ const MessagesPage: React.FC = () => {
                   className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 cursor-pointer"
                   onClick={() => navigate(`/users/${otherParticipant.identity.user.username}`)}
                 >
-                  {otherParticipant.identity.user.image ? (
-                    <img
-                      src={otherParticipant.identity.user.image}
-                      alt={otherParticipant.identity.user.username}
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="w-full h-full bg-gray-600 flex items-center justify-center">
-                      <span className="text-white text-sm font-semibold">
-                        {(otherParticipant.identity.user.username || 'U')[0].toUpperCase()}
-                      </span>
-                    </div>
-                  )}
+                  <img
+                    src={getUserAvatar(otherParticipant.identity.user)}
+                    alt={otherParticipant.identity.user.username}
+                    className="w-full h-full object-cover"
+                  />
                 </div>
               )}
               <h1
@@ -1076,17 +1093,15 @@ const MessagesPage: React.FC = () => {
                     <div className="flex items-center justify-between">
                       <div className="flex items-start space-x-3 flex-1">
                         <div className="flex-shrink-0">
-                          {otherUser?.identity.user.image ? (
+                          {otherUser?.identity.user ? (
                             <img
-                              src={otherUser.identity.user.image}
+                              src={getUserAvatar(otherUser.identity.user)}
                               alt={otherUser.identity.user.username}
                               className="w-10 h-10 rounded-full object-cover"
                             />
                           ) : (
                             <div className="w-10 h-10 rounded-full bg-gray-600 flex items-center justify-center">
-                              <span className="text-white font-semibold">
-                                {(otherUser?.identity.user.username || 'U')[0].toUpperCase()}
-                              </span>
+                              <span className="text-white font-semibold">U</span>
                             </div>
                           )}
                         </div>
@@ -1758,17 +1773,12 @@ const MessagesPage: React.FC = () => {
       )}
 
       {/* New Message Modal */}
-      {isNewMessageModalOpen && (
-        <div
-          className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
-          onClick={closeModal}
-        >
-          <div
-            className={`w-full max-w-md max-h-[80vh] flex flex-col rounded-2xl transition-all duration-300 ${
-              isDark ? 'bg-black border border-white/20' : 'bg-white border border-gray-200'
-            }`}
-            onClick={(e) => e.stopPropagation()}
-          >
+      <ModalWrapper
+        isOpen={isNewMessageModalOpen}
+        onClose={closeModal}
+        maxWidth="max-w-md"
+        className="max-h-[80vh] flex flex-col"
+      >
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b border-white/20">
               {modalStep === 'compose' && (
@@ -1841,7 +1851,7 @@ const MessagesPage: React.FC = () => {
                             }`}
                           >
                             <img
-                              src={user.avatarUrl || '/images/logo.jpeg'}
+                              src={getUserAvatar(user)}
                               alt={user.username}
                               className="w-10 h-10 rounded-full object-cover"
                             />
@@ -1883,7 +1893,7 @@ const MessagesPage: React.FC = () => {
                             }`}
                           >
                             <img
-                              src={user.avatarUrl || '/images/logo.jpeg'}
+                              src={getUserAvatar(user)}
                               alt={user.username}
                               className="w-10 h-10 rounded-full object-cover"
                             />
@@ -1955,9 +1965,7 @@ const MessagesPage: React.FC = () => {
                 </div>
               </>
             )}
-          </div>
-        </div>
-      )}
+      </ModalWrapper>
 
       {/* Message Settings Modal */}
       <ModalWrapper isOpen={isSettingsModalOpen} onClose={() => setIsSettingsModalOpen(false)} maxWidth="max-w-sm">
@@ -2061,7 +2069,7 @@ const MessagesPage: React.FC = () => {
               }`}>
                 <div className="flex items-center gap-3">
                   <img
-                    src={dmPrivacyError.peer.avatarUrl || dmPrivacyError.peer.image || '/images/logo.jpeg'}
+                    src={getUserAvatar(dmPrivacyError.peer)}
                     alt={dmPrivacyError.peer.username}
                     className="w-10 h-10 rounded-full object-cover"
                   />
