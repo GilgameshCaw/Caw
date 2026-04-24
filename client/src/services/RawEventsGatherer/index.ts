@@ -11,7 +11,8 @@ const Config = z.object({
   chainId:         z.number().int().positive(),
   rpcUrl:          z.string(), // Validated at runtime after env var substitution
   redisUrl:        z.string().optional().default('redis://127.0.0.1:6379'),
-  startBlock:      z.number().int().optional() // If set, never scan earlier than this block
+  startBlock:      z.number().int().optional(), // Manual override — overrides creationBlock
+  clientId:        z.number().int().positive().optional(), // Defaults to CLIENT_ID env var
 })
 
 type Config = z.infer<typeof Config>
@@ -35,6 +36,20 @@ export const rawEventsGathererService: Service = {
     // Prefer environment variable for RPC URL (never commit API keys to config)
     const rpcUrl = process.env.L2_RPC_URL || cfg.rpcUrl
     const { chainId, redisUrl } = cfg
+
+    // Resolve clientId — this instance scopes to one client. Falls through
+    // config → CLIENT_ID env var → default to 1 (legacy single-client
+    // deployments). When multiple instances run, each MUST set their own
+    // clientId so actions don't cross-contaminate.
+    //
+    // Note: Number(undefined) is NaN, and NaN ?? x does NOT fall through
+    // because NaN isn't nullish. Coerce with explicit env.CLIENT_ID check.
+    const envClientIdRaw = process.env.CLIENT_ID
+    const envClientId = envClientIdRaw ? Number(envClientIdRaw) : undefined
+    const clientId = cfg.clientId ?? (envClientId && Number.isFinite(envClientId) ? envClientId : 1)
+    if (!Number.isFinite(clientId) || clientId <= 0) {
+      throw new Error(`RawEventsGatherer: invalid clientId ${clientId}`)
+    }
 
     if (!rpcUrl || rpcUrl.includes('${')) {
       throw new Error('Missing L2_RPC_URL in environment variables')
@@ -143,11 +158,42 @@ export const rawEventsGathererService: Service = {
         }
       }
 
+      // Resolve the fresh-DB start block. Precedence, strongest to weakest:
+      //   1. cfg.startBlock — explicit override in config.json, for
+      //      backfill/repair or short-circuiting history.
+      //   2. Client.creationBlock in DB — canonical "this client was created
+      //      at block N" for the client we're indexing. Populated from
+      //      the CawClientManager's on-chain CawClient struct once the
+      //      struct carries that field (pending a redeploy). For now
+      //      seeded manually via `npx tsx scripts/set-client-creation-block.ts`.
+      //   3. undefined — listenForRawEvents falls back to "current head",
+      //      which is the today-behavior for an unknown client.
+      //
+      // Once a RawEvent lands in the DB, getLastProcessedEvent takes over
+      // and this resolution is never used again. So it only matters on
+      // cold-start of a fresh DB.
+      let resolvedStartBlock: number | undefined = cfg.startBlock
+      if (resolvedStartBlock === undefined) {
+        try {
+          const client = await prisma.client.findUnique({
+            where: { id: clientId },
+            select: { creationBlock: true },
+          })
+          if (client?.creationBlock != null) {
+            resolvedStartBlock = Number(client.creationBlock)
+            console.log(`[RawEventsGatherer] Using Client.creationBlock=${resolvedStartBlock} for clientId=${clientId}`)
+          }
+        } catch (err: any) {
+          console.warn(`[RawEventsGatherer] Failed to read Client.creationBlock: ${err?.message}`)
+        }
+      }
+
       const listener = await listenForRawEvents({
         rpcUrl,
         chainId,
+        clientId,
         contractAddress: CAW_ACTIONS_ADDRESS,
-        startBlock: cfg.startBlock,
+        startBlock: resolvedStartBlock,
         rawEventsProvider: {
           getLastProcessedEvent: getLast,
           storeEvent:            storeAndPublish,

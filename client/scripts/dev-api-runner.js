@@ -3,12 +3,13 @@
  * Watches source files and runs the API server.
  * Restarts on file changes (like nodemon) AND on crashes (unlike nodemon).
  */
-const { spawn } = require('child_process')
+const { spawn, execSync } = require('child_process')
 const { watch } = require('fs')
 const path = require('path')
 
 const SRC_DIR = path.join(__dirname, '..', 'src')
 const FRONTEND_DIR = path.join(SRC_DIR, 'services', 'FrontEnd', 'src')
+const API_PORT = 4000
 const RESTART_DELAY_MS = 3000
 const DEBOUNCE_MS = 500
 
@@ -16,9 +17,30 @@ let child = null
 let restartTimer = null
 let stopping = false
 
+/**
+ * Kill any stale process still holding the API port. Runs before every
+ * spawn so a crash-looping child can't get stuck behind a zombie from a
+ * previous run. Quiet on success (no listeners is the normal case).
+ */
+function killStaleApiListener() {
+  try {
+    const pids = execSync(`lsof -iTCP:${API_PORT} -sTCP:LISTEN -t 2>/dev/null`, {
+      encoding: 'utf8',
+    }).trim()
+    if (pids) {
+      console.log(`[dev-api] Killing stale listener on :${API_PORT} (pid ${pids.replace(/\n/g, ', ')})`)
+      execSync(`echo "${pids}" | xargs kill -9 2>/dev/null`, { stdio: 'ignore' })
+    }
+  } catch {
+    // lsof exits non-zero when no listener is found — fine.
+  }
+}
+
 function startServer() {
   if (stopping) return
   if (child) return // already running
+
+  killStaleApiListener()
 
   console.log('[dev-api] Starting server...')
   child = spawn('node', ['-r', './file-polyfill.js', '-r', 'tsx/cjs', 'programs/start.ts'], {

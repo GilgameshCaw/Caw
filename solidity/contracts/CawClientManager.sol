@@ -14,6 +14,10 @@ struct CawClient {
   uint256 depositFee;
   uint256 mintFee;
   uint256 authFee;
+  // Block at which this client was created, so indexers can scope their
+  // historical event scan to [creationBlock, current] instead of scanning
+  // the entire contract history. Set once in createClient(); never changes.
+  uint256 creationBlock;
 }
 
 /// @notice Replication destination: chain ID + contract address
@@ -162,7 +166,8 @@ contract CawClientManager is Ownable, OnlyOnce {
       withdrawFee: withdrawFee,
       depositFee: depositFee,
       authFee: authFee,
-      mintFee: mintFee
+      mintFee: mintFee,
+      creationBlock: block.number
     });
 
     emit ClientCreated(nextClientId, clients[nextClientId]);

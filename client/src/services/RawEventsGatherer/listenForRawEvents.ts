@@ -46,6 +46,8 @@ export default async function listenForRawEvents(
     rpcUrl: string
     contractAddress: string
     chainId: number
+    /** Scope this indexer to one client; actions for other clients are dropped. */
+    clientId: number
     startBlock?: number // Minimum block to start scanning from (avoids old contract events)
     rawEventsProvider: {
       getLastProcessedEvent(): Promise<{
@@ -129,6 +131,11 @@ export default async function listenForRawEvents(
       const batch: RawEventInput[] = []
       for (let i = 0; i < actions.length; i++) {
         const a = actions[i]
+        // Skip actions for other clients — this instance is scoped to
+        // config.clientId. Do this BEFORE hashNext so the parentHash chain
+        // contains only actions we actually store. Mixing in other clients'
+        // actions would make the chain unverifiable on reindex.
+        if (Number(a.clientId) !== config.clientId) continue
         const action = {
           actionType:      a.actionType,
           senderId:        a.senderId,
@@ -204,6 +211,8 @@ export default async function listenForRawEvents(
           const batch: RawEventInput[] = []
           for (let i = 0; i < wsActions.length; i++) {
             const a = wsActions[i]
+            // Scope to our client — see processEvents() for rationale.
+            if (Number(a.clientId) !== config.clientId) continue
             const action = {
               actionType:      a.actionType,
               senderId:        a.senderId,

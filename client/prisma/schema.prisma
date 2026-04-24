@@ -492,6 +492,14 @@ model Client {
   updatedAt           DateTime @updatedAt
   lastSyncedAt        DateTime?
   lastSyncedBlock     BigInt?
+  // Block at which this client was created on-chain. Used as the L2 indexer's
+  // historical scan lower bound so a fresh DB doesn't replay events from
+  // before this client existed. Nullable for clients created before the
+  // field was added — backend falls back to configured startBlock when null.
+  // Once the on-chain CawClient struct carries this field, ChainSyncService
+  // populates it from the contract. Until then it's manually seeded or
+  // derived from the ClientCreated event block.
+  creationBlock       BigInt?
 
   @@index([ownerAddress])
 }
