@@ -373,18 +373,28 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   const [mediaPosition, setMediaPosition] = useState<'start' | 'end'>('start')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [signingProgress, setSigningProgress] = useState<{ current: number; total: number } | null>(null)
-  const [displayedSigningCurrent, setDisplayedSigningCurrent] = useState(0)
   const signingTotal = signingProgress?.total ?? 0
+  // Refs to the count-up <span>s inside each submit button variant. We write
+  // textContent directly to avoid re-rendering the whole form on every tick —
+  // signing is main-thread heavy, and React reconciliation would starve it.
+  const signingCountRef1 = useRef<HTMLSpanElement | null>(null)
+  const signingCountRef2 = useRef<HTMLSpanElement | null>(null)
   useEffect(() => {
-    if (!signingTotal) { setDisplayedSigningCurrent(0); return }
-    setDisplayedSigningCurrent(1)
-    const id = setInterval(() => {
-      setDisplayedSigningCurrent(prev => {
-        if (prev >= signingTotal) { clearInterval(id); return signingTotal }
-        return prev + 1
-      })
-    }, 25)
-    return () => clearInterval(id)
+    if (!signingTotal) return
+    // Pace the full count-up to roughly 2s regardless of thread length; floor
+    // the per-step interval at 8ms so small threads don't blitz past too fast.
+    const stepMs = Math.min(80, Math.max(8, 2200 / signingTotal))
+    const start = performance.now()
+    let rafId = 0
+    const tick = (now: number) => {
+      const target = Math.min(signingTotal, Math.max(1, Math.floor((now - start) / stepMs)))
+      const text = `${target}`
+      if (signingCountRef1.current) signingCountRef1.current.textContent = text
+      if (signingCountRef2.current) signingCountRef2.current.textContent = text
+      if (target < signingTotal) rafId = requestAnimationFrame(tick)
+    }
+    rafId = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(rafId)
   }, [signingTotal])
   const activeTokenId = useTokenDataStore(state => state.activeTokenId);
   const activeToken = useActiveToken();
@@ -1362,7 +1372,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                     disabled={isDisabled}
                     onClick={handleSubmit}
                   >
-                    {wrongWallet ? 'Wrong Wallet' : signingProgress ? `Signing ${displayedSigningCurrent}/${signingProgress.total}...` : isSubmitting ? 'Signing...' : isThreadMode ? `Thread (${chunkCount})` : replyTo ? 'Reply' : 'Post'}
+                    {wrongWallet ? 'Wrong Wallet' : signingProgress ? <>Signing <span ref={signingCountRef1}>1</span>/{signingProgress.total}...</> : isSubmitting ? 'Signing...' : isThreadMode ? `Thread (${chunkCount})` : replyTo ? 'Reply' : 'Post'}
                   </button>
                 )
                 return tooltipText ? <Tooltip text={tooltipText}>{btn}</Tooltip> : btn
@@ -1729,7 +1739,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                     disabled={isDisabled2}
                     onClick={handleSubmit}
                   >
-                    {wrongWallet2 ? 'Wrong Wallet' : hasNoToken ? 'Create Account' : signingProgress ? `Signing ${displayedSigningCurrent}/${signingProgress.total}...` : isSubmitting ? 'Signing...' : isThreadMode ? `Thread (${chunkCount})` : replyTo ? 'Reply' : 'Post'}
+                    {wrongWallet2 ? 'Wrong Wallet' : hasNoToken ? 'Create Account' : signingProgress ? <>Signing <span ref={signingCountRef2}>1</span>/{signingProgress.total}...</> : isSubmitting ? 'Signing...' : isThreadMode ? `Thread (${chunkCount})` : replyTo ? 'Reply' : 'Post'}
                   </button>
                 )
                 return tooltipText2 ? <Tooltip text={tooltipText2}>{btn2}</Tooltip> : btn2
