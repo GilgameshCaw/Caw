@@ -2060,6 +2060,10 @@ console.log("succeededKeys", succeededKeys)
     // ================================================================
 
     const OPTIMISTIC_ARCHIVE_ADDRESS = CAW_ACTIONS_ARCHIVE_OPTIMISTIC_ADDRESS
+    // One-shot guard so the CLI stake-setup prompt prints once per process,
+    // not every 30s when the replicator loop re-fires.
+    let underStakedWarned = false
+    const ethers_formatStake = (wei: bigint) => (Number(wei) / 1e18).toFixed(4).replace(/0+$/, '').replace(/\.$/, '')
     const CHALLENGE_RELAY_ADDRESS = CAW_CHALLENGE_RELAY_ADDRESS
     const OPTIMISTIC_MIN_STAKE = BigInt('10000000000000000')     // 0.01 ETH
     const OPTIMISTIC_INITIAL_DEPOSIT = BigInt('20000000000000000') // 0.02 ETH
@@ -2322,33 +2326,55 @@ console.log("succeededKeys", succeededKeys)
       try {
         const { archiveRead: archive, archiveWrite: archiveW, l2bWallet: w } = getL2bContracts()
 
-        // 1. Check / ensure stake.
-        //    Auto-restake is OFF BY DEFAULT: a validator whose stake drops
-        //    below MIN_STAKE in live operation was almost certainly slashed
-        //    for fraud, and silently re-depositing just keeps bleeding funds
-        //    while the underlying bug (or compromised key) stays hidden.
-        //    First-time setup needs a one-shot manual deposit — see README.
-        //    Opt in to automatic top-ups by setting AUTO_RESTAKE=true if
-        //    you really want it (e.g. local dev / a known-honest test).
+        // 1. Find clients needing replication FIRST — if none, nothing to do
+        //    and we shouldn't prod the operator about stake either.
+        const clients = await prisma.client.findMany({
+          where: { replicationEnabled: true, replicationCount: { gt: 0 } },
+          select: { id: true }
+        })
+        if (clients.length === 0) return
+
+        // 2. Check stake. Auto-restake is OFF BY DEFAULT: a stake drop during
+        //    live operation almost always means a slash — silently topping
+        //    up bleeds funds while hiding the underlying cause. Opt in with
+        //    AUTO_RESTAKE=true for local dev / known-honest test runs.
+        //
+        //    Under-staked + opt-out: print a clear CLI setup instruction
+        //    ONCE per process lifetime, then skip quietly on subsequent
+        //    cycles so we don't flood logs every 30s.
         const currentStake = BigInt(await archive.stakes(w.address))
         if (currentStake < OPTIMISTIC_MIN_STAKE) {
           if (process.env.AUTO_RESTAKE !== 'true') {
-            console.warn(`[OptimisticReplication] Stake ${currentStake} < MIN_STAKE — skipping deposit (set AUTO_RESTAKE=true to auto-top-up)`)
+            if (!underStakedWarned) {
+              const archiveAddr = OPTIMISTIC_ARCHIVE_ADDRESS
+              const amountEth = (Number(OPTIMISTIC_INITIAL_DEPOSIT) / 1e18).toFixed(2)
+              const role = REPLICATOR_PRIVATE_KEY ? 'REPLICATOR' : 'VALIDATOR'
+              console.warn(
+                `\n` +
+                `┌─ Replication paused: under-staked ─────────────────────┐\n` +
+                `│ Your ${role} wallet (${w.address.slice(0,10)}…) has ${ethers_formatStake(currentStake)} ETH\n` +
+                `│ staked on archive ${archiveAddr.slice(0,10)}…, but the\n` +
+                `│ minimum is ${ethers_formatStake(OPTIMISTIC_MIN_STAKE)} ETH.\n` +
+                `│\n` +
+                `│ To replicate, deposit stake first:\n` +
+                `│   cd client\n` +
+                `│   npx tsx scripts/archive-deposit.ts ${role} ${amountEth}\n` +
+                `│\n` +
+                `│ (or set AUTO_RESTAKE=true to auto-top-up every cycle)\n` +
+                `└────────────────────────────────────────────────────────┘`
+              )
+              underStakedWarned = true
+            }
             return
           }
           console.log(`[OptimisticReplication] Stake ${currentStake} < MIN_STAKE ${OPTIMISTIC_MIN_STAKE}, depositing ${OPTIMISTIC_INITIAL_DEPOSIT}...`)
           const tx = await archiveW.deposit({ value: OPTIMISTIC_INITIAL_DEPOSIT })
           const receipt = await tx.wait()
           console.log(`[OptimisticReplication] Deposited ${OPTIMISTIC_INITIAL_DEPOSIT} wei as stake. tx: ${receipt?.hash}`)
+        } else {
+          // Reset so a future slash can re-trigger the prompt once.
+          underStakedWarned = false
         }
-
-        // 2. Find clients needing replication
-        const clients = await prisma.client.findMany({
-          where: { replicationEnabled: true, replicationCount: { gt: 0 } },
-          select: { id: true }
-        })
-
-        if (clients.length === 0) return
 
         const httpProvider = replicationHttpProvider
         const cawActionsViewAbi = ['function clientActionCount(uint32) view returns (uint256)']
