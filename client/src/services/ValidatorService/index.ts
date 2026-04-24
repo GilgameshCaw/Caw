@@ -2122,6 +2122,13 @@ console.log("succeededKeys", succeededKeys)
     // wallet (so slashed ETH visibly moves to the main validator who challenges)
     // and deliberately commit a bad merkle root so the monitor can catch them.
     const CORRUPT_REPLICATION = process.env.CORRUPT_REPLICATION === 'true'
+    // CORRUPT_MODE selects which fraud class the replicator simulates:
+    //   "A" (default): keep packedActions honest but commit a bad merkleRoot.
+    //       Caught by monitor's Mode-A branch → slashIncoherentRoot.
+    //   "B": corrupt one byte of packedActions and build a root consistent
+    //       with that corruption. Caught by monitor's Mode-B branch →
+    //       resolveChallenge with submitter's claimedHash + proof.
+    const CORRUPT_MODE = (process.env.CORRUPT_MODE || 'A').toUpperCase()
     const REPLICATOR_PRIVATE_KEY = process.env.REPLICATOR_PRIVATE_KEY
 
     function getL2bContracts() {
@@ -2146,7 +2153,7 @@ console.log("succeededKeys", succeededKeys)
       console.log(`[OptimisticReplication] Submitter: ${l2bWallet.address}${REPLICATOR_PRIVATE_KEY ? ' (REPLICATOR test key)' : ''}`)
       console.log(`[OptimisticReplication] Monitor:   ${l2bMonitorWallet.address}`)
       if (CORRUPT_REPLICATION) {
-        console.warn(`[OptimisticReplication] ⚠️  CORRUPT_REPLICATION=true — next submission will commit a bad merkle root`)
+        console.warn(`[OptimisticReplication] ⚠️  CORRUPT_REPLICATION=true CORRUPT_MODE=${CORRUPT_MODE} — next submission will be fraudulent`)
       }
 
       return { l2bProvider, l2bWallet, l2bMonitorWallet, archiveRead, archiveWrite }
@@ -2444,17 +2451,49 @@ console.log("succeededKeys", succeededKeys)
             let { root: merkleRoot } = buildCheckpointMerkleTree(checkpointIds, data.checkpointHashes)
             console.log(`[OptimisticReplication] Merkle root: ${merkleRoot}`)
 
-            // TEST MODE: swap the first checkpoint hash for a deterministic bad
-            // value and rebuild the tree. The merkle proof still verifies, but
-            // resolveChallenge will find claimedHash != correctHash and slash.
-            if (CORRUPT_REPLICATION) {
+            // TEST MODE: introduce a specific kind of fraud so the monitor
+            // exercises the corresponding detection/slash path.
+            if (CORRUPT_REPLICATION && CORRUPT_MODE === 'A') {
+              // Mode A: swap the first checkpoint hash locally and rebuild
+              // the tree, but leave packedActions + r as the honest
+              // L2 values. The committed root no longer derives from the
+              // emitted packedActions → slashIncoherentRoot will catch it.
               const badHashes = [...data.checkpointHashes]
-              // keccak256("CORRUPTED_REPLICATION_FOR_SLASH_TEST") as a hex preimage
-              badHashes[0] = keccak256('0x434f525255505445445f5245504c49434154494f4e5f464f525f534c4153485f54455354')
+              badHashes[0] = keccak256('0x434f525255505445445f5245504c49434154494f4e5f464f525f534c4153485f54455354') // "CORRUPTED_REPLICATION_FOR_SLASH_TEST"
               const corrupted = buildCheckpointMerkleTree(checkpointIds, badHashes)
-              console.warn(`[OptimisticReplication] ⚠️  CORRUPTING: cp ${startCheckpointId} hash ${data.checkpointHashes[0]} → ${badHashes[0]}`)
+              console.warn(`[OptimisticReplication] ⚠️  MODE A CORRUPTION: cp ${startCheckpointId} hash ${data.checkpointHashes[0]} → ${badHashes[0]}`)
               console.warn(`[OptimisticReplication] ⚠️  merkleRoot ${merkleRoot} → ${corrupted.root}`)
               data.checkpointHashes = badHashes
+              merkleRoot = corrupted.root
+            } else if (CORRUPT_REPLICATION && CORRUPT_MODE === 'B') {
+              // Mode B: flip one byte inside packedActions, re-fold the hash
+              // chain, build a root consistent with the corrupted data. The
+              // root IS derivable from packedActions (slashIncoherentRoot
+              // would NOT fire), but individual checkpoint hashes now
+              // diverge from L2's canonical ones → resolveChallenge fires.
+              const badPacked = new Uint8Array(data.packedBytes)
+              // Flip byte at action index 0, offset 1 (senderId's high byte)
+              // within the 25-byte action layout: [type(1)][senderId(4)]...
+              // That change propagates through actionHash → every checkpoint
+              // hash from this point forward differs from L2.
+              const flipOffset = 2 + 1
+              badPacked[flipOffset] = badPacked[flipOffset] ^ 0xff
+              const badActionSlices = getPackedActionSlices(badPacked)
+
+              // Refold to get the corrupt-but-consistent checkpoint hashes.
+              const prevHash = data.entryHash
+              const badCheckpointHashes: string[] = []
+              let h = prevHash
+              for (let i = 0; i < badActionSlices.length; i++) {
+                const actionHash = keccak256(bytesToHex(badActionSlices[i]))
+                h = keccak256(solidityPacked(['bytes32', 'bytes32', 'bytes32'], [h, data.allR[i], actionHash]))
+                if ((i + 1) % OPTIMISTIC_CHECKPOINT_INTERVAL === 0) badCheckpointHashes.push(h)
+              }
+              const corrupted = buildCheckpointMerkleTree(checkpointIds, badCheckpointHashes)
+              console.warn(`[OptimisticReplication] ⚠️  MODE B CORRUPTION: flipped packedBytes[${flipOffset}]`)
+              console.warn(`[OptimisticReplication] ⚠️  merkleRoot ${merkleRoot} → ${corrupted.root}`)
+              data.packedBytes = badPacked
+              data.checkpointHashes = badCheckpointHashes
               merkleRoot = corrupted.root
             }
 
