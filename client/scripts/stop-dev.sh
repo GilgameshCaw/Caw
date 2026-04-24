@@ -6,8 +6,7 @@ set -u
 
 # Processes started directly by our scripts
 pkill -9 -f 'programs/start.ts'        2>/dev/null
-pkill -9 -f 'nodemon'                  2>/dev/null
-pkill -9 -f 'dev-api-runner'           2>/dev/null
+pkill -9 -f 'tsx watch.*programs/start' 2>/dev/null
 pkill -9 -f 'concurrently.*restart'    2>/dev/null
 pkill -9 -f 'vite.*FrontEnd'           2>/dev/null
 pkill -9 -f 'vite.*localhost'          2>/dev/null
