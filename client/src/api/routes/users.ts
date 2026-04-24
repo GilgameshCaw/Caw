@@ -777,7 +777,6 @@ router.patch(
           location: true,
           website: true,
           avatarUrl: true,
-        defaultAvatarId: true,
           defaultAvatarId: true,
           coverPhotoUrl: true,
           profileSource: true,
@@ -966,8 +965,6 @@ router.get('/:username', async (req, res) => {
       tipPending,
       isBlocked,
     }
-
-    console.log(`[users API] ${username}: followerCount=${actualFollowerCount}, followingCount=${actualFollowingCount}`)
 
     return res.json(response)
   } catch (err: any) {

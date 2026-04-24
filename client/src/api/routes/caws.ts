@@ -26,9 +26,7 @@ router.get('/', async (req, res) => {
     const filter      = (req.query.filter as string|undefined)?.toLowerCase()
     const username    = req.query.user    as string|undefined
     const limit       = Math.min(parseInt(req.query.limit as string) || 20, 100)
-    
-    console.log('API Debug - username parameter:', username)
-    
+
     // Fix cursor handling - ignore invalid values like "undefined"
     const cursorParam = req.query.cursor as string | undefined
     const cursor = (cursorParam && cursorParam !== 'undefined' && cursorParam !== 'null')

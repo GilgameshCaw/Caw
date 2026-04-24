@@ -2,7 +2,7 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { getTrendingHashtags, searchHashtags } from '../../tools/hashtags'
-import { shapeCaw, getCawIncludeConfig, handlePagination } from '../shared/cawUtils'
+import { shapeCaw, handlePagination } from '../shared/cawUtils'
 
 const router = Router()
 
@@ -18,8 +18,6 @@ router.get('/:tag/caws', async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit as string) || 20, 100)
     const cursor = req.query.cursor ? { id: Number(req.query.cursor) } : undefined
     const currentUserId = Number(req.header('x-user-id') || 0) || undefined
-
-    console.log(`API Debug - fetching caws for hashtag: ${hashtagName}`)
 
     // Find the hashtag first
     const hashtag = await prisma.hashtag.findUnique({

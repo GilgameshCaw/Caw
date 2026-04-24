@@ -82,7 +82,6 @@ export function shapeCaw(raw: CawRaw | any): ShapedCaw {
   const hasTipped = Boolean(userTip && !userTip.pending) // Only true if confirmed
   const tipPending = userTip?.pending
 
-  console.log(`[shapeCaw ${raw.id}] userRecawOrQuote:`, userRecawOrQuote, 'hasRecawed:', hasRecawed, 'recawPending:', recawPending, 'recawCount:', raw.recawCount)
 
   return {
     id: raw.id.toString(),
