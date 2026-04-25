@@ -191,16 +191,21 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
     //   `#你好`, `#résumé`, `#foo123` all match; `#5` and `$100` are plain text.
     // The lookahead `(?=...*[non-digit]...)` enforces the not-pure-digit rule.
     const tagAlt = `[@#$](?=${TAG_CHAR_CLASS}*[\\p{L}\\p{M}_])${TAG_CHAR_CLASS}+`
+    // Plain URL alt — same shape as PostForm.tsx URL_REGEX. Keeps the
+    // short-URL alt first so e.g. `https://caw.social/s/abc` is captured by
+    // the short-URL branch, not the generic one.
+    const urlAlt = `https?:\\/\\/[^\\s<>"'{}|\\\\^\`\\[\\]]+[^\\s<>"'{}|\\\\^\`\\[\\].,!?;:)\\]]`
     const specialRegex = new RegExp(
-      `((?:https?:\\/\\/[^\\s]+)?\\/s\\/[a-zA-Z0-9]+(?:\\.[a-zA-Z0-9]+)?|${tagAlt})`,
+      `((?:https?:\\/\\/[^\\s]+)?\\/s\\/[a-zA-Z0-9]+(?:\\.[a-zA-Z0-9]+)?|${tagAlt}|${urlAlt})`,
       'gu',
     )
     // Anchored matchers used to confirm a split chunk is *entirely* a tag /
-    // mention — not just text that happens to start with `#` (e.g. `#333 hi`,
-    // which the regex won't capture, but `split()` returns intact as the head
-    // of the parts array).
+    // mention / URL — not just text that happens to start with `#`/`http`
+    // (e.g. `#333 hi` or `https://x.com/foo bar`, which split() returns
+    // intact as the head of the parts array if they don't fully match).
     const isFullMention = new RegExp(`^@${TAG_CHAR_CLASS}+$`, 'u')
     const isFullTag = new RegExp(`^${tagAlt}$`, 'u')
+    const isFullUrl = new RegExp(`^${urlAlt}$`, 'u')
 
     const parts = text.split(specialRegex)
 
@@ -214,6 +219,22 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
         if (isMediaShortUrl(code) || isVideoShortUrl(code)) return part
         return (
           <ShortUrlLink key={`${keyPrefix}-${index}`} code={code} shortHref={shortHref} />
+        )
+      }
+
+      // Check if this is a plain http(s) URL
+      if (isFullUrl.test(part)) {
+        return (
+          <a
+            key={`${keyPrefix}-${index}`}
+            href={part}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className={`${linkClass} hover:underline break-all`}
+          >
+            {part}
+          </a>
         )
       }
 
