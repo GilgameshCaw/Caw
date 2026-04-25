@@ -184,6 +184,30 @@ router.get('/bids/:address', async (req, res) => {
 })
 
 /**
+ * GET /api/marketplace/refunds/:address
+ * Bids whose escrowed funds are claimable by the given address: anything in
+ * OUTBID status (covers both "outbid by a higher bid" and "auction was
+ * cancelled / reclaimed", since BidReclaimed maps the indexer status the
+ * same way). The frontend should treat this as a list of *candidate*
+ * refunds and confirm the actual amount on-chain via pendingReturns(...)
+ * before showing UI numbers — chain is the source of truth.
+ */
+router.get('/refunds/:address', async (req, res) => {
+  try {
+    const address = req.params.address.toLowerCase()
+    const bids = await prisma.marketplaceBid.findMany({
+      where: { bidder: address, status: 'OUTBID' },
+      orderBy: { createdAt: 'desc' },
+      include: { listing: true },
+    })
+    res.json({ bids })
+  } catch (err: any) {
+    console.error('[marketplace] refunds error:', err)
+    res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+/**
  * POST /api/marketplace/listings/:id/sold
  * Optimistically mark a listing as sold after a successful buy tx.
  * The indexer will confirm it later with the actual Sale event.

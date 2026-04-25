@@ -22,6 +22,7 @@ const MARKETPLACE_ABI = [
   'event Sale(uint256 indexed listingId, uint32 indexed tokenId, address buyer, uint256 price, address paymentToken)',
   'event BidPlaced(uint256 indexed listingId, address bidder, uint256 amount)',
   'event BidWithdrawn(uint256 indexed listingId, address bidder, uint256 amount)',
+  'event BidReclaimed(uint256 indexed listingId, address bidder, uint256 amount)',
   'event ListingCancelled(uint256 indexed listingId)',
   'event AuctionSettled(uint256 indexed listingId, address winner, uint256 price)',
   'event OfferCreated(uint256 indexed offerId, uint32 indexed tokenId, address offerer, address paymentToken, uint256 amount, uint64 expiry)',
@@ -106,6 +107,7 @@ export const marketplaceIndexerService: Service = {
           const saleFilter = marketplace.filters.Sale()
           const bidFilter = marketplace.filters.BidPlaced()
           const bidWithdrawnFilter = marketplace.filters.BidWithdrawn()
+          const bidReclaimedFilter = marketplace.filters.BidReclaimed()
           const cancelledFilter = marketplace.filters.ListingCancelled()
           const settledFilter = marketplace.filters.AuctionSettled()
           const offerCreatedFilter = marketplace.filters.OfferCreated()
@@ -122,14 +124,15 @@ export const marketplaceIndexerService: Service = {
           const sales = await marketplace.queryFilter(saleFilter, fromBlock, toBlock)
           const bids = await marketplace.queryFilter(bidFilter, fromBlock, toBlock)
           const bidWithdrawals = await marketplace.queryFilter(bidWithdrawnFilter, fromBlock, toBlock)
+          const bidReclaimed = await marketplace.queryFilter(bidReclaimedFilter, fromBlock, toBlock)
           const cancelled = await marketplace.queryFilter(cancelledFilter, fromBlock, toBlock)
           const settled = await marketplace.queryFilter(settledFilter, fromBlock, toBlock)
           const offersCreated = await marketplace.queryFilter(offerCreatedFilter, fromBlock, toBlock)
           const offersAccepted = await marketplace.queryFilter(offerAcceptedFilter, fromBlock, toBlock)
           const offersCancelled = await marketplace.queryFilter(offerCancelledFilter, fromBlock, toBlock)
 
-          if (listed.length || sales.length || bids.length || cancelled.length || settled.length || offersCreated.length || offersAccepted.length || offersCancelled.length) {
-            console.log(`[MarketplaceIndexer] Found events: ${listed.length} listed, ${sales.length} sales, ${bids.length} bids, ${cancelled.length} cancelled, ${settled.length} settled, ${offersCreated.length} offers created, ${offersAccepted.length} offers accepted, ${offersCancelled.length} offers cancelled`)
+          if (listed.length || sales.length || bids.length || bidWithdrawals.length || bidReclaimed.length || cancelled.length || settled.length || offersCreated.length || offersAccepted.length || offersCancelled.length) {
+            console.log(`[MarketplaceIndexer] Found events: ${listed.length} listed, ${sales.length} sales, ${bids.length} bids, ${bidWithdrawals.length} bid-withdrawn, ${bidReclaimed.length} bid-reclaimed, ${cancelled.length} cancelled, ${settled.length} settled, ${offersCreated.length} offers created, ${offersAccepted.length} offers accepted, ${offersCancelled.length} offers cancelled`)
           }
 
           // Process Listed events
@@ -294,6 +297,28 @@ export const marketplaceIndexerService: Service = {
               await prisma.marketplaceBid.updateMany({
                 where: { listingId: listing.id, bidder, status: 'OUTBID' },
                 data: { status: 'WITHDRAWN' },
+              })
+            }
+          }
+
+          // Process BidReclaimed events. The contract emits this when an English
+          // auction is cancelled by the seller or reclaimed by anyone after the
+          // seller transferred the NFT away — in both cases the highest bidder's
+          // funds are credited via the pull-pattern (see CawProfileMarketplace
+          // pendingReturns) and become claimable via withdrawBid. Mark the bid
+          // as OUTBID so it shows up in the user's claimable-refunds list,
+          // which is the same UX as a bid that was outbid by a higher one.
+          for (const event of bidReclaimed) {
+            const ev = event as ethers.EventLog
+            const args = ev.args
+            const onChainListingId = Number(args[0])
+            const bidder = args[1].toLowerCase()
+
+            const listing = await prisma.marketplaceListing.findUnique({ where: { listingId: onChainListingId } })
+            if (listing) {
+              await prisma.marketplaceBid.updateMany({
+                where: { listingId: listing.id, bidder, status: 'ACTIVE' },
+                data: { status: 'OUTBID' },
               })
             }
           }
