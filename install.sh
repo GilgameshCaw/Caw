@@ -22,12 +22,15 @@
 set -euo pipefail
 
 # ---------- Colors -----------------------------------------------------------
+# ANSI-C quoting ($'...') so the escape bytes are real, not the literal string
+# "\033[1;33m". This lets us use the vars inside `cat` heredocs without needing
+# echo -e / printf for every line.
 
-GOLD='\033[1;33m'
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-DIM='\033[2m'
-RESET='\033[0m'
+GOLD=$'\033[1;33m'
+GREEN=$'\033[0;32m'
+RED=$'\033[0;31m'
+DIM=$'\033[2m'
+RESET=$'\033[0m'
 
 log()  { echo -e "  $*"; }
 ok()   { echo -e "  ${GREEN}✓${RESET} $*"; }
