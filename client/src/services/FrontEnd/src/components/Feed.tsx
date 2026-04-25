@@ -626,30 +626,90 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
               })
               .filter(p => !confirmedSigs.has(sig(p)))
           : []
-        const parentOf = (p: any) => p.replyToId || p.parent?.id
-        // Group pending replies by the parent id that lives in this feed
-        const pendingRepliesByParent = new Map<string, any[]>()
+
+        // Build maps so a pending reply can find its pending parent (within
+        // the same thread submission). replyToId points at the parent's
+        // tempId; once the parent confirms, its id swaps to the real DB id
+        // but tempId stays — so we keep tempId as the key.
+        const pendingByTempId = new Map<string, any>()
+        for (const p of visiblePending) {
+          if (p.tempId) pendingByTempId.set(p.tempId, p)
+        }
+
+        // Resolve a pending parent reference (tempId in replyToId) against
+        // the confirmed feed when the parent has since confirmed. We match
+        // on (cawonce, tokenId) — a stable identity that survives the
+        // pending→confirmed swap. Without this, 2/2 lands in pendingAtTop
+        // while 1/2 sits in filteredItems, and the user sees them inverted.
+        const confirmedIdByCawonce = new Map<string, string>()
+        for (const c of filteredItems) {
+          if (c.cawonce != null && c.user?.tokenId != null) {
+            confirmedIdByCawonce.set(`${c.user.tokenId}:${c.cawonce}`, c.id)
+          }
+        }
+        const resolveParent = (p: any): { kind: 'confirmed' | 'pending' | 'none', id?: string } => {
+          const pid = p.replyToId || p.parent?.id
+          if (!pid) return { kind: 'none' }
+          if (feedIds.has(pid)) return { kind: 'confirmed', id: pid }
+          if (pendingByTempId.has(pid)) return { kind: 'pending', id: pid }
+          // replyToId is a tempId of a parent that's no longer pending —
+          // try to match it to a confirmed item via the parent CawItem we
+          // captured at compose time (carries the real cawonce).
+          const parentCawonce = p.parent?.cawonce
+          const parentTokenId = p.parent?.user?.tokenId
+          if (parentCawonce != null && parentTokenId != null) {
+            const realId = confirmedIdByCawonce.get(`${parentTokenId}:${parentCawonce}`)
+            if (realId) return { kind: 'confirmed', id: realId }
+          }
+          return { kind: 'none' }
+        }
+
+        // Group pending replies by their parent. A parent can be (a) a
+        // confirmed item already in the feed, or (b) another pending post
+        // submitted moments earlier in the same thread.
+        const pendingRepliesByConfirmedParent = new Map<string, any[]>()
+        const pendingRepliesByPendingParent = new Map<string, any[]>()
         const pendingAtTop: any[] = []
         for (const p of visiblePending) {
-          const pid = parentOf(p)
-          if (pid && feedIds.has(pid)) {
-            const arr = pendingRepliesByParent.get(pid) || []
+          const r = resolveParent(p)
+          if (r.kind === 'none') {
+            pendingAtTop.push(p)
+          } else if (r.kind === 'confirmed') {
+            const arr = pendingRepliesByConfirmedParent.get(r.id!) || []
             arr.push(p)
-            pendingRepliesByParent.set(pid, arr)
-          } else if (!pid) {
-            // Top-level pending post
-            pendingAtTop.push(p)
+            pendingRepliesByConfirmedParent.set(r.id!, arr)
           } else {
-            // Reply whose parent isn't visible — keep legacy behavior, show at top
-            pendingAtTop.push(p)
+            const arr = pendingRepliesByPendingParent.get(r.id!) || []
+            arr.push(p)
+            pendingRepliesByPendingParent.set(r.id!, arr)
           }
         }
 
+        // Build the at-top render list. Each "root" pending post (in
+        // pendingAtTop) carries its own inline pending replies if any.
+        // pendingPosts is stored newest-first, so reverse to get submission
+        // order (1/N appears above 2/N). That also stops a 2-post thread from
+        // showing 2/2 above 1/2 before any confirmation arrives.
+        const renderPendingAtTop = [...pendingAtTop].reverse()
+        // Children of pending parents — sort oldest-first within each group.
+        const sortPendingChildren = (arr: any[]) =>
+          [...arr].sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''))
+
         return (
           <>
-            {pendingAtTop.map(post => (
-              <FeedItem key={post.tempId} item={post as CawItem} />
-            ))}
+            {renderPendingAtTop.map(post => {
+              const inlineUnderPending = sortPendingChildren(
+                pendingRepliesByPendingParent.get(post.tempId) || []
+              )
+              return (
+                <React.Fragment key={post.tempId}>
+                  <FeedItem item={post as CawItem} />
+                  {inlineUnderPending.map(child => (
+                    <FeedItem key={child.tempId} item={child as CawItem} hideParentPreview />
+                  ))}
+                </React.Fragment>
+              )
+            })}
 
             {/* Posts with consistent styling across all pages */}
             {filteredItems.map((caw, idx) => {
@@ -665,7 +725,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
                 caw.parent.id === prevItem.parent.id
               )
               const hidePreview = parentIsAbove || sameParentAsPrev
-              const inlinePending = pendingRepliesByParent.get(caw.id) || []
+              const inlinePending = pendingRepliesByConfirmedParent.get(caw.id) || []
               const inlinePinned = pinnedInlineByParent.get(caw.id) || []
               return (
                 <React.Fragment key={caw.id}>
