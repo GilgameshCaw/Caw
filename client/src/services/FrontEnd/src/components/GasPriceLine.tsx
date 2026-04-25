@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { formatNumber } from "~/utils";
 import GasIcon from "~/assets/images/gas.svg?react";
+import { usePriceStore } from "~/store/tokenDataStore";
 
 interface GasPriceLineProps {
   gas?: number;
@@ -9,15 +10,14 @@ interface GasPriceLineProps {
 }
 
 export const GasPriceLine: React.FC<GasPriceLineProps> = ({ label, gas = 0, className = "" }) => {
-  // TODO: get real price
-  // TODO: get real price
-  // TODO: get real price
-  const ethPrice = 1
+  // ETH price comes from ChainSyncService via /api/prices (refetched every 5min).
+  // useFetchPrices runs at the app root and writes into usePriceStore on success.
+  const ethPrice = usePriceStore(s => s.priceMap['ethereum']) ?? 0;
   const [gasUSD, setGasUSD] = useState<string>();
   const [isLoading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (gas) {
+    if (gas && ethPrice) {
       const usd = formatNumber(gas * ethPrice);
       setGasUSD(usd);
       setLoading(false);

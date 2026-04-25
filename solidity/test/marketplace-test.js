@@ -349,12 +349,9 @@ contract("CawProfileMarketplace", (accounts) => {
       );
     });
 
-    it("should not allow seller to cancel with bids", async () => {
-      await expectRevert(
-        marketplace.cancelListing(auctionListingId, { from: seller }),
-        "Cannot cancel auction with bids"
-      );
-    });
+    // Cancel-with-bids semantics tested in the Cancellation describe block below
+    // (requires a fresh token to avoid breaking the settle-after-deadline test
+    // sequence in this block).
 
     it("should settle auction after deadline", async () => {
       // Advance past end
@@ -403,6 +400,32 @@ contract("CawProfileMarketplace", (accounts) => {
 
       const tx = await marketplace.cancelListing(lid, { from: seller });
       truffleAssert.eventEmitted(tx, 'ListingCancelled');
+    });
+
+    it("should allow cancelling English auction WITH bids and refund the bidder", async () => {
+      // Create a fresh auction on tokenId2, place a bid, then have the seller cancel.
+      // Bidder must receive their full bid back; listing must become inactive.
+      // This is the proactive equivalent of reclaimBid — no NFT-transfer workaround needed.
+      const minBid = web3.utils.toWei("0.5", "ether");
+      await marketplace.createListing(
+        tokenId2, 2, "0x0000000000000000000000000000000000000000",
+        minBid, 0, 3600, { from: seller }
+      );
+      const lid = (await marketplace.nextListingId()).toNumber() - 1;
+
+      const bidAmount = web3.utils.toWei("0.6", "ether");
+      await marketplace.placeBid(lid, { from: bidder1, value: bidAmount });
+
+      const bidderBalBefore = BigInt(await web3.eth.getBalance(bidder1));
+      const tx = await marketplace.cancelListing(lid, { from: seller });
+      truffleAssert.eventEmitted(tx, 'BidReclaimed');
+      truffleAssert.eventEmitted(tx, 'ListingCancelled');
+
+      const bidderBalAfter = BigInt(await web3.eth.getBalance(bidder1));
+      assert.equal((bidderBalAfter - bidderBalBefore).toString(), BigInt(bidAmount).toString());
+
+      const listing = await marketplace.listings(lid);
+      assert.equal(listing.active, false);
     });
 
     it("should not allow non-seller to cancel", async () => {

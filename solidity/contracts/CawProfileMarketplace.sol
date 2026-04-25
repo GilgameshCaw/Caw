@@ -146,17 +146,33 @@ contract CawProfileMarketplace is ReentrancyGuard, Ownable {
      * @notice Cancel an active listing.
      *         English auctions can only be cancelled if there are no bids.
      */
+    /// @notice Cancel a listing. Seller-only. If the listing is an English auction
+    ///         with an active highest bidder, that bidder is refunded automatically —
+    ///         the seller doesn't need to transfer the NFT away to undo the auction
+    ///         (the previous workaround). Outbid bidders' pull-pattern balances in
+    ///         pendingReturns are not touched and remain claimable via withdrawBid.
     function cancelListing(uint256 listingId) external nonReentrant {
         Listing storage listing = listings[listingId];
         require(listing.active, "Listing not active");
         require(listing.seller == msg.sender, "Not seller");
 
-        if (listing.listingType == ListingType.ENGLISH_AUCTION) {
-            require(listing.highestBidder == address(0), "Cannot cancel auction with bids");
-        }
-
         listing.active = false;
         listingByTokenId[listing.tokenId] = 0;
+
+        if (
+            listing.listingType == ListingType.ENGLISH_AUCTION
+            && listing.highestBidder != address(0)
+        ) {
+            address bidder = listing.highestBidder;
+            uint256 amount = listing.highestBid;
+            if (listing.paymentToken == address(0)) {
+                (bool sent,) = bidder.call{value: amount}("");
+                require(sent, "ETH refund failed");
+            } else {
+                IERC20(listing.paymentToken).safeTransfer(bidder, amount);
+            }
+            emit BidReclaimed(listingId, bidder, amount);
+        }
 
         emit ListingCancelled(listingId);
     }
