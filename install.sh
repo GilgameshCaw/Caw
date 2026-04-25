@@ -101,6 +101,43 @@ if [[ $EUID -ne 0 ]]; then
   exec sudo -E bash "$0" "$@"
 fi
 
+# ---------- Host capability check --------------------------------------------
+#
+# A full node runs ES (512MB heap), Postgres, Redis, Node + pm2, and an nginx
+# build of the React app. ~3.5GB of working set + headroom — we recommend 4GB
+# RAM minimum, 8GB for comfortable margin. Two cores. 25GB disk for the OS,
+# packages, repo, and DB growth.
+#
+# Below minimum, warn and prompt to continue. Above minimum, silently note
+# the available headroom so anyone reading the install log knows what we saw.
+
+ram_gb=$(awk '/MemTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo)
+cores=$(nproc 2>/dev/null || echo 1)
+disk_gb=$(df -BG --output=avail / 2>/dev/null | tail -1 | tr -dc '0-9')
+
+log "Detected: ${ram_gb} GB RAM, ${cores} cores, ${disk_gb:-?} GB free on /"
+
+low=()
+[[ "${ram_gb:-0}" -lt 4 ]]   && low+=("RAM (${ram_gb} GB; recommended 4+)")
+[[ "${cores:-0}" -lt 2 ]]    && low+=("CPU cores (${cores}; recommended 2+)")
+[[ "${disk_gb:-99}" -lt 20 ]] && low+=("free disk (${disk_gb} GB; recommended 20+)")
+
+if (( ${#low[@]} > 0 )); then
+  warn "This host is below recommended specs:"
+  for item in "${low[@]}"; do warn "  • $item"; done
+  warn "Install will likely succeed but ES may OOM and the frontend build may swap."
+  if [[ -t 0 ]] || [[ -r /dev/tty ]]; then
+    if [[ -t 0 ]]; then
+      read -r -p "  Continue anyway? [y/N]: " ans
+    else
+      read -r -p "  Continue anyway? [y/N]: " ans < /dev/tty
+    fi
+    [[ "${ans:-N}" =~ ^[Yy]$ ]] || { err "Aborting."; exit 1; }
+  else
+    warn "No tty — proceeding anyway (set SKIP_HOST_CHECK=1 to silence)."
+  fi
+fi
+
 # ---------- Defaults ---------------------------------------------------------
 
 CAW_REPO="${CAW_REPO:-https://github.com/GilgameshCaw/Caw.git}"
@@ -280,6 +317,13 @@ else
 fi
 
 # ---------- Step 2: Configure Elasticsearch ----------------------------------
+#
+# Only configure ES when the operator picked native install AND didn't override
+# the URL. Docker users get ES from a container; "existing" users have their
+# own ES somewhere else.
+if [[ "$CAW_INFRA_MODE" != "native" || -n "${CAW_ES_URL:-}" ]]; then
+  log "Skipping Elasticsearch config (infra mode: ${CAW_INFRA_MODE})"
+else
 
 step "Configuring Elasticsearch (localhost-only, no auth, 512MB heap)"
 
@@ -333,6 +377,8 @@ systemctl enable elasticsearch >/dev/null 2>&1
 quiet "Starting Elasticsearch" systemctl restart elasticsearch
 ok "Elasticsearch configured"
 
+fi  # end native ES config
+
 # ---------- Step 3: Firewall -------------------------------------------------
 
 step "Configuring firewall"
@@ -380,21 +426,25 @@ fi
 ok "Repo at ${CAW_DIR}"
 
 # ---------- Step 6: Wait for Postgres ----------------------------------------
-
-# postgresql.service exits 0 immediately as a meta-target; the cluster is in
-# postgresql@16-main. Don't proceed until pg_isready agrees the server is up.
-step "Waiting for PostgreSQL"
-for i in {1..30}; do
-  if sudo -u postgres pg_isready -q; then
-    ok "PostgreSQL ready"
-    break
-  fi
-  sleep 1
-  if [[ $i -eq 30 ]]; then
-    err "PostgreSQL didn't come up — check 'systemctl status postgresql@*'"
-    exit 1
-  fi
-done
+#
+# Only run this when we installed PG natively. Docker / existing handle their
+# own readiness — the Node CLI's prisma push will retry / surface errors.
+if [[ "$CAW_INFRA_MODE" == "native" && -z "${CAW_DB_URL:-}" ]]; then
+  # postgresql.service exits 0 immediately as a meta-target; the cluster is in
+  # postgresql@16-main. Don't proceed until pg_isready agrees the server is up.
+  step "Waiting for PostgreSQL"
+  for i in {1..30}; do
+    if sudo -u postgres pg_isready -q; then
+      ok "PostgreSQL ready"
+      break
+    fi
+    sleep 1
+    if [[ $i -eq 30 ]]; then
+      err "PostgreSQL didn't come up — check 'systemctl status postgresql@*'"
+      exit 1
+    fi
+  done
+fi
 
 # ---------- Step 7: Install CLI deps + hand off ------------------------------
 
@@ -405,7 +455,81 @@ sudo -u "$CAW_USER" -H bash -c "cd '$CAW_DIR/cli' && npm install --silent" \
 
 ok "CLI ready"
 
-# ---------- Step 8: Run the interactive installer ----------------------------
+# ---------- Step 8: TLS certificate (own-cert path) --------------------------
+#
+# Find or wait for the operator's TLS files. The Node CLI's nginx step will
+# pick a TLS source (LE / wildcard / own-cert), but if we can pre-resolve
+# files here, we set CAW_CERT_PATH / CAW_KEY_PATH and the CLI skips the
+# prompt entirely.
+#
+# Three precedence rules:
+#   1. CAW_CERT_PATH + CAW_KEY_PATH already set → trust them.
+#   2. /etc/ssl/<domain>/{fullchain.pem,<domain>.key} exists → use directly.
+#   3. /etc/ssl/<parent-domain>/ wildcard exists → symlink and use.
+#   4. Else prompt: scp the files now, press Enter, re-check.
+
+if [[ -n "${CAW_DOMAIN:-}" && "${CAW_TLS_MODE:-}" != "skip" ]]; then
+  step "TLS certificate"
+
+  domain_dir="/etc/ssl/${CAW_DOMAIN}"
+  parent_domain="${CAW_DOMAIN#*.}"
+  parent_dir="/etc/ssl/${parent_domain}"
+
+  if [[ -z "${CAW_CERT_PATH:-}" || ! -f "${CAW_CERT_PATH}" ]]; then
+    if [[ -f "${domain_dir}/fullchain.pem" ]]; then
+      CAW_CERT_PATH="${domain_dir}/fullchain.pem"
+    elif [[ "$parent_domain" != "$CAW_DOMAIN" && -f "${parent_dir}/fullchain.pem" ]]; then
+      CAW_CERT_PATH="${parent_dir}/fullchain.pem"
+      log "Using wildcard cert from ${parent_dir}/"
+    fi
+  fi
+  if [[ -z "${CAW_KEY_PATH:-}" || ! -f "${CAW_KEY_PATH}" ]]; then
+    for candidate in \
+      "${domain_dir}/${CAW_DOMAIN}.key" \
+      "${domain_dir}/privkey.pem" \
+      "${parent_dir}/${parent_domain}.key" \
+      "${parent_dir}/privkey.pem"; do
+      [[ -f "$candidate" ]] && { CAW_KEY_PATH="$candidate"; break; }
+    done
+  fi
+
+  # Still missing? Wait for the user to scp the files in.
+  if [[ -z "${CAW_CERT_PATH:-}" || -z "${CAW_KEY_PATH:-}" || ! -f "${CAW_CERT_PATH}" || ! -f "${CAW_KEY_PATH}" ]]; then
+    mkdir -p "$domain_dir"
+    chmod 700 "$domain_dir"
+    echo
+    log "No TLS files found for ${CAW_DOMAIN}."
+    log "From your local machine, copy your cert + key onto this server:"
+    echo
+    echo -e "  ${GOLD}scp fullchain.pem your-key.key root@$(hostname -I | awk '{print $1}'):${domain_dir}/${RESET}"
+    echo
+    log "Or use ${parent_dir}/ if you have a wildcard for *.${parent_domain}."
+    log "(If you'd rather the CLI handle TLS — Let's Encrypt or skip — just press Enter; the CLI will ask.)"
+    echo
+    if [[ -t 0 ]]; then
+      read -r -p "  Press Enter when ready (or skip): " _
+    elif [[ -r /dev/tty ]]; then
+      read -r -p "  Press Enter when ready (or skip): " _ < /dev/tty
+    fi
+    # Re-check after the wait
+    [[ -f "${domain_dir}/fullchain.pem" ]] && CAW_CERT_PATH="${domain_dir}/fullchain.pem"
+    for candidate in "${domain_dir}/${CAW_DOMAIN}.key" "${domain_dir}/privkey.pem"; do
+      [[ -f "$candidate" ]] && { CAW_KEY_PATH="$candidate"; break; }
+    done
+  fi
+
+  if [[ -n "${CAW_CERT_PATH:-}" && -f "${CAW_CERT_PATH}" ]]; then
+    chmod 644 "${CAW_CERT_PATH}" 2>/dev/null || true
+    [[ -n "${CAW_KEY_PATH:-}" && -f "${CAW_KEY_PATH}" ]] && chmod 600 "${CAW_KEY_PATH}" 2>/dev/null || true
+    ok "Cert: ${CAW_CERT_PATH}"
+    ok "Key:  ${CAW_KEY_PATH}"
+    export CAW_CERT_PATH CAW_KEY_PATH
+  else
+    log "(No cert resolved — the CLI will offer Let's Encrypt or own-cert prompts.)"
+  fi
+fi
+
+# ---------- Step 9: Run the interactive installer ----------------------------
 
 # The Node CLI from here on. It collects RPC URLs, validator config, infra
 # choices, etc., writes the env files + pm2 ecosystem, runs prisma migrations,
@@ -416,8 +540,17 @@ echo -e "${GOLD}▸${RESET} Handing off to the interactive installer..."
 echo
 
 cd "$CAW_DIR"
-# CAW_DOMAIN is consumed by infrastructure.js as the default for the domain
-# prompt. sudo strips most env by default, so pass it explicitly.
+# Forward env into the sudo'd Node process. sudo strips env by default, so
+# we pass each var explicitly. CAW_DOMAIN is consumed by infrastructure.js as
+# the default for the domain prompt. CAW_INFRA_MODE / CAW_*_URL drive the infra
+# branching. CAW_CERT_PATH / CAW_KEY_PATH let the nginx step skip its prompt.
 exec sudo -u "$CAW_USER" -H \
   CAW_DOMAIN="${CAW_DOMAIN:-}" \
+  CAW_INFRA_MODE="${CAW_INFRA_MODE:-native}" \
+  CAW_DB_URL="${CAW_DB_URL:-}" \
+  CAW_REDIS_URL="${CAW_REDIS_URL:-}" \
+  CAW_ES_URL="${CAW_ES_URL:-}" \
+  CAW_CERT_PATH="${CAW_CERT_PATH:-}" \
+  CAW_KEY_PATH="${CAW_KEY_PATH:-}" \
+  CAW_API_PORT="${CAW_API_PORT:-}" \
   node "$CAW_DIR/cli/bin/caw.js" install --dir "$CAW_DIR"

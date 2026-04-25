@@ -6,69 +6,63 @@ export async function collectInfraConfig(nodeType) {
     return collectFrontendOnlyConfig()
   }
 
-  section('Infrastructure')
+  // Infra mode is set by install.sh before we run; we just honor it here.
+  // Map the shell's three modes into the legacy `useDocker` value the rest
+  // of the CLI passes around.
+  //   native   → 'local'   — apt-installed services on 127.0.0.1, defaults are right
+  //   docker   → 'docker'  — write docker-compose, prompt for a db password
+  //   existing → 'existing' — collect URLs (or honor pre-set env vars)
+  const infraMode = process.env.CAW_INFRA_MODE || 'native'
+  const useDocker = infraMode === 'native' ? 'local' : infraMode
 
-  // Database
-  tipBlock([
-    'CAW uses PostgreSQL for data storage and Redis for caching/pub-sub.',
-    'You can use Docker (recommended) or connect to existing instances.',
-  ])
+  let dbUrl = process.env.CAW_DB_URL || 'postgresql://postgres:postgres@127.0.0.1:5432/caw'
+  let redisUrl = process.env.CAW_REDIS_URL || 'redis://127.0.0.1:6379'
+  let elasticsearchNode = process.env.CAW_ES_URL || 'http://127.0.0.1:9200'
 
-  const { useDocker } = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'useDocker',
-      message: 'How do you want to run PostgreSQL and Redis?',
-      choices: [
-        { value: 'docker', name: `${brand('Docker Compose')} ${dim('(recommended — handles everything)')}` },
-        { value: 'existing', name: 'Connect to existing instances' },
-        { value: 'local', name: `Local installs ${dim('(already installed on this machine)')}` }
-      ]
-    }
-  ])
-
-  let dbUrl = 'postgresql://postgres:postgres@127.0.0.1:5432/caw'
-  let redisUrl = 'redis://127.0.0.1:6379'
-  let elasticsearchNode = 'http://127.0.0.1:9200'
-
-  if (useDocker === 'docker') {
+  if (infraMode === 'docker' && !process.env.CAW_DB_URL) {
+    section('Database password')
     const { dbPassword } = await inquirer.prompt([
       {
         type: 'password',
         name: 'dbPassword',
         message: `PostgreSQL password ${dim('(for the Docker container)')}:`,
         default: 'caw_' + Math.random().toString(36).slice(2, 10),
-        mask: '*'
-      }
+        mask: '*',
+      },
     ])
     dbUrl = `postgresql://postgres:${dbPassword}@127.0.0.1:5432/caw`
-  } else if (useDocker === 'existing') {
-    const answers = await inquirer.prompt([
-      {
-        type: 'input',
-        name: 'dbUrl',
-        message: 'PostgreSQL connection URL:',
-        default: dbUrl,
-        validate: (input) => input.startsWith('postgresql://') ? true : 'Must be a PostgreSQL URL'
-      },
-      {
-        type: 'input',
-        name: 'redisUrl',
-        message: 'Redis connection URL:',
-        default: redisUrl,
-        validate: (input) => input.startsWith('redis://') ? true : 'Must be a Redis URL'
-      },
-      {
-        type: 'input',
-        name: 'elasticsearchNode',
-        message: `Elasticsearch URL ${dim('(search is optional — leave default if unsure)')}:`,
-        default: elasticsearchNode,
-        validate: (input) => /^https?:\/\//.test(input) ? true : 'Must start with http:// or https://'
-      }
+  } else if (infraMode === 'existing') {
+    section('Existing services')
+    tipBlock([
+      'You picked "connect to existing services". Provide URLs for each.',
+      'Set CAW_DB_URL / CAW_REDIS_URL / CAW_ES_URL in the env to skip these',
+      'prompts in future runs.',
     ])
-    dbUrl = answers.dbUrl
-    redisUrl = answers.redisUrl
-    elasticsearchNode = answers.elasticsearchNode
+    const prompts = []
+    if (!process.env.CAW_DB_URL) prompts.push({
+      type: 'input', name: 'dbUrl',
+      message: 'PostgreSQL connection URL:',
+      default: dbUrl,
+      validate: (input) => input.startsWith('postgresql://') ? true : 'Must be a PostgreSQL URL',
+    })
+    if (!process.env.CAW_REDIS_URL) prompts.push({
+      type: 'input', name: 'redisUrl',
+      message: 'Redis connection URL:',
+      default: redisUrl,
+      validate: (input) => input.startsWith('redis://') ? true : 'Must be a Redis URL',
+    })
+    if (!process.env.CAW_ES_URL) prompts.push({
+      type: 'input', name: 'elasticsearchNode',
+      message: `Elasticsearch URL ${dim('(optional — search degrades gracefully if unreachable)')}:`,
+      default: elasticsearchNode,
+      validate: (input) => /^https?:\/\//.test(input) ? true : 'Must start with http:// or https://',
+    })
+    if (prompts.length) {
+      const answers = await inquirer.prompt(prompts)
+      if (answers.dbUrl) dbUrl = answers.dbUrl
+      if (answers.redisUrl) redisUrl = answers.redisUrl
+      if (answers.elasticsearchNode) elasticsearchNode = answers.elasticsearchNode
+    }
   }
 
   // Domain (for nodes that serve HTTP). install.sh asks for the domain
@@ -118,37 +112,46 @@ export async function collectInfraConfig(nodeType) {
     adminPassword = adminPw
   }
 
-  // Client ID
+  // Client ID. Each clientId on-chain scopes a separate sub-network: only
+  // posts attributed to that client are visible to its users, and the client
+  // owner controls the fees (mint, auth, deposit, withdraw) charged on-chain.
+  // Most operators want to join the public network (clientId 1). Creating a
+  // new client requires sending an on-chain tx — we don't do that from the
+  // installer; we link to docs.
   let clientId = 1
 
   if (['full', 'frontend-api'].includes(nodeType)) {
+    section('Client ID')
     tipBlock([
-      'Each CAW frontend has a client ID registered on-chain.',
-      'This identifies your frontend to the protocol.',
-      'If you don\'t have one yet, use ID 1 (default/shared client) for now.',
+      'Each CAW frontend is registered on-chain under a clientId.',
+      '',
+      `${brand('What does it do?')}`,
+      '  • Scopes a sub-network: users on your frontend see posts attributed',
+      '    to your clientId. Different clientIds form independent networks.',
+      '  • The client owner sets the fees (mint / auth / deposit / withdraw)',
+      '    charged on-chain for actions submitted under that client.',
+      '',
+      `${brand('Most operators want clientId 1')} — the public CAW network.`,
+      'To create your own, mint one via CawClientManager.createClient (see',
+      `the docs at ${brand('https://github.com/GilgameshCaw/Caw#creating-a-client')}).`,
     ])
 
     const { clientIdInput } = await inquirer.prompt([
       {
         type: 'number',
         name: 'clientIdInput',
-        message: `Client ID ${dim('(default: 1)')}:`,
+        message: `Client ID ${dim('(default: 1 — public network)')}:`,
         default: 1,
-        validate: (input) => input > 0 ? true : 'Must be a positive number'
-      }
+        validate: (input) => input > 0 ? true : 'Must be a positive number',
+      },
     ])
     clientId = clientIdInput
   }
 
-  // API port
-  const { apiPort } = await inquirer.prompt([
-    {
-      type: 'number',
-      name: 'apiPort',
-      message: `API port ${dim('(default: 4000)')}:`,
-      default: 4000
-    }
-  ])
+  // API port — hardcoded with an env override (CAW_API_PORT) for the rare
+  // case where 4000 is taken. We don't ask, because end-users never care
+  // and the answer is meaningless to anyone debugging.
+  const apiPort = Number(process.env.CAW_API_PORT) || 4000
 
   return {
     useDocker,
