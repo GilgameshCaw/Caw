@@ -303,6 +303,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
 
   const [text, setText] = useState('')
   const [cursorPosition, setCursorPosition] = useState(0)
+  // User-facing toggle for the shorten-URLs behavior. When on (default), we
+  // silently map original URLs to short URLs and use the short form for the
+  // byte counter and on-chain submission. When off, URLs pass through
+  // untouched and the counter reflects the full URL length.
+  const [shortenUrls, setShortenUrls] = useState(true)
   // Maps original URLs to their shortened versions. The user always sees their
   // original text — short URLs are only used for character counting and on-chain submission.
   const urlMappings = useRef<Map<string, string>>(new Map())
@@ -313,6 +318,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   // We only shorten URLs that are "finalized" (followed by whitespace or end-of-string).
   useEffect(() => {
     if (!text) return
+    if (!shortenUrls) return
     const FINALIZED_URL = /(https?:\/\/[^\s<>"'{}|\\^`[\]]+[^\s<>"'{}|\\^`[\].,!?;:)\]])(?=\s|$)/g
     const toShorten: string[] = []
     let m: RegExpExecArray | null
@@ -339,10 +345,12 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       }
     }, 500)
     return () => clearTimeout(timer)
-  }, [text])
+  }, [text, shortenUrls])
 
-  /** Replace original URLs with short URLs for on-chain submission */
+  /** Replace original URLs with short URLs for on-chain submission.
+   *  Honors the shortenUrls toggle — when disabled, returns input unchanged. */
   function getOnChainText(input: string): string {
+    if (!shortenUrls) return input
     let result = input
     for (const [original, short] of urlMappings.current) {
       result = result.split(original).join(short)
@@ -662,8 +670,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
           finalText = finalText + gifUrls
         }
 
-        // Replace original URLs with short URLs for on-chain submission.
-        finalText = await shortenUrlsInText(getOnChainText(finalText))
+        // Replace original URLs with short URLs for on-chain submission
+        // (skipped entirely when the user turned shortening off).
+        if (shortenUrls) finalText = await shortenUrlsInText(getOnChainText(finalText))
 
         // Split into thread chunks if needed — mirrors the immediate-post path.
         const chunks = splitTextIntoChunks(finalText, includePageIndicators)
@@ -851,8 +860,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       }
     }
 
-    // Replace original URLs with short URLs for on-chain submission.
-    finalText = await shortenUrlsInText(getOnChainText(finalText))
+    // Replace original URLs with short URLs for on-chain submission
+    // (skipped entirely when the user turned shortening off).
+    if (shortenUrls) finalText = await shortenUrlsInText(getOnChainText(finalText))
 
     // effectiveTokenId is already defined at the start of handleSubmit
 
@@ -1748,6 +1758,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
             </button>
+
           </div>
 
           {/* Character counter, token status and Post Button */}
@@ -1835,6 +1846,43 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               />
               Include (1/{chunkCount}) indicators
             </label>
+          </div>
+        )}
+
+        {/* Shorten URLs toggle. Only rendered when the draft actually has at
+            least one URL — otherwise the toggle is irrelevant and just adds
+            noise. The tooltip names the current host so it reads right on
+            caw.social, localhost, preview deploys, etc.
+            `.search()` instead of `URL_REGEX.test()` — the constant has the
+            `g` flag and `.test()` would alternate true/false on each render. */}
+        {text.search(URL_REGEX) !== -1 && (
+          <div className="flex items-center mt-3">
+            <Tooltip
+              text={`Your URLs will show their original text in your post,\nbut on-chain they will be stored using the ${typeof window !== 'undefined' ? window.location.hostname : 'caw.social'} domain`}
+            >
+              <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={shortenUrls}
+                  onClick={() => setShortenUrls(s => !s)}
+                  className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors duration-200 focus:outline-none ${
+                    shortenUrls
+                      ? 'bg-yellow-500'
+                      : (isDark ? 'bg-white/20' : 'bg-gray-300')
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-200 ${
+                      shortenUrls ? 'translate-x-4' : 'translate-x-0.5'
+                    }`}
+                  />
+                </button>
+                <span className={`text-sm ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
+                  Shorten URLs
+                </span>
+              </label>
+            </Tooltip>
           </div>
         )}
       </div>
