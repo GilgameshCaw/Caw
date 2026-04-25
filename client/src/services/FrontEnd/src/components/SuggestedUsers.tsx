@@ -137,7 +137,7 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
       <h2 className={`text-lg font-semibold mb-4 ml-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
         Suggested users to follow
       </h2>
-      <div className={`flex gap-3 overflow-x-auto overflow-y-visible pb-[20px] transition-all duration-500 ${visibleUsers.length <= 3 ? 'justify-center' : ''}`}>
+      <div className={`flex gap-3 overflow-x-auto overflow-y-visible pb-[20px] pl-[20px] transition-all duration-500 ${visibleUsers.length <= 3 ? 'justify-center' : ''}`}>
         {visibleUsers.map((user, idx) => {
           const isFadingOut = fadingOutIds.has(user.tokenId)
           const isFirst = idx === 0

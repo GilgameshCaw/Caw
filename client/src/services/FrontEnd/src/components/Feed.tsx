@@ -584,7 +584,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
     <div>
       {/* Show suggested users at top when following < 10 people */}
       {showSuggestedUsers && (
-        <div className="mb-4">
+        <div className="my-4">
           <SuggestedUsers onFollowChange={handleFollowChange} />
         </div>
       )}
