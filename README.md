@@ -71,7 +71,120 @@ CAW-nfts/
 └── README.md
 ```
 
-## ⚡ Quick Start
+## 🛠 Run a Node
+
+There are two ways to run a CAW node: the **one-liner installer** (recommended for fresh Linux servers — VPS, cloud, etc.) and the **manual install** (if you want full control or you're on macOS for local dev).
+
+### One-liner installer
+
+On a fresh Debian/Ubuntu host:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/GilgameshCaw/Caw/master/install.sh)"
+```
+
+The script:
+
+- Asks for your domain, then re-execs with sudo
+- Detects host capacity (RAM / cores / disk) and warns if you're below recommended specs
+- Asks how you want to run Postgres / Redis / Elasticsearch (native install, Docker, or connect to existing)
+- Installs Node 22, pm2, yarn, nginx, ufw, certbot, and the chosen DB stack
+- Creates a `caw` system user, clones the repo to `/var/www/<domain>`, hands off to the interactive Node CLI
+- The CLI walks you through node type, network, RPC URLs, validator config, optional replication, infrastructure, and TLS
+
+#### Requirements
+
+| Resource | Minimum (validator-only) | Recommended (full node) |
+|---|---|---|
+| **RAM** | 2 GB | 8 GB |
+| **CPU** | 1 core | 2+ cores |
+| **Disk** | 10 GB | 25+ GB SSD |
+| **OS** | Linux (apt-based) | Ubuntu 24.04 LTS |
+| **Network** | Public IPv4 | Static IPv4 + domain |
+
+A full node runs Elasticsearch (~512 MB heap), Postgres, Redis, the Node API + indexers under pm2, and an nginx-served React build. ES is the dominant memory consumer.
+
+#### Environment overrides
+
+Set these before running the script to skip the corresponding prompt:
+
+| Variable | Effect |
+|---|---|
+| `CAW_DIR` | Install directory (default: `/var/www/<domain>` from the prompt) |
+| `CAW_REPO` | Git remote (default: `https://github.com/GilgameshCaw/Caw.git`) |
+| `CAW_BRANCH` | Branch to check out (default: `master`) |
+| `CAW_USER` | System user that owns the install (default: `caw`) |
+| `CAW_DOMAIN` | Skip the domain prompt |
+| `CAW_INFRA_MODE` | `native`, `docker`, or `existing` |
+| `CAW_DB_URL` / `CAW_REDIS_URL` / `CAW_ES_URL` | Use these instead of installing the corresponding service |
+| `CAW_CERT_PATH` / `CAW_KEY_PATH` | Skip the TLS prompt; use these files for nginx |
+| `CAW_API_PORT` | Override the default API port (4000) |
+| `SKIP_BOOTSTRAP=1` | Skip apt installs (assume system deps are already there) |
+
+### Manual install
+
+If the one-liner doesn't fit your environment, install the system deps yourself, then run the interactive CLI:
+
+```bash
+# 1. System packages (Debian/Ubuntu shown — adapt for your distro)
+sudo apt-get update
+sudo apt-get install -y curl git build-essential nginx postgresql postgresql-contrib redis-server
+
+# Node 22 from NodeSource
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo bash -
+sudo apt-get install -y nodejs
+sudo npm install -g yarn pm2
+
+# Elasticsearch from Elastic's apt repo (or use a managed ES instance)
+curl -fsSL https://artifacts.elastic.co/GPG-KEY-elasticsearch | \
+  sudo gpg --dearmor -o /usr/share/keyrings/elastic.gpg
+echo "deb [signed-by=/usr/share/keyrings/elastic.gpg] https://artifacts.elastic.co/packages/8.x/apt stable main" | \
+  sudo tee /etc/apt/sources.list.d/elastic-8.x.list
+sudo apt-get update && sudo apt-get install -y elasticsearch
+
+# 2. Configure Elasticsearch (cap heap, disable auth, bind localhost)
+# See install.sh for the exact /etc/elasticsearch/elasticsearch.yml we write.
+
+# 3. Create a non-root user and clone the repo
+sudo adduser --disabled-password --gecos "" caw
+sudo mkdir -p /var/www/<your-domain>
+sudo chown caw:caw /var/www/<your-domain>
+sudo -u caw git clone https://github.com/GilgameshCaw/Caw.git /var/www/<your-domain>
+
+# 4. Run the interactive CLI as the caw user
+cd /var/www/<your-domain>
+sudo -u caw bash -c 'cd cli && npm install'
+sudo -u caw node cli/bin/caw.js install --dir /var/www/<your-domain>
+```
+
+The CLI generates `client/.env`, `client/config.json`, and `ecosystem.config.cjs`, runs `prisma db push`, and starts services under pm2.
+
+### Local dev (macOS)
+
+For local development without Linux:
+
+```bash
+git clone https://github.com/GilgameshCaw/Caw.git
+cd Caw
+
+# Install Node 22, postgres, redis, elasticsearch via Homebrew
+brew install node@22 postgresql@16 redis elasticsearch
+
+# Start the stateful services
+brew services start postgresql@16
+brew services start redis
+brew services start elasticsearch
+
+# Run the interactive CLI
+cd cli && npm install && cd ..
+node cli/bin/caw.js install --dir "$PWD"
+```
+
+Pick the `dev` deployment mode in the CLI — vite serves the frontend live at http://localhost:5273 and pm2 watches the API.
+
+## ⚡ Quick Start (legacy)
+
+For development against an already-installed checkout:
 
 ### Prerequisites
 - Node.js v22.0.0+
@@ -82,12 +195,12 @@ CAW-nfts/
 ### Installation
 ```bash
 # Clone the repository
-git clone https://github.com/AW-CAW/CAW-nfts.git
-cd CAW-nfts
+git clone https://github.com/GilgameshCaw/Caw.git
+cd Caw
 
 # Install dependencies
 cd client
-npm install
+npm install --legacy-peer-deps
 
 # Set up environment
 cp .env.example .env
