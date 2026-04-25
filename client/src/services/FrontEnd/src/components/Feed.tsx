@@ -687,13 +687,15 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
 
         // Build the at-top render list. Each "root" pending post (in
         // pendingAtTop) carries its own inline pending replies if any.
-        // pendingPosts is stored newest-first, so reverse to get submission
-        // order (1/N appears above 2/N). That also stops a 2-post thread from
-        // showing 2/2 above 1/2 before any confirmation arrives.
-        const renderPendingAtTop = [...pendingAtTop].reverse()
-        // Children of pending parents — sort oldest-first within each group.
-        const sortPendingChildren = (arr: any[]) =>
-          [...arr].sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''))
+        // Sort by cawonce ascending — every pending post was assigned its
+        // real cawonce by the API at submit time (PostForm.tsx:1171), so
+        // it's a stable monotonically-increasing submission-order key.
+        // Falling back to timestamp loses ties when a multi-chunk thread
+        // is signed in the same millisecond (1/3, 2/3, 3/3 all share
+        // a timestamp), which previously rendered the run out of order.
+        const byCawonce = (a: any, b: any) => (a.cawonce ?? 0) - (b.cawonce ?? 0)
+        const renderPendingAtTop = [...pendingAtTop].sort(byCawonce)
+        const sortPendingChildren = (arr: any[]) => [...arr].sort(byCawonce)
 
         return (
           <>
@@ -725,7 +727,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
                 caw.parent.id === prevItem.parent.id
               )
               const hidePreview = parentIsAbove || sameParentAsPrev
-              const inlinePending = pendingRepliesByConfirmedParent.get(caw.id) || []
+              const inlinePending = sortPendingChildren(pendingRepliesByConfirmedParent.get(caw.id) || [])
               const inlinePinned = pinnedInlineByParent.get(caw.id) || []
               return (
                 <React.Fragment key={caw.id}>
