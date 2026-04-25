@@ -39,7 +39,14 @@ export function useFollowButton({
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const { address, isConnected } = useAccount()
   const hasActiveSession = useHasActiveSession()
-  const [isFollowing, setIsFollowing] = useState(initialIsFollowing)
+  // When mounting into a pending server-state, `initialIsFollowing` reflects
+  // the *previous* (last server-confirmed) state — the user is mid-transition
+  // to its opposite. Display `isFollowing` as the anticipated end state from
+  // the start so it agrees with the click path (which also flips this flag
+  // optimistically before the on-chain confirmation lands).
+  const [isFollowing, setIsFollowing] = useState(
+    initialIsPending ? !initialIsFollowing : initialIsFollowing
+  )
   const [isPending, setPending] = useState(initialIsPending)
   const [isSigning, setIsSigning] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -64,17 +71,24 @@ export function useFollowButton({
     ? activeToken.address.toLowerCase() !== address.toLowerCase()
     : false)
 
-  // Sync with prop changes - only when the prop itself changes, never when hasUserAction changes
+  // Sync with prop changes - only when the prop itself changes, never when hasUserAction changes.
+  // Same invariant as the initial useState: while pending, display the
+  // anticipated state, not the previous server-confirmed state.
   useEffect(() => {
     if (!hasUserAction) {
-      setIsFollowing(initialIsFollowing)
+      setIsFollowing(initialIsPending ? !initialIsFollowing : initialIsFollowing)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [initialIsFollowing])
+  }, [initialIsFollowing, initialIsPending])
 
   useEffect(() => {
     if (!hasUserAction) {
       setPending(initialIsPending)
+      // Kick off polling if the prop says we're pending and we aren't already
+      // polling. Covers the case where the parent's data fetch resolves after
+      // mount and flips initialIsPending false → true; the useState initializer
+      // only ran on first render, so isPolling wouldn't otherwise update.
+      if (initialIsPending) setIsPolling(true)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialIsPending])
@@ -202,25 +216,23 @@ export function useFollowButton({
           return
         }
 
-        if (status.isFollowing) {
-          // Confirmed as following — success
+        // Local `isFollowing` reflects the anticipated end state. Server has
+        // settled when status.isPending=false; treat a server result that
+        // matches our anticipation as success.
+        if (status.isFollowing === isFollowing) {
           setPending(false)
-          setIsFollowing(true)
+          // setIsFollowing call left in for callback symmetry — value already matches.
+          setIsFollowing(status.isFollowing)
           pendingActionRef.current = null
-          onFollowStateChangeRef.current?.(true)
-          setHasUserAction(false)
-        } else if (!isFollowing) {
-          // We were trying to unfollow, and server says not following — success
-          setPending(false)
-          setIsFollowing(false)
-          pendingActionRef.current = null
-          onFollowStateChangeRef.current?.(false)
+          onFollowStateChangeRef.current?.(status.isFollowing)
           setHasUserAction(false)
         } else if (pollStartTimeRef.current && Date.now() - pollStartTimeRef.current < 90_000) {
-          // Waiting for a follow — record may not exist yet (on-chain processing can take 20-60s)
+          // Server result disagrees with anticipation but on-chain processing
+          // can take 20-60s — keep polling for a bit before giving up.
           return
         } else {
-          // Enough time has passed — accept the server state
+          // Enough time has passed — accept the server state, even if it
+          // contradicts what we anticipated (e.g. tx reverted).
           setPending(false)
           setIsFollowing(status.isFollowing)
           pendingActionRef.current = null
@@ -365,15 +377,10 @@ export function useFollowButton({
     }
   }
 
-  // While pending on-chain, show the anticipated label (the state we're
-  // transitioning *to*) so the button doesn't read as "Follow" with the
-  // "Following" styling, which the visual treatment in FollowButton.tsx
-  // already adopts for (isPending && !isFollowing).
-  const buttonText = isSigning
-    ? 'Processing...'
-    : isPending
-      ? (isFollowing ? 'Follow' : 'Following')
-      : (isFollowing ? 'Following' : 'Follow')
+  // `isFollowing` is normalized in the hook so it always reflects the
+  // *anticipated* state (during pending) or the confirmed state (otherwise).
+  // That lets this stay simple.
+  const buttonText = isSigning ? 'Processing...' : isFollowing ? 'Following' : 'Follow'
   const hoverText = isFollowing ? 'Unfollow' : 'Follow'
 
   return {
