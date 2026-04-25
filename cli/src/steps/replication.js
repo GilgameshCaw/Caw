@@ -2,15 +2,47 @@ import inquirer from 'inquirer'
 import crypto from 'crypto'
 import { section, dim, tipBlock, brand, success, warn, err } from '../utils/ui.js'
 
+// Replication chain options. Each entry maps to one archive chain that the
+// optimistic-archive contracts have been deployed to. We pick by network
+// (testnet/mainnet) so operators see only the chains that exist for their
+// chosen environment. The label/cta/lzEid are wedged in here so we can
+// surface useful info in prompts later (gas comparisons, etc.).
+const REPLICATION_CHAINS = {
+  testnet: [
+    {
+      key: 'arbitrum-sepolia',
+      label: 'Arbitrum Sepolia',
+      hint: 'cheapest, fastest finality — recommended for testnet',
+    },
+    // Future: optimism-sepolia, polygon-amoy, etc. Add as deployments land.
+  ],
+  mainnet: [
+    {
+      key: 'arbitrum-one',
+      label: 'Arbitrum One',
+      hint: 'cheapest L2 by gas, most-deployed CAW archive',
+    },
+    // Future entries gated on actually-deployed contracts. Don't list a chain
+    // here unless CawActionsArchive is live on it.
+  ],
+}
+
 /**
  * Optional replication participation. Replication is the optimistic-archive
- * fraud-detection layer: validators that opt in commit a hash of each batch to
- * an archive chain (Arbitrum Sepolia today), and watch for incorrect
- * submissions from peers — winning slashing rewards if they catch fraud.
+ * fraud-detection layer: validators that opt in commit a hash of each batch
+ * to an archive chain and watch for incorrect submissions from peers,
+ * winning slashing rewards if they catch fraud.
+ *
+ * Each client picks its own replication destinations on-chain (via
+ * CawClientManager.addReplication). The validator just needs (a) an RPC for
+ * one of those chains and (b) a key with ETH on that chain to submit batch
+ * hashes and challenges.
  *
  * Two env vars come out of this step:
- *   RPC_ARBITRUM_SEPOLIA   — RPC URL for the archive chain (always required
- *                            when replication is enabled)
+ *   REPLICATION_RPC        — RPC URL for the chosen archive chain
+ *   REPLICATION_CHAIN      — short key identifying which chain (e.g.
+ *                            "arbitrum-sepolia"); ValidatorService picks
+ *                            the contract address by this key.
  *   REPLICATOR_PRIVATE_KEY — separate key for the submitter wallet. When
  *                            unset, ValidatorService falls back to the main
  *                            validator key. We recommend separate keys so a
@@ -51,29 +83,61 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
 
   if (!participate) {
     console.log(dim('  Skipping replication setup — you can enable it later by setting'))
-    console.log(dim('  RPC_ARBITRUM_SEPOLIA (and optionally REPLICATOR_PRIVATE_KEY) in client/.env.'))
+    console.log(dim('  REPLICATION_RPC, REPLICATION_CHAIN, and (optionally)'))
+    console.log(dim('  REPLICATOR_PRIVATE_KEY in client/.env.'))
     return {}
   }
 
-  // ---- Archive chain RPC ----
-  // Today only Arbitrum Sepolia (testnet) and mainnet equivalent are
-  // supported; the contracts pick the chain so we just need an RPC URL for it.
-  const archiveLabel = ctx.network === 'mainnet'
-    ? 'Arbitrum One (mainnet)'
-    : 'Arbitrum Sepolia (testnet)'
+  // ---- Archive chain selection ----
+  const network = ctx.network || 'testnet'
+  const chains = REPLICATION_CHAINS[network] || []
+  if (chains.length === 0) {
+    console.log(warn(`  No replication chains are deployed yet for ${network}.`))
+    return {}
+  }
 
   console.log()
   tipBlock([
-    `Replication archive chain: ${brand(archiveLabel)}`,
+    'Pick the chain you want to replicate to. Different clients can choose',
+    'different chains; if you run for multiple clients, pick the one your',
+    'primary client uses (you can run extra replicators on other chains',
+    'later by adding more env config).',
+  ])
+
+  let replicationChain
+  if (chains.length === 1) {
+    // Single-chain shortcut: don't make the operator pick from a list of one.
+    replicationChain = chains[0].key
+    console.log(dim(`  Using ${chains[0].label} (only chain available on ${network}).`))
+  } else {
+    const answer = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'chainKey',
+        message: 'Replication chain:',
+        choices: chains.map(c => ({
+          value: c.key,
+          name: `${brand(c.label)} ${dim('— ' + c.hint)}`,
+        })),
+        default: chains[0].key,
+      },
+    ])
+    replicationChain = answer.chainKey
+  }
+  const chosenChain = chains.find(c => c.key === replicationChain)
+
+  console.log()
+  tipBlock([
+    `Replication chain: ${brand(chosenChain.label)}`,
     'You need an HTTP RPC URL for this chain. Free tiers from Infura,',
     'Alchemy, or QuickNode all work.',
   ])
 
-  const { archiveRpcUrl } = await inquirer.prompt([
+  const { replicationRpcUrl } = await inquirer.prompt([
     {
       type: 'input',
-      name: 'archiveRpcUrl',
-      message: `${archiveLabel} HTTP RPC URL:`,
+      name: 'replicationRpcUrl',
+      message: `${chosenChain.label} HTTP RPC URL:`,
       validate: (input) => {
         if (!input.trim()) return 'Required'
         if (!/^https?:\/\//.test(input)) return 'Must start with http:// or https://'
@@ -128,7 +192,7 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
     console.log(warn('  Private key: ') + dim(replicatorPrivateKey))
     console.log()
     console.log(err.bold('  IMPORTANT: Back up this private key. Fund the address above with ETH'))
-    console.log(err.bold(`  on ${archiveLabel} (used for tx fees on submissions and challenges).`))
+    console.log(err.bold(`  on ${chosenChain.label} (used for tx fees on submissions and challenges).`))
     console.log()
     const { backedUp } = await inquirer.prompt([
       { type: 'confirm', name: 'backedUp', message: 'Have you saved the private key?', default: false },
@@ -154,7 +218,8 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
   }
 
   return {
-    archiveRpcUrl,
+    replicationRpcUrl,
+    replicationChain,
     replicatorPrivateKey,
     replicationEnabled: true,
   }

@@ -1,14 +1,7 @@
 import inquirer from 'inquirer'
 import crypto from 'crypto'
 import { section, dim, tipBlock, brand, success, warn, err } from '../utils/ui.js'
-
-// Hardcoded contract addresses by network. The CAW_NAMES_MINTER_ADDRESS lives
-// in client/src/abi/addresses.ts but importing TS from the CLI is awkward;
-// duplicating the addresses here keeps the CLI self-contained.
-const MINTER_ADDRESS = {
-  testnet: '0xbacef3De5A2c8036268df5a59c3cce2fbd533883', // Sepolia
-  mainnet: '0xbacef3De5A2c8036268df5a59c3cce2fbd533883', // TODO: update if mainnet differs
-}
+import { addr } from '../addresses.js'
 
 // Just enough ABI to look up token IDs and owners.
 const MINTER_ABI = [
@@ -17,12 +10,6 @@ const MINTER_ABI = [
 const PROFILE_ABI = [
   'function ownerOf(uint256) view returns (address)',
 ]
-
-// CawProfile (L1) holds the ERC721. Reuse CAW_NAMES_ADDRESS from addresses.ts.
-const PROFILE_ADDRESS = {
-  testnet: '0x14FFACEB52025d2A04f3FA997e3946b17eB28aF2', // Sepolia
-  mainnet: '0x14FFACEB52025d2A04f3FA997e3946b17eB28aF2', // TODO: mainnet
-}
 
 export async function collectValidatorConfig(nodeType, installDir, ctx = {}) {
   if (!['full', 'validator'].includes(nodeType)) return {}
@@ -139,9 +126,12 @@ export async function collectValidatorConfig(nodeType, installDir, ctx = {}) {
  * the user confirms or chooses to enter a tokenId by hand.
  */
 async function resolveValidatorByUsername(ctx) {
-  const { l1RpcUrl, network = 'testnet' } = ctx
-  const minter = MINTER_ADDRESS[network]
-  const profile = PROFILE_ADDRESS[network]
+  const { l1RpcUrl } = ctx
+  // Username/owner contracts live on L1 in both networks. addresses.ts is
+  // the single source of truth for whichever environment the CLI's repo is
+  // checked out for.
+  const minter = addr('CAW_NAMES_MINTER_ADDRESS')
+  const profile = addr('CAW_NAMES_ADDRESS')
 
   while (true) {
     const { username } = await inquirer.prompt([

@@ -2115,10 +2115,27 @@ console.log("succeededKeys", succeededKeys)
       if (l2bProvider && l2bWallet && l2bMonitorWallet && archiveRead && archiveWrite) {
         return { l2bProvider, l2bWallet, l2bMonitorWallet, archiveRead, archiveWrite }
       }
-      const l2bRpcUrl = process.env.RPC_ARBITRUM_SEPOLIA
-      if (!l2bRpcUrl) throw new Error('RPC_ARBITRUM_SEPOLIA not set — required for optimistic replication')
+      // REPLICATION_RPC + REPLICATION_CHAIN are the canonical names. We
+      // accept the legacy RPC_ARBITRUM_SEPOLIA for back-compat with older
+      // installs — drop it later once everyone's regenerated their .env.
+      const l2bRpcUrl = process.env.REPLICATION_RPC || process.env.RPC_ARBITRUM_SEPOLIA
+      if (!l2bRpcUrl) throw new Error('REPLICATION_RPC not set — required for optimistic replication')
 
-      l2bProvider = makeJsonRpcProvider(l2bRpcUrl, 421614)
+      // Map REPLICATION_CHAIN → chainId. Today only Arbitrum Sepolia ships
+      // with deployed contracts. When other chains come online, extend this
+      // map (and OPTIMISTIC_ARCHIVE_ADDRESS will need to become a per-chain
+      // lookup too — see the multi-chain backlog item).
+      const chainIdByKey: Record<string, number> = {
+        'arbitrum-sepolia': 421614,
+        'arbitrum-one': 42161,
+      }
+      const replicationChain = process.env.REPLICATION_CHAIN || 'arbitrum-sepolia'
+      const chainId = chainIdByKey[replicationChain]
+      if (!chainId) {
+        throw new Error(`REPLICATION_CHAIN="${replicationChain}" — supported keys: ${Object.keys(chainIdByKey).join(', ')}`)
+      }
+
+      l2bProvider = makeJsonRpcProvider(l2bRpcUrl, chainId)
 
       // Submitter uses REPLICATOR_PRIVATE_KEY if present (test mode), else main validator.
       const submitterKey = REPLICATOR_PRIVATE_KEY || privateKey!
