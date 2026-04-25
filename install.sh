@@ -38,6 +38,27 @@ warn() { echo -e "  ${GOLD}!${RESET} $*"; }
 err()  { echo -e "  ${RED}✗${RESET} $*" >&2; }
 step() { echo; echo -e "${GOLD}▸${RESET} $*"; }
 
+# Run a command quietly. Stdout goes to /tmp/caw-install.log (so apt's
+# unpacking spam doesn't drown the user); stderr stays attached so real errors
+# surface in real time. On failure, dump the last 30 lines of the log so the
+# operator has something to debug with. Usage: quiet <label> <cmd...>
+INSTALL_LOG=/tmp/caw-install.log
+: > "$INSTALL_LOG"
+quiet() {
+  local label="$1"; shift
+  printf "  %s..." "$label"
+  if "$@" >> "$INSTALL_LOG" 2>&1; then
+    printf "\r  ${GREEN}✓${RESET} %s\n" "$label"
+  else
+    local rc=$?
+    printf "\r  ${RED}✗${RESET} %s\n" "$label"
+    echo
+    err "Last 30 lines of $INSTALL_LOG:"
+    tail -n 30 "$INSTALL_LOG" >&2
+    return $rc
+  fi
+}
+
 # ---------- Banner -----------------------------------------------------------
 
 cat <<EOF
@@ -133,10 +154,11 @@ if [[ "$SKIP_BOOTSTRAP" == "1" ]]; then
   step "Skipping system bootstrap (SKIP_BOOTSTRAP=1)"
 else
   step "Installing system packages"
+  log "(detailed output streams to ${INSTALL_LOG})"
 
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq
-  apt-get install -y -qq \
+  quiet "Updating apt metadata" apt-get update -qq
+  quiet "Installing base packages" apt-get install -y -qq \
     curl ca-certificates gnupg git build-essential \
     nginx ufw certbot python3-certbot-nginx \
     postgresql postgresql-contrib redis-server
@@ -145,30 +167,27 @@ else
   # typically too old (and we don't want to surprise the operator with whatever
   # version Ubuntu ships).
   if ! command -v node >/dev/null 2>&1 || [[ "$(node -v | cut -d. -f1 | tr -d v)" -lt 20 ]]; then
-    log "Installing Node.js 22 from NodeSource..."
-    curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null 2>&1
-    apt-get install -y -qq nodejs
+    quiet "Adding NodeSource repo" bash -c "curl -fsSL https://deb.nodesource.com/setup_22.x | bash -"
+    quiet "Installing Node.js 22" apt-get install -y -qq nodejs
   fi
   ok "Node $(node -v)"
 
   # Yarn + pm2 are runtime tools, not OS packages. npm-global is the right home.
   for tool in yarn pm2; do
     if ! command -v "$tool" >/dev/null 2>&1; then
-      log "Installing $tool..."
-      npm install -g --silent "$tool"
+      quiet "Installing $tool" npm install -g --silent "$tool"
     fi
   done
 
   # Elasticsearch is in the Elastic apt repo, not Ubuntu's. Add it once.
   if ! dpkg -l elasticsearch >/dev/null 2>&1; then
-    log "Adding Elastic apt repo..."
-    install -m 0755 -d /usr/share/keyrings
-    curl -fsSL https://artifacts.elastic.co/GPG-KEY-elasticsearch \
-      | gpg --dearmor -o /usr/share/keyrings/elastic.gpg
-    echo "deb [signed-by=/usr/share/keyrings/elastic.gpg] https://artifacts.elastic.co/packages/8.x/apt stable main" \
-      > /etc/apt/sources.list.d/elastic-8.x.list
-    apt-get update -qq
-    apt-get install -y -qq elasticsearch
+    quiet "Adding Elastic apt repo" bash -c '
+      install -m 0755 -d /usr/share/keyrings &&
+      curl -fsSL https://artifacts.elastic.co/GPG-KEY-elasticsearch | gpg --dearmor -o /usr/share/keyrings/elastic.gpg &&
+      echo "deb [signed-by=/usr/share/keyrings/elastic.gpg] https://artifacts.elastic.co/packages/8.x/apt stable main" > /etc/apt/sources.list.d/elastic-8.x.list &&
+      apt-get update -qq
+    '
+    quiet "Installing Elasticsearch" apt-get install -y -qq elasticsearch
   fi
 
   ok "System packages installed"
