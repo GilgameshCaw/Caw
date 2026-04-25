@@ -174,19 +174,16 @@ contract CawProfileMarketplace is ReentrancyGuard {
         listing.active = false;
         listingByTokenId[listing.tokenId] = 0;
 
+        // English auction with a live high bidder: credit the bidder via the
+        // pull-pattern instead of pushing the refund. A malicious bidder
+        // contract whose receive() reverts could otherwise block the seller
+        // from cancelling, forcing the auction to settle in their favor.
         if (
             listing.listingType == ListingType.ENGLISH_AUCTION
             && listing.highestBidder != address(0)
         ) {
-            address bidder = listing.highestBidder;
-            uint256 amount = listing.highestBid;
-            if (listing.paymentToken == address(0)) {
-                (bool sent,) = bidder.call{value: amount}("");
-                require(sent, "ETH refund failed");
-            } else {
-                IERC20(listing.paymentToken).safeTransfer(bidder, amount);
-            }
-            emit BidReclaimed(listingId, bidder, amount);
+            pendingReturns[listing.highestBidder][listingId] += listing.highestBid;
+            emit BidReclaimed(listingId, listing.highestBidder, listing.highestBid);
         }
 
         emit ListingCancelled(listingId);
@@ -365,18 +362,13 @@ contract CawProfileMarketplace is ReentrancyGuard {
         listing.active = false;
         listingByTokenId[listing.tokenId] = 0;
 
-        // Refund the highest bidder
-        address bidder = listing.highestBidder;
-        uint256 amount = listing.highestBid;
+        // Pull-pattern refund — see cancelListing for the rationale. A
+        // malicious bidder contract that reverts on receive() must not be able
+        // to permanently brick listingByTokenId[tokenId] by blocking the
+        // refund, since that would lock the seller out of relisting forever.
+        pendingReturns[listing.highestBidder][listingId] += listing.highestBid;
 
-        if (listing.paymentToken == address(0)) {
-            (bool sent,) = bidder.call{value: amount}("");
-            require(sent, "ETH refund failed");
-        } else {
-            IERC20(listing.paymentToken).safeTransfer(bidder, amount);
-        }
-
-        emit BidReclaimed(listingId, bidder, amount);
+        emit BidReclaimed(listingId, listing.highestBidder, listing.highestBid);
     }
 
     /**
