@@ -104,7 +104,12 @@ const Tooltip: React.FC<TooltipProps> = ({
           className={`fixed px-3 py-2 text-xs font-medium rounded-lg whitespace-nowrap pointer-events-none z-[9999] ${bgClass}`}
           style={{ top: coords.top, left: coords.left }}
         >
-          {text}
+          {text.split('\n').map((line, i, arr) => (
+            <React.Fragment key={i}>
+              {line}
+              {i < arr.length - 1 && <br />}
+            </React.Fragment>
+          ))}
         </div>,
         document.body
       )}
