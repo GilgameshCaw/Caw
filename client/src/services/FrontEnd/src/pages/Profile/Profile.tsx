@@ -1,4 +1,5 @@
 import { getUserAvatar } from "~/utils/defaultAvatar"
+import Avatar from "~/components/Avatar"
 // src/pages/ProfilePage.tsx
 import React, { useState, useEffect, useRef } from 'react'
 import { Link, useParams, useSearchParams }    from 'react-router-dom'
@@ -10,7 +11,8 @@ import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { formatWalletError } from '~/utils/errorMessage'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useModalStore } from '~/store/modalStore'
-import { HiPencil, HiX, HiCamera, HiGlobe, HiLink, HiLocationMarker, HiOutlineMail, HiDotsHorizontal, HiOutlineCurrencyDollar, HiOutlineLockClosed, HiClipboardCopy, HiCheck } from 'react-icons/hi'
+import { HiPencil, HiX, HiCamera, HiGlobe, HiLink, HiLocationMarker, HiOutlineMail, HiDotsHorizontal, HiOutlineCurrencyDollar, HiOutlineLockClosed } from 'react-icons/hi'
+import CopyAddressButton from '~/components/CopyAddressButton'
 import { apiFetch } from '~/api/client'
 import { useDmIdentity } from '~/hooks/useDmIdentity'
 import { useDmClient } from '~/hooks/useDm'
@@ -63,6 +65,7 @@ type ProfileData = {
   followerCount: number
   followingCount: number
   likeCount: number
+  likedCount?: number
   replyCount: number
   mediaCount: number
   isFollowing?: boolean
@@ -179,7 +182,6 @@ export const Profile: React.FC = () => {
   const [hasTipped, setHasTipped] = useState(false)
   const [activeListing, setActiveListing] = useState<MarketplaceListing | null>(null)
   const [myOffers, setMyOffers] = useState<MarketplaceOffer[]>([])
-  const [addressCopied, setAddressCopied] = useState(false)
 
   // Cancel offer hooks
   const { writeContract: writeCancelOffer, data: cancelOfferHash, isPending: isCancellingOffer, error: cancelOfferError, reset: resetCancelOffer } = useWriteContract()
@@ -792,7 +794,7 @@ export const Profile: React.FC = () => {
     { id: 'posts',   label: `Posts${tabCount(profileData?.cawCount)}`     },
     { id: 'replies', label: `Replies${tabCount(profileData?.replyCount)}` },
     { id: 'media',   label: `Media${tabCount(profileData?.mediaCount)}`   },
-    { id: 'likes',   label: `Likes${tabCount(profileData?.likeCount)}`    },
+    { id: 'likes',   label: `Likes${tabCount(profileData?.likedCount)}`   },
   ]
 
   // Profile not in our DB — check on-chain availability for better UX
@@ -895,10 +897,10 @@ export const Profile: React.FC = () => {
               isDark ? 'border-black bg-black' : 'border-white bg-gray-200'
             }`}>
               {profileData && (
-                <img
+                <Avatar
                   src={optimisticAvatar || getUserAvatar(profileData)}
                   alt={`${profileData.username || displayUsername} avatar`}
-                  className="w-full h-full object-cover rounded-full"
+                  className="w-full h-full rounded-full"
                 />
               )}
             </div>
@@ -931,26 +933,19 @@ export const Profile: React.FC = () => {
                   @{profileData?.username || displayUsername}
                 </p>
                 {profileData?.address && (
-                  <Tooltip text={addressCopied ? 'Copied!' : 'Click to copy full address'}>
-                    <button
-                      onClick={() => {
-                        navigator.clipboard.writeText(profileData.address)
-                        setAddressCopied(true)
-                        setTimeout(() => setAddressCopied(false), 2000)
-                      }}
-                      className={`flex items-center gap-1 text-xs mt-1 font-mono cursor-pointer transition-all duration-200 ${
+                  <div className="flex items-center gap-2 mt-1">
+                    <Link
+                      to={`/address/${profileData.address.toLowerCase()}`}
+                      className={`text-xs font-mono transition-all duration-200 ${
                         isDark
                           ? 'text-gray-500 hover:text-gray-300'
                           : 'text-gray-400 hover:text-gray-600'
                       }`}
                     >
                       {profileData.address.slice(0, 5)}...{profileData.address.slice(-4)}
-                      {addressCopied
-                        ? <HiCheck className="w-3 h-3 text-green-500" />
-                        : <HiClipboardCopy className="w-3 h-3" />
-                      }
-                    </button>
-                  </Tooltip>
+                    </Link>
+                    <CopyAddressButton address={profileData.address} iconOnly />
+                  </div>
                 )}
                 <p className={`text-sm mt-1 transition-all duration-300 ${
                   isDark ? 'text-gray-400' : 'text-gray-600'

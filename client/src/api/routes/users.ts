@@ -344,19 +344,22 @@ router.get('/by-token/:tokenId', async (req, res) => {
       return res.status(400).json({ error: 'Invalid tokenId' })
     }
 
+    const userSelect = {
+      tokenId: true,
+      username: true,
+      displayName: true,
+      avatarUrl: true,
+      defaultAvatarId: true,
+      image: true,
+      address: true,
+      lastStakedAt: true,
+      pendingDepositAmount: true,
+      followerCount: true,
+    } as const
+
     let user = await prisma.user.findUnique({
       where: { tokenId },
-      select: {
-        tokenId: true,
-        username: true,
-        displayName: true,
-        avatarUrl: true,
-        defaultAvatarId: true,
-        image: true,
-        address: true,
-        lastStakedAt: true,
-        pendingDepositAmount: true,
-      }
+      select: userSelect,
     })
 
     // Auto-create from chain if not in DB
@@ -365,11 +368,7 @@ router.get('/by-token/:tokenId', async (req, res) => {
         await findOrCreateUser(tokenId)
         user = await prisma.user.findUnique({
           where: { tokenId },
-          select: {
-            tokenId: true, username: true, displayName: true, avatarUrl: true,
-        defaultAvatarId: true,
-            image: true, address: true, lastStakedAt: true, pendingDepositAmount: true,
-          }
+          select: userSelect,
         })
       } catch (err: any) {
         console.log(`[users/by-token] Auto-create failed for tokenId ${tokenId}: ${err.message?.slice(0, 100)}`)
@@ -424,7 +423,35 @@ router.get('/by-token/:tokenId', async (req, res) => {
       where: { senderId: tokenId, status: 'waiting_for_deposit' }
     })
 
-    return res.json({ ...user, waitingForDepositCount: waitingCount })
+    // Compute live counts in parallel. Cached counters on the User row can drift
+    // (DB rebuilds, pre-CountManager data, pending→failed races), so we recompute
+    // them and self-heal the cache via a fire-and-forget update — same pattern
+    // the username profile route uses (see GET /:username below).
+    const [likeCount, actualFollowerCount] = await Promise.all([
+      prisma.like.count({
+        where: {
+          caw: { userId: user.tokenId },
+          action: ActionType.LIKE,
+        },
+      }),
+      prisma.follow.count({
+        where: { followingId: user.tokenId, action: 'FOLLOW', status: 'SUCCESS' },
+      }),
+    ])
+
+    if (user.followerCount !== actualFollowerCount) {
+      prisma.user.update({
+        where: { tokenId: user.tokenId },
+        data: { followerCount: actualFollowerCount },
+      }).catch(() => {}) // fire-and-forget; the response uses the live count below
+    }
+
+    return res.json({
+      ...user,
+      followerCount: actualFollowerCount,
+      likeCount,
+      waitingForDepositCount: waitingCount,
+    })
   } catch (err: any) {
     console.error('GET /api/users/by-token/:tokenId error', err)
     return res.status(500).json({ error: 'Internal server error' })
@@ -848,6 +875,16 @@ router.get('/:username', async (req, res) => {
       }
     })
 
+    // Caws this user has liked — drives the "Likes" tab on the Profile page,
+    // distinct from likeCount above (which is popularity, i.e. likes received).
+    // Match the tab's content query (no pending filter) so badge and list agree.
+    const likedCount = await prisma.like.count({
+      where: {
+        userId: user.tokenId,
+        action: ActionType.LIKE,
+      }
+    })
+
     // Check if current user is following this user
     let isFollowing = false
     let followPending = false
@@ -957,6 +994,7 @@ router.get('/:username', async (req, res) => {
       followerCount: actualFollowerCount,
       followingCount: actualFollowingCount,
       likeCount,
+      likedCount,
       replyCount,
       mediaCount,
       isFollowing,
