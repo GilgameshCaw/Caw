@@ -1,5 +1,6 @@
 import inquirer from 'inquirer'
 import { section, dim, tipBlock } from '../utils/ui.js'
+import { chainLabels } from './networkAndMode.js'
 
 /**
  * Infer the HTTP URL from a WebSocket URL.
@@ -80,11 +81,12 @@ async function collectRpcPair(label, required) {
   }
 }
 
-export async function collectRpcUrls(nodeType) {
+export async function collectRpcUrls(nodeType, network = 'testnet') {
   section('RPC Endpoints')
 
+  const labels = chainLabels(network)
   tipBlock([
-    'CAW uses Ethereum L1 (Sepolia) and Base L2 for operations.',
+    `CAW uses Ethereum L1 and Base L2 for operations on ${network === 'mainnet' ? 'mainnet' : 'testnet'}.`,
     'You need both WebSocket (wss://) and HTTP (https://) endpoints.',
     '',
     'Free options: Infura, Alchemy, QuickNode (all have free tiers)',
@@ -97,13 +99,13 @@ export async function collectRpcUrls(nodeType) {
   const answers = {}
 
   if (needsL2) {
-    const l2 = await collectRpcPair('L2 (Base Sepolia)', true)
+    const l2 = await collectRpcPair(labels.l2, true)
     answers.l2RpcUrl = l2.wss
     answers.l2RpcUrlHttp = l2.http
   }
 
   if (needsL1) {
-    const l1 = await collectRpcPair('L1 (Ethereum Sepolia)', true)
+    const l1 = await collectRpcPair(labels.l1, true)
     answers.l1RpcUrl = l1.wss
     answers.l1RpcUrlHttp = l1.http
 

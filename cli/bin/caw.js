@@ -6,6 +6,7 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import { banner, section, success, brand, dim } from '../src/utils/ui.js'
 import { selectNodeType } from '../src/steps/nodeType.js'
+import { collectNetworkAndMode } from '../src/steps/networkAndMode.js'
 import { collectRpcUrls } from '../src/steps/rpcUrls.js'
 import { collectValidatorConfig } from '../src/steps/validator.js'
 import { collectInfraConfig } from '../src/steps/infrastructure.js'
@@ -38,17 +39,20 @@ program
       // Step 1: Node type
       const nodeType = await selectNodeType()
 
-      // Step 2: RPC URLs
-      const rpcConfig = await collectRpcUrls(nodeType)
+      // Step 2: Network + deployment mode (drives chain labels in step 3)
+      const networkConfig = await collectNetworkAndMode(nodeType)
 
-      // Step 3: Validator config (if applicable)
+      // Step 3: RPC URLs (labels reflect the chosen network)
+      const rpcConfig = await collectRpcUrls(nodeType, networkConfig.network)
+
+      // Step 4: Validator config (if applicable)
       const validatorConfig = await collectValidatorConfig(nodeType, opts.dir)
 
-      // Step 4: Infrastructure (DB, Redis, domain, client ID)
+      // Step 5: Infrastructure (DB, Redis, domain, client ID)
       const infraConfig = await collectInfraConfig(nodeType)
 
       // Merge all config
-      const fullConfig = { ...rpcConfig, ...validatorConfig, ...infraConfig }
+      const fullConfig = { ...networkConfig, ...rpcConfig, ...validatorConfig, ...infraConfig }
 
       // Step 5: Generate config files
       generateConfig(nodeType, fullConfig, opts.dir)

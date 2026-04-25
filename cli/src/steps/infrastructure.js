@@ -1,48 +1,9 @@
 import inquirer from 'inquirer'
-import { section, dim, tipBlock, brand, warn } from '../utils/ui.js'
+import { section, dim, tipBlock, brand } from '../utils/ui.js'
 
 export async function collectInfraConfig(nodeType) {
   if (nodeType === 'frontend-only') {
     return collectFrontendOnlyConfig()
-  }
-
-  // Network — drives chain IDs, contract addresses, and indexer behavior.
-  section('Network')
-  tipBlock([
-    'Pick the network this node will run against.',
-    'Most public installs run testnet — it has no real funds at stake.',
-  ])
-  const { network } = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'network',
-      message: 'Which network?',
-      choices: [
-        { value: 'testnet', name: `${brand('Testnet')} ${dim('(Base Sepolia / Ethereum Sepolia)')}` },
-        { value: 'mainnet', name: `${brand('Mainnet')} ${dim('(Base / Ethereum)')}` },
-      ],
-      default: 'testnet',
-    },
-  ])
-
-  // Deployment mode — drives whether we run vite dev or build the frontend
-  // and let nginx serve dist/. Ask early because subsequent steps branch on it.
-  let deployment = 'dev'
-  if (['full', 'frontend-api', 'frontend-only', 'api-only'].includes(nodeType)) {
-    section('Deployment Mode')
-    const { mode } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'mode',
-        message: 'How are you running this node?',
-        choices: [
-          { value: 'production', name: `${brand('Production')} ${dim('(public domain, nginx serves built frontend)')}` },
-          { value: 'dev', name: `${brand('Development')} ${dim('(localhost, vite dev server)')}` },
-        ],
-        default: 'production',
-      },
-    ])
-    deployment = mode
   }
 
   section('Infrastructure')
@@ -190,8 +151,6 @@ export async function collectInfraConfig(nodeType) {
   ])
 
   return {
-    network,
-    deployment,
     useDocker,
     dbUrl,
     redisUrl,
