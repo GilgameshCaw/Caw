@@ -1,17 +1,39 @@
 import inquirer from 'inquirer'
 import crypto from 'crypto'
-import fs from 'fs'
-import path from 'path'
 import { section, dim, tipBlock, brand, success, warn, err } from '../utils/ui.js'
 
-export async function collectValidatorConfig(nodeType, installDir) {
+// Hardcoded contract addresses by network. The CAW_NAMES_MINTER_ADDRESS lives
+// in client/src/abi/addresses.ts but importing TS from the CLI is awkward;
+// duplicating the addresses here keeps the CLI self-contained.
+const MINTER_ADDRESS = {
+  testnet: '0xbacef3De5A2c8036268df5a59c3cce2fbd533883', // Sepolia
+  mainnet: '0xbacef3De5A2c8036268df5a59c3cce2fbd533883', // TODO: update if mainnet differs
+}
+
+// Just enough ABI to look up token IDs and owners.
+const MINTER_ABI = [
+  'function idByUsername(string) view returns (uint32)',
+]
+const PROFILE_ABI = [
+  'function ownerOf(uint256) view returns (address)',
+]
+
+// CawProfile (L1) holds the ERC721. Reuse CAW_NAMES_ADDRESS from addresses.ts.
+const PROFILE_ADDRESS = {
+  testnet: '0x14FFACEB52025d2A04f3FA997e3946b17eB28aF2', // Sepolia
+  mainnet: '0x14FFACEB52025d2A04f3FA997e3946b17eB28aF2', // TODO: mainnet
+}
+
+export async function collectValidatorConfig(nodeType, installDir, ctx = {}) {
   if (!['full', 'validator'].includes(nodeType)) return {}
 
   section('Validator Configuration')
 
   tipBlock([
     'The validator needs a private key to sign and submit transactions on L2.',
-    'This key will hold ETH on Base (for gas fees) and earn CAW tips.',
+    'This key will hold ETH on Base (for gas fees) and be used to submit',
+    'batched user actions on-chain. Validator tips are paid to the wallet that',
+    'owns the validator username NFT (asked next), not to this signing key.',
     '',
     'Options:',
     '  1. Generate a new key (recommended for fresh installs)',
@@ -25,16 +47,15 @@ export async function collectValidatorConfig(nodeType, installDir) {
       message: 'Validator private key:',
       choices: [
         { value: 'generate', name: `${brand('Generate new key')} ${dim('(recommended)')}` },
-        { value: 'import', name: 'Import existing private key' }
-      ]
-    }
+        { value: 'import', name: 'Import existing private key' },
+      ],
+    },
   ])
 
   let privateKey
 
   if (keySource === 'generate') {
     privateKey = '0x' + crypto.randomBytes(32).toString('hex')
-    // Derive address for display
     const { computeAddress } = await importEthersUtils()
     const address = computeAddress(privateKey)
 
@@ -49,12 +70,7 @@ export async function collectValidatorConfig(nodeType, installDir) {
     console.log()
 
     const { backedUp } = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'backedUp',
-        message: 'Have you saved the private key?',
-        default: false
-      }
+      { type: 'confirm', name: 'backedUp', message: 'Have you saved the private key?', default: false },
     ])
 
     if (!backedUp) {
@@ -73,40 +89,35 @@ export async function collectValidatorConfig(nodeType, installDir) {
           const hex = input.startsWith('0x') ? input.slice(2) : input
           if (!/^[0-9a-fA-F]{64}$/.test(hex)) return 'Invalid private key (must be 64 hex characters)'
           return true
-        }
-      }
+        },
+      },
     ])
     privateKey = importedKey.startsWith('0x') ? importedKey : '0x' + importedKey
   }
 
-  // Validator ID (token ID)
+  // ----- Validator username (and on-chain lookup of tokenId + owner) -----
   console.log()
   tipBlock([
-    'Each validator needs a CAW username (NFT token) to identify itself.',
-    'The token ID is the numeric ID of your CawName NFT.',
-    'If you don\'t have one yet, you\'ll need to mint one first (Phase 2 feature).',
-  ])
-
-  const { validatorId } = await inquirer.prompt([
-    {
-      type: 'number',
-      name: 'validatorId',
-      message: 'Validator token ID (your CawName NFT ID):',
-      validate: (input) => {
-        if (!input || input <= 0) return 'Token ID must be a positive number'
-        return true
-      }
-    }
-  ])
-
-  // Validator tip
-  tipBlock([
-    'The minimum tip is the CAW amount you require per action to cover gas.',
-    'Higher tips = you process more actions (users pay you more).',
-    'Lower tips = you process cheaper actions but earn less per action.',
+    'Each validator is identified by a CawName username NFT.',
     '',
-    'Default: 1000 CAW base + 500 CAW per replication chain',
-    'At current prices, 1000 CAW ~ $0.02',
+    `${brand('Validator tips are paid in CAW to the wallet that OWNS that username.')}`,
+    'If you transfer the username to another wallet, tips follow it. The signing',
+    'key above is just for submitting transactions and does not receive tips.',
+    '',
+    'Type the username (no @, no .caw — just the name) and we\'ll look up the',
+    'token ID and owner address on-chain to confirm.',
+  ])
+
+  const validatorId = await resolveValidatorByUsername(ctx)
+
+  // ----- Poll interval -----
+  console.log()
+  tipBlock([
+    'How often should the validator check the TxQueue (the queue of pending',
+    'user actions waiting to be submitted on-chain)?',
+    '',
+    `Lower = lower latency for users, more RPC calls. ${brand('3000ms')} is the default.`,
+    'Don\'t go below 1000ms — RPC providers will rate-limit you.',
   ])
 
   const { checkInterval } = await inquirer.prompt([
@@ -115,11 +126,87 @@ export async function collectValidatorConfig(nodeType, installDir) {
       name: 'checkInterval',
       message: `TxQueue poll interval in ms ${dim('(default: 3000)')}:`,
       default: 3000,
-      validate: (input) => input >= 1000 ? true : 'Minimum 1000ms'
-    }
+      validate: (input) => input >= 1000 ? true : 'Minimum 1000ms',
+    },
   ])
 
   return { validatorPrivateKey: privateKey, validatorId, checkInterval }
+}
+
+/**
+ * Ask for a username, look up tokenId via the Minter contract on L1, then
+ * fetch the owner address from CawProfile to show "tips go here". Loops until
+ * the user confirms or chooses to enter a tokenId by hand.
+ */
+async function resolveValidatorByUsername(ctx) {
+  const { l1RpcUrl, network = 'testnet' } = ctx
+  const minter = MINTER_ADDRESS[network]
+  const profile = PROFILE_ADDRESS[network]
+
+  while (true) {
+    const { username } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'username',
+        message: 'Validator username (or "manual" to enter token ID directly):',
+        validate: (input) => input.trim().length > 0 ? true : 'Required',
+      },
+    ])
+
+    if (username.trim().toLowerCase() === 'manual') {
+      const { tokenId } = await inquirer.prompt([
+        {
+          type: 'number',
+          name: 'tokenId',
+          message: 'Validator token ID:',
+          validate: (input) => input > 0 ? true : 'Token ID must be a positive number',
+        },
+      ])
+      return tokenId
+    }
+
+    if (!l1RpcUrl) {
+      console.log(warn(`  No L1 RPC URL available — can't look up "${username}" on-chain.`))
+      console.log(dim('  Type "manual" at the next prompt to enter a token ID directly.'))
+      continue
+    }
+
+    let tokenId, owner
+    try {
+      const { JsonRpcProvider, Contract } = await import('ethers')
+      const provider = new JsonRpcProvider(l1RpcUrl)
+      const minterContract = new Contract(minter, MINTER_ABI, provider)
+      const profileContract = new Contract(profile, PROFILE_ABI, provider)
+
+      const id = await minterContract.idByUsername(username.trim())
+      tokenId = Number(id)
+      if (tokenId === 0) {
+        console.log(err(`  No token found for username "${username}".`))
+        console.log(dim('  Double-check the spelling, or type "manual" to enter a token ID.'))
+        console.log()
+        continue
+      }
+      owner = await profileContract.ownerOf(tokenId)
+    } catch (e) {
+      console.log(err(`  Lookup failed: ${e?.message || e}`))
+      console.log(dim('  Type "manual" to enter a token ID by hand, or try a different username.'))
+      console.log()
+      continue
+    }
+
+    console.log()
+    console.log(success(`  Found ${brand(username)}:`))
+    console.log(`    Token ID:     ${brand(String(tokenId))}`)
+    console.log(`    Owner wallet: ${brand(owner)}`)
+    console.log()
+    console.log(warn(`  Validator tips for this node will be paid to ${owner}.`))
+    console.log()
+
+    const { confirmed } = await inquirer.prompt([
+      { type: 'confirm', name: 'confirmed', message: 'Use this validator identity?', default: true },
+    ])
+    if (confirmed) return tokenId
+  }
 }
 
 async function importEthersUtils() {
@@ -127,9 +214,6 @@ async function importEthersUtils() {
     const ethers = await import('ethers')
     return { computeAddress: ethers.computeAddress }
   } catch {
-    // Fallback: can't compute address without ethers
-    return {
-      computeAddress: () => '(install ethers to see address)'
-    }
+    return { computeAddress: () => '(install ethers to see address)' }
   }
 }

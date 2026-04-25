@@ -45,8 +45,12 @@ program
       // Step 3: RPC URLs (labels reflect the chosen network)
       const rpcConfig = await collectRpcUrls(nodeType, networkConfig.network)
 
-      // Step 4: Validator config (if applicable)
-      const validatorConfig = await collectValidatorConfig(nodeType, opts.dir)
+      // Step 4: Validator config (if applicable). Pass the L1 RPC + network
+      // so we can look up the validator's tokenId by username on-chain.
+      const validatorConfig = await collectValidatorConfig(nodeType, opts.dir, {
+        l1RpcUrl: rpcConfig.l1RpcUrlHttp || rpcConfig.l1RpcUrl,
+        network: networkConfig.network,
+      })
 
       // Step 5: Infrastructure (DB, Redis, domain, client ID)
       const infraConfig = await collectInfraConfig(nodeType)
