@@ -206,15 +206,20 @@ async function processDueScheduledPosts() {
   try {
     const now = new Date()
 
-    // Find all pending scheduled posts where scheduledAt <= now
+    // Find all pending scheduled posts where scheduledAt <= now.
+    // Order by threadIndex secondarily so chunk 0 of a thread is processed
+    // before chunks 1..N (which reference chunk 0 via receiverId/receiverCawonce
+    // and only resolve their parent caw once chunk 0 has been written).
     const dueScheduledPosts = await prisma.scheduledCaw.findMany({
       where: {
         status: 'pending',
-        scheduledAt: {
-          lte: now
-        }
+        scheduledAt: { lte: now },
       },
-      orderBy: { scheduledAt: 'asc' }
+      orderBy: [
+        { scheduledAt: 'asc' },
+        { threadId: 'asc' },
+        { threadIndex: 'asc' },
+      ],
     })
 
     if (dueScheduledPosts.length === 0) {
@@ -226,13 +231,27 @@ async function processDueScheduledPosts() {
 
     let successCount = 0
     let failCount = 0
+    // Track threads whose head (or any prior chunk) failed — any later chunk in
+    // the same thread can't find its parent caw, so fail it fast rather than
+    // running through processScheduledPost only to mis-link or orphan it.
+    const failedThreadIds = new Set<string>()
 
     for (const scheduledPost of dueScheduledPosts) {
+      if (scheduledPost.threadId && failedThreadIds.has(scheduledPost.threadId)) {
+        logger.warn(`Skipping thread chunk ${scheduledPost.id} — earlier chunk in thread ${scheduledPost.threadId} failed`)
+        await prisma.scheduledCaw.update({
+          where: { id: scheduledPost.id },
+          data: { status: 'failed' },
+        })
+        failCount++
+        continue
+      }
       const success = await processScheduledPost(scheduledPost)
       if (success) {
         successCount++
       } else {
         failCount++
+        if (scheduledPost.threadId) failedThreadIds.add(scheduledPost.threadId)
       }
     }
 

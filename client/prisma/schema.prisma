@@ -248,6 +248,9 @@ model ScheduledCaw {
   updatedAt    DateTime @updatedAt
   signedAction Json?
   cawonce      Int?
+  threadId     String?  // shared id across all chunks of one scheduled thread; null = single post
+  threadIndex  Int?     // 0-based position of this chunk within its thread
+  threadTotal  Int?     // total chunks in the thread
   user         User     @relation(fields: [userId], references: [tokenId], onDelete: Cascade)
 
   @@index([userId])
@@ -255,6 +258,7 @@ model ScheduledCaw {
   @@index([status])
   @@index([status, scheduledAt])
   @@index([userId, status, cawonce])
+  @@index([threadId, threadIndex])
 }
 
 model Notification {

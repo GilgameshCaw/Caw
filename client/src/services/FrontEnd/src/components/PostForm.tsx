@@ -644,7 +644,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
 
     // Check if this is a scheduled post
     if (showScheduler && scheduledDate && scheduledTime) {
-
+      // Guard against double-clicks: a thread takes seconds to sign, and a
+      // second click would re-enter and schedule the same post twice.
+      if (isScheduling) return
       setIsScheduling(true)
       setScheduleError(null)
       try {
@@ -661,71 +663,70 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         }
 
         // Replace original URLs with short URLs for on-chain submission.
-        // getOnChainText handles URLs pre-shortened during typing;
-        // shortenUrlsInText catches any remaining (e.g., GIF URLs appended above).
         finalText = await shortenUrlsInText(getOnChainText(finalText))
 
-        // Get current cawonce
-        const currentCawonce = activeToken?.cawonce ?? 0
+        // Split into thread chunks if needed — mirrors the immediate-post path.
+        const chunks = splitTextIntoChunks(finalText, includePageIndicators)
 
-        // Build EIP-712 typed data (same as regular post)
-        const { domain, types, primaryType, message } = buildTypedData({
-          actionType: 'caw',
-          senderId: effectiveTokenId,
-          text: finalText,
-          cawonce: currentCawonce
-        })
+        // Reserve sequential cawonces for the whole thread up front so async
+        // syncs don't reuse them. (Same approach as the immediate-post path.)
+        const startCawonce = activeToken?.cawonce ?? 0
+        const threadCawonces = chunks.map((_, i) => startCawonce + i)
+        const setCawonce = useTokenDataStore.getState().setCawonce
+        setCawonce(effectiveTokenId, startCawonce + chunks.length)
+        const firstPostCawonce = threadCawonces[0]
 
-        // Prefer signing with the Quick Sign session key when one covers this
-        // action — matches the live-post flow and avoids needing a connected wallet.
+        // Resolve session key once — same logic as immediate-post path.
         const { useSessionKeyStore } = await import('~/store/sessionKeyStore')
         const { privateKeyToAccount } = await import('viem/accounts')
         const tokenOwner = activeToken?.owner
         const session = tokenOwner
           ? useSessionKeyStore.getState().getActiveSessionForAddress(tokenOwner)
           : useSessionKeyStore.getState().getActiveSession()
-        const cawActionBit = 0 // bit 0 = 'caw' in ActionTypeMap
+        const cawActionBit = 0
         const canUseSession = !!session && (session.scopeBitmap & (1 << cawActionBit)) !== 0
+        const sessionAccount = canUseSession ? privateKeyToAccount(session!.privateKey) : null
 
-        let signature: `0x${string}`
-        if (canUseSession) {
-          const sessionAccount = privateKeyToAccount(session!.privateKey)
-          signature = await sessionAccount.signTypedData({
-            domain,
-            types: { ActionData: TYPES.ActionData },
-            primaryType,
-            message,
+        // Drive the count-up button immediately for multi-chunk threads.
+        if (chunks.length > 1) setSigningProgress({ current: 1, total: chunks.length })
+
+        // Sign each chunk. Chunks 1..N reply to chunk 0 (flat thread, matches
+        // the immediate-post path at lines 1095-1104).
+        const signedChunks: any[] = []
+        for (let i = 0; i < chunks.length; i++) {
+          const isFirst = i === 0
+          const { domain, types, primaryType, message } = buildTypedData({
+            actionType: 'caw',
+            senderId: effectiveTokenId,
+            text: chunks[i],
+            cawonce: threadCawonces[i],
+            ...(isFirst ? {} : { receiverId: effectiveTokenId, receiverCawonce: firstPostCawonce }),
           })
-        } else {
-          signature = await signTypedDataAsync({
-            domain,
-            types: { ActionData: TYPES.ActionData },
-            primaryType,
-            message,
+          const signArgs = { domain, types: { ActionData: TYPES.ActionData }, primaryType, message } as const
+          const signature = sessionAccount
+            ? await sessionAccount.signTypedData(signArgs)
+            : await signTypedDataAsync(signArgs)
+          signedChunks.push({
+            content: chunks[i],
+            signedAction: { data: message, domain, types, signature },
           })
+          if (chunks.length > 1) setSigningProgress({ current: i + 1, total: chunks.length })
         }
 
-        // Bump cawonce after successful signature
         bumpCawonce(effectiveTokenId)
 
-        // Send to scheduled API with the signed data. Use finalText so
-        // media-only posts (where the user typed no text but attached a GIF)
-        // still pass the server's content validation — finalText has the GIF
-        // URLs appended and is what gets posted on-chain.
+        // POST single payload for one chunk (back-compat); array for threads.
+        const body = chunks.length > 1
+          ? { scheduledAt: scheduledAt.toISOString(), chunks: signedChunks }
+          : {
+              content: signedChunks[0].content,
+              scheduledAt: scheduledAt.toISOString(),
+              signedAction: signedChunks[0].signedAction,
+            }
         await apiFetch('/api/scheduled', {
           method: 'POST',
-          body: JSON.stringify({
-            content: finalText,
-            scheduledAt: scheduledAt.toISOString(),
-            // Include signed action data for later processing
-            signedAction: {
-              data: message,
-              domain,
-              types,
-              signature
-            }
-          }),
-          headers: { 'x-user-id': effectiveTokenId.toString() }
+          body: JSON.stringify(body),
+          headers: { 'x-user-id': effectiveTokenId.toString() },
         })
 
         // Clear form
@@ -743,10 +744,19 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
         console.error('[Schedule] Failed:', error)
         const isUserRejection = error?.code === 4001 || /rejected|denied|cancelled/i.test(error?.message || '')
         if (!isUserRejection) {
-          setScheduleError(error?.message || 'Something went wrong scheduling this post.')
+          // apiFetch wraps server messages as "API 400: <detail>" — strip the
+          // status prefix before showing it to the user so the inline error
+          // reads like a normal sentence, not a developer log line.
+          const raw = error?.message || 'Something went wrong scheduling this post.'
+          const cleaned = raw.replace(/^API\s+\d+(?:\s+[A-Za-z ]+)?:\s*/, '')
+          setScheduleError(cleaned)
         }
       } finally {
         setIsScheduling(false)
+        // Don't clear signingProgress immediately — session-key signing finishes
+        // in well under the count-up's 2.2s animation budget, and clearing here
+        // kills the rAF tick mid-animation. Let it run out, then clear.
+        setTimeout(() => setSigningProgress(null), 2300)
       }
       return
     }
@@ -1397,7 +1407,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                 const wrongWallet = isConnected && !isTokenOwner && !hasActiveSession && activeToken?.tokenId
                 const tooltipText = wrongWallet ? 'Please switch to the correct wallet' : isSubmitting ? 'Signing...' : ''
                 const threadTooLong = isThreadMode && chunkCount > 300
-                const isDisabled = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isSubmitting || threadTooLong
+                const isDisabled = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isSubmitting || isScheduling || threadTooLong
                 const btn = (
                   <button
                     ref={submitBtnRef}
@@ -1769,7 +1779,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                 const wrongWallet2 = isConnected && !isTokenOwner && !hasActiveSession && activeToken?.tokenId
                 const tooltipText2 = wrongWallet2 ? 'Please switch to the correct wallet' : hasNoToken ? '' : isSubmitting ? 'Signing...' : ''
                 const threadTooLong2 = isThreadMode && chunkCount > 300
-                const isDisabled2 = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isSubmitting || threadTooLong2
+                const isDisabled2 = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isSubmitting || isScheduling || threadTooLong2
                 const btn2 = (
                   <button
                     ref={submitBtnRef}

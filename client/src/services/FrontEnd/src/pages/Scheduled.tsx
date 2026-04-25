@@ -1,15 +1,16 @@
-import React, { useState } from 'react'
+import React, { useState, useMemo } from 'react'
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { useAccount } from "wagmi"
 import { useConnectModal } from "@rainbow-me/rainbowkit"
-import { HiOutlineClock, HiOutlineTrash, HiOutlineCheck, HiOutlineXCircle } from "react-icons/hi"
+import { HiOutlineClock, HiOutlineTrash, HiOutlineCheck, HiOutlineXCircle, HiChevronDown, HiChevronRight } from "react-icons/hi"
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '~/api/client'
 import { useAuthStore } from '~/store/authStore'
 import { useVerifyWallet } from '~/hooks/useVerifyWallet'
 import { formatDistanceToNow, format, isPast } from 'date-fns'
+import ContentWithHashtags from '~/components/ContentWithHashtags'
 
 interface ScheduledCaw {
   id: number
@@ -20,6 +21,9 @@ interface ScheduledCaw {
   publishedId: number | null
   hasImage: boolean
   createdAt: string
+  threadId: string | null
+  threadIndex: number | null
+  threadTotal: number | null
   user: {
     tokenId: number
     username: string
@@ -28,9 +32,51 @@ interface ScheduledCaw {
   }
 }
 
+// One row in the rendered list — either a single scheduled caw or a thread
+// group. For a group, items[] is sorted by threadIndex ascending.
+type Row =
+  | { kind: 'single'; item: ScheduledCaw }
+  | { kind: 'thread'; threadId: string; items: ScheduledCaw[] }
+
+// Bucket the API response into rows: single posts stay as-is; chunks sharing a
+// threadId collapse into one thread row anchored on chunk 0's scheduled time.
+function groupIntoRows(items: ScheduledCaw[]): Row[] {
+  const threads = new Map<string, ScheduledCaw[]>()
+  const rows: Row[] = []
+  for (const it of items) {
+    if (it.threadId) {
+      const arr = threads.get(it.threadId) ?? []
+      arr.push(it)
+      threads.set(it.threadId, arr)
+    } else {
+      rows.push({ kind: 'single', item: it })
+    }
+  }
+  for (const [threadId, arr] of threads) {
+    arr.sort((a, b) => (a.threadIndex ?? 0) - (b.threadIndex ?? 0))
+    rows.push({ kind: 'thread', threadId, items: arr })
+  }
+  // Order rows by their representative scheduledAt (chunk 0 for threads).
+  rows.sort((a, b) => {
+    const at = a.kind === 'single' ? a.item.scheduledAt : a.items[0].scheduledAt
+    const bt = b.kind === 'single' ? b.item.scheduledAt : b.items[0].scheduledAt
+    return new Date(at).getTime() - new Date(bt).getTime()
+  })
+  return rows
+}
+
 const ScheduledPage: React.FC = () => {
   const { isDark } = useTheme()
   const [activeTab, setActiveTab] = useState<'pending' | 'published' | 'failed'>('pending')
+  const [expandedThreads, setExpandedThreads] = useState<Set<string>>(new Set())
+  const toggleThread = (threadId: string) => {
+    setExpandedThreads(prev => {
+      const next = new Set(prev)
+      if (next.has(threadId)) next.delete(threadId)
+      else next.add(threadId)
+      return next
+    })
+  }
   const { isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
   const activeToken = useActiveToken()
@@ -51,6 +97,11 @@ const ScheduledPage: React.FC = () => {
     enabled: !!activeToken?.tokenId,
     refetchInterval: 30000, // Refresh every 30 seconds
   })
+
+  const rows: Row[] = useMemo(
+    () => groupIntoRows(scheduledData?.items ?? []),
+    [scheduledData]
+  )
 
   const cancelMutation = useMutation({
     mutationFn: async (id: number) => {
@@ -207,66 +258,129 @@ const ScheduledPage: React.FC = () => {
           </div>
         ) : (
           <div className="space-y-4">
-            {scheduledData.items.map((item) => (
-              <div
-                key={item.id}
-                className={`p-4 rounded-xl border transition-colors ${
-                  isDark
-                    ? 'bg-white/5 border-white/10 hover:bg-white/10'
-                    : 'bg-white border-gray-200 hover:bg-gray-50'
-                }`}
-              >
-                {/* Post Content */}
-                <div className={`mb-3 ${isDark ? 'text-white' : 'text-black'}`}>
-                  <p className="whitespace-pre-wrap break-words">{item.content}</p>
-                  {item.hasImage && (
-                    <span className={`inline-block mt-2 text-xs px-2 py-1 rounded ${
-                      isDark ? 'bg-white/10 text-gray-400' : 'bg-gray-100 text-gray-600'
-                    }`}>
-                      Has image attachment
-                    </span>
-                  )}
-                </div>
+            {rows.map((row) => {
+              const cardClass = `p-4 rounded-xl border transition-colors ${
+                isDark
+                  ? 'bg-white/5 border-white/10 hover:bg-white/10'
+                  : 'bg-white border-gray-200 hover:bg-gray-50'
+              }`
+              if (row.kind === 'single') {
+                const item = row.item
+                return (
+                  <div key={item.id} className={cardClass}>
+                    <div className={`mb-3 ${isDark ? 'text-white' : 'text-black'}`}>
+                      <ContentWithHashtags content={item.content} />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        {getStatusIcon(item.status)}
+                        <span className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                          {getStatusText(item)}
+                        </span>
+                      </div>
+                      {item.status === 'pending' && (
+                        <button
+                          onClick={() => cancelMutation.mutate(item.id)}
+                          disabled={cancelMutation.isPending}
+                          className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-sm transition-colors ${
+                            isDark ? 'text-red-400 hover:bg-red-500/20' : 'text-red-600 hover:bg-red-50'
+                          } ${cancelMutation.isPending ? 'opacity-50 cursor-not-allowed' : ''}`}
+                        >
+                          <HiOutlineTrash className="w-4 h-4" />
+                          Cancel
+                        </button>
+                      )}
+                      {item.status === 'published' && item.publishedId && (
+                        <a
+                          href={`/caws/${item.publishedId}`}
+                          className={`text-sm px-3 py-1.5 rounded-full transition-colors ${
+                            isDark ? 'text-yellow-400 hover:bg-yellow-500/20' : 'text-yellow-600 hover:bg-yellow-50'
+                          }`}
+                        >
+                          View Post
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                )
+              }
 
-                {/* Status & Actions */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {getStatusIcon(item.status)}
-                    <span className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                      {getStatusText(item)}
-                    </span>
+              // Thread row — collapsed by default, shows chunk 0 as preview;
+              // expanding reveals the remaining chunks. Cancel acts on chunk 0
+              // (the API cascade-cancels every still-pending chunk by threadId).
+              const expanded = expandedThreads.has(row.threadId)
+              const head = row.items[0]
+              const total = head.threadTotal ?? row.items.length
+              // Status to display for the thread as a whole: any failed → failed,
+              // else any pending → pending, else any cancelled → cancelled, else published.
+              const aggregateStatus: ScheduledCaw['status'] =
+                row.items.find(i => i.status === 'failed')?.status ??
+                row.items.find(i => i.status === 'pending')?.status ??
+                row.items.find(i => i.status === 'cancelled')?.status ??
+                'published'
+              const headForStatus: ScheduledCaw = { ...head, status: aggregateStatus }
+              return (
+                <div key={`thread-${row.threadId}`} className={cardClass}>
+                  <button
+                    type="button"
+                    onClick={() => toggleThread(row.threadId)}
+                    className={`flex items-center gap-2 mb-2 text-xs font-medium ${
+                      isDark ? 'text-gray-400 hover:text-gray-200' : 'text-gray-500 hover:text-gray-700'
+                    }`}
+                  >
+                    {expanded ? <HiChevronDown className="w-4 h-4" /> : <HiChevronRight className="w-4 h-4" />}
+                    Thread ({total} posts)
+                  </button>
+
+                  <div className={`mb-3 ${isDark ? 'text-white' : 'text-black'}`}>
+                    <ContentWithHashtags content={head.content} />
                   </div>
 
-                  {item.status === 'pending' && (
-                    <button
-                      onClick={() => cancelMutation.mutate(item.id)}
-                      disabled={cancelMutation.isPending}
-                      className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-sm transition-colors ${
-                        isDark
-                          ? 'text-red-400 hover:bg-red-500/20'
-                          : 'text-red-600 hover:bg-red-50'
-                      } ${cancelMutation.isPending ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  {expanded && row.items.slice(1).map((chunk, idx) => (
+                    <div
+                      key={chunk.id}
+                      className={`mt-3 pt-3 border-t ${isDark ? 'border-white/10 text-white' : 'border-gray-200 text-black'}`}
                     >
-                      <HiOutlineTrash className="w-4 h-4" />
-                      Cancel
-                    </button>
-                  )}
+                      <div className={`text-[11px] mb-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                        {idx + 2} / {total}
+                      </div>
+                      <ContentWithHashtags content={chunk.content} />
+                    </div>
+                  ))}
 
-                  {item.status === 'published' && item.publishedId && (
-                    <a
-                      href={`/caws/${item.publishedId}`}
-                      className={`text-sm px-3 py-1.5 rounded-full transition-colors ${
-                        isDark
-                          ? 'text-yellow-400 hover:bg-yellow-500/20'
-                          : 'text-yellow-600 hover:bg-yellow-50'
-                      }`}
-                    >
-                      View Post
-                    </a>
-                  )}
+                  <div className="flex items-center justify-between mt-3">
+                    <div className="flex items-center gap-2">
+                      {getStatusIcon(aggregateStatus)}
+                      <span className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                        {getStatusText(headForStatus)}
+                      </span>
+                    </div>
+                    {aggregateStatus === 'pending' && (
+                      <button
+                        onClick={() => cancelMutation.mutate(head.id)}
+                        disabled={cancelMutation.isPending}
+                        className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-sm transition-colors ${
+                          isDark ? 'text-red-400 hover:bg-red-500/20' : 'text-red-600 hover:bg-red-50'
+                        } ${cancelMutation.isPending ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        <HiOutlineTrash className="w-4 h-4" />
+                        Cancel thread
+                      </button>
+                    )}
+                    {aggregateStatus === 'published' && head.publishedId && (
+                      <a
+                        href={`/caws/${head.publishedId}`}
+                        className={`text-sm px-3 py-1.5 rounded-full transition-colors ${
+                          isDark ? 'text-yellow-400 hover:bg-yellow-500/20' : 'text-yellow-600 hover:bg-yellow-50'
+                        }`}
+                      >
+                        View Thread
+                      </a>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
