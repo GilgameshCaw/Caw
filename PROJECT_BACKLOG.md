@@ -1,427 +1,304 @@
-# CAW Protocol - Project Backlog
+# CAW Protocol — Project Backlog
 
-This document tracks outstanding TODOs, security considerations, and planned features.
+Outstanding TODOs, security considerations, and planned features. Each entry has enough context for an agent (or human) to pick it up cold.
 
-## Critical / Security
-
-### High Priority
-
-- [ ] **Fee blocking attack vector** (CawName.sol)
-  - **Issue**: Could a client set stupidly high fees to block users from withdrawing?
-  - **Location**: `CawName.withdraw()` calls `clientManager.getDepositFeeAndAddress()`
-  - **Impact**: Users could be prevented from withdrawing if client sets extreme fees
-  - **Suggested fix**: Add maximum fee caps or allow users to withdraw without client interaction
-  - **Status**: Needs investigation
-
-### Medium Priority
-
-- [ ] **XMTP authentication disabled** (xmtp.ts)
-  - **Issue**: Authentication is commented out on all XMTP endpoints
-  - **Location**: `client/src/api/routes/xmtp.ts` (lines 53, 83, 140, 171, 196, 227, 429)
-  - **Comment**: "TODO: Re-enable authentication after testing"
-  - **Status**: Re-enable before production
-
-- [ ] **XMTP wallet key management** (XmtpService/index.ts)
-  - **Issue**: Using deterministic wallet seed for XMTP identity
-  - **Location**: Line 194
-  - **Comment**: "TODO: In production, use the user's actual wallet or secure key management"
-  - **Status**: Needs proper key management solution
+---
 
 ## Smart Contracts
 
-### Gas Limits (Need Real Values) - HIGH PRIORITY
+### Mint flow — three modes (frontend work)
 
-- [ ] **CawName.gasLimitFor()** (CawName.sol:529-542)
-  - Current values are placeholders
-  - Need to measure actual gas usage on testnet
-  - Affects: `addToBalanceSelector`, `mintSelector`, `updateOwnersSelector`, `authSelector`, `setReplicationPeerSelector`
+The `mintSelector` / `mintAndUpdateOwners` plumbing is intentionally kept as latent capacity (see comments in `CawProfile.sol:44-50` and `CawProfileL2.sol:280-289`). Once mainnet contracts ship they're immutable, so removing the wiring would lock us out of a flow we might want.
 
-- [ ] **CawNameL2.gasLimitFor()** (CawNameL2.sol:325-335)
-  - Current values are placeholders
-  - Need to measure actual gas usage on testnet
-  - Affects: `setWithdrawableSelector`
+**Current state worth knowing:**
+- `mintAndDeposit` (cross-chain) sends `depositAndUpdateOwners`, which sets `ownerOf[tokenId]` on L2 but **does NOT set `usernames[tokenId]`** on L2. L2's `usernames[]` mapping is currently dead in cross-chain mode — the only writer (`mintAndUpdateOwners`) is never reached. `getTokens()` returns an empty string for `username`, but the backend doesn't read it (FE/backend pull username from L1's `usernames[]`). So no live bug, but the field is misleading.
+- Pure `mint()` doesn't lzSend at all → L2 doesn't even know the token exists.
 
-- [ ] **CawActionsReplicator.RECEIVE_GAS_LIMIT** (CawActionsReplicator.sol:45-50)
-  - Currently set to 50,000 (should be sufficient for event-only archive)
-  - Verify on testnet that LZ overhead + event emission stays under limit
-  - If archive contracts do more than emit events, this needs to increase
+- [ ] **Mint UI: three explicit modes** (frontend)
+  - **Mint + deposit** (current default, uses `mintAndDeposit`) — pays mint + deposit + auth fees, CAW usable immediately.
+  - **Mint + authenticate (no deposit)** — pays mint + auth fees, registers the token with the chosen client without depositing CAW yet. Closes the awkward gap where a freshly-minted token can't receive internal CAW transfers from another token until *something* tells L2 it exists. Needs a new L1 path (`mintAndAuthenticate`?) that mints and lzSends in one call. Either selector works:
+    - Reuse `authSelector` (`authenticateAndUpdateOwners`): minimal change, but L2 still doesn't learn the username at this step (matches current `mintAndDeposit` behavior).
+    - Use the parked `mintSelector` (`mintAndUpdateOwners`): also pushes the username to L2 so `getTokens().username` finally returns something useful in cross-chain mode.
+  - **Mint only** — pays mint fee only. Token exists on L1 (marketplace/identity); L2 has no record. User authenticates later when they're ready to use the platform.
+  - Tooltip explains the fee for each mode.
+  - **Side question**: do we want L2 usernames populated for non-co-deployed setups? If yes, `mintSelector` is the right path forward; if not, the L2 `usernames[]` mapping should probably be removed in a future deploy to avoid the misleading empty-string field in `getTokens()`.
 
-### UX Improvements
+---
 
-- [ ] **Combined mint + stake transaction** (CawNameMinter.sol)
-  - **Goal**: Let users mint a CawName and authenticate/stake to their chosen L2 + client in a single transaction
-  - **Current flow**: `buy()` on L1, then separate `authenticate()` call with LZ fee
-  - **Proposed**: Add `buyAndAuthenticate(name, clientId, lzDestId)` that does both in one tx
-  - **Considerations**: `msg.value` = CAW cost + LZ fee; if LZ part fails, mint still succeeds (user retries auth only)
-  - **Status**: Not started
+## Security & Pre-Launch
 
-### Marketplace
+### LZ DVN 3-of-3 config — verify before mainnet
 
-- [ ] **Buy Offers (OTC offer system)** (CawNameMarketplace.sol)
-  - **Goal**: Allow anyone to make a buy offer on any username, even if it's not listed
-  - **Contract changes**:
-    - New `Offer` struct: `{ offerer, tokenId, paymentToken, amount, expiry, active }`
-    - `createOffer(tokenId, paymentToken, amount, expiry)` — buyer escrows funds in contract
-    - `acceptOffer(offerId)` — seller accepts, NFT transfers to buyer, funds to seller (one click)
-    - `cancelOffer(offerId)` — buyer withdraws their escrowed funds before acceptance
-    - `offers[]` mapping and `offersByTokenId[]` for lookup
-    - Offers auto-expire after `expiry` timestamp; buyer can reclaim after expiry
-    - Multiple offers can exist on the same tokenId (from different buyers or different amounts)
-  - **Frontend**:
-    - "Make Offer" button on any user profile page
-    - Modal: choose currency, amount, expiry duration (1d, 3d, 7d, 30d)
-    - Notification to the profile owner when they receive an offer
-    - "Pending Offers" section on the marketplace "My Profiles" tab
-    - One-click accept with approval check
-    - Buyer can view and cancel their pending offers
-  - **Indexer**: Index `OfferCreated`, `OfferAccepted`, `OfferCancelled` events
-  - **API**: New endpoints for offers (list by tokenId, by buyer, by seller)
-  - **Considerations**:
-    - Offers are fully escrowed (funds held in contract) so acceptance is guaranteed
-    - Seller must still own the NFT at acceptance time (check in `acceptOffer`)
-    - If seller has an active listing, they should be able to accept an offer (cancels the listing)
-    - 0% fee, consistent with marketplace philosophy
-  - **Status**: Not started
+**Status:** Implemented in `solidity/scripts/deploy.js` phase 6 (and `solidity/scripts/lz-dvn-config.js`). Runs automatically on mainnet deploys; testnet intentionally uses LZ defaults.
 
-- [x] **English auction safety: reclaimBid for transferred NFTs** (CawNameMarketplace.sol:324)
-  - `reclaimBid(listingId)` implemented — callable by anyone if seller no longer owns NFT
-  - **Frontend**: Still needs "Reclaim Bid" button UI (see BACKLOG.md UX section)
-  - **Status**: Contract done, frontend UX pending
+**Config:** 3-of-3 required DVNs across every cross-chain pathway (CawProfile ↔ CawProfileL2_L2, CawProfile ↔ CawProfileL2_L2b, CawChallengeRelay_L2 → CawActionsArchive_L2b):
 
-### Refactoring
+- LayerZero Labs
+- Nethermind
+- Google Cloud
 
-- [ ] **Unused mintSelector** (CawName.sol:41)
-  - Comment: "TODO: this one not used"
-  - Either implement or remove
+DVN addresses are per-chain, pulled from LayerZero's metadata API on 2026-04-24. Send and receive sides of each pathway use the same provider identity set, protecting against the "DVN mismatch" pitfall LZ's docs warn about.
 
-- [x] **depositFor function** (CawName.sol:286)
-  - Permissionless `depositFor(clientId, tokenId, amount, lzDestId, lzTokenAmount)` implemented
-  - Status: Done
+**Pre-mainnet checklist:**
 
-- [ ] **LayerZero refund address** (CawName.sol:464-466)
-  - Comment: "Should the msg.sender receive the refund instead?"
-  - Currently refunds go to contract address
-  - Need to decide on proper refund handling
+- [ ] Re-pull DVN addresses from `metadata.layerzero-api.com/v1/metadata/dvns` right before mainnet deploy and diff against `scripts/lz-dvn-config.js::DVNS_BY_CHAIN_MAINNET`. If LZ moves an address, our hardcoded value is stale.
+- [ ] Verify send/receive library addresses (`LZ_LIBRARIES_MAINNET`) haven't been rotated — run `endpoint.defaultSendLibrary(destEid)` / `defaultReceiveLibrary(destEid)` for each pathway and confirm they match what the script uses.
+- [ ] After mainnet deploy, for each of the 6 pathways, call `endpoint.getConfig(oapp, library, destEid, 2)` and assert the on-chain `requiredDVNs` array is sorted ascending and contains exactly the 3 expected addresses.
+- [ ] Send one test cross-chain message and observe all 3 DVNs sign before delivery.
+- [ ] Renounce the ability to alter `setConfig` for each OApp (or move to multisig) once verified — otherwise a compromised deployer key can downgrade the DVN set.
+
+### Admin/owner abilities — verify before mainnet
+
+**Core lockdown is DONE** via the `OnlyOnce` pattern (`solidity/contracts/OnlyOnce.sol`). All protocol-critical setters are gated by `onlyOnce(key)` and permanently disabled after their first successful call:
+
+- `CawProfile.setMinter`, `setUriGenerator`, `setL2Peer` (per-eid), and now also raw `setPeer` (per-eid)
+- `CawProfileL2.setL1Peer`, `setCawActions`, raw `setPeer` (per-eid)
+- `CawActionsArchive.setPeer` (per-eid) — newly added
+- `CawChallengeRelay.setPeer` (per-eid) — newly added
+- `CawClientManager.setCawProfile`
+
+Strictly stronger than `renounceOwnership()` because it's per-setter and doesn't need a separate "remember to renounce" step.
+
+The inherited `OAppCore.setPeer(uint32, bytes32)` was the dangerous one — `public virtual onlyOwner`, would have let a compromised owner swap an existing peer at any time and forge LZ messages. Now overridden in every OApp-extending contract with a per-eid `onlyOnce` so existing peers are immutable forever; new chains can still be added by setting peers for fresh eids. (Commit `3c445c0`.)
+
+Intentionally unlocked (operational, not protocol-critical):
+
+- `CawProfileMarketplace.setAllowedPaymentToken` — payment token whitelist must remain tunable. Compromise risk is bounded.
+- `CawClientManager` per-client fee setters — controlled by each client's owner, not the protocol owner. By design.
+- `OAppCore.setDelegate` — not virtual (can't override). Handled by the multisig/renounce step in the deploy checklist instead.
+
+**Pre-mainnet checklist:**
+
+- [ ] Deploy runs all `onlyOnce`-gated setters once in `deploy.js` (verify none are missed).
+- [ ] Spot-check each locked setter post-deploy by calling it again and confirming `"OnlyOnce: already called"` revert.
+- [ ] Transfer `CawProfileMarketplace` ownership to a multisig (or remove ownership entirely — see open question in this backlog).
+- [x] **Delegatecall audit (done 2026-04-25)**: only two delegatecall sites in the codebase (`CawProfile._lzReceive`, `CawProfileL2._lzReceive`); both call `address(this).delegatecall(...)` (target is self, not user-controlled), behind a whitelisted-selector check, behind OApp's endpoint+peer auth, with `fromLZ` flag flipped on success only. Selector collisions against all inherited functions (Ownable / ERC721 / ERC721Enumerable / OApp / OAppCore) checked and ruled out. No further action needed.
+
+---
+
+## Replication & Testing
+
+### End-to-end replication tests — mostly covered
+
+The replication path was rewritten as the optimistic archive + trustless `CawChallengeRelay` (commit `b536eae`); the old LZ-based `CawActionsReplicator` is gone.
+
+**Already tested:**
+
+- **Real archive submissions.** `solidity/test/archive-test.js` covers `submitReplication`, finalization after challenge period, deposits / withdraws, pending-submission gating, multi-submission invalidation on slash.
+- **Mode B (mismatched root) slashing on chain.** `archive-test.js` covers full-stake slashing on fraud, all-pending-submissions invalidated when one is slashed, false-challenge rejection.
+- **Mode A and Mode B in production.** `ValidatorService` has built-in `CORRUPT_REPLICATION=true` + `CORRUPT_MODE=A|B` test selectors (`index.ts:2097-2143`). Mode A corrupts the merkle root → monitor catches it via `slashIncoherentRoot`; Mode B corrupts the rebuild path → `slashFraud` via merkle proof. Both have been exercised end-to-end on testnet.
+- **`slashIncoherentRoot` path** (added 2026-04 / `a9b51e5`) — exercised live by the corrupt-validator test rig.
+- **Live testnet challenge flow.** `solidity/scripts/test-slash.js` runs the full path: deposit stake on L2b → submit bad data → relay correct hash via `CawChallengeRelay` on L2 → wait for LZ delivery → `resolveChallenge` on L2b → verify slashed.
+
+**Still missing:**
+
+- [ ] **Mode A unit test** in `archive-test.js`. Mode A is exercised live but not in solidity unit tests; adding a `slashIncoherentRoot` test alongside the existing `slashFraud` ones would let CI catch regressions without needing testnet.
+- [ ] **Stale test cleanup.** `solidity/test/multi-layer-test.js` references `migratePartialCheckpoint` (removed). Either rewrite against the current architecture or delete in favor of `archive-test.js` and `instance-registry-test.js`.
+
+### Stale test cleanup
+
+- [ ] `solidity/test/multi-layer-test.js` references `migratePartialCheckpoint` (and possibly other removed functions). Either rewrite against the current architecture or delete in favour of new tests written for the optimistic archive flow.
+
+---
 
 ## Frontend
 
-### Features
+### UX — features not started
 
-- [ ] **Delete posts**
-  - Allow users to delete their own posts
-  - Needs contract-level support or soft-delete via API
-  - UI: add "Delete" option to the post options menu (three dots)
+- [ ] **Image modal** (`client/src/services/FrontEnd/src/components/FeedItem.tsx:966, 994, 1022`)
+  - Comment: `// TODO: Open image in modal`
+  - Clicking on post images should open a full-size modal.
 
-- [ ] **DM editing and deletion**
-  - Allow users to edit and delete their own direct messages
-  - See detailed design notes below in [DM Edit/Delete Design Notes](#dm-editdelete-design-notes)
+- [ ] **Real gas price** (`client/src/services/FrontEnd/src/components/GasPriceLine.tsx:12-15`)
+  - Currently hardcoded `const ethPrice = 1`.
+  - ETH price IS already tracked by `ChainSyncService` (`usdPerEth` cached, `chainData` updated every 5 min). Frontend just needs to consume it via the `chainData` API.
 
-- [ ] **Reported content moderation (explicit / removed)** — IN PROGRESS
-  - Admin can mark any post as `EXPLICIT` or `REMOVED` from the /admin/reports page
-  - **Done so far**: Report modal sub-options for Explicit vs Illegal/Harmful, reason filtering in admin dashboard, success confirmation screen, duplicate reports update instead of 409
+- [ ] **Reported content moderation (EXPLICIT / REMOVED)** — IN PROGRESS
+  - **Done**: report modal sub-options (Explicit vs Illegal/Harmful), reason filtering on admin dashboard, success confirmation screen, duplicate reports update instead of 409.
   - **Still needed**:
-    - Add `moderation` field (enum: NONE, EXPLICIT, REMOVED) to Caw model + migration
-    - Admin API endpoint `PATCH /api/caws/:id/moderation` (requireAdmin)
-    - shapeCaw/getCawIncludeConfig: pass moderation field through, blank content for REMOVED posts server-side
-    - FeedItem: EXPLICIT posts show blurred overlay with click-to-reveal gate; REMOVED posts show stub ("This caw was removed from this domain. It still exists on chain through the CAW protocol.") with no action buttons
-    - Propagation: explicit/removed status applies to quoted/recawed parent posts automatically via nested includes
-    - Admin buttons on report rows: "Mark Explicit", "Remove Post", "Clear Moderation"
+    - Add `moderation` enum field (`NONE | EXPLICIT | REMOVED`) to `Caw` model and migration.
+    - `PATCH /api/caws/:id/moderation` endpoint, `requireAdmin`.
+    - `shapeCaw` / `getCawIncludeConfig`: pass moderation through, blank content for `REMOVED` server-side.
+    - `FeedItem`: `EXPLICIT` shows blurred overlay with click-to-reveal; `REMOVED` shows stub ("This caw was removed from this domain. It still exists on chain through the CAW protocol.") with no action buttons.
+    - Propagation: explicit/removed status applies to quoted/recawed parents automatically via nested includes.
+    - Admin row buttons: "Mark Explicit", "Remove Post", "Clear Moderation".
 
 - [ ] **Shadow banning**
-  - Frontend-level content filtering for users flagged by admins/reports
-  - Shadow-banned users can still post and interact, but their content is hidden from other users' feeds
-  - The banned user sees no indication they've been banned (posts appear normal to them)
-  - Applies per-frontend (consistent with manifesto — protocol is uncensorable, frontends moderate)
-  - Admin UI to manage shadow-banned users (via ReportsAdmin page or similar)
-  - DB: add `shadowBanned` boolean to User model
-  - API: filter shadow-banned users' content from feed/search/trending endpoints
-  - Exclude from suggested users, trending hashtags contributions, etc.
+  - Frontend-level content filtering for users flagged by admins.
+  - Banned users post and interact normally; their content is hidden from other users' feeds.
+  - The banned user sees no indication (posts appear normal in their own view).
+  - Per-frontend (consistent with manifesto: protocol uncensorable, frontends moderate).
+  - DB: add `shadowBanned: Boolean` to `User`.
+  - API: filter shadow-banned users' content from feed/search/trending/suggested.
+  - Admin UI to manage banned users (extend ReportsAdmin page).
 
-- [ ] **Image modal** (FeedItem.tsx:794, 819, 845)
-  - Comment: "TODO: Open image in modal"
-  - Clicking on post images should open full-size modal
+- [ ] **Tip ceiling exceeded warning**
+  - Quick Sign sessions store a `tipCeiling`. The autonomous signing path uses `min(currentMarketTip, ceiling)`, so the user is never charged more than agreed. If validator network's market tip rises above the ceiling, actions still get signed (with the ceiling) but may be rejected.
+  - **What's needed**:
+    1. Hook that periodically compares `getCurrentMarketTip()` to active session's `tipCeiling`.
+    2. Non-blocking banner near the top of MainLayout when underpriced: *"Quick Sign tip ceiling ($X) is below the current network rate (~$Y). Posts may be slow or rejected. [Renew Quick Sign]"*
+    3. On all-validator rejection: explicit modal: *"All validators rejected your action because your tip is too low. Renew Quick Sign with a higher ceiling?"*
+    4. `QuickSignRenewModal` opens with ceiling preset to `currentMarket × 3`.
+  - **Why deferred**: the cap protection itself ships; this UX polish is only needed once validators actually raise tips significantly. Wait for real-use signal.
 
-- [ ] **Real gas price** (GasPriceLine.tsx:12-14)
-  - Comment: "TODO: get real price"
-  - Currently hardcoded `ethPrice = 1`
-  - Need to fetch real ETH price from oracle/API
+- [ ] **English auction "stuck" recovery flow**
+  - **Background**: when a seller transfers their NFT outside the marketplace mid-auction, `settleAuction` fails. **No funds at risk** — `reclaimBid(listingId)` is a public safety valve (anyone can call it if `cawName.ownerOf(tokenId) != listing.seller`); previously outbid bidders use `withdrawBid` to pull their escrowed refunds.
+  - **Contract**: `CawProfileMarketplace.sol` (`reclaimBid`, `withdrawBid`, `settleAuction`).
+  - **Frontend work needed**:
+    - Detect stuck state per active English auction by checking `cawName.ownerOf(tokenId) === listing.seller`.
+    - Surface to highest bidder: banner *"This auction can no longer be settled — the seller transferred the NFT away. [Reclaim your bid]"*, button calls `reclaimBid(listingId)`.
+    - Surface to outbid bidders: ensure pending-returns `withdrawBid` flow is discoverable.
+    - Surface to seller: warn on their listings page if they've transferred the NFT.
+    - Optional: public "stuck listings" view across the marketplace with public Reclaim button (self-healing).
+  - **Backend**: `MarketplaceIndexerService` should set a `stuck` flag on the listing record so the FE doesn't hit the chain on every page load. Optionally emit a notification when an active-auction NFT transfers.
+  - **Out of scope**: preventing the seller from transferring the NFT. Would require either NFT-side approval-locking or marketplace-managed escrow (much bigger UX change).
 
-- [ ] **Read token data from ETH** (useTokenDataUpdate.tsx:84-86)
-  - Commented out code references reading from Ethereum
-  - Status: Unclear if still needed
+---
 
 ## Backend Services
 
-### Validator Mesh Network
+### Validator Mesh Network — partly done
 
-- [ ] **Set up mesh network for action broadcasting**
-  - **Goal**: Enable validators to broadcast actions to each other for redundancy and faster propagation
-  - **Potential approach**: Use Evmos or similar chain for validator coordination
-  - **Components needed**:
-    - P2P networking layer (libp2p, WebRTC, or custom protocol)
-    - Action gossip protocol (broadcast new actions to peers)
-    - Peer discovery and management
-    - Deduplication (prevent reprocessing same actions)
-    - Authentication (verify peer validators)
-  - **Benefits**:
-    - Reduced latency for action propagation
-    - Redundancy if one validator goes down
-    - Decentralized action submission (users can submit to any validator)
-  - **Considerations**:
-    - How to handle conflicting actions (same cawonce from different sources)
-    - Rate limiting to prevent spam
-    - Incentive alignment for validators to participate
-    - Evmos integration details (Cosmos SDK, IBC compatibility)
-  - **Status**: Not started - needs further research
+**Already in place:**
 
-### Validator Profitability Analysis
+- **On-chain instance registry**: `CawClientManager` emits `InstanceRegistered` / `InstanceUpdated` events carrying each instance's `apiUrl` and `validatorAddress`. `InstanceRegistryService` auto-registers the local instance on startup, so any node coming online broadcasts itself.
+- **Frontend host failover with reputation**: `useInstanceStore` reads the registry and exposes `getApiHosts()`; `apiFetch` walks that list in response-time-priority order; `useHostVerification` records failures and blacklists hosts that serve unverified posts. 5xx errors trigger automatic failover; 4xx don't (correct semantics).
+- **DM relay across instances**: `DmRelayService` reads the same registry, fans out incoming DMs to peer instances via `POST /api/dm/relay` (fire-and-forget), so a conversation can happen across domains regardless of which instance each side connects to.
 
-- [ ] **Analyze and optimize validator economics**
-  - Calculate expected revenue vs costs for running a validator
-  - Determine optimal fee structures
-  - Model validator incentives and game theory
-  - **Status**: Not started
+**Still missing:**
 
-### Staking Pool Analytics
+- [ ] **Validator-to-validator action gossip**. `relayDmToPeers` covers DMs but there's no equivalent for actions — the FE can fail over to a peer instance for *reading*, but action submission doesn't get gossiped between validators. Consequence: if a user submits to validator A and A goes down before broadcasting on chain, the action is lost; another validator can't pick it up. Add an `action-relay` route + service mirroring `DmRelayService`. Reuse the same on-chain registry + signed-payload pattern (`/api/dm/relay` already validates that the payload is signed by the sender's wallet, so no extra peer auth is needed). Dedup by `(senderId, cawonce)`.
+- [ ] **Action submission resilience inside the FE**. When the user posts and validator A 5xx's, we currently fail the post — we don't retry on the next host. Mirror the read-side failover for action submission too (`api/actions.ts`).
+- [ ] **Stale registry handling**. `useInstanceStore` and `DmRelayService` both query `InstanceRegistered` events from `fromBlock: 0` every refresh. Cache the last-scanned block per service so this scales as the registry grows.
 
-- [ ] **Track and display daily CAW distribution to stakers**
-  - **Goal**: Show users how much CAW is being distributed to the staking pool
-  - **Approach**: Query `ActionsProcessed` events from last 24h, calculate distribution based on action types:
-    - CAW post: 5,000 CAW distributed
-    - Like: 400 CAW distributed
-    - Recaw: 2,000 CAW distributed
-    - Follow: 6,000 CAW distributed
-  - **Display options**:
+### Validator Profitability Modeling
+
+- [ ] **Optimal fee modeling and game theory analysis**
+  - The data side is **done**: `ValidatorAnalytics.tsx` (admin route `/admin/validator-analytics`) tracks revenue, gas cost, profit, action breakdown, time-series — pulls from `ValidatorTx` rows written by `ValidatorService`.
+  - **What's still needed**:
+    - Document expected revenue vs costs across realistic activity levels (low / medium / high posting volume).
+    - Recommend default fee/tip presets that keep validators net-profitable across typical usage.
+    - Game-theory write-up: when does it pay to undercut? At what point does the network's tip-priority queue fail to clear?
+
+### Daily CAW Distribution Display
+
+- [ ] **"X CAW distributed to stakers today" widget**
+  - Query `ActionsProcessed` events from last 24h, multiply by per-action issuance:
+    - CAW post: 5,000
+    - Like: 400
+    - Recaw: 2,000
+    - Follow: 6,000
+  - Display:
     - "X CAW distributed to stakers today"
-    - "Your earnings today: Y CAW" (based on user's share of pool)
+    - "Your earnings today: Y CAW" (user share of pool)
     - Historical chart of daily distributions
     - "Based on recent activity, stakers earning ~Z CAW/day"
-  - **Note**: This is activity-based yield, not time-based APR - more like equity dividends than interest
-  - **Status**: Not started
+  - **Note**: activity-based yield, not time-based APR — more like equity dividends. The HelpPage already explains the model in plain English; just need the live calculation surfaced.
 
 ### Price History Tracking
 
-- [ ] **Store price history over time for charting**
-  - Currently ChainSyncService overwrites the latest price in `chainData`
-  - Add a `PriceHistory` table: `{ id, token (caw/eth), usdPrice, ethPrice, timestamp }`
-  - Insert a new row every sync interval (5 min) instead of just overwriting
-  - Add API endpoint `GET /api/prices/history?token=caw&period=24h` for charting
-  - Frontend: price chart on staking page or sidebar showing CAW price over time
-  - Retention policy: keep 5-min granularity for 7 days, hourly for 90 days, daily forever
-  - **Status**: Not started
-
-### XMTP Messaging System
-
-- [ ] **Complete XMTP integration**
-  - Re-enable authentication on all endpoints
-  - Implement proper wallet key management
-  - Test with production XMTP network
-  - Add rate limiting
-  - Add message persistence/caching
+- [ ] **`PriceHistory` table for charts**
+  - Currently `ChainSyncService` overwrites the latest price in `chainData`.
+  - New table: `{ id, token (caw|eth), usdPrice, ethPrice, timestamp }`.
+  - Insert a new row every sync interval (5 min) instead of just overwriting.
+  - `GET /api/prices/history?token=caw&period=24h` for charting.
+  - Frontend: price chart on staking page or sidebar.
+  - Retention: 5-min granularity for 7 days, hourly for 90 days, daily forever.
 
 ### API & Worker Efficiency
 
-- [ ] **Minimize redundant RPC and DB calls across services**
-  - Audit API routes and worker services (ActionProcessor, RawEventsGatherer, ValidatorService, ChainSyncService, DataCleaner) for redundant chain reads, duplicate DB queries, and unnecessary polling
-  - Batch RPC calls where possible (multicall, batch getLogs)
-  - Add caching layers (Redis) for frequently-read chain data that doesn't change often (token metadata, client configs, gas prices)
-  - Deduplicate overlapping work between services (e.g. multiple services reading the same contract state independently)
-  - Profile DB query patterns — look for N+1 queries, missing indexes, over-fetching in Prisma includes
-  - Consider debouncing/throttling event re-processing on reorgs
-  - **Status**: Not started
+- [ ] **Audit redundant RPC and DB calls across services**
+  - Profile: ActionProcessor, RawEventsGatherer, ValidatorService, ChainSyncService, DataCleaner.
+  - Look for:
+    - Redundant chain reads, duplicate DB queries, over-polling
+    - Missed batching (multicall, batch `getLogs`)
+    - Cache opportunities (Redis) for stable chain data: token metadata, client configs, gas prices
+    - Overlapping work between services reading the same contract state
+    - N+1 queries, missing indexes, over-fetching in Prisma includes
+    - Reorg-induced reprocessing — debounce/throttle?
+  - **Note**: `findOrCreateUser` in-memory cache landed 2026-04-24 (`UserService.ts:198`). Same "burst of N parallel lookups for the same key" pattern likely exists elsewhere and is worth hunting.
 
 ### Infrastructure
 
-- [ ] **Contract address configuration**
-  - Many contract addresses marked as TBD in documentation
-  - Update after deployment
+- [ ] **Document all deployed contract addresses**
+  - Many addresses marked TBD in docs.
+  - Update after each deployment so client config and indexers stay in sync.
 
-### Client Deployment CLI (`cli/`)
+---
+
+## Client Deployment CLI (`cli/`)
 
 One-liner install: `curl -fsSL https://raw.githubusercontent.com/.../install.sh | bash`
 
-#### Phase 1 — Interactive installer & process management (IN PROGRESS)
+### Phase 1 — Interactive installer & process management — MOSTLY DONE
 
-- [ ] **Node type selection** — user picks what they want to run:
-  - **Full node** (validator + API + frontend): earns tips, serves users, max decentralization. Needs validator PEM, client ID, RPC URLs, domain, PostgreSQL, Redis.
-  - **Validator only**: earns tips but lower priority (not discoverable as a client). Needs validator PEM, RPC URLs. Minimal infra (no domain, smaller DB).
-  - **Frontend + API** (no validator): serves users, reads chain, delegates action submission to external validators. Needs client ID, RPC URLs, domain, DB.
-  - **Frontend only** (static site): just the React app pointed at an external API. No backend, no DB. Cheapest option.
-  - **API only** (headless): serves data to other frontends. No validator, no public UI.
-- [ ] **Guided config collection** — colored prompts for:
-  - L1/L2 RPC URLs (with provider suggestions: Infura, Alchemy, public RPCs)
-  - Validator private key (import PEM or generate new one)
-  - Validator profile tokenId (enter username, CLI looks up tokenId)
-  - Client ID (enter existing or explain how to register one)
-  - Domain name and SSL (for API/frontend nodes)
-  - Admin password
-  - Validator tip amount (with explanation of economics)
-  - API URL (if using external API instead of running own)
-  - Database connection (PostgreSQL — Docker or existing)
-  - Redis connection (Docker or existing)
-- [ ] **Dependency installation** — based on node type:
-  - Node.js 22, PostgreSQL, Redis (or Docker equivalents)
-  - `npm install` / `yarn install`
-  - Prisma schema push
-- [ ] **Config generation** — produces `client/config.json` and `client/.env`
-- [ ] **Process management** — pm2 for:
-  - Start/stop/restart services
-  - Auto-restart on crash
-  - Log management
-  - Startup on boot (`pm2 startup`)
-- [ ] **Docker support** (optional) — `docker-compose.yml` generation for PostgreSQL + Redis + app
-- [ ] **Pros/cons guidance** — at each decision point, explain tradeoffs:
-  - Running a validator: earn tips, help process transactions, need ETH for gas
-  - Running a frontend: help decentralize access, attract users
-  - Replication chains: permanence vs gas costs
-  - Tip amounts: higher tips = faster processing, but cost more per action
+**Already implemented:**
 
-#### Phase 2 — On-chain operations
+- Node type selection step (`cli/src/steps/nodeType.js`)
+- RPC URL collection (`rpcUrls.js`)
+- Validator config (`validator.js`)
+- Infrastructure config (`infrastructure.js`)
+- Config generation (`generate.js`)
+- Dependency install (`install.js`)
+- Nginx setup (`nginx.js`)
+- Process management commands wired up: `caw status`, `caw logs`, `caw restart`, `caw stop`
 
-- [ ] **Mint username** — if user doesn't have a CawName, walk them through minting (requires ETH + CAW on L1)
-- [ ] **Register client** — submit `registerClient` transaction on-chain using the validator PEM
-- [ ] **Check balances** — verify validator wallet has enough ETH for gas
-- [ ] **Buy CAW** — Uniswap integration to swap ETH for CAW (if needed for staking/minting)
-- [ ] **Authenticate** — submit L1→L2 authentication via LayerZero
-- [ ] **Register session key** — create and register a session key for the validator
+**Still missing in Phase 1:**
 
-#### Phase 3 — Management & operations
+- [ ] Docker support — `docker-compose.yml` generation for PostgreSQL + Redis + app (optional)
+- [ ] pm2 startup-on-boot integration (`pm2 startup`)
+- [ ] Pros/cons guidance at each prompt — explain economics, replication tradeoffs, tip-amount tradeoffs
 
-- [ ] **`caw status`** — show running services, uptime, pending txQueue count, validator earnings
-- [ ] **`caw restart`** — restart all or specific services
+### Phase 2 — On-chain operations — NOT STARTED
+
+- [ ] **Mint username** — walk through if user doesn't have a CawName (needs ETH + CAW on L1).
+- [ ] **Register client** — submit `registerClient` transaction using validator PEM.
+- [ ] **Check balances** — verify validator wallet has enough ETH for gas.
+- [ ] **Buy CAW** — Uniswap integration for ETH→CAW swap if needed for staking/minting.
+- [ ] **Authenticate** — submit L1→L2 authentication via LayerZero.
+- [ ] **Register session key** — create and register a session key for the validator.
+
+### Phase 3 — Management & operations — PARTIALLY DONE
+
+**Already implemented:** `caw status`, `caw logs`, `caw restart`, `caw stop`.
+
+**Still missing:**
+
 - [ ] **`caw update`** — pull latest from GitHub, rebuild, restart
 - [ ] **`caw config`** — edit configuration interactively
-- [ ] **`caw logs`** — tail logs for specific services
 - [ ] **`caw domain`** — change domain, regenerate SSL
 - [ ] **`caw api-priority`** — manage API endpoint discovery priority
 - [ ] **`caw api-blacklist`** — block specific API endpoints
-- [ ] **`caw uninstall`** — clean removal of all CAW components
-- [ ] **`caw analytics`** — validator profitability, action throughput, gas costs
+- [ ] **`caw uninstall`** — clean removal
+- [ ] **`caw analytics`** — validator profitability, action throughput, gas costs (CLI surface for the data already in `ValidatorAnalytics.tsx`)
 
-## Testing
-
-- [ ] **Gas limit testing**
-  - Deploy to testnet
-  - Measure actual gas consumption for each cross-chain call
-  - Update gas limit constants
-
-- [ ] **Replication testing**
-  - Test with actual archive chain deployment
-  - Verify historical migration works correctly
-  - Test edge cases (max 4 destinations, removal, etc.)
+---
 
 ## Documentation
 
-- [x] **Client replication guide** - Created: `solidity/docs/CLIENT_REPLICATION_GUIDE.md`
-- [x] **Services documentation** - Created: `SERVICES.md`
-- [ ] **API documentation** - Document all REST endpoints
-- [ ] **Deployment guide** - Step-by-step deployment instructions
-
-## Design Notes
-
-### DM Edit/Delete Design Notes
-
-#### Philosophical Context
-
-The CAW manifesto establishes that **public protocol data is permanent and censorship-resistant**: "All data will be stored permanently," "no username or message will be blocked or quarantined," and contracts are deployed with renounced ownership so no one can alter the public record.
-
-However, DMs occupy a fundamentally different architectural and philosophical space:
-
-- **The manifesto explicitly separates DMs from public actions** (section vii): "DM's should be 'free' and executed via a trustless handshake between two accounts to enable secure peer-to-peer messaging."
-- **DMs are not on-chain.** They are E2E encrypted, relay-based, and stored in the client database — not archived to multiple chains like public posts.
-- **DMs are private speech between two people**, not public speech that the protocol exists to protect from censorship.
-- **The immutability guarantee exists to prevent external censorship**, not to prevent two consenting parties from managing their own private conversation.
-
-Therefore, edit and delete functionality for DMs is philosophically consistent with the protocol's values, provided it is implemented transparently.
-
-#### Edit Messages — Design
-
-**Allow editing with full transparency.**
-
-- **Time limit: 15 minutes** after sending. After that, the message is locked. This prevents weaponized editing (e.g., changing a message days later to gaslight someone about what was said) while still allowing corrections for typos and mistakes.
-- **"Edited" indicator**: All edited messages display a visible "(edited)" label next to the timestamp. This is non-negotiable — transparency is core to the protocol's ethos.
-- **Edit history visible to both parties**: Either participant can tap/click "(edited)" to see the full history of what the message originally said and when it was changed. Since messages are E2E encrypted, only the two participants can see this history anyway.
-- **No silent edits**: The recipient receives a notification or visual indicator that a message was edited, even if they weren't looking at the conversation at the time.
-
-**Implementation approach:**
-- Add an `editHistory` JSON field to the `Message` model (or a related `MessageEdit` table) storing `{ content: string, editedAt: DateTime }[]`.
-- The `encryptedPayload` field on the Message row gets updated to the new content. The old content is moved into the edit history (also encrypted with the same shared secret).
-- API endpoint: `PATCH /api/dm/messages/:messageId` with the new encrypted payload. Server validates that the sender owns the message and that it's within the 15-minute window.
-- Frontend: show "(edited)" badge, with a popover/modal showing history on click.
-
-#### Delete Messages — Design
-
-**Two distinct operations with different behaviors.**
-
-##### "Delete for me" (local hide)
-- Always available, no time limit.
-- The message is hidden from the deleting user's view only. The other participant still sees it.
-- This is a pure UI/privacy operation — the user just doesn't want it in their own view.
-- Implementation: Add a `deletedByUsers` array or a `MessageDeletion` join table tracking which users have hidden which messages. Filter these out when fetching conversation history for that user.
-
-##### "Delete for everyone" (mutual delete)
-- **Time limit: 5 minutes** after sending. This is intentionally shorter than the edit window because deletion is more drastic — it removes the record rather than amending it.
-- **Tombstone message**: When a message is deleted for everyone, it is replaced with a tombstone: "[Message deleted]" with the timestamp preserved. The other party knows something was there. This prevents the unsettling experience of messages silently vanishing from a conversation and maintains conversational context.
-- The encrypted payload is wiped from the database. Edit history (if any) is also wiped. Only the tombstone metadata remains.
-- **No deletion of the other person's messages**: You can only delete messages you sent.
-
-**Implementation approach:**
-- "Delete for me": `POST /api/dm/messages/:messageId/hide` — creates a `MessageDeletion` record for the requesting user. No data is actually removed.
-- "Delete for everyone": `DELETE /api/dm/messages/:messageId` — server validates ownership and 5-minute window. Sets `encryptedPayload` to null, `contentType` to `"deleted"`, clears edit history. The message row persists as a tombstone.
-- Frontend: "Delete for me" option always available. "Delete for everyone" only shown within the time window. Tombstoned messages render as a gray italicized "[Message deleted]" row.
-
-#### What NOT to support
-
-- **No "unsend" that silently removes all trace.** This conflicts with the transparency principle. If you said something, the other person at minimum knows a message existed.
-- **No editing after 15 minutes.** If you need to correct something after that, send a follow-up message. Long edit windows create trust problems.
-- **No bulk delete.** Deleting an entire conversation for the other person is too aggressive. "Delete for me" (hiding the whole conversation locally) is fine; "delete for everyone" operates message-by-message within the time window only.
-- **No admin/moderator message deletion.** There is no server-side moderation of DMs. The relay stores encrypted payloads it cannot read, and only the two parties can manage their own messages.
-
-#### Database Changes Required
-
-```
-// Add to Message model:
-contentType    String    @default("text")   // existing — add "deleted" as a type
-editHistory    String?                       // encrypted JSON array of previous versions
-
-// New model:
-model MessageDeletion {
-  id        Int      @id @default(autoincrement())
-  messageId String
-  userId    Int
-  deletedAt DateTime @default(now())
-  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
-
-  @@unique([messageId, userId])
-  @@index([userId])
-}
-```
-
-#### API Endpoints Required
-
-- `PATCH /api/dm/messages/:messageId` — Edit message (within 15min, sender only)
-- `POST /api/dm/messages/:messageId/hide` — Delete for me (any time, either party)
-- `DELETE /api/dm/messages/:messageId` — Delete for everyone (within 5min, sender only)
-
-#### UI/UX Notes
-
-- Long-press (mobile) or right-click (desktop) on a message to show context menu with Edit / Delete options.
-- Edit: inline editing in the message bubble, with Save/Cancel buttons.
-- The "(edited)" label should be subtle (smaller, muted color) but always visible.
-- Edit history popover: simple chronological list showing each version with its timestamp.
-- Tombstoned messages should be clearly distinct from regular messages (e.g., gray italic text, no bubble background) so they don't look like real content.
-- Time-limited actions should show remaining time in the context menu (e.g., "Delete for everyone (3m left)") to set expectations.
+- [ ] **API documentation** — document all REST endpoints. Currently no `API.md`.
+- [ ] **Deployment guide** — step-by-step deployment instructions. Currently no `DEPLOYMENT.md`.
+- [x] **Client replication guide** — `solidity/docs/CLIENT_REPLICATION_GUIDE.md`
+- [x] **Services documentation** — `client/src/services/SERVICES.md`
+- [x] **Architecture docs** — `docs/ARCHITECTURE.md`, `docs/DATA_FLOW.md`, `docs/REPLICATION_AND_SLASHING.md`, `docs/VALIDATOR_MESH_NETWORK.md`, `docs/SESSION_KEYS.md`, `docs/MARKETPLACE.md`, `docs/DIRECT_MESSAGING.md`, etc. — extensive
 
 ---
 
-## Completed Items
+## Resolved (since previous backlog snapshots)
 
-- [x] Refactor CawClientManager to not be an OApp (route through CawName)
-- [x] Make CawActionsReplicator ownerless after deployment
-- [x] Fix replicationQuote to return 0 instead of reverting when no replication
-- [x] Add historical migration support
-- [x] Create client replication documentation
-
----
-
-*Last updated: 2026-04-10*
+- [x] **`OnlyOnce` lockdown of all protocol-critical setters** (2026-04-24)
+- [x] **Old LZ replication path removed** (`CawActionsReplicator.sol` deleted, runtime callers gone, address removed from `client/src/abi/addresses.ts`; one stale test reference remains — see "Stale test cleanup")
+- [x] **`gasLimitFor()` measured values** in `CawProfile.sol` and `CawProfileL2.sol` (from `solidity/scripts/measure-gas.js`); `CawActionsReplicator.RECEIVE_GAS_LIMIT` is moot — contract removed
+- [x] **Permissionless `depositFor`** on `CawProfile.sol`
+- [x] **Combined mint + stake transaction** — `mintAndDeposit` on `CawProfile.sol:157` and `CawProfileMinter.sol:45`, with quoter at `CawProfileQuoter.sol:75`
+- [x] **Buy-offer system (OTC)** — `createOfferETH` / `createOfferERC20` / `acceptOffer` / `cancelOffer` on `CawProfileMarketplace.sol`; FE `MakeOfferModal` and `ViewOffersModal` wired up
+- [x] **Withdraw fee floor locked at first authentication** (per `(clientId, tokenId)`) — clients can't retroactively raise fees on existing users; old "fee blocking attack" is no longer reachable
+- [x] **LayerZero refund address resolved** — `CawProfile.lzSend()` refunds to `tx.origin` with comment explaining why (works through marketplace intermediaries)
+- [x] **`reclaimBid` for transferred NFTs** — contract done; frontend UX still in the open list above
+- [x] **XMTP integration removed entirely** — no DM service, no auth TODOs
+- [x] **Short URLs after DB rebuild** — resolved by toggle in UI to choose current domain or not
+- [x] **`useTokenDataUpdate` ETH-read TODO** — code cleaned up
+- [x] **Delete posts** — implemented via on-chain `hide:caw:{cawonce}` action (`FeedItem.tsx:1660-1676`); the `hide` action handler in `actionHandlers.ts` flips the caw to `HIDDEN` status
+- [x] **DM editing and deletion** — full backend (`Message.editHistory`, `MessageDeletion` model, edit/hide/delete endpoints in `dm.ts`) and frontend (`useDm.ts` decrypts edit history, etc.)
+- [x] **Validator profitability data** — `ValidatorAnalytics.tsx` admin page tracks revenue, gas cost, profit, breakdown, time-series. Optimal-fee *modeling* still open (see Backend Services).
+- [x] **`findOrCreateUser` in-memory cache + pulled out of interactive tx** (2026-04-24) — fixes `P2028` "transaction already closed" cascades when a batch of N actions from the same sender arrives in parallel
