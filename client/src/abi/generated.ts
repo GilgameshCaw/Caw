@@ -352,6 +352,15 @@ export const cawActionsArchiveAbi = [
     type: 'event',
     anonymous: false,
     inputs: [
+      { name: 'payload', internalType: 'bytes', type: 'bytes', indexed: false },
+      { name: 'reason', internalType: 'bytes', type: 'bytes', indexed: false },
+    ],
+    name: 'ChallengeDeliveryFailed',
+  },
+  {
+    type: 'event',
+    anonymous: false,
+    inputs: [
       {
         name: 'submissionId',
         internalType: 'uint256',
@@ -576,6 +585,13 @@ export const cawActionsArchiveAbi = [
     name: 'MIN_STAKE',
     outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
     stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [{ name: 'payload', internalType: 'bytes', type: 'bytes' }],
+    name: '_processChallenge',
+    outputs: [],
+    stateMutability: 'nonpayable',
   },
   {
     type: 'function',
