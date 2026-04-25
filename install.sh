@@ -114,7 +114,12 @@ else
   ok "Node $(node -v)"
 
   # Yarn + pm2 are runtime tools, not OS packages. npm-global is the right home.
-  npm install -g --silent yarn pm2 >/dev/null 2>&1 || npm install -g yarn pm2
+  for tool in yarn pm2; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+      log "Installing $tool..."
+      npm install -g --silent "$tool"
+    fi
+  done
 
   # Elasticsearch is in the Elastic apt repo, not Ubuntu's. Add it once.
   if ! dpkg -l elasticsearch >/dev/null 2>&1; then
@@ -196,15 +201,22 @@ fi
 
 step "Fetching repository"
 
-mkdir -p "$(dirname "$CAW_DIR")"
+# Create only the install dir itself and chown that. We deliberately don't
+# touch the parent (e.g. /var/www) — other deployments may live alongside.
+mkdir -p "$CAW_DIR"
+chown "$CAW_USER":"$CAW_USER" "$CAW_DIR"
 
 if [[ -d "$CAW_DIR/.git" ]]; then
   log "Existing checkout — pulling latest..."
   sudo -u "$CAW_USER" -H git -C "$CAW_DIR" fetch origin "$CAW_BRANCH"
   sudo -u "$CAW_USER" -H git -C "$CAW_DIR" reset --hard "origin/$CAW_BRANCH"
+elif [[ -n "$(ls -A "$CAW_DIR" 2>/dev/null)" ]]; then
+  err "Install dir $CAW_DIR exists and is non-empty but not a git checkout."
+  err "Move or remove it, or set CAW_DIR to a different path."
+  exit 1
 else
-  # Make the parent dir owned by caw so the clone lands without a chown step.
-  chown "$CAW_USER":"$CAW_USER" "$(dirname "$CAW_DIR")"
+  # git clone refuses to clone into an existing directory unless it's empty,
+  # which is exactly what we have. Use the directory directly.
   sudo -u "$CAW_USER" -H git clone --depth 1 -b "$CAW_BRANCH" "$CAW_REPO" "$CAW_DIR"
 fi
 
