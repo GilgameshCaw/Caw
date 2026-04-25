@@ -95,7 +95,7 @@ const Tooltip: React.FC<TooltipProps> = ({
   return (
     <div
       ref={wrapperRef}
-      className={`relative ${className}`}
+      className={`relative inline-block ${className}`}
     >
       {children}
       {visible && !tooltipDisabled && createPortal(
