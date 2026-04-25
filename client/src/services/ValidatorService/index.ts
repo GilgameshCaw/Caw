@@ -2094,14 +2094,28 @@ console.log("succeededKeys", succeededKeys)
     // Slash-test knobs. When both are set, submissions fire from a separate
     // wallet (so slashed ETH visibly moves to the main validator who challenges)
     // and deliberately commit a bad merkle root so the monitor can catch them.
-    const CORRUPT_REPLICATION = process.env.CORRUPT_REPLICATION === 'true'
-    // CORRUPT_MODE selects which fraud class the replicator simulates:
-    //   "A" (default): keep packedActions honest but commit a bad merkleRoot.
-    //       Caught by monitor's Mode-A branch → slashIncoherentRoot.
+    // CORRUPT_REPLICATION and CORRUPT_MODE BOTH must be set — no defaults.
+    // Twin-key gate so a single fat-fingered env var can't accidentally
+    // start producing fraud (and losing your stake) in production.
+    //
+    // CORRUPT_MODE choices:
+    //   "A": keep packedActions honest but commit a bad merkleRoot.
+    //        Caught by monitor's Mode-A branch → slashIncoherentRoot.
     //   "B": corrupt one byte of packedActions and build a root consistent
-    //       with that corruption. Caught by monitor's Mode-B branch →
-    //       resolveChallenge with submitter's claimedHash + proof.
-    const CORRUPT_MODE = (process.env.CORRUPT_MODE || 'A').toUpperCase()
+    //        with that corruption. Caught by monitor's Mode-B branch →
+    //        resolveChallenge with submitter's claimedHash + proof.
+    const _rawCorruptMode = (process.env.CORRUPT_MODE || '').toUpperCase()
+    const CORRUPT_REPLICATION =
+      process.env.CORRUPT_REPLICATION === 'true' &&
+      (_rawCorruptMode === 'A' || _rawCorruptMode === 'B')
+    const CORRUPT_MODE = CORRUPT_REPLICATION ? _rawCorruptMode : ''
+    if (process.env.CORRUPT_REPLICATION === 'true' && !CORRUPT_REPLICATION) {
+      console.warn(
+        `[OptimisticReplication] CORRUPT_REPLICATION=true was set but ` +
+        `CORRUPT_MODE is missing/invalid (got "${process.env.CORRUPT_MODE}"). ` +
+        `Refusing to corrupt — set CORRUPT_MODE to A or B explicitly to enable.`
+      )
+    }
     const REPLICATOR_PRIVATE_KEY = process.env.REPLICATOR_PRIVATE_KEY
 
     function getL2bContracts() {
@@ -2324,6 +2338,15 @@ console.log("succeededKeys", succeededKeys)
      */
     async function optimisticReplicationLoop() {
       try {
+        // Loud reminder every cycle when corruption is active, so this can't
+        // silently keep producing fraud after being left on by accident.
+        if (CORRUPT_REPLICATION) {
+          console.warn(
+            `[OptimisticReplication] ⚠️  CORRUPT_REPLICATION=true CORRUPT_MODE=${CORRUPT_MODE} — ` +
+            `every submission this cycle will be FRAUDULENT and slashable. ` +
+            `Unset both env vars and restart to disable.`
+          )
+        }
         const { archiveRead: archive, archiveWrite: archiveW, l2bWallet: w } = getL2bContracts()
 
         // 1. Find clients needing replication FIRST — if none, nothing to do
