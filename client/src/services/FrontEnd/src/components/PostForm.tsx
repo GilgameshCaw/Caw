@@ -1,11 +1,10 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { useSignAndSubmitAction, buildTypedData, TYPES, DOMAIN } from '../api/actions'
+import { useSignAndSubmitAction, buildTypedData, TYPES } from '../api/actions'
 import { useTokenDataStore, useActiveToken } from "~/store/tokenDataStore";
-import { useAccount, useChains, useSwitchChain, useConnections, useSignTypedData } from "wagmi";
+import { useAccount, useConnections, useSignTypedData } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import type { ActionParams } from '~/api/actions'
-import { baseSepolia } from "wagmi/chains";
 import type { CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
 import { getUserAvatar } from '~/utils/defaultAvatar'
@@ -415,11 +414,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
   const addPendingPost = usePendingPostsStore((state) => state.addPendingPost)
   const updatePostWithTxQueueId = usePendingPostsStore((state) => state.updatePostWithTxQueueId)
 
-  const { switchChain } = useSwitchChain();
-  const chains = useChains();
   const { address } = useAccount();
-  const handleSwitchChain = () => switchChain({ chainId: baseSepolia.id });
-  const wrongChain = connections[0]?.chainId != baseSepolia.id;
 
   // Check if the user owns the selected token
   const isTokenOwner = activeToken && address && activeToken.owner?.toLowerCase() === address.toLowerCase();

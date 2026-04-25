@@ -1,6 +1,8 @@
+import './instrument';
 import './utils/polyfills';
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import * as Sentry from '@sentry/react';
 
 import "./index.css";
 import "@rainbow-me/rainbowkit/styles.css";
@@ -20,10 +22,12 @@ const queryClient = new QueryClient({
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <Web3Provider queryClient={queryClient}>
-      <StateProvider>
-        <App />
-      </StateProvider>
-    </Web3Provider>
+    <Sentry.ErrorBoundary fallback={<p>Something went wrong. The error has been reported.</p>}>
+      <Web3Provider queryClient={queryClient}>
+        <StateProvider>
+          <App />
+        </StateProvider>
+      </Web3Provider>
+    </Sentry.ErrorBoundary>
   </StrictMode>
 );

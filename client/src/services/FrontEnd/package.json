@@ -18,6 +18,7 @@
     "@react-three/fiber": "8.17.10",
     "@reactuses/core": "^6.0.2",
     "@rollup/rollup-darwin-x64": "^4.52.4",
+    "@sentry/react": "^10.50.0",
     "@tanstack/react-query": "^5.81.5",
     "@types/multer": "^2.0.0",
     "@types/uuid": "^10.0.0",

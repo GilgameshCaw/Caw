@@ -41,6 +41,7 @@
   "dependencies": {
     "@elastic/elasticsearch": "^8.11.0",
     "@prisma/client": "^6.18.0",
+    "@sentry/node": "^10.50.0",
     "@types/cors": "^2.8.19",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/keccak": "^3.0.4",

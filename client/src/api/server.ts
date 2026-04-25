@@ -35,6 +35,7 @@ import meRouter from './routes/me'
 import adminDbRouter from './routes/admin-db'
 import { getSession } from './sessionStore'
 import { prisma } from '../prismaClient'
+import { Sentry, sentryEnabled } from '../sentry'
 
 /**
  * natstat: build and configure Express app
@@ -188,6 +189,12 @@ export function createApp() {
   app.use('/api/bookmarks', bookmarksRouter)
   app.use('/api/me', meRouter)
   app.use('/api/admin/db', adminDbRouter)
+
+  app.get('/api/__sentry-test', (_req, _res) => {
+    throw new Error('Sentry backend test error')
+  })
+
+  if (sentryEnabled) Sentry.setupExpressErrorHandler(app)
 
   return app
 }

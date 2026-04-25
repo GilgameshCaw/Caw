@@ -5,11 +5,14 @@ if (typeof globalThis.File === 'undefined') {
   }
 }
 
+import { Sentry, sentryEnabled } from '../src/sentry'
 import runServices, { RunServicesConfig } from '../src/runServices'
 import fs from 'fs'
 import process from 'process'
 import 'reflect-metadata'
 import { logger } from '../src/utils/logger'
+
+if (sentryEnabled) logger.log('Sentry error reporting enabled')
 
 if (!fs.existsSync('config.json')) {
   console.error('config.json not found; copy from template')
@@ -40,6 +43,7 @@ process.on('uncaughtException', (error: any) => {
   console.error('==========================================')
   logger.log(`Uncaught Exception: ${error?.message || JSON.stringify(error)}`)
   if (error?.stack) logger.log(`Stack: ${error.stack}`)
+  if (sentryEnabled) Sentry.captureException(error, { tags: { source: 'uncaughtException' } })
   console.log('[Server] Continuing — watchdog will restart any stalled services')
 })
 
@@ -57,6 +61,7 @@ process.on('unhandledRejection', (reason: any, _promise) => {
   console.error('==========================================')
   logger.log(`Unhandled Rejection: ${reasonStr}`)
   if (reason instanceof Error && reason.stack) logger.log(`Stack: ${reason.stack}`)
+  if (sentryEnabled) Sentry.captureException(reason, { tags: { source: 'unhandledRejection' } })
   console.log('[Server] Continuing — watchdog will restart any stalled services')
 })
 

@@ -370,7 +370,7 @@ const ValidatorAnalytics: React.FC = () => {
           actionBreakdown: p.actionBreakdown || {},
         }
       })
-      const hourMap = new Map(rawHourly.map((p: any) => [p.hour, p]))
+      const hourMap = new Map<number, ChartPoint>(rawHourly.map((p: any) => [p.hour as number, p as ChartPoint]))
       const padded: ChartPoint[] = []
       for (let h = 0; h < 24; h++) {
         const existing = hourMap.get(h)

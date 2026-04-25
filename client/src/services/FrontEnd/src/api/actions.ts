@@ -4,7 +4,7 @@ import { baseSepolia }           from 'wagmi/chains'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useSignTypedData, useAccount, useSwitchChain, useChainId } from 'wagmi'
 import { readContract } from '@wagmi/core'
-import type { TypedDataDomain, TypedDataField } from '@ethersproject/abstract-signer'
+import type { TypedDataField } from '@ethersproject/abstract-signer'
 import { useActiveToken, useTokenDataStore } from "~/store/tokenDataStore";
 import { CAW_ACTIONS_ADDRESS, CAW_NAMES_L2_ADDRESS } from '~/../../../abi/addresses'
 import { cawActionsAbi, cawProfileL2Abi } from '~/../../../abi/generated'
@@ -142,12 +142,12 @@ export async function findSafeCawonceStart(tokenId: number, start: number, count
 
 
 /** natstat: EIP-712 domain */
-export const DOMAIN: TypedDataDomain = {
+export const DOMAIN = {
   name:               'Caw Protocol',
   version:            '1',
   chainId:            baseSepolia.id,
   verifyingContract:  CAW_ACTIONS_ADDRESS
-}
+} as const
 
 /** natstat: EIP-712 types */
 export const TYPES: Record<string, TypedDataField[]> = {
