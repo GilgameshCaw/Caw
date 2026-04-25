@@ -76,3 +76,6 @@ yarn-error.log*
 /client/logs
 *.log
 
+# Redis append-only-file persistence (recreated on each redis-server start)
+*.aof
+
