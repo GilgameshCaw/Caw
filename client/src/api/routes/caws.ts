@@ -408,12 +408,37 @@ router.get('/:id', async (req, res) => {
     user: r.user,
   }))
 
+  // Tips on this caw — rendered inline like recaws. Same blocked-user filter
+  // and cap. Pending tips are excluded so we don't show un-confirmed tips.
+  const rawTips = await prisma.tip.findMany({
+    where: {
+      cawId,
+      pending: false,
+      ...(commentBlockedIds.length > 0 ? { senderId: { notIn: commentBlockedIds } } : {}),
+    },
+    take: 100,
+    orderBy: { createdAt: 'asc' },
+    select: {
+      id: true,
+      amount: true,
+      createdAt: true,
+      sender: { select: { tokenId: true, username: true, displayName: true, avatarUrl: true, image: true, defaultAvatarId: true } },
+    },
+  })
+  const tips = rawTips.map(t => ({
+    id: t.id.toString(),
+    timestamp: t.createdAt.toISOString(),
+    amount: t.amount,
+    user: t.sender,
+  }))
+
   // shape into your CawItem shape…
   const shapedCaw = shapeCaw(raw)
   res.json({
     caw:     shapedCaw,
     comments: rawComments.map(shapeCaw),
     recaws,
+    tips,
     hasMoreComments,
     nextCommentCursor,
   })
