@@ -190,11 +190,17 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
     //   provided the run contains at least one non-digit. So `#テスト`,
     //   `#你好`, `#résumé`, `#foo123` all match; `#5` and `$100` are plain text.
     // The lookahead `(?=...*[non-digit]...)` enforces the not-pure-digit rule.
+    const tagAlt = `[@#$](?=${TAG_CHAR_CLASS}*[\\p{L}\\p{M}_])${TAG_CHAR_CLASS}+`
     const specialRegex = new RegExp(
-      `((?:https?:\\/\\/[^\\s]+)?\\/s\\/[a-zA-Z0-9]+(?:\\.[a-zA-Z0-9]+)?|` +
-      `[@#$](?=${TAG_CHAR_CLASS}*[\\p{L}\\p{M}_])${TAG_CHAR_CLASS}+)`,
+      `((?:https?:\\/\\/[^\\s]+)?\\/s\\/[a-zA-Z0-9]+(?:\\.[a-zA-Z0-9]+)?|${tagAlt})`,
       'gu',
     )
+    // Anchored matchers used to confirm a split chunk is *entirely* a tag /
+    // mention — not just text that happens to start with `#` (e.g. `#333 hi`,
+    // which the regex won't capture, but `split()` returns intact as the head
+    // of the parts array).
+    const isFullMention = new RegExp(`^@${TAG_CHAR_CLASS}+$`, 'u')
+    const isFullTag = new RegExp(`^${tagAlt}$`, 'u')
 
     const parts = text.split(specialRegex)
 
@@ -212,7 +218,7 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
       }
 
       // Check if this is an @mention
-      if (part.startsWith('@')) {
+      if (isFullMention.test(part)) {
         return (
           <Tooltip key={`${keyPrefix}-${index}`} text={`View ${part}'s profile`} className="inline">
             <button
@@ -230,7 +236,7 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
       }
 
       // Check if this is a hashtag or cashtag
-      if (part.startsWith('#') || part.startsWith('$')) {
+      if (isFullTag.test(part)) {
         return (
           <Tooltip key={`${keyPrefix}-${index}`} text={`View posts with ${part}`} className="inline">
             <button
