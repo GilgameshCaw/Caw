@@ -267,6 +267,23 @@ Both modes leave the REPLICATOR with `0 ETH` staked. Set
 `CORRUPT_REPLICATION=` (unset) and restart, optionally re-deposit
 REPLICATOR's stake if you want it to keep submitting honestly.
 
+### Manual slash (debugging)
+
+If the monitor is offline or you want to slash a specific submission by
+hand, there's a CLI for the Mode A path:
+
+```bash
+cd client
+npx tsx scripts/slash-incoherent.ts <submissionId>
+```
+
+It reads the submission from the archive, fetches the submitter's
+packedActions from `ActionsArchived`, verifies the dataCommitment,
+runs a staticCall to confirm the root really is incoherent, then sends
+the real `slashIncoherentRoot` tx. Mode B has no equivalent CLI — the
+two-round flow (relay challenge → wait for LZ → resolve) is more easily
+done by just letting the monitor run.
+
 ---
 
 ## Operational invariants
