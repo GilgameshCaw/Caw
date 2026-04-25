@@ -29,10 +29,14 @@ export async function runInstall(nodeType, config, installDir) {
     }
   }
 
-  // 2. Install Node.js dependencies
+  // 2. Install Node.js dependencies. We pass --legacy-peer-deps because
+  // typeorm peer-depends on redis@^3||^4 but the project pins redis@^5; npm
+  // 9+ enforces peers strictly and refuses, while older npm/yarn just
+  // shrug. legacy-peer-deps gets us back to the permissive behavior that
+  // matches what the dev environment uses.
   const spinner2 = ora('Installing Node.js dependencies...').start()
   try {
-    execSync('npm install', { cwd: clientDir, stdio: 'pipe' })
+    execSync('npm install --legacy-peer-deps', { cwd: clientDir, stdio: 'pipe' })
     spinner2.succeed('Node.js dependencies installed')
   } catch (e) {
     spinner2.fail('Failed to install dependencies')

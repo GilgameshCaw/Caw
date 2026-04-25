@@ -148,6 +148,59 @@ log "Repository:        ${CAW_REPO}#${CAW_BRANCH}"
 log "Service user:      ${CAW_USER}"
 [[ -n "${CAW_DOMAIN:-}" ]] && log "Domain:            ${CAW_DOMAIN}"
 
+# ---------- Infrastructure placement -----------------------------------------
+#
+# Decide BEFORE we apt-install anything how the operator wants to run the
+# stateful services (Postgres, Redis, Elasticsearch). Three options:
+#
+#   native   — install via apt, run as systemd services (default)
+#   docker   — pull docker images and run via docker compose
+#   existing — connect to URLs the operator already has
+#
+# Power users can skip the prompt by setting CAW_INFRA_MODE in the env, and
+# can short-circuit even further by passing CAW_DB_URL / CAW_REDIS_URL /
+# CAW_ES_URL — those are forwarded to the Node CLI which writes them into the
+# generated .env. Whatever isn't overridden gets installed/started normally.
+
+ask_infra_mode() {
+  local prompt='
+  Where should Postgres, Redis, and Elasticsearch run?
+    1) Native install (recommended)
+    2) Docker (containers managed by docker compose)
+    3) Connect to existing services I already have
+
+  Choice [1]: '
+  local answer
+  if [[ -t 0 ]]; then
+    read -r -p "$prompt" answer
+  elif [[ -r /dev/tty ]]; then
+    read -r -p "$prompt" answer < /dev/tty
+  else
+    answer=1
+  fi
+  case "${answer:-1}" in
+    1|n|N|native|'') echo native ;;
+    2|d|D|docker) echo docker ;;
+    3|e|E|existing) echo existing ;;
+    *) err "Invalid choice: $answer"; return 1 ;;
+  esac
+}
+
+if [[ -z "${CAW_INFRA_MODE:-}" ]]; then
+  CAW_INFRA_MODE="$(ask_infra_mode)"
+fi
+
+case "$CAW_INFRA_MODE" in
+  native|docker|existing) ;;
+  *) err "CAW_INFRA_MODE must be one of: native, docker, existing (got '$CAW_INFRA_MODE')"; exit 1 ;;
+esac
+export CAW_INFRA_MODE
+
+log "Infra mode:        ${CAW_INFRA_MODE}"
+[[ -n "${CAW_DB_URL:-}" ]]    && log "Postgres URL:      (override via CAW_DB_URL)"
+[[ -n "${CAW_REDIS_URL:-}" ]] && log "Redis URL:         (override via CAW_REDIS_URL)"
+[[ -n "${CAW_ES_URL:-}" ]]    && log "Elasticsearch URL: (override via CAW_ES_URL)"
+
 # ---------- Step 1: System packages ------------------------------------------
 
 if [[ "$SKIP_BOOTSTRAP" == "1" ]]; then
@@ -157,11 +210,41 @@ else
   log "(detailed output streams to ${INSTALL_LOG})"
 
   export DEBIAN_FRONTEND=noninteractive
+
+  # Always-installed: things every node needs regardless of infra mode.
+  ALWAYS_PKGS=(
+    curl ca-certificates gnupg git build-essential
+    nginx ufw certbot python3-certbot-nginx
+  )
+
+  # Stateful services — only install the ones the user wants natively, and
+  # only the ones they didn't already override with their own URL. (E.g. if
+  # they set CAW_DB_URL=postgres://external-host... we skip postgresql.)
+  NATIVE_INFRA_PKGS=()
+  if [[ "$CAW_INFRA_MODE" == "native" ]]; then
+    [[ -z "${CAW_DB_URL:-}" ]]    && NATIVE_INFRA_PKGS+=(postgresql postgresql-contrib)
+    [[ -z "${CAW_REDIS_URL:-}" ]] && NATIVE_INFRA_PKGS+=(redis-server)
+    # Elasticsearch handled separately (different apt repo).
+  fi
+
   quiet "Updating apt metadata" apt-get update -qq
   quiet "Installing base packages" apt-get install -y -qq \
-    curl ca-certificates gnupg git build-essential \
-    nginx ufw certbot python3-certbot-nginx \
-    postgresql postgresql-contrib redis-server
+    "${ALWAYS_PKGS[@]}" "${NATIVE_INFRA_PKGS[@]}"
+
+  # Docker mode: install docker engine + compose plugin instead.
+  if [[ "$CAW_INFRA_MODE" == "docker" ]]; then
+    if ! command -v docker >/dev/null 2>&1; then
+      quiet "Installing Docker" bash -c '
+        install -m 0755 -d /etc/apt/keyrings &&
+        curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg &&
+        chmod a+r /etc/apt/keyrings/docker.gpg &&
+        echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" > /etc/apt/sources.list.d/docker.list &&
+        apt-get update -qq &&
+        apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+      '
+    fi
+    ok "Docker $(docker --version | awk "{print \$3}" | tr -d ,)"
+  fi
 
   # Node 22 from NodeSource — the version the app's tested on. Distro Node is
   # typically too old (and we don't want to surprise the operator with whatever
@@ -179,15 +262,18 @@ else
     fi
   done
 
-  # Elasticsearch is in the Elastic apt repo, not Ubuntu's. Add it once.
-  if ! dpkg -l elasticsearch >/dev/null 2>&1; then
-    quiet "Adding Elastic apt repo" bash -c '
-      install -m 0755 -d /usr/share/keyrings &&
-      curl -fsSL https://artifacts.elastic.co/GPG-KEY-elasticsearch | gpg --dearmor -o /usr/share/keyrings/elastic.gpg &&
-      echo "deb [signed-by=/usr/share/keyrings/elastic.gpg] https://artifacts.elastic.co/packages/8.x/apt stable main" > /etc/apt/sources.list.d/elastic-8.x.list &&
-      apt-get update -qq
-    '
-    quiet "Installing Elasticsearch" apt-get install -y -qq elasticsearch
+  # Elasticsearch — only install natively if the operator picked native infra
+  # AND didn't override the URL.
+  if [[ "$CAW_INFRA_MODE" == "native" && -z "${CAW_ES_URL:-}" ]]; then
+    if ! dpkg -l elasticsearch >/dev/null 2>&1; then
+      quiet "Adding Elastic apt repo" bash -c '
+        install -m 0755 -d /usr/share/keyrings &&
+        curl -fsSL https://artifacts.elastic.co/GPG-KEY-elasticsearch | gpg --dearmor -o /usr/share/keyrings/elastic.gpg &&
+        echo "deb [signed-by=/usr/share/keyrings/elastic.gpg] https://artifacts.elastic.co/packages/8.x/apt stable main" > /etc/apt/sources.list.d/elastic-8.x.list &&
+        apt-get update -qq
+      '
+      quiet "Installing Elasticsearch" apt-get install -y -qq elasticsearch
+    fi
   fi
 
   ok "System packages installed"
