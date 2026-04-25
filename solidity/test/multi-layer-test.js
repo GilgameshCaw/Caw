@@ -1576,8 +1576,6 @@ contract("CawProfile - Transfer & Replication Gas", function(accounts) {
 });
 
 
-// Full integration test for migratePartialCheckpoint
-// This test creates actual actions through CawActions and verifies the hash chain migration
 contract("CawProfileMinter - mintAndDeposit", function(accounts) {
   var l1Endpoint, l2Endpoint;
   var localToken, localMinter, localCawProfiles, localCawProfilesL2;

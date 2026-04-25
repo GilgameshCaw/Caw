@@ -1936,13 +1936,6 @@ console.log("succeededKeys", succeededKeys)
     }
 
     /**
-     * Background replication loop. Checks for complete 32-action checkpoints
-     * and submits them to archive chains via replicateBatch (multibatch).
-     *
-     * All data comes from on-chain: reads ActionsProcessed events to get actions,
-     * decodes processActions calldata from the transactions to extract signatures.
-     */
-    /**
      * Decode known custom error selectors into human-readable strings.
      * Add new entries as we hit them so future failures are diagnosable
      * without grepping ABIs by hand.
