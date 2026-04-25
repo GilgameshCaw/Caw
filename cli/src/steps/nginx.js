@@ -38,25 +38,72 @@ export async function configureNginx(config, installDir) {
     `We'll write a server block for ${brand(config.domain)} that:`,
     '  • serves the built frontend from client/src/services/FrontEnd/dist',
     '  • proxies /api/ and /socket.io/ to the API on localhost',
-    '  • handles HTTPS via your chosen TLS source',
+    '  • terminates HTTPS via your chosen TLS source',
   ])
 
-  const { sslMode } = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'sslMode',
-      message: 'How are you handling SSL?',
-      choices: [
-        { value: 'own-cert', name: `${brand('I have my own cert')} ${dim('(point nginx at its files)')}` },
-        { value: 'letsencrypt', name: `${brand('Use Let\'s Encrypt + certbot')} ${dim('(DNS must already be live)')}` },
-        { value: 'skip', name: `${brand('Skip TLS for now')} ${dim('(HTTP only — dev/staging)')}` },
-      ],
-      default: 'own-cert',
-    },
-  ])
+  // Detect a wildcard cert one level up from the install domain
+  // (e.g. /etc/ssl/caw.social/ for testnet.caw.social). When found, present
+  // it as the most prominent option — operators with paid wildcards almost
+  // always want to reuse them across subdomains.
+  const wildcard = detectParentWildcard(config.domain)
 
-  let certPath, keyPath
-  if (sslMode === 'own-cert') {
+  // Pre-supplied paths via env (install.sh sets these after asking the
+  // operator to scp the files). Skip the prompt entirely in that case.
+  const envCert = process.env.CAW_CERT_PATH
+  const envKey = process.env.CAW_KEY_PATH
+  const haveEnvPaths = envCert && envKey && fs.existsSync(envCert) && fs.existsSync(envKey)
+
+  const choices = []
+  if (wildcard) {
+    choices.push({
+      value: 'wildcard',
+      name: `${brand(`Use the wildcard cert at /etc/ssl/${wildcard.parent}/`)} ${dim('(recommended)')}`,
+    })
+  }
+  choices.push({
+    value: 'letsencrypt',
+    name: `${brand("Let's Encrypt (free)")} ${dim('— good for one domain, auto-renews every 90 days')}`,
+  })
+  choices.push({
+    value: 'own-cert',
+    name: `${brand('I have my own cert')} ${dim('— best for wildcards or multi-domain certs')}`,
+  })
+
+  let sslMode, certPath, keyPath
+
+  if (haveEnvPaths) {
+    sslMode = 'own-cert'
+    certPath = envCert
+    keyPath = envKey
+    console.log(dim(`  Using cert + key from CAW_CERT_PATH / CAW_KEY_PATH (set by install.sh).`))
+  } else {
+    const answer = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'sslMode',
+        message: 'How are you handling SSL?',
+        choices,
+        default: choices[0].value,
+      },
+    ])
+    sslMode = answer.sslMode
+  }
+
+  if (sslMode === 'wildcard') {
+    certPath = wildcard.cert
+    keyPath = wildcard.key
+    console.log(dim(`  Using ${certPath} + ${keyPath}`))
+  } else if (sslMode === 'own-cert' && !certPath) {
+    // Show the scp instructions before asking for paths so the user has
+    // something concrete to copy/paste while the script waits.
+    tipBlock([
+      'Drop your cert + key on this server before proceeding. From your',
+      'local machine, something like:',
+      '',
+      `  ${brand(`scp fullchain.pem your-key.key root@<host>:/etc/ssl/${config.domain}/`)}`,
+      '',
+      'Make sure the files exist before you press Enter.',
+    ])
     const answers = await inquirer.prompt([
       {
         type: 'input',
@@ -82,10 +129,10 @@ export async function configureNginx(config, installDir) {
   const sitesAvailable = `/etc/nginx/sites-available/${config.domain}`
   const sitesEnabled = `/etc/nginx/sites-enabled/${config.domain}`
 
-  // Dev/skip-TLS gets a port-80-only block. Everything else gets the full
-  // 80→443 redirect + TLS server. Putting the dist/ + proxy logic in a single
-  // location section keeps both modes' configs in lockstep.
-  const tls = sslMode === 'skip' ? null : { certPath, keyPath, mode: sslMode }
+  // Letsencrypt requires a running HTTP-only block first so certbot can solve
+  // the HTTP-01 challenge. Once it succeeds, certbot rewrites our config to
+  // add the TLS server and 80→443 redirect.
+  const tls = sslMode === 'letsencrypt' ? null : { certPath, keyPath, mode: sslMode }
   const conf = renderNginxConf({ domain: config.domain, apiPort, frontendDist, tls })
 
   const spinner = ora('Writing nginx server block...').start()
@@ -127,7 +174,7 @@ export async function configureNginx(config, installDir) {
       throw e
     }
   } else {
-    // Own-cert and skip both go through this path.
+    // Own-cert / wildcard paths — direct write + reload, no certbot.
     const spinner2 = ora('Testing + reloading nginx...').start()
     try {
       execSync('nginx -t', { stdio: 'pipe' })
@@ -142,13 +189,29 @@ export async function configureNginx(config, installDir) {
 
   console.log()
   console.log(success(`  ${config.domain} is now served by nginx.`))
-  if (sslMode === 'skip') {
-    console.log(dim(`  http://${config.domain}/  →  ${frontendDist}`))
-  } else {
-    console.log(dim(`  https://${config.domain}/  →  ${frontendDist}`))
-  }
+  console.log(dim(`  https://${config.domain}/  →  ${frontendDist}`))
 
   return { sslMode, certPath, keyPath }
+}
+
+/**
+ * Look for a wildcard cert one level up from the install domain.
+ * For testnet.caw.social, checks /etc/ssl/caw.social/{fullchain,*.key}.
+ *
+ * Returns null if not found or if the install domain has no parent (e.g. an
+ * apex like example.com — there's no parent to look at).
+ */
+function detectParentWildcard(domain) {
+  const parts = domain.split('.')
+  if (parts.length < 3) return null // apex; no parent to check
+  const parent = parts.slice(1).join('.')
+  const dir = `/etc/ssl/${parent}`
+  if (!fs.existsSync(dir)) return null
+  // Common cert layouts: fullchain.pem + <parent>.key, fullchain.pem + privkey.pem.
+  const cert = ['fullchain.pem', 'cert.pem'].map(n => path.join(dir, n)).find(p => fs.existsSync(p))
+  const key = [`${parent}.key`, 'privkey.pem', 'private.key'].map(n => path.join(dir, n)).find(p => fs.existsSync(p))
+  if (cert && key) return { parent, cert, key }
+  return null
 }
 
 /**
@@ -193,7 +256,8 @@ function renderNginxConf({ domain, apiPort, frontendDist, tls }) {
 `
 
   if (!tls) {
-    // HTTP-only mode (skip TLS). Nothing fancy.
+    // Port-80-only block — used as the intermediate state for Let's Encrypt
+    // before certbot bolts on the TLS server and 80→443 redirect.
     return `# Auto-generated by caw cli. Edit at your own risk.
 server {
     listen 80;
