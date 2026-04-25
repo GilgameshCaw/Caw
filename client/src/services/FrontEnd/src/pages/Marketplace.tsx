@@ -11,6 +11,7 @@ import ListingFilters from '~/components/marketplace/ListingFilters'
 import SaleCard from '~/components/marketplace/SaleCard'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import ProfileCard from '~/components/marketplace/ProfileCard'
+import RefundsBanner from '~/components/marketplace/RefundsBanner'
 import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi'
 import { readContract } from '@wagmi/core'
 import { wagmiConfig } from '~/config/Web3Provider'
@@ -120,6 +121,9 @@ const Marketplace: React.FC = () => {
         {/* Marketplace section */}
         <div className={`border-t pt-6 ${themeBorder(isDark)}`}>
           <h2 className={`text-3xl font-bold mb-4 ${themeText(isDark)}`}>Profile Marketplace</h2>
+
+          {/* Claimable refunds (outbid bids + cancelled/reclaimed auctions) */}
+          <RefundsBanner />
 
           {/* Tabs */}
           <div className={`flex gap-1 mb-6 border-b ${themeBorder(isDark)}`}>
