@@ -1,6 +1,7 @@
 import { prisma } from '../../prismaClient'
 import { scheduledPostLogger as logger } from '../../utils/scheduledPostLogger'
 import { processHashtagsForCaw } from '../../tools/hashtags'
+import { countManager } from '../CountManager'
 import SmlTxt from 'smltxt'
 
 // data.text arrives as smltxt-compressed hex (signed bytes); decompress for
@@ -105,14 +106,15 @@ async function processScheduledPost(scheduledPost: any): Promise<boolean> {
       })
       textContent = textContent.replace(/\n{3,}/g, '\n\n').trim()
 
-      // For replies, find the parent caw ID
+      // For replies, find the parent caw ID. Receiver fields are 0/null for
+      // top-level posts; for thread chunks 1..N they reference chunk 0.
       let originalCawId: number | undefined
       if (data.receiverId && data.receiverCawonce) {
         const parentCaw = await prisma.caw.findFirst({
           where: {
             userId: data.receiverId,
-            cawonce: data.receiverCawonce
-          }
+            cawonce: data.receiverCawonce,
+          },
         })
         if (parentCaw) {
           originalCawId = parentCaw.id
@@ -120,34 +122,99 @@ async function processScheduledPost(scheduledPost: any): Promise<boolean> {
         }
       }
 
-      // Create the pending caw
-      const caw = await prisma.caw.upsert({
-        where: {
-          userId_cawonce: {
+      // Replies (CAW with a parent) get a Reply record + commentCount bump.
+      // Quotes are RECAW with parent, but ScheduledPostProcessor only handles CAW.
+      const isReply = !!originalCawId
+
+      // Atomic block — Caw upsert, Reply upsert, and CountManager increments
+      // must succeed or fail together so counts never drift from records.
+      // Mirrors the optimistic creation logic in /api/actions and /api/actions/batch.
+      const { caw, replyWasNew, cawWasNew } = await prisma.$transaction(async (tx) => {
+        const existingCaw = await tx.caw.findUnique({
+          where: { userId_cawonce: { userId: data.senderId, cawonce: data.cawonce } },
+        })
+        const cawWasNew = !existingCaw
+
+        const caw = await tx.caw.upsert({
+          where: {
+            userId_cawonce: { userId: data.senderId, cawonce: data.cawonce },
+          },
+          update: {
+            status: 'PENDING',
+            // Replies don't store originalCawId on the Caw row — the Reply
+            // table is the source of truth. Matches /api/actions line ~508.
+            originalCawId: isReply ? null : (originalCawId || null),
+            updatedAt: new Date(),
+          },
+          create: {
             userId: data.senderId,
-            cawonce: data.cawonce
-          }
-        },
-        update: {
-          status: 'PENDING',
-          originalCawId: originalCawId || null,
-          updatedAt: new Date()
-        },
-        create: {
-          userId: data.senderId,
-          cawonce: data.cawonce,
-          content: textContent,
-          action: 'CAW',
-          status: 'PENDING',
-          originalCawId: originalCawId || null,
-          imageData: imageUrls.length > 0 ? `urls:${imageUrls.join('|||')}` : scheduledPost.imageData || null,
-          hasImage: imageUrls.length > 0 || scheduledPost.hasImage,
-          videoData: videoUrls.length > 0 ? videoUrls.join('|||') : null,
-          hasVideo: videoUrls.length > 0
+            cawonce: data.cawonce,
+            content: textContent,
+            action: 'CAW',
+            status: 'PENDING',
+            originalCawId: isReply ? null : (originalCawId || null),
+            imageData: imageUrls.length > 0 ? `urls:${imageUrls.join('|||')}` : scheduledPost.imageData || null,
+            hasImage: imageUrls.length > 0 || scheduledPost.hasImage,
+            videoData: videoUrls.length > 0 ? videoUrls.join('|||') : null,
+            hasVideo: videoUrls.length > 0,
+          },
+        })
+
+        // CountManager: bump user.cawCount for new pending posts. For replies
+        // we pass originalCawId=null because reply commentCount is handled
+        // below, not via onCawCreated (which would bump recawCount).
+        if (cawWasNew) {
+          await countManager.onCawCreated(tx, {
+            id: caw.id,
+            userId: data.senderId,
+            action: 'CAW',
+            originalCawId: null,
+            status: 'PENDING',
+          })
         }
+
+        // Reply record + commentCount bump for replies
+        let replyWasNew = false
+        if (isReply && originalCawId) {
+          const existingReply = await tx.reply.findUnique({
+            where: {
+              userId_cawId_replyCawId: {
+                userId: data.senderId,
+                cawId: originalCawId,
+                replyCawId: caw.id,
+              },
+            },
+          })
+          replyWasNew = !existingReply
+          await tx.reply.upsert({
+            where: {
+              userId_cawId_replyCawId: {
+                userId: data.senderId,
+                cawId: originalCawId,
+                replyCawId: caw.id,
+              },
+            },
+            update: { pending: true },
+            create: {
+              userId: data.senderId,
+              cawId: originalCawId,
+              replyCawId: caw.id,
+              pending: true,
+            },
+          })
+          if (replyWasNew) {
+            await countManager.onReplyCreated(tx, {
+              cawId: originalCawId,
+              replyCawId: caw.id,
+              pending: true,
+            })
+          }
+        }
+
+        return { caw, replyWasNew, cawWasNew }
       })
 
-      logger.log(`Created pending caw: ID=${caw.id}, userId=${caw.userId}, cawonce=${caw.cawonce}`)
+      logger.log(`Created pending caw: ID=${caw.id}, userId=${caw.userId}, cawonce=${caw.cawonce}, isReply=${isReply}, cawWasNew=${cawWasNew}, replyWasNew=${replyWasNew}`)
 
       // Process hashtags
       try {
