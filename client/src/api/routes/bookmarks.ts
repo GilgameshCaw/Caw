@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { extractSession } from '../middleware/auth'
+import { shapeCaw, getCawIncludeConfig } from '../shared/cawUtils'
 
 const router = Router()
 
@@ -40,12 +41,7 @@ router.get('/', async (req, res) => {
       take: limit + 1,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       include: {
-        caw: {
-          include: {
-            user: true,
-            parent: { include: { user: true } },
-          }
-        }
+        caw: { include: getCawIncludeConfig({ currentUserId: userId }) },
       }
     })
 
@@ -54,7 +50,7 @@ router.get('/', async (req, res) => {
 
     res.json({
       bookmarks: items.map(b => ({
-        ...b.caw,
+        ...shapeCaw(b.caw),
         isBookmarked: true,
         bookmarkId: b.id,
       })),
