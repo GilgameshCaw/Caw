@@ -63,15 +63,18 @@ The inherited `OAppCore.setPeer(uint32, bytes32)` was the dangerous one — `pub
 
 Intentionally unlocked (operational, not protocol-critical):
 
-- `CawProfileMarketplace.setAllowedPaymentToken` — payment token whitelist must remain tunable. Compromise risk is bounded.
 - `CawClientManager` per-client fee setters — controlled by each client's owner, not the protocol owner. By design.
 - `OAppCore.setDelegate` — not virtual (can't override). Handled by the multisig/renounce step in the deploy checklist instead.
+
+Removed entirely:
+
+- `CawProfileMarketplace` ownership + `setAllowedPaymentToken` — the marketplace no longer inherits `Ownable`. The allowed-payment-token set is now fixed at construction (per-env list passed by deploy.js: WETH/USDC/USDT on mainnet plus per-env CAW). ETH is always allowed. To change the set, deploy a sibling marketplace.
 
 **Pre-mainnet checklist:**
 
 - [ ] Deploy runs all `onlyOnce`-gated setters once in `deploy.js` (verify none are missed).
 - [ ] Spot-check each locked setter post-deploy by calling it again and confirming `"OnlyOnce: already called"` revert.
-- [ ] Transfer `CawProfileMarketplace` ownership to a multisig (or remove ownership entirely — see open question in this backlog).
+- [x] **Marketplace has no admin (done 2026-04-25)** — `CawProfileMarketplace` no longer inherits `Ownable`; payment-token list fixed at construction.
 - [x] **Delegatecall audit (done 2026-04-25)**: only two delegatecall sites in the codebase (`CawProfile._lzReceive`, `CawProfileL2._lzReceive`); both call `address(this).delegatecall(...)` (target is self, not user-controlled), behind a whitelisted-selector check, behind OApp's endpoint+peer auth, with `fromLZ` flag flipped on success only. Selector collisions against all inherited functions (Ownable / ERC721 / ERC721Enumerable / OApp / OAppCore) checked and ruled out. No further action needed.
 
 ---
@@ -93,7 +96,6 @@ The replication path was rewritten as the optimistic archive + trustless `CawCha
 **Still missing:**
 
 - [ ] **Mode A unit test** in `archive-test.js`. Mode A is exercised live but not in solidity unit tests; adding a `slashIncoherentRoot` test alongside the existing `slashFraud` ones would let CI catch regressions without needing testnet.
-- [ ] **Stale test cleanup.** `solidity/test/multi-layer-test.js` references `migratePartialCheckpoint` (removed). Either rewrite against the current architecture or delete in favor of `archive-test.js` and `instance-registry-test.js`.
 
 ### Stale test cleanup
 
@@ -123,14 +125,14 @@ The replication path was rewritten as the optimistic archive + trustless `CawCha
     - Propagation: explicit/removed status applies to quoted/recawed parents automatically via nested includes.
     - Admin row buttons: "Mark Explicit", "Remove Post", "Clear Moderation".
 
-- [ ] **Shadow banning**
-  - Frontend-level content filtering for users flagged by admins.
-  - Banned users post and interact normally; their content is hidden from other users' feeds.
-  - The banned user sees no indication (posts appear normal in their own view).
-  - Per-frontend (consistent with manifesto: protocol uncensorable, frontends moderate).
-  - DB: add `shadowBanned: Boolean` to `User`.
-  - API: filter shadow-banned users' content from feed/search/trending/suggested.
-  - Admin UI to manage banned users (extend ReportsAdmin page).
+- [ ] **Operator-level user removal (transparent extension of REMOVED moderation)**
+  - When a client operator decides a user is bad-faith (illegal content, sustained spam, repeated hate speech), they can remove that user **from this client only**. The user is told. Their on-chain content is unaffected and remains visible from any other client.
+  - This explicitly *replaces* the originally-considered "shadow banning" feature. Shadow banning hides content silently from the banned user, which is deceptive and operator-asymmetric — it's the kind of moderator power the protocol's transparency ethos is designed to make hard. Hard, transparent removal is the same enforcement capability without the deception.
+  - DB: `User.removedFromClient: Boolean` (per-instance, not synced across clients).
+  - API: when querying feed/search/trending/suggested-users, filter out users with `removedFromClient = true`. The user themselves still sees their own posts (so they can move to another client without surprise) and gets a banner: *"You've been removed from this client. Your content is still on-chain — try connecting through a different domain."*
+  - Reuses the existing `REMOVED` moderation render-stub pattern for the user's posts when seen from this client by other users.
+  - Admin UI to manage removed users (extend ReportsAdmin page).
+  - Block + mute already cover the per-user "I don't want to see X" case; this is purely about operator-level enforcement.
 
 - [ ] **Tip ceiling exceeded warning**
   - Quick Sign sessions store a `tipCeiling`. The autonomous signing path uses `min(currentMarketTip, ceiling)`, so the user is never charged more than agreed. If validator network's market tip rises above the ceiling, actions still get signed (with the ceiling) but may be rejected.
@@ -141,17 +143,14 @@ The replication path was rewritten as the optimistic archive + trustless `CawCha
     4. `QuickSignRenewModal` opens with ceiling preset to `currentMarket × 3`.
   - **Why deferred**: the cap protection itself ships; this UX polish is only needed once validators actually raise tips significantly. Wait for real-use signal.
 
-- [ ] **English auction "stuck" recovery flow**
-  - **Background**: when a seller transfers their NFT outside the marketplace mid-auction, `settleAuction` fails. **No funds at risk** — `reclaimBid(listingId)` is a public safety valve (anyone can call it if `cawName.ownerOf(tokenId) != listing.seller`); previously outbid bidders use `withdrawBid` to pull their escrowed refunds.
-  - **Contract**: `CawProfileMarketplace.sol` (`reclaimBid`, `withdrawBid`, `settleAuction`).
-  - **Frontend work needed**:
-    - Detect stuck state per active English auction by checking `cawName.ownerOf(tokenId) === listing.seller`.
-    - Surface to highest bidder: banner *"This auction can no longer be settled — the seller transferred the NFT away. [Reclaim your bid]"*, button calls `reclaimBid(listingId)`.
-    - Surface to outbid bidders: ensure pending-returns `withdrawBid` flow is discoverable.
-    - Surface to seller: warn on their listings page if they've transferred the NFT.
-    - Optional: public "stuck listings" view across the marketplace with public Reclaim button (self-healing).
-  - **Backend**: `MarketplaceIndexerService` should set a `stuck` flag on the listing record so the FE doesn't hit the chain on every page load. Optionally emit a notification when an active-auction NFT transfers.
-  - **Out of scope**: preventing the seller from transferring the NFT. Would require either NFT-side approval-locking or marketplace-managed escrow (much bigger UX change).
+- [ ] **English auction "stuck" recovery UX (frontend)**
+  - **Status**: contract-side mostly resolved. As of `db84bf7`, `cancelListing` works on English auctions even with active bids — the seller can back out cleanly and the bidder is refunded automatically. `reclaimBid` remains as a public safety valve for the rare case where the seller transferred the NFT away and won't act.
+  - **Frontend work still needed**:
+    - "Cancel auction" button on the seller's own active English auctions, even when there's a highest bidder. Confirmation dialog explains the bidder will be refunded.
+    - Detect "seller no longer owns NFT" stuck state by checking `cawProfile.ownerOf(tokenId) === listing.seller`. If false, surface the banner to the highest bidder: *"This auction can no longer be settled — the seller transferred the NFT away. [Reclaim your bid]"* (calls `reclaimBid`).
+    - Make the pull-pattern `withdrawBid` flow discoverable for previously outbid bidders.
+    - Optional: public "stuck listings" view across the marketplace with a public Reclaim button (self-healing).
+  - **Backend**: optional — `MarketplaceIndexerService` could set a `stuck` flag on the listing record so the FE doesn't hit the chain on every page load. Lower priority now that the seller has a proactive cancel path.
 
 ---
 
@@ -302,3 +301,9 @@ One-liner install: `curl -fsSL https://raw.githubusercontent.com/.../install.sh 
 - [x] **DM editing and deletion** — full backend (`Message.editHistory`, `MessageDeletion` model, edit/hide/delete endpoints in `dm.ts`) and frontend (`useDm.ts` decrypts edit history, etc.)
 - [x] **Validator profitability data** — `ValidatorAnalytics.tsx` admin page tracks revenue, gas cost, profit, breakdown, time-series. Optimal-fee *modeling* still open (see Backend Services).
 - [x] **`findOrCreateUser` in-memory cache + pulled out of interactive tx** (2026-04-24) — fixes `P2028` "transaction already closed" cascades when a batch of N actions from the same sender arrives in parallel
+- [x] **GasPriceLine wired to real ETH price** (2026-04-25, `db84bf7`) — was hardcoded to `1` with three TODO comments; now reads from `usePriceStore` (already populated by `useFetchPrices` from `/api/prices`)
+- [x] **Marketplace ownership removed** (2026-04-25) — see Security & Pre-Launch above for details
+- [x] **`setPeer` once-per-eid lock + delegatecall audit** (2026-04-25, `3c445c0`)
+- [x] **English auction `cancelListing` works with active bids** (2026-04-25, `db84bf7`) — refunds highest bidder automatically; seller no longer needs the transfer-NFT-away workaround
+- [x] **`mintSelector` kept as latent capacity** (2026-04-25) — comments now explain it's reserved for a future "mint + authenticate (no deposit)" flow rather than the misleading `// TODO: this one not used`
+- [x] **Stale `multi-layer-test.js` references** cleaned up (2026-04-25, by user)

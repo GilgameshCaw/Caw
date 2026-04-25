@@ -3767,7 +3767,10 @@ export const cawProfileL2Abi = [
 export const cawProfileMarketplaceAbi = [
   {
     type: 'constructor',
-    inputs: [{ name: '_cawProfile', internalType: 'address', type: 'address' }],
+    inputs: [
+      { name: '_cawProfile', internalType: 'address', type: 'address' },
+      { name: '_paymentTokens', internalType: 'address[]', type: 'address[]' },
+    ],
     stateMutability: 'nonpayable',
   },
   {
@@ -4030,25 +4033,6 @@ export const cawProfileMarketplaceAbi = [
     anonymous: false,
     inputs: [
       {
-        name: 'previousOwner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'newOwner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-    ],
-    name: 'OwnershipTransferred',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
         name: 'listingId',
         internalType: 'uint256',
         type: 'uint256',
@@ -4260,13 +4244,6 @@ export const cawProfileMarketplaceAbi = [
   },
   {
     type: 'function',
-    inputs: [],
-    name: 'owner',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
     inputs: [
       { name: '', internalType: 'address', type: 'address' },
       { name: '', internalType: 'uint256', type: 'uint256' },
@@ -4301,34 +4278,10 @@ export const cawProfileMarketplaceAbi = [
   },
   {
     type: 'function',
-    inputs: [],
-    name: 'renounceOwnership',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'token', internalType: 'address', type: 'address' },
-      { name: 'allowed', internalType: 'bool', type: 'bool' },
-    ],
-    name: 'setAllowedPaymentToken',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
     inputs: [{ name: 'listingId', internalType: 'uint256', type: 'uint256' }],
     name: 'settleAuction',
     outputs: [],
     stateMutability: 'payable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
-    name: 'transferOwnership',
-    outputs: [],
-    stateMutability: 'nonpayable',
   },
   {
     type: 'function',

@@ -55,14 +55,12 @@ contract("CawProfileMarketplace", (accounts) => {
     // Create a client (needed for minting)
     await clientManager.createClient("Test Client", deployer, dummyL2Eid, 0, 0, 0, 0);
 
-    // Deploy marketplace
-    marketplace = await CawProfileMarketplace.new(cawProfiles.address);
-
     // Use MintableCaw as payment token for ERC20 tests
     paymentToken = token;
 
-    // Allow payment token in marketplace
-    await marketplace.setAllowedPaymentToken(paymentToken.address, true);
+    // Deploy marketplace with the payment-token allowlist baked in.
+    // The marketplace has no admin — allowed tokens are fixed at construction.
+    marketplace = await CawProfileMarketplace.new(cawProfiles.address, [paymentToken.address]);
 
     // Mint CAW tokens for users
     const mintAmount = web3.utils.toWei("1000000000000", "ether"); // 1T CAW
@@ -894,20 +892,28 @@ contract("CawProfileMarketplace", (accounts) => {
     });
   });
 
-  describe("Admin", () => {
-    it("should allow owner to set payment token", async () => {
-      const fakeToken = accounts[9];
-      await marketplace.setAllowedPaymentToken(fakeToken, true);
-      assert.equal(await marketplace.allowedPaymentTokens(fakeToken), true);
-
-      await marketplace.setAllowedPaymentToken(fakeToken, false);
-      assert.equal(await marketplace.allowedPaymentTokens(fakeToken), false);
+  describe("Payment-token allowlist (no admin)", () => {
+    it("ETH (address(0)) is always allowed", async () => {
+      assert.equal(await marketplace.allowedPaymentTokens('0x0000000000000000000000000000000000000000'), true);
     });
 
-    it("should not allow non-owner to set payment token", async () => {
-      await expectRevert.unspecified(
-        marketplace.setAllowedPaymentToken(accounts[9], true, { from: buyer })
-      );
+    it("constructor-allowed tokens are on the allowlist", async () => {
+      assert.equal(await marketplace.allowedPaymentTokens(paymentToken.address), true);
+    });
+
+    it("tokens not passed at construction are not allowed", async () => {
+      const random = accounts[9];
+      assert.equal(await marketplace.allowedPaymentTokens(random), false);
+    });
+
+    it("there is no setAllowedPaymentToken function (no admin)", async () => {
+      assert.equal(typeof marketplace.setAllowedPaymentToken, 'undefined');
+    });
+
+    it("can deploy with no extra tokens (ETH-only marketplace)", async () => {
+      const ethOnly = await CawProfileMarketplace.new(cawProfiles.address, []);
+      assert.equal(await ethOnly.allowedPaymentTokens('0x0000000000000000000000000000000000000000'), true);
+      assert.equal(await ethOnly.allowedPaymentTokens(paymentToken.address), false);
     });
   });
 });

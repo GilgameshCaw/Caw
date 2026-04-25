@@ -6,7 +6,6 @@ import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
 
 interface ICawProfileTransfer is IERC721 {
     function transferAndSync(address to, uint256 tokenId, uint256 lzTokenAmount) external payable;
@@ -16,9 +15,15 @@ interface ICawProfileTransfer is IERC721 {
  * @title CawProfileMarketplace
  * @notice Trustless, feeless marketplace for CAW username NFTs.
  *         Supports fixed-price sales, Dutch auctions, English auctions, and buy offers.
- *         0% fees forever — per the CAW manifesto.
+ *         0% fees forever, no admin — per the CAW manifesto.
+ *
+ * @dev No `Ownable` inheritance. The allowed-payment-token set is fixed at
+ *      construction (passed by the deployer for the env's WETH/USDC/USDT/CAW
+ *      addresses), and ETH (address(0)) is always allowed. There is no
+ *      post-deploy way to add or remove a payment token. If the ecosystem
+ *      decides a different set is desirable, deploy a sibling marketplace.
  */
-contract CawProfileMarketplace is ReentrancyGuard, Ownable {
+contract CawProfileMarketplace is ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     enum ListingType { FIXED, DUTCH_AUCTION, ENGLISH_AUCTION }
@@ -74,11 +79,21 @@ contract CawProfileMarketplace is ReentrancyGuard, Ownable {
     event OfferAccepted(uint256 indexed offerId, uint32 indexed tokenId, address seller, address buyer, uint256 price, address paymentToken);
     event OfferCancelled(uint256 indexed offerId);
 
-    constructor(address _cawProfile) {
+    /// @param _cawProfile The CawProfile (NFT) address.
+    /// @param _paymentTokens ERC20 tokens that should be allowed as payment, in
+    ///        addition to native ETH (which is always allowed via address(0)).
+    ///        Pass an empty array for ETH-only. Duplicates and the zero address
+    ///        are both fine — zero is treated as ETH (already on); duplicates
+    ///        are idempotent.
+    constructor(address _cawProfile, address[] memory _paymentTokens) {
         require(_cawProfile != address(0), "Invalid CawProfile address");
         cawProfile = ICawProfileTransfer(_cawProfile);
-        // ETH is always allowed (represented by address(0))
+
+        // ETH is always allowed.
         allowedPaymentTokens[address(0)] = true;
+        for (uint256 i = 0; i < _paymentTokens.length; i++) {
+            allowedPaymentTokens[_paymentTokens[i]] = true;
+        }
     }
 
     // ============================================
@@ -532,17 +547,6 @@ contract CawProfileMarketplace is ReentrancyGuard, Ownable {
         Listing storage listing = listings[listingId];
         require(listing.active, "Listing not active");
         return _getCurrentPrice(listing);
-    }
-
-    // ============================================
-    // ADMIN
-    // ============================================
-
-    /**
-     * @notice Add or remove an allowed payment token.
-     */
-    function setAllowedPaymentToken(address token, bool allowed) external onlyOwner {
-        allowedPaymentTokens[token] = allowed;
     }
 
     // ============================================

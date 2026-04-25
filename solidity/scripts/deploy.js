@@ -160,6 +160,21 @@ const EXISTING_CONTRACTS = {
   },
 };
 
+// Marketplace-allowed ERC20 payment tokens, by env. ETH (address(0)) is always
+// allowed by the contract itself and is NOT in this list. CAW is added at deploy
+// time from state.addresses.MintableCaw (per-env). Adding/removing tokens after
+// deployment is impossible — the marketplace has no admin. To change the set,
+// deploy a sibling marketplace.
+const MARKETPLACE_PAYMENT_TOKENS = {
+  mainnet: [
+    '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', // WETH
+    '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', // USDC
+    '0xdAC17F958D2ee523a2206206994597C13D831ec7', // USDT
+  ],
+  testnet: [],
+  dev: [],
+};
+
 // Contract definitions with dependencies
 const CONTRACTS = {
   // Phase 1: Deploy CawProfileL2 on both L2 chains (needed by L1 CawProfile for cross-chain setup)
@@ -280,7 +295,13 @@ const CONTRACTS = {
     chain: 'L1',
     phase: 2,
     dependencies: ['CawProfile'],
-    constructorArgs: (state) => [state.addresses.CawProfile],
+    constructorArgs: (state, _chainKey, env) => {
+      const erc20Tokens = (MARKETPLACE_PAYMENT_TOKENS[env] || []).slice();
+      // CAW (per env) — added on top of the static list. Skip if not deployed.
+      const caw = state.addresses.MintableCaw || state.addresses.CAW;
+      if (caw) erc20Tokens.push(caw);
+      return [state.addresses.CawProfile, erc20Tokens];
+    },
   },
   CawActions_L1: {
     artifact: 'CawActions',
@@ -652,69 +673,11 @@ const LINKING_STEPS = [
     },
   },
 
-  // Phase 5: Marketplace payment token configuration
-  // WETH
-  {
-    name: 'Allow WETH as marketplace payment token',
-    chain: 'L1',
-    phase: 5,
-    contract: 'CawProfileMarketplace',
-    method: 'setAllowedPaymentToken',
-    args: () => ['0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', true], // Mainnet WETH
-    condition: (state) => !!state.addresses.CawProfileMarketplace,
-    skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawProfileMarketplace');
-      if (!contract) return false;
-      try { return await contract.allowedPaymentTokens('0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2'); } catch { return false; }
-    },
-  },
-  // USDC
-  {
-    name: 'Allow USDC as marketplace payment token',
-    chain: 'L1',
-    phase: 5,
-    contract: 'CawProfileMarketplace',
-    method: 'setAllowedPaymentToken',
-    args: () => ['0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', true], // Mainnet USDC
-    condition: (state) => !!state.addresses.CawProfileMarketplace,
-    skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawProfileMarketplace');
-      if (!contract) return false;
-      try { return await contract.allowedPaymentTokens('0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48'); } catch { return false; }
-    },
-  },
-  // USDT
-  {
-    name: 'Allow USDT as marketplace payment token',
-    chain: 'L1',
-    phase: 5,
-    contract: 'CawProfileMarketplace',
-    method: 'setAllowedPaymentToken',
-    args: () => ['0xdAC17F958D2ee523a2206206994597C13D831ec7', true], // Mainnet USDT
-    condition: (state) => !!state.addresses.CawProfileMarketplace,
-    skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawProfileMarketplace');
-      if (!contract) return false;
-      try { return await contract.allowedPaymentTokens('0xdAC17F958D2ee523a2206206994597C13D831ec7'); } catch { return false; }
-    },
-  },
-  // CAW
-  {
-    name: 'Allow CAW as marketplace payment token',
-    chain: 'L1',
-    phase: 5,
-    contract: 'CawProfileMarketplace',
-    method: 'setAllowedPaymentToken',
-    args: (state) => [state.addresses.MintableCaw || state.addresses.CAW, true],
-    condition: (state) => !!state.addresses.CawProfileMarketplace && !!(state.addresses.MintableCaw || state.addresses.CAW),
-    skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawProfileMarketplace');
-      if (!contract) return false;
-      const cawAddr = state.addresses.MintableCaw || state.addresses.CAW;
-      if (!cawAddr) return false;
-      try { return await contract.allowedPaymentTokens(cawAddr); } catch { return false; }
-    },
-  },
+  // Phase 5: (was: marketplace payment-token whitelist via setAllowedPaymentToken)
+  // The marketplace no longer has an admin. Allowed ERC20 payment tokens are
+  // fixed at construction (see MARKETPLACE_PAYMENT_TOKENS + the constructorArgs
+  // for CawProfileMarketplace above). ETH is always allowed.
+
 
   // -----------------------------------------------------------------
   // Phase 6: LZ DVN config — mainnet only, 3-of-3 required DVN set
@@ -900,7 +863,7 @@ class MultiChainDeployer {
     }
     const wallet = this.wallets[chainKey];
 
-    const args = config.constructorArgs(this.state, chainKey);
+    const args = config.constructorArgs(this.state, chainKey, this.env);
     console.log(`\nDeploying ${contractKey} to ${chainKey}...`);
     console.log(`   Constructor args:`, args);
 
