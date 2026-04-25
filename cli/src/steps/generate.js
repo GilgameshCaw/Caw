@@ -159,6 +159,13 @@ function buildEnvVars(nodeType, config) {
   if (config.validatorPrivateKey) env.VALIDATOR_PRIVATE_KEY = config.validatorPrivateKey
   if (config.adminPassword) env.ADMIN_PASSWORD = config.adminPassword
 
+  // Replication is optional. RPC_ARBITRUM_SEPOLIA enables the optimistic
+  // archive loop in ValidatorService; REPLICATOR_PRIVATE_KEY only set when
+  // the operator chose a separate replicator key (otherwise the service
+  // falls back to the validator key).
+  if (config.archiveRpcUrl) env.RPC_ARBITRUM_SEPOLIA = config.archiveRpcUrl
+  if (config.replicatorPrivateKey) env.REPLICATOR_PRIVATE_KEY = config.replicatorPrivateKey
+
   // JWT signs API session tokens. Generate a fresh one per install — leaking
   // a JWT secret across deployments would let one node's tokens authorize
   // requests against another's API.

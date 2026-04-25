@@ -9,6 +9,7 @@ import { selectNodeType } from '../src/steps/nodeType.js'
 import { collectNetworkAndMode } from '../src/steps/networkAndMode.js'
 import { collectRpcUrls } from '../src/steps/rpcUrls.js'
 import { collectValidatorConfig } from '../src/steps/validator.js'
+import { collectReplicationConfig } from '../src/steps/replication.js'
 import { collectInfraConfig } from '../src/steps/infrastructure.js'
 import { generateConfig } from '../src/steps/generate.js'
 import { runInstall, startServices } from '../src/steps/install.js'
@@ -52,11 +53,23 @@ program
         network: networkConfig.network,
       })
 
-      // Step 5: Infrastructure (DB, Redis, domain, client ID)
+      // Step 5: Replication (optional). Asked separately because operators
+      // can run a validator without participating in fraud-detection.
+      const replicationConfig = await collectReplicationConfig(nodeType, {
+        network: networkConfig.network,
+      })
+
+      // Step 6: Infrastructure (DB, Redis, domain, client ID)
       const infraConfig = await collectInfraConfig(nodeType)
 
       // Merge all config
-      const fullConfig = { ...networkConfig, ...rpcConfig, ...validatorConfig, ...infraConfig }
+      const fullConfig = {
+        ...networkConfig,
+        ...rpcConfig,
+        ...validatorConfig,
+        ...replicationConfig,
+        ...infraConfig,
+      }
 
       // Step 5: Generate config files
       generateConfig(nodeType, fullConfig, opts.dir)
