@@ -141,9 +141,11 @@ async function processScheduledPost(scheduledPost: any): Promise<boolean> {
           },
           update: {
             status: 'PENDING',
-            // Replies don't store originalCawId on the Caw row — the Reply
-            // table is the source of truth. Matches /api/actions line ~508.
-            originalCawId: isReply ? null : (originalCawId || null),
+            // Store originalCawId on the Caw row so the feed can group thread
+            // replies under their parent. /api/actions and /api/actions/batch
+            // both do this unconditionally; only the CountManager call below
+            // skips it for replies (to avoid double-bumping recawCount).
+            originalCawId: originalCawId || null,
             updatedAt: new Date(),
           },
           create: {
@@ -152,7 +154,7 @@ async function processScheduledPost(scheduledPost: any): Promise<boolean> {
             content: textContent,
             action: 'CAW',
             status: 'PENDING',
-            originalCawId: isReply ? null : (originalCawId || null),
+            originalCawId: originalCawId || null,
             imageData: imageUrls.length > 0 ? `urls:${imageUrls.join('|||')}` : scheduledPost.imageData || null,
             hasImage: imageUrls.length > 0 || scheduledPost.hasImage,
             videoData: videoUrls.length > 0 ? videoUrls.join('|||') : null,
