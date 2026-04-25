@@ -1,6 +1,23 @@
+import crypto from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import { section, success, dim, brand, warn } from '../utils/ui.js'
+
+// Per-network constants. The CLI asks the operator which network they want;
+// everything chain-id-flavored derives from this single source so we never
+// have to hand-update half a dozen call sites when adding a new network.
+const NETWORKS = {
+  testnet: {
+    label: 'Testnet (Base Sepolia)',
+    l2ChainId: 84532,    // Base Sepolia
+    l1ChainId: 11155111, // Ethereum Sepolia
+  },
+  mainnet: {
+    label: 'Mainnet (Base)',
+    l2ChainId: 8453,     // Base
+    l1ChainId: 1,        // Ethereum mainnet
+  },
+}
 
 /**
  * Generate config.json and .env from collected answers
@@ -54,36 +71,41 @@ export function generateConfig(nodeType, config, installDir) {
 
 function buildServiceList(nodeType, config) {
   const services = []
+  const net = NETWORKS[config.network || 'testnet']
+  // Node groupings — keep these in one place so future tweaks don't need
+  // to touch every if-statement below.
+  const RUNS_FRONTEND = ['full', 'frontend-api'].includes(nodeType)
+  const RUNS_API = ['full', 'frontend-api', 'api-only'].includes(nodeType)
+  const RUNS_VALIDATOR = ['full', 'validator'].includes(nodeType)
+  const RUNS_INDEXER = ['full', 'frontend-api', 'api-only', 'validator'].includes(nodeType)
 
-  // FrontEnd service
-  if (['full', 'frontend-api'].includes(nodeType)) {
+  if (RUNS_FRONTEND) {
     services.push({ service: 'FrontEnd', config: {} })
   }
 
-  // API service
-  if (['full', 'frontend-api', 'api-only'].includes(nodeType)) {
+  if (RUNS_API) {
     const apiConfig = {
       port: config.apiPort || 4000,
       allowedOrigins: config.domain
-        ? [`https://${config.domain}`, 'http://localhost:5173']
-        : ['http://localhost:5173', 'http://localhost:5174']
+        ? [`https://${config.domain}`, 'http://localhost:5273']
+        : ['http://localhost:5273', 'http://localhost:5174']
     }
     if (config.domain) {
       apiConfig.shortUrlDomain = `https://${config.domain}`
     }
     services.push({ service: 'Api', config: apiConfig })
-  }
 
-  // ActionProcessor
-  if (['full', 'frontend-api', 'api-only'].includes(nodeType)) {
     services.push({
       service: 'ActionProcessor',
       config: { redisUrl: config.redisUrl || 'redis://127.0.0.1:6379' }
     })
+    services.push({ service: 'DataCleaner', config: {} })
+    services.push({ service: 'ScheduledPostProcessor', config: {} })
+    services.push({ service: 'MarketplaceIndexer', config: {} })
+    services.push({ service: 'InstanceRegistry', config: {} })
   }
 
-  // Validator
-  if (['full', 'validator'].includes(nodeType)) {
+  if (RUNS_VALIDATOR) {
     services.push({
       service: 'Validator',
       config: {
@@ -94,25 +116,28 @@ function buildServiceList(nodeType, config) {
     })
   }
 
-  // RawEventsGatherer
-  if (['full', 'frontend-api', 'api-only', 'validator'].includes(nodeType)) {
+  if (RUNS_INDEXER) {
     services.push({
       service: 'RawEventsGatherer',
       config: {
-        chainId: 84532, // Base Sepolia (update for mainnet)
+        chainId: net.l2ChainId,
         rpcUrl: '${L2_RPC_URL}'
       }
     })
-  }
-
-  // DataCleaner
-  if (['full', 'frontend-api', 'api-only'].includes(nodeType)) {
-    services.push({ service: 'DataCleaner', config: {} })
-  }
-
-  // ScheduledPostProcessor
-  if (['full', 'frontend-api', 'api-only'].includes(nodeType)) {
-    services.push({ service: 'ScheduledPostProcessor', config: {} })
+    services.push({
+      service: 'ChainSyncService',
+      config: {
+        l1RpcUrl: '${L1_RPC_URL}',
+        ethMainnetRpcUrl: '${ETH_MAINNET_RPC_URL}'
+      }
+    })
+    services.push({
+      service: 'NftTransferWatcher',
+      config: {
+        l1RpcUrl: '${L1_RPC_URL}',
+        chainId: net.l1ChainId,
+      }
+    })
   }
 
   return services
@@ -120,32 +145,28 @@ function buildServiceList(nodeType, config) {
 
 function buildEnvVars(nodeType, config) {
   const env = {}
+  const net = NETWORKS[config.network || 'testnet']
 
   env.DATABASE_URL = config.dbUrl || 'postgresql://postgres:postgres@127.0.0.1:5432/caw'
+  env.REDIS_URL = config.redisUrl || 'redis://127.0.0.1:6379'
+  env.ELASTICSEARCH_NODE = config.elasticsearchNode || 'http://127.0.0.1:9200'
 
-  if (config.l2RpcUrl) {
-    env.L2_RPC_URL = config.l2RpcUrl
-  }
-  if (config.l2RpcUrlHttp) {
-    env.L2_RPC_URL_HTTP = config.l2RpcUrlHttp
-  }
-  if (config.l1RpcUrl) {
-    env.L1_RPC_URL = config.l1RpcUrl
-  }
-  if (config.l1RpcUrlHttp) {
-    env.L1_RPC_URL_HTTP = config.l1RpcUrlHttp
-  }
-  if (config.ethMainnetRpcUrl) {
-    env.ETH_MAINNET_RPC_URL = config.ethMainnetRpcUrl
-  }
-  if (config.validatorPrivateKey) {
-    env.VALIDATOR_PRIVATE_KEY = config.validatorPrivateKey
-  }
-  if (config.adminPassword) {
-    env.ADMIN_PASSWORD = config.adminPassword
-  }
+  if (config.l2RpcUrl) env.L2_RPC_URL = config.l2RpcUrl
+  if (config.l2RpcUrlHttp) env.L2_RPC_URL_HTTP = config.l2RpcUrlHttp
+  if (config.l1RpcUrl) env.L1_RPC_URL = config.l1RpcUrl
+  if (config.l1RpcUrlHttp) env.L1_RPC_URL_HTTP = config.l1RpcUrlHttp
+  if (config.ethMainnetRpcUrl) env.ETH_MAINNET_RPC_URL = config.ethMainnetRpcUrl
+  if (config.validatorPrivateKey) env.VALIDATOR_PRIVATE_KEY = config.validatorPrivateKey
+  if (config.adminPassword) env.ADMIN_PASSWORD = config.adminPassword
 
-  env.L2_CHAIN_ID = '84532' // Base Sepolia
+  // JWT signs API session tokens. Generate a fresh one per install — leaking
+  // a JWT secret across deployments would let one node's tokens authorize
+  // requests against another's API.
+  env.JWT_SECRET = config.jwtSecret || crypto.randomBytes(48).toString('hex')
+
+  env.L2_CHAIN_ID = String(net.l2ChainId)
+  env.L1_CHAIN_ID = String(net.l1ChainId)
+  env.NETWORK = config.network || 'testnet'
 
   return env
 }
@@ -203,6 +224,10 @@ volumes:
 
 function buildPm2Config(nodeType, config, installDir) {
   const apps = []
+  // If `pm2 startup` is wired to systemd, pm2 boots as root and launches each
+  // app. Set the per-app `user` so workloads drop privileges. When pm2 runs
+  // unprivileged (the typical CLI install path), this is a no-op.
+  const runAsUser = config.runAsUser || process.env.SUDO_USER || (process.getuid && process.getuid() === 0 ? 'caw' : undefined)
 
   // Main CAW server (all backend services run in one process)
   if (nodeType !== 'frontend-only') {
@@ -211,31 +236,34 @@ function buildPm2Config(nodeType, config, installDir) {
       cwd: path.join(installDir, 'client'),
       script: 'node',
       args: '-r ./file-polyfill.js -r tsx/cjs programs/start.ts',
-      env: {
-        NODE_ENV: 'production'
-      },
+      env: { NODE_ENV: 'production' },
       max_memory_restart: '1G',
       error_file: path.join(installDir, 'logs/caw-server-error.log'),
       out_file: path.join(installDir, 'logs/caw-server-out.log'),
       merge_logs: true,
-      log_date_format: 'YYYY-MM-DD HH:mm:ss Z'
+      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+      ...(runAsUser ? { user: runAsUser } : {}),
     })
   }
 
-  // Frontend dev server (or build for production)
-  if (['full', 'frontend-api', 'frontend-only'].includes(nodeType)) {
+  // Frontend: dev mode runs vite under pm2; production hands off to nginx
+  // (which serves the static build produced during `runInstall`). So we only
+  // add the pm2 app when we're in dev mode.
+  const runFrontendUnderPm2 =
+    ['full', 'frontend-api', 'frontend-only'].includes(nodeType) &&
+    config.deployment !== 'production'
+  if (runFrontendUnderPm2) {
     apps.push({
       name: 'caw-frontend',
       cwd: path.join(installDir, 'client/src/services/FrontEnd'),
       script: 'npx',
       args: 'vite --host 0.0.0.0',
-      env: {
-        NODE_ENV: 'production'
-      },
+      env: { NODE_ENV: 'development' },
       error_file: path.join(installDir, 'logs/caw-frontend-error.log'),
       out_file: path.join(installDir, 'logs/caw-frontend-out.log'),
       merge_logs: true,
-      log_date_format: 'YYYY-MM-DD HH:mm:ss Z'
+      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+      ...(runAsUser ? { user: runAsUser } : {}),
     })
   }
 

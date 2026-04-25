@@ -39,11 +39,12 @@ export async function runInstall(nodeType, config, installDir) {
     throw e
   }
 
-  // 3. Install frontend dependencies (if needed)
+  // 3. Install frontend dependencies + (production) build
   if (['full', 'frontend-api', 'frontend-only'].includes(nodeType)) {
+    const frontendDir = path.join(clientDir, 'src/services/FrontEnd')
+
     const spinner3 = ora('Installing frontend dependencies...').start()
     try {
-      const frontendDir = path.join(clientDir, 'src/services/FrontEnd')
       execSync('yarn install --frozen-lockfile 2>/dev/null || yarn install', {
         cwd: frontendDir,
         stdio: 'pipe'
@@ -52,6 +53,20 @@ export async function runInstall(nodeType, config, installDir) {
     } catch (e) {
       spinner3.fail('Failed to install frontend dependencies')
       throw e
+    }
+
+    // For production deployments, build the static bundle once. Nginx serves
+    // dist/ directly — no need for vite to keep running. Dev mode skips the
+    // build and runs vite under pm2 like before.
+    if (config.deployment === 'production') {
+      const spinner3b = ora('Building frontend (production)...').start()
+      try {
+        execSync('yarn build', { cwd: frontendDir, stdio: 'pipe' })
+        spinner3b.succeed('Frontend built — dist/ ready for nginx')
+      } catch (e) {
+        spinner3b.fail('Frontend build failed')
+        throw e
+      }
     }
   }
 

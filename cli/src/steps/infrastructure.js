@@ -6,6 +6,45 @@ export async function collectInfraConfig(nodeType) {
     return collectFrontendOnlyConfig()
   }
 
+  // Network — drives chain IDs, contract addresses, and indexer behavior.
+  section('Network')
+  tipBlock([
+    'Pick the network this node will run against.',
+    'Most public installs run testnet — it has no real funds at stake.',
+  ])
+  const { network } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'network',
+      message: 'Which network?',
+      choices: [
+        { value: 'testnet', name: `${brand('Testnet')} ${dim('(Base Sepolia / Ethereum Sepolia)')}` },
+        { value: 'mainnet', name: `${brand('Mainnet')} ${dim('(Base / Ethereum)')}` },
+      ],
+      default: 'testnet',
+    },
+  ])
+
+  // Deployment mode — drives whether we run vite dev or build the frontend
+  // and let nginx serve dist/. Ask early because subsequent steps branch on it.
+  let deployment = 'dev'
+  if (['full', 'frontend-api', 'frontend-only', 'api-only'].includes(nodeType)) {
+    section('Deployment Mode')
+    const { mode } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'mode',
+        message: 'How are you running this node?',
+        choices: [
+          { value: 'production', name: `${brand('Production')} ${dim('(public domain, nginx serves built frontend)')}` },
+          { value: 'dev', name: `${brand('Development')} ${dim('(localhost, vite dev server)')}` },
+        ],
+        default: 'production',
+      },
+    ])
+    deployment = mode
+  }
+
   section('Infrastructure')
 
   // Database
@@ -29,6 +68,7 @@ export async function collectInfraConfig(nodeType) {
 
   let dbUrl = 'postgresql://postgres:postgres@127.0.0.1:5432/caw'
   let redisUrl = 'redis://127.0.0.1:6379'
+  let elasticsearchNode = 'http://127.0.0.1:9200'
 
   if (useDocker === 'docker') {
     const { dbPassword } = await inquirer.prompt([
@@ -56,10 +96,18 @@ export async function collectInfraConfig(nodeType) {
         message: 'Redis connection URL:',
         default: redisUrl,
         validate: (input) => input.startsWith('redis://') ? true : 'Must be a Redis URL'
+      },
+      {
+        type: 'input',
+        name: 'elasticsearchNode',
+        message: `Elasticsearch URL ${dim('(search is optional — leave default if unsure)')}:`,
+        default: elasticsearchNode,
+        validate: (input) => /^https?:\/\//.test(input) ? true : 'Must start with http:// or https://'
       }
     ])
     dbUrl = answers.dbUrl
     redisUrl = answers.redisUrl
+    elasticsearchNode = answers.elasticsearchNode
   }
 
   // Domain (for nodes that serve HTTP)
@@ -137,7 +185,18 @@ export async function collectInfraConfig(nodeType) {
     }
   ])
 
-  return { useDocker, dbUrl, redisUrl, domain, adminPassword, clientId, apiPort }
+  return {
+    network,
+    deployment,
+    useDocker,
+    dbUrl,
+    redisUrl,
+    elasticsearchNode,
+    domain,
+    adminPassword,
+    clientId,
+    apiPort,
+  }
 }
 
 async function collectFrontendOnlyConfig() {

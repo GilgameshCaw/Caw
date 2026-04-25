@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander'
+import { execSync } from 'child_process'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { banner, section, success, brand, dim } from '../src/utils/ui.js'
@@ -10,6 +11,7 @@ import { collectValidatorConfig } from '../src/steps/validator.js'
 import { collectInfraConfig } from '../src/steps/infrastructure.js'
 import { generateConfig } from '../src/steps/generate.js'
 import { runInstall, startServices } from '../src/steps/install.js'
+import { configureNginx } from '../src/steps/nginx.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT_DIR = path.resolve(__dirname, '../..')
@@ -51,8 +53,14 @@ program
       // Step 5: Generate config files
       generateConfig(nodeType, fullConfig, opts.dir)
 
-      // Step 6: Install dependencies & start
+      // Step 6: Install dependencies + (production) build the frontend
       await runInstall(nodeType, fullConfig, opts.dir)
+
+      // Step 7: nginx + TLS for production deployments with a domain.
+      // Runs *after* install so the built dist/ exists for nginx to serve.
+      await configureNginx(fullConfig, opts.dir)
+
+      // Step 8: Start everything via pm2
       await startServices(nodeType, opts.dir)
 
       // Done!
@@ -83,7 +91,6 @@ program
   .command('status')
   .description('Show status of CAW services')
   .action(() => {
-    const { execSync } = require('child_process')
     try {
       execSync('pm2 list', { stdio: 'inherit' })
     } catch {
@@ -96,7 +103,6 @@ program
   .description('Tail CAW service logs')
   .argument('[service]', 'Service name (caw-server, caw-frontend)')
   .action((service) => {
-    const { execSync } = require('child_process')
     const target = service || 'all'
     try {
       execSync(`pm2 logs ${target} --lines 50`, { stdio: 'inherit' })
@@ -110,7 +116,6 @@ program
   .description('Restart CAW services')
   .argument('[service]', 'Service name (or "all")', 'all')
   .action((service) => {
-    const { execSync } = require('child_process')
     try {
       execSync(`pm2 restart ${service}`, { stdio: 'inherit' })
     } catch {
@@ -122,7 +127,6 @@ program
   .command('stop')
   .description('Stop CAW services')
   .action(() => {
-    const { execSync } = require('child_process')
     try {
       execSync('pm2 stop all', { stdio: 'inherit' })
     } catch {
