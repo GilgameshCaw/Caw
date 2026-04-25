@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react'
 import { useTheme } from '~/hooks/useTheme'
+import { TAG_CHAR_CLASS } from '~/../../../tools/hashtagRegex'
 
 interface HighlightedTextareaProps {
   value: string
@@ -55,10 +56,16 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   const getHighlightedText = (text: string) => {
     if (!text) return null
 
-    // Match @mentions, #hashtags (must contain a letter), $cashtags (must contain a letter), and URLs
-    const regex = /(@[a-zA-Z0-9_]+|[#$][a-zA-Z0-9_]*[a-zA-Z_][a-zA-Z0-9_]*|https?:\/\/[^\s<>"'{}|\\^`[\]]+[^\s<>"'{}|\\^`[\].,!?;:)\]])/g
+    // Match @mentions, #hashtags, $cashtags, and URLs. Hashtags/cashtags must
+    // contain at least one non-digit char; pure-numeric runs like `#5` or
+    // `$100` stay plain text. Char class allows any Unicode letter/digit/mark
+    // so e.g. `#テスト` and `#你好` highlight the same as `#foo`.
+    const tagAlt = `[#$](?=${TAG_CHAR_CLASS}*[\\p{L}\\p{M}_])${TAG_CHAR_CLASS}+`
+    const mentionAlt = `@${TAG_CHAR_CLASS}+`
+    const urlAlt = `https?:\\/\\/[^\\s<>"'{}|\\\\^\`\\[\\]]+[^\\s<>"'{}|\\\\^\`\\[\\].,!?;:)\\]]`
+    const regex = new RegExp(`(${mentionAlt}|${tagAlt}|${urlAlt})`, 'gu')
     const parts = text.split(regex)
-    const isMentionOrTag = /^(@[a-zA-Z0-9_]+|[#$][a-zA-Z0-9_]*[a-zA-Z_][a-zA-Z0-9_]*)$/
+    const isMentionOrTag = new RegExp(`^(${mentionAlt}|${tagAlt})$`, 'u')
     const isUrl = /^https?:\/\//
 
     return parts.map((part, index) => {

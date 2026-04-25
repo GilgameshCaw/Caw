@@ -1,6 +1,7 @@
 // Hook to manage mute preferences from localStorage
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
+import { HASHTAG_REGEX, TAG_CHAR_CLASS, isValidTagBody } from '~/../../../tools/hashtagRegex'
 
 export interface MutePreferences {
   mutedThreads: string[]       // Post IDs
@@ -113,9 +114,13 @@ export const COMMON_WORDS = new Set([
 
 // Extract meaningful words from post content
 export function extractMuteableWords(content: string): string[] {
-  // Extract hashtags/cashtags
-  const hashtagRegex = /[#$][a-zA-Z0-9_\u00C0-\u017F\u1E00-\u1EFF\u0100-\u024F\u1EA0-\u1EF9]+/g
-  const hashtags = (content.match(hashtagRegex) || []).map(tag => tag.toLowerCase())
+  // Extract hashtags/cashtags (Unicode-aware; numeric-only tags ignored,
+  // since they're never indexed as hashtags anyway).
+  const hashtags: string[] = []
+  for (const m of content.matchAll(HASHTAG_REGEX)) {
+    const body = m[1].toLowerCase()
+    if (isValidTagBody(body)) hashtags.push(`${m[0][0]}${body}`)
+  }
 
   // Extract regular words (3+ chars, not URLs)
   const words = content
@@ -491,7 +496,8 @@ function matchesMutedWord(content: string, mutedWord: string): boolean {
 
   // 4. Check for the stem at word boundaries within compound hashtags
   // This handles cases like #mytest, #testrun where the word is at the start/end
-  const hashtagMatches = contentLower.match(/[#$][a-zA-Z0-9_]+/g) || []
+  const hashtagMatches: string[] = []
+  for (const m of contentLower.matchAll(new RegExp(`[#$]${TAG_CHAR_CLASS}+`, 'gu'))) hashtagMatches.push(m[0])
   for (const tag of hashtagMatches) {
     const tagContent = tag.slice(1) // Remove # or $
 

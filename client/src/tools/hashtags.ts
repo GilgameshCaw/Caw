@@ -1,28 +1,19 @@
 import { prisma } from '../prismaClient'
 import { PrismaClient } from '@prisma/client'
+import { extractHashtagBodies } from './hashtagRegex'
 
 type TxClient = Parameters<Parameters<PrismaClient['$transaction']>[0]>[0]
 
 /**
- * Extract hashtags from text content
- * Returns array of hashtag strings (without # or $ symbol)
- * Supports both hashtags (#) and cashtags ($)
+ * Extract hashtags from text content. Returns lowercased bodies (no `#`/`$`),
+ * deduped, with pure-numeric tags filtered out. Recognition rules live in
+ * tools/hashtagRegex.ts so the server, search index, composer highlighter,
+ * and feed renderer all agree.
  */
 export function extractHashtags(content: string): string[] {
-  // Match hashtags: # or $ followed by word characters, including Unicode letters and numbers
-  // Supports international characters and emojis
-  const hashtagRegex = /[#$]([a-zA-Z0-9_\u00C0-\u017F\u1E00-\u1EFF\u0100-\u024F\u1EA0-\u1EF9]+)/g
-  const matches = content.match(hashtagRegex)
-
-  if (!matches) return []
-
-  // Remove # or $ symbol and convert to lowercase for consistency
-  return matches
-    .map(tag => tag.slice(1).toLowerCase())
-    .filter((tag, index, array) => array.indexOf(tag) === index) // Remove duplicates
-    .filter(tag => tag.length > 0 && tag.length <= 100) // Length validation
-    .filter(tag => !/^\d+$/.test(tag)) // Skip purely numeric "hashtags" like #18
+  return extractHashtagBodies(content)
 }
+
 
 /**
  * Process hashtags for a caw

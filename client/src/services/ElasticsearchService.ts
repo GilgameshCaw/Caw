@@ -1,5 +1,6 @@
 import { Client } from '@elastic/elasticsearch'
 import { prisma } from '../prismaClient'
+import { extractHashtagBodies, MENTION_REGEX, isValidTagBody } from '../tools/hashtagRegex'
 
 interface CawDocument {
   id: number
@@ -681,21 +682,25 @@ class ElasticsearchService {
   }
 
   /**
-   * Extract hashtags from text
+   * Extract hashtags from text. Shares recognition rules with the server-side
+   * hashtag indexer and the frontend renderer (tools/hashtagRegex.ts).
    */
   private extractHashtags(text: string): string[] {
-    const hashtagRegex = /#\w+/g
-    const matches = text.match(hashtagRegex) || []
-    return matches.map(tag => tag.toLowerCase())
+    return extractHashtagBodies(text)
   }
 
   /**
-   * Extract mentions from text
+   * Extract mentions from text. Same Unicode-aware char class as hashtags;
+   * pure-numeric mentions (which can't exist anyway since usernames must
+   * contain a letter) are also rejected for consistency.
    */
   private extractMentions(text: string): string[] {
-    const mentionRegex = /@\w+/g
-    const matches = text.match(mentionRegex) || []
-    return matches.map(mention => mention.substring(1).toLowerCase())
+    const out: string[] = []
+    for (const m of text.matchAll(MENTION_REGEX)) {
+      const body = m[1].toLowerCase()
+      if (isValidTagBody(body)) out.push(body)
+    }
+    return out
   }
 
   /**

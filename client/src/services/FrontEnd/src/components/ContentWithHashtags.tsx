@@ -5,6 +5,7 @@ import LinkPreview from './LinkPreview'
 import Tooltip from '~/components/Tooltip'
 import { useCachedFetch } from '~/hooks/useCachedFetch'
 import { useTheme } from '~/hooks/useTheme'
+import { TAG_CHAR_CLASS } from '~/../../../tools/hashtagRegex'
 
 // Caches
 const shortUrlCache = new Map<string, string | null>()
@@ -182,12 +183,18 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
   }
 
   const parseTextWithHashtags = (text: string, keyPrefix: string) => {
-    // Regular expression that matches hashtags, cashtags, @mentions, AND short URLs
-    // (so we can render short URLs as clickable links pointing to the original URL).
-    // Short URLs: /s/code or https://host/s/code (with optional extension)
-    // Hashtags/cashtags/mentions must contain at least one letter — pure-numeric
-    // sequences like "$100" or "#5" should render as plain text.
-    const specialRegex = /((?:https?:\/\/[^\s]+)?\/s\/[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)?|[@#$](?=[a-zA-Z0-9_\u00C0-\u017F\u1E00-\u1EFF\u0100-\u024F\u1EA0-\u1EF9]*[a-zA-Z_\u00C0-\u017F\u1E00-\u1EFF\u0100-\u024F\u1EA0-\u1EF9])[a-zA-Z0-9_\u00C0-\u017F\u1E00-\u1EFF\u0100-\u024F\u1EA0-\u1EF9]+)/g
+    // Matches hashtags, cashtags, @mentions, AND short URLs (so we can render
+    // short URLs as clickable links pointing to the original URL).
+    // - Short URLs: /s/code or https://host/s/code (with optional extension).
+    // - Hashtags/cashtags/mentions: any Unicode letter / digit / mark or `_`,
+    //   provided the run contains at least one non-digit. So `#テスト`,
+    //   `#你好`, `#résumé`, `#foo123` all match; `#5` and `$100` are plain text.
+    // The lookahead `(?=...*[non-digit]...)` enforces the not-pure-digit rule.
+    const specialRegex = new RegExp(
+      `((?:https?:\\/\\/[^\\s]+)?\\/s\\/[a-zA-Z0-9]+(?:\\.[a-zA-Z0-9]+)?|` +
+      `[@#$](?=${TAG_CHAR_CLASS}*[\\p{L}\\p{M}_])${TAG_CHAR_CLASS}+)`,
+      'gu',
+    )
 
     const parts = text.split(specialRegex)
 
