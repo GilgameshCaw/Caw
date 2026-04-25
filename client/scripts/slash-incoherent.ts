@@ -14,7 +14,7 @@
 import 'dotenv/config'
 import { ethers } from 'ethers'
 import {
-  CAW_ACTIONS_ARCHIVE_OPTIMISTIC_ADDRESS,
+  CAW_ACTIONS_ARCHIVE_ADDRESS,
   CAW_ACTIONS_ADDRESS,
 } from '../src/abi/addresses'
 
@@ -41,8 +41,8 @@ async function main() {
   ]
   const cawActionsAbi = ['function clientHashAtCheckpoint(uint32,uint256) view returns (bytes32)']
 
-  const archive = new ethers.Contract(CAW_ACTIONS_ARCHIVE_OPTIMISTIC_ADDRESS, archiveAbi, arb)
-  const archiveW = new ethers.Contract(CAW_ACTIONS_ARCHIVE_OPTIMISTIC_ADDRESS, archiveAbi, wallet)
+  const archive = new ethers.Contract(CAW_ACTIONS_ARCHIVE_ADDRESS, archiveAbi, arb)
+  const archiveW = new ethers.Contract(CAW_ACTIONS_ARCHIVE_ADDRESS, archiveAbi, wallet)
   const cawActions = new ethers.Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi, base)
 
   const sub = await archive.submissions(SUBID)

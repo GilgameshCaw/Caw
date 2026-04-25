@@ -223,6 +223,12 @@ The replication path was rewritten as the optimistic archive + trustless `CawCha
   - Many addresses marked TBD in docs.
   - Update after each deployment so client config and indexers stay in sync.
 
+- [ ] **Multi-chain storage support** — see `docs/MULTI_CHAIN_STORAGE.md` for the full plan.
+  - Contracts already accept any `storageChainEid` per client (`CawClientManager.createClient`); the off-chain runtime hardcodes Base.
+  - Work splits into: deploy `CawActions` + `CawProfileL2` to a new chain, restructure `addresses.ts` as `addresses.<chain>.<symbol>`, parameterize chain-specific addresses in service configs, have the CLI read `storageChainEid` from `CawClientManager.getClient(clientId)` at install time and configure RPC + addresses per-client.
+  - Don't touch this until there's a real driver (a client wanting to deploy to a non-Base storage chain). Indirection costs zero today; the abstraction is purely future-tense.
+  - Same restructure unblocks the parallel "replication chain → archive contract address" map in `ValidatorService` (today there's one hardcoded `CAW_ACTIONS_ARCHIVE_ADDRESS`).
+
 ---
 
 ## Client Deployment CLI (`cli/`)

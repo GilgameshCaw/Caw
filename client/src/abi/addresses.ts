@@ -14,9 +14,10 @@ export const CAW_NAMES_L2_ADDRESS = "0xB379a474C770CB5e7657C8EcC0FF2f7D2863b5bb"
 export const CAW_NAMES_L2_MAINNET_ADDRESS = '0xfB9D00d70C747995f2c9D3b31B998bC0C218A399' as const;
 export const CAW_ACTIONS_MAINNET_ADDRESS = '0xaEE8a40EEDe3c17dA85339F97472c32618AEa905' as const;
 export const CAW_ACTIONS_ADDRESS = "0x701Cae1460569acc64d69B0B757AE847E1565B94" as const;
-// Optimistic replication: stake-based L2b archive + L2 challenge relay.
-// `ARCHIVE_OPTIMISTIC` lives on Arbitrum Sepolia; `CHALLENGE_RELAY` lives on Base
-// Sepolia and forwards challenges via LayerZero to the archive's _lzReceive.
-export const CAW_ACTIONS_ARCHIVE_OPTIMISTIC_ADDRESS = '0x78569305b07972350fF55e1aa5d399ADC9dCdDA3' as const;
+// Optimistic replication: stake-based archive + L2 challenge relay. The
+// archive lives on the replication chain (today: Arbitrum Sepolia);
+// CHALLENGE_RELAY lives on the storage chain (Base Sepolia) and forwards
+// challenges via LayerZero to the archive's _lzReceive.
+export const CAW_ACTIONS_ARCHIVE_ADDRESS = '0x78569305b07972350fF55e1aa5d399ADC9dCdDA3' as const;
 export const CAW_CHALLENGE_RELAY_ADDRESS = '0xBE2329e895e0c8e2934c8b3096445c9a11C99d49' as const;
 export const CAW_NAME_MARKETPLACE_ADDRESS = '0x5696675aB8e8E82cBe46C805F47875CF836bFd2A' as const; // Updated after deployment

@@ -1385,7 +1385,7 @@ After deployment, ABIs are automatically regenerated for the frontend.
       CawProfileL2_L1: 'CAW_NAMES_L2_MAINNET_ADDRESS',
       CawActions_L1: 'CAW_ACTIONS_MAINNET_ADDRESS',
       CawActions_L2: 'CAW_ACTIONS_ADDRESS',
-      CawActionsArchive_L2b: 'CAW_ACTIONS_ARCHIVE_OPTIMISTIC_ADDRESS',
+      CawActionsArchive_L2b: 'CAW_ACTIONS_ARCHIVE_ADDRESS',
       CawChallengeRelay_L2: 'CAW_CHALLENGE_RELAY_ADDRESS',
       CawProfileMarketplace: 'CAW_NAME_MARKETPLACE_ADDRESS',
     };

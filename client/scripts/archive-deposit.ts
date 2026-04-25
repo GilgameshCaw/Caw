@@ -13,7 +13,7 @@
 // Defaults: VALIDATOR, 0.02 ETH.
 import 'dotenv/config'
 import { ethers } from 'ethers'
-import { CAW_ACTIONS_ARCHIVE_OPTIMISTIC_ADDRESS } from '../src/abi/addresses'
+import { CAW_ACTIONS_ARCHIVE_ADDRESS } from '../src/abi/addresses'
 
 async function main() {
   const who = (process.argv[2] || 'VALIDATOR').toUpperCase()
@@ -29,7 +29,7 @@ async function main() {
   const provider = new ethers.JsonRpcProvider(rpc)
   const wallet = new ethers.Wallet(pk, provider)
   const archive = new ethers.Contract(
-    CAW_ACTIONS_ARCHIVE_OPTIMISTIC_ADDRESS,
+    CAW_ACTIONS_ARCHIVE_ADDRESS,
     ['function deposit() payable', 'function stakes(address) view returns (uint256)'],
     wallet,
   )

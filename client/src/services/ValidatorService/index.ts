@@ -6,7 +6,7 @@ import { Service } from '../../Service'
 import { prisma }  from '../../prismaClient'
 import getActionType from '../../abi/getActionType'
 import { cawActionsAbi } from '../../abi/generated'
-import { CAW_ACTIONS_ADDRESS, CAW_ADDRESS, WETH_ADDRESS, CAW_ACTIONS_ARCHIVE_OPTIMISTIC_ADDRESS, CAW_CHALLENGE_RELAY_ADDRESS } from '../../abi/addresses'
+import { CAW_ACTIONS_ADDRESS, CAW_ADDRESS, WETH_ADDRESS, CAW_ACTIONS_ARCHIVE_ADDRESS, CAW_CHALLENGE_RELAY_ADDRESS } from '../../abi/addresses'
 import { WebSocketProvider, JsonRpcProvider, Contract, Wallet, Interface, keccak256, solidityPacked, AbiCoder } from 'ethers'
 import { packActions, packSignatures, bytesToHex, getPackedActionSlices, unpackActions } from '../../utils/packActions'
 import { buildCheckpointMerkleTree } from '../../utils/checkpointMerkle'
@@ -2052,7 +2052,7 @@ console.log("succeededKeys", succeededKeys)
     // Optimistic replication: direct L2b submission with stake + fraud proofs
     // ================================================================
 
-    const OPTIMISTIC_ARCHIVE_ADDRESS = CAW_ACTIONS_ARCHIVE_OPTIMISTIC_ADDRESS
+    const OPTIMISTIC_ARCHIVE_ADDRESS = CAW_ACTIONS_ARCHIVE_ADDRESS
     // One-shot guard so the CLI stake-setup prompt prints once per process,
     // not every 30s when the replicator loop re-fires.
     let underStakedWarned = false
