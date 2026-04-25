@@ -77,10 +77,10 @@ const DiscussionHashtags: React.FC = () => {
             <div className="flex items-center">
               <span className={`text-xs transition-colors duration-200 ${
                 isDark
-                  ? 'text-gray-400 group-hover:text-gray-300'
-                  : 'text-gray-500 group-hover:text-gray-600'
+                  ? 'text-yellow-500/70 group-hover:text-yellow-400'
+                  : 'text-amber-800/70 group-hover:text-amber-900'
               }`}>
-                {topic.usageCount === 1 ? '1 post' : `${formatLargeNumber(topic.usageCount)} posts`}
+                {topic.usageCount === 1 ? '1 caw' : `${formatLargeNumber(topic.usageCount)} caws`}
               </span>
             </div>
           </div>
