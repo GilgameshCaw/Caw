@@ -93,7 +93,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
       {/* Backdrop */}
       <div
         className="fixed inset-0 bg-black/50 z-40 transition-opacity"
-        onClick={onClose}
+        onMouseDown={onClose}
       />
 
       {/* Modal */}

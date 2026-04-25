@@ -68,15 +68,22 @@ export class NotificationService {
   }
 
   /**
-   * Create notifications for @mentions in a caw
+   * Create notifications for @mentions in a caw.
+   *
+   * Accepts an optional `client` so callers inside an interactive transaction
+   * can pass the tx client. The new caw row is only visible inside its own
+   * transaction until commit, so writing the FK-bearing notification through
+   * the global prisma client races the commit and silently fails for any
+   * caw created in this same tx (e.g. cawes ingested via RawEventsGatherer
+   * from remote nodes, which have no pre-existing pending row).
    */
-  static async createMentionNotifications(cawId: number, content: string, actorId: number) {
+  static async createMentionNotifications(cawId: number, content: string, actorId: number, client: Pick<typeof prisma, 'user' | 'notification'> = prisma) {
     const mentions = this.extractMentions(content)
 
     if (mentions.length === 0) return
 
     // Find users with mentioned usernames
-    const mentionedUsers = await prisma.user.findMany({
+    const mentionedUsers = await client.user.findMany({
       where: {
         username: { in: mentions },
         tokenId: { not: actorId } // Don't notify the actor of their own mention
@@ -101,7 +108,7 @@ export class NotificationService {
     }))
 
     if (notifications.length > 0) {
-      await prisma.notification.createMany({
+      await client.notification.createMany({
         data: notifications,
         skipDuplicates: true
       })
@@ -206,11 +213,17 @@ export class NotificationService {
   }
 
   /**
-   * Create notification for a reply
+   * Create notification for a reply.
+   *
+   * `client` defaults to the global prisma but callers inside an interactive
+   * transaction MUST pass the tx — the notification's FK on `replyCawId`
+   * points at a caw that was upserted in the same tx and is invisible to
+   * outside connections until commit. See createMentionNotifications for the
+   * same pattern.
    */
-  static async createReplyNotification(parentCawId: number, replyCawId: number, replierId: number) {
+  static async createReplyNotification(parentCawId: number, replyCawId: number, replierId: number, client: Pick<typeof prisma, 'caw' | 'notification'> = prisma) {
     // Get the parent caw to find its owner
-    const parentCaw = await prisma.caw.findUnique({
+    const parentCaw = await client.caw.findUnique({
       where: { id: parentCawId },
       select: { userId: true }
     })
@@ -228,7 +241,7 @@ export class NotificationService {
     }
 
     // Check if notification already exists to avoid duplicates
-    const existing = await prisma.notification.findFirst({
+    const existing = await client.notification.findFirst({
       where: {
         userId: parentCaw.userId,
         actorId: replierId,
@@ -238,7 +251,7 @@ export class NotificationService {
     })
 
     if (!existing) {
-      await prisma.notification.create({
+      await client.notification.create({
         data: {
           userId: parentCaw.userId,
           actorId: replierId,
@@ -295,11 +308,15 @@ export class NotificationService {
   }
 
   /**
-   * Create notification for a quote
+   * Create notification for a quote.
+   *
+   * Pass the tx `client` when called from inside an interactive transaction —
+   * the FK on `quoteCawId` points at a caw upserted in the same tx. See
+   * createMentionNotifications for the same pattern.
    */
-  static async createQuoteNotification(originalCawId: number, quoteCawId: number, quoterId: number) {
+  static async createQuoteNotification(originalCawId: number, quoteCawId: number, quoterId: number, client: Pick<typeof prisma, 'caw' | 'notification'> = prisma) {
     // Get the original caw to find its owner
-    const originalCaw = await prisma.caw.findUnique({
+    const originalCaw = await client.caw.findUnique({
       where: { id: originalCawId },
       select: { userId: true }
     })
@@ -317,7 +334,7 @@ export class NotificationService {
     }
 
     // Check if notification already exists to avoid duplicates
-    const existing = await prisma.notification.findFirst({
+    const existing = await client.notification.findFirst({
       where: {
         userId: originalCaw.userId,
         actorId: quoterId,
@@ -327,7 +344,7 @@ export class NotificationService {
     })
 
     if (!existing) {
-      await prisma.notification.create({
+      await client.notification.create({
         data: {
           userId: originalCaw.userId,
           actorId: quoterId,
@@ -368,7 +385,7 @@ export class NotificationService {
           type: NotificationType.TIP,
           cawId: cawId || undefined,
           groupKey: cawId ? `tip_caw_${cawId}` : undefined,
-          actionPayload: amount ? JSON.stringify({ tipAmount: String(amount) }) : undefined,
+          actionPayload: amount ? { tipAmount: String(amount) } : undefined,
         }
       })
     }

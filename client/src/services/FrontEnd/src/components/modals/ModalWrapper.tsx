@@ -53,8 +53,9 @@ const ModalWrapper: React.FC<ModalWrapperProps> = ({
     }
   }, [closeOnEscape, onClose])
 
-  // Handle click outside
-  const handleBackdropClick = (e: React.MouseEvent) => {
+  // Handle click outside — use mousedown so a drag started inside the modal
+  // and released on the backdrop does not close it
+  const handleBackdropMouseDown = (e: React.MouseEvent) => {
     if (closeOnClickOutside && e.target === e.currentTarget) {
       onClose()
     }
@@ -84,14 +85,14 @@ const ModalWrapper: React.FC<ModalWrapperProps> = ({
     <div
       className={`fixed inset-0 ${effectiveBackdrop} flex items-center justify-center p-4`}
       style={{ zIndex }}
-      onClick={handleBackdropClick}
+      onMouseDown={handleBackdropMouseDown}
     >
       <div
         ref={modalRef}
         className={`w-full ${maxWidth} rounded-2xl transition-all duration-300 ${
           isDark ? 'bg-black border border-yellow-500/30' : 'bg-white border border-gray-200'
         } ${className}`}
-        onClick={e => e.stopPropagation()}
+        onMouseDown={e => e.stopPropagation()}
       >
         {children}
       </div>

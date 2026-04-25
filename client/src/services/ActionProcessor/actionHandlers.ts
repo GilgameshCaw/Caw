@@ -123,9 +123,10 @@ export async function handleCawAction(
     // Don't fail the entire transaction if hashtag processing fails
   }
 
-  // Create notifications for @mentions
+  // Create notifications for @mentions — pass tx so the FK to newCaw resolves
+  // (newCaw is only visible inside this transaction until commit)
   try {
-    await NotificationService.createMentionNotifications(newCaw.id, textContent, authorId)
+    await NotificationService.createMentionNotifications(newCaw.id, textContent, authorId, tx)
   } catch (err) {
     console.error(`Failed to create mention notifications for caw ${newCaw.id}:`, err)
   }
@@ -157,7 +158,7 @@ export async function handleCawAction(
       }
 
       try {
-        await NotificationService.createReplyNotification(parentCawId, newCaw.id, authorId)
+        await NotificationService.createReplyNotification(parentCawId, newCaw.id, authorId, tx)
       } catch (err) {
         console.error(`Failed to create reply notification for caw ${newCaw.id}:`, err)
       }
@@ -184,14 +185,14 @@ export async function handleCawAction(
       }
 
       try {
-        await NotificationService.createReplyNotification(parentCawId, newCaw.id, authorId)
+        await NotificationService.createReplyNotification(parentCawId, newCaw.id, authorId, tx)
       } catch (err) {
         console.error(`Failed to create reply notification for caw ${newCaw.id}:`, err)
       }
     } else {
       // It's a quote (RECAW with parent) — recawCount on parent is handled by onCawCreated below
       try {
-        await NotificationService.createQuoteNotification(parentCawId, newCaw.id, authorId)
+        await NotificationService.createQuoteNotification(parentCawId, newCaw.id, authorId, tx)
       } catch (err) {
         console.error(`Failed to create quote notification for caw ${newCaw.id}:`, err)
       }
@@ -304,7 +305,7 @@ export async function handleRecawAction(
     try {
       if (isQuoteRecaw) {
         const newCaw = await tx.caw.findUnique({ where: { userId_cawonce: { userId, cawonce: action.cawonce } } })
-        if (newCaw) await NotificationService.createQuoteNotification(originalCawId, newCaw.id, userId)
+        if (newCaw) await NotificationService.createQuoteNotification(originalCawId, newCaw.id, userId, tx)
       } else {
         await NotificationService.createRepostNotification(originalCawId, userId)
       }

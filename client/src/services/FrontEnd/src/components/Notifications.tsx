@@ -456,7 +456,7 @@ const Notifications: React.FC = () => {
         const tipAmt = notification.actionPayload?.tipAmount
         let tipLabel = ''
         if (tipAmt) {
-          const cawNum = Number(tipAmt) / 1e18
+          const cawNum = Number(tipAmt)
           const formatted = cawNum >= 1_000_000 ? `${(cawNum / 1_000_000).toFixed(1)}M`
             : cawNum >= 1_000 ? `${(cawNum / 1_000).toFixed(1)}K`
             : cawNum.toFixed(0)
