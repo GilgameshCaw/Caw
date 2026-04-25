@@ -208,29 +208,43 @@ EOF
 # We disable xpack security entirely. ES listens on 127.0.0.1 only, ufw blocks
 # 9200 from outside, and it's read by trusted local processes — adding TLS
 # inside localhost is busywork that breaks more than it secures.
+#
+# Rather than try to sed-edit the elasticsearch-deb auto-config (which has bit
+# us with multi-line nested mappings before), we back up the original once and
+# replace it with a known-good minimal config. Re-runs are no-ops because the
+# config we write is byte-identical.
 ES_YML=/etc/elasticsearch/elasticsearch.yml
-if ! grep -q '^# CAW-installer overrides' "$ES_YML" 2>/dev/null; then
-  # Comment out anything xpack.security.* the auto-config wrote so our values
-  # at the bottom actually win. YAML's "last value wins" only applies to scalar
-  # keys at the same level — nested mappings of the same path can clash.
-  sed -i 's|^xpack\.security\.|# &|; s|^http\.host:|# &|' "$ES_YML"
-  cat >> "$ES_YML" <<'EOF'
+if [[ -f "$ES_YML" && ! -f "${ES_YML}.orig" ]]; then
+  cp "$ES_YML" "${ES_YML}.orig"
+fi
+cat > "$ES_YML" <<'EOF'
+# Managed by caw install.sh. The original elasticsearch-deb config is preserved
+# at /etc/elasticsearch/elasticsearch.yml.orig.
 
-# CAW-installer overrides — anything above here is the auto-config that
-# elasticsearch-deb writes; we override the security and bind settings so the
-# node runs unauthenticated on localhost only.
+# Single-node cluster — ES otherwise tries to bootstrap a multi-node cluster
+# and refuses to start without a discovery configuration.
+discovery.type: single-node
+
+# Bind localhost only. Combined with ufw blocking 9200 from outside, this is
+# why we can safely disable auth below.
 network.host: 127.0.0.1
 http.port: 9200
+
+# Default paths from the deb package — keep them so logs/data land where ops
+# tooling expects.
+path.data: /var/lib/elasticsearch
+path.logs: /var/log/elasticsearch
+
+# Disable xpack security. CAW reads from 127.0.0.1 only.
 xpack.security.enabled: false
 xpack.security.enrollment.enabled: false
 xpack.security.http.ssl.enabled: false
 xpack.security.transport.ssl.enabled: false
 EOF
-fi
 
 systemctl daemon-reload
 systemctl enable elasticsearch >/dev/null 2>&1
-systemctl restart elasticsearch
+quiet "Starting Elasticsearch" systemctl restart elasticsearch
 ok "Elasticsearch configured"
 
 # ---------- Step 3: Firewall -------------------------------------------------
