@@ -12,6 +12,7 @@ import { formatCAWAmount } from '~/utils/numberFormat'
 import ModalWrapper from '~/components/modals/ModalWrapper'
 import Tooltip from '~/components/Tooltip'
 import { getUserAvatar } from '~/utils/defaultAvatar'
+import Avatar from '~/components/Avatar'
 
 const AccountSettings: React.FC = () => {
   const { isDark } = useTheme()
@@ -227,7 +228,7 @@ const AccountSettings: React.FC = () => {
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    <img
+                    <Avatar
                       src={getUserAvatar(token)}
                       alt={token.username}
                       className="w-10 h-10 rounded-full"

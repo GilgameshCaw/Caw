@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { getUserAvatar } from '~/utils/defaultAvatar'
+import Avatar from '~/components/Avatar'
 
 interface User {
   tokenId: number
@@ -226,10 +227,10 @@ const MentionAutocomplete: React.FC<MentionAutocompleteProps> = ({
                 : 'hover:bg-gray-50'
             }`}
           >
-            <img
+            <Avatar
               src={getUserAvatar(user)}
               alt={user.username}
-              className="w-8 h-8 rounded-full object-cover"
+              className="w-8 h-8 rounded-full"
             />
             <div className="flex-1 min-w-0">
               <div className={`font-semibold text-sm truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>

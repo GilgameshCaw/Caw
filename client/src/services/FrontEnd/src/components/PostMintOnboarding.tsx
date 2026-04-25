@@ -40,6 +40,7 @@ import { HiInformationCircle } from 'react-icons/hi'
 import { FollowButton } from '~/components/FollowButton'
 import cawLogo from '~/assets/images/caw-logo.png'
 import { getUserAvatar } from '~/utils/defaultAvatar'
+import Avatar from '~/components/Avatar'
 import BoidsBg from '~/components/BoidsBg'
 import UsernameSvg from '~/components/UsernameSvg'
 import ProfileEditForm from '~/components/ProfileEditForm'
@@ -1243,10 +1244,10 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                     >
                       <a href={`/users/${user.username}`} onClick={(e) => { e.preventDefault(); onComplete?.(); window.location.href = `/users/${user.username}` }} className="block text-center cursor-pointer">
                         <div className={`w-14 h-14 rounded-full mx-auto mb-2 overflow-hidden border ${tc.avatarBorder}`}>
-                          <img
+                          <Avatar
                             src={getUserAvatar(user)}
                             alt={user.username}
-                            className="w-full h-full object-cover"
+                            className="w-full h-full"
                           />
                         </div>
                         <p className={`font-medium text-sm truncate ${tc.textPrimary}`}>

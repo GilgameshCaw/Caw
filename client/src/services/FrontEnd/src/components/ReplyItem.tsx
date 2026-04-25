@@ -7,6 +7,8 @@ import Recaw from '~/assets/images/recaw.svg?react';
 import Pencil from '~/assets/images/pencil.svg?react';
 import Bookmark from '~/assets/images/bookmark.svg?react';
 import Share from '~/assets/images/share.svg?react';
+import Avatar from '~/components/Avatar';
+import { getUserAvatar } from '~/utils/defaultAvatar';
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import { useModalStore } from '~/store/modalStore'
 import { Link } from 'react-router-dom'
@@ -167,10 +169,10 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
             to={`/users/${item.user.username}`} 
             className="w-10 h-10 rounded-full cursor-pointer overflow-hidden flex-shrink-0"
           >
-            <img 
-              src="/images/logo.jpeg" 
+            <Avatar
+              src={getUserAvatar(item.user)}
               alt={`${item.user.username} avatar`}
-              className="w-full h-full object-cover rounded-full hover:opacity-80 transition-opacity duration-200"
+              className="w-full h-full rounded-full hover:opacity-80 transition-opacity duration-200"
             />
           </Link>
           

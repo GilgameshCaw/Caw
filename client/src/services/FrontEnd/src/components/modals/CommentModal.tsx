@@ -4,6 +4,7 @@ import React from 'react'
 import type { CawItem } from '~/types'
 import PostForm from '~/components/PostForm'
 import ContentWithHashtags from '~/components/ContentWithHashtags'
+import Avatar from '~/components/Avatar'
 import { useTheme } from '~/hooks/useTheme'
 import ModalWrapper from './ModalWrapper'
 import ModalHeader from './ModalHeader'
@@ -36,10 +37,10 @@ export const CommentModal: React.FC<CommentModalProps> = ({ isOpen, caw, onClose
       {/* Original Caw */}
       <div className={`px-4 pt-4 ${isDark ? 'text-white' : 'text-black'}`}>
         <div className="flex items-start space-x-3">
-          <img
+          <Avatar
             src={getUserAvatar(caw.user)}
             alt={`${caw.user.username} avatar`}
-            className="w-10 h-10 rounded-full object-cover"
+            className="w-10 h-10 rounded-full"
           />
           <div className="flex-1 min-w-0">
             <div className="flex items-center space-x-2">

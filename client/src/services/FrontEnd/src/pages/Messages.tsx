@@ -11,6 +11,7 @@ import Tooltip from '~/components/Tooltip'
 import ModalWrapper from '~/components/modals/ModalWrapper'
 import { apiFetch, API_HOST } from '~/api/client'
 import { getUserAvatar } from '~/utils/defaultAvatar'
+import Avatar from '~/components/Avatar'
 import {
   HiOutlineCog,
   HiOutlineMail,
@@ -791,10 +792,10 @@ const MessagesPage: React.FC = () => {
                   className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 cursor-pointer"
                   onClick={() => navigate(`/users/${otherParticipant.identity.user.username}`)}
                 >
-                  <img
+                  <Avatar
                     src={getUserAvatar(otherParticipant.identity.user)}
                     alt={otherParticipant.identity.user.username}
-                    className="w-full h-full object-cover"
+                    className="w-full h-full"
                   />
                 </div>
               )}
@@ -1094,10 +1095,10 @@ const MessagesPage: React.FC = () => {
                       <div className="flex items-start space-x-3 flex-1">
                         <div className="flex-shrink-0">
                           {otherUser?.identity.user ? (
-                            <img
+                            <Avatar
                               src={getUserAvatar(otherUser.identity.user)}
                               alt={otherUser.identity.user.username}
-                              className="w-10 h-10 rounded-full object-cover"
+                              className="w-10 h-10 rounded-full"
                             />
                           ) : (
                             <div className="w-10 h-10 rounded-full bg-gray-600 flex items-center justify-center">
@@ -1850,10 +1851,10 @@ const MessagesPage: React.FC = () => {
                               isDark ? 'text-white' : 'text-black'
                             }`}
                           >
-                            <img
+                            <Avatar
                               src={getUserAvatar(user)}
                               alt={user.username}
-                              className="w-10 h-10 rounded-full object-cover"
+                              className="w-10 h-10 rounded-full"
                             />
                             <div className="flex-1 text-left">
                               <div className="font-semibold">{user.displayName || user.username}</div>
@@ -1892,10 +1893,10 @@ const MessagesPage: React.FC = () => {
                               isDark ? 'text-white' : 'text-black'
                             }`}
                           >
-                            <img
+                            <Avatar
                               src={getUserAvatar(user)}
                               alt={user.username}
-                              className="w-10 h-10 rounded-full object-cover"
+                              className="w-10 h-10 rounded-full"
                             />
                             <div className="flex-1 text-left">
                               <div className="font-semibold">{user.displayName || user.username}</div>
@@ -2068,10 +2069,10 @@ const MessagesPage: React.FC = () => {
                 isDark ? 'bg-white/5' : 'bg-gray-50'
               }`}>
                 <div className="flex items-center gap-3">
-                  <img
+                  <Avatar
                     src={getUserAvatar(dmPrivacyError.peer)}
                     alt={dmPrivacyError.peer.username}
-                    className="w-10 h-10 rounded-full object-cover"
+                    className="w-10 h-10 rounded-full"
                   />
                   <div>
                     <p className={`font-medium text-sm ${isDark ? 'text-white' : 'text-gray-900'}`}>

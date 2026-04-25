@@ -7,6 +7,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { HiUsers, HiHashtag, HiCollection } from 'react-icons/hi'
 import { useMutePreferences } from '~/hooks/useMutePreferences'
 import { getUserAvatar } from '~/utils/defaultAvatar'
+import Avatar from '~/components/Avatar'
 
 interface SearchResults {
   caws: any[]
@@ -194,10 +195,10 @@ const SearchResultsPage: React.FC<SearchResultsPageProps> = ({ defaultTab = 'all
                     }`}
                   >
                     <div className="flex items-center space-x-3">
-                      <img
+                      <Avatar
                         src={getUserAvatar(user)}
                         alt={user.username}
-                        className="w-10 h-10 rounded-full object-cover"
+                        className="w-10 h-10 rounded-full"
                       />
                       <div className="flex-1">
                         <div className="flex items-center space-x-2">
