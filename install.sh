@@ -79,15 +79,50 @@ fi
 
 # ---------- Defaults ---------------------------------------------------------
 
-CAW_DIR="${CAW_DIR:-/var/www/caw}"
 CAW_REPO="${CAW_REPO:-https://github.com/GilgameshCaw/Caw.git}"
 CAW_USER="${CAW_USER:-caw}"
 CAW_BRANCH="${CAW_BRANCH:-master}"
 SKIP_BOOTSTRAP="${SKIP_BOOTSTRAP:-0}"
 
+# Ask up front for the domain — it determines the install directory and
+# pre-fills the domain question the Node CLI asks later. Skip if CAW_DIR
+# was already provided via env (power-user override).
+#
+# When piped through curl, stdin is the script body, so prompts must read
+# from the controlling tty directly.
+if [[ -z "${CAW_DIR:-}" ]]; then
+  echo
+  echo -e "  ${DIM}This installer creates one node per directory. Pick a directory${RESET}"
+  echo -e "  ${DIM}name based on the domain you'll serve from this node.${RESET}"
+  echo
+  echo -e "  ${DIM}Examples: testnet.caw.social, mynode.example.com${RESET}"
+  echo -e "  ${DIM}If you don't have a domain yet, leave blank for /var/www/caw.${RESET}"
+  echo
+  if [[ -t 0 ]]; then
+    read -r -p "  Domain (or blank): " CAW_DOMAIN
+  elif [[ -r /dev/tty ]]; then
+    read -r -p "  Domain (or blank): " CAW_DOMAIN < /dev/tty
+  else
+    warn "No tty available — defaulting domain to none."
+    CAW_DOMAIN=""
+  fi
+  if [[ -n "$CAW_DOMAIN" ]]; then
+    # Basic sanity check: at least one dot, no slashes/spaces.
+    if [[ ! "$CAW_DOMAIN" =~ ^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$ ]]; then
+      err "That doesn't look like a valid domain: $CAW_DOMAIN"
+      exit 1
+    fi
+    CAW_DIR="/var/www/$CAW_DOMAIN"
+    export CAW_DOMAIN
+  else
+    CAW_DIR="/var/www/caw"
+  fi
+fi
+
 log "Install directory: ${CAW_DIR}"
 log "Repository:        ${CAW_REPO}#${CAW_BRANCH}"
 log "Service user:      ${CAW_USER}"
+[[ -n "${CAW_DOMAIN:-}" ]] && log "Domain:            ${CAW_DOMAIN}"
 
 # ---------- Step 1: System packages ------------------------------------------
 
@@ -259,4 +294,8 @@ echo -e "${GOLD}▸${RESET} Handing off to the interactive installer..."
 echo
 
 cd "$CAW_DIR"
-exec sudo -u "$CAW_USER" -H -E node "$CAW_DIR/cli/bin/caw.js" install --dir "$CAW_DIR"
+# CAW_DOMAIN is consumed by infrastructure.js as the default for the domain
+# prompt. sudo strips most env by default, so pass it explicitly.
+exec sudo -u "$CAW_USER" -H \
+  CAW_DOMAIN="${CAW_DOMAIN:-}" \
+  node "$CAW_DIR/cli/bin/caw.js" install --dir "$CAW_DIR"

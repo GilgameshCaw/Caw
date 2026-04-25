@@ -110,9 +110,12 @@ export async function collectInfraConfig(nodeType) {
     elasticsearchNode = answers.elasticsearchNode
   }
 
-  // Domain (for nodes that serve HTTP)
+  // Domain (for nodes that serve HTTP). install.sh asks for the domain
+  // before cloning and exports it as CAW_DOMAIN — use that as the default
+  // so the user doesn't get asked twice.
   let domain = ''
   let adminPassword = ''
+  const envDomain = process.env.CAW_DOMAIN || ''
 
   if (['full', 'frontend-api', 'api-only'].includes(nodeType)) {
     section('Domain & Access')
@@ -122,7 +125,7 @@ export async function collectInfraConfig(nodeType) {
         type: 'confirm',
         name: 'hasDomain',
         message: 'Do you have a domain name for this node?',
-        default: true
+        default: !!envDomain || true,
       }
     ])
 
@@ -132,6 +135,7 @@ export async function collectInfraConfig(nodeType) {
           type: 'input',
           name: 'domainInput',
           message: 'Domain name (e.g., caw.example.com):',
+          default: envDomain || undefined,
           validate: (input) => /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(input) ? true : 'Enter a valid domain'
         }
       ])
