@@ -365,7 +365,15 @@ export function useFollowButton({
     }
   }
 
-  const buttonText = isSigning ? 'Processing...' : isFollowing ? 'Following' : 'Follow'
+  // While pending on-chain, show the anticipated label (the state we're
+  // transitioning *to*) so the button doesn't read as "Follow" with the
+  // "Following" styling, which the visual treatment in FollowButton.tsx
+  // already adopts for (isPending && !isFollowing).
+  const buttonText = isSigning
+    ? 'Processing...'
+    : isPending
+      ? (isFollowing ? 'Follow' : 'Following')
+      : (isFollowing ? 'Following' : 'Follow')
   const hoverText = isFollowing ? 'Unfollow' : 'Follow'
 
   return {
