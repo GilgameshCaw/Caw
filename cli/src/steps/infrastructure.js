@@ -1,7 +1,8 @@
 import inquirer from 'inquirer'
 import { section, dim, tipBlock, brand } from '../utils/ui.js'
+import { createClientFlow } from './clientCreator.js'
 
-export async function collectInfraConfig(nodeType) {
+export async function collectInfraConfig(nodeType, ctx = {}) {
   if (nodeType === 'frontend-only') {
     return collectFrontendOnlyConfig()
   }
@@ -115,9 +116,9 @@ export async function collectInfraConfig(nodeType) {
   // Client ID. Each clientId on-chain scopes a separate sub-network: only
   // posts attributed to that client are visible to its users, and the client
   // owner controls the fees (mint, auth, deposit, withdraw) charged on-chain.
-  // Most operators want to join the public network (clientId 1). Creating a
-  // new client requires sending an on-chain tx — we don't do that from the
-  // installer; we link to docs.
+  // Most operators want to join the public network (clientId 1). Anyone with
+  // ETH on L1 can create a new client via CawClientManager.createClient —
+  // we offer that as a sub-flow when the validator key has the funds.
   let clientId = 1
 
   if (['full', 'frontend-api'].includes(nodeType)) {
@@ -130,22 +131,60 @@ export async function collectInfraConfig(nodeType) {
       '    to your clientId. Different clientIds form independent networks.',
       '  • The client owner sets the fees (mint / auth / deposit / withdraw)',
       '    charged on-chain for actions submitted under that client.',
-      '',
-      `${brand('Most operators want clientId 1')} — the public CAW network.`,
-      'To create your own, mint one via CawClientManager.createClient (see',
-      `the docs at ${brand('https://github.com/GilgameshCaw/Caw#creating-a-client')}).`,
+      '  • The owner picks the storage chain and replication chains.',
     ])
 
-    const { clientIdInput } = await inquirer.prompt([
-      {
-        type: 'number',
-        name: 'clientIdInput',
-        message: `Client ID ${dim('(default: 1 — public network)')}:`,
-        default: 1,
-        validate: (input) => input > 0 ? true : 'Must be a positive number',
-      },
+    const choices = [
+      { value: 'public', name: `${brand('Use clientId 1')} ${dim('(public CAW network — recommended)')}` },
+      { value: 'existing', name: 'I already have a clientId' },
+    ]
+    if (ctx.l1RpcUrl && ctx.validatorPrivateKey) {
+      choices.push({
+        value: 'create',
+        name: `${brand('Create a new client with my validator address')} ${dim('(needs ETH on L1)')}`,
+      })
+    }
+
+    const { clientChoice } = await inquirer.prompt([
+      { type: 'list', name: 'clientChoice', message: 'Client setup:', choices, default: 'public' },
     ])
-    clientId = clientIdInput
+
+    if (clientChoice === 'public') {
+      clientId = 1
+    } else if (clientChoice === 'existing') {
+      const { clientIdInput } = await inquirer.prompt([
+        {
+          type: 'number',
+          name: 'clientIdInput',
+          message: 'Client ID:',
+          validate: (input) => input > 0 ? true : 'Must be a positive number',
+        },
+      ])
+      clientId = clientIdInput
+    } else {
+      const newId = await createClientFlow({
+        l1RpcUrl: ctx.l1RpcUrl,
+        validatorPrivateKey: ctx.validatorPrivateKey,
+        network: ctx.network,
+      })
+      if (newId) {
+        clientId = newId
+      } else {
+        // Operator backed out or tx failed — fall back to existing-id prompt
+        // rather than crashing the whole install.
+        console.log(dim('  Falling back to existing-clientId prompt.'))
+        const { clientIdInput } = await inquirer.prompt([
+          {
+            type: 'number',
+            name: 'clientIdInput',
+            message: 'Client ID:',
+            default: 1,
+            validate: (input) => input > 0 ? true : 'Must be a positive number',
+          },
+        ])
+        clientId = clientIdInput
+      }
+    }
   }
 
   // API port — hardcoded with an env override (CAW_API_PORT) for the rare

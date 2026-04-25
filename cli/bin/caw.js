@@ -59,8 +59,14 @@ program
         network: networkConfig.network,
       })
 
-      // Step 6: Infrastructure (DB, Redis, domain, client ID)
-      const infraConfig = await collectInfraConfig(nodeType)
+      // Step 6: Infrastructure (DB, Redis, domain, client ID). Passes the
+      // L1 RPC + validator key so the client-creation sub-flow has what it
+      // needs to sign + broadcast the createClient tx.
+      const infraConfig = await collectInfraConfig(nodeType, {
+        l1RpcUrl: rpcConfig.l1RpcUrlHttp || rpcConfig.l1RpcUrl,
+        validatorPrivateKey: validatorConfig.validatorPrivateKey,
+        network: networkConfig.network,
+      })
 
       // Merge all config
       const fullConfig = {
