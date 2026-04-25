@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import PostForm from "~/components/PostForm";
 import MainLayout from '~/layouts/MainLayout'
 import FeedItem from '~/components/FeedItem'
+import Avatar from '~/components/Avatar'
 import { apiFetch } from '~/api/client'
 import type { CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
@@ -10,11 +11,27 @@ import { useTokenDataStore, useActiveToken } from '~/store/tokenDataStore'
 import { HiArrowLeft } from 'react-icons/hi'
 import SignInModal from '~/components/modals/SignInModal'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
+import { getUserAvatar } from '~/utils/defaultAvatar'
+import Recaw from '~/assets/images/recaw.svg?react'
+
+type RecawIndicator = {
+  id: string
+  timestamp: string
+  user: {
+    tokenId?: number
+    username: string
+    displayName?: string | null
+    avatarUrl?: string | null
+    image?: string | null
+    defaultAvatarId?: number | null
+  }
+}
 
 export const CawPage: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const [caw, setCaw]           = useState<CawItem | null>(null)
   const [comments, setComments] = useState<CawItem[]>([])
+  const [recaws, setRecaws]     = useState<RecawIndicator[]>([])
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState<string | null>(null)
   const [initialLoadDone, setInitialLoadDone] = useState(false)
@@ -27,16 +44,34 @@ export const CawPage: React.FC = () => {
   const isAuthenticated = !!activeToken?.username
   const allPendingPosts = usePendingPostsStore(s => s.pendingPosts)
   const pendingReplies = useMemo(() => allPendingPosts.filter(p => p.replyToId === id), [allPendingPosts, id])
+
+  // Interleave replies and plain recaws by timestamp (ascending), so the
+  // post page reads chronologically as a single conversation. Pending
+  // replies still render separately above this list.
+  const feedItems = useMemo(() => {
+    const replyItems = comments
+      .filter(comm => {
+        if (comm.status !== 'PENDING') return true
+        const sig = `${comm.user.tokenId}:${comm.content?.trim()}`
+        return !pendingReplies.some(p => `${p.user?.tokenId}:${p.content?.trim()}` === sig)
+      })
+      .map(comm => ({ kind: 'reply' as const, timestamp: comm.timestamp, comm }))
+    const recawItems = recaws.map(r => ({ kind: 'recaw' as const, timestamp: r.timestamp, recaw: r }))
+    return [...replyItems, ...recawItems].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    )
+  }, [comments, recaws, pendingReplies])
   const [showSignInModal, setShowSignInModal] = useState(false)
   const [pollingReplies, setPollingReplies] = useState(false)
 
   // Function to refresh comments after posting a reply
   const refreshComments = async () => {
     try {
-      const { caw: fetched, comments: fetchedComments } =
-        await apiFetch<{ caw: CawItem; comments: CawItem[] }>(`/api/caws/${id}`)
+      const { caw: fetched, comments: fetchedComments, recaws: fetchedRecaws } =
+        await apiFetch<{ caw: CawItem; comments: CawItem[]; recaws?: RecawIndicator[] }>(`/api/caws/${id}`)
       setCaw(fetched)
       setComments(fetchedComments)
+      setRecaws(fetchedRecaws || [])
     } catch (error) {
       console.error('Error refreshing comments:', error)
     }
@@ -76,8 +111,8 @@ export const CawPage: React.FC = () => {
     console.log('[CawPage] Starting reply poll for caw:', id)
     const interval = setInterval(async () => {
       try {
-        const { caw: fetched, comments: fetchedComments } =
-          await apiFetch<{ caw: CawItem; comments: CawItem[] }>(`/api/caws/${id}`)
+        const { caw: fetched, comments: fetchedComments, recaws: fetchedRecaws } =
+          await apiFetch<{ caw: CawItem; comments: CawItem[]; recaws?: RecawIndicator[] }>(`/api/caws/${id}`)
 
         console.log('[CawPage] Poll result:', {
           replyPending: fetched.replyPending,
@@ -86,6 +121,7 @@ export const CawPage: React.FC = () => {
         })
         setCaw(fetched)
         setComments(fetchedComments)
+        setRecaws(fetchedRecaws || [])
         const hasPendingComments = fetchedComments.some(c => c.status === 'PENDING')
         if (!fetched.replyPending && !hasPendingComments) {
           console.log('[CawPage] Reply confirmed, stopping poll')
@@ -130,9 +166,10 @@ export const CawPage: React.FC = () => {
       }
       setError(null)
 
-      const data = await apiFetch<{ caw: CawItem; comments: CawItem[]; hasMoreComments?: boolean; nextCommentCursor?: number }>(`/api/caws/${id}`)
+      const data = await apiFetch<{ caw: CawItem; comments: CawItem[]; recaws?: RecawIndicator[]; hasMoreComments?: boolean; nextCommentCursor?: number }>(`/api/caws/${id}`)
       setCaw(data.caw)
       setComments(data.comments)
+      setRecaws(data.recaws || [])
       setHasMoreComments(!!data.hasMoreComments)
       setCommentCursor(data.nextCommentCursor)
       setInitialLoadDone(true)
@@ -229,14 +266,10 @@ export const CawPage: React.FC = () => {
                 <FeedItem item={post as CawItem} isReply={true} hideParentPreview={true} />
               </div>
             ))}
-            {comments.filter(comm => {
-              if (comm.status !== 'PENDING') return true
-              const sig = `${comm.user.tokenId}:${comm.content?.trim()}`
-              return !pendingReplies.some(p => `${p.user?.tokenId}:${p.content?.trim()}` === sig)
-            }).map((comm) => (
-              <div key={comm.id} className="relative">
+            {feedItems.map((entry) => entry.kind === 'reply' ? (
+              <div key={`reply-${entry.comm.id}`} className="relative">
                 <FeedItem
-                  item={comm}
+                  item={entry.comm}
                   isReply={true}
                   hideParentPreview={true}
                   onLikeStateChange={(cawId, likePending) => {
@@ -249,6 +282,29 @@ export const CawPage: React.FC = () => {
                   }}
                 />
               </div>
+            ) : (
+              <Link
+                key={`recaw-${entry.recaw.id}`}
+                to={`/users/${entry.recaw.user.username}`}
+                className={`flex items-center gap-2 py-2 pr-1 pl-[15px] text-sm hover:underline ${
+                  isDark ? 'text-gray-400' : 'text-gray-600'
+                }`}
+              >
+                <Recaw className="w-4 h-4 opacity-60 flex-shrink-0" />
+                <div className="w-6 h-6 rounded-full overflow-hidden flex-shrink-0">
+                  <Avatar
+                    src={getUserAvatar(entry.recaw.user)}
+                    alt={`${entry.recaw.user.username} avatar`}
+                    className="w-full h-full rounded-full"
+                  />
+                </div>
+                <span className="truncate">
+                  <span className={`font-medium ${isDark ? 'text-white' : 'text-black'}`}>
+                    {entry.recaw.user.displayName || entry.recaw.user.username}
+                  </span>
+                  {' recawed this'}
+                </span>
+              </Link>
             ))}
             {hasMoreComments && (
               <button

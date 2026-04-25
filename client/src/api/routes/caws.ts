@@ -383,11 +383,37 @@ router.get('/:id', async (req, res) => {
   if (hasMoreComments) rawComments.pop()
   const nextCommentCursor = hasMoreComments ? rawComments[rawComments.length - 1]?.id : undefined
 
+  // Plain recaws (RECAW with no text) — rendered as inline 1-liners on the
+  // post page, interleaved with replies by timestamp. Capped to keep the
+  // payload small for popular posts.
+  const rawRecaws = await prisma.caw.findMany({
+    where: {
+      originalCawId: cawId,
+      action: 'RECAW',
+      content: '',
+      status: 'SUCCESS',
+      ...(commentBlockedIds.length > 0 ? { userId: { notIn: commentBlockedIds } } : {}),
+    },
+    take: 100,
+    orderBy: { createdAt: 'asc' },
+    select: {
+      id: true,
+      createdAt: true,
+      user: { select: { tokenId: true, username: true, displayName: true, avatarUrl: true, image: true, defaultAvatarId: true } },
+    },
+  })
+  const recaws = rawRecaws.map(r => ({
+    id: r.id.toString(),
+    timestamp: r.createdAt.toISOString(),
+    user: r.user,
+  }))
+
   // shape into your CawItem shape…
   const shapedCaw = shapeCaw(raw)
   res.json({
     caw:     shapedCaw,
     comments: rawComments.map(shapeCaw),
+    recaws,
     hasMoreComments,
     nextCommentCursor,
   })
