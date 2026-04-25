@@ -41,7 +41,12 @@ contract CawProfile is
   string[] public usernames;
   bool private fromLZ;
 
-  // TODO: this one not used
+  /// @notice Selector for L2's mint mirror. Currently unused — mint() does not lzSend.
+  /// @dev Reserved for a future "mint + authenticate (no deposit)" flow that pushes
+  ///      username + owner to L2 at mint time so the token can receive internal CAW
+  ///      transfers from other tokens before its own first deposit. Keeping the selector,
+  ///      gasLimitFor branch, and L2 receiver wired now means we don't need to redeploy
+  ///      to enable that flow later — these contracts are immutable post-deployment.
   bytes4 public mintSelector = bytes4(keccak256("mintAndUpdateOwners(uint32,address,string,uint32[],address[])"));
 
   bytes4 public addToBalanceSelector = bytes4(keccak256("depositAndUpdateOwners(uint32,uint32,uint256,uint32[],address[])"));
@@ -115,6 +120,23 @@ contract CawProfile is
       setPeer(_eid, bytes32(uint256(uint160(_peer))));
     } else cawProfileL2 = CawProfileL2(_peer);
     emit L2PeerSet(_eid, _peer);
+  }
+
+  /// @notice Lock the inherited OApp `setPeer` once per eid. Critical: a compromised
+  /// or rogue owner could otherwise swap a peer to a contract they control and start
+  /// delivering forged LZ messages. Once a peer for an eid is set (typically in deploy
+  /// phase 1), it can NEVER be changed — even by the owner. Adding NEW eids (new chains)
+  /// stays open by design.
+  ///
+  /// Note: other Ownable-gated inherited setters (setDelegate on OAppCore,
+  /// transferOwnership on Ownable) are not overridden here — they're handled by the
+  /// pre-mainnet checklist (multisig handoff or renounce).
+  function setPeer(uint32 _eid, bytes32 _peer)
+    public
+    override
+    onlyOnce(keccak256(abi.encode("setPeer", _eid)))
+  {
+    super.setPeer(_eid, _peer);
   }
 
   function setMinter(address _minter)

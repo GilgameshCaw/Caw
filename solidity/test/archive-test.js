@@ -290,4 +290,27 @@ contract("CawActionsArchive", function(accounts) {
     assert.equal(await archive.isRangeAvailable(1, 8, 9), false); // 8 is claimed
     console.log("Range availability: PASS");
   });
+
+  it("setPeer is locked once-per-eid (cannot overwrite an existing peer)", async function() {
+    // The before() hook already set L2_EID -> RELAY_PEER. Owner must NOT be able to
+    // swap that peer to a different address — even though they're still the owner.
+    const newPeer = '0x' + '00'.repeat(12) + 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
+    try {
+      await archive.setPeer(L2_EID, newPeer, { from: accounts[0] });
+      assert.fail("Should revert");
+    } catch (err) {
+      assert(err.message.includes("OnlyOnce: already called"),
+        `Expected OnlyOnce revert, got: ${err.message}`);
+    }
+    // Sanity: original peer is still in place.
+    const stored = await archive.peers(L2_EID);
+    assert.equal(stored.toLowerCase(), RELAY_PEER.toLowerCase());
+
+    // A different eid is still settable — adding new chains stays open.
+    const NEW_EID = 99999;
+    await archive.setPeer(NEW_EID, newPeer, { from: accounts[0] });
+    const stored2 = await archive.peers(NEW_EID);
+    assert.equal(stored2.toLowerCase(), newPeer.toLowerCase());
+    console.log("setPeer once-per-eid lock: PASS");
+  });
 });

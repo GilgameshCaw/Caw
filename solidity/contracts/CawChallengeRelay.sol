@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 
 import "@layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
+import "./OnlyOnce.sol";
 
 interface ICawActionsCheckpoints {
   function clientHashAtCheckpoint(uint32 clientId, uint256 checkpointId) external view returns (bytes32);
@@ -18,7 +19,7 @@ interface ICawActionsCheckpoints {
  *      archive trusts the hash because it arrives from a registered LZ peer that
  *      reads directly from CawActions' immutable checkpoint storage.
  */
-contract CawChallengeRelay is OApp {
+contract CawChallengeRelay is OnlyOnce, OApp {
   using OptionsBuilder for bytes;
 
   ICawActionsCheckpoints public immutable cawActions;
@@ -50,6 +51,18 @@ contract CawChallengeRelay is OApp {
   ) OApp(_endpoint, msg.sender) {
     require(_cawActions != address(0), "Invalid CawActions");
     cawActions = ICawActionsCheckpoints(_cawActions);
+  }
+
+  /// @notice Lock the inherited OApp `setPeer` once per eid. Once a peer is set
+  /// in deploy, it can NEVER be changed — even by the owner. The relay points at
+  /// the canonical archive on each destination chain; swapping it would let a rogue
+  /// owner redirect challenges into a bogus archive. New eids stay openable.
+  function setPeer(uint32 _eid, bytes32 _peer)
+    public
+    override
+    onlyOnce(keccak256(abi.encode("setPeer", _eid)))
+  {
+    super.setPeer(_eid, _peer);
   }
 
   /// @notice Relay one or more checkpoint hashes to an archive chain as a

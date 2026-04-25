@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
+import "./OnlyOnce.sol";
 
 /**
  * @title CawActionsArchive
@@ -25,7 +26,7 @@ import { OApp, Origin, MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contra
  *     setPeer, then ownership is renounced — zero admin post-setup.
  *   - At least one honest validator must monitor within CHALLENGE_PERIOD.
  */
-contract CawActionsArchive is Ownable, ReentrancyGuard, OApp {
+contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
 
   // ============================================
   // TYPES
@@ -124,6 +125,19 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OApp {
   // ============================================
 
   constructor(address _endpoint) OApp(_endpoint, msg.sender) {}
+
+  /// @notice Lock the inherited OApp `setPeer` once per eid. Once a peer is set
+  /// in deploy, it can NEVER be changed — even by the owner. Critical here because
+  /// the canonical CawChallengeRelay on each source chain is what we trust to deliver
+  /// fraud proofs; a swapped peer could send forged "everything is fine" / "this is
+  /// fraud" messages. New eids stay openable so future chains can be added.
+  function setPeer(uint32 _eid, bytes32 _peer)
+    public
+    override
+    onlyOnce(keccak256(abi.encode("setPeer", _eid)))
+  {
+    super.setPeer(_eid, _peer);
+  }
 
   // ============================================
   // STAKING

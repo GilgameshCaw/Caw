@@ -158,6 +158,18 @@ contract CawProfileL2 is
     } else setPeer(_eid, bytes32(uint256(uint160(address(peer)))));
   }
 
+  /// @notice Lock the inherited OApp `setPeer` once per eid. Once a peer is set
+  /// (typically the first call to setL1Peer in deploy), it can NEVER be changed —
+  /// even by the owner. Prevents a compromised owner from swapping the L1 peer to a
+  /// contract they control and forging LZ messages. New eids stay openable by design.
+  function setPeer(uint32 _eid, bytes32 _peer)
+    public
+    override
+    onlyOnce(keccak256(abi.encode("setPeer", _eid)))
+  {
+    super.setPeer(_eid, _peer);
+  }
+
   /// @notice Set the CawActions contract address. Owner-only, one-shot.
   /// @dev CawActions is the only contract authorized to call spend/balance functions here.
   function setCawActions(address _cawActions)
@@ -278,7 +290,9 @@ contract CawProfileL2 is
   }
 
   /// @notice Mint a new token (mirror of an L1 mint) and apply pending ownership updates.
-  /// @dev Only callable from `_lzReceive`. Sets username + owner atomically.
+  /// @dev Only callable from `_lzReceive`. Sets username + owner atomically. Currently
+  ///      unreachable because L1's mint() does not lzSend — kept wired so a future
+  ///      "mint + authenticate (no deposit)" flow can be added without contract changes.
   function mintAndUpdateOwners(uint32 tokenId, address owner, string memory username, uint32[] calldata tokenIds, address[] calldata owners) public {
     require(fromLZ, "mintAndUpdateOwners only callable internally");
     usernames[tokenId] = username;
