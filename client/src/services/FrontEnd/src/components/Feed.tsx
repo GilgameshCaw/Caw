@@ -171,9 +171,12 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
     // The feed comes in desc order, so a thread's replies appear before the parent.
     // We collect runs of replies to the same parent, find the parent post if it's
     // nearby in the array, and reorder so: parent → reply 1 → reply 2 → ...
-
-    // First pass: find all reply runs and their parent IDs
-    const consumed = new Set<number>() // indices consumed into a thread group
+    //
+    // Triggers for any size run (1+) so a 2-post thread (parent + 1 reply) gets
+    // grouped too, not just 3+ post threads. We only emit a group if the parent
+    // is actually present in the nearby window — otherwise the reply renders
+    // alone in its original position (don't promote orphan replies).
+    const consumed = new Set<number>()
     const result: CawItem[] = []
     let i = 0
     while (i < filtered.length) {
@@ -187,22 +190,19 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
         while (j < filtered.length && filtered[j].parent?.id === parentId && filtered[j].user.tokenId === userId) {
           j++
         }
-        if (j - i > 1) {
-          // Look for the parent post in the remaining items (it's usually right after the run)
-          let parentIdx = -1
-          for (let k = j; k < filtered.length && k < j + 5; k++) {
-            if (filtered[k].id === parentId && !consumed.has(k)) {
-              parentIdx = k
-              break
-            }
+        // Look for the parent post in the nearby window (5 items past the run)
+        let parentIdx = -1
+        for (let k = j; k < filtered.length && k < j + 5; k++) {
+          if (filtered[k].id === parentId && !consumed.has(k)) {
+            parentIdx = k
+            break
           }
-          // Sort replies by cawonce ascending
+        }
+        if (parentIdx >= 0) {
+          // Sort replies by cawonce ascending so 1/N renders before 2/N
           const run = filtered.slice(i, j).sort((a, b) => (a.cawonce ?? 0) - (b.cawonce ?? 0))
-          // If parent found, place it before the replies
-          if (parentIdx >= 0) {
-            consumed.add(parentIdx)
-            result.push(filtered[parentIdx])
-          }
+          consumed.add(parentIdx)
+          result.push(filtered[parentIdx])
           result.push(...run)
           i = j
           continue
