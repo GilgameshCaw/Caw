@@ -69,6 +69,14 @@ async function cleanupOptimisticRows(
         where: { userId: senderId, cawonce, status: 'PENDING' },
         data: { status: 'FAILED', reason: reason.slice(0, 200) }
       })
+      // If this Caw originated from a ScheduledCaw, the scheduled record is
+      // currently sitting at status='published' (the processor flips it the
+      // moment it queues the tx, before broadcast). Demote it to 'failed' so
+      // the user sees it in the Failed tab on /scheduled instead of Published.
+      await prisma.scheduledCaw.updateMany({
+        where: { userId: senderId, cawonce, status: 'published' },
+        data: { status: 'failed' },
+      })
     }
 
     // FOLLOW (4) / UNFOLLOW (5): mark the pending Follow row as FAILED so
