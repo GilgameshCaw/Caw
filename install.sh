@@ -111,16 +111,27 @@ fi
 # Below minimum, warn and prompt to continue. Above minimum, silently note
 # the available headroom so anyone reading the install log knows what we saw.
 
-ram_gb=$(awk '/MemTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo)
-cores=$(nproc 2>/dev/null || echo 1)
-disk_gb=$(df -BG --output=avail / 2>/dev/null | tail -1 | tr -dc '0-9')
+# Each measurement is best-effort — different distros / containers expose
+# this differently and we'd rather skip a metric than abort the installer
+# over a missing /proc/meminfo entry. Empty string = "couldn't tell."
+ram_gb=$(awk '/MemTotal/ {printf "%d", $2/1024/1024}' /proc/meminfo 2>/dev/null || echo "")
+cores=$(nproc 2>/dev/null || echo "")
+# `df -BG` is GNU coreutils; busybox `df` doesn't accept it. Try the GNU form
+# first, fall back to plain df parsing.
+disk_gb=$(df -BG --output=avail / 2>/dev/null | tail -1 | tr -dc '0-9' || true)
+if [[ -z "$disk_gb" ]]; then
+  # busybox df: 1K-blocks → divide by 1024^2 to GB.
+  disk_gb=$(df -k / 2>/dev/null | awk 'NR==2 {printf "%d", $4/1024/1024}' || echo "")
+fi
 
-log "Detected: ${ram_gb} GB RAM, ${cores} cores, ${disk_gb:-?} GB free on /"
+log "Detected: ${ram_gb:-?} GB RAM, ${cores:-?} cores, ${disk_gb:-?} GB free on /"
 
+# Only warn on metrics we successfully measured. A missing reading shouldn't
+# turn into a "below 4GB" false alarm.
 low=()
-[[ "${ram_gb:-0}" -lt 4 ]]   && low+=("RAM (${ram_gb} GB; recommended 4+)")
-[[ "${cores:-0}" -lt 2 ]]    && low+=("CPU cores (${cores}; recommended 2+)")
-[[ "${disk_gb:-99}" -lt 20 ]] && low+=("free disk (${disk_gb} GB; recommended 20+)")
+[[ -n "$ram_gb"  && "$ram_gb"  -lt 4  ]] && low+=("RAM (${ram_gb} GB; recommended 4+)")
+[[ -n "$cores"   && "$cores"   -lt 2  ]] && low+=("CPU cores (${cores}; recommended 2+)")
+[[ -n "$disk_gb" && "$disk_gb" -lt 20 ]] && low+=("free disk (${disk_gb} GB; recommended 20+)")
 
 if (( ${#low[@]} > 0 )); then
   warn "This host is below recommended specs:"
