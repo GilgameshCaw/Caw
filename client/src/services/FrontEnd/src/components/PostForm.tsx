@@ -1007,21 +1007,23 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
       return 0
     }
 
-    // For threads (multiple chunks), verify the cawonce range is clear.
-    // This prevents "cawonce already used" errors from cancelled retries.
-    if (chunks.length > 1) {
-      try {
-        const { findSafeCawonceStart } = await import('~/api/actions')
-        const currentCawonce = getCawonce()
-        const safeCawonce = await findSafeCawonceStart(effectiveTokenId, currentCawonce, chunks.length)
-        if (safeCawonce !== currentCawonce) {
-          console.log(`[Thread] Cawonce conflict detected: local=${currentCawonce}, resetting to safe=${safeCawonce}`)
-          const setCawonce = useTokenDataStore.getState().setCawonce
-          setCawonce(effectiveTokenId, safeCawonce)
-        }
-      } catch (err) {
-        console.warn('[Thread] Could not verify cawonce range, proceeding with local value:', err)
+    // Verify the cawonce range is clear before signing. The local
+    // useTokenDataStore.cawonce can drift from on-chain reality (other tabs,
+    // other devices, missed bumpCawonce events, action processor races) and
+    // signing with a stale cawonce results in a wasted on-chain failure +
+    // auto-retry. Cheap one-shot check that lets us fix the local store
+    // before signing instead of after the fact.
+    try {
+      const { findSafeCawonceStart } = await import('~/api/actions')
+      const currentCawonce = getCawonce()
+      const safeCawonce = await findSafeCawonceStart(effectiveTokenId, currentCawonce, chunks.length)
+      if (safeCawonce !== currentCawonce) {
+        console.log(`[Post] Cawonce conflict detected: local=${currentCawonce}, resetting to safe=${safeCawonce}`)
+        const setCawonce = useTokenDataStore.getState().setCawonce
+        setCawonce(effectiveTokenId, safeCawonce)
       }
+    } catch (err) {
+      console.warn('[Post] Could not verify cawonce range, proceeding with local value:', err)
     }
 
     // Pre-allocate cawonces for the entire thread upfront.
@@ -1410,7 +1412,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                 // covering for it). If no wallet is connected, the button just
                 // triggers the connect flow and should say "Post".
                 const wrongWallet = isConnected && !isTokenOwner && !hasActiveSession && activeToken?.tokenId
-                const tooltipText = wrongWallet ? 'Please switch to the correct wallet' : isSubmitting ? 'Signing...' : ''
+                const tooltipText = wrongWallet ? 'Please switch to the correct wallet' : ''
                 const threadTooLong = isThreadMode && chunkCount > 300
                 const isDisabled = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isSubmitting || isScheduling || threadTooLong
                 const btn = (
@@ -1783,7 +1785,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
 
             {(() => {
                 const wrongWallet2 = isConnected && !isTokenOwner && !hasActiveSession && activeToken?.tokenId
-                const tooltipText2 = wrongWallet2 ? 'Please switch to the correct wallet' : hasNoToken ? '' : isSubmitting ? 'Signing...' : ''
+                const tooltipText2 = wrongWallet2 ? 'Please switch to the correct wallet' : ''
                 const threadTooLong2 = isThreadMode && chunkCount > 300
                 const isDisabled2 = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isSubmitting || isScheduling || threadTooLong2
                 const btn2 = (
