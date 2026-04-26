@@ -53,8 +53,7 @@ import {
   HiCheck,
   HiArrowRight,
 } from 'react-icons/hi'
-
-const CLIENT_ID = Number(import.meta.env.VITE_CLIENT_ID)
+import { CLIENT_ID } from '~/api/actions'
 
 interface SuggestedUser {
   tokenId: number

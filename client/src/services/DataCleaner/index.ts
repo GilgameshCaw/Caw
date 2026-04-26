@@ -22,7 +22,17 @@ function getCawProfileL2(): Contract {
   return _cawProfileL2
 }
 
-const CAW_CLIENT_ID = Number(process.env.CLIENT_ID || 1)
+// Required at runtime. Defaulting to 1 would scope this node's
+// authentication-status checks to the wrong client, silently dropping
+// real users from cleanup decisions.
+const CAW_CLIENT_ID = (() => {
+  const raw = process.env.CLIENT_ID
+  const n = raw ? Number(raw) : NaN
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error('DataCleaner: CLIENT_ID is required (set it in client/.env)')
+  }
+  return n
+})()
 
 /**
  * Clean up stale pending likes

@@ -102,7 +102,13 @@ function buildServiceList(nodeType, config) {
     services.push({ service: 'DataCleaner', config: {} })
     services.push({ service: 'ScheduledPostProcessor', config: {} })
     services.push({ service: 'MarketplaceIndexer', config: {} })
-    services.push({ service: 'InstanceRegistry', config: {} })
+    services.push({
+      service: 'InstanceRegistry',
+      config: {
+        l1RpcUrl: '${L1_RPC_URL}',
+        clientId: config.clientId,
+      },
+    })
   }
 
   if (RUNS_VALIDATOR) {

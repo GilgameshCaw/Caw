@@ -20,7 +20,17 @@ let peerInstances: PeerInstance[] = []
 let lastRefresh = 0
 const REFRESH_INTERVAL = 10 * 60 * 1000 // 10 minutes
 
-const clientId = Number(process.env.CLIENT_ID || 1)
+// CLIENT_ID is required at runtime — silently defaulting to 1 would
+// route this node's DM relay traffic to the wrong client's instance pool.
+// Resolved lazily so module import still works in test environments.
+function requireClientId(): number {
+  const raw = process.env.CLIENT_ID
+  const n = raw ? Number(raw) : NaN
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error('DmRelayService: CLIENT_ID is required (set it in client/.env)')
+  }
+  return n
+}
 const l1RpcUrl = process.env.L1_RPC_URL || ''
 const ownApiUrl = process.env.INSTANCE_API_URL || ''
 
@@ -32,6 +42,7 @@ async function refreshPeerInstances(): Promise<void> {
   if (Date.now() - lastRefresh < REFRESH_INTERVAL) return
 
   try {
+    const clientId = requireClientId()
     const provider = makeJsonRpcProvider(l1RpcUrl, 11155111)
     const clientManager = new Contract(CLIENT_MANAGER_ADDRESS, cawClientManagerAbi, provider)
 

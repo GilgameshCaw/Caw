@@ -38,17 +38,17 @@ export const rawEventsGathererService: Service = {
     const { chainId, redisUrl } = cfg
 
     // Resolve clientId — this instance scopes to one client. Falls through
-    // config → CLIENT_ID env var → default to 1 (legacy single-client
-    // deployments). When multiple instances run, each MUST set their own
-    // clientId so actions don't cross-contaminate.
+    // config.json → CLIENT_ID env var. No legacy fallback to 1: a missing
+    // value is a real bug (silently watching the wrong client's events
+    // cross-contaminates the indexer's database) and should fail loud.
     //
     // Note: Number(undefined) is NaN, and NaN ?? x does NOT fall through
     // because NaN isn't nullish. Coerce with explicit env.CLIENT_ID check.
     const envClientIdRaw = process.env.CLIENT_ID
     const envClientId = envClientIdRaw ? Number(envClientIdRaw) : undefined
-    const clientId = cfg.clientId ?? (envClientId && Number.isFinite(envClientId) ? envClientId : 1)
-    if (!Number.isFinite(clientId) || clientId <= 0) {
-      throw new Error(`RawEventsGatherer: invalid clientId ${clientId}`)
+    const clientId = cfg.clientId ?? (envClientId && Number.isFinite(envClientId) ? envClientId : undefined)
+    if (clientId === undefined || !Number.isFinite(clientId) || clientId <= 0) {
+      throw new Error('RawEventsGatherer: CLIENT_ID is required (set it in client/.env or config.json)')
     }
 
     if (!rpcUrl || rpcUrl.includes('${')) {

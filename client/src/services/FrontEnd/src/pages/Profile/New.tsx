@@ -18,8 +18,7 @@ import { useNavigate, Link, useSearchParams } from 'react-router-dom'
 import StakingRewardsInfo from '~/components/StakingRewardsInfo'
 import { HiInformationCircle } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
-
-const CLIENT_ID = Number(import.meta.env.VITE_CLIENT_ID)
+import { CLIENT_ID } from '~/api/actions'
 
 // cost schedule (raw CAW)
 const COST_SCHEDULE: Record<number, bigint> = {

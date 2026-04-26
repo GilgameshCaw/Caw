@@ -28,10 +28,9 @@ import LayerZeroStatus from '~/components/LayerZeroStatus'
 import StakingRewardsInfo from '~/components/StakingRewardsInfo'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
+import { CLIENT_ID } from '~/api/actions'
 
 type StakingTab = 'stake' | 'unstake' | 'info'
-
-const CLIENT_ID = Number(import.meta.env.VITE_CLIENT_ID)
 
 interface WithdrawalRequest {
   id: number
