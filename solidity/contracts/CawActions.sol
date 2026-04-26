@@ -50,6 +50,13 @@ contract CawActions is Ownable {
   bytes32 private constant ACTIONDATA_TYPEHASH = keccak256(
     "ActionData(uint8 actionType,uint32 senderId,uint32 receiverId,uint32 receiverCawonce,uint32 clientId,uint32 cawonce,uint32[] recipients,uint64[] amounts,bytes text)"
   );
+  /// @dev Typed-data hash for batched-action signatures. One signature over a
+  ///      group of actions, all sharing the same senderId. The hash chain on
+  ///      the source chain still commits per-action (using the batch sig's r),
+  ///      so replication and the archive remain unchanged.
+  bytes32 private constant ACTIONBATCH_TYPEHASH = keccak256(
+    "ActionBatch(uint32 senderId,uint32 firstCawonce,uint32 actionCount,bytes32 actionsHash)"
+  );
 
   /// @dev Checkpoint interval — a checkpoint is stored every N actions per client.
   /// @dev 32 actions per checkpoint. Small checkpoints enable flexible multibatch
@@ -87,11 +94,21 @@ contract CawActions is Ownable {
   //       [2]   uint16  textLength (T)
   //       [T]   bytes   text
   //
-  //   sigs: concatenated per-action signatures
-  //     Per action: [1] v, [32] r, [32] s = 65 bytes each
+  //   sigs: grouped signatures
+  //     [2 bytes] uint16 numGroups
+  //     Per group:
+  //       [2]   uint16  groupSize  (1 = single sig, 2+ = batch sig over groupSize actions)
+  //       [1]   uint8   v
+  //       [32]  bytes32 r
+  //       [32]  bytes32 s
+  //     Each group's signature is verified ONCE; for a batch group the signed
+  //     payload is an ActionBatch typed struct over the group's contiguous
+  //     actions. All actions in a batch group must share senderId.
 
   /// @notice Process a batch of actions from packed calldata. ~50% less gas than
-  ///         the ABI-encoded version because calldata is ~60% smaller.
+  ///         the ABI-encoded version because calldata is ~60% smaller. Supports
+  ///         per-action sigs (group of 1) and batched sigs (one sig over many
+  ///         actions from the same sender) in any mix within the same call.
   function processActions(
     uint32 validatorId,
     bytes calldata packedActions,
@@ -103,57 +120,197 @@ contract CawActions is Ownable {
     assembly { actionCount := shr(240, calldataload(packedActions.offset)) }
     require(actionCount > 0, "No actions");
     require(actionCount <= 256, "Too many actions");
-    require(sigs.length == actionCount * 65, "Sigs length mismatch");
 
-    uint32 firstClientId;
-    uint16 withdrawCount;
-    uint256 withdrawBitmap; // safe: actionCount <= 256, bitmap fits uint256
-    uint256 pos = 2; // skip actionCount header
+    uint256 numGroups;
+    assembly { numGroups := shr(240, calldataload(sigs.offset)) }
+    require(numGroups > 0 && numGroups <= actionCount, "Bad sig group count");
 
-    for (uint256 i = 0; i < actionCount; ) {
-      uint256 actionStart = pos;
+    BatchCursor memory c;
+    c.pos = 2;     // skip actionCount header
+    c.sigPos = 2;  // skip numGroups header
 
-      // Unpack one action from packed bytes
-      (ActionData memory action, uint256 nextPos) = _unpackAction(packedActions, pos);
-      pos = nextPos;
-
-      // Enforce single-client constraint
-      if (i == 0) {
-        firstClientId = action.clientId;
-      } else {
-        require(action.clientId == firstClientId, "All actions must belong to the same client");
-      }
-
-      // Read signature
-      (uint8 v, bytes32 r, bytes32 s) = _readSig(sigs, i);
-
-      // Process the action (all validation, token transfers, etc.)
-      _processActionPacked(validatorId, action, v, r, s, packedActions[actionStart:pos]);
-
-      // Track withdrawals
-      if (action.actionType == ActionType.WITHDRAW) {
-        withdrawBitmap |= (1 << i);
-        unchecked { ++withdrawCount; }
-      }
-
-      unchecked { ++i; }
+    for (uint256 g = 0; g < numGroups; ) {
+      _processOneGroup(validatorId, packedActions, sigs, c, actionCount);
+      unchecked { ++g; }
     }
+
+    require(c.actionsSeen == actionCount, "Sigs don't cover all actions");
 
     emit ActionsProcessed(packedActions);
 
-    // Handle withdrawals
-    if (withdrawCount > 0) {
-      _handleWithdrawals(withdrawBitmap, withdrawCount, actionCount, packedActions);
+    if (c.withdrawCount > 0) {
+      _handleWithdrawals(c.withdrawBitmap, c.withdrawCount, actionCount, packedActions);
     }
-
-    // Forward ETH for LZ withdraw fees if needed
-    if (withdrawCount > 0 && withdrawFee > 0) {
+    if (c.withdrawCount > 0 && withdrawFee > 0) {
       _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
     }
   }
 
-  /// @notice Safe version — tries each action individually, collects rejections.
+  /// @dev Bookkeeping passed through the group-processing loop by reference.
+  ///      Avoids returning a 6-tuple from internal helpers.
+  struct BatchCursor {
+    uint256 pos;             // current offset into packedActions
+    uint256 sigPos;          // current offset into sigs
+    uint256 actionsSeen;     // total actions processed so far across all groups
+    uint32  firstClientId;   // set on first action; enforced equal across all
+    uint16  withdrawCount;
+    uint256 withdrawBitmap;
+  }
+
+  /// @dev Read a sig group header from `sigs` at `sigPos` and advance.
+  ///      Layout: [2 groupSize][1 v][32 r][32 s] = 67 bytes.
+  function _readSigGroup(bytes calldata sigs, uint256 sigPos)
+    internal pure returns (uint256 groupSize, uint8 v, bytes32 r, bytes32 s)
+  {
+    assembly {
+      let off := add(sigs.offset, sigPos)
+      groupSize := shr(240, calldataload(off))
+      v := shr(248, calldataload(add(off, 2)))
+      r := calldataload(add(off, 3))
+      s := calldataload(add(off, 35))
+    }
+  }
+
+  /// @dev Process one signature group: recover the signer once, apply each
+  ///      action in the group with the same r anchor in the hash chain.
+  function _processOneGroup(
+    uint32 validatorId,
+    bytes calldata packedActions,
+    bytes calldata sigs,
+    BatchCursor memory c,
+    uint256 actionCount
+  ) internal {
+    (uint256 groupSize, uint8 v, bytes32 r, bytes32 s) = _readSigGroup(sigs, c.sigPos);
+    require(groupSize > 0, "Empty group");
+    require(c.actionsSeen + groupSize <= actionCount, "Group overflows actions");
+    c.sigPos += 67;
+
+    if (groupSize == 1) {
+      _processSingleSig(validatorId, packedActions, c, v, r, s);
+    } else {
+      _processBatchSig(validatorId, packedActions, c, groupSize, v, r, s);
+    }
+  }
+
+  /// @dev Single-action sig path within a group of size 1. Backwards-compatible
+  ///      with the legacy per-action sig flow.
+  function _processSingleSig(
+    uint32 validatorId,
+    bytes calldata packedActions,
+    BatchCursor memory c,
+    uint8 v, bytes32 r, bytes32 s
+  ) internal {
+    uint256 actionStart = c.pos;
+    (ActionData memory action, uint256 nextPos) = _unpackAction(packedActions, c.pos);
+    c.pos = nextPos;
+    _trackClientAndWithdraw(c, action, c.actionsSeen);
+    (address signer, bool isSessionKey) = _verifySignatureMem(v, r, s, action);
+    _applyAction(validatorId, action, r, signer, isSessionKey, packedActions[actionStart:nextPos]);
+    c.actionsSeen += 1;
+  }
+
+  /// @dev Batch-sig path: one signature over ACTIONBATCH_TYPEHASH covering
+  ///      `groupSize` consecutive actions from the same senderId.
+  function _processBatchSig(
+    uint32 validatorId,
+    bytes calldata packedActions,
+    BatchCursor memory c,
+    uint256 groupSize,
+    uint8 v, bytes32 r, bytes32 s
+  ) internal {
+    bytes32[] memory perActionHashes = new bytes32[](groupSize);
+    ActionData[] memory groupActions = new ActionData[](groupSize);
+    uint256[] memory sliceStarts = new uint256[](groupSize);
+    uint256[] memory sliceEnds = new uint256[](groupSize);
+
+    for (uint256 i = 0; i < groupSize; ) {
+      uint256 sliceStart = c.pos;
+      (ActionData memory action, uint256 nextPos) = _unpackAction(packedActions, c.pos);
+      c.pos = nextPos;
+
+      _trackClientAndWithdraw(c, action, c.actionsSeen + i);
+
+      // All actions in a batch must share the same senderId. Without this,
+      // one user's batch sig could authorize another user's actions.
+      if (i > 0) {
+        require(action.senderId == groupActions[0].senderId, "Mixed senders in batch");
+      }
+
+      groupActions[i] = action;
+      sliceStarts[i] = sliceStart;
+      sliceEnds[i] = nextPos;
+      perActionHashes[i] = keccak256(packedActions[sliceStart:nextPos]);
+      unchecked { ++i; }
+    }
+
+    BatchAuth memory ba;
+    (ba.signer, ba.isSessionKey) = _verifyBatchSignature(
+      v, r, s,
+      groupActions[0].senderId,
+      groupActions[0].cawonce,
+      uint32(groupSize),
+      keccak256(abi.encodePacked(perActionHashes))
+    );
+    ba.r = r;
+    if (ba.isSessionKey) {
+      address owner = cawProfile.ownerOf(groupActions[0].senderId);
+      (, ba.scopeBitmap,) = cawProfile.sessions(owner, ba.signer);
+    }
+
+    _applyBatch(validatorId, packedActions, groupActions, sliceStarts, sliceEnds, ba);
+    c.actionsSeen += groupSize;
+  }
+
+  /// @dev Bundle of fields produced by batch-sig recovery, threaded into
+  ///      _applyBatch as one struct to keep the inner loop's stack shallow.
+  struct BatchAuth {
+    address signer;
+    bool    isSessionKey;
+    uint8   scopeBitmap;
+    bytes32 r;
+  }
+
+  /// @dev Apply each action in a verified batch group, doing the per-action
+  ///      session-scope check before _applyAction.
+  function _applyBatch(
+    uint32 validatorId,
+    bytes calldata packedActions,
+    ActionData[] memory groupActions,
+    uint256[] memory sliceStarts,
+    uint256[] memory sliceEnds,
+    BatchAuth memory ba
+  ) internal {
+    uint256 n = groupActions.length;
+    for (uint256 i = 0; i < n; ) {
+      ActionData memory action = groupActions[i];
+      if (ba.isSessionKey) {
+        require((ba.scopeBitmap & (1 << uint8(action.actionType))) != 0, "Action not in session scope");
+      }
+      _applyAction(
+        validatorId, action, ba.r, ba.signer, ba.isSessionKey,
+        packedActions[sliceStarts[i]:sliceEnds[i]]
+      );
+      unchecked { ++i; }
+    }
+  }
+
+  /// @dev Single-client invariant + withdraw bookkeeping per action.
+  function _trackClientAndWithdraw(BatchCursor memory c, ActionData memory action, uint256 actionIndex) internal pure {
+    if (actionIndex == 0) {
+      c.firstClientId = action.clientId;
+    } else {
+      require(action.clientId == c.firstClientId, "All actions must belong to the same client");
+    }
+    if (action.actionType == ActionType.WITHDRAW) {
+      c.withdrawBitmap |= (1 << actionIndex);
+      unchecked { ++c.withdrawCount; }
+    }
+  }
+
+  /// @notice Safe version — tries each sig group individually, collects rejections.
   ///         Intended for eth_call simulation before submitting via processActions.
+  ///         All-or-nothing per group: if a batch group fails, every action in
+  ///         that group is marked rejected with the same reason.
   function safeProcessActions(
     uint32 validatorId,
     bytes calldata packedActions,
@@ -165,51 +322,179 @@ contract CawActions is Ownable {
     assembly { actionCount := shr(240, calldataload(packedActions.offset)) }
     require(actionCount > 0, "No actions");
     require(actionCount <= 256, "Too many actions");
-    require(sigs.length == actionCount * 65, "Sigs length mismatch");
+
+    uint256 numGroups;
+    assembly { numGroups := shr(240, calldataload(sigs.offset)) }
+    require(numGroups > 0 && numGroups <= actionCount, "Bad sig group count");
 
     rejections = new string[](actionCount);
-    uint16 withdrawCount;
-    uint256 withdrawBitmap;
-    uint256 pos = 2;
+    SafeCursor memory sc;
+    sc.pos = 2;     // skip actionCount header
+    sc.sigPos = 2;  // skip numGroups header
 
-    for (uint256 i = 0; i < actionCount; ) {
-      uint256 actionStart = pos;
-      (ActionData memory action, uint256 nextPos) = _unpackAction(packedActions, pos);
-      pos = nextPos;
-      (uint8 v, bytes32 r, bytes32 s) = _readSig(sigs, i);
-
-      try CawActions(this).processActionSingle(validatorId, action, v, r, s, packedActions[actionStart:nextPos]) {
-        unchecked { ++successCount; }
-        if (action.actionType == ActionType.WITHDRAW) {
-          withdrawBitmap |= (1 << i);
-          unchecked { ++withdrawCount; }
-        }
-      } catch Error(string memory reason) {
-        rejections[i] = reason;
-        emit ActionRejected(action.senderId, action.cawonce, reason);
-      } catch (bytes memory) {
-        rejections[i] = "Low-level exception";
-        emit ActionRejected(action.senderId, action.cawonce, "Low-level exception");
-      }
-
-      unchecked { ++i; }
+    for (uint256 g = 0; g < numGroups; ) {
+      _safeProcessOneGroup(validatorId, packedActions, sigs, sc, rejections, actionCount);
+      unchecked { ++g; }
     }
+
+    require(sc.actionsSeen == actionCount, "Sigs don't cover all actions");
+    successCount = sc.successCount;
 
     // NOTE (audited 2026-04-20): emits the FULL packedActions including rejected
     // actions, not just the successful ones. Indexers MUST cross-reference
-    // ActionRejected events to filter. Repacking only successful actions would
-    // cost gas and the validator pre-filters via simulation anyway.
+    // ActionRejected events to filter.
     if (successCount > 0) {
       emit ActionsProcessed(packedActions);
     }
 
-    if (withdrawCount > 0 && withdrawFee > 0) {
-      _handleWithdrawals(withdrawBitmap, withdrawCount, actionCount, packedActions);
+    if (sc.withdrawCount > 0 && withdrawFee > 0) {
+      _handleWithdrawals(sc.withdrawBitmap, sc.withdrawCount, actionCount, packedActions);
       _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
     }
   }
 
+  /// @dev Bookkeeping for safeProcessActions, kept on the stack as a struct
+  ///      to dodge "stack too deep" inside the per-group inner loop.
+  struct SafeCursor {
+    uint256 pos;
+    uint256 sigPos;
+    uint256 actionsSeen;
+    uint256 successCount;
+    uint16  withdrawCount;
+    uint256 withdrawBitmap;
+  }
+
+  /// @dev Process one sig group in the safe path: try the whole group via
+  ///      the external trampoline, all-or-nothing. Updates the cursor in place.
+  function _safeProcessOneGroup(
+    uint32 validatorId,
+    bytes calldata packedActions,
+    bytes calldata sigs,
+    SafeCursor memory sc,
+    string[] memory rejections,
+    uint256 actionCount
+  ) internal {
+    (uint256 groupSize, uint8 v, bytes32 r, bytes32 s) = _readSigGroup(sigs, sc.sigPos);
+    require(groupSize > 0, "Empty group");
+    require(sc.actionsSeen + groupSize <= actionCount, "Group overflows actions");
+    sc.sigPos += 67;
+
+    uint256 groupStartPos = sc.pos;
+
+    // Walk slices once to capture metadata for rejection labelling +
+    // withdraw tracking, and to advance pos to the end of the group.
+    uint32[] memory senderIds = new uint32[](groupSize);
+    uint32[] memory cawonces = new uint32[](groupSize);
+    bool[] memory isWithdraw = new bool[](groupSize);
+    for (uint256 i = 0; i < groupSize; ) {
+      (ActionData memory peek, uint256 nextPos) = _unpackAction(packedActions, sc.pos);
+      sc.pos = nextPos;
+      senderIds[i] = peek.senderId;
+      cawonces[i] = peek.cawonce;
+      isWithdraw[i] = peek.actionType == ActionType.WITHDRAW;
+      unchecked { ++i; }
+    }
+
+    try CawActions(this).processGroupSingle(
+      validatorId, packedActions[groupStartPos:sc.pos], v, r, s, uint16(groupSize)
+    ) {
+      sc.successCount += groupSize;
+      for (uint256 i = 0; i < groupSize; ) {
+        if (isWithdraw[i]) {
+          sc.withdrawBitmap |= (1 << (sc.actionsSeen + i));
+          unchecked { ++sc.withdrawCount; }
+        }
+        unchecked { ++i; }
+      }
+    } catch Error(string memory reason) {
+      for (uint256 i = 0; i < groupSize; ) {
+        rejections[sc.actionsSeen + i] = reason;
+        emit ActionRejected(senderIds[i], cawonces[i], reason);
+        unchecked { ++i; }
+      }
+    } catch (bytes memory) {
+      for (uint256 i = 0; i < groupSize; ) {
+        rejections[sc.actionsSeen + i] = "Low-level exception";
+        emit ActionRejected(senderIds[i], cawonces[i], "Low-level exception");
+        unchecked { ++i; }
+      }
+    }
+
+    sc.actionsSeen += groupSize;
+  }
+
   /// @notice External entry for safeProcessActions try/catch. Only callable by self.
+  ///         Processes one signature group atomically; reverts roll back the
+  ///         whole group's state changes (all-or-nothing within a batch).
+  function processGroupSingle(
+    uint32 validatorId,
+    bytes calldata groupBytes,
+    uint8 v, bytes32 r, bytes32 s,
+    uint16 groupSize
+  ) external {
+    require(msg.sender == address(this), "Only self");
+
+    // groupBytes is just the actions slice for this group (no actionCount
+    // header). We pass it verbatim to a re-entry of the group-processing
+    // logic by reconstructing a tiny BatchCursor.
+    uint32 firstClientId = 0;
+    uint256 pos = 0;
+    bytes32[] memory perActionHashes = new bytes32[](groupSize);
+    ActionData[] memory groupActions = new ActionData[](groupSize);
+    uint256[] memory sliceStarts = new uint256[](groupSize);
+    uint256[] memory sliceEnds = new uint256[](groupSize);
+
+    for (uint256 i = 0; i < groupSize; ) {
+      uint256 sliceStart = pos;
+      (ActionData memory action, uint256 nextPos) = _unpackAction(groupBytes, pos);
+      pos = nextPos;
+      if (i == 0) firstClientId = action.clientId;
+      else require(action.clientId == firstClientId, "All actions must belong to the same client");
+      groupActions[i] = action;
+      sliceStarts[i] = sliceStart;
+      sliceEnds[i] = nextPos;
+      perActionHashes[i] = keccak256(groupBytes[sliceStart:nextPos]);
+      unchecked { ++i; }
+    }
+
+    address signer;
+    bool isSessionKey;
+    uint8 scopeBitmap;
+    if (groupSize == 1) {
+      (signer, isSessionKey) = _verifySignatureMem(v, r, s, groupActions[0]);
+    } else {
+      // Batch — all senders must match, then verify the ActionBatch sig
+      for (uint256 i = 1; i < groupSize; ) {
+        require(groupActions[i].senderId == groupActions[0].senderId, "Mixed senders in batch");
+        unchecked { ++i; }
+      }
+      (signer, isSessionKey) = _verifyBatchSignature(
+        v, r, s,
+        groupActions[0].senderId,
+        groupActions[0].cawonce,
+        uint32(groupSize),
+        keccak256(abi.encodePacked(perActionHashes))
+      );
+      if (isSessionKey) {
+        address owner = cawProfile.ownerOf(groupActions[0].senderId);
+        (, scopeBitmap,) = cawProfile.sessions(owner, signer);
+      }
+    }
+
+    for (uint256 i = 0; i < groupSize; ) {
+      ActionData memory action = groupActions[i];
+      if (groupSize > 1 && isSessionKey) {
+        require((scopeBitmap & (1 << uint8(action.actionType))) != 0, "Action not in session scope");
+      }
+      _applyAction(
+        validatorId, action, r, signer, isSessionKey,
+        groupBytes[sliceStarts[i]:sliceEnds[i]]
+      );
+      unchecked { ++i; }
+    }
+  }
+
+  /// @notice External entry for legacy single-sig path. Only callable by self.
   function processActionSingle(
     uint32 validatorId,
     ActionData calldata action,
@@ -224,17 +509,33 @@ contract CawActions is Ownable {
   // CORE ACTION PROCESSING
   // ============================================
 
+  /// @dev Verify a per-action signature (the legacy single-sig path) and
+  ///      then apply the action. Kept as a thin wrapper so existing callers
+  ///      (processActionSingle) don't need to change.
   function _processActionPacked(
     uint32 validatorId,
     ActionData memory action,
     uint8 v, bytes32 r, bytes32 s,
     bytes calldata packedSlice
   ) internal {
+    (address signer, bool isSessionKey) = _verifySignatureMem(v, r, s, action);
+    _applyAction(validatorId, action, r, signer, isSessionKey, packedSlice);
+  }
+
+  /// @dev Apply a single already-authenticated action: protocol costs,
+  ///      amount distribution, session spend, cawonce burn, hash-chain link.
+  ///      Caller is responsible for verifying the signature (single or batch)
+  ///      and for the per-action session-scope check on batch sigs.
+  function _applyAction(
+    uint32 validatorId,
+    ActionData memory action,
+    bytes32 r,
+    address signer,
+    bool isSessionKey,
+    bytes calldata packedSlice
+  ) internal {
     require(!isCawonceUsed(action.senderId, action.cawonce), "Cawonce already used");
     require(cawProfile.authenticated(action.clientId, action.senderId), "User has not authenticated with this client");
-
-    (address signer, bool isSessionKey) = _verifySignatureMem(v, r, s, action);
-
     require(action.text.length <= 420, "Text exceeds 420 bytes");
 
     // Fixed protocol costs per action type (in whole CAW tokens)
@@ -276,8 +577,9 @@ contract CawActions is Ownable {
     useCawonce(action.senderId, action.cawonce);
 
     // Checkpoint hash — hash the PACKED slice directly (no abi.encode overhead).
-    // This is cryptographically equivalent: the packed bytes uniquely represent
-    // the action struct, so keccak256(packedSlice) is collision-resistant.
+    // r is the recovering signature's r (single-sig: per-action r; batch-sig:
+    // shared across the group). Either way, the chain still extends with a
+    // unique actionHash per action so links are non-degenerate.
     uint32 clientId = action.clientId;
     bytes32 actionHash = keccak256(packedSlice);
     clientCurrentHash[clientId] = keccak256(abi.encodePacked(clientCurrentHash[clientId], r, actionHash));
@@ -332,6 +634,35 @@ contract CawActions is Ownable {
     (uint64 expiry, uint8 scopeBitmap,) = cawProfile.sessions(owner, signer);
     require(expiry > block.timestamp, "Session expired or not found");
     require((scopeBitmap & (1 << uint8(data.actionType))) != 0, "Action not in session scope");
+    return (signer, true);
+  }
+
+  /// @dev Recover the signer of an ActionBatch signature. Performs the same
+  ///      owner-or-session-key resolution as _verifySignatureMem, except the
+  ///      per-action scope check is the caller's job (batch covers many
+  ///      actions, each of which must be checked against the bitmap).
+  function _verifyBatchSignature(
+    uint8 v, bytes32 r, bytes32 s,
+    uint32 senderId,
+    uint32 firstCawonce,
+    uint32 batchActionCount,
+    bytes32 actionsHash
+  ) internal view returns (address signer, bool isSessionKey) {
+    bytes32 structHash = keccak256(abi.encode(
+      ACTIONBATCH_TYPEHASH,
+      senderId,
+      firstCawonce,
+      batchActionCount,
+      actionsHash
+    ));
+    signer = getSigner(structHash, v, r, s);
+    require(signer != address(0), "Invalid batch signature");
+
+    address owner = cawProfile.ownerOf(senderId);
+    if (signer == owner) return (signer, false);
+
+    (uint64 expiry,,) = cawProfile.sessions(owner, signer);
+    require(expiry > block.timestamp, "Session expired or not found");
     return (signer, true);
   }
 

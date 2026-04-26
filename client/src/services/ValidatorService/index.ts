@@ -8,7 +8,7 @@ import getActionType from '../../abi/getActionType'
 import { cawActionsAbi } from '../../abi/generated'
 import { CAW_ACTIONS_ADDRESS, CAW_ADDRESS, WETH_ADDRESS, CAW_ACTIONS_ARCHIVE_ADDRESS, CAW_CHALLENGE_RELAY_ADDRESS } from '../../abi/addresses'
 import { WebSocketProvider, JsonRpcProvider, Contract, Wallet, Interface, keccak256, solidityPacked, AbiCoder } from 'ethers'
-import { packActions, packSignatures, bytesToHex, getPackedActionSlices, unpackActions } from '../../utils/packActions'
+import { packActions, packSignatures, packGroupedSignatures, bytesToHex, getPackedActionSlices, unpackActions } from '../../utils/packActions'
 import { buildCheckpointMerkleTree } from '../../utils/checkpointMerkle'
 import { tryClaimChallengeLock, releaseChallengeLock } from '../../utils/challengeLock'
 import { foldCheckpointHashes } from '../../utils/foldCheckpointHashes'
@@ -631,20 +631,35 @@ export const validatorService: Service = {
 
     /** natstat: split each raw signedTx into r, s, v and collect action payloads */
     function buildMultiActionData(
-      queueEntries: Array<{ payload: any; signedTx: string }>
+      queueEntries: Array<{ payload: any; signedTx: string; batchId?: number | null }>
     ) {
       const actions: any[]    = []
       const sigParts: Array<{ v: number; r: string; s: string }> = []
+      // groups[] mirrors actions[]: group[i] is the (batchId-or-tempUnique, runningGroupSize)
+      // we'll fold into the grouped sigs payload below.
+      const groups: Array<{ groupSize: number; v: number; r: string; s: string }> = []
+      let lastBatchId: number | null | undefined = undefined
 
       for (const entry of queueEntries) {
         const signature = entry.signedTx
         const hex = signature.startsWith('0x') ? signature.slice(2) : signature
-
-        sigParts.push({
+        const sig = {
           r: '0x' + hex.slice(0, 64),
           s: '0x' + hex.slice(64, 128),
           v: parseInt(hex.slice(128, 130), 16),
-        })
+        }
+        sigParts.push(sig)
+
+        // Group adjacent txqueue rows that share a batchId. Rows with no
+        // batchId always get their own group of size 1. Rows with a batchId
+        // must share the SAME signedTx — the validator trusts the API to
+        // have stored the batch sig consistently across the group's rows.
+        if (entry.batchId != null && entry.batchId === lastBatchId && groups.length > 0) {
+          groups[groups.length - 1].groupSize += 1
+        } else {
+          groups.push({ groupSize: 1, ...sig })
+        }
+        lastBatchId = entry.batchId ?? null
 
         // Ensure amounts are properly formatted
         const actionData = (entry.payload as any).data
@@ -679,7 +694,7 @@ export const validatorService: Service = {
         amounts: a.amounts.map((x: any) => BigInt(x)),
         text: a.text || '0x',
       })))
-      const sigsBytes = packSignatures(sigParts)
+      const sigsBytes = packGroupedSignatures(groups)
 
       return {
         actions,

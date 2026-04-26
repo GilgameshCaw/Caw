@@ -195,7 +195,14 @@ model TxQueue {
   // and the DataCleaner watcher to promote it when L2 catches up.
   pendingDepositTxHash String?
 
+  // Groups txqueue rows that share an ActionBatch signature. Adjacent rows
+  // (in createdAt/cawonce order) with the same batchId are sent on-chain
+  // as one signature group. signedTx must match across rows in the group —
+  // it's the batch sig that covers all of them.
+  batchId              Int?
+
   @@index([senderId, status])
+  @@index([batchId])
 }
 
 model Action {

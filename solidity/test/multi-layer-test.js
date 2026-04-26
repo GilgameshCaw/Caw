@@ -59,13 +59,19 @@ function packActionsForContract(signedActions) {
   return '0x' + buf.toString('hex');
 }
 
+// New grouped-sig format: [2 numGroups][per group: 2 groupSize, 1 v, 32 r, 32 s]
+// Each individually-signed action = a group of size 1. Batched signatures
+// (one sig over many actions) use the helper packBatchSigsForContract below.
 function packSigsForContract(signedActions) {
-  var buf = Buffer.alloc(signedActions.length * 65);
-  for (var i = 0; i < signedActions.length; i++) {
-    var off = i * 65;
-    buf.writeUInt8(signedActions[i].sigData.v, off);
-    Buffer.from(signedActions[i].sigData.r.slice(2), 'hex').copy(buf, off + 1);
-    Buffer.from(signedActions[i].sigData.s.slice(2), 'hex').copy(buf, off + 33);
+  var n = signedActions.length;
+  var buf = Buffer.alloc(2 + n * 67);
+  var pos = 0;
+  buf.writeUInt16BE(n, pos); pos += 2;
+  for (var i = 0; i < n; i++) {
+    buf.writeUInt16BE(1, pos); pos += 2; // groupSize = 1
+    buf.writeUInt8(signedActions[i].sigData.v, pos); pos += 1;
+    Buffer.from(signedActions[i].sigData.r.slice(2), 'hex').copy(buf, pos); pos += 32;
+    Buffer.from(signedActions[i].sigData.s.slice(2), 'hex').copy(buf, pos); pos += 32;
   }
   return '0x' + buf.toString('hex');
 }

@@ -87,17 +87,40 @@ export function packActions(actions: ActionForPacking[]): Uint8Array {
   return buf
 }
 
+/**
+ * Pack signatures into the new grouped sigs format expected by CawActions:
+ *
+ *   [2 bytes]   uint16 numGroups
+ *   per group:
+ *     [2]  uint16  groupSize  (1 = single-action sig, 2+ = ActionBatch sig)
+ *     [1]  uint8   v
+ *     [32] bytes32 r
+ *     [32] bytes32 s
+ *
+ * Pass an array of sigs to treat each as a group of size 1 (legacy
+ * per-action signing). Pass groups explicitly via packGroupedSignatures
+ * when emitting batch sigs.
+ */
 export function packSignatures(
   signatures: Array<{ v: number; r: string; s: string }>
 ): Uint8Array {
-  const buf = new Uint8Array(signatures.length * 65)
-  for (let i = 0; i < signatures.length; i++) {
-    const off = i * 65
-    buf[off] = signatures[i].v
-    const rBytes = hexToBytes(signatures[i].r)
-    const sBytes = hexToBytes(signatures[i].s)
-    buf.set(rBytes, off + 1)
-    buf.set(sBytes, off + 33)
+  return packGroupedSignatures(signatures.map(sig => ({ groupSize: 1, ...sig })))
+}
+
+export function packGroupedSignatures(
+  groups: Array<{ groupSize: number; v: number; r: string; s: string }>
+): Uint8Array {
+  const buf = new Uint8Array(2 + groups.length * 67)
+  buf[0] = (groups.length >> 8) & 0xFF
+  buf[1] = groups.length & 0xFF
+  let pos = 2
+  for (const g of groups) {
+    buf[pos] = (g.groupSize >> 8) & 0xFF
+    buf[pos + 1] = g.groupSize & 0xFF
+    buf[pos + 2] = g.v
+    buf.set(hexToBytes(g.r), pos + 3)
+    buf.set(hexToBytes(g.s), pos + 35)
+    pos += 67
   }
   return buf
 }
