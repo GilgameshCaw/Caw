@@ -196,6 +196,37 @@ log "Repository:        ${CAW_REPO}#${CAW_BRANCH}"
 log "Service user:      ${CAW_USER}"
 [[ -n "${CAW_DOMAIN:-}" ]] && log "Domain:            ${CAW_DOMAIN}"
 
+# ---------- API port (auto-pick the next free one) ---------------------------
+#
+# Multiple CAW installs can coexist under different subdomains (e.g.
+# test1.caw.social + test2.caw.social). They can't all bind :4000, so we
+# scan existing ecosystem.config.cjs files in /var/www/*/ for already-
+# assigned API ports and pick max + 1. The operator can override with
+# CAW_API_PORT.
+#
+# We read OUR own ecosystem files rather than scanning listening ports
+# because (a) it's deterministic across reboots and (b) it ignores ports
+# held by non-CAW processes.
+
+if [[ -z "${CAW_API_PORT:-}" ]]; then
+  highest=3999
+  for eco in /var/www/*/ecosystem.config.cjs; do
+    [[ -f "$eco" ]] || continue
+    # Skip the ecosystem file we're about to overwrite — its old port
+    # shouldn't constrain our new one.
+    [[ "$eco" == "$CAW_DIR/ecosystem.config.cjs" ]] && continue
+    # Match: PORT: 4001  or  PORT: "4001"
+    port=$(grep -oE '"?PORT"?\s*:\s*"?[0-9]+' "$eco" 2>/dev/null \
+      | grep -oE '[0-9]+' | head -1)
+    if [[ -n "$port" && "$port" -gt "$highest" ]]; then
+      highest=$port
+    fi
+  done
+  CAW_API_PORT=$((highest + 1))
+fi
+export CAW_API_PORT
+log "API port:          ${CAW_API_PORT}"
+
 # ---------- Infrastructure placement -----------------------------------------
 #
 # Decide BEFORE we apt-install anything how the operator wants to run the

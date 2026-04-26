@@ -252,14 +252,24 @@ function buildPm2Config(nodeType, config, installDir) {
   // unprivileged (the typical CLI install path), this is a no-op.
   const runAsUser = config.runAsUser || process.env.SUDO_USER || (process.getuid && process.getuid() === 0 ? 'caw' : undefined)
 
+  // Multiple CAW installs share one pm2 daemon, so app names need to be
+  // unique. Use the domain (or "default" for dirless installs) as a suffix
+  // so `pm2 list` reads cleanly: caw-server-test1.caw.social,
+  // caw-server-test2.caw.social, etc.
+  const suffix = config.domain || 'default'
+  const apiPort = config.apiPort || 4000
+
   // Main CAW server (all backend services run in one process)
   if (nodeType !== 'frontend-only') {
     apps.push({
-      name: 'caw-server',
+      name: `caw-server-${suffix}`,
       cwd: path.join(installDir, 'client'),
       script: 'node',
       args: '-r ./file-polyfill.js -r tsx/cjs programs/start.ts',
-      env: { NODE_ENV: 'production' },
+      // PORT is referenced by the install-side port scan and is the single
+      // source of truth for which port this install's API listens on.
+      // config.json's Api.port should match (we set both from config.apiPort).
+      env: { NODE_ENV: 'production', PORT: String(apiPort) },
       max_memory_restart: '1G',
       error_file: path.join(installDir, 'logs/caw-server-error.log'),
       out_file: path.join(installDir, 'logs/caw-server-out.log'),
@@ -277,7 +287,7 @@ function buildPm2Config(nodeType, config, installDir) {
     config.deployment !== 'production'
   if (runFrontendUnderPm2) {
     apps.push({
-      name: 'caw-frontend',
+      name: `caw-frontend-${suffix}`,
       cwd: path.join(installDir, 'client/src/services/FrontEnd'),
       script: 'npx',
       args: 'vite --host 0.0.0.0',

@@ -16,7 +16,18 @@ export async function collectInfraConfig(nodeType, ctx = {}) {
   const infraMode = process.env.CAW_INFRA_MODE || 'native'
   const useDocker = infraMode === 'native' ? 'local' : infraMode
 
-  let dbUrl = process.env.CAW_DB_URL || 'postgresql://postgres:postgres@127.0.0.1:5432/caw'
+  // Each install gets its own Postgres database so multiple CAW nodes can
+  // share one Postgres server. Derive the DB name from the domain (postgres
+  // identifier rules: lowercase, alphanumeric + underscore). Operators with
+  // their own existing DB override via CAW_DB_URL.
+  const domainSlug = (process.env.CAW_DOMAIN || 'default')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 50) // postgres identifiers are bounded; trim long subdomains
+  const defaultDbName = `caw_${domainSlug || 'default'}`
+
+  let dbUrl = process.env.CAW_DB_URL || `postgresql://postgres:postgres@127.0.0.1:5432/${defaultDbName}`
   let redisUrl = process.env.CAW_REDIS_URL || 'redis://127.0.0.1:6379'
   let elasticsearchNode = process.env.CAW_ES_URL || 'http://127.0.0.1:9200'
 
@@ -31,7 +42,7 @@ export async function collectInfraConfig(nodeType, ctx = {}) {
         mask: '*',
       },
     ])
-    dbUrl = `postgresql://postgres:${dbPassword}@127.0.0.1:5432/caw`
+    dbUrl = `postgresql://postgres:${dbPassword}@127.0.0.1:5432/${defaultDbName}`
   } else if (infraMode === 'existing') {
     section('Existing services')
     tipBlock([
