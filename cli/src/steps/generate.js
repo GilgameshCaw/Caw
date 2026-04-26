@@ -157,6 +157,12 @@ function buildEnvVars(nodeType, config) {
   env.REDIS_URL = config.redisUrl || 'redis://127.0.0.1:6379'
   env.ELASTICSEARCH_NODE = config.elasticsearchNode || 'http://127.0.0.1:9200'
 
+  // Per-install Elasticsearch index prefix. install.sh derives it from the
+  // domain so two installs don't collide on flat index names like "caws"
+  // and "users". The ES service still uses flat names today (backlog),
+  // but writing the var here means the eventual fix won't need a re-config.
+  if (process.env.CAW_ES_INDEX_PREFIX) env.ES_INDEX_PREFIX = process.env.CAW_ES_INDEX_PREFIX
+
   if (config.l2RpcUrl) env.L2_RPC_URL = config.l2RpcUrl
   if (config.l2RpcUrlHttp) env.L2_RPC_URL_HTTP = config.l2RpcUrlHttp
   if (config.l1RpcUrl) env.L1_RPC_URL = config.l1RpcUrl

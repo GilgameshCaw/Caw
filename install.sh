@@ -227,6 +227,54 @@ fi
 export CAW_API_PORT
 log "API port:          ${CAW_API_PORT}"
 
+# ---------- Redis logical DB (isolate multi-install state) -------------------
+#
+# Two CAW installs sharing one Redis can step on each other's keys —
+# pending-action queues, validator tx-staging, session tokens. Redis
+# offers 16 logical DBs by default (numbered 0–15); we pick the next free
+# one by scanning existing client/.env files. The operator can override
+# the whole REDIS_URL via CAW_REDIS_URL.
+
+if [[ -z "${CAW_REDIS_URL:-}" ]]; then
+  used_dbs=""
+  for env_file in /var/www/*/client/.env; do
+    [[ -f "$env_file" ]] || continue
+    [[ "$env_file" == "$CAW_DIR/client/.env" ]] && continue
+    # Match REDIS_URL=redis://...:6379/N  (optional /N at end).
+    db=$(grep -oE 'REDIS_URL=redis://[^[:space:]]+/[0-9]+' "$env_file" 2>/dev/null \
+      | grep -oE '/[0-9]+$' | tr -d '/')
+    [[ -n "$db" ]] && used_dbs="$used_dbs $db"
+  done
+  next_db=0
+  for n in 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+    if ! echo " $used_dbs " | grep -q " $n "; then
+      next_db=$n
+      break
+    fi
+  done
+  CAW_REDIS_URL="redis://127.0.0.1:6379/${next_db}"
+fi
+export CAW_REDIS_URL
+log "Redis URL:         ${CAW_REDIS_URL}"
+
+# ---------- Elasticsearch index prefix ---------------------------------------
+#
+# Today the ES service uses flat index names (caws, users, notifications) —
+# two installs sharing one ES cluster collide. Until ES indexing is fully
+# scoped (see backlog), expose a CAW_ES_INDEX_PREFIX env var; the prefix is
+# derived from the domain so it's stable per install.
+#
+# Note: the code that *reads* this var doesn't exist yet (ES service still
+# uses flat names). Setting it now lets the var land in .env so the
+# eventual fix doesn't need a re-config.
+
+if [[ -z "${CAW_ES_INDEX_PREFIX:-}" && -n "${CAW_DOMAIN:-}" ]]; then
+  # Sanitize: lowercase, replace non-alphanumeric with underscore, trim.
+  CAW_ES_INDEX_PREFIX=$(echo "$CAW_DOMAIN" | tr '[:upper:]' '[:lower:]' | tr -c 'a-z0-9' '_' | sed 's/^_*//;s/_*$//')
+fi
+export CAW_ES_INDEX_PREFIX
+[[ -n "${CAW_ES_INDEX_PREFIX:-}" ]] && log "ES index prefix:   ${CAW_ES_INDEX_PREFIX}"
+
 # ---------- Infrastructure placement -----------------------------------------
 #
 # Decide BEFORE we apt-install anything how the operator wants to run the
@@ -595,4 +643,5 @@ exec sudo -u "$CAW_USER" -H \
   CAW_CERT_PATH="${CAW_CERT_PATH:-}" \
   CAW_KEY_PATH="${CAW_KEY_PATH:-}" \
   CAW_API_PORT="${CAW_API_PORT:-}" \
+  CAW_ES_INDEX_PREFIX="${CAW_ES_INDEX_PREFIX:-}" \
   node "$CAW_DIR/cli/bin/caw.js" install --dir "$CAW_DIR"

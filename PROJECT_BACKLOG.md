@@ -266,6 +266,13 @@ The replication path was rewritten as the optimistic archive + trustless `CawCha
   - Don't touch this until there's a real driver (a client wanting to deploy to a non-Base storage chain). Indirection costs zero today; the abstraction is purely future-tense.
   - Same restructure unblocks the parallel "replication chain → archive contract address" map in `ValidatorService` (today there's one hardcoded `CAW_ACTIONS_ARCHIVE_ADDRESS`).
 
+- [ ] **Scope Elasticsearch indexes per install** — multi-install on shared ES cluster currently collides.
+  - Today `ElasticsearchService.ts` creates flat indexes: `caws`, `users`, `notifications`. Two CAW installs pointing at the same ES cluster (the common case for testnet + mainnet on one VPS) write to the same indexes — search results mix content from both.
+  - The CLI already writes `ES_INDEX_PREFIX` to `client/.env` (derived from the domain). Just nothing reads it yet.
+  - **Sketch:** add a `prefixedIndex(name: string)` helper inside `ElasticsearchService` that returns `${process.env.ES_INDEX_PREFIX || ''}${name}` (with a separator if prefix is set). Replace every literal `'caws'` / `'users'` / `'notifications'` with the helper. Same for the search-time queries elsewhere (`search.ts`, `notifications.ts`, etc).
+  - Backwards-compatible: empty prefix → flat names like today. Existing installs see no change until they set the env var.
+  - Estimate: ~1 hour. Mostly mechanical, but search the whole `client/src` for any place that hits ES by name to make sure nothing's missed.
+
 - [ ] **RPC fallback support (primary + secondary)** — graceful degradation when the paid RPC is throttled or down.
   - Today every backend service reads one URL from env (`L2_RPC_URL_HTTP`, `L1_RPC_URL`, etc.) with no failover. If the primary chokes, the indexer stalls and the validator stops submitting until someone restarts.
   - The CLI already detects-and-warns when the operator types a known public RPC, but we don't currently let them set a fallback to use as a safety net.
