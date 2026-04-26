@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 
 interface AvatarProps {
@@ -14,6 +14,11 @@ interface AvatarProps {
 const Avatar: React.FC<AvatarProps> = ({ src, alt = '', className = 'w-full h-full' }) => {
   const [broken, setBroken] = useState(false)
   const { isDark } = useTheme()
+
+  // Reset broken state when src changes — otherwise navigating from a user
+  // with a failing avatar to one with a working avatar leaves the silhouette
+  // in place (the component is reused, only props change).
+  useEffect(() => { setBroken(false) }, [src])
 
   if (broken) {
     return (
