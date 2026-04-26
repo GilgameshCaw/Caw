@@ -740,9 +740,11 @@ router.post('/', async (req, res) => {
             })
           ])
 
-          // Parse target caw from text: "tip:userId:cawonce"
+          // Parse target caw from plaintext (NOT data.text — that's the
+          // smltxt-compressed bytes signed for on-chain submission, and
+          // the literal "tip:" prefix only appears after decompression).
           let cawId: number | null = null
-          const parts = data.text.replace('tip:', '').split(':')
+          const parts = plaintext.replace('tip:', '').split(':')
           if (parts.length >= 2 && parts[0] && parts[1]) {
             const targetUserId = parseInt(parts[0])
             const targetCawonce = parseInt(parts[1])

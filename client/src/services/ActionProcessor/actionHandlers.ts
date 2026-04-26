@@ -8,13 +8,18 @@ import { countManager } from '../CountManager'
 import type { PrismaTransactionClient } from './types'
 
 /**
- * Helper function to find a caw by cawonce and user
+ * Helper function to find a caw by cawonce and user.
+ *
+ * Don't filter by action: every Caw row (CAW, RECAW/quote) is uniquely keyed
+ * by (userId, cawonce), and quotes are valid targets for replies, likes, and
+ * tips just like original posts — filtering to action='CAW' would silently
+ * miss them on the indexer and leave Tip.cawId / Reply.cawId / Like.cawId
+ * null forever for any interaction with a quote.
  */
 export async function findCawId(cawonce: number, userOnChain: number): Promise<number> {
   const uid = await findOrCreateUser(userOnChain)
-  const c = await prisma.caw.findFirst({
-    where: { userId: uid, action: 'CAW', cawonce: cawonce },
-    orderBy: { createdAt: 'asc' }
+  const c = await prisma.caw.findUnique({
+    where: { userId_cawonce: { userId: uid, cawonce } }
   })
   if (!c) throw new Error(`target caw not found ${uid} cawonce: ${cawonce}`)
   return c.id
