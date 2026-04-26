@@ -88,22 +88,33 @@ contract CawClientManager {
     return clients[clientId].withdrawFee;
   }
 
+  /// @dev True iff a client has been registered at this id. createClient sets
+  ///      the struct's `id` to the same nonzero clientId; an unregistered slot
+  ///      reads back as the zero struct so id == 0 => not registered.
+  function _clientExists(uint32 clientId) internal view returns (bool) {
+    return clients[clientId].id != 0;
+  }
+
   function getMintFeeAndAddress(uint32 clientId) public view returns (uint256, address) {
+    require(_clientExists(clientId), "Client does not exist");
     CawClient storage client = clients[clientId];
     return (client.mintFee, client.feeAddress);
   }
 
   function getAuthFeeAndAddress(uint32 clientId) public view returns (uint256, address) {
+    require(_clientExists(clientId), "Client does not exist");
     CawClient storage client = clients[clientId];
     return (client.authFee, client.feeAddress);
   }
 
   function getDepositFeeAndAddress(uint32 clientId) public view returns (uint256, address) {
+    require(_clientExists(clientId), "Client does not exist");
     CawClient storage client = clients[clientId];
     return (client.depositFee, client.feeAddress);
   }
 
   function getWithdrawFeeAndAddress(uint32 clientId) public view returns (uint256, address) {
+    require(_clientExists(clientId), "Client does not exist");
     CawClient storage client = clients[clientId];
     return (client.withdrawFee, client.feeAddress);
   }
