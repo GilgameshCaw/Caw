@@ -1,3 +1,11 @@
+// addresses.ts is a per-install artifact written by the CLI install step
+// (cli/src/steps/generate.js). Don't edit the real client/src/abi/addresses.ts
+// by hand — it'll be overwritten next time you run `caw install`. Look up
+// addresses in the canonical manifest at client/src/abi/deployments.ts
+// instead, then re-run install to regenerate addresses.ts for your client.
+//
+// This .example file is the snapshot at the moment the manifest model
+// was introduced. It's safe to delete in a future cleanup.
 export const WETH_ADDRESS = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2" as const;
 // Mainnet: USDC 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48, USDT 0xdAC17F958D2ee523a2206206994597C13D831ec7
 export const USDC_ADDRESS = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" as const;

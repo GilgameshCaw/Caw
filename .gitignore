@@ -79,3 +79,9 @@ yarn-error.log*
 # Redis append-only-file persistence (recreated on each redis-server start)
 *.aof
 
+# Per-install addresses.ts. Written by the CLI install step (resolves the
+# operator's chosen client to the right per-chain addresses from
+# client/src/abi/deployments.ts). The committed addresses.ts.example is the
+# pre-multi-chain snapshot; the canonical manifest lives in deployments.ts.
+client/src/abi/addresses.ts
+

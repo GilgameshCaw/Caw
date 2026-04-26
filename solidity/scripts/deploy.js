@@ -623,6 +623,70 @@ for (const L of L2_CHAIN_KEYS) {
 }
 
 // ============================================
+// DEPLOYMENTS.TS WRITER
+// ============================================
+//
+// Builds the per-env block string for client/src/abi/deployments.ts.
+// The block shape matches the file's hand-written initial content so the
+// regex replace stays simple. Per-chain contracts (CawActions et al) live
+// inside L1/L2/L2b sub-blocks indexed by abstract chain key.
+//
+// L1 contains everything L1-only (Profile, CCM, Minter, Marketplace, etc.)
+// PLUS the L1-side bypassLZ co-deployments (CawProfileL2_L1 → CawProfileL2,
+// CawActions_L1 → CawActions). That's why a client choosing L1 as their
+// storage chain still has CawActions to talk to.
+//
+// Each L2 in L2_CHAIN_KEYS contains the four per-chain roles. Empty strings
+// for not-yet-deployed contracts so the manifest stays well-formed.
+
+function buildDeploymentsBlock(env, addresses) {
+  const lines = [`  ${env}: {`];
+
+  // ----- L1 (always present) -----
+  const l1 = {
+    MintableCaw: addresses.MintableCaw,
+    CawProfile: addresses.CawProfile,
+    CawProfileL2: addresses.CawProfileL2_L1, // bypassLZ co-deployment on L1
+    CawClientManager: addresses.CawClientManager,
+    CawProfileMinter: addresses.CawProfileMinter,
+    CawProfileQuoter: addresses.CawProfileQuoter,
+    CawProfileMarketplace: addresses.CawProfileMarketplace,
+    CawProfileURI: addresses.CawProfileURI,
+    CawFontDataA: addresses.CawFontDataA,
+    CawFontDataB: addresses.CawFontDataB,
+    CawBuyAndBurn: addresses.CawBuyAndBurn,
+    MockSwapRouter: addresses.MockSwapRouter,
+    CawActions: addresses.CawActions_L1,
+  };
+  lines.push('    L1: {');
+  for (const [name, addr] of Object.entries(l1)) {
+    if (addr) lines.push(`      ${name}: '${addr}',`);
+  }
+  lines.push('    },');
+
+  // ----- Each L2 -----
+  for (const L of L2_CHAIN_KEYS) {
+    const block = {
+      CawProfileL2: addresses[`CawProfileL2_${L}`],
+      CawActions: addresses[`CawActions_${L}`],
+      CawActionsArchive: addresses[`CawActionsArchive_${L}`],
+      CawChallengeRelay: addresses[`CawChallengeRelay_${L}`],
+    };
+    // Skip the chain block entirely if nothing's deployed there yet
+    // (keeps the file tidy for partial deploys).
+    if (!Object.values(block).some(Boolean)) continue;
+    lines.push(`    ${L}: {`);
+    for (const [name, addr] of Object.entries(block)) {
+      if (addr) lines.push(`      ${name}: '${addr}',`);
+    }
+    lines.push('    },');
+  }
+
+  lines.push('  },');
+  return lines.join('\n');
+}
+
+// ============================================
 // DEPLOYER CLASS
 // ============================================
 
@@ -1293,39 +1357,31 @@ After deployment, ABIs are automatically regenerated for the frontend.
   deployer.printState();
   console.log('\nDeployment complete!');
 
-  // Update client addresses and regenerate ABIs
+  // Update client deployment manifest + regenerate ABIs
   if (!skipAbi) {
-    // Update addresses.ts with new deployment addresses
-    const addressesFile = path.join(__dirname, '../../client/src/abi/addresses.ts');
-    const addressMap = {
-      MintableCaw: 'CAW_ADDRESS',
-      CawProfile: 'CAW_NAMES_ADDRESS',
-      CawProfileQuoter: 'CAW_NAME_QUOTER_ADDRESS',
-      CawProfileMinter: 'CAW_NAMES_MINTER_ADDRESS',
-      CawProfileURI: 'URI_GENERATOR_ADDRESS',
-      CawClientManager: 'CLIENT_MANAGER_ADDRESS',
-      CawProfileL2_L2: 'CAW_NAMES_L2_ADDRESS',
-      CawProfileL2_L1: 'CAW_NAMES_L2_MAINNET_ADDRESS',
-      CawActions_L1: 'CAW_ACTIONS_MAINNET_ADDRESS',
-      CawActions_L2: 'CAW_ACTIONS_ADDRESS',
-      CawActionsArchive_L2b: 'CAW_ACTIONS_ARCHIVE_ADDRESS',
-      CawChallengeRelay_L2: 'CAW_CHALLENGE_RELAY_ADDRESS',
-      CawProfileMarketplace: 'CAW_NAME_MARKETPLACE_ADDRESS',
-    };
-
+    // Rewrite the env block in client/src/abi/deployments.ts. The CLI then
+    // reads from there + the operator's clientId to write a per-install
+    // addresses.ts. deploy.js never touches addresses.ts directly anymore.
+    const deploymentsFile = path.join(__dirname, '../../client/src/abi/deployments.ts');
     try {
-      let content = fs.readFileSync(addressesFile, 'utf8');
-      for (const [stateKey, constName] of Object.entries(addressMap)) {
-        const addr = deployer.state.addresses[stateKey];
-        if (addr) {
-          const regex = new RegExp(`(export const ${constName} = ['"])0x[a-fA-F0-9]+(['"])`);
-          content = content.replace(regex, `$1${addr}$2`);
-        }
+      const newBlock = buildDeploymentsBlock(deployer.env, deployer.state.addresses);
+      let content = fs.readFileSync(deploymentsFile, 'utf8');
+      // Match the entire `<env>: { ... },` block (the closing `},` at the
+      // env-level indent) and replace it. Anchored at the env name so other
+      // env blocks stay untouched.
+      const blockRegex = new RegExp(
+        `(  ${deployer.env}: \\{)[\\s\\S]*?(\\n  \\},)`,
+        'm'
+      );
+      if (blockRegex.test(content)) {
+        content = content.replace(blockRegex, newBlock);
+        fs.writeFileSync(deploymentsFile, content);
+        console.log(`\nUpdated ${deployer.env} block in client/src/abi/deployments.ts`);
+      } else {
+        console.warn(`\nCouldn't find ${deployer.env} block in deployments.ts; skipping update`);
       }
-      fs.writeFileSync(addressesFile, content);
-      console.log('\nUpdated client/src/abi/addresses.ts');
     } catch (e) {
-      console.warn('\nFailed to update addresses.ts:', e.message);
+      console.warn('\nFailed to update deployments.ts:', e.message);
     }
 
     // Update RawEventsGatherer startBlock in config.json if l2DeployBlock was recorded

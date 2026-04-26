@@ -78,7 +78,7 @@ program
       }
 
       // Step 5: Generate config files
-      generateConfig(nodeType, fullConfig, opts.dir)
+      await generateConfig(nodeType, fullConfig, opts.dir)
 
       // Step 6: Install dependencies + (production) build the frontend
       await runInstall(nodeType, fullConfig, opts.dir)
