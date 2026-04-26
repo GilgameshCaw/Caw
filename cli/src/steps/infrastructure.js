@@ -67,13 +67,13 @@ export async function collectInfraConfig(nodeType, ctx = {}) {
   }
 
   // Domain (for nodes that serve HTTP). install.sh asks for the domain
-  // before cloning and exports it as CAW_DOMAIN — use that as the default
-  // so the user doesn't get asked twice.
-  let domain = ''
+  // before cloning and exports it as CAW_DOMAIN. When set, take it as
+  // gospel — re-asking is friction. The only case we prompt is when the
+  // Node CLI is run standalone (without install.sh), e.g. local dev.
+  let domain = process.env.CAW_DOMAIN || ''
   let adminPassword = ''
-  const envDomain = process.env.CAW_DOMAIN || ''
 
-  if (['full', 'frontend-api', 'api-only'].includes(nodeType)) {
+  if (['full', 'frontend-api', 'api-only'].includes(nodeType) && !domain) {
     section('Domain & Access')
 
     const { hasDomain } = await inquirer.prompt([
@@ -81,8 +81,8 @@ export async function collectInfraConfig(nodeType, ctx = {}) {
         type: 'confirm',
         name: 'hasDomain',
         message: 'Do you have a domain name for this node?',
-        default: !!envDomain || true,
-      }
+        default: false,
+      },
     ])
 
     if (hasDomain) {
@@ -91,24 +91,34 @@ export async function collectInfraConfig(nodeType, ctx = {}) {
           type: 'input',
           name: 'domainInput',
           message: 'Domain name (e.g., caw.example.com):',
-          default: envDomain || undefined,
-          validate: (input) => /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(input) ? true : 'Enter a valid domain'
-        }
+          validate: (input) => /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(input) ? true : 'Enter a valid domain',
+        },
       ])
       domain = domainInput
     } else {
       console.log(dim('  You can set up a domain later with `caw domain`.'))
     }
+  }
 
-    // Admin password
+  // Admin password (for the admin dashboard). Asked whenever the node
+  // serves HTTP, regardless of how the domain was supplied.
+  if (['full', 'frontend-api', 'api-only'].includes(nodeType)) {
+    // If the domain came from install.sh we never opened a Domain section
+    // above; print a tiny acknowledgement so the operator knows we're
+    // using their answer without re-asking.
+    if (domain && process.env.CAW_DOMAIN) {
+      section('Domain & Access')
+      console.log(dim(`  Using domain ${domain} (from install.sh).`))
+    }
+
     const { adminPw } = await inquirer.prompt([
       {
         type: 'password',
         name: 'adminPw',
         message: 'Admin password (for the admin dashboard):',
         mask: '*',
-        validate: (input) => input.length >= 8 ? true : 'Password must be at least 8 characters'
-      }
+        validate: (input) => input.length >= 8 ? true : 'Password must be at least 8 characters',
+      },
     ])
     adminPassword = adminPw
   }
