@@ -134,10 +134,11 @@ async function fetchBadges(tokenId: number) {
     }
     const notifications = await prisma.notification.count({ where: notifWhere })
 
-    // Marketplace offers
+    // Marketplace offers — count every ACTIVE offer received. Drops only when
+    // the offer is accepted or cancelled, never on view.
     const user = await prisma.user.findUnique({
       where: { tokenId },
-      select: { address: true, lastViewedOffersAt: true },
+      select: { address: true },
     })
     let offers = 0
     if (user?.address) {
@@ -147,9 +148,9 @@ async function fetchBadges(tokenId: number) {
       })
       const tokenIds = ownedUsers.map(u => u.tokenId)
       if (tokenIds.length > 0) {
-        const offerWhere: any = { tokenId: { in: tokenIds }, status: 'ACTIVE' }
-        if (user.lastViewedOffersAt) offerWhere.createdAt = { gt: user.lastViewedOffersAt }
-        offers = await prisma.marketplaceOffer.count({ where: offerWhere })
+        offers = await prisma.marketplaceOffer.count({
+          where: { tokenId: { in: tokenIds }, status: 'ACTIVE' },
+        })
       }
     }
 

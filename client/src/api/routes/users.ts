@@ -146,7 +146,7 @@ router.get('/badges', requireAuth({ lookup: async (req) => Number(req.query.user
     const blockedIdsPromise = getBlockedUserIds(userId)
     const userPromise = prisma.user.findUnique({
       where: { tokenId: userId },
-      select: { address: true, lastViewedOffersAt: true },
+      select: { address: true },
     })
     const dmConversationsPromise = prisma.conversation.findMany({
       where: { participants: { some: { userId } } },
@@ -178,9 +178,12 @@ router.get('/badges', requireAuth({ lookup: async (req) => Number(req.query.user
       })
       const tokenIds = ownedUsers.map(u => u.tokenId)
       if (tokenIds.length > 0) {
-        const offerWhere: any = { tokenId: { in: tokenIds }, status: 'ACTIVE' }
-        if (user.lastViewedOffersAt) offerWhere.createdAt = { gt: user.lastViewedOffersAt }
-        offers = await prisma.marketplaceOffer.count({ where: offerWhere })
+        // Badge counts every ACTIVE offer, regardless of whether the user has
+        // viewed the My Offers tab. The count drops only when the offer is
+        // accepted or cancelled (status transitions out of ACTIVE).
+        offers = await prisma.marketplaceOffer.count({
+          where: { tokenId: { in: tokenIds }, status: 'ACTIVE' },
+        })
       }
     }
 

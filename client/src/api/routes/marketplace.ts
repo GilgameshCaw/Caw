@@ -465,7 +465,9 @@ router.post('/offers/:offerId/cancelled', async (req, res) => {
 
 /**
  * GET /api/marketplace/offers/unseen-count
- * Count of received offers created after the user's lastViewedOffersAt.
+ * Count of ACTIVE received offers. Stays non-zero while any offer is still
+ * pending — the badge only clears once each offer is accepted or cancelled
+ * (which transitions it out of ACTIVE). Endpoint name kept for FE compat.
  * Authenticated: requires session with the given userId.
  */
 router.get('/offers/unseen-count', requireAuth({ lookup: async (req) => Number(req.query.userId) || undefined }), async (req, res) => {
@@ -475,9 +477,9 @@ router.get('/offers/unseen-count', requireAuth({ lookup: async (req) => Number(r
 
     const user = await prisma.user.findUnique({
       where: { tokenId: userId },
-      select: { address: true, lastViewedOffersAt: true },
+      select: { address: true },
     })
-    if (!user) return res.json({ count: 0 })
+    if (!user?.address) return res.json({ count: 0 })
 
     // Find all tokenIds owned by this address
     const ownedUsers = await prisma.user.findMany({
@@ -488,12 +490,9 @@ router.get('/offers/unseen-count', requireAuth({ lookup: async (req) => Number(r
 
     if (tokenIds.length === 0) return res.json({ count: 0 })
 
-    const where: any = { tokenId: { in: tokenIds }, status: 'ACTIVE' }
-    if (user.lastViewedOffersAt) {
-      where.createdAt = { gt: user.lastViewedOffersAt }
-    }
-
-    const count = await prisma.marketplaceOffer.count({ where })
+    const count = await prisma.marketplaceOffer.count({
+      where: { tokenId: { in: tokenIds }, status: 'ACTIVE' },
+    })
     res.json({ count })
   } catch (err: any) {
     console.error('[marketplace] unseen count error:', err)

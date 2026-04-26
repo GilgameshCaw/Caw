@@ -46,7 +46,6 @@ const Marketplace: React.FC = () => {
   )
   const activeToken = useActiveToken()
   const offersUnreadCount = useOffersUnreadStore(s => s.unreadCount)
-  const setOffersUnread = useOffersUnreadStore(s => s.setUnreadCount)
   const [stats, setStats] = useState<{ totalUsers: number; activeListings: number; totalCawBurned: string } | null>(null)
   const navigate = useNavigate()
 
@@ -63,18 +62,10 @@ const Marketplace: React.FC = () => {
     }
   }, [activeTab])
 
-  // Mark offers as seen (server-side) when viewing the offers tab
-  useEffect(() => {
-    if (activeTab === 'offers') {
-      if (offersUnreadCount > 0) setOffersUnread(0)
-      if (activeToken?.tokenId) {
-        apiFetch('/api/marketplace/offers/mark-seen', {
-          method: 'POST',
-          body: JSON.stringify({ userId: activeToken.tokenId }),
-        }).catch(() => {})
-      }
-    }
-  }, [activeTab])
+  // The offers badge intentionally does NOT clear on view — it tracks the
+  // count of ACTIVE offers received and only drops when each offer is
+  // accepted or cancelled (server-side `status` transition). The next badge
+  // poll picks up the change automatically.
 
   useEffect(() => {
     Promise.all([
