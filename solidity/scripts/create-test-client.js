@@ -9,16 +9,15 @@
  * disjoint history.
  *
  * Usage:
- *   PRIVATE_KEYS=<deployerKey> node scripts/create-test-client.js [--name "..."]
+ *   node scripts/create-test-client.js [--name "..."]
  *
- * Env:
- *   PRIVATE_KEYS    Comma-separated; first key is used (must be the deployer
- *                   that owns the existing client / has ETH on local L1)
- *   RPC_DEV_L1      L1 RPC URL (default http://localhost:8545)
+ * Reads from client/.env (loaded automatically):
+ *   L1_RPC_URL_HTTP         L1 (Sepolia) RPC URL
+ *   VALIDATOR_PRIVATE_KEY   Wallet that owns the existing client / has ETH
  *
  * Defaults — same as the first client, only `name` differs:
- *   feeAddress         deployer
- *   storageChainEid    40161 (devL2)
+ *   feeAddress         the validator wallet
+ *   storageChainEid    40245 (Base Sepolia — same as client 1)
  *   withdrawFee        0.0015 ETH
  *   depositFee         0.0015 ETH
  *   authFee            0.0015 ETH
@@ -28,10 +27,11 @@
 const { ethers } = require('ethers')
 const fs = require('fs')
 const path = require('path')
+require('dotenv').config({ path: path.join(__dirname, '../../client/.env') })
 
-// Parameters mirror the first client (deploy.js phase 2 createClient step).
+// Parameters mirror the live client 1 (read from chain on Sepolia).
 const CLIENT_MANAGER_ADDRESS = '0x4524922C4614DBbb79FCcdce6d2c41CaF563FE04'
-const STORAGE_CHAIN_EID = 40161 // devL2 from deploy.js
+const STORAGE_CHAIN_EID = 40245 // Base Sepolia — matches client 1
 const FEE_WEI = '1500000000000000' // 0.0015 ETH per fee — same as client 1
 const ARTIFACT_PATH = path.join(
   __dirname,
@@ -48,15 +48,18 @@ function parseArgs(argv) {
 
 async function main() {
   const opts = parseArgs(process.argv)
-  const rpc = process.env.RPC_DEV_L1 || 'http://localhost:8545'
-  const keys = (process.env.PRIVATE_KEYS || '').split(',').filter(Boolean)
-  if (keys.length === 0) {
-    throw new Error('PRIVATE_KEYS env var required (comma-separated; first key is used)')
+  const rpc = process.env.L1_RPC_URL_HTTP
+  const key = process.env.VALIDATOR_PRIVATE_KEY
+  if (!rpc) {
+    throw new Error('L1_RPC_URL_HTTP missing — expected in client/.env')
+  }
+  if (!key) {
+    throw new Error('VALIDATOR_PRIVATE_KEY missing — expected in client/.env')
   }
 
   const artifact = JSON.parse(fs.readFileSync(ARTIFACT_PATH, 'utf8'))
   const provider = new ethers.JsonRpcProvider(rpc)
-  const wallet = new ethers.Wallet(keys[0], provider)
+  const wallet = new ethers.Wallet(key, provider)
   const manager = new ethers.Contract(CLIENT_MANAGER_ADDRESS, artifact.abi, wallet)
 
   const nextId = await manager.nextClientId()
@@ -81,20 +84,26 @@ async function main() {
   const receipt = await tx.wait()
   console.log(`Confirmed in block ${receipt.blockNumber}`)
 
-  // Pull the ClientCreated event for the new id (avoids race vs nextClientId
-  // if another tx slipped in between our read and our send).
-  const created = receipt.logs
-    .map(l => { try { return manager.interface.parseLog(l) } catch { return null } })
-    .find(p => p && p.name === 'ClientCreated')
-  if (created) {
-    const newId = Number(created.args[0])
-    console.log(`\nNew clientId: ${newId}`)
-    console.log(`Set this in your env to scope the new instance:`)
-    console.log(`  Server: CLIENT_ID=${newId}`)
-    console.log(`  Frontend: VITE_CLIENT_ID=${newId}`)
-  } else {
-    console.log('\nClientCreated event not found in receipt — check tx manually.')
+  // Read back the new id from chain. Using `nextClientId - 1` is robust even
+  // when our local ABI's event signature has drifted from the deployed
+  // contract (in which case parseLog on the receipt returns null). It also
+  // handles the case where another tx slipped in between our pre-tx read of
+  // nextId and our send — we still find *our* client by matching the
+  // expected name in a small backwards walk.
+  const newNext = await manager.nextClientId()
+  let newId = Number(newNext) - 1
+  // Confirm the client at that id is the one we just created.
+  for (let probe = newId; probe >= 1; probe--) {
+    const c = await manager.getClient(probe)
+    if (c.name === opts.name && c.ownerAddress.toLowerCase() === feeAddress.toLowerCase()) {
+      newId = probe
+      break
+    }
   }
+  console.log(`\nNew clientId: ${newId}`)
+  console.log(`Set this in your env to scope the new instance:`)
+  console.log(`  Server: CLIENT_ID=${newId}`)
+  console.log(`  Frontend: VITE_CLIENT_ID=${newId}`)
 }
 
 main().catch(e => { console.error(e); process.exit(1) })
