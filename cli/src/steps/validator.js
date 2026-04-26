@@ -109,25 +109,10 @@ export async function collectValidatorConfig(nodeType, installDir, ctx = {}) {
 
   const validatorId = await resolveValidatorByUsername(ctx)
 
-  // ----- Poll interval -----
-  console.log()
-  tipBlock([
-    'How often should the validator check the TxQueue (the queue of pending',
-    'user actions waiting to be submitted on-chain)?',
-    '',
-    `Lower = lower latency for users, more RPC calls. ${brand('3000ms')} is the default.`,
-    'Don\'t go below 1000ms — RPC providers will rate-limit you.',
-  ])
-
-  const { checkInterval } = await inquirer.prompt([
-    {
-      type: 'number',
-      name: 'checkInterval',
-      message: `TxQueue poll interval in ms ${dim('(default: 3000)')}:`,
-      default: 3000,
-      validate: (input) => input >= 1000 ? true : 'Minimum 1000ms',
-    },
-  ])
+  // TxQueue poll interval — operators don't have a meaningful answer to this
+  // and 3000ms is correct for >99% of installs. Hardcode with an env override
+  // (CAW_TX_POLL_INTERVAL) for the rare case someone genuinely needs to tune it.
+  const checkInterval = Number(process.env.CAW_TX_POLL_INTERVAL) || 3000
 
   return { validatorPrivateKey: privateKey, validatorId, checkInterval }
 }
