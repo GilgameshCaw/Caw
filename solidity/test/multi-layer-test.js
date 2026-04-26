@@ -1230,125 +1230,11 @@ contract('CawProfiles', function(accounts, x) {
 
     console.log("TOTAL GAS:", totalGas);
 
-    // Test replication destination management on CawClientManager
-    console.log("---");
-    console.log("Testing replication destination management");
-
-    // Create a new test client owned by accounts[0] for replication testing
-    var testClientTx = await clientManager.createClient("Replication Test", accounts[0], l2, 1, 1, 1, 1);
-    var testClientId = testClientTx.logs[0].args.clientId.toNumber();
-    console.log("Created test client ID:", testClientId);
-
-    // Verify the client is owned by accounts[0]
-    var testClient = await clientManager.getClient(testClientId);
-    console.log("Test client owner:", testClient.ownerAddress);
-    expect(testClient.ownerAddress).to.equal(accounts[0]);
-
-    // Add a replication destination to the test client
-    var mockArchiveEid = 40231; // Arbitrum Sepolia
-    var mockArchiveAddress = '0x1234567890123456789012345678901234567890';
-    await clientManager.addReplication(testClientId, mockArchiveEid, { from: accounts[0] });
-
-    // Verify replication was added
-    var replications = await clientManager.getReplications(testClientId);
-    console.log("Test client replications:", replications);
-    expect(replications.length).to.equal(1);
-    expect(Number(replications[0].eid)).to.equal(mockArchiveEid);
-
-    // Add a second replication destination
-    var secondArchiveEid = 30110; // Arbitrum mainnet
-    await clientManager.addReplication(testClientId, secondArchiveEid, { from: accounts[0] });
-
-    var updatedReplications = await clientManager.getReplications(testClientId);
-    console.log("Test client replications after adding second:", updatedReplications);
-    expect(updatedReplications.length).to.equal(2);
-
-    // Test removing a replication destination
-    await clientManager.removeReplication(testClientId, mockArchiveEid, { from: accounts[0] });
-    var afterRemoval = await clientManager.getReplications(testClientId);
-    console.log("Test client replications after removal:", afterRemoval);
-    expect(afterRemoval.length).to.equal(1);
-    expect(Number(afterRemoval[0].eid)).to.equal(secondArchiveEid);
-
-    // Test that non-owner cannot add replication
-    var shouldFail = false;
-    try {
-      await clientManager.addReplication(testClientId, 12345, { from: accounts[1] });
-    } catch (e) {
-      shouldFail = true;
-      var errorMsg = e.reason || e.message || '';
-      expect(errorMsg).to.include('Not the owner');
-    }
-    expect(shouldFail).to.equal(true, "Non-owner should not be able to add replication");
-
-    // Test that non-owner cannot remove replication
-    shouldFail = false;
-    try {
-      await clientManager.removeReplication(testClientId, secondArchiveEid, { from: accounts[1] });
-    } catch (e) {
-      shouldFail = true;
-      var errorMsg = e.reason || e.message || '';
-      expect(errorMsg).to.include('Not the owner');
-    }
-    expect(shouldFail).to.equal(true, "Non-owner should not be able to remove replication");
-
-    // Test setReplicationEnabled
-    console.log("Testing setReplicationEnabled...");
-
-    // Initially should be enabled (since we added replications)
-    var isEnabled = await clientManager.clientReplicationEnabled(testClientId);
-    expect(isEnabled).to.equal(true);
-
-    // Disable replication
-    await clientManager.setReplicationEnabled(testClientId, false, { from: accounts[0] });
-    isEnabled = await clientManager.clientReplicationEnabled(testClientId);
-    expect(isEnabled).to.equal(false);
-    console.log("Replication disabled for client", testClientId);
-
-    // Re-enable replication
-    await clientManager.setReplicationEnabled(testClientId, true, { from: accounts[0] });
-    isEnabled = await clientManager.clientReplicationEnabled(testClientId);
-    expect(isEnabled).to.equal(true);
-    console.log("Replication re-enabled for client", testClientId);
-
-    // Non-owner should not be able to toggle replication
-    shouldFail = false;
-    try {
-      await clientManager.setReplicationEnabled(testClientId, false, { from: accounts[1] });
-    } catch (e) {
-      shouldFail = true;
-      var errorMsg = e.reason || e.message || '';
-      expect(errorMsg).to.include('Not the owner');
-    }
-    expect(shouldFail).to.equal(true, "Non-owner should not be able to toggle replication");
-
-    // Test duplicate replication prevention
-    console.log("Testing duplicate replication prevention...");
-    var duplicateEid = 55555;
-    var duplicateAddr = '0x5555555555555555555555555555555555555555';
-
-    // Add replication
-    await clientManager.addReplication(testClientId, duplicateEid, { from: accounts[0] });
-    var replicationsBefore = await clientManager.getReplications(testClientId);
-    var countBefore = replicationsBefore.length;
-
-    // Try to add the same eid again (should fail with "Replication chain already added")
-    shouldFail = false;
-    try {
-      await clientManager.addReplication(testClientId, duplicateEid, { from: accounts[0] });
-    } catch (e) {
-      shouldFail = true;
-      var errorMsg = e.reason || e.message || '';
-      expect(errorMsg).to.include('Replication chain already added');
-    }
-    expect(shouldFail).to.equal(true, "Should not allow duplicate replication eid");
-
-    // Count should remain the same
-    var replicationsAfter = await clientManager.getReplications(testClientId);
-    expect(replicationsAfter.length).to.equal(countBefore, "Should not create duplicate replication");
-    console.log("Duplicate prevention works correctly");
-
-    console.log("Replication destination tests passed!");
+    // Replication-destination management used to live on CawClientManager
+    // (addReplication / removeReplication / setReplicationEnabled). That
+    // surface was removed: replication targets are now per-validator env
+    // config (REPLICATE_CLIENT_IDS), not chain state. Tests for the old
+    // surface were deleted.
 
   });
 
@@ -1392,7 +1278,6 @@ contract("CawProfile - Transfer & Replication Gas", function(accounts) {
     await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
 
     await localClientManager.createClient("Local Test", accounts[0], l2, 1, 1, 1, 1);
-    await localClientManager.setCawProfile(localCawProfiles.address);
 
     localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address);
     await localCawProfiles.setMinter(localMinter.address);
@@ -1412,21 +1297,6 @@ contract("CawProfile - Transfer & Replication Gas", function(accounts) {
     });
 
     console.log("Setup complete - testuser minted as token 1");
-  });
-
-  it("should return parameterized gas for setClientChainsSelector", async function() {
-    this.timeout(60000);
-
-    var selector = await localCawProfiles.setClientChainsSelector();
-    // 150_000 + 25_000 * n — sized from scripts/measure-gas.js + margin
-    var gas0 = await localCawProfiles.gasLimitFor(selector, 0);
-    var gas1 = await localCawProfiles.gasLimitFor(selector, 1);
-    var gas5 = await localCawProfiles.gasLimitFor(selector, 5);
-    expect(gas0.toString()).to.equal('150000');
-    expect(gas1.toString()).to.equal('175000');
-    expect(gas5.toString()).to.equal('275000');
-
-    console.log("setClientChains parameterized gas test passed");
   });
 
   it("should allow owner to call transferAndSync", async function() {
@@ -1608,7 +1478,6 @@ contract("CawProfileMinter - mintAndDeposit", function(accounts) {
 
     // Client with fees: mint=1, deposit=1, auth=1, withdraw=1
     await localClientManager.createClient("Test Client", accounts[0], l2, 1, 1, 1, 1);
-    await localClientManager.setCawProfile(localCawProfiles.address);
 
     localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address);
     await localCawProfiles.setMinter(localMinter.address);
@@ -1753,7 +1622,6 @@ contract("CawProfile - depositFor", function(accounts) {
 
     // Client with fees: mint=1, deposit=1, auth=1, withdraw=1
     await localClientManager.createClient("Test Client", accounts[0], l2, 1, 1, 1, 1);
-    await localClientManager.setCawProfile(localCawProfiles.address);
 
     localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address);
     await localCawProfiles.setMinter(localMinter.address);
@@ -1961,7 +1829,6 @@ contract("CawProfile - locked withdraw fee + fee withdrawal", function(accounts)
 
     // Create client with the fee mock as feeAddress, so we can test contract recipients receiving fees
     await localClientManager.createClient("LockedFeeClient", feeRecipientMock.address, l2, INITIAL_WITHDRAW_FEE, DEPOSIT_FEE, AUTH_FEE, MINT_FEE);
-    await localClientManager.setCawProfile(localCawProfiles.address);
 
     localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address);
     await localCawProfiles.setMinter(localMinter.address);
@@ -2310,7 +2177,6 @@ contract("CawProfile - Buy and Burn", function(accounts) {
 
     // Client with meaningful fees — feeAddress = accounts[0]
     await localClientManager.createClient("BuyBurn Client", accounts[0], l2, WITHDRAW_FEE, DEPOSIT_FEE, AUTH_FEE, MINT_FEE);
-    await localClientManager.setCawProfile(localCawProfiles.address);
 
     localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address);
     await localCawProfiles.setMinter(localMinter.address);

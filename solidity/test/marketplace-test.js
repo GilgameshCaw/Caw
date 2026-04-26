@@ -400,10 +400,12 @@ contract("CawProfileMarketplace", (accounts) => {
       truffleAssert.eventEmitted(tx, 'ListingCancelled');
     });
 
-    it("should allow cancelling English auction WITH bids and refund the bidder", async () => {
+    it("should allow cancelling English auction WITH bids; bidder is credited via pendingReturns", async () => {
       // Create a fresh auction on tokenId2, place a bid, then have the seller cancel.
-      // Bidder must receive their full bid back; listing must become inactive.
-      // This is the proactive equivalent of reclaimBid — no NFT-transfer workaround needed.
+      // Listing must become inactive and the bidder's bid must show up in
+      // pendingReturns (pull-pattern refund, see CawProfileMarketplace:cancelListing).
+      // We use pull instead of push so a malicious bidder contract whose receive()
+      // reverts can't block the seller from cancelling.
       const minBid = web3.utils.toWei("0.5", "ether");
       await marketplace.createListing(
         tokenId2, 2, "0x0000000000000000000000000000000000000000",
@@ -414,13 +416,26 @@ contract("CawProfileMarketplace", (accounts) => {
       const bidAmount = web3.utils.toWei("0.6", "ether");
       await marketplace.placeBid(lid, { from: bidder1, value: bidAmount });
 
-      const bidderBalBefore = BigInt(await web3.eth.getBalance(bidder1));
       const tx = await marketplace.cancelListing(lid, { from: seller });
       truffleAssert.eventEmitted(tx, 'BidReclaimed');
       truffleAssert.eventEmitted(tx, 'ListingCancelled');
 
+      // Bid was pull-credited (not pushed) — pendingReturns holds it now.
+      const credited = await marketplace.pendingReturns(bidder1, lid);
+      assert.equal(credited.toString(), BigInt(bidAmount).toString());
+
+      // The bidder withdraws and the funds (minus gas) finally land in their wallet.
+      const bidderBalBefore = BigInt(await web3.eth.getBalance(bidder1));
+      const wTx = await marketplace.withdrawBid(lid, { from: bidder1 });
+      const wReceipt = await web3.eth.getTransactionReceipt(wTx.tx);
+      const wTxData = await web3.eth.getTransaction(wTx.tx);
+      const gasCost = BigInt(wReceipt.gasUsed) * BigInt(wTxData.gasPrice);
       const bidderBalAfter = BigInt(await web3.eth.getBalance(bidder1));
-      assert.equal((bidderBalAfter - bidderBalBefore).toString(), BigInt(bidAmount).toString());
+      assert.equal((bidderBalAfter - bidderBalBefore + gasCost).toString(), BigInt(bidAmount).toString());
+
+      // pendingReturns is now zero
+      const remaining = await marketplace.pendingReturns(bidder1, lid);
+      assert.equal(remaining.toString(), '0');
 
       const listing = await marketplace.listings(lid);
       assert.equal(listing.active, false);
@@ -587,16 +602,23 @@ contract("CawProfileMarketplace", (accounts) => {
         marketplace.settleAuction(reclaimAuctionId)
       );
 
-      // Bidder reclaims their bid
-      const balBefore = BigInt(await web3.eth.getBalance(bidder1));
+      // Bidder reclaims their bid (pull pattern — credits pendingReturns).
       const tx = await marketplace.reclaimBid(reclaimAuctionId, { from: bidder1 });
-      const balAfter = BigInt(await web3.eth.getBalance(bidder1));
-
       truffleAssert.eventEmitted(tx, 'BidReclaimed', (ev) => {
         return ev.bidder === bidder1 && ev.amount.toString() === bid;
       });
 
-      assert(balAfter > balBefore, "Bidder should receive refund");
+      const credited = await marketplace.pendingReturns(bidder1, reclaimAuctionId);
+      assert.equal(credited.toString(), bid, "Bidder should be credited via pendingReturns");
+
+      // Bidder withdraws — funds (minus gas) finally land in their wallet.
+      const balBefore = BigInt(await web3.eth.getBalance(bidder1));
+      const wTx = await marketplace.withdrawBid(reclaimAuctionId, { from: bidder1 });
+      const wReceipt = await web3.eth.getTransactionReceipt(wTx.tx);
+      const wTxData = await web3.eth.getTransaction(wTx.tx);
+      const gasCost = BigInt(wReceipt.gasUsed) * BigInt(wTxData.gasPrice);
+      const balAfter = BigInt(await web3.eth.getBalance(bidder1));
+      assert.equal((balAfter - balBefore + gasCost).toString(), bid);
 
       // Listing should be inactive
       const listing = await marketplace.listings(reclaimAuctionId);
@@ -644,12 +666,12 @@ contract("CawProfileMarketplace", (accounts) => {
       // Transfer NFT away
       await cawProfiles.transferFrom(seller, accounts[7], tokenId2, { from: seller });
 
-      // Anyone (accounts[5]) can call reclaimBid
-      const bidderBalBefore = BigInt(await web3.eth.getBalance(bidder2));
+      // Anyone (accounts[5]) can call reclaimBid; bid is credited to the original
+      // bidder via pendingReturns regardless of who called.
+      const bid = web3.utils.toWei("0.2", "ether");
       await marketplace.reclaimBid(lid, { from: accounts[5] });
-      const bidderBalAfter = BigInt(await web3.eth.getBalance(bidder2));
-
-      assert(bidderBalAfter > bidderBalBefore, "Bidder should receive refund even when called by third party");
+      const credited = await marketplace.pendingReturns(bidder2, lid);
+      assert.equal(credited.toString(), bid, "Bidder should be credited even when third party reclaimed");
 
       // Transfer back
       await cawProfiles.transferFrom(accounts[7], seller, tokenId2, { from: accounts[7] });
@@ -669,16 +691,19 @@ contract("CawProfileMarketplace", (accounts) => {
       await paymentToken.approve(marketplace.address, minBid, { from: bidder1 });
       await marketplace.placeBidWithToken(lid, minBid, { from: bidder1 });
 
-      const bidderBalBefore = BigInt((await paymentToken.balanceOf(bidder1)).toString());
-
       // Seller transfers away
       await cawProfiles.transferFrom(seller, accounts[7], tokenId2, { from: seller });
 
-      // Reclaim
+      // Reclaim — credits pendingReturns (pull pattern, same as ETH path).
       await marketplace.reclaimBid(lid, { from: bidder1 });
+      const credited = await marketplace.pendingReturns(bidder1, lid);
+      assert.equal(credited.toString(), minBid, "Bidder should be credited ERC20 amount via pendingReturns");
 
+      // Withdraw to actually move the tokens.
+      const bidderBalBefore = BigInt((await paymentToken.balanceOf(bidder1)).toString());
+      await marketplace.withdrawBid(lid, { from: bidder1 });
       const bidderBalAfter = BigInt((await paymentToken.balanceOf(bidder1)).toString());
-      assert(bidderBalAfter > bidderBalBefore, "Bidder should get ERC20 refund");
+      assert.equal((bidderBalAfter - bidderBalBefore).toString(), minBid, "Bidder should receive ERC20 refund");
 
       // Transfer back
       await cawProfiles.transferFrom(accounts[7], seller, tokenId2, { from: accounts[7] });

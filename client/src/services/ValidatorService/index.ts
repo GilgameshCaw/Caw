@@ -2429,11 +2429,19 @@ console.log("succeededKeys", succeededKeys)
 
         // 1. Find clients needing replication FIRST — if none, nothing to do
         //    and we shouldn't prod the operator about stake either.
-        const clients = await prisma.client.findMany({
-          where: { replicationEnabled: true, replicationCount: { gt: 0 } },
-          select: { id: true }
-        })
-        if (clients.length === 0) return
+        //
+        //    Per-validator config via REPLICATE_CLIENT_IDS env (comma-separated
+        //    list of client IDs this validator replicates). Replaces the old
+        //    on-chain CCM replication registry — operators decide independently
+        //    which clients they archive, and the chain doesn't need to know.
+        const replicateClientIds = (process.env.REPLICATE_CLIENT_IDS || '')
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean)
+          .map(s => Number(s))
+          .filter(n => Number.isFinite(n) && n > 0)
+        if (replicateClientIds.length === 0) return
+        const clients = replicateClientIds.map(id => ({ id }))
 
         // 2. Check stake. Auto-restake is OFF BY DEFAULT: a stake drop during
         //    live operation almost always means a slash — silently topping

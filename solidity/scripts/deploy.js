@@ -481,26 +481,6 @@ const LINKING_STEPS = [
       return current !== '0x0000000000000000000000000000000000000000';
     },
   },
-  {
-    name: 'Set CawProfile on ClientManager',
-    chain: 'L1',
-    phase: 2,
-    contract: 'CawClientManager',
-    method: 'setCawProfile',
-    args: (state) => [
-      state.addresses.CawProfile,
-    ],
-    condition: (state) => state.addresses.CawClientManager && state.addresses.CawProfile,
-    skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawClientManager');
-      if (!contract) return false;
-      try {
-        const current = await contract.cawProfile();
-        return current !== '0x0000000000000000000000000000000000000000';
-      } catch { return false; }
-    },
-  },
-
   // Phase 3 linking (L2 - Base Sepolia)
   {
     name: 'Set L1 peer on CawProfileL2_L2',
@@ -598,80 +578,8 @@ const LINKING_STEPS = [
     },
   },
 
-  // Client replication registry. `CawClientManager.addReplication` records each
-  // destination chain on L1 and emits `ClientChainsSet` on L2 via LayerZero so
-  // indexers pick up the config. The new optimistic archive doesn't gate on this
-  // registry, but it's load-bearing metadata for the multi-chain replication
-  // roadmap and for any L2-side indexer.
-  // Register client 1's replication destinations. Each addReplication call fires
-  // a single L1 → L2-storage LZ message with the updated chain list so indexers
-  // on L2 see the change. msg.value funds that LZ message.
-  {
-    name: 'Add replication for client 1 → L2b (archive chain)',
-    chain: 'L1',
-    phase: 5,
-    contract: 'CawClientManager',
-    method: 'addReplication',
-    args: (state, chainConfig) => [
-      1, // clientId
-      CHAINS[chainConfig.env + 'L2b'].lzEid,
-    ],
-    condition: (state) => state.addresses.CawClientManager
-      && state.addresses.CawActionsArchive_L2b
-      && state.addresses.CawProfile,
-    skipIf: async (state, deployer, chainConfig) => {
-      const cm = deployer.getContract('CawClientManager');
-      if (!cm) return false;
-      const l2bEid = CHAINS[chainConfig.env + 'L2b'].lzEid;
-      try {
-        const eids = await cm.getClientChainEids(1);
-        return eids.map(e => Number(e)).includes(l2bEid);
-      } catch { return false; }
-    },
-    overrides: async (state, deployer, chainConfig) => {
-      const quoter = deployer.getContract('CawProfileQuoter');
-      if (!quoter) return { value: ethers.parseEther('0.0002') };
-      try {
-        const l2bEid = CHAINS[chainConfig.env + 'L2b'].lzEid;
-        const l2Eid = CHAINS[chainConfig.env + 'L2'].lzEid;
-        const quote = await quoter.syncReplicationQuote(1, [l2bEid], l2Eid, false);
-        return { value: (quote.nativeFee * 120n) / 100n };
-      } catch {
-        return { value: ethers.parseEther('0.0002') };
-      }
-    },
-  },
-  {
-    name: 'Add replication for client 1 → L2 (storage chain)',
-    chain: 'L1',
-    phase: 5,
-    contract: 'CawClientManager',
-    method: 'addReplication',
-    args: (state, chainConfig) => [1, CHAINS[chainConfig.env + 'L2'].lzEid],
-    condition: (state) => state.addresses.CawClientManager
-      && state.addresses.CawActions_L2
-      && state.addresses.CawProfile,
-    skipIf: async (state, deployer, chainConfig) => {
-      const cm = deployer.getContract('CawClientManager');
-      if (!cm) return false;
-      const l2Eid = CHAINS[chainConfig.env + 'L2'].lzEid;
-      try {
-        const eids = await cm.getClientChainEids(1);
-        return eids.map(e => Number(e)).includes(l2Eid);
-      } catch { return false; }
-    },
-    overrides: async (state, deployer, chainConfig) => {
-      const quoter = deployer.getContract('CawProfileQuoter');
-      if (!quoter) return { value: ethers.parseEther('0.0002') };
-      try {
-        const l2Eid = CHAINS[chainConfig.env + 'L2'].lzEid;
-        const quote = await quoter.syncReplicationQuote(1, [l2Eid], l2Eid, false);
-        return { value: (quote.nativeFee * 120n) / 100n };
-      } catch {
-        return { value: ethers.parseEther('0.0002') };
-      }
-    },
-  },
+  // Replication targets used to be on-chain (CCM.addReplication + LZ push to L2).
+  // That's gone — REPLICATE_CLIENT_IDS env on each validator is the source of truth.
 
   // Phase 5: (was: marketplace payment-token whitelist via setAllowedPaymentToken)
   // The marketplace no longer has an admin. Allowed ERC20 payment tokens are

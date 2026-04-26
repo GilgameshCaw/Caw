@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "./OnlyOnce.sol";
-
 struct CawClient {
   uint32 id;
   uint32 storageChainEid; // The L2 chain where this client's actions are processed
@@ -20,46 +17,23 @@ struct CawClient {
   uint256 creationBlock;
 }
 
-/// @notice Replication destination: chain ID + contract address
-struct ReplicationDestination {
-  address target;  // Contract address on that chain (e.g., CawActionsArchive)
-  uint32 eid;      // LayerZero endpoint ID
-}
-
-/// @notice Interface for CawProfile's cross-chain sync functions.
-/// @dev Quote functions live on CawProfileQuoter — call them directly from off-chain.
-interface ICawProfile {
-  function syncReplicationInternal(uint32 clientId, uint32[] calldata destEids, uint32 lzDestId) external payable;
-}
-
 /**
  * @title CawClientManager
- * @notice Manages client configuration including fees and replication destinations.
- * @dev Deployed on L1. This is a simple registry - cross-chain messaging is handled by CawProfile.
- *      Replication config changes are automatically synced to L2 via CawProfile's LayerZero connection.
+ * @notice Registry of clients and their per-instance API endpoints.
+ * @dev Replication destinations used to live here too — pushed to L2 over LayerZero
+ *      via CawProfile. That is gone. Per-validator replication targets are now
+ *      configuration on the validator (REPLICATE_CLIENT_IDS env), not chain state.
+ *      The on-chain part is just identity, fees, owner, storageChainEid, and
+ *      instance registry.
  */
-contract CawClientManager is Ownable, OnlyOnce {
+contract CawClientManager {
 
   address public immutable buyAndBurnAddress;
-
-  /// @notice The CawProfile contract used for L1->L2 sync
-  ICawProfile public cawProfile;
 
   uint32 public nextClientId = 1;
   mapping(uint32 => CawClient) public clients;
 
-  /// @notice Replication destinations configured for each client.
-  /// @dev Maximum 8 replication destinations per client.
-  mapping(uint32 => ReplicationDestination[]) public clientReplications;
-
-  /// @notice Whether replication is enabled for a client
-  mapping(uint32 => bool) public clientReplicationEnabled;
-
   event ClientCreated(uint32 indexed clientId, CawClient client);
-  event ClientReplicationAdded(uint32 indexed clientId, uint32 indexed eid, address target);
-  event ClientReplicationRemoved(uint32 indexed clientId, uint32 indexed eid);
-  event ClientReplicationEnabledChanged(uint32 indexed clientId, bool enabled);
-  event CawProfileSet(address indexed cawProfile);
 
   // ============================================
   // INSTANCE REGISTRY
@@ -79,20 +53,6 @@ contract CawClientManager is Ownable, OnlyOnce {
 
   constructor(address _buyAndBurn) {
     buyAndBurnAddress = _buyAndBurn;
-  }
-
-  /**
-   * @notice Set the CawProfile contract address. Owner-only, one-shot.
-   * @param _cawProfile The CawProfile contract address
-   */
-  function setCawProfile(address _cawProfile)
-    external
-    onlyOwner
-    onlyOnce(keccak256("setCawProfile"))
-  {
-    require(_cawProfile != address(0), "Zero address");
-    cawProfile = ICawProfile(_cawProfile);
-    emit CawProfileSet(_cawProfile);
   }
 
   modifier onlyClientOwner(uint32 clientId) {
@@ -236,6 +196,10 @@ contract CawClientManager is Ownable, OnlyOnce {
     clients[clientId].feeAddress = feeAddress;
   }
 
+  function getStorageChainEid(uint32 clientId) public view returns (uint32) {
+    return clients[clientId].storageChainEid;
+  }
+
   // ============================================
   // INSTANCE MANAGEMENT
   // ============================================
@@ -289,101 +253,4 @@ contract CawClientManager is Ownable, OnlyOnce {
     instanceActive[instanceId] = true;
     emit InstanceActivated(instanceId);
   }
-
-  // ============================================
-  // REPLICATION CONFIG MANAGEMENT
-  // ============================================
-  // Note: These functions only update local state. The CawProfile contract
-  // is responsible for syncing changes to L2 via LayerZero.
-
-  /**
-   * @notice Add a replication destination for a client.
-   * @dev Records the destination chain on L1 and syncs the updated chain list to
-   *      L2 via CawProfile's LayerZero peer; CawProfileL2 then emits ClientChainsSet
-   *      for indexers. Requires msg.value for LayerZero fees.
-   * @param clientId The ID of the client.
-   * @param eid The LayerZero endpoint ID of the destination chain.
-   */
-  /// @param clientId  The ID of the client.
-  /// @param eid       LZ endpoint ID of the destination chain.
-  function addReplication(uint32 clientId, uint32 eid) public payable onlyClientOwner(clientId) {
-    ReplicationDestination[] storage replications = clientReplications[clientId];
-    require(replications.length < 8, "Maximum 8 replication destinations");
-
-    for (uint i = 0; i < replications.length; i++)
-      require(replications[i].eid != eid, "Replication chain already added");
-
-    replications.push(ReplicationDestination({ target: address(0), eid: eid }));
-    clientReplicationEnabled[clientId] = true;
-    emit ClientReplicationAdded(clientId, eid, address(0));
-
-    if (address(cawProfile) != address(0)) {
-      uint32 storageEid = clients[clientId].storageChainEid;
-      cawProfile.syncReplicationInternal{value: msg.value}(clientId, getClientChainEids(clientId), storageEid);
-    }
-  }
-
-  /**
-   * @notice Remove a replication destination from a client.
-   * @dev Automatically syncs updated chain list to L2 via CawProfile. Requires msg.value for LayerZero fees.
-   */
-  function removeReplication(uint32 clientId, uint32 eid) public payable onlyClientOwner(clientId) {
-    ReplicationDestination[] storage replications = clientReplications[clientId];
-    for (uint i = 0; i < replications.length; i++) {
-      if (replications[i].eid == eid) {
-        replications[i] = replications[replications.length - 1];
-        replications.pop();
-
-        emit ClientReplicationRemoved(clientId, eid);
-
-        if (address(cawProfile) != address(0)) {
-          uint32 storageEid = clients[clientId].storageChainEid;
-          cawProfile.syncReplicationInternal{value: msg.value}(clientId, getClientChainEids(clientId), storageEid);
-        }
-        return;
-      }
-    }
-    revert("Replication destination not found");
-  }
-
-  /**
-   * @notice Enable or disable replication for a client.
-   */
-  function setReplicationEnabled(uint32 clientId, bool enabled) public onlyClientOwner(clientId) {
-    clientReplicationEnabled[clientId] = enabled;
-    emit ClientReplicationEnabledChanged(clientId, enabled);
-  }
-
-  /// @notice Get all replication destinations for a client.
-  function getReplications(uint32 clientId) public view returns (ReplicationDestination[] memory) {
-    if (!clientReplicationEnabled[clientId]) return new ReplicationDestination[](0);
-    return clientReplications[clientId];
-  }
-
-  /// @notice Get the number of replication destinations for a client.
-  function getReplicationCount(uint32 clientId) public view returns (uint256) {
-    if (!clientReplicationEnabled[clientId]) return 0;
-    return clientReplications[clientId].length;
-  }
-
-  /// @notice Get all chain EIDs for a client's replication destinations.
-  function getClientChainEids(uint32 clientId) public view returns (uint32[] memory) {
-    ReplicationDestination[] storage replications = clientReplications[clientId];
-    uint32[] memory eids = new uint32[](replications.length);
-    for (uint i = 0; i < replications.length; i++) {
-      eids[i] = replications[i].eid;
-    }
-    return eids;
-  }
-
-  function getStorageChainEid(uint32 clientId) public view returns (uint32) {
-    return clients[clientId].storageChainEid;
-  }
-
-  /// @notice Accept ETH refunds from LayerZero. When `addReplication`/`removeReplication` forwards
-  /// `msg.value` to `CawProfile.syncReplicationInternal`, the LZ refund address ends up being this
-  /// contract (since CawProfile uses `payable(msg.sender)` for refunds, and msg.sender at the LZ
-  /// boundary is this contract). Without `receive()`, the LZ excess-fee refund would revert the
-  /// entire add/remove flow.
-  receive() external payable {}
 }

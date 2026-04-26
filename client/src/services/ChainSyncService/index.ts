@@ -129,14 +129,6 @@ async function syncClient(clientId: number): Promise<boolean> {
       return false
     }
 
-    const replications = await clientManager.getReplications(clientId)
-    const replicationEnabled = await clientManager.clientReplicationEnabled(clientId)
-
-    const replicationData = replications.map((r: any) => ({
-      eid: Number(r.eid),
-      target: r.target
-    }))
-
     const currentBlock = await l1Provider.getBlockNumber()
 
     await prisma.client.upsert({
@@ -148,9 +140,6 @@ async function syncClient(clientId: number): Promise<boolean> {
         depositFee: client.depositFee.toString(),
         withdrawFee: client.withdrawFee.toString(),
         authFee: client.authFee.toString(),
-        replicationEnabled: replicationEnabled,
-        replicationCount: replicationData.length,
-        replications: replicationData,
         lastSyncedAt: new Date(),
         lastSyncedBlock: BigInt(currentBlock)
       },
@@ -162,15 +151,12 @@ async function syncClient(clientId: number): Promise<boolean> {
         depositFee: client.depositFee.toString(),
         withdrawFee: client.withdrawFee.toString(),
         authFee: client.authFee.toString(),
-        replicationEnabled: replicationEnabled,
-        replicationCount: replicationData.length,
-        replications: replicationData,
         lastSyncedAt: new Date(),
         lastSyncedBlock: BigInt(currentBlock)
       }
     })
 
-    console.log(`[ChainSync:Clients] Synced client ${clientId}: owner=${client.ownerAddress}, replications=${replicationData.length}`)
+    console.log(`[ChainSync:Clients] Synced client ${clientId}: owner=${client.ownerAddress}`)
     return true
   } catch (err: any) {
     if (err.message?.includes('revert') || err.message?.includes('call revert')) {

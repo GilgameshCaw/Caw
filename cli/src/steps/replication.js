@@ -38,7 +38,7 @@ const REPLICATION_CHAINS = {
  * one of those chains and (b) a key with ETH on that chain to submit batch
  * hashes and challenges.
  *
- * Two env vars come out of this step:
+ * Env vars produced:
  *   REPLICATION_RPC        — RPC URL for the chosen archive chain
  *   REPLICATION_CHAIN      — short key identifying which chain (e.g.
  *                            "arbitrum-sepolia"); ValidatorService picks
@@ -47,6 +47,10 @@ const REPLICATION_CHAINS = {
  *                            unset, ValidatorService falls back to the main
  *                            validator key. We recommend separate keys so a
  *                            compromise of one is contained.
+ *   REPLICATE_CLIENT_IDS   — comma-separated list of client IDs this validator
+ *                            replicates (e.g. "1" or "1,3"). Per-validator
+ *                            config; the chain has no on-chain replication
+ *                            registry anymore.
  *
  * Skipped when nodeType isn't full or validator.
  */
@@ -84,8 +88,8 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
 
   if (!participate) {
     console.log(dim('  Skipping replication setup — you can enable it later by setting'))
-    console.log(dim('  REPLICATION_RPC, REPLICATION_CHAIN, and (optionally)'))
-    console.log(dim('  REPLICATOR_PRIVATE_KEY in client/.env.'))
+    console.log(dim('  REPLICATION_RPC, REPLICATION_CHAIN, REPLICATE_CLIENT_IDS, and'))
+    console.log(dim('  (optionally) REPLICATOR_PRIVATE_KEY in client/.env.'))
     return {}
   }
 
@@ -142,6 +146,31 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
       validate: (input) => {
         if (!input.trim()) return 'Required'
         if (!/^https?:\/\//.test(input)) return 'Must start with http:// or https://'
+        return true
+      },
+    },
+  ])
+
+  // ---- Which clients to replicate ----
+  console.log()
+  tipBlock([
+    `${brand('Which clients do you replicate?')}`,
+    'Replication is per-validator: you decide which clients\' actions you',
+    'archive. Most operators replicate the client they run a node for.',
+    'Multiple comma-separated IDs are fine if you replicate for several.',
+  ])
+  const { replicateClientIds } = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'replicateClientIds',
+      message: 'Client IDs to replicate (comma-separated):',
+      default: ctx.clientId ? String(ctx.clientId) : '1',
+      validate: (input) => {
+        const ids = input.split(',').map(s => s.trim()).filter(Boolean)
+        if (ids.length === 0) return 'At least one client ID required'
+        for (const id of ids) {
+          if (!/^\d+$/.test(id) || Number(id) <= 0) return `Invalid client ID: ${id}`
+        }
         return true
       },
     },
@@ -235,6 +264,7 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
   return {
     replicationRpcUrl,
     replicationChain,
+    replicateClientIds,
     replicatorPrivateKey,
     replicationEnabled: true,
   }

@@ -307,24 +307,6 @@ contract CawProfileL2 is
     authenticated[cawClientId][tokenId] = true;
   }
 
-  // ============================================
-  // REPLICATION CONFIG
-  // ============================================
-
-  event ClientChainsSet(uint32 indexed clientId, uint32[] destEids);
-
-  /**
-   * @notice Record the destination chain list for a client. Called from L1 via LayerZero.
-   * @dev Replication is now consumed by off-chain indexers + the optimistic archive;
-   *      this function only emits an event so indexers can observe config changes.
-   * @param clientId The client ID
-   * @param destEids Array of destination chain EIDs the client replicates to
-   */
-  function setClientChains(uint32 clientId, uint32[] calldata destEids) public {
-    require(fromLZ || (bypassLZ && msg.sender == address(cawProfile)), "only callable from L1");
-    emit ClientChainsSet(clientId, destEids);
-  }
-
   /// @notice Credit a deposit from a co-deployed L1 contract (no LayerZero involved).
   /// @dev Only callable in mainnet co-deployment mode (`bypassLZ && msg.sender == cawProfile`).
   function deposit(uint32 cawClientId, uint32 tokenId, uint256 amount) external onlyOnMainnet {
@@ -672,7 +654,7 @@ contract CawProfileL2 is
     // SECURITY NOTE (audited 2026-04-06): The fromLZ + delegatecall pattern is intentional and safe.
     // - The OApp base class already verifies msg.sender == endpoint and the peer before _lzReceive runs.
     // - All authorized functions (depositAndUpdateOwners, authenticateAndUpdateOwners,
-    //   mintAndUpdateOwners, updateOwners, setClientChains) perform only storage writes.
+    //   mintAndUpdateOwners, updateOwners) perform only storage writes.
     // - fromLZ cannot get stuck: on success it resets below; on revert the entire tx rolls back.
     // - The endpoint is immutable (set once in constructor, can never change).
     // - These contracts are immutable post-deployment, so no new authorized functions can be added.
@@ -708,8 +690,7 @@ contract CawProfileL2 is
     return selector == bytes4(keccak256("depositAndUpdateOwners(uint32,uint32,uint256,uint32[],address[])")) ||
       selector == bytes4(keccak256("authenticateAndUpdateOwners(uint32,uint32,uint32[],address[])")) ||
       selector == bytes4(keccak256("mintAndUpdateOwners(uint32,address,string,uint32[],address[])")) ||
-      selector == bytes4(keccak256("updateOwners(uint32[],address[])")) ||
-      selector == bytes4(keccak256("setClientChains(uint32,uint32[])"));
+      selector == bytes4(keccak256("updateOwners(uint32[],address[])"));
   }
 
   /// @notice Subtract CAW from a token's balance (used during withdraw flows). CawActions only.

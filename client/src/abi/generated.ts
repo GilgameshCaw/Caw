@@ -1313,19 +1313,6 @@ export const cawClientManagerAbi = [
     anonymous: false,
     inputs: [
       {
-        name: 'cawProfile',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-    ],
-    name: 'CawProfileSet',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
         name: 'clientId',
         internalType: 'uint32',
         type: 'uint32',
@@ -1351,54 +1338,6 @@ export const cawClientManagerAbi = [
       },
     ],
     name: 'ClientCreated',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'clientId',
-        internalType: 'uint32',
-        type: 'uint32',
-        indexed: true,
-      },
-      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: true },
-      {
-        name: 'target',
-        internalType: 'address',
-        type: 'address',
-        indexed: false,
-      },
-    ],
-    name: 'ClientReplicationAdded',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'clientId',
-        internalType: 'uint32',
-        type: 'uint32',
-        indexed: true,
-      },
-      { name: 'enabled', internalType: 'bool', type: 'bool', indexed: false },
-    ],
-    name: 'ClientReplicationEnabledChanged',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'clientId',
-        internalType: 'uint32',
-        type: 'uint32',
-        indexed: true,
-      },
-      { name: 'eid', internalType: 'uint32', type: 'uint32', indexed: true },
-    ],
-    name: 'ClientReplicationRemoved',
   },
   {
     type: 'event',
@@ -1489,25 +1428,6 @@ export const cawClientManagerAbi = [
     name: 'InstanceUpdated',
   },
   {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'previousOwner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-      {
-        name: 'newOwner',
-        internalType: 'address',
-        type: 'address',
-        indexed: true,
-      },
-    ],
-    name: 'OwnershipTransferred',
-  },
-  {
     type: 'function',
     inputs: [{ name: 'instanceId', internalType: 'uint32', type: 'uint32' }],
     name: 'activateInstance',
@@ -1516,28 +1436,9 @@ export const cawClientManagerAbi = [
   },
   {
     type: 'function',
-    inputs: [
-      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
-      { name: 'eid', internalType: 'uint32', type: 'uint32' },
-    ],
-    name: 'addReplication',
-    outputs: [],
-    stateMutability: 'payable',
-  },
-  {
-    type: 'function',
     inputs: [],
     name: 'buyAndBurnAddress',
     outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'cawProfile',
-    outputs: [
-      { name: '', internalType: 'contract ICawProfile', type: 'address' },
-    ],
     stateMutability: 'view',
   },
   {
@@ -1549,26 +1450,6 @@ export const cawClientManagerAbi = [
     name: 'changeOwner',
     outputs: [],
     stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '', internalType: 'uint32', type: 'uint32' }],
-    name: 'clientReplicationEnabled',
-    outputs: [{ name: '', internalType: 'bool', type: 'bool' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: '', internalType: 'uint32', type: 'uint32' },
-      { name: '', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'clientReplications',
-    outputs: [
-      { name: 'target', internalType: 'address', type: 'address' },
-      { name: 'eid', internalType: 'uint32', type: 'uint32' },
-    ],
-    stateMutability: 'view',
   },
   {
     type: 'function',
@@ -1655,13 +1536,6 @@ export const cawClientManagerAbi = [
   {
     type: 'function',
     inputs: [{ name: 'clientId', internalType: 'uint32', type: 'uint32' }],
-    name: 'getClientChainEids',
-    outputs: [{ name: '', internalType: 'uint32[]', type: 'uint32[]' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'clientId', internalType: 'uint32', type: 'uint32' }],
     name: 'getClientOwner',
     outputs: [{ name: '', internalType: 'address', type: 'address' }],
     stateMutability: 'view',
@@ -1697,30 +1571,6 @@ export const cawClientManagerAbi = [
     outputs: [
       { name: '', internalType: 'uint256', type: 'uint256' },
       { name: '', internalType: 'address', type: 'address' },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'clientId', internalType: 'uint32', type: 'uint32' }],
-    name: 'getReplicationCount',
-    outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'clientId', internalType: 'uint32', type: 'uint32' }],
-    name: 'getReplications',
-    outputs: [
-      {
-        name: '',
-        internalType: 'struct ReplicationDestination[]',
-        type: 'tuple[]',
-        components: [
-          { name: 'target', internalType: 'address', type: 'address' },
-          { name: 'eid', internalType: 'uint32', type: 'uint32' },
-        ],
-      },
     ],
     stateMutability: 'view',
   },
@@ -1778,13 +1628,6 @@ export const cawClientManagerAbi = [
   },
   {
     type: 'function',
-    inputs: [],
-    name: 'owner',
-    outputs: [{ name: '', internalType: 'address', type: 'address' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
     inputs: [
       { name: 'clientId', internalType: 'uint32', type: 'uint32' },
       { name: 'apiUrl', internalType: 'string', type: 'string' },
@@ -1798,33 +1641,9 @@ export const cawClientManagerAbi = [
     type: 'function',
     inputs: [
       { name: 'clientId', internalType: 'uint32', type: 'uint32' },
-      { name: 'eid', internalType: 'uint32', type: 'uint32' },
-    ],
-    name: 'removeReplication',
-    outputs: [],
-    stateMutability: 'payable',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'renounceOwnership',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
       { name: 'fee', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'setAuthFee',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: '_cawProfile', internalType: 'address', type: 'address' }],
-    name: 'setCawProfile',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -1875,26 +1694,9 @@ export const cawClientManagerAbi = [
     type: 'function',
     inputs: [
       { name: 'clientId', internalType: 'uint32', type: 'uint32' },
-      { name: 'enabled', internalType: 'bool', type: 'bool' },
-    ],
-    name: 'setReplicationEnabled',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
       { name: 'fee', internalType: 'uint256', type: 'uint256' },
     ],
     name: 'setWithdrawFee',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [{ name: 'newOwner', internalType: 'address', type: 'address' }],
-    name: 'transferOwnership',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -1909,7 +1711,6 @@ export const cawClientManagerAbi = [
     outputs: [],
     stateMutability: 'nonpayable',
   },
-  { type: 'receive', stateMutability: 'payable' },
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2637,13 +2438,6 @@ export const cawProfileAbi = [
   },
   {
     type: 'function',
-    inputs: [],
-    name: 'setClientChainsSelector',
-    outputs: [{ name: '', internalType: 'bytes4', type: 'bytes4' }],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
     inputs: [{ name: '_delegate', internalType: 'address', type: 'address' }],
     name: 'setDelegate',
     outputs: [],
@@ -2706,28 +2500,6 @@ export const cawProfileAbi = [
     name: 'symbol',
     outputs: [{ name: '', internalType: 'string', type: 'string' }],
     stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
-      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
-      { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
-    ],
-    name: 'syncReplication',
-    outputs: [],
-    stateMutability: 'payable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
-      { name: 'destEids', internalType: 'uint32[]', type: 'uint32[]' },
-      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
-    ],
-    name: 'syncReplicationInternal',
-    outputs: [],
-    stateMutability: 'payable',
   },
   {
     type: 'function',
@@ -3018,25 +2790,6 @@ export const cawProfileL2Abi = [
       },
     ],
     name: 'CawActionsSet',
-  },
-  {
-    type: 'event',
-    anonymous: false,
-    inputs: [
-      {
-        name: 'clientId',
-        internalType: 'uint32',
-        type: 'uint32',
-        indexed: true,
-      },
-      {
-        name: 'destEids',
-        internalType: 'uint32[]',
-        type: 'uint32[]',
-        indexed: false,
-      },
-    ],
-    name: 'ClientChainsSet',
   },
   {
     type: 'event',
@@ -3592,16 +3345,6 @@ export const cawProfileL2Abi = [
     type: 'function',
     inputs: [{ name: '_cawActions', internalType: 'address', type: 'address' }],
     name: 'setCawActions',
-    outputs: [],
-    stateMutability: 'nonpayable',
-  },
-  {
-    type: 'function',
-    inputs: [
-      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
-      { name: 'destEids', internalType: 'uint32[]', type: 'uint32[]' },
-    ],
-    name: 'setClientChains',
     outputs: [],
     stateMutability: 'nonpayable',
   },
@@ -4475,28 +4218,6 @@ export const cawProfileQuoterAbi = [
   {
     type: 'function',
     inputs: [
-      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
-      { name: 'destEids', internalType: 'uint32[]', type: 'uint32[]' },
-      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
-      { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
-    ],
-    name: 'syncReplicationQuote',
-    outputs: [
-      {
-        name: 'quote',
-        internalType: 'struct MessagingFee',
-        type: 'tuple',
-        components: [
-          { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
-          { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
-        ],
-      },
-    ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [
       { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
       { name: 'newOwner', internalType: 'address', type: 'address' },
       { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
@@ -4676,24 +4397,6 @@ export const iCawFontDataAbi = [
 ] as const
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// ICawProfile
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-export const iCawProfileAbi = [
-  {
-    type: 'function',
-    inputs: [
-      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
-      { name: 'destEids', internalType: 'uint32[]', type: 'uint32[]' },
-      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
-    ],
-    name: 'syncReplicationInternal',
-    outputs: [],
-    stateMutability: 'payable',
-  },
-] as const
-
-//////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // ICawProfileForQuoter
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -4800,13 +4503,6 @@ export const iCawProfileForQuoterAbi = [
       { name: '', internalType: 'uint32[]', type: 'uint32[]' },
       { name: '', internalType: 'address[]', type: 'address[]' },
     ],
-    stateMutability: 'view',
-  },
-  {
-    type: 'function',
-    inputs: [],
-    name: 'setClientChainsSelector',
-    outputs: [{ name: '', internalType: 'bytes4', type: 'bytes4' }],
     stateMutability: 'view',
   },
   {

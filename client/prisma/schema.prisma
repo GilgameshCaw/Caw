@@ -495,9 +495,6 @@ model Client {
   depositFee          String   @default("0")
   withdrawFee         String   @default("0")
   authFee             String   @default("0")
-  replicationEnabled  Boolean  @default(false)
-  replicationCount    Int      @default(0)
-  replications        Json?    // Array of { eid: number, target: string }
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
   lastSyncedAt        DateTime?

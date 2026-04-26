@@ -52,7 +52,6 @@ contract CawProfile is
   bytes4 public addToBalanceSelector = bytes4(keccak256("depositAndUpdateOwners(uint32,uint32,uint256,uint32[],address[])"));
   bytes4 public authSelector = bytes4(keccak256("authenticateAndUpdateOwners(uint32,uint32,uint32[],address[])"));
   bytes4 public updateOwnersSelector = bytes4(keccak256("updateOwners(uint32[],address[])"));
-  bytes4 public setClientChainsSelector = bytes4(keccak256("setClientChains(uint32,uint32[])"));
 
   // Keeping track of clients to which the user has authenticated
   mapping(uint32 => mapping(uint32 => bool)) public authenticated;
@@ -464,42 +463,8 @@ contract CawProfile is
   // REPLICATION CONFIG SYNC
   // ============================================
 
-  /**
-   * @notice Sync a client's chain list to L2. Called by CawClientManager.
-   * @dev Only callable by CawClientManager (auto-sync on add/remove).
-   * @param clientId The client ID
-   * @param destEids Array of destination chain EIDs
-   * @param lzDestId The L2 endpoint ID to sync to
-   */
-  function syncReplicationInternal(uint32 clientId, uint32[] calldata destEids, uint32 lzDestId) external payable {
-    require(msg.sender == address(clientManager), "Only CawClientManager");
-    _syncClientChains(clientId, destEids, lzDestId, msg.value, 0);
-  }
-
-  /**
-   * @notice Manually sync a client's chain list to L2.
-   * @dev Only callable by the client owner. Reads config from CawClientManager.
-   * @param clientId The client ID
-   * @param lzDestId The L2 endpoint ID to sync to
-   * @param lzTokenAmount LZ token amount for fees
-   */
-  function syncReplication(uint32 clientId, uint32 lzDestId, uint256 lzTokenAmount) external payable {
-    require(clientManager.getClientOwner(clientId) == msg.sender, "Not client owner");
-    uint32[] memory destEids = clientManager.getClientChainEids(clientId);
-    _syncClientChains(clientId, destEids, lzDestId, msg.value, lzTokenAmount);
-  }
-
-  function _syncClientChains(uint32 clientId, uint32[] memory destEids, uint32 lzDestId, uint256 lzEthAmount, uint256 lzTokenAmount) internal {
-    if (lzDestId == mainnetLzId) {
-      // Direct call on mainnet
-      cawProfileL2.setClientChains(clientId, destEids);
-    } else {
-      bytes memory payload = abi.encodeWithSelector(setClientChainsSelector, clientId, destEids);
-      lzSend(lzDestId, setClientChainsSelector, destEids.length, payload, lzEthAmount, lzTokenAmount);
-    }
-  }
-
-  // syncReplicationQuote moved to CawProfileQuoter contract
+  // Replication-chain sync to L2 has been removed. Per-validator REPLICATE_CLIENT_IDS
+  // env config replaced the on-chain registry; no L1→L2 chain-list push is needed.
 
   /// @notice Credit per-token withdraw amounts. Only callable via LayerZero from L2 CawProfileL2.
   /// @dev SECURITY NOTE (audited 2026-04-07): No `tokenIds.length == amounts.length` check is
@@ -703,13 +668,12 @@ contract CawProfile is
   ///      or opcode cost changes. Worst-case (n=50) fits within ~1.3× of measured.
   function gasLimitFor(bytes4 selector, uint256 n) public view returns (uint128) {
     // Base must cover the measured n=0 worst case, not just the linear-fit intercept:
-    // mint(n=0)=54k, deposit(n=0)=81k, auth(n=0)=36k, updateOwners(n=0)=18k,
-    // setClientChains(n=1 cold)=112k. See scripts/measure-gas.js output.
+    // mint(n=0)=54k, deposit(n=0)=81k, auth(n=0)=36k, updateOwners(n=0)=18k.
+    // See scripts/measure-gas.js output.
     if (selector == addToBalanceSelector)      return uint128(110_000 + 19_000 * n);  // measured n=0: 81k
     if (selector == mintSelector)              return uint128( 75_000 + 19_000 * n);  // measured n=0: 54k
     if (selector == updateOwnersSelector)      return uint128( 25_000 + 19_000 * n);  // measured n=0: 18k
     if (selector == authSelector)              return uint128( 50_000 + 19_000 * n);  // measured n=0: 36k
-    if (selector == setClientChainsSelector)   return uint128(150_000 + 25_000 * n);  // n=1 cold: 112k
     revert("Bad selector");
   }
 

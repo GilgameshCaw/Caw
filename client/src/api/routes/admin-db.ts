@@ -169,7 +169,7 @@ const MODEL_META: Record<string, ModelMeta> = {
   client: {
     defaultSort: 'createdAt',
     searchFields: ['ownerAddress'],
-    listFields: ['id', 'ownerAddress', 'feeAddress', 'replicationEnabled', 'createdAt'],
+    listFields: ['id', 'ownerAddress', 'feeAddress', 'createdAt'],
     writable: false,
     label: 'Clients',
   },

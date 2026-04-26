@@ -165,6 +165,7 @@ function buildEnvVars(nodeType, config) {
   // the service falls back to the validator key).
   if (config.replicationRpcUrl) env.REPLICATION_RPC = config.replicationRpcUrl
   if (config.replicationChain) env.REPLICATION_CHAIN = config.replicationChain
+  if (config.replicateClientIds) env.REPLICATE_CLIENT_IDS = config.replicateClientIds
   if (config.replicatorPrivateKey) env.REPLICATOR_PRIVATE_KEY = config.replicatorPrivateKey
 
   // JWT signs API session tokens. Generate a fresh one per install — leaking
