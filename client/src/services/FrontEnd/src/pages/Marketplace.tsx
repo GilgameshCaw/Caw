@@ -9,7 +9,8 @@ import { useMarketplaceStore, MarketplaceListing, MarketplaceOffer } from '~/sto
 import ListingCard from '~/components/marketplace/ListingCard'
 import ListingFilters from '~/components/marketplace/ListingFilters'
 import SaleCard from '~/components/marketplace/SaleCard'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { formatAddress } from '~/utils'
 import ProfileCard from '~/components/marketplace/ProfileCard'
 import RefundsBanner from '~/components/marketplace/RefundsBanner'
 import { useAccount, useChainId, useSwitchChain, useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi'
@@ -757,7 +758,14 @@ const MyOffersTab: React.FC = () => {
                         {fmtPrice(offer.amount, offer.paymentToken)} {offer.paymentToken}
                       </div>
                       <div className={`text-xs mt-1 ${themeTextMuted(isDark)}`}>
-                        from {offer.offerer.slice(0, 6)}...{offer.offerer.slice(-4)}
+                        from{' '}
+                        <Link
+                          to={`/address/${offer.offerer.toLowerCase()}`}
+                          onClick={e => e.stopPropagation()}
+                          className={`hover:underline ${isDark ? 'hover:text-yellow-400' : 'hover:text-yellow-500'}`}
+                        >
+                          {formatAddress(offer.offerer)}
+                        </Link>
                       </div>
                       <div className={`text-xs mt-0.5 ${themeTextMuted(isDark)}`}>
                         {formatTimeLeft(offer.expiry)}

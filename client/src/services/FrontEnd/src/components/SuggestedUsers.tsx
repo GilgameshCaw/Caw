@@ -1,12 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
-import { Link } from 'react-router-dom'
 import { useTheme } from '~/hooks/useTheme'
 import { apiFetch } from '~/api/client'
 import { useTokenDataStore } from '~/store/tokenDataStore'
-import { FollowButton } from './FollowButton'
-import { HiOutlineX } from 'react-icons/hi'
-import { getUserAvatar } from '~/utils/defaultAvatar'
-import Avatar from '~/components/Avatar'
+import UserCard from '~/components/UserCard'
 import { LoadingSpinner } from '~/components/Skeleton'
 
 
@@ -112,12 +108,6 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
     }
   }, [])
 
-  const formatCount = (count: number) => {
-    if (count >= 1000000) return `${(count / 1000000).toFixed(1)}M`
-    if (count >= 1000) return `${(count / 1000).toFixed(1)}K`
-    return count.toString()
-  }
-
   if (loading) {
     return <LoadingSpinner className="py-8" />
   }
@@ -138,72 +128,18 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
         Suggested users to follow
       </h2>
       <div className={`flex gap-3 overflow-x-auto overflow-y-visible pb-[20px] pl-[20px] transition-all duration-500 ${visibleUsers.length <= 3 ? 'justify-center' : ''}`}>
-        {visibleUsers.map((user, idx) => {
-          const isFadingOut = fadingOutIds.has(user.tokenId)
-          const isFirst = idx === 0
-          const isLast = idx === visibleUsers.length - 1
-          return (
-            <div
-              key={user.tokenId}
-              className={`relative rounded-xl p-4 shrink-0 transition-all duration-700 ease-in-out ${
-                isDark
-                  ? 'bg-white/5 hover:bg-white/10'
-                  : 'bg-white hover:bg-gray-50 shadow-lg border border-gray-200'
-              }`}
-              style={{
-                width: isFadingOut ? '0%' : '33%',
-                minWidth: isFadingOut ? '0' : '165px',
-                opacity: isFadingOut ? 0 : 1,
-                padding: isFadingOut ? '0' : undefined,
-                overflow: isFadingOut ? 'hidden' : 'visible',
-                marginLeft: isFirst ? '20px' : undefined,
-                marginRight: isLast ? '20px' : undefined,
-              }}
-            >
-              {/* Dismiss button */}
-              <button
-                onClick={() => handleDismiss(user.tokenId)}
-                className={`absolute top-2 right-2 p-1 rounded-full transition-opacity cursor-pointer ${
-                  isDark ? 'hover:bg-white/10 text-white/40 hover:text-white/70' : 'hover:bg-gray-200 text-gray-400 hover:text-gray-600'
-                }`}
-                style={{ opacity: 0.4 }}
-              >
-                <HiOutlineX className="w-4 h-4" />
-              </button>
-
-              <Link to={`/users/${user.username}`} className="block text-center">
-                <div className="w-16 h-16 rounded-full mx-auto mb-1 overflow-hidden">
-                  <Avatar src={getUserAvatar(user)} alt={user.username} />
-                </div>
-
-                <p className={`font-medium truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  {user.displayName || user.username}
-                </p>
-                <p className={`text-sm truncate ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-                  @{user.username}
-                </p>
-
-                <div className={`flex justify-center gap-3 mt-2 text-xs ${
-                  isDark ? 'text-white/40' : 'text-gray-400'
-                }`}>
-                  <span>{formatCount(user.followerCount)} followers</span>
-                  <span>·</span>
-                  <span>{formatCount(user.likeCount)} likes</span>
-                </div>
-              </Link>
-
-              <div className="mt-3 flex justify-center">
-                <FollowButton
-                  targetUserId={user.tokenId}
-                  initialIsFollowing={user.isFollowing}
-                  initialIsPending={user.followPending}
-                  size="small"
-                  onFollowConfirmed={() => handleFollowConfirmed(user.tokenId)}
-                />
-              </div>
-            </div>
-          )
-        })}
+        {visibleUsers.map((user, idx) => (
+          <UserCard
+            key={user.tokenId}
+            user={user}
+            layout="carousel"
+            isFirst={idx === 0}
+            isLast={idx === visibleUsers.length - 1}
+            fadingOut={fadingOutIds.has(user.tokenId)}
+            onDismiss={handleDismiss}
+            onFollowConfirmed={handleFollowConfirmed}
+          />
+        ))}
       </div>
     </div>
   )

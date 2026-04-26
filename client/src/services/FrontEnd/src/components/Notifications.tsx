@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { apiFetch } from '~/api/client'
 import { useVerifyWalletStore } from '~/store/verifyWalletStore'
 import { useTheme } from '~/hooks/useTheme'
@@ -492,15 +492,13 @@ const Notifications: React.FC = () => {
           const addrDisplay = `${addr.slice(0, 6)}...${addr.slice(-4)}`
           return (
             <>
-              <a
-                href={`https://etherscan.io/address/${addr}`}
-                target="_blank"
-                rel="noopener noreferrer"
+              <Link
+                to={`/address/${addr.toLowerCase()}`}
                 className="text-yellow-500 hover:underline"
                 onClick={e => e.stopPropagation()}
               >
                 {addrDisplay}
-              </a>
+              </Link>
               {` made an offer on your profile${offerUsd}`}
             </>
           )

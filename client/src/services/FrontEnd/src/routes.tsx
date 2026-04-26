@@ -27,6 +27,7 @@ import DatabaseAdmin from "./pages/DatabaseAdmin";
 import Admin from "./pages/Admin";
 import WelcomePage from "./pages/WelcomePage";
 import Marketplace from "./pages/Marketplace";
+import AddressTokens from "./pages/AddressTokens";
 import CaptiveSplash from "./pages/CaptiveSplash";
 import AuthGate from "./components/AuthGate";
 import AdminGate from "./components/AdminGate";
@@ -84,6 +85,10 @@ export default [
   {
     path: "/users/:username",
     component: <Profile />,
+  },
+  {
+    path: "/address/:address",
+    component: <AddressTokens />,
   },
   {
     path: "/caws/:id",
