@@ -2,25 +2,43 @@ import inquirer from 'inquirer'
 import crypto from 'crypto'
 import { section, dim, tipBlock, brand, success, warn, err } from '../utils/ui.js'
 
-// Replication chain options. Each entry maps to one archive chain that the
-// optimistic-archive contracts have been deployed to. We pick by network
-// (testnet/mainnet) so operators see only the chains that exist for their
-// chosen environment. The label/cta/lzEid are wedged in here so we can
-// surface useful info in prompts later (gas comparisons, etc.).
+// Replication chain options. Each entry maps to one archive chain that
+// CawActionsArchive has been deployed to. We pick by network so operators
+// see only the chains that exist for their chosen environment.
+//
+// Canonical pairing: a client whose storage is Base typically replicates
+// to Arbitrum (and vice-versa) — pick the L2 where you already have an ETH
+// balance. The CLI surfaces this as a "(recommended for X storage)" hint
+// when the operator has told us which storage chain their target client
+// uses.
 const REPLICATION_CHAINS = {
   testnet: [
     {
       key: 'arbitrum-sepolia',
       label: 'Arbitrum Sepolia',
-      hint: 'cheapest, fastest finality — recommended for testnet',
+      hint: 'cheap L2 — recommended if your client stores on Base Sepolia',
+      pairsWith: ['base-sepolia', 'sepolia'],
+    },
+    {
+      key: 'base-sepolia',
+      label: 'Base Sepolia',
+      hint: 'cheap L2 — recommended if your client stores on Arbitrum Sepolia',
+      pairsWith: ['arbitrum-sepolia', 'sepolia'],
     },
     // Future: optimism-sepolia, polygon-amoy, etc. Add as deployments land.
   ],
   mainnet: [
     {
-      key: 'arbitrum-one',
+      key: 'arbitrum',
       label: 'Arbitrum One',
-      hint: 'cheapest L2 by gas, most-deployed CAW archive',
+      hint: 'cheap L2 — recommended if your client stores on Base',
+      pairsWith: ['base', 'ethereum'],
+    },
+    {
+      key: 'base',
+      label: 'Base',
+      hint: 'cheap L2 — recommended if your client stores on Arbitrum',
+      pairsWith: ['arbitrum', 'ethereum'],
     },
     // Future entries gated on actually-deployed contracts. Don't list a chain
     // here unless CawActionsArchive is live on it.
@@ -101,12 +119,21 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
     return {}
   }
 
+  // If the caller knows which storage chain the operator's primary client
+  // uses (storageChainKey, e.g. "base-sepolia"), prefer the canonical
+  // partner — sort it to the top + show as the default. Operators can
+  // still pick another chain, just doesn't bury the obvious answer.
+  const storageChainKey = ctx.storageChainKey || ''
+  const recommendedKey = chains.find(c => c.pairsWith?.includes(storageChainKey))?.key
+    || chains[0].key
+
   console.log()
   tipBlock([
-    'Pick the chain you want to replicate to. Different clients can choose',
-    'different chains; if you run for multiple clients, pick the one your',
-    'primary client uses (you can run extra replicators on other chains',
-    'later by adding more env config).',
+    'Pick the chain you want to replicate to. The canonical pairing is',
+    `${brand('Base ↔ Arbitrum')} — clients on one typically replicate to the other`,
+    'so the validator only needs ETH on two L2s instead of three.',
+    '',
+    'You can pick any chain you have ETH on; the protocol doesn\'t care.',
   ])
 
   let replicationChain
@@ -120,11 +147,14 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
         type: 'list',
         name: 'chainKey',
         message: 'Replication chain:',
-        choices: chains.map(c => ({
-          value: c.key,
-          name: `${brand(c.label)} ${dim('— ' + c.hint)}`,
-        })),
-        default: chains[0].key,
+        choices: chains.map(c => {
+          const tag = c.key === recommendedKey ? brand(' (recommended)') : ''
+          return {
+            value: c.key,
+            name: `${brand(c.label)}${tag} ${dim('— ' + c.hint)}`,
+          }
+        }),
+        default: recommendedKey,
       },
     ])
     replicationChain = answer.chainKey

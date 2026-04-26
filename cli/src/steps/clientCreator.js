@@ -9,16 +9,36 @@ const CLIENT_MANAGER_ABI = [
   'event ClientCreated(uint32 indexed clientId, tuple(uint32 id, uint32 storageChainEid, string name, address feeAddress, address ownerAddress, uint256 withdrawFee, uint256 depositFee, uint256 authFee, uint256 mintFee, uint256 creationBlock) client)',
 ]
 
-// LayerZero EIDs for the L2 storage chains. Today only Base is supported as
-// a storage layer. When more chains come online, extend this list — the
-// contracts already accept any EID; the constraint is just which L2s have
-// CawProfileL2 deployed.
+// Storage-chain options the CLI surfaces during createClient. Each entry
+// must have CawProfileL2 + CawActions deployed (or planned). The actual
+// contract addresses live in client/src/abi/deployments.ts (written by the
+// deploy script); we only need labels + LZ EIDs here for the CLI to wire
+// things up.
+//
+// `costNote` surfaces a per-chain economic caveat. Most chains don't need
+// one; Ethereum L1 storage is where every action submission costs L1 gas
+// (~$5–30 per action at typical gas prices), which is "extremely
+// expensive" and warrants a loud warning before the operator picks it.
 const STORAGE_CHAINS = {
   testnet: [
-    { key: 'base-sepolia', label: 'Base Sepolia', eid: 40245 },
+    { key: 'base-sepolia',     label: 'Base Sepolia',     eid: 40245, costNote: null },
+    { key: 'arbitrum-sepolia', label: 'Arbitrum Sepolia', eid: 40231, costNote: null },
+    {
+      key: 'sepolia',
+      label: 'Ethereum Sepolia (L1)',
+      eid: 40161,
+      costNote: 'extremely expensive — every action submission pays L1 gas',
+    },
   ],
   mainnet: [
-    { key: 'base', label: 'Base', eid: 30184 },
+    { key: 'base',     label: 'Base',     eid: 30184, costNote: null },
+    { key: 'arbitrum', label: 'Arbitrum', eid: 30110, costNote: null },
+    {
+      key: 'ethereum',
+      label: 'Ethereum Mainnet (L1)',
+      eid: 30101,
+      costNote: 'extremely expensive — every action submission pays L1 gas (~$5-30/action at typical prices)',
+    },
   ],
 }
 
@@ -73,16 +93,44 @@ export async function createClientFlow(ctx) {
     storageChainEid = chains[0].eid
     console.log(dim(`  Storage chain: ${chains[0].label} (only option on ${network})`))
   } else {
-    const answer = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'eid',
-        message: 'Storage chain (where this client\'s actions are processed):',
-        choices: chains.map(c => ({ value: c.eid, name: `${brand(c.label)} ${dim('(EID ' + c.eid + ')')}` })),
-        default: chains[0].eid,
-      },
+    tipBlock([
+      'Storage chain = where your client\'s actions are processed and where',
+      'validators submit batches. The choice affects gas costs for every',
+      'single user action your client serves.',
+      '',
+      `${brand('L2s (Base, Arbitrum)')} are cheap (cents per action) and the typical choice.`,
+      `${brand('L1 (Ethereum)')} is supported but ${dim('extremely expensive')} — only pick it if`,
+      'you have a specific reason (max decentralization for a specialized client).',
     ])
-    storageChainEid = answer.eid
+    while (true) {
+      const answer = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'eid',
+          message: 'Storage chain:',
+          choices: chains.map(c => {
+            const noteSuffix = c.costNote ? ` ${dim('— ' + c.costNote)}` : ''
+            return { value: c.eid, name: `${brand(c.label)}${noteSuffix}` }
+          }),
+          default: chains[0].eid,
+        },
+      ])
+      const picked = chains.find(c => c.eid === answer.eid)
+      // Force a deliberate confirm for chains we've flagged as expensive.
+      if (picked?.costNote) {
+        console.log()
+        console.log(warn(`  Heads up: ${picked.label} is ${picked.costNote}.`))
+        console.log(dim('  Every user action your client serves pays a tx on this chain.'))
+        console.log(dim('  At typical gas prices that\'s orders of magnitude more than an L2.'))
+        console.log()
+        const { confirmed } = await inquirer.prompt([
+          { type: 'confirm', name: 'confirmed', message: `Use ${picked.label} as the storage chain anyway?`, default: false },
+        ])
+        if (!confirmed) continue // re-prompt the chain picker
+      }
+      storageChainEid = answer.eid
+      break
+    }
   }
 
   // ---- Fee address (default: validator wallet) ----
