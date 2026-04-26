@@ -79,8 +79,21 @@ export default function useContractCall<
 
   const call = useCallback(async () => {
     console.log(`[useContractCall] ${functionName} called — disabled:`, disabledRef.current, 'account:', !!accountRef.current)
-    if (!accountRef.current) throw new Error("Wallet is not connected");
-    if (disabledRef.current) throw new Error("Contract call is disabled");
+    // Pre-flight checks. Fire onError before throwing so callers that wired
+    // up onError (e.g. to clear a "Pending..." button label) get the signal
+    // even when the call bails out before reaching writeContractAsync. Without
+    // this, a click that hits a disabled gate would leave the caller's pending
+    // state stuck because the throw bypasses the try/catch below.
+    if (!accountRef.current) {
+      const err = new Error("Wallet is not connected") as BaseError;
+      onError?.(err);
+      throw err;
+    }
+    if (disabledRef.current) {
+      const err = new Error("Contract call is disabled") as BaseError;
+      onError?.(err);
+      throw err;
+    }
 
     try {
       const hash = await writeContractAsync({

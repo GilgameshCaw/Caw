@@ -288,7 +288,12 @@ const Staking = () => {
     return () => clearInterval(interval)
   }, [hasRecentCompletedWithdrawal, refetchTokenData])
 
-  const insufficientBalance = !balance || parseUnits(amount || "0", 18) > balance
+  // Only consider balance "insufficient" when we actually know it. Pre-connect
+  // (or pre-load) `balance` is undefined — surfacing that as "Insufficient
+  // Balance" on the button makes the staking page look broken before the user
+  // has even connected. Treat unknown as not-insufficient so the button shows
+  // the normal label and clicking enters the connect flow.
+  const insufficientBalance = balance !== undefined && parseUnits(amount || "0", 18) > balance
   const needsApproval = !allowance || parseUnits(amount || "0", 18) > allowance
 
   // Dollar-based preset buttons, converted to CAW at current price
@@ -504,20 +509,32 @@ const Staking = () => {
     },
   })
 
-  // Handle stake button click
+  // Handle stake button click. ensureWallet may open the connect modal +
+  // resolve only once the wallet is ready; the await below bridges that.
+  // We always clear pending state in finally so a thrown error (e.g. user
+  // rejected, or useContractCall bailed on a stale `disabled` ref) doesn't
+  // leave the button stuck on "Approving…".
   const handleStake = useCallback(async () => {
     console.log('[Staking] handleStake called', { isConnected, amount, wrongChainForStake, needsApproval })
-    await ensureWallet({ chainId: chains.l1.chainId }, async () => {
-      if (needsApproval) {
-        console.log('[Staking] Approving CAW tokens')
-        setIsApprovePending(true)
-        await approve.call()
-      } else {
-        console.log('[Staking] Depositing CAW')
-        setIsStakePending(true)
-        await stake.call()
-      }
-    })
+    try {
+      await ensureWallet({ chainId: chains.l1.chainId }, async () => {
+        if (needsApproval) {
+          console.log('[Staking] Approving CAW tokens')
+          setIsApprovePending(true)
+          try { await approve.call() } finally { setIsApprovePending(false) }
+        } else {
+          console.log('[Staking] Depositing CAW')
+          setIsStakePending(true)
+          try { await stake.call() } finally { setIsStakePending(false) }
+        }
+      })
+    } catch (err) {
+      // ensureWallet itself can throw (user closed connect modal, switch-chain
+      // rejected). Surface in the existing error handler.
+      handleError(err as any, needsApproval ? 'approve' : 'stake')
+      setIsApprovePending(false)
+      setIsStakePending(false)
+    }
   }, [isConnected, wrongChainForStake, needsApproval, approve, stake, amount, ensureWallet])
 
   // Handle withdraw button click (for pending withdrawals)
