@@ -145,24 +145,17 @@ export const CawPage: React.FC = () => {
   useEffect(() => {
     if (!pollingReplies) return
 
-    console.log('[CawPage] Starting reply poll for caw:', id)
     const interval = setInterval(async () => {
       try {
         const { caw: fetched, comments: fetchedComments, recaws: fetchedRecaws, tips: fetchedTips } =
           await apiFetch<{ caw: CawItem; comments: CawItem[]; recaws?: RecawIndicator[]; tips?: TipIndicator[] }>(`/api/caws/${id}`)
 
-        console.log('[CawPage] Poll result:', {
-          replyPending: fetched.replyPending,
-          commentCount: fetchedComments.length,
-          commentStatuses: fetchedComments.map(c => ({ id: c.id, status: c.status, content: c.content?.slice(0, 30) })),
-        })
         setCaw(fetched)
         setComments(fetchedComments)
         setRecaws(fetchedRecaws || [])
         setTips(fetchedTips || [])
         const hasPendingComments = fetchedComments.some(c => c.status === 'PENDING')
         if (!fetched.replyPending && !hasPendingComments) {
-          console.log('[CawPage] Reply confirmed, stopping poll')
           setPollingReplies(false)
         }
       } catch (error) {
@@ -275,7 +268,6 @@ export const CawPage: React.FC = () => {
               item={caw}
               isMainPost={true}
               onReplyStateChange={(cawId, replyPending) => {
-                console.log('[CawPage] Reply state changed for main caw', cawId, 'pending:', replyPending)
                 if (caw && caw.id === cawId) {
                   setCaw({ ...caw, replyPending })
                 }
@@ -321,7 +313,6 @@ export const CawPage: React.FC = () => {
                       isReply={true}
                       hideParentPreview={true}
                       onLikeStateChange={(cawId, likePending) => {
-                        console.log('[CawPage] Like state changed for reply', cawId, 'pending:', likePending)
                         setComments(current =>
                           current.map(item =>
                             item.id === cawId ? { ...item, likePending } : item
