@@ -131,45 +131,70 @@ export async function collectValidatorConfig(nodeType, installDir, ctx = {}) {
 }
 
 /**
- * Ask for a username, look up tokenId via the Minter contract on L1, then
- * fetch the owner address from CawProfile to show "tips go here". Loops until
- * the user confirms or chooses to enter a tokenId by hand.
+ * Ask the operator how they want to identify their validator (by username
+ * with on-chain lookup, or by token ID directly), then collect + verify.
+ * Using a separate menu prompt avoids the username/sentinel collision
+ * problem — usernames are `[a-z0-9]+` on-chain so any sentinel string we
+ * picked could in principle collide with a real username.
  */
 async function resolveValidatorByUsername(ctx) {
   const { l1RpcUrl } = ctx
-  // Username/owner contracts live on L1 in both networks. addresses.ts is
-  // the single source of truth for whichever environment the CLI's repo is
-  // checked out for.
   const minter = addr('CAW_NAMES_MINTER_ADDRESS')
   const profile = addr('CAW_NAMES_ADDRESS')
 
+  // Up-front choice: lookup vs direct entry. Default is username lookup
+  // when we have an L1 RPC; falls back to direct entry otherwise.
+  const lookupAvailable = !!l1RpcUrl
+  const choices = [
+    {
+      value: 'username',
+      name: lookupAvailable
+        ? `${brand('By username')} ${dim('(recommended — looks up tokenId on-chain)')}`
+        : `${brand('By username')} ${dim('(unavailable — no L1 RPC)')}`,
+      disabled: lookupAvailable ? false : 'Provide an L1 RPC URL earlier in the install',
+    },
+    { value: 'tokenId', name: 'By token ID directly' },
+  ]
+  const { method } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'method',
+      message: 'How do you want to identify your validator?',
+      choices,
+      default: lookupAvailable ? 'username' : 'tokenId',
+    },
+  ])
+
+  if (method === 'tokenId') {
+    const { tokenId } = await inquirer.prompt([
+      {
+        type: 'number',
+        name: 'tokenId',
+        message: 'Validator token ID:',
+        validate: (input) => input > 0 ? true : 'Token ID must be a positive number',
+      },
+    ])
+    return tokenId
+  }
+
+  // Username lookup — loop until the operator either confirms a result or
+  // bails back to the menu.
   while (true) {
     const { username } = await inquirer.prompt([
       {
         type: 'input',
         name: 'username',
-        message: 'Validator username (or "manual" to enter token ID directly):',
-        validate: (input) => input.trim().length > 0 ? true : 'Required',
+        message: 'Validator username:',
+        validate: (input) => {
+          const v = input.trim()
+          if (!v) return 'Required'
+          // CawNames are 1-255 lowercase alphanumerics on-chain. We don't
+          // enforce the upper bound here; let the lookup just return 0.
+          if (!/^[a-z0-9]+$/.test(v)) return 'Username must be lowercase letters and numbers only'
+          return true
+        },
       },
     ])
-
-    if (username.trim().toLowerCase() === 'manual') {
-      const { tokenId } = await inquirer.prompt([
-        {
-          type: 'number',
-          name: 'tokenId',
-          message: 'Validator token ID:',
-          validate: (input) => input > 0 ? true : 'Token ID must be a positive number',
-        },
-      ])
-      return tokenId
-    }
-
-    if (!l1RpcUrl) {
-      console.log(warn(`  No L1 RPC URL available — can't look up "${username}" on-chain.`))
-      console.log(dim('  Type "manual" at the next prompt to enter a token ID directly.'))
-      continue
-    }
 
     let tokenId, owner
     try {
@@ -182,14 +207,14 @@ async function resolveValidatorByUsername(ctx) {
       tokenId = Number(id)
       if (tokenId === 0) {
         console.log(err(`  No token found for username "${username}".`))
-        console.log(dim('  Double-check the spelling, or type "manual" to enter a token ID.'))
+        console.log(dim('  Check the spelling and try again.'))
         console.log()
         continue
       }
       owner = await profileContract.ownerOf(tokenId)
     } catch (e) {
       console.log(err(`  Lookup failed: ${e?.message || e}`))
-      console.log(dim('  Type "manual" to enter a token ID by hand, or try a different username.'))
+      console.log(dim('  Try a different username, or restart the install with a working L1 RPC.'))
       console.log()
       continue
     }
