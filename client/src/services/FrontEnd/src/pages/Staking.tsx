@@ -518,12 +518,21 @@ const Staking = () => {
     console.log('[Staking] handleStake called', { isConnected, amount, wrongChainForStake, needsApproval })
     try {
       await ensureWallet({ chainId: chains.l1.chainId }, async () => {
-        if (needsApproval) {
+        // Re-fetch allowance now that the wallet is connected and the user's
+        // address is known. Pre-connect, useAllowance returns 0n (no owner
+        // address), which makes the React-state `needsApproval` true. If the
+        // user already has a prior approval, we don't want to ask them to
+        // approve again — check the FRESH on-chain value instead.
+        const { data: freshAllowance } = await refetchAllowance()
+        const wantedAmount = parseUnits((amount || "0").toString(), 18)
+        const needsApprovalFresh = !freshAllowance || freshAllowance < wantedAmount
+
+        if (needsApprovalFresh) {
           console.log('[Staking] Approving CAW tokens')
           setIsApprovePending(true)
           try { await approve.call() } finally { setIsApprovePending(false) }
         } else {
-          console.log('[Staking] Depositing CAW')
+          console.log('[Staking] Skipping approve (existing allowance covers amount); depositing')
           setIsStakePending(true)
           try { await stake.call() } finally { setIsStakePending(false) }
         }
@@ -535,7 +544,7 @@ const Staking = () => {
       setIsApprovePending(false)
       setIsStakePending(false)
     }
-  }, [isConnected, wrongChainForStake, needsApproval, approve, stake, amount, ensureWallet])
+  }, [isConnected, wrongChainForStake, needsApproval, approve, stake, amount, ensureWallet, refetchAllowance])
 
   // Handle withdraw button click (for pending withdrawals)
   const handleWithdraw = useCallback(async () => {
