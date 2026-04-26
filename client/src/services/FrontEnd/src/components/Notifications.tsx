@@ -377,7 +377,14 @@ const Notifications: React.FC = () => {
   // out of on-chain implementation details and lean on plainspoken language
   // for anything they don't need to understand to take a useful next step.
   const describeFailedReason = (raw: string): string => {
-    const lower = (raw || '').toLowerCase()
+    // Strip ethers' CALL_EXCEPTION wrapper down to the contract revert string.
+    // Matches the `reason="..."` field that ethers serializes into the message.
+    // Falls back to the full raw input if no reason is found, so we still
+    // pattern-match against it below.
+    const reasonMatch = (raw || '').match(/reason="([^"]+)"/)
+    const cleaned = reasonMatch ? reasonMatch[1] : (raw || '')
+
+    const lower = cleaned.toLowerCase()
     if (lower.includes('insufficient')) return "You don't have enough deposited CAW for this action."
     if (lower.includes('not authenticated')) return 'Account not yet authenticated with this client.'
     if (lower.includes('cawonce') || lower.includes('conflict')) {
@@ -386,6 +393,9 @@ const Notifications: React.FC = () => {
     if (lower.includes('deposit did not arrive')) return 'Your pending deposit did not arrive from L1 in time.'
     if (lower.includes('text exceeds')) return 'The post text was too long.'
     if (lower.includes('cannot follow yourself')) return "You can't follow your own account."
+    if (lower.includes('sigs length mismatch') || lower.includes('invalid signature') || lower.includes('signature')) {
+      return 'Signature validation failed on-chain.'
+    }
     if (lower.includes('simulation') || lower.includes('internal error') || lower.includes('rpc')) {
       return 'Something went wrong while processing this action on-chain.'
     }
@@ -393,7 +403,13 @@ const Notifications: React.FC = () => {
     if (lower.includes('cannot read properties') || lower.includes('typeerror') || lower.includes('referenceerror') || lower.includes('undefined')) {
       return 'Something went wrong.'
     }
-    return raw || 'Something went wrong.'
+    // Anything still wrapped in an ethers stack trace at this point is too
+    // verbose to show — fall back to a generic message rather than dumping
+    // calldata, addresses, or invocation blobs into the notification card.
+    if (cleaned.includes('CALL_EXCEPTION') || cleaned.includes('action="call"') || cleaned.length > 140) {
+      return 'Something went wrong while processing this action on-chain.'
+    }
+    return cleaned || 'Something went wrong.'
   }
 
   const getNotificationText = (notification: Notification): React.ReactNode => {
