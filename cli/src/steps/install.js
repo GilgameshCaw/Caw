@@ -49,13 +49,20 @@ export async function runInstall(nodeType, config, installDir) {
 
     const spinner3 = ora('Installing frontend dependencies...').start()
     try {
-      execSync('yarn install --frozen-lockfile 2>/dev/null || yarn install', {
+      // --ignore-platform lets yarn skip platform-incompatible optional
+      // packages (e.g. @rollup/rollup-darwin-x64 if someone pinned it).
+      // Drop --frozen-lockfile because the lockfile is generated on a Mac
+      // and re-resolves on Linux — strict mode rejects legitimate platform
+      // differences.
+      execSync('yarn install --ignore-platform', {
         cwd: frontendDir,
-        stdio: 'pipe'
+        stdio: 'pipe',
       })
       spinner3.succeed('Frontend dependencies installed')
     } catch (e) {
       spinner3.fail('Failed to install frontend dependencies')
+      // Surface the actual yarn error rather than just the spinner state.
+      console.log(err(`  ${e?.stderr?.toString?.() || e?.stdout?.toString?.() || e?.message || e}`))
       throw e
     }
 
