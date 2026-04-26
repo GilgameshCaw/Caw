@@ -183,7 +183,12 @@ model Block {
 model TxQueue {
   id                   Int      @id @default(autoincrement())
   payload              Json
-  signedTx             String   @unique
+  // signedTx was @unique under the legacy 1-sig-per-action model. Batched
+  // sigs reuse one ActionBatch signature across every row in the group, so
+  // uniqueness is no longer true at the column level. Replaced with a
+  // plain index — the single-action dedup path (POST /api/actions) catches
+  // duplicates with a findFirst lookup that's still bounded by the index.
+  signedTx             String
   status               String   @default("pending")
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
@@ -203,6 +208,7 @@ model TxQueue {
 
   @@index([senderId, status])
   @@index([batchId])
+  @@index([signedTx])
 }
 
 model Action {

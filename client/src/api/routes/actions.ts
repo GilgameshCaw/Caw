@@ -26,6 +26,7 @@ import { countManager } from '../../services/CountManager'
 import { getSession, addAuthorization, createSession } from '../sessionStore'
 import { cawProfileL2Abi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
+import { packActions, getPackedActionSlices } from '../../utils/packActions'
 
 const router = Router()
 
@@ -823,6 +824,20 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ error: 'Invalid retriedTxQueueId' })
     }
 
+    // Single-action dedup: if this exact signature is already queued (and
+    // not part of a batch), return the existing row. signedTx is no longer
+    // @unique at the schema level (the batched-sig path reuses one sig
+    // across N rows), so we look it up explicitly. batchId IS NULL filters
+    // out batch rows where the dedup semantics don't apply.
+    const dup = await prisma.txQueue.findFirst({
+      where: { signedTx: signature, batchId: null },
+      orderBy: { id: 'asc' },
+    })
+    if (dup) {
+      console.log(`Duplicate submission for txQueue ${dup.id}, returning existing entry`)
+      return res.json({ txQueueId: dup.id, status: dup.status })
+    }
+
     try {
       txQueueEntry = await prisma.$transaction(async (tx) => {
         if (parsedRetryId != null) {
@@ -848,14 +863,6 @@ router.post('/', async (req, res) => {
     } catch (err: any) {
       if (err.retryConflict) {
         return res.status(409).json({ error: err.message })
-      }
-      if (err.code === 'P2002') {
-        // Duplicate signature — find the existing entry and return it
-        const existing = await prisma.txQueue.findFirst({ where: { signedTx: signature } })
-        if (existing) {
-          console.log(`Duplicate submission for txQueue ${existing.id}, returning existing entry`)
-          return res.json({ txQueueId: existing.id, status: existing.status })
-        }
       }
       throw err
     }
@@ -912,7 +919,7 @@ router.post('/', async (req, res) => {
  */
 router.post('/batch', async (req, res) => {
   try {
-    const { actions, pendingDepositTxHash } = req.body
+    const { actions, pendingDepositTxHash, batchSig, domain: batchDomain, types: batchTypes } = req.body
 
     if (!Array.isArray(actions) || actions.length === 0) {
       return res.status(400).json({ error: 'Expected non-empty actions array' })
@@ -920,6 +927,12 @@ router.post('/batch', async (req, res) => {
     if (actions.length > 300) {
       return res.status(400).json({ error: `Thread too long (${actions.length} posts). Maximum is 300.` })
     }
+
+    // batchSig path: one ActionBatch signature covers every action in the
+    // group. Per-action `signature` fields are not required (and will be
+    // ignored if present). When `batchSig` is absent we fall back to the
+    // legacy per-action signing path below.
+    const useBatchSig = typeof batchSig === 'string' && batchSig.length > 0
 
     // Validate pendingDepositTxHash shape (same rules as single-action endpoint).
     // When present, all resulting TxQueue rows get parked in waiting_for_deposit
@@ -944,8 +957,11 @@ router.post('/batch', async (req, res) => {
       return res.status(400).json({ error: 'First action missing senderId' })
     }
     for (const a of actions) {
-      if (!a?.data || !a?.signature) {
-        return res.status(400).json({ error: 'Each action must have data and signature' })
+      if (!a?.data) {
+        return res.status(400).json({ error: 'Each action must have data' })
+      }
+      if (!useBatchSig && !a?.signature) {
+        return res.status(400).json({ error: 'Each action must have a signature (or pass batchSig instead)' })
       }
       if (a.data.senderId !== firstSenderId) {
         return res.status(400).json({ error: 'All actions must share the same senderId' })
@@ -965,17 +981,78 @@ router.post('/batch', async (req, res) => {
     }
     const ownerAddress = sender.address.toLowerCase()
 
-    // Verify first signature to recover the signer (all must match)
+    // Recover the signer.
+    //  - batchSig path: verify ONE ActionBatch signature whose actionsHash
+    //    commits to the keccak256 of every per-action packed slice. Mirrors
+    //    CawActions.processActions's batch path so this API can pre-verify
+    //    exactly what the contract will check.
+    //  - per-action path: verify the first action's sig and require every
+    //    other to recover to the same signer (legacy shape).
     let firstSigner: string
-    try {
-      firstSigner = ethers.verifyTypedData(
-        actions[0].domain,
-        { ActionData: actions[0].types.ActionData },
-        actions[0].data,
-        actions[0].signature
-      ).toLowerCase()
-    } catch {
-      return res.status(400).json({ error: 'Invalid signature on first action' })
+    if (useBatchSig) {
+      // Build packed bytes for the whole group, then take per-action keccaks.
+      // packActions expects amounts/recipients pre-cleaned, so do that here.
+      const sanitizedActions = actions.map((a: any) => {
+        const amounts = Array.isArray(a.data.amounts) ? a.data.amounts.map((amt: any) => {
+          if (amt === null || amt === undefined || amt === '') return '0'
+          const strAmt = String(amt)
+          return (strAmt === 'NaN' || isNaN(Number(strAmt))) ? '0' : strAmt
+        }) : []
+        return {
+          actionType: Number(a.data.actionType),
+          senderId: Number(a.data.senderId),
+          receiverId: Number(a.data.receiverId || 0),
+          receiverCawonce: Number(a.data.receiverCawonce || 0),
+          clientId: Number(a.data.clientId),
+          cawonce: Number(a.data.cawonce),
+          recipients: (a.data.recipients || []).map(Number),
+          amounts: amounts.map((x: any) => BigInt(x)),
+          text: a.data.text || '0x',
+        }
+      })
+      const packed = packActions(sanitizedActions)
+      const slices = getPackedActionSlices(packed)
+      const perActionHashes: string[] = slices.map(s => ethers.keccak256(s))
+      const actionsHash = ethers.keccak256(ethers.solidityPacked(
+        Array(perActionHashes.length).fill('bytes32'),
+        perActionHashes,
+      ))
+      const batchMessage = {
+        senderId: Number(actions[0].data.senderId),
+        firstCawonce: Number(actions[0].data.cawonce),
+        actionCount: actions.length,
+        actionsHash,
+      }
+      const batchTypeDef = {
+        ActionBatch: [
+          { name: 'senderId', type: 'uint32' },
+          { name: 'firstCawonce', type: 'uint32' },
+          { name: 'actionCount', type: 'uint32' },
+          { name: 'actionsHash', type: 'bytes32' },
+        ],
+      }
+      try {
+        firstSigner = ethers.verifyTypedData(
+          batchDomain,
+          batchTypeDef,
+          batchMessage,
+          batchSig,
+        ).toLowerCase()
+      } catch (err: any) {
+        console.warn('[Actions/batch] verifyTypedData (ActionBatch) threw:', err?.shortMessage || err?.message)
+        return res.status(400).json({ error: 'Invalid batch signature' })
+      }
+    } else {
+      try {
+        firstSigner = ethers.verifyTypedData(
+          actions[0].domain,
+          { ActionData: actions[0].types.ActionData },
+          actions[0].data,
+          actions[0].signature,
+        ).toLowerCase()
+      } catch {
+        return res.status(400).json({ error: 'Invalid signature on first action' })
+      }
     }
 
     // If not owner, check session key once
@@ -988,10 +1065,15 @@ router.post('/batch', async (req, res) => {
       }
     }
 
+    // Allocate a shared batchId for this group so the validator can re-cluster
+    // the rows into one sig group when packing the on-chain submission.
+    // null on the legacy per-action path keeps existing behaviour.
+    const batchId: number | null = useBatchSig ? Date.now() & 0x7fffffff : null
+
     // Verify every other signature matches the first signer
     // (and that action types are in the session scope if session-signed)
     const results: Array<{ index: number; txQueueId?: number; status?: string; error?: string }> = []
-    const rowsToInsert: Array<{ senderId: number; payload: any; signedTx: string }> = []
+    const rowsToInsert: Array<{ senderId: number; payload: any; signedTx: string; batchId: number | null }> = []
 
     for (let i = 0; i < actions.length; i++) {
       const a = actions[i]
@@ -1006,27 +1088,33 @@ router.post('/batch', async (req, res) => {
         a.data.amounts = []
       }
 
-      // Verify signature
-      try {
-        const recovered = ethers.verifyTypedData(
-          a.domain,
-          { ActionData: a.types.ActionData },
-          a.data,
-          a.signature
-        ).toLowerCase()
-        if (recovered !== firstSigner) {
-          results.push({ index: i, error: 'Signer mismatch — all actions must share the same signer' })
+      if (!useBatchSig) {
+        // Verify per-action signature
+        try {
+          const recovered = ethers.verifyTypedData(
+            a.domain,
+            { ActionData: a.types.ActionData },
+            a.data,
+            a.signature
+          ).toLowerCase()
+          if (recovered !== firstSigner) {
+            results.push({ index: i, error: 'Signer mismatch — all actions must share the same signer' })
+            continue
+          }
+        } catch {
+          results.push({ index: i, error: 'Invalid signature' })
           continue
         }
-      } catch {
-        results.push({ index: i, error: 'Invalid signature' })
-        continue
       }
 
       rowsToInsert.push({
         senderId: a.data.senderId,
-        payload: { data: a.data, domain: a.domain, types: a.types },
-        signedTx: a.signature,
+        // Use the batch sig as signedTx for every row; the validator looks at
+        // batchId to know rows share a sig group, then takes signedTx from
+        // one row (any row in the group has the same batch sig).
+        payload: { data: a.data, domain: useBatchSig ? batchDomain : a.domain, types: useBatchSig ? batchTypes : a.types },
+        signedTx: useBatchSig ? batchSig : a.signature,
+        batchId,
       })
       results.push({ index: i }) // placeholder, txQueueId filled after insert
     }

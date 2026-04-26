@@ -14,6 +14,8 @@ import { getActionTypeForModal } from '~/errors/InsufficientStakeError'
 import { useInsufficientStakeStore } from '~/store/insufficientStakeStore'
 import { useAuthStore } from '~/store/authStore'
 import { privateKeyToAccount } from 'viem/accounts'
+import { keccak256, concat } from 'viem'
+import { packActions, getPackedActionSlices } from '~/../../../utils/packActions'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import { useQuickSignRenewStore } from '~/components/modals/QuickSignRenewModal'
@@ -929,31 +931,65 @@ export function useSignAndSubmitAction() {
       ? getValidatorTip(BigInt(activeSession.tipCeiling || '0'))
       : getValidatorTip()
 
-    // Phase 1: sign all actions in sequence (in-memory, fast)
+    // Build typed data for every action (no signing yet — needed to compute
+    // the per-action packed slice each batch sig commits to).
     const sessionAccount = privateKeyToAccount(activeSession.privateKey)
-    const signedItems: Array<{ params: ActionParams; data: any; signature: `0x${string}`; domain: any; types: any }> = []
+    const typedItems: Array<{ params: ActionParams; data: any; domain: any; types: any }> = []
     for (let i = 0; i < allParams.length; i++) {
       const p = allParams[i]
-      const { domain, types, primaryType, message } = buildTypedData(p, effectiveTip)
-      const signature = await sessionAccount.signTypedData({
-        domain: domain as any,
-        types: { ActionData: TYPES.ActionData },
-        primaryType,
-        message,
-      })
-      signedItems.push({ params: p, data: message, signature, domain, types })
-      onProgress?.({ signed: i + 1, submitted: 0, total: allParams.length })
+      const { domain, types, message } = buildTypedData(p, effectiveTip)
+      typedItems.push({ params: p, data: message, domain, types })
     }
 
-    // Phase 2: single batch POST. The server shares user lookup + session
-    // key verification across all actions, and inserts all TxQueue rows in
-    // one DB transaction.
-    const batchPayload = signedItems.map(item => ({
-      data: item.data,
-      domain: item.domain,
-      types: item.types,
-      signature: item.signature,
+    // ONE ActionBatch signature covers all N actions. Mirrors the contract's
+    // batch path: hash each per-action packed slice, then keccak the concat,
+    // then sign ActionBatch(senderId, firstCawonce, actionCount, actionsHash).
+    // The validator clusters txQueue rows by batchId and emits one sig group
+    // for the whole thread, replacing N ecrecovers with 1 on-chain.
+    const sanitizedForPack = typedItems.map(item => ({
+      actionType: Number(item.data.actionType),
+      senderId: Number(item.data.senderId),
+      receiverId: Number(item.data.receiverId || 0),
+      receiverCawonce: Number(item.data.receiverCawonce || 0),
+      clientId: Number(item.data.clientId),
+      cawonce: Number(item.data.cawonce),
+      recipients: (item.data.recipients || []).map(Number),
+      amounts: (item.data.amounts || []).map((x: any) => BigInt(x)),
+      text: item.data.text || '0x',
     }))
+    const packedBytes = packActions(sanitizedForPack)
+    const slices = getPackedActionSlices(packedBytes)
+    // viem's keccak256(ByteArray) returns Hex; concat(Hex[]) → Hex; keccak256(Hex) → Hex.
+    const perActionHashes = slices.map((s: Uint8Array) => keccak256(s))
+    const actionsHash = keccak256(concat(perActionHashes))
+
+    const batchDomain = typedItems[0].domain
+    const batchTypeDef = {
+      ActionBatch: [
+        { name: 'senderId', type: 'uint32' },
+        { name: 'firstCawonce', type: 'uint32' },
+        { name: 'actionCount', type: 'uint32' },
+        { name: 'actionsHash', type: 'bytes32' },
+      ],
+    }
+    const batchMessage = {
+      senderId: Number(typedItems[0].data.senderId),
+      firstCawonce: Number(typedItems[0].data.cawonce),
+      actionCount: typedItems.length,
+      actionsHash,
+    }
+    const batchSig = await sessionAccount.signTypedData({
+      domain: batchDomain as any,
+      types: batchTypeDef,
+      primaryType: 'ActionBatch',
+      message: batchMessage,
+    })
+    onProgress?.({ signed: typedItems.length, submitted: 0, total: typedItems.length })
+
+    // Phase 2: single batch POST. The server verifies the batch sig once,
+    // creates N TxQueue rows sharing batchId + signedTx, and the validator
+    // re-clusters them into one sig group when packing the on-chain submission.
+    const batchPayload = typedItems.map(item => ({ data: item.data }))
 
     // Forward pending mint/deposit hint (same logic as single-action path) so
     // threads posted during LZ propagation get parked in waiting_for_deposit
@@ -980,13 +1016,16 @@ export function useSignAndSubmitAction() {
         method: 'POST',
         body: JSON.stringify({
           actions: batchPayload,
+          batchSig,
+          domain: batchDomain,
+          types: batchTypeDef,
           ...(pendingDepositTxHash ? { pendingDepositTxHash } : {}),
         }),
       })
     } catch (err: any) {
       console.error('[submitMany] Batch submit failed:', err.message)
       // Fill all with error so caller sees consistent shape
-      const results = signedItems.map(() => ({ error: err.message || 'batch submission failed' }))
+      const results = typedItems.map(() => ({ error: err.message || 'batch submission failed' }))
       return results
     }
 
@@ -998,10 +1037,10 @@ export function useSignAndSubmitAction() {
 
     for (let i = 0; i < allParams.length; i++) {
       const r = batchResponse?.results?.[i]
-      results[i] = r ? { ...r, cawonce: signedItems[i]?.data?.cawonce } : { error: 'no response for action' }
+      results[i] = r ? { ...r, cawonce: typedItems[i]?.data?.cawonce } : { error: 'no response for action' }
       // Track pending spend for successful queues
       if (r?.txQueueId) {
-        const costWholeTokens = (actionCostWei[signedItems[i].params.actionType] || 0n) + effectiveTip
+        const costWholeTokens = (actionCostWei[typedItems[i].params.actionType] || 0n) + effectiveTip
         const costWei = costWholeTokens * 10n**18n
         if (costWei > 0n) {
           usePendingSpendStore.getState().addPendingSpend(r.txQueueId, costWei)
