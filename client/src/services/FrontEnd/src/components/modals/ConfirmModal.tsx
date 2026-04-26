@@ -38,9 +38,11 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
         <h3 className={`text-lg font-semibold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
           {title}
         </h3>
-        <p className={`text-sm mb-5 ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-          {message}
-        </p>
+        <div className={`text-sm mb-5 space-y-2 ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
+          {message.split('\n\n').map((paragraph, i) => (
+            <p key={i}>{paragraph}</p>
+          ))}
+        </div>
         <div className="flex gap-3">
           <button
             onClick={onClose}

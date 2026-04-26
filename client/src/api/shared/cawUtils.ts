@@ -25,7 +25,7 @@ export interface CawRaw {
   hashtags?: Array<{ hashtag: { name: string } }>
   imageData?: string
   hasImage?: boolean
-  status?: 'SUCCESS' | 'PENDING' | 'FAILED'
+  status?: 'SUCCESS' | 'PENDING' | 'FAILED' | 'HIDDEN'
   reason?: string | null
 }
 
@@ -58,7 +58,7 @@ export interface ShapedCaw {
   parent?: ShapedCaw | null
   imageData?: string
   hasImage?: boolean
-  status?: 'SUCCESS' | 'PENDING' | 'FAILED'
+  status?: 'SUCCESS' | 'PENDING' | 'FAILED' | 'HIDDEN'
   reason?: string | null
 }
 

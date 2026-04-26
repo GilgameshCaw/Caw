@@ -706,18 +706,24 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         }`}>
           {/* Replying to header - only for actual replies (not quotes or recaws) */}
           {item.parent && !isRecaw && !isQuote && item.parent.user && !hideParentPreview && (
-            <Link to={`/caws/${item.parent.id}`} className={`block text-xs transition-all duration-300 mb-3 ${
-              isDark ? 'text-gray-400' : 'text-gray-600'
-            }`}>
-              <span className="truncate md:truncate-none">Replying to <span className="underline">@{item.parent.user.username}</span></span>
-              {item.parent.content && (
-                <span className={`block mt-1 text-[11px] leading-snug line-clamp-2 ${
-                  isDark ? 'text-white/25' : 'text-gray-400'
-                }`}>
-                  {item.parent.content}
-                </span>
-              )}
-            </Link>
+            item.parent.status === 'HIDDEN' ? (
+              <div className={`block text-xs mb-3 italic ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                Replying to a post that has been removed by the poster
+              </div>
+            ) : (
+              <Link to={`/caws/${item.parent.id}`} className={`block text-xs transition-all duration-300 mb-3 ${
+                isDark ? 'text-gray-400' : 'text-gray-600'
+              }`}>
+                <span className="truncate md:truncate-none">Replying to <span className="underline">@{item.parent.user.username}</span></span>
+                {item.parent.content && (
+                  <span className={`block mt-1 text-[11px] leading-snug line-clamp-2 ${
+                    isDark ? 'text-white/25' : 'text-gray-400'
+                  }`}>
+                    {item.parent.content}
+                  </span>
+                )}
+              </Link>
+            )
           )}
 
           {/* Recawed header */}
@@ -1035,33 +1041,45 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           )}
 
           {/* Quoted post embed */}
-          {isQuote && item.parent && item.parent.user && (
-            <Link
-              to={`/caws/${item.parent.id}`}
-              onClick={(e) => e.stopPropagation()}
-              className={`block mt-3 mb-3 rounded-xl border p-3 transition-colors ${
-                isDark ? 'border-white/10 bg-white/[0.02] hover:bg-white/[0.04]' : 'border-gray-200 bg-gray-50 hover:bg-gray-100'
-              }`}
-            >
-              <div className="flex items-center gap-2 mb-1.5">
-                <Avatar
-                  src={getUserAvatar(item.parent.user)}
-                  className="w-5 h-5 rounded-full border border-gray-700"
-                />
-                <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  {item.parent.user.displayName || item.parent.user.username}
-                </span>
-                <span className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                  @{item.parent.user.username}
-                </span>
-              </div>
-              {item.parent.content && (
-                <div className={`text-sm line-clamp-3 ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
-                  <ContentWithHashtags content={item.parent.content} />
+          {isQuote && item.parent && item.parent.user && (() => {
+            const isHidden = item.parent.status === 'HIDDEN'
+            const Wrapper: any = isHidden ? 'div' : Link
+            const wrapperProps: any = isHidden
+              ? { onClick: (e: React.MouseEvent) => e.stopPropagation() }
+              : { to: `/caws/${item.parent.id}`, onClick: (e: React.MouseEvent) => e.stopPropagation() }
+            return (
+              <Wrapper
+                {...wrapperProps}
+                className={`block mt-3 mb-3 rounded-xl border p-3 transition-colors ${
+                  isHidden
+                    ? isDark ? 'border-white/10 bg-white/[0.02]' : 'border-gray-200 bg-gray-50'
+                    : isDark ? 'border-white/10 bg-white/[0.02] hover:bg-white/[0.04]' : 'border-gray-200 bg-gray-50 hover:bg-gray-100'
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-1.5">
+                  <Avatar
+                    src={getUserAvatar(item.parent.user)}
+                    className="w-5 h-5 rounded-full border border-gray-700"
+                  />
+                  <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                    {item.parent.user.displayName || item.parent.user.username}
+                  </span>
+                  <span className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                    @{item.parent.user.username}
+                  </span>
                 </div>
-              )}
-            </Link>
-          )}
+                {isHidden ? (
+                  <div className={`text-sm italic ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                    The content of this post has been removed by the poster
+                  </div>
+                ) : item.parent.content && (
+                  <div className={`text-sm line-clamp-3 ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
+                    <ContentWithHashtags content={item.parent.content} />
+                  </div>
+                )}
+              </Wrapper>
+            )
+          })()}
 
           {/* Post Actions */}
           <div className="flex items-center justify-between" onClick={(e) => e.stopPropagation()}>
@@ -1658,7 +1676,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         isOpen={showDeleteConfirm}
         onClose={() => setShowDeleteConfirm(false)}
         title="Delete post"
-        message="This post will be hidden for everyone. This action is recorded on-chain and cannot be undone."
+        message={"This post will be hidden for everyone, but the content of this post already exists on chain forever and can not be removed.\n\nHiding this post will also be recorded on-chain and cannot be undone."}
         confirmText="Delete"
         destructive
         onConfirm={async () => {

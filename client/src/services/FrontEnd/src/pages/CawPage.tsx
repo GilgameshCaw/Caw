@@ -53,14 +53,35 @@ export const CawPage: React.FC = () => {
   const activeToken = useActiveToken()
   const isAuthenticated = !!activeToken?.username
   const allPendingPosts = usePendingPostsStore(s => s.pendingPosts)
-  const pendingReplies = useMemo(() => allPendingPosts.filter(p => p.replyToId === id), [allPendingPosts, id])
+  // Pending posts targeted at this caw, excluding quotes — quotes are
+  // standalone posts, not replies, so they don't belong in the reply
+  // pending list. They'll appear in the page's quote section once confirmed.
+  const pendingReplies = useMemo(
+    () => allPendingPosts.filter(p =>
+      p.replyToId === id && !(p.isQuote || (p.action === 'recaw' && p.content !== ''))
+    ),
+    [allPendingPosts, id]
+  )
 
   // Interleave replies, plain recaws, and tips by timestamp (ascending), so
-  // the post page reads chronologically as a single conversation. Pending
-  // replies still render separately above this list.
+  // the post page reads chronologically as a single conversation. Quotes
+  // (RECAW with content) are excluded from this sort — they're standalone
+  // posts that just happen to reference this one, and slotting them
+  // chronologically into the reply thread reads as if they were replies.
+  // Pending replies still render separately above this list.
+  // Quotes (RECAW with non-empty content) are standalone posts that just
+  // happen to reference this one. They don't belong in the chronological
+  // reply thread — slotting them by timestamp reads as if they were replies.
+  // Detect them defensively: prefer the API-shaped isQuote flag, but fall
+  // back to action+content in case isQuote isn't populated (optimistic
+  // local items, future API shape drift).
+  const isQuoteItem = (c: CawItem) =>
+    c.isQuote === true || (c.action === 'RECAW' && !!c.content && c.content !== '')
+
   const feedItems = useMemo(() => {
     const replyItems = comments
       .filter(comm => {
+        if (isQuoteItem(comm)) return false
         if (comm.status !== 'PENDING') return true
         const sig = `${comm.user.tokenId}:${comm.content?.trim()}`
         return !pendingReplies.some(p => `${p.user?.tokenId}:${p.content?.trim()}` === sig)
@@ -72,6 +93,10 @@ export const CawPage: React.FC = () => {
       (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     )
   }, [comments, recaws, tips, pendingReplies])
+
+  // Quotes — kept in their original order from the API so they don't
+  // shuffle under any of the merge logic above.
+  const quotes = useMemo(() => comments.filter(isQuoteItem), [comments])
   const [showSignInModal, setShowSignInModal] = useState(false)
   const [pollingReplies, setPollingReplies] = useState(false)
 
@@ -275,6 +300,13 @@ export const CawPage: React.FC = () => {
         {/* Comments Section */}
         {isAuthenticated ? (
           <div className="space-y-0 relative">
+            {/* Quotes render at the top — they're their own posts, not part
+                of the chronological reply thread below. */}
+            {quotes.map((quote) => (
+              <div key={`quote-${quote.id}`} className="relative">
+                <FeedItem item={quote} hideParentPreview={true} />
+              </div>
+            ))}
             {pendingReplies.map((post) => (
               <div key={post.tempId} className="relative">
                 <FeedItem item={post as CawItem} isReply={true} hideParentPreview={true} />
