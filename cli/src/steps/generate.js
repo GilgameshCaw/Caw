@@ -159,6 +159,14 @@ function buildEnvVars(nodeType, config) {
   if (config.validatorPrivateKey) env.VALIDATOR_PRIVATE_KEY = config.validatorPrivateKey
   if (config.adminPassword) env.ADMIN_PASSWORD = config.adminPassword
 
+  // CLIENT_ID is the same value the frontend reads as VITE_CLIENT_ID — the
+  // duplication exists only because Vite requires the VITE_ prefix to expose
+  // a var to the browser bundle. Backend services (RawEventsGatherer,
+  // DmRelayService, DataCleaner, InstanceRegistryService) read CLIENT_ID
+  // directly. Without it, they silently fall back to clientId=1, which is
+  // wrong for any install serving a different client.
+  if (config.clientId) env.CLIENT_ID = String(config.clientId)
+
   // Replication is optional. REPLICATION_RPC + REPLICATION_CHAIN enable the
   // optimistic-archive loop in ValidatorService; REPLICATOR_PRIVATE_KEY is
   // only set when the operator chose a separate replicator key (otherwise
