@@ -75,6 +75,20 @@ const EXPECTED_DEPLOYER = '0xF71338f3eAa483aA66125598B09BA1988e694a95';
 // (CawProfileL2, CawActions, CawActionsArchive, CawChallengeRelay) so any
 // client can pick any of them as its storage chain. Adding a new L2 = append
 // to this list + add a per-env CHAINS entry below.
+//
+// L1 is INTENTIONALLY NOT IN THIS LIST. L1 still gets a co-deployed
+// CawProfileL2_L1 + CawActions_L1 (in `bypassLZ` mode — see Phase 2 below)
+// so that a client can pick L1 as their `storageChainEid` at createClient
+// time and have actions land natively on mainnet. But L1 doesn't get a
+// CawActionsArchive or a CawChallengeRelay because:
+//   * Archiving L1 to a cheaper chain is pointless — L1 is the most
+//     permanent chain in the stack already.
+//   * Without an archive, there's no fraud-proof channel needed; readers
+//     verify L1 actions by reading the canonical chain directly.
+// Validators that opt to replicate an L1-storage client should set
+// SKIP_L1_REPLICATE_CLIENT_IDS=<id,id,...> in their .env so the
+// optimistic-replication loop short-circuits for that client (otherwise
+// it'd try to ship hashes from a chain with no relay and fail per cycle).
 const L2_CHAIN_KEYS = ['L2', 'L2b'];
 
 // Chain configurations. Env vars are role-named (L1_RPC_URL, L2_RPC_URL,

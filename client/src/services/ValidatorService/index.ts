@@ -2146,6 +2146,8 @@ console.log("succeededKeys", succeededKeys)
     // One-shot guard so the CLI stake-setup prompt prints once per process,
     // not every 30s when the replicator loop re-fires.
     let underStakedWarned = false
+    // Same one-shot pattern for the L1-storage skip notice.
+    let skippedL1ClientsWarned = false
     const ethers_formatStake = (wei: bigint) => (Number(wei) / 1e18).toFixed(4).replace(/0+$/, '').replace(/\.$/, '')
     const CHALLENGE_RELAY_ADDRESS = CAW_CHALLENGE_RELAY_ADDRESS
     const OPTIMISTIC_MIN_STAKE = BigInt('10000000000000000')     // 0.01 ETH
@@ -2463,7 +2465,37 @@ console.log("succeededKeys", succeededKeys)
           .map(s => Number(s))
           .filter(n => Number.isFinite(n) && n > 0)
         if (replicateClientIds.length === 0) return
-        const clients = replicateClientIds.map(id => ({ id }))
+
+        // 1a. Filter out clients whose storage chain is L1 (mainnet/Sepolia).
+        //
+        //    Why: archiving L1 actions to another chain is pointless — L1 is
+        //    already the most permanent chain in the stack. The deploy script
+        //    intentionally does NOT include L1 in L2_CHAIN_KEYS, so there's no
+        //    CawChallengeRelay_L1 to read CawActions_L1.clientHashAtCheckpoint
+        //    and ship a fraud proof. Anyone wanting to verify L1 actions reads
+        //    the canonical chain directly.
+        //
+        //    The validator can't see Client.storageChainEid in the DB (not
+        //    cached today), and we don't want to add a per-cycle CCM RPC just
+        //    for this guard. Operators with L1-storage clients should set
+        //    SKIP_L1_REPLICATE_CLIENT_IDS=N,M to silence the loop for those
+        //    ids — without it, the loop tries to ship hashes from the wrong
+        //    chain and the archive submission fails per cycle.
+        const skipL1Ids = new Set(
+          (process.env.SKIP_L1_REPLICATE_CLIENT_IDS || '')
+            .split(',').map(s => s.trim()).filter(Boolean)
+            .map(s => Number(s)).filter(n => Number.isFinite(n) && n > 0)
+        )
+        const eligibleClientIds = replicateClientIds.filter(id => !skipL1Ids.has(id))
+        if (skipL1Ids.size > 0 && !skippedL1ClientsWarned) {
+          console.log(
+            `[OptimisticReplication] Skipping L1-storage client(s) ${[...skipL1Ids].join(', ')} ` +
+            `— L1-stored actions don't need archiving (L1 is already canonical).`
+          )
+          skippedL1ClientsWarned = true
+        }
+        if (eligibleClientIds.length === 0) return
+        const clients = eligibleClientIds.map(id => ({ id }))
 
         // 2. Check stake. Auto-restake is OFF BY DEFAULT: a stake drop during
         //    live operation almost always means a slash — silently topping
