@@ -114,6 +114,35 @@ Removed entirely:
 - [x] **Marketplace has no admin (done 2026-04-25)** — `CawProfileMarketplace` no longer inherits `Ownable`; payment-token list fixed at construction.
 - [x] **Delegatecall audit (done 2026-04-25)**: only two delegatecall sites in the codebase (`CawProfile._lzReceive`, `CawProfileL2._lzReceive`); both call `address(this).delegatecall(...)` (target is self, not user-controlled), behind a whitelisted-selector check, behind OApp's endpoint+peer auth, with `fromLZ` flag flipped on success only. Selector collisions against all inherited functions (Ownable / ERC721 / ERC721Enumerable / OApp / OAppCore) checked and ruled out. No further action needed.
 
+### DDoS protection — multiple surfaces, partial coverage today
+
+The CAW node has several distinct DDoS surfaces; rate-limit coverage is uneven. Audit each before mainnet and close the gaps.
+
+**Existing coverage (to verify, not just trust):**
+- `express-rate-limit` on `/api/upload` (image + video routes), `/api/marketplace/listings/:id/sold`, and `/api/shorturl` (two limiters: anonymous + authenticated).
+- Redis-backed rate limit on session creation (`session_ratelimit:<address>` keys, 20/day per address).
+- On-chain rate limit on free actions (unlike, unfollow) — 30/min per `senderId` in `client/src/api/routes/actions.ts:38` to prevent validator-griefing on zero-cost actions.
+
+**Surfaces currently unprotected (or under-protected) — fix before mainnet:**
+
+- [ ] **Action submission (`/api/actions`)** — the hot path. Each accepted action consumes validator gas. Today's free-action limit only covers unlike/unfollow; paid actions (`caw`, `like`, `recaw`, `follow`) rely on the on-chain spend cap, which works but doesn't prevent rapid-fire signature-flooding from a single client. Add per-IP and per-`senderId` rate limits at the route level. Tier the per-`senderId` limit by stake (more stake = higher rate ceiling) since high-stake users are the ones whose actions actually settle.
+
+- [ ] **Read endpoints (`/api/caws`, `/api/users/:username`, `/api/users/by-token/:id`, `/api/marketplace/*`, search)** — Postgres + ES queries on every request, no rate limit. A scraper can hammer these and slow down legitimate users. Add a global per-IP limit (e.g. 200 req/min) plus a tighter per-IP limit on the search endpoint specifically (search is the most expensive). express-rate-limit with the existing Redis-backed store is the right shape.
+
+- [ ] **WebSocket/Socket.IO** — `socket.io-client` connections aren't currently rate-limited at handshake. A connection-flood attack opens many sockets, exhausts file descriptors, no req/min limiter applies. Cap concurrent connections per IP at the socket.io middleware level (~10).
+
+- [ ] **DM endpoints (`/api/dm/*`)** — DMs are E2E encrypted so no content-scanning, but they're still inserts into Postgres. A peer hammering relayDmToPeers with spoofed identities can fill the DB. The existing `requireAuth` gate covers identity spoofing; add a per-recipient inbound rate limit to bound DB growth.
+
+- [ ] **L1 minter / deposit endpoints** — these proxy to expensive on-chain ops. A client repeating a failed mint transaction can pile up `txQueue` rows. Per-`senderId` cap on simultaneous in-flight `txQueue` entries.
+
+- [ ] **L7 / nginx layer** — install.sh's nginx server block doesn't set `limit_req_zone` or `limit_conn_zone`. Add reasonable defaults at the nginx layer (e.g. 50 req/s burst with a 100-conn cap per IP). nginx limits run before the Node app even sees the request, which protects from a stampede the Node event loop can't handle.
+
+- [ ] **CDN-friendly cache headers on read paths** — most public reads (`/api/users/:username`, `/api/caws/:id`) could be cached for 5–30 seconds at the edge with a `Cache-Control: s-maxage=...` header. Doesn't help if the operator isn't behind Cloudflare/Fastly, but it's free defense for those who are.
+
+- [ ] **Cloudflare in front of the node (operator option)** — document this in the README. Cloudflare's free tier handles L3/L4 floods we can't, and the operator just needs to flip an "orange cloud" on. Caveat: a transparent proxy means the Node app sees Cloudflare IPs, not real clients — `app.set('trust proxy', ...)` and `req.ip` need to resolve to the X-Forwarded-For correctly for our rate limits to bucket per real client.
+
+Estimate: ~1 day to cover the route-level pieces (express-rate-limit on each path) and another half day for the nginx + websocket pieces. The Cloudflare/CDN parts are documentation only.
+
 ---
 
 ## Replication & Testing
