@@ -12,6 +12,7 @@ import { cawProfileAbi } from '~/../../../abi/generated'
 import { apiFetch } from '~/api/client'
 import CopyAddressButton from '~/components/CopyAddressButton'
 import UserCard, { UserCardUser } from '~/components/UserCard'
+import UsernameSvg from '~/components/UsernameSvg'
 import LiveCountdown from '~/components/marketplace/LiveCountdown'
 import { LoadingSpinner } from '~/components/Skeleton'
 import { useTokenDataStore, usePriceStore } from '~/store/tokenDataStore'
@@ -230,20 +231,18 @@ const AddressTokens: React.FC = () => {
         {/* Header */}
         <div className={`rounded-xl border ${themeBorder(isDark)} ${themeBgSubtle(isDark)} p-4 mb-4`}>
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <h1 className={`text-base font-mono break-all ${isDark ? 'text-white' : 'text-gray-900'}`}>
-              {address}
-            </h1>
-            <div className="flex items-center gap-3">
+            <h1 className={`text-base font-mono font-bold break-all flex items-center gap-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+              <span>{address}</span>
               <CopyAddressButton address={address} iconOnly />
-              <a
-                href={`https://etherscan.io/address/${address}`}
-                target="_blank"
-                rel="noreferrer"
-                className={`text-xs ${themeTextMuted(isDark)} hover:underline`}
-              >
-                View on Etherscan ↗
-              </a>
-            </div>
+            </h1>
+            <a
+              href={`https://etherscan.io/address/${address}`}
+              target="_blank"
+              rel="noreferrer"
+              className={`text-xs ${themeTextMuted(isDark)} hover:underline`}
+            >
+              View on Etherscan ↗
+            </a>
           </div>
 
           <div className={`grid grid-cols-3 gap-3 mt-4 pt-4 border-t ${themeBorder(isDark)}`}>
@@ -251,7 +250,7 @@ const AddressTokens: React.FC = () => {
               <div className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 {balanceLoading ? '—' : tokenCount}
               </div>
-              <div className={`text-xs ${themeTextMuted(isDark)}`}>Tokens owned</div>
+              <div className={`text-xs ${themeTextMuted(isDark)}`}>Profiles owned</div>
             </div>
             <div className="text-center">
               <div className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
@@ -270,9 +269,9 @@ const AddressTokens: React.FC = () => {
           </div>
         </div>
 
-        {/* Tokens owned */}
+        {/* Profiles owned */}
         <h2 className={`text-lg font-semibold mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-          Tokens owned
+          Profiles owned
         </h2>
         {balanceLoading || indicesLoading ? (
           <LoadingSpinner className="py-8" />
@@ -283,9 +282,11 @@ const AddressTokens: React.FC = () => {
         ) : resolvedUsers.length === 0 ? (
           <LoadingSpinner className="py-8" />
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+          <div className="flex flex-wrap justify-center gap-3">
             {resolvedUsers.map(u => (
-              <UserCard key={u.tokenId} user={u} />
+              <div key={u.tokenId} className="w-full sm:w-[calc(50%-0.375rem)] md:w-[calc(33.333%-0.5rem)]">
+                <UserCard user={u} />
+              </div>
             ))}
           </div>
         )}
@@ -299,7 +300,7 @@ const AddressTokens: React.FC = () => {
             No active offers from this address.
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="grid grid-cols-1 min-[520px]:grid-cols-2 gap-4">
             {offers.map(offer => {
               const dec = DECIMALS[offer.paymentToken] ?? 18
               const num = parseFloat(dec === 18 ? formatEther(BigInt(offer.amount)) : formatUnits(BigInt(offer.amount), dec))
@@ -314,30 +315,29 @@ const AddressTokens: React.FC = () => {
               return (
                 <div
                   key={offer.offerId}
-                  className={`rounded-xl border ${themeBorder(isDark)} ${themeBgSubtle(isDark)} p-4`}
+                  className={`p-4 rounded-xl border transition-all duration-200 ${
+                    isDark ? 'border-white/10 bg-white/5' : 'border-gray-200 bg-white'
+                  }`}
                 >
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <div className={`text-sm ${themeTextMuted(isDark)}`}>
-                        on{' '}
-                        <Link
-                          to={`/users/${offer.username}`}
-                          className={`font-medium ${isDark ? 'text-white hover:text-yellow-400' : 'text-gray-900 hover:text-yellow-500'} hover:underline`}
-                        >
-                          @{offer.username}
-                        </Link>
+                  <Link
+                    to={`/users/${offer.username}`}
+                    className="block cursor-pointer hover:opacity-80 transition-opacity"
+                  >
+                    <div className="w-full max-w-[160px] mx-auto mb-3">
+                      <UsernameSvg username={offer.username} />
+                    </div>
+                  </Link>
+                  <div className="text-center">
+                    {usdStr && (
+                      <div className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                        {usdStr}
                       </div>
-                      {usdStr && (
-                        <div className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                          {usdStr}
-                        </div>
-                      )}
-                      <div className={`text-sm ${themeTextMuted(isDark)}`}>
-                        {fmtPrice(offer.amount, offer.paymentToken)} {offer.paymentToken}
-                      </div>
-                      <div className="mt-0.5">
-                        <LiveCountdown endTime={offer.expiry} />
-                      </div>
+                    )}
+                    <div className={`text-sm ${themeTextMuted(isDark)}`}>
+                      {fmtPrice(offer.amount, offer.paymentToken)} {offer.paymentToken}
+                    </div>
+                    <div className="text-xs mt-1">
+                      <LiveCountdown endTime={offer.expiry} />
                     </div>
                   </div>
                 </div>

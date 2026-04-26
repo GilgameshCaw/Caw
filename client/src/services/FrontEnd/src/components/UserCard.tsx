@@ -58,7 +58,7 @@ const UserCard: React.FC<UserCardProps> = ({
         opacity: fadingOut ? 0 : 1,
         padding: fadingOut ? '0' : undefined,
         overflow: fadingOut ? 'hidden' : 'visible',
-        marginLeft: isFirst ? '20px' : undefined,
+        marginLeft: isFirst ? '10px' : undefined,
         marginRight: isLast ? '20px' : undefined,
       }
     : { opacity: fadingOut ? 0 : 1 }
