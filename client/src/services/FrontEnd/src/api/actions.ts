@@ -515,13 +515,19 @@ export function useSignAndSubmitAction() {
           clientAuthCache.set(activeTokenId, true)
         } else {
           return new Promise((resolve, reject) => {
-            useClientAuthStore.getState().show(activeTokenId, async () => {
-              try {
-                clientAuthCache.set(activeTokenId, true)
-                const result = await requestAndSubmit(params)
-                resolve(result)
-              } catch (err) { reject(err) }
-            })
+            useClientAuthStore.getState().show(
+              activeTokenId,
+              async () => {
+                try {
+                  clientAuthCache.set(activeTokenId, true)
+                  const result = await requestAndSubmit(params)
+                  resolve(result)
+                } catch (err) { reject(err) }
+              },
+              // Reject on cancel so the caller (e.g. PostForm submit) can
+              // unstick its pending state instead of hanging on this Promise.
+              () => reject(new Error('Client authentication cancelled'))
+            )
           })
         }
       } catch (err) {
@@ -804,13 +810,18 @@ export function useSignAndSubmitAction() {
       if (errMsg.includes('not authenticated')) {
         clientAuthCache.delete(activeTokenId!)
         return new Promise((resolve, reject) => {
-          useClientAuthStore.getState().show(activeTokenId!, async () => {
-            try {
-              clientAuthCache.set(activeTokenId!, true)
-              const result = await requestAndSubmit(params)
-              resolve(result)
-            } catch (err) { reject(err) }
-          })
+          useClientAuthStore.getState().show(
+            activeTokenId!,
+            async () => {
+              try {
+                clientAuthCache.set(activeTokenId!, true)
+                const result = await requestAndSubmit(params)
+                resolve(result)
+              } catch (err) { reject(err) }
+            },
+            // Reject on cancel so the caller can unstick its pending state.
+            () => reject(new Error('Client authentication cancelled'))
+          )
         })
       }
 

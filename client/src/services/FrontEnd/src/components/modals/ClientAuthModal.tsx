@@ -1,6 +1,5 @@
-import React, { useState } from 'react'
-import { useWriteContract, useReadContract, useAccount, useSwitchChain, useChainId } from 'wagmi'
-import { useConnectModal } from '@rainbow-me/rainbowkit'
+import React, { useEffect, useState } from 'react'
+import { useWriteContract, useReadContract } from 'wagmi'
 import ModalWrapper from './ModalWrapper'
 import { useClientAuthStore } from '~/store/clientAuthStore'
 import { useTheme } from '~/hooks/useTheme'
@@ -10,20 +9,25 @@ import { cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
 import { chains } from '~/config/chains'
 import { formatEther } from 'viem'
+import { usePriceStore } from '~/store/tokenDataStore'
 
 const ClientAuthModal: React.FC = () => {
-  const { isOpen, tokenId, onSuccess, close } = useClientAuthStore()
+  const { isOpen, tokenId, close } = useClientAuthStore()
   const { isDark } = useTheme()
-  const { isConnected } = useAccount()
-  const { openConnectModal } = useConnectModal()
-  const chainId = useChainId()
-  const { switchChain } = useSwitchChain()
   const ensureWallet = useEnsureWallet()
   const { writeContractAsync } = useWriteContract()
   const [isPending, setIsPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const wrongChain = isConnected && chainId !== chains.l1.chainId
+  // Reset transient state every time the modal opens — otherwise a stale
+  // "Transaction rejected" from the previous open lingers when the user
+  // pops the modal again from a different action.
+  useEffect(() => {
+    if (isOpen) {
+      setError(null)
+      setIsPending(false)
+    }
+  }, [isOpen])
 
   // Get LZ quote for the authenticate call (includes auth fee + LZ messaging fee)
   const { data: authQuote } = useReadContract({
@@ -36,6 +40,10 @@ const ClientAuthModal: React.FC = () => {
   })
 
   const totalFee = authQuote?.nativeFee ? BigInt(authQuote.nativeFee) : 0n
+  const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
+  const totalEth = Number(formatEther(totalFee))
+  const totalUsd = totalEth * ethPrice
+  const domainName = typeof window !== 'undefined' ? window.location.hostname : ''
 
   const handleAuth = async () => {
     await ensureWallet({ chainId: chains.l1.chainId }, async () => {
@@ -54,11 +62,12 @@ const ClientAuthModal: React.FC = () => {
           chainId: chains.l1.chainId,
         })
 
-        close()
-        // Give LayerZero a moment to relay, then retry
-        if (onSuccess) {
-          setTimeout(onSuccess, 3000)
-        }
+        // Give LayerZero a moment to relay before firing onSuccess (which
+        // will retry the original action) — succeed() reads onSuccess off
+        // the store and clears state, so capture it for the delayed call.
+        const cb = useClientAuthStore.getState().onSuccess
+        useClientAuthStore.setState({ isOpen: false, tokenId: undefined, onSuccess: undefined, onCancel: undefined })
+        if (cb) setTimeout(cb, 3000)
       } catch (err: any) {
         if (err?.name === 'UserRejectedRequestError' || err?.code === 4001) {
           setError('Transaction rejected')
@@ -89,17 +98,29 @@ const ClientAuthModal: React.FC = () => {
         </h2>
 
         <p className={`text-sm text-center mb-4 ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-          You need to register with this client before you can post, like, or follow.
-          This is a one-time on-chain transaction on Ethereum.
+          {domainName || 'this client'} requires an authentication fee to participate.
+          This helps offset costs and allows the network to run smoothly.
         </p>
 
         {totalFee > 0n && (
-          <div className={`text-center text-sm mb-4 px-3 py-2 rounded-lg ${
-            isDark ? 'bg-white/5 text-white/50' : 'bg-gray-100 text-gray-500'
+          <div className={`text-center mb-4 px-3 py-3 rounded-lg ${
+            isDark ? 'bg-white/5' : 'bg-gray-100'
           }`}>
-            Total cost: {formatEther(totalFee)} ETH
-            <span className={`block text-xs mt-0.5 ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
+            <div className={`text-xs uppercase tracking-wide mb-1 ${isDark ? 'text-white/40' : 'text-gray-500'}`}>
+              Total cost
+            </div>
+            <div className={`text-2xl font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+              {ethPrice > 0 ? `$${totalUsd.toFixed(2)}` : `${totalEth.toFixed(5)} ETH`}
+            </div>
+            {ethPrice > 0 && (
+              <div className={`text-xs mt-0.5 ${isDark ? 'text-white/40' : 'text-gray-500'}`}>
+                ~{totalEth.toFixed(5)} ETH
+              </div>
+            )}
+            <span className={`block text-xs mt-2 ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
               Includes registration fee + network relay.
+            </span>
+            <span className={`block text-xs mt-1 ${isDark ? 'text-yellow-600/70' : 'text-yellow-700/70'}`}>
               Half of all fees are used to buy and burn CAW.
             </span>
           </div>
@@ -116,11 +137,7 @@ const ClientAuthModal: React.FC = () => {
           disabled={isPending || !totalFee}
           className="w-full py-3 rounded-lg font-medium bg-yellow-500 hover:bg-yellow-600 text-black transition-colors disabled:opacity-50 cursor-pointer"
         >
-          {isPending
-            ? 'Confirming...'
-            : wrongChain
-            ? 'Switch to Ethereum'
-            : 'Activate'}
+          {isPending ? 'Confirming...' : 'Activate'}
         </button>
 
         <button
