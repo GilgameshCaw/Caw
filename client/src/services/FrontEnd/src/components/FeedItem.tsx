@@ -1119,7 +1119,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   onClick={e => {
                     e.preventDefault();
                     e.stopPropagation();
-                    if (item.status !== 'PENDING' && item.status !== 'FAILED') {
+                    // Recaws of a PENDING parent are valid — the on-chain
+                    // action keys off (receiverId, receiverCawonce), both
+                    // known at sign-time, so it doesn't matter that the
+                    // parent isn't mined yet.
+                    if (item.status !== 'FAILED') {
                       setShowRecawMenu(show => !show)
                     }
                   }}
