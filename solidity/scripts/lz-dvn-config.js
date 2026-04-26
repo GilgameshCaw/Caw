@@ -30,6 +30,11 @@
 
 // DVN addresses per mainnet chain, provided in ASCENDING order by address
 // (UlnConfig requires this — unordered arrays revert).
+//
+// To add a new L2 (e.g. mainnetL2c for Optimism): append the chain to
+// L2_CHAIN_KEYS in deploy.js, add a CHAINS entry, and add an entry here
+// + in LZ_LIBRARIES_MAINNET below. The PATHWAYS list regenerates from
+// L2_CHAIN_KEYS so no code changes needed in this file.
 const DVNS_BY_CHAIN_MAINNET = {
   // Ethereum mainnet (lzEid 30101)
   mainnetL1: [
@@ -161,24 +166,35 @@ function configMatches(current, expectedDvns) {
 }
 
 /**
- * All the LZ pathways this deployment needs configured. Each pathway
+ * Build the full PATHWAYS list from the active L2 chain set. Each pathway
  * produces two setConfig txs: send on source, receive on destination.
  *
+ * Includes:
+ *   * Profile L1 ↔ each L2 (CawProfile setL2Peer'd to that chain).
+ *   * Fraud-proof mesh: every CawChallengeRelay_<L> ↔ every other
+ *     CawActionsArchive_<L'>. N×(N-1) directed pairs.
+ *
  * Format: { oapp: string (state.addresses key), srcChain, destChain }
- * srcChain/destChain are the chain *abstract* names (L1/L2/L2b); the
+ * srcChain/destChain are the chain *abstract* names (L1/L2/L2b/...); the
  * deployer resolves them to concrete keys (mainnetL1 etc) at runtime.
  */
-const PATHWAYS = [
-  // Profile L1 ↔ L2 (Base)
-  { oapp: 'CawProfile',         srcChain: 'L1',  destChain: 'L2'  },
-  { oapp: 'CawProfileL2_L2',    srcChain: 'L2',  destChain: 'L1'  },
-  // Profile L1 ↔ L2b (Arbitrum)
-  { oapp: 'CawProfile',         srcChain: 'L1',  destChain: 'L2b' },
-  { oapp: 'CawProfileL2_L2b',   srcChain: 'L2b', destChain: 'L1'  },
-  // Fraud-proof relay: L2 → L2b (one-way logical, but LZ needs both sides configured)
-  { oapp: 'CawChallengeRelay_L2',    srcChain: 'L2',  destChain: 'L2b' },
-  { oapp: 'CawActionsArchive_L2b',   srcChain: 'L2b', destChain: 'L2'  },
-];
+function buildPathways(l2ChainKeys) {
+  const pathways = [];
+  for (const L of l2ChainKeys) {
+    // Profile: L1 CawProfile ↔ this L2's CawProfileL2_<L>
+    pathways.push({ oapp: 'CawProfile',         srcChain: 'L1', destChain: L  });
+    pathways.push({ oapp: `CawProfileL2_${L}`,  srcChain: L,    destChain: 'L1' });
+  }
+  // Fraud-proof mesh: relay on L → archive on L' for every L != L'.
+  for (const L of l2ChainKeys) {
+    for (const Lp of l2ChainKeys) {
+      if (Lp === L) continue;
+      pathways.push({ oapp: `CawChallengeRelay_${L}`,    srcChain: L,  destChain: Lp });
+      pathways.push({ oapp: `CawActionsArchive_${Lp}`,   srcChain: Lp, destChain: L  });
+    }
+  }
+  return pathways;
+}
 
 /**
  * Runs the full DVN config reconciliation. For each pathway:
@@ -192,7 +208,7 @@ const PATHWAYS = [
  * @param deployer - Deployer instance (provides getContract, initChain, etc.)
  * @param chainConfig - { env, ... }
  */
-async function configureLzDvns(state, deployer, chainConfig, chainsMap) {
+async function configureLzDvns(state, deployer, chainConfig, chainsMap, l2ChainKeys) {
   const ethers = require('ethers');
   const env = chainConfig.env;
 
@@ -201,13 +217,14 @@ async function configureLzDvns(state, deployer, chainConfig, chainsMap) {
     return;
   }
 
-  console.log(`\n  Reconciling DVN config across ${PATHWAYS.length} pathway(s)…`);
+  const pathways = buildPathways(l2ChainKeys);
+  console.log(`\n  Reconciling DVN config across ${pathways.length} pathway(s)…`);
   console.log(`  Required DVNs: LayerZero Labs + Nethermind + Google Cloud (3-of-3).`);
 
   let applied = 0;
   let skipped = 0;
 
-  for (const pathway of PATHWAYS) {
+  for (const pathway of pathways) {
     const srcChainKey = deployer.getChainKey(pathway.srcChain);
     const destChainKey = deployer.getChainKey(pathway.destChain);
     const oappAddress = state.addresses[pathway.oapp];
@@ -261,22 +278,24 @@ async function configureLzDvns(state, deployer, chainConfig, chainsMap) {
     }
   }
 
-  console.log(`\n  DVN config summary: ${applied} applied, ${skipped} already-correct, ${PATHWAYS.length * 2 - applied - skipped} skipped (missing contracts)`);
+  console.log(`\n  DVN config summary: ${applied} applied, ${skipped} already-correct, ${pathways.length * 2 - applied - skipped} skipped (missing contracts)`);
 }
 
 /**
- * Look up the OApp key for the destination end of a pathway.
+ * Look up the OApp key for the destination end of a pathway. Derived from
+ * the source contract's role:
+ *   * CawProfile (on L1) ↔ CawProfileL2_<destChain>
+ *   * CawChallengeRelay_<src> ↔ CawActionsArchive_<dest>
  */
 function destOappKeyFor(pathway) {
-  // Profile: dest is CawProfileL2_<destChain> (or CawProfile on L1)
-  if (pathway.oapp === 'CawProfile') {
-    return pathway.destChain === 'L2' ? 'CawProfileL2_L2' : 'CawProfileL2_L2b';
-  }
-  if (pathway.oapp === 'CawProfileL2_L2')  return 'CawProfile';
-  if (pathway.oapp === 'CawProfileL2_L2b') return 'CawProfile';
-  // Fraud-proof: L2 → L2b
-  if (pathway.oapp === 'CawChallengeRelay_L2')  return 'CawActionsArchive_L2b';
-  if (pathway.oapp === 'CawActionsArchive_L2b') return 'CawChallengeRelay_L2';
+  // Profile L1 → L2: dest is the chain's CawProfileL2_<destChain>.
+  if (pathway.oapp === 'CawProfile') return `CawProfileL2_${pathway.destChain}`;
+  // Profile L2 → L1: dest is L1's CawProfile.
+  if (pathway.oapp.startsWith('CawProfileL2_')) return 'CawProfile';
+  // Fraud-proof relay → archive: dest is the destChain's CawActionsArchive.
+  if (pathway.oapp.startsWith('CawChallengeRelay_')) return `CawActionsArchive_${pathway.destChain}`;
+  // Fraud-proof archive ← relay: dest is the destChain's CawChallengeRelay.
+  if (pathway.oapp.startsWith('CawActionsArchive_')) return `CawChallengeRelay_${pathway.destChain}`;
   throw new Error(`No destination mapping for pathway ${pathway.oapp}`);
 }
 

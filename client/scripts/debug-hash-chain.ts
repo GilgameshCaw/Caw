@@ -21,7 +21,7 @@ const CHECKPOINT = 3
 const ACTION_TUPLE = 'tuple(uint8 actionType, uint32 senderId, uint32 receiverId, uint32 receiverCawonce, uint32 clientId, uint32 cawonce, uint32[] recipients, uint64[] amounts, bytes text)'
 
 async function main() {
-  const rpc = process.env.L2_RPC_URL_HTTP || process.env.RPC_BASE_SEPOLIA || 'https://sepolia.base.org'
+  const rpc = process.env.L2_RPC_URL_HTTP || process.env.L2_RPC_URL || 'https://sepolia.base.org'
   const provider = new JsonRpcProvider(rpc.replace(/^wss:/, 'https:').replace('/ws/', '/'))
   const view = new Contract(CAW_ACTIONS_ADDRESS, HASH_ABI, provider)
 

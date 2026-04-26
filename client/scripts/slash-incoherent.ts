@@ -9,8 +9,8 @@
 //   cd client
 //   npx tsx scripts/slash-incoherent.ts <submissionId>
 //
-// Reads RPC + key from .env (VALIDATOR_PRIVATE_KEY, RPC_ARBITRUM_SEPOLIA,
-// L2_RPC_URL_HTTP). Archive + CawActions addresses come from addresses.ts.
+// Reads RPC + key from .env (VALIDATOR_PRIVATE_KEY, L2B_RPC_URL,
+// L2_RPC_URL). Archive + CawActions addresses come from addresses.ts.
 import 'dotenv/config'
 import { ethers } from 'ethers'
 import {
@@ -23,10 +23,10 @@ async function main() {
   if (!subIdArg) throw new Error('usage: slash-incoherent.ts <submissionId>')
   const SUBID = BigInt(subIdArg)
 
-  const arbRpc = process.env.RPC_ARBITRUM_SEPOLIA
-  const baseRpc = process.env.L2_RPC_URL_HTTP || 'https://sepolia.base.org'
+  const arbRpc = process.env.L2B_RPC_URL
+  const baseRpc = process.env.L2_RPC_URL_HTTP || process.env.L2_RPC_URL || 'https://sepolia.base.org'
   const pk = process.env.VALIDATOR_PRIVATE_KEY
-  if (!arbRpc) throw new Error('RPC_ARBITRUM_SEPOLIA not set')
+  if (!arbRpc) throw new Error('L2B_RPC_URL not set')
   if (!pk) throw new Error('VALIDATOR_PRIVATE_KEY not set')
 
   const arb = new ethers.JsonRpcProvider(arbRpc)

@@ -2190,10 +2190,10 @@ console.log("succeededKeys", succeededKeys)
       if (l2bProvider && l2bWallet && l2bMonitorWallet && archiveRead && archiveWrite) {
         return { l2bProvider, l2bWallet, l2bMonitorWallet, archiveRead, archiveWrite }
       }
-      // REPLICATION_RPC + REPLICATION_CHAIN are the canonical names. We
-      // accept the legacy RPC_ARBITRUM_SEPOLIA for back-compat with older
-      // installs — drop it later once everyone's regenerated their .env.
-      const l2bRpcUrl = process.env.REPLICATION_RPC || process.env.RPC_ARBITRUM_SEPOLIA
+      // REPLICATION_RPC + REPLICATION_CHAIN are the canonical names; falls
+      // back to L2B_RPC_URL when an operator hasn't set the dedicated
+      // replicator RPC (the two are typically the same chain anyway).
+      const l2bRpcUrl = process.env.REPLICATION_RPC || process.env.L2B_RPC_URL
       if (!l2bRpcUrl) throw new Error('REPLICATION_RPC not set — required for optimistic replication')
 
       // Map REPLICATION_CHAIN → chainId. Today only Arbitrum Sepolia ships

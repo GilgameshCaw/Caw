@@ -23,8 +23,8 @@ async function main() {
   const pk = process.env[keyEnv]
   if (!pk) throw new Error(`${keyEnv} not set in .env`)
 
-  const rpc = process.env.RPC_ARBITRUM_SEPOLIA
-  if (!rpc) throw new Error('RPC_ARBITRUM_SEPOLIA not set')
+  const rpc = process.env.L2B_RPC_URL
+  if (!rpc) throw new Error('L2B_RPC_URL not set')
 
   const provider = new ethers.JsonRpcProvider(rpc)
   const wallet = new ethers.Wallet(pk, provider)

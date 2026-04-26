@@ -14,21 +14,21 @@ var pems = process.env.PRIVATE_KEYS
       '0x2a871d0798f97d79848a013d4936a73bf4cc922c825d33c1cf7073dff6d409c6'
     ];
 
-// RPC URLs from environment variables
-// Defaults provided for common public endpoints (may have rate limits)
+// RPC URLs from environment variables. Role-named (L1_RPC_URL, L2_RPC_URL,
+// L2B_RPC_URL, L2C_RPC_URL...) so the same .env works across testnet/mainnet.
 const rpcUrls = {
   // Testnets
-  sepolia: process.env.RPC_SEPOLIA || 'https://eth-sepolia.public.blastapi.io',
-  baseSepolia: process.env.RPC_BASE_SEPOLIA || 'https://sepolia.base.org',
-  arbitrumSepolia: process.env.RPC_ARBITRUM_SEPOLIA || 'https://sepolia-rollup.arbitrum.io/rpc',
-  // Mainnets
-  ethereum: process.env.RPC_ETHEREUM || 'https://eth.public-rpc.com',
-  base: process.env.RPC_BASE || 'https://mainnet.base.org',
-  arbitrum: process.env.RPC_ARBITRUM || 'https://arb1.arbitrum.io/rpc',
+  sepolia: process.env.L1_RPC_URL || 'https://eth-sepolia.public.blastapi.io',
+  baseSepolia: process.env.L2_RPC_URL || 'https://sepolia.base.org',
+  arbitrumSepolia: process.env.L2B_RPC_URL || 'https://sepolia-rollup.arbitrum.io/rpc',
+  // Mainnets — same env names; --network selects which truffle profile uses them.
+  ethereum: process.env.L1_RPC_URL || 'https://eth.public-rpc.com',
+  base: process.env.L2_RPC_URL || 'https://mainnet.base.org',
+  arbitrum: process.env.L2B_RPC_URL || 'https://arb1.arbitrum.io/rpc',
   // Local development
-  devL1: process.env.RPC_DEV_L1 || 'http://localhost:8545',
-  devL2: process.env.RPC_DEV_L2 || 'http://localhost:8546',
-  devArchive: process.env.RPC_DEV_ARCHIVE || 'http://localhost:8547',
+  devL1: process.env.DEV_L1_RPC_URL || 'http://localhost:8545',
+  devL2: process.env.DEV_L2_RPC_URL || 'http://localhost:8546',
+  devArchive: process.env.DEV_L2B_RPC_URL || 'http://localhost:8547',
 };
 
 console.log("RPC URLs configured for networks");

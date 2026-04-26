@@ -75,8 +75,8 @@ async function main() {
   const badActorPk = '0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d'
 
   // Connect to both chains
-  const l2Provider = new ethers.JsonRpcProvider(process.env.RPC_BASE_SEPOLIA, undefined, { batchMaxCount: 1 })
-  const l2bProvider = new ethers.JsonRpcProvider(process.env.RPC_ARBITRUM_SEPOLIA, undefined, { batchMaxCount: 1 })
+  const l2Provider = new ethers.JsonRpcProvider(process.env.L2_RPC_URL, undefined, { batchMaxCount: 1 })
+  const l2bProvider = new ethers.JsonRpcProvider(process.env.L2B_RPC_URL, undefined, { batchMaxCount: 1 })
 
   const l2Wallet = new ethers.Wallet(pk, l2Provider)
   const l2bWallet = new ethers.Wallet(pk, l2bProvider)

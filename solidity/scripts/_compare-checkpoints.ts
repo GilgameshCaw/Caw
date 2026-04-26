@@ -6,7 +6,7 @@ import { CAW_ACTIONS_ADDRESS, CAW_ACTIONS_REPLICATOR_L2_ADDRESS } from '../src/a
 const ACTION_TUPLE = 'tuple(uint8 actionType, uint32 senderId, uint32 receiverId, uint32 receiverCawonce, uint32 clientId, uint32 cawonce, uint32[] recipients, uint64[] amounts, bytes text)'
 
 async function main() {
-  const p = new JsonRpcProvider(process.env.RPC_BASE_SEPOLIA)
+  const p = new JsonRpcProvider(process.env.L2_RPC_URL)
   const iface = new Interface(cawActionsAbi as any)
   const c = new Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi as any, p)
 

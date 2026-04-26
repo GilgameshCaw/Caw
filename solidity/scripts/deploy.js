@@ -19,28 +19,30 @@
  *   node scripts/deploy.js --state                   # Show current state
  *
  * ENVIRONMENT VARIABLES (optional - defaults provided):
- *   PRIVATE_KEYS        - Comma-separated private keys (defaults to test keys)
- *   RPC_SEPOLIA         - Sepolia RPC URL
- *   RPC_BASE_SEPOLIA    - Base Sepolia RPC URL
- *   RPC_ARBITRUM_SEPOLIA - Arbitrum Sepolia RPC URL
- *   RPC_ETHEREUM        - Ethereum mainnet RPC URL
- *   RPC_BASE            - Base mainnet RPC URL
- *   RPC_ARBITRUM        - Arbitrum mainnet RPC URL
+ *   PRIVATE_KEYS  - Comma-separated private keys (defaults to test keys)
+ *   L1_RPC_URL    - L1 RPC (Ethereum / Sepolia)
+ *   L2_RPC_URL    - First L2 RPC (Base / Base Sepolia)
+ *   L2B_RPC_URL   - Second L2 RPC (Arbitrum / Arbitrum Sepolia)
+ *   L2C_RPC_URL   - Third L2 RPC (future, e.g. Optimism). Add an entry to
+ *                   `L2_CHAIN_KEYS` below + a CHAINS entry per env to enable.
  *
- * DEPLOYMENT PHASES:
- *   Phase 1: L2a + L2b - Deploy CawProfileL2 on both L2 chains
- *   Phase 2: L1 - Deploy all L1 contracts (CawProfile, CawClientManager, etc.)
- *   Phase 3: L2a + L2b - Deploy remaining L2 contracts (CawActions)
- *   Phase 4: L2b - Deploy CawActionsArchive; L2 - Deploy CawChallengeRelay
- *   Phase 5: Wire up the L2 challenge relay as an LZ peer of the L2b archive
+ * DEPLOYMENT PHASES (generic across N L2s):
+ *   Phase 1: For each L2 — deploy CawProfileL2 (peered with L1)
+ *   Phase 2: L1 — deploy CawProfile, CCM, Minter, Quoter, Marketplace, etc.
+ *   Phase 3: For each L2 — deploy CawActions (storage chain role)
+ *   Phase 4: For each L2 — deploy CawActionsArchive + CawChallengeRelay
+ *            (any L2 can be both a storage chain AND an archive chain)
+ *   Phase 5: Full-mesh peer wiring:
+ *            - L1 CawProfile  ↔ each L2's CawProfileL2
+ *            - For every (storageL2, archiveL2) pair where storage != archive:
+ *                CawChallengeRelay_<storage>  ↔  CawActionsArchive_<archive>
  *
- * ARCHITECTURE (testnet):
- *   L1 (Sepolia): CawProfile, CawClientManager, CawProfileMinter, CawProfileQuoter
- *   L2 (Base Sepolia): CawProfileL2, CawActions, CawChallengeRelay
- *   L2b (Arbitrum Sepolia): CawProfileL2, CawActions, CawActionsArchive
- *   Replication: validators submit checkpoint merkle roots directly to L2b's
- *   CawActionsArchive with a stake. Fraud proofs go L2 → LZ → L2b
- *   via CawChallengeRelay and are resolved on L2b.
+ * ARCHITECTURE:
+ *   - Every L2 in `L2_CHAIN_KEYS` deploys the full set, so any client owner
+ *     can pick any L2 as their storage chain (createClient(..., eid)) and
+ *     any validator can replicate to any archive (REPLICATE_CLIENT_IDS env).
+ *   - Adding a new L2 = append to `L2_CHAIN_KEYS` + add per-env CHAINS entries.
+ *     CONTRACTS, LINKING_STEPS and the LZ DVN PATHWAYS regenerate automatically.
  *
  * STATE FILE:
  *   Deployment state is saved to .deploy-state.json in the solidity directory.
@@ -69,12 +71,18 @@ const STATE_FILE = path.join(__dirname, '../.deploy-state.json');
 // The deployer wallet address (for verification)
 const EXPECTED_DEPLOYER = '0xF71338f3eAa483aA66125598B09BA1988e694a95';
 
-// Chain configurations
-// L2 = Base Sepolia, L2b = Arbitrum Sepolia (both are full L2s that cross-replicate)
+// L2 chain *abstract* keys. Every L2 in this list runs the full per-chain set
+// (CawProfileL2, CawActions, CawActionsArchive, CawChallengeRelay) so any
+// client can pick any of them as its storage chain. Adding a new L2 = append
+// to this list + add a per-env CHAINS entry below.
+const L2_CHAIN_KEYS = ['L2', 'L2b'];
+
+// Chain configurations. Env vars are role-named (L1_RPC_URL, L2_RPC_URL,
+// L2B_RPC_URL, L2C_RPC_URL...) so the same names work across testnet/mainnet.
 const CHAINS = {
   testnetL1: {
     name: 'Sepolia',
-    rpc: process.env.RPC_SEPOLIA || 'https://eth-sepolia.public.blastapi.io',
+    rpc: process.env.L1_RPC_URL || 'https://eth-sepolia.public.blastapi.io',
     chainId: 11155111,
     lzEndpoint: '0x6EDCE65403992e310A62460808c4b910D972f10f',
     lzEid: 40161,
@@ -82,7 +90,7 @@ const CHAINS = {
   },
   testnetL2: {
     name: 'Base Sepolia',
-    rpc: process.env.RPC_BASE_SEPOLIA || 'https://sepolia.base.org',
+    rpc: process.env.L2_RPC_URL || 'https://sepolia.base.org',
     chainId: 84532,
     lzEndpoint: '0x6EDCE65403992e310A62460808c4b910D972f10f',
     lzEid: 40245,
@@ -90,7 +98,7 @@ const CHAINS = {
   },
   testnetL2b: {
     name: 'Arbitrum Sepolia',
-    rpc: process.env.RPC_ARBITRUM_SEPOLIA || 'https://sepolia-rollup.arbitrum.io/rpc',
+    rpc: process.env.L2B_RPC_URL || 'https://sepolia-rollup.arbitrum.io/rpc',
     chainId: 421614,
     lzEndpoint: '0x6EDCE65403992e310A62460808c4b910D972f10f',
     lzEid: 40231,
@@ -98,7 +106,7 @@ const CHAINS = {
   },
   devL1: {
     name: 'Local L1',
-    rpc: process.env.RPC_DEV_L1 || 'http://localhost:8545',
+    rpc: process.env.DEV_L1_RPC_URL || 'http://localhost:8545',
     chainId: 31337,
     lzEndpoint: '0x1a44076050125825900e736c501f859c50fe728c',
     lzEid: 30101,
@@ -106,7 +114,7 @@ const CHAINS = {
   },
   devL2: {
     name: 'Local L2',
-    rpc: process.env.RPC_DEV_L2 || 'http://localhost:8546',
+    rpc: process.env.DEV_L2_RPC_URL || 'http://localhost:8546',
     chainId: 31337,
     lzEndpoint: '0x1a44076050125825900e736c501f859c50fe728c',
     lzEid: 40161,
@@ -114,7 +122,7 @@ const CHAINS = {
   },
   devL2b: {
     name: 'Local L2b',
-    rpc: process.env.RPC_DEV_L2B || 'http://localhost:8547',
+    rpc: process.env.DEV_L2B_RPC_URL || 'http://localhost:8547',
     chainId: 31337,
     lzEndpoint: '0x1a44076050125825900e736c501f859c50fe728c',
     lzEid: 40231,
@@ -123,7 +131,7 @@ const CHAINS = {
   // Mainnet configurations
   mainnetL1: {
     name: 'Ethereum Mainnet',
-    rpc: process.env.RPC_ETHEREUM || 'https://eth.public-rpc.com',
+    rpc: process.env.L1_RPC_URL || 'https://eth.public-rpc.com',
     chainId: 1,
     lzEndpoint: '0x1a44076050125825900e736c501f859c50fe728c',
     lzEid: 30101,
@@ -131,7 +139,7 @@ const CHAINS = {
   },
   mainnetL2: {
     name: 'Base Mainnet',
-    rpc: process.env.RPC_BASE || 'https://mainnet.base.org',
+    rpc: process.env.L2_RPC_URL || 'https://mainnet.base.org',
     chainId: 8453,
     lzEndpoint: '0x1a44076050125825900e736c501f859c50fe728c',
     lzEid: 30184,
@@ -139,7 +147,7 @@ const CHAINS = {
   },
   mainnetL2b: {
     name: 'Arbitrum Mainnet',
-    rpc: process.env.RPC_ARBITRUM || 'https://arb1.arbitrum.io/rpc',
+    rpc: process.env.L2B_RPC_URL || 'https://arb1.arbitrum.io/rpc',
     chainId: 42161,
     lzEndpoint: '0x1a44076050125825900e736c501f859c50fe728c',
     lzEid: 30110,
@@ -175,30 +183,11 @@ const MARKETPLACE_PAYMENT_TOKENS = {
   dev: [],
 };
 
-// Contract definitions with dependencies
+// Contract definitions with dependencies. The L2-specific entries
+// (CawProfileL2_<L>, CawActions_<L>, CawActionsArchive_<L>, CawChallengeRelay_<L>)
+// are appended programmatically after this map is defined — see the
+// `for (const L of L2_CHAIN_KEYS)` block below.
 const CONTRACTS = {
-  // Phase 1: Deploy CawProfileL2 on both L2 chains (needed by L1 CawProfile for cross-chain setup)
-  CawProfileL2_L2: {
-    artifact: 'CawProfileL2',
-    chain: 'L2',
-    phase: 1,
-    dependencies: [],
-    constructorArgs: (state, chain) => [
-      CHAINS[chain.replace('L2', 'L1')].lzEid, // peer network eid (L1)
-      CHAINS[chain].lzEndpoint,
-    ],
-  },
-  CawProfileL2_L2b: {
-    artifact: 'CawProfileL2',
-    chain: 'L2b',
-    phase: 1,
-    dependencies: [],
-    constructorArgs: (state, chain) => [
-      CHAINS[chain.replace('L2b', 'L1')].lzEid, // peer network eid (L1)
-      CHAINS[chain].lzEndpoint,
-    ],
-  },
-
   // Phase 2: L1 - Deploy everything on L1
   // CawFontDataA and CawFontDataB are pure-data contracts holding the vectorized
   // glyph paths for on-chain SVG rendering. CawProfileURI reads from them via
@@ -255,7 +244,13 @@ const CONTRACTS = {
   CawProfile: {
     chain: 'L1',
     phase: 2,
-    dependencies: ['CawProfileL2_L2', 'CawProfileL2_L2b', 'CawProfileURI', 'CawClientManager', 'CawBuyAndBurn'],
+    // CawProfile depends on every L2's CawProfileL2 (so we know each peer's
+    // address at L1 deploy time for setL2Peer wiring later). Built from
+    // L2_CHAIN_KEYS so adding a new L2 doesn't require editing this list.
+    dependencies: [
+      ...L2_CHAIN_KEYS.map(L => `CawProfileL2_${L}`),
+      'CawProfileURI', 'CawClientManager', 'CawBuyAndBurn',
+    ],
     constructorArgs: (state, chain) => [
       state.addresses.MintableCaw,
       state.addresses.CawProfileURI,
@@ -310,46 +305,52 @@ const CONTRACTS = {
     dependencies: ['CawProfileL2_L1'],
     constructorArgs: (state) => [state.addresses.CawProfileL2_L1],
   },
-  // Phase 3: Deploy remaining L2 contracts on both chains
-  CawActions_L2: {
-    artifact: 'CawActions',
-    chain: 'L2',
-    phase: 3,
-    dependencies: ['CawProfileL2_L2'],
-    constructorArgs: (state) => [state.addresses.CawProfileL2_L2],
-  },
-  CawActions_L2b: {
-    artifact: 'CawActions',
-    chain: 'L2b',
-    phase: 3,
-    dependencies: ['CawProfileL2_L2b'],
-    constructorArgs: (state) => [state.addresses.CawProfileL2_L2b],
-  },
+};
 
-  // Phase 4: Optimistic replication infrastructure
-  //   - L2b (Arbitrum Sepolia) hosts the stake-based archive that validators
-  //     write checkpoint merkle roots to.
-  //   - L2 (Base Sepolia) hosts the challenge relay that reads CawActions and
-  //     forwards the canonical hash via LayerZero to the L2b archive for
-  //     fraud resolution.
-  CawActionsArchive_L2b: {
+// Per-L2 contracts: for each L2 in L2_CHAIN_KEYS, expand to four entries:
+//   CawProfileL2_<L>     (phase 1, peered with L1)
+//   CawActions_<L>       (phase 3, depends on CawProfileL2_<L>)
+//   CawActionsArchive_<L>(phase 4, archive role on this chain)
+//   CawChallengeRelay_<L>(phase 4, depends on CawActions_<L>)
+//
+// Adding a new L2 = append to L2_CHAIN_KEYS + a CHAINS entry per env. The
+// peer wiring in LINKING_STEPS regenerates from this list too.
+for (const L of L2_CHAIN_KEYS) {
+  CONTRACTS[`CawProfileL2_${L}`] = {
+    artifact: 'CawProfileL2',
+    chain: L,
+    phase: 1,
+    dependencies: [],
+    constructorArgs: (state, chain) => [
+      CHAINS[chain.replace(/L2.*$/, 'L1')].lzEid, // peer eid (L1)
+      CHAINS[chain].lzEndpoint,
+    ],
+  };
+  CONTRACTS[`CawActions_${L}`] = {
+    artifact: 'CawActions',
+    chain: L,
+    phase: 3,
+    dependencies: [`CawProfileL2_${L}`],
+    constructorArgs: (state) => [state.addresses[`CawProfileL2_${L}`]],
+  };
+  CONTRACTS[`CawActionsArchive_${L}`] = {
     artifact: 'CawActionsArchive',
-    chain: 'L2b',
+    chain: L,
     phase: 4,
     dependencies: [],
     constructorArgs: (state, chain) => [CHAINS[chain].lzEndpoint],
-  },
-  CawChallengeRelay_L2: {
+  };
+  CONTRACTS[`CawChallengeRelay_${L}`] = {
     artifact: 'CawChallengeRelay',
-    chain: 'L2',
+    chain: L,
     phase: 4,
-    dependencies: ['CawActions_L2'],
+    dependencies: [`CawActions_${L}`],
     constructorArgs: (state, chain) => [
       CHAINS[chain].lzEndpoint,
-      state.addresses.CawActions_L2,
+      state.addresses[`CawActions_${L}`],
     ],
-  },
-};
+  };
+}
 
 // Linking steps (run after deployments)
 const LINKING_STEPS = [
@@ -403,30 +404,8 @@ const LINKING_STEPS = [
     ],
     condition: (state) => state.addresses.CawProfile && state.addresses.CawProfileL2_L1,
   },
-  {
-    name: 'Set L2 peer on CawProfile (to L2 CawProfileL2)',
-    chain: 'L1',
-    phase: 2,
-    contract: 'CawProfile',
-    method: 'setL2Peer',
-    args: (state, chainConfig) => [
-      CHAINS[chainConfig.env + 'L2'].lzEid,
-      state.addresses.CawProfileL2_L2,
-    ],
-    condition: (state) => state.addresses.CawProfile && state.addresses.CawProfileL2_L2,
-  },
-  {
-    name: 'Set L2b peer on CawProfile (to L2b CawProfileL2)',
-    chain: 'L1',
-    phase: 2,
-    contract: 'CawProfile',
-    method: 'setL2Peer',
-    args: (state, chainConfig) => [
-      CHAINS[chainConfig.env + 'L2b'].lzEid,
-      state.addresses.CawProfileL2_L2b,
-    ],
-    condition: (state) => state.addresses.CawProfile && state.addresses.CawProfileL2_L2b,
-  },
+  // L1 CawProfile setL2Peer to each L2's CawProfileL2 — generated in the
+  // expansion block below for ['L2', 'L2b', ...].
   {
     name: 'Set minter on CawProfile',
     chain: 'L1',
@@ -481,102 +460,10 @@ const LINKING_STEPS = [
       return current !== '0x0000000000000000000000000000000000000000';
     },
   },
-  // Phase 3 linking (L2 - Base Sepolia)
-  {
-    name: 'Set L1 peer on CawProfileL2_L2',
-    chain: 'L2',
-    phase: 3,
-    contract: 'CawProfileL2_L2',
-    method: 'setL1Peer',
-    args: (state, chainConfig) => [
-      CHAINS[chainConfig.env + 'L1'].lzEid,
-      state.addresses.CawProfile,
-      false, // don't bypass LZ for cross-chain
-    ],
-    condition: (state) => state.addresses.CawProfileL2_L2 && state.addresses.CawProfile,
-  },
-  {
-    name: 'Link CawProfileL2_L2 to CawActions_L2',
-    chain: 'L2',
-    phase: 3,
-    contract: 'CawProfileL2_L2',
-    method: 'setCawActions',
-    getter: 'cawActions',
-    args: (state) => [state.addresses.CawActions_L2],
-    condition: (state) => state.addresses.CawProfileL2_L2 && state.addresses.CawActions_L2,
-  },
-  // Phase 3 linking (L2b - Arbitrum Sepolia)
-  {
-    name: 'Set L1 peer on CawProfileL2_L2b',
-    chain: 'L2b',
-    phase: 3,
-    contract: 'CawProfileL2_L2b',
-    method: 'setL1Peer',
-    args: (state, chainConfig) => [
-      CHAINS[chainConfig.env + 'L1'].lzEid,
-      state.addresses.CawProfile,
-      false,
-    ],
-    condition: (state) => state.addresses.CawProfileL2_L2b && state.addresses.CawProfile,
-  },
-  {
-    name: 'Link CawProfileL2_L2b to CawActions_L2b',
-    chain: 'L2b',
-    phase: 3,
-    contract: 'CawProfileL2_L2b',
-    method: 'setCawActions',
-    getter: 'cawActions',
-    args: (state) => [state.addresses.CawActions_L2b],
-    condition: (state) => state.addresses.CawProfileL2_L2b && state.addresses.CawActions_L2b,
-  },
-  // Phase 5: Fraud-proof LZ wiring.
-  //   Archive ↔ relay are pinned as each other's sole LZ peers. Once these are
-  //   set, the archive owner can renounce — from then on every challenge MUST
-  //   come from the canonical CawChallengeRelay via LZ, nothing else is accepted.
-  {
-    name: 'Set LZ peer on CawActionsArchive_L2b (accepts from L2 CawChallengeRelay)',
-    chain: 'L2b',
-    phase: 5,
-    contract: 'CawActionsArchive_L2b',
-    method: 'setPeer',
-    args: (state, chainConfig) => [
-      CHAINS[chainConfig.env + 'L2'].lzEid,
-      ethers.zeroPadValue(state.addresses.CawChallengeRelay_L2, 32),
-    ],
-    condition: (state) => state.addresses.CawActionsArchive_L2b && state.addresses.CawChallengeRelay_L2,
-    skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawActionsArchive_L2b');
-      if (!contract) return false;
-      const l2Eid = CHAINS[deployer.getChainKey('L2')].lzEid;
-      const expected = ethers.zeroPadValue(deployer.state.addresses.CawChallengeRelay_L2, 32);
-      try {
-        const peer = await contract.peers(l2Eid);
-        return peer.toLowerCase() === expected.toLowerCase();
-      } catch { return false; }
-    },
-  },
-  {
-    name: 'Set LZ peer on CawChallengeRelay_L2 (targets L2b CawActionsArchive)',
-    chain: 'L2',
-    phase: 5,
-    contract: 'CawChallengeRelay_L2',
-    method: 'setPeer',
-    args: (state, chainConfig) => [
-      CHAINS[chainConfig.env + 'L2b'].lzEid,
-      ethers.zeroPadValue(state.addresses.CawActionsArchive_L2b, 32),
-    ],
-    condition: (state) => state.addresses.CawChallengeRelay_L2 && state.addresses.CawActionsArchive_L2b,
-    skipIf: async (state, deployer) => {
-      const contract = deployer.getContract('CawChallengeRelay_L2');
-      if (!contract) return false;
-      const l2bEid = CHAINS[deployer.getChainKey('L2b')].lzEid;
-      const expected = ethers.zeroPadValue(deployer.state.addresses.CawActionsArchive_L2b, 32);
-      try {
-        const peer = await contract.peers(l2bEid);
-        return peer.toLowerCase() === expected.toLowerCase();
-      } catch { return false; }
-    },
-  },
+  // Phase 3 + Phase 5 per-L2 linking is generated below from L2_CHAIN_KEYS.
+  //   Phase 3: each L2's CawProfileL2 ← L1 peer + setCawActions wiring.
+  //   Phase 5: full mesh — every storage L2's CawChallengeRelay peers with
+  //            every other L2's CawActionsArchive (and vice versa).
 
   // Replication targets used to be on-chain (CCM.addReplication + LZ push to L2).
   // That's gone — REPLICATE_CLIENT_IDS env on each validator is the source of truth.
@@ -603,10 +490,123 @@ const LINKING_STEPS = [
     chain: 'L1',
     phase: 6,
     custom: async (state, deployer, chainConfig) => {
-      await configureLzDvns(state, deployer, chainConfig, CHAINS);
+      await configureLzDvns(state, deployer, chainConfig, CHAINS, L2_CHAIN_KEYS);
     },
   },
 ];
+
+// =============================================================================
+// Per-L2 linking step generation
+// =============================================================================
+//
+// For each L in L2_CHAIN_KEYS append:
+//   * Phase 2 (on L1): setL2Peer to that L's CawProfileL2.
+//   * Phase 3 (on L itself): setL1Peer + setCawActions wiring.
+//   * Phase 5 (full mesh): for every other L2 L', wire CawChallengeRelay_L
+//     ↔ CawActionsArchive_L'. N×(N-1) directed pairs total.
+// =============================================================================
+
+for (const L of L2_CHAIN_KEYS) {
+  // Phase 2: L1's CawProfile setL2Peer for this L's CawProfileL2.
+  LINKING_STEPS.push({
+    name: `Set L2 peer on CawProfile (to CawProfileL2_${L})`,
+    chain: 'L1',
+    phase: 2,
+    contract: 'CawProfile',
+    method: 'setL2Peer',
+    args: (state, chainConfig) => [
+      CHAINS[chainConfig.env + L].lzEid,
+      state.addresses[`CawProfileL2_${L}`],
+    ],
+    condition: (state) => state.addresses.CawProfile && state.addresses[`CawProfileL2_${L}`],
+  });
+
+  // Phase 3: this L's CawProfileL2 setL1Peer (for cross-chain mints/auths).
+  LINKING_STEPS.push({
+    name: `Set L1 peer on CawProfileL2_${L}`,
+    chain: L,
+    phase: 3,
+    contract: `CawProfileL2_${L}`,
+    method: 'setL1Peer',
+    args: (state, chainConfig) => [
+      CHAINS[chainConfig.env + 'L1'].lzEid,
+      state.addresses.CawProfile,
+      false, // don't bypass LZ for cross-chain
+    ],
+    condition: (state) => state.addresses[`CawProfileL2_${L}`] && state.addresses.CawProfile,
+  });
+
+  // Phase 3: link this L's CawProfileL2 to its CawActions.
+  LINKING_STEPS.push({
+    name: `Link CawProfileL2_${L} to CawActions_${L}`,
+    chain: L,
+    phase: 3,
+    contract: `CawProfileL2_${L}`,
+    method: 'setCawActions',
+    getter: 'cawActions',
+    args: (state) => [state.addresses[`CawActions_${L}`]],
+    condition: (state) => state.addresses[`CawProfileL2_${L}`] && state.addresses[`CawActions_${L}`],
+  });
+
+  // Phase 5: full-mesh archive ↔ relay wiring. For every other L2 L':
+  //   - On L (storage), CawChallengeRelay_L peers L'.lzEid → CawActionsArchive_L'.
+  //   - On L' (archive), CawActionsArchive_L' peers L.lzEid → CawChallengeRelay_L.
+  // The "skipIf" reads on-chain peers() so re-running is idempotent across
+  // partial deploys.
+  for (const Lp of L2_CHAIN_KEYS) {
+    if (Lp === L) continue; // a chain doesn't relay to its own archive
+
+    // SEND side: CawChallengeRelay on L points to CawActionsArchive on L'.
+    LINKING_STEPS.push({
+      name: `Set LZ peer on CawChallengeRelay_${L} (targets CawActionsArchive_${Lp})`,
+      chain: L,
+      phase: 5,
+      contract: `CawChallengeRelay_${L}`,
+      method: 'setPeer',
+      args: (state, chainConfig) => [
+        CHAINS[chainConfig.env + Lp].lzEid,
+        ethers.zeroPadValue(state.addresses[`CawActionsArchive_${Lp}`], 32),
+      ],
+      condition: (state) =>
+        state.addresses[`CawChallengeRelay_${L}`] && state.addresses[`CawActionsArchive_${Lp}`],
+      skipIf: async (state, deployer) => {
+        const contract = deployer.getContract(`CawChallengeRelay_${L}`);
+        if (!contract) return false;
+        const peerEid = CHAINS[deployer.getChainKey(Lp)].lzEid;
+        const expected = ethers.zeroPadValue(state.addresses[`CawActionsArchive_${Lp}`], 32);
+        try {
+          const peer = await contract.peers(peerEid);
+          return peer.toLowerCase() === expected.toLowerCase();
+        } catch { return false; }
+      },
+    });
+
+    // RECEIVE side: CawActionsArchive on L' accepts from CawChallengeRelay on L.
+    LINKING_STEPS.push({
+      name: `Set LZ peer on CawActionsArchive_${Lp} (accepts from CawChallengeRelay_${L})`,
+      chain: Lp,
+      phase: 5,
+      contract: `CawActionsArchive_${Lp}`,
+      method: 'setPeer',
+      args: (state, chainConfig) => [
+        CHAINS[chainConfig.env + L].lzEid,
+        ethers.zeroPadValue(state.addresses[`CawChallengeRelay_${L}`], 32),
+      ],
+      condition: (state) =>
+        state.addresses[`CawActionsArchive_${Lp}`] && state.addresses[`CawChallengeRelay_${L}`],
+      skipIf: async (state, deployer) => {
+        const contract = deployer.getContract(`CawActionsArchive_${Lp}`);
+        if (!contract) return false;
+        const peerEid = CHAINS[deployer.getChainKey(L)].lzEid;
+        const expected = ethers.zeroPadValue(state.addresses[`CawChallengeRelay_${L}`], 32);
+        try {
+          const peer = await contract.peers(peerEid);
+          return peer.toLowerCase() === expected.toLowerCase();
+        } catch { return false; }
+      },
+    });
+  }
+}
 
 // ============================================
 // DEPLOYER CLASS
@@ -1133,12 +1133,13 @@ class MultiChainDeployer {
     console.log(`Deployer: ${this.state.deployerAddress || 'Not connected'}\n`);
 
     console.log('Addresses:');
+    const l2List = L2_CHAIN_KEYS.join(' + ');
     const phases = {
-      1: 'L2 + L2b CawProfileL2 (Phase 1)',
+      1: `${l2List} CawProfileL2 (Phase 1)`,
       2: 'L1 (Phase 2)',
-      3: 'L2 + L2b CawActions (Phase 3)',
-      4: 'Optimistic replication (L2b archive, L2 challenge relay) (Phase 4)',
-      5: 'Cross-chain wiring + client replication registry (Phase 5)',
+      3: `${l2List} CawActions (Phase 3)`,
+      4: `${l2List} CawActionsArchive + CawChallengeRelay (Phase 4 — full mesh)`,
+      5: 'Cross-chain peer wiring (Phase 5)',
     };
     for (const phase of [1, 2, 3, 4, 5]) {
       const phaseContracts = Object.entries(CONTRACTS).filter(([_, c]) => c.phase === phase);

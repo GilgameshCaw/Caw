@@ -68,10 +68,12 @@ npx truffle deploy --network testnetL2
 
 Configure in `.env`:
 ```env
-# RPC URLs (use your own endpoints for reliability)
-RPC_SEPOLIA=https://your-sepolia-rpc
-RPC_BASE_SEPOLIA=https://your-base-sepolia-rpc
-RPC_ARBITRUM_SEPOLIA=https://your-arbitrum-sepolia-rpc
+# RPC URLs (use your own endpoints for reliability). Role-named so the
+# same .env works across testnet/mainnet: --network selects the chain.
+L1_RPC_URL=https://your-l1-rpc                # Ethereum / Sepolia
+L2_RPC_URL=https://your-l2-rpc                # Base / Base Sepolia
+L2B_RPC_URL=https://your-l2b-rpc              # Arbitrum / Arbitrum Sepolia
+# L2C_RPC_URL=...                              # Add for each new L2 enabled in deploy.js
 
 # Private keys (never commit real keys!)
 PRIVATE_KEYS=0x...,0x...
