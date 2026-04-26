@@ -46,24 +46,34 @@ export async function collectValidatorConfig(nodeType, installDir, ctx = {}) {
     const { computeAddress } = await importEthersUtils()
     const address = computeAddress(privateKey)
 
+    // The address is safe to print always — that's how you fund the key.
+    // The private key is shown only if the operator explicitly asks. The
+    // key always lives in client/.env (chmod 600, owned by caw), so a
+    // power-user who wants to back it up can read it from there later.
     console.log()
     console.log(success('  New validator key generated!'))
     console.log()
     console.log(brand('  Address: ') + address)
-    console.log(warn('  Private key: ') + dim(privateKey))
-    console.log()
-    console.log(err.bold('  IMPORTANT: Back up this private key! It cannot be recovered.'))
-    console.log(err.bold(`  You need to fund ${address} with ETH on Base for gas.`))
+    console.log(err.bold(`  Fund ${address} with ETH on Base — this address pays gas for every action you submit.`))
     console.log()
 
-    const { backedUp } = await inquirer.prompt([
-      { type: 'confirm', name: 'backedUp', message: 'Have you saved the private key?', default: false },
+    const { showKey } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'showKey',
+        message: 'Print the private key now so you can back it up?',
+        default: false,
+      },
     ])
-
-    if (!backedUp) {
-      console.log(warn('  Please save the private key before continuing.'))
-      console.log(warn(`  Private key: ${privateKey}`))
-      await inquirer.prompt([{ type: 'confirm', name: 'ok', message: 'Ready to continue?', default: true }])
+    if (showKey) {
+      console.log()
+      console.log(warn('  Private key: ') + dim(privateKey))
+      console.log(err.bold('  IMPORTANT: Copy this somewhere safe. It cannot be recovered.'))
+      console.log(dim('  (Also lives at client/.env on this server — readable only by the caw user.)'))
+      console.log()
+      await inquirer.prompt([{ type: 'confirm', name: 'ok', message: 'Saved? Continue.', default: true }])
+    } else {
+      console.log(dim('  Skipped. The key is in client/.env if you need it later.'))
     }
   } else {
     const { importedKey } = await inquirer.prompt([

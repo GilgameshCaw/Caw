@@ -185,21 +185,34 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
     replicatorPrivateKey = '0x' + crypto.randomBytes(32).toString('hex')
     const { computeAddress } = await importEthersUtils()
     const address = computeAddress(replicatorPrivateKey)
+
+    // Same opt-in pattern as the validator key: address is safe to print
+    // (you have to fund it); the secret key is only shown if the operator
+    // explicitly asks for it. It always lives in client/.env regardless.
     console.log()
     console.log(success('  New replicator key generated!'))
     console.log()
     console.log(brand('  Address: ') + address)
-    console.log(warn('  Private key: ') + dim(replicatorPrivateKey))
+    console.log(err.bold(`  Fund ${address} with ETH on ${chosenChain.label} — pays gas for batch submissions and challenges.`))
     console.log()
-    console.log(err.bold('  IMPORTANT: Back up this private key. Fund the address above with ETH'))
-    console.log(err.bold(`  on ${chosenChain.label} (used for tx fees on submissions and challenges).`))
-    console.log()
-    const { backedUp } = await inquirer.prompt([
-      { type: 'confirm', name: 'backedUp', message: 'Have you saved the private key?', default: false },
+
+    const { showKey } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'showKey',
+        message: 'Print the private key now so you can back it up?',
+        default: false,
+      },
     ])
-    if (!backedUp) {
-      console.log(warn(`  Replicator private key: ${replicatorPrivateKey}`))
-      await inquirer.prompt([{ type: 'confirm', name: 'ok', message: 'Ready to continue?', default: true }])
+    if (showKey) {
+      console.log()
+      console.log(warn('  Private key: ') + dim(replicatorPrivateKey))
+      console.log(err.bold('  IMPORTANT: Copy this somewhere safe. It cannot be recovered.'))
+      console.log(dim('  (Also lives at client/.env on this server — readable only by the caw user.)'))
+      console.log()
+      await inquirer.prompt([{ type: 'confirm', name: 'ok', message: 'Saved? Continue.', default: true }])
+    } else {
+      console.log(dim('  Skipped. The key is in client/.env if you need it later.'))
     }
   } else {
     const { importedKey } = await inquirer.prompt([
