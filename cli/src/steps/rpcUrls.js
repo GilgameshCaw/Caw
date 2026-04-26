@@ -1,5 +1,5 @@
 import inquirer from 'inquirer'
-import { section, dim, tipBlock } from '../utils/ui.js'
+import { section, dim, tipBlock, warn } from '../utils/ui.js'
 import { chainLabels } from './networkAndMode.js'
 
 function inferWsFromHttp(httpUrl) {
@@ -13,6 +13,33 @@ function inferWsFromHttp(httpUrl) {
 
 function isInfuraUrl(url) {
   return /\.infura\.io[/]/.test(url)
+}
+
+// Conservative set of well-known free / shared RPCs. False positives here
+// just produce a slightly-too-aggressive warning, which is the safer failure
+// mode. Update this list as new public providers come online — the goal is
+// surfacing risk, not keeping an exhaustive index.
+const PUBLIC_RPC_HOSTS = [
+  /\.publicnode\.com$/i,
+  /^sepolia\.base\.org$/i,
+  /^mainnet\.base\.org$/i,
+  /^rpc\.sepolia\.org$/i,
+  /^rpc\.ankr\.com$/i,
+  /^cloudflare-eth\.com$/i,
+  /^arbitrum-sepolia\.public\.blastapi\.io$/i,
+  /^arb-sepolia\.public\.blastapi\.io$/i,
+  /^endpoints\.omniatech\.io$/i,
+  /^1rpc\.io$/i,
+  /^rpc\.io$/i,
+  /\.gateway\.tenderly\.co$/i,
+]
+function isPublicRpc(url) {
+  try {
+    const host = new URL(url).hostname
+    return PUBLIC_RPC_HOSTS.some(re => re.test(host))
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -48,6 +75,22 @@ async function collectRpcPair(label, required) {
   }])
 
   if (!http.trim()) return { wss: '', http: '' }
+
+  // Public RPC sanity warning. We don't block the install — operators may
+  // legitimately want a free endpoint for testing or low-volume nodes — but
+  // we do want them to make an informed choice. The risks (rate limits,
+  // outages, the RPC operator can lie about state) are real for a validator.
+  if (isPublicRpc(http)) {
+    console.log()
+    console.log(warn(`  Heads up: ${new URL(http).hostname} looks like a free / shared public RPC.`))
+    console.log(dim('    • Rate limits are aggressive and shared with every other user'))
+    console.log(dim('    • Outages happen with no warning'))
+    console.log(dim('    • The RPC operator sees every read + every tx you sign'))
+    console.log(dim('    • A misbehaving public RPC can return stale state — bad for a validator'))
+    console.log(dim('    Fine for trying things out; for a real node, use a paid provider'))
+    console.log(dim('    (Infura, Alchemy, QuickNode all have free tiers).'))
+    console.log()
+  }
 
   // Step 2: WSS URL (optional). When the HTTP URL is Infura, offer the
   // auto-derived WSS as a default; otherwise leave blank — most providers

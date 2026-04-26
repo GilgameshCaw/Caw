@@ -229,6 +229,17 @@ The replication path was rewritten as the optimistic archive + trustless `CawCha
   - Don't touch this until there's a real driver (a client wanting to deploy to a non-Base storage chain). Indirection costs zero today; the abstraction is purely future-tense.
   - Same restructure unblocks the parallel "replication chain → archive contract address" map in `ValidatorService` (today there's one hardcoded `CAW_ACTIONS_ARCHIVE_ADDRESS`).
 
+- [ ] **RPC fallback support (primary + secondary)** — graceful degradation when the paid RPC is throttled or down.
+  - Today every backend service reads one URL from env (`L2_RPC_URL_HTTP`, `L1_RPC_URL`, etc.) with no failover. If the primary chokes, the indexer stalls and the validator stops submitting until someone restarts.
+  - The CLI already detects-and-warns when the operator types a known public RPC, but we don't currently let them set a fallback to use as a safety net.
+  - **Sketch of the work:**
+    - Service side: switch `makeJsonRpcProvider` to return a `FallbackProvider` (ethers v6 has this built in — quorum 1, two children, with the public one as the "fallback only" tier). Same change for the viem transport on the frontend (`fallback([http(primary), http(public)])`).
+    - Env side: add `L2_RPC_URL_HTTP_FALLBACK`, `L1_RPC_URL_HTTP_FALLBACK`, etc. Generate them in `cli/src/steps/generate.js` when the operator provides them.
+    - CLI prompt: after the primary HTTP URL, ask for an optional fallback. Default to a known-good public RPC for the chosen network/chain, with a warning that the fallback is only used when the primary fails. Skip the prompt entirely if the primary itself is already public.
+    - **Don't** wire fallback for the validator's signing path — a tx going to two RPCs increases the chance of a nonce conflict and double-broadcast. Fallback is for reads + event subscription only.
+  - File `client/src/utils/rpcProvider.ts` is where most of the service-side logic lives today. It already throttles + circuit-breaks; adding a `FallbackProvider` wrapper there propagates to every caller.
+  - Estimate: half-day for the service refactor + ~30 min in the CLI. Worth doing once you have a few real installs and someone has actually tripped over throttling.
+
 ---
 
 ## Client Deployment CLI (`cli/`)
