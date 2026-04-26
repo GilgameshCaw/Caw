@@ -104,6 +104,28 @@ program
         }
       }
       console.log()
+
+      // RPC URL leak warning. The frontend bundles VITE_L1_RPC_URL /
+      // VITE_L2_RPC_URL into the built JS — they're visible in any browser's
+      // DevTools to anyone who loads the page. Without provider-side
+      // allowlists this lets randos burn through your free-tier quota or
+      // rack up your paid bill in a few hours.
+      if (infraConfig.domain && ['full', 'frontend-api'].includes(nodeType)) {
+        console.log(brand('  ⚠  Lock down your RPC URLs at the provider'))
+        console.log(dim('     Your frontend RPC URLs ship in the public JS bundle and are'))
+        console.log(dim('     visible in DevTools to anyone who loads your site. Allowlist them'))
+        console.log(dim('     at your provider so other people can\'t use them on your dime.'))
+        console.log()
+        console.log(`     ${brand('HTTP referer / domain allowlist:')} https://${infraConfig.domain}`)
+        console.log(`     ${brand('Server IP allowlist (for backend calls):')} the public IP of this VPS`)
+        console.log()
+        console.log(dim('     Provider docs:'))
+        console.log(dim('       Infura:    Settings → Configure → Allowlists'))
+        console.log(dim('       Alchemy:   Apps → your app → Security → Add allowed origin / IP'))
+        console.log(dim('       QuickNode: your endpoint → Endpoint Security'))
+        console.log()
+      }
+
       console.log(dim('  Run `pm2 list` to see running services.'))
       console.log(dim('  Run `pm2 logs` to view logs.'))
       console.log()
