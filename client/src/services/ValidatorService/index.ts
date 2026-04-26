@@ -1595,7 +1595,14 @@ console.log("succeededKeys", succeededKeys)
                  lowerMsg.includes('too many requests') ||
                  lowerMsg.includes('429') ||
                  lowerMsg.includes('rate limit') ||
-                 lowerMsg.includes('missing response')
+                 lowerMsg.includes('missing response') ||
+                 // Auth state hasn't been relayed from L1 to L2 yet — the
+                 // user just submitted the authenticate tx and we're waiting
+                 // on LayerZero (typically 1-5 min). Same race the pre-sim
+                 // pendingDepositTxHash hold handles for deposits, but that
+                 // gate doesn't fire here because there's no tx hash on the
+                 // queued action. Retry on next poll until L2 catches up.
+                 lowerMsg.includes('not authenticated with this client')
         })
 
         if (hasTemporaryError) {
