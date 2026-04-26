@@ -38,6 +38,53 @@ async function markTxQueueFailed(
   return sharedMarkTxQueueFailed(prisma as any, txQueueId, reason, senderId, actionData)
 }
 
+// How long a txqueue can sit in 'awaiting_indexer' before we give up and
+// declare it a real failure. The contract said the cawonce was used, but
+// our local Action table never caught up — at that point we have to
+// assume the indexer is broken or the action genuinely doesn't exist.
+const AWAITING_INDEXER_TIMEOUT_MS = 60_000
+
+/**
+ * Resolve a "Cawonce already used" simulation rejection by checking our
+ * local Action table.
+ *
+ * The contract is the source of truth on whether `(senderId, cawonce)` is
+ * used, but it doesn't store the action contents — so to decide whether
+ * the existing on-chain action is OURS (just not yet indexed locally) or
+ * a genuine collision with a different action, we have to match the
+ * contents against the Action row the ActionProcessor writes from the
+ * `ActionsProcessed` event. That indexer can lag the chain by several
+ * seconds, especially during retry storms — so when the row isn't there
+ * yet, we defer instead of immediately failing.
+ *
+ * Returns:
+ *   'done'              — Action row exists and matches our payload; it's our action.
+ *   'failed'            — Action row exists but is a different action at this cawonce.
+ *   'awaiting_indexer'  — Action row not yet present; recheck on next tick.
+ */
+async function resolveCawonceUsed(data: any, firstSeenAt?: Date): Promise<'done' | 'failed' | 'awaiting_indexer'> {
+  const existingAction = await prisma.action.findFirst({
+    where: { senderId: data.senderId, cawonce: data.cawonce }
+  })
+  if (existingAction) {
+    const ex = existingAction.data as any
+    const sameAction =
+      Number(ex?.actionType ?? -1) === Number(data.actionType) &&
+      Number(ex?.receiverId ?? -1) === Number(data.receiverId ?? 0) &&
+      Number(ex?.receiverCawonce ?? -1) === Number(data.receiverCawonce ?? 0) &&
+      (ex?.text ?? '') === (data.text ?? '')
+    return sameAction ? 'done' : 'failed'
+  }
+  // No Action row yet. Either the indexer hasn't caught up, or the cawonce
+  // really is a phantom (eg. used by a tx that failed receipt verification
+  // but still triggered the on-chain bitmap). Give the indexer a window;
+  // if we've been waiting past the timeout, treat it as a real failure.
+  if (firstSeenAt && Date.now() - firstSeenAt.getTime() > AWAITING_INDEXER_TIMEOUT_MS) {
+    return 'failed'
+  }
+  return 'awaiting_indexer'
+}
+
 /** Build { CAW: 3, LIKE: 2, ... } breakdown from submitted actions (which have actionType) */
 function buildActionBreakdown(actions: any[]): Record<string, number> {
   const breakdown: Record<string, number> = {}
@@ -506,6 +553,45 @@ export const validatorService: Service = {
       })
       if (heldCount.count > 0) {
         console.log(`[Validator] Pre-sim hold: moved ${heldCount.count} rows to waiting_for_deposit`)
+      }
+
+      // awaiting_indexer recheck: rows where simulation reported "Cawonce
+      // already used" but the local Action row hadn't been written yet.
+      // Re-resolve against the Action table (now updated by ActionProcessor)
+      // and either close them out or, if we've waited past the timeout,
+      // fail them. Skip simulation entirely for these — the contract's
+      // verdict on the cawonce hasn't changed; only our local view of the
+      // action contents has.
+      const awaitingRows = await prisma.txQueue.findMany({
+        where: { status: 'awaiting_indexer' },
+        select: { id: true, payload: true, senderId: true, updatedAt: true },
+      })
+      if (awaitingRows.length > 0) {
+        console.log(`[Validator] Rechecking ${awaitingRows.length} awaiting_indexer row(s)`)
+        await Promise.all(awaitingRows.map(async (row) => {
+          const data = (row.payload as any)?.data
+          if (!data) return
+          const resolution = await resolveCawonceUsed(data, row.updatedAt)
+          if (resolution === 'done') {
+            console.log(`[Validator] TxQueue ${row.id}: Action row now indexed and matches — marking done`)
+            await prisma.txQueue.update({
+              where: { id: row.id },
+              data: { status: 'done', reason: null },
+            })
+            // Also mark the optimistic Caw row SUCCESS for caw/recaw actions, mirroring updateQueueStatuses.
+            if (data.actionType === 0 || data.actionType === 'caw' || data.actionType === 3 || data.actionType === 'recaw') {
+              await prisma.caw.update({
+                where: { userId_cawonce: { userId: data.senderId, cawonce: data.cawonce } },
+                data: { status: 'SUCCESS' },
+              }).catch(() => {})
+            }
+          } else if (resolution === 'failed') {
+            console.log(`[Validator] TxQueue ${row.id}: gave up on awaiting_indexer (different action or indexer timeout)`)
+            await markTxQueueFailed(row.id, 'Cawonce already used', row.senderId, data)
+          }
+          // 'awaiting_indexer' — leave the row alone; do NOT re-update,
+          // since that would bump updatedAt and reset the timeout.
+        }))
       }
 
       // Fetch more candidates than we might use so we can stop at the size limit.
@@ -1035,44 +1121,38 @@ console.log("Update success")
       )
 console.log("succeededKeys", succeededKeys)
 
-      await Promise.all(queueEntries.map(async (entry, index) => {
+      await Promise.all(queueEntries.map(async (entry: any, index) => {
         const data = (entry.payload as any).data
         const key  = `${data.senderId}-${data.cawonce}`
 
-        // Check "Cawonce already used" — verify in Action table before marking done
+        // Check "Cawonce already used" — verify in Action table before
+        // marking done. If the Action row hasn't been indexed yet, defer
+        // (status: awaiting_indexer) and we'll recheck on the next tick.
         const rejection = simulationRejections[index] || ''
         const cawonceUsed = rejection.includes('Cawonce already used')
-        let processedByOther = false
+        let cawonceResolution: 'done' | 'failed' | 'awaiting_indexer' | null = null
         if (cawonceUsed) {
-          const existingAction = await prisma.action.findFirst({
-            where: { senderId: data.senderId, cawonce: data.cawonce }
-          })
-          if (existingAction) {
-            // Verify this is actually the same action, not a different one reusing the cawonce.
-            // Compare actionType, receiverId, receiverCawonce, and text.
-            const ex = existingAction.data as any
-            const sameAction =
-              Number(ex?.actionType ?? -1) === Number(data.actionType) &&
-              Number(ex?.receiverId ?? -1) === Number(data.receiverId ?? 0) &&
-              Number(ex?.receiverCawonce ?? -1) === Number(data.receiverCawonce ?? 0) &&
-              (ex?.text ?? '') === (data.text ?? '')
-            processedByOther = sameAction
-            if (!sameAction) {
-              console.log(`[Validator] TxQueue ${entry.id}: Cawonce ${data.cawonce} used by DIFFERENT action — marking failed`)
-              console.log(`  existing: type=${ex?.actionType} receiver=${ex?.receiverId} text="${(ex?.text ?? '').slice(0, 40)}"`)
-              console.log(`  new:      type=${data.actionType} receiver=${data.receiverId} text="${(data.text ?? '').slice(0, 40)}"`)
-            }
+          cawonceResolution = await resolveCawonceUsed(data, entry.updatedAt)
+          if (cawonceResolution === 'failed') {
+            console.log(`[Validator] TxQueue ${entry.id}: Cawonce ${data.cawonce} used by DIFFERENT action — marking failed`)
+          } else if (cawonceResolution === 'awaiting_indexer') {
+            console.log(`[Validator] TxQueue ${entry.id}: Cawonce ${data.cawonce} reported used but Action row not yet indexed — deferring`)
           }
         }
 
-        let newStatus = succeededKeys.has(key) || processedByOther
+        const processedByOther = cawonceResolution === 'done'
+
+        let newStatus: string = succeededKeys.has(key) || processedByOther
           ? 'done'
-          : 'failed'
+          : cawonceResolution === 'awaiting_indexer'
+            ? 'awaiting_indexer'
+            : 'failed'
 
         // Get the rejection reason for this specific entry
-        let reason = newStatus === 'failed' && simulationRejections[index]
-          ? (cawonceUsed && !processedByOther ? 'Cawonce already used' : simulationRejections[index])
-          : undefined
+        let reason: string | undefined =
+          newStatus === 'failed' && simulationRejections[index]
+            ? (cawonceUsed && !processedByOther ? 'Cawonce already used' : simulationRejections[index])
+            : undefined
 
         // Check if the failure is due to insufficient balance with a pending deposit
         if (newStatus === 'failed' && reason) {
@@ -1085,6 +1165,14 @@ console.log("succeededKeys", succeededKeys)
 
         if (newStatus === 'failed' && reason) {
           await markTxQueueFailed(entry.id, reason, data.senderId, data)
+        } else if (newStatus === 'awaiting_indexer') {
+          // Don't surface this to the user as a failure; just bump the row
+          // so updatedAt advances and the next pass will see how long
+          // we've been waiting.
+          await prisma.txQueue.update({
+            where: { id: entry.id },
+            data: { status: 'awaiting_indexer', reason: 'awaiting Action indexer' },
+          })
         } else {
           // 'done' path (or non-terminal states like waiting_for_deposit).
           // No notification needed — the helper is only for terminal failures.
@@ -1311,27 +1399,27 @@ console.log("succeededKeys", succeededKeys)
               const simResult = await simulateActions(validatorId, subBatch)
               if (!simResult || !simResult.successfulActions?.length) {
                 console.log(`[Validator] Client ${clientId} simulation failed or no successful actions`)
-                await Promise.all(subBatchEntries.map(async (entry, idx) => {
+                await Promise.all(subBatchEntries.map(async (entry: any, idx) => {
                   const data = (entry.payload as any).data
                   const rejection = simResult?.rejectionMessages?.[idx] || ''
                   const cawonceUsed = rejection.includes('Cawonce already used')
-                  let processedByOther = false
+                  let cawonceResolution: 'done' | 'failed' | 'awaiting_indexer' | null = null
                   if (cawonceUsed) {
-                    const existingAction = await prisma.action.findFirst({
-                      where: { senderId: data.senderId, cawonce: data.cawonce }
-                    })
-                    if (existingAction) {
-                      const ex = existingAction.data as any
-                      processedByOther =
-                        Number(ex?.actionType ?? -1) === Number(data.actionType) &&
-                        Number(ex?.receiverId ?? -1) === Number(data.receiverId ?? 0) &&
-                        Number(ex?.receiverCawonce ?? -1) === Number(data.receiverCawonce ?? 0) &&
-                        (ex?.text ?? '') === (data.text ?? '')
-                    }
+                    cawonceResolution = await resolveCawonceUsed(data, entry.updatedAt)
                   }
-                  let failStatus = 'failed'
-                  let failReason: string | null = processedByOther ? null : (cawonceUsed && !processedByOther ? 'Cawonce already used' : (rejection || 'Simulation failed'))
-                  if (!processedByOther && failReason) {
+                  const processedByOther = cawonceResolution === 'done'
+
+                  let failStatus: string = processedByOther
+                    ? 'done'
+                    : cawonceResolution === 'awaiting_indexer'
+                      ? 'awaiting_indexer'
+                      : 'failed'
+                  let failReason: string | null = processedByOther
+                    ? null
+                    : cawonceResolution === 'awaiting_indexer'
+                      ? 'awaiting Action indexer'
+                      : (cawonceUsed ? 'Cawonce already used' : (rejection || 'Simulation failed'))
+                  if (failStatus === 'failed' && failReason) {
                     const depositCheck = await checkDepositWaiting(data.senderId, failReason)
                     failStatus = depositCheck.status
                     failReason = depositCheck.reason
@@ -1344,7 +1432,7 @@ console.log("succeededKeys", succeededKeys)
                   } else if (failStatus === 'failed' && failReason) {
                     await markTxQueueFailed(entry.id, failReason, data.senderId, data)
                   } else {
-                    // waiting_for_deposit path
+                    // awaiting_indexer or waiting_for_deposit
                     await prisma.txQueue.update({
                       where: { id: entry.id },
                       data: { status: failStatus, reason: failReason }
@@ -1476,42 +1564,22 @@ console.log("succeededKeys", succeededKeys)
         )
         if (allCawonceUsed) {
           console.log("[Validator] All actions rejected with 'Cawonce already used' — checking Action table...")
-          await Promise.all(validatedEntries.map(async (entry) => {
+          await Promise.all(validatedEntries.map(async (entry: any) => {
             const data = (entry.payload as any).data
-            // Check if an Action record exists for this exact senderId + cawonce
-            const existingAction = await prisma.action.findFirst({
-              where: { senderId: data.senderId, cawonce: data.cawonce }
-            })
-            if (existingAction) {
-              // Verify this is the same action, not a different one reusing the cawonce
-              const ex = existingAction.data as any
-              const sameAction =
-                Number(ex?.actionType ?? -1) === Number(data.actionType) &&
-                Number(ex?.receiverId ?? -1) === Number(data.receiverId ?? 0) &&
-                Number(ex?.receiverCawonce ?? -1) === Number(data.receiverCawonce ?? 0) &&
-                (ex?.text ?? '') === (data.text ?? '')
-              if (sameAction) {
-                console.log(`[Validator] TxQueue ${entry.id}: Same action exists for senderId=${data.senderId} cawonce=${data.cawonce} — marking done`)
-                await prisma.txQueue.update({ where: { id: entry.id }, data: { status: 'done' } })
-              } else {
-                console.log(`[Validator] TxQueue ${entry.id}: Cawonce ${data.cawonce} used by DIFFERENT action — marking failed`)
-                console.log(`  existing: type=${ex?.actionType} receiver=${ex?.receiverId} text="${(ex?.text ?? '').slice(0, 40)}"`)
-                console.log(`  new:      type=${data.actionType} receiver=${data.receiverId} text="${(data.text ?? '').slice(0, 40)}"`)
-                await markTxQueueFailed(
-                  entry.id,
-                  'Cawonce already used',
-                  data.senderId,
-                  data
-                )
-              }
+            const resolution = await resolveCawonceUsed(data, entry.updatedAt)
+            if (resolution === 'done') {
+              console.log(`[Validator] TxQueue ${entry.id}: Same action exists for senderId=${data.senderId} cawonce=${data.cawonce} — marking done`)
+              await prisma.txQueue.update({ where: { id: entry.id }, data: { status: 'done' } })
+            } else if (resolution === 'failed') {
+              console.log(`[Validator] TxQueue ${entry.id}: Cawonce ${data.cawonce} used by DIFFERENT action (or indexer timeout) — marking failed`)
+              await markTxQueueFailed(entry.id, 'Cawonce already used', data.senderId, data)
             } else {
-              console.log(`[Validator] TxQueue ${entry.id}: No Action found for senderId=${data.senderId} cawonce=${data.cawonce} — cawonce conflict, marking failed`)
-              await markTxQueueFailed(
-                entry.id,
-                'Cawonce already used',
-                data.senderId,
-                data
-              )
+              // awaiting_indexer — Action row not yet present. Defer to next tick.
+              console.log(`[Validator] TxQueue ${entry.id}: Cawonce ${data.cawonce} reported used but Action row not yet indexed — deferring`)
+              await prisma.txQueue.update({
+                where: { id: entry.id },
+                data: { status: 'awaiting_indexer', reason: 'awaiting Action indexer' },
+              })
             }
           }))
           return
