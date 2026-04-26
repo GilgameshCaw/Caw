@@ -19,8 +19,9 @@ export async function collectValidatorConfig(nodeType, installDir, ctx = {}) {
   tipBlock([
     'The validator needs a private key to sign and submit transactions on L2.',
     'This key will hold ETH on Base (for gas fees) and be used to submit',
-    'batched user actions on-chain. Validator tips are paid to the wallet that',
-    'owns the validator username NFT (asked next), not to this signing key.',
+    'batched user actions on-chain. Validator tips are paid to the validator',
+    'username (asked next) — whichever wallet owns that username can withdraw',
+    'them. This signing key only pays gas; it does not receive tips.',
     '',
     'Options:',
     '  1. Generate a new key (recommended for fresh installs)',
@@ -97,12 +98,13 @@ export async function collectValidatorConfig(nodeType, installDir, ctx = {}) {
   tipBlock([
     'Each validator is identified by a CawName username NFT.',
     '',
-    `${brand('Validator tips are paid in CAW to the wallet that OWNS that username.')}`,
-    'If you transfer the username to another wallet, tips follow it. The signing',
-    'key above is just for submitting transactions and does not receive tips.',
+    `${brand('Validator tips are paid in CAW to the username itself.')}`,
+    'Whoever currently owns the username NFT can withdraw the accrued tips.',
+    'If you transfer the username to another wallet, the new owner withdraws',
+    'future tips. The signing key above only pays gas — it never holds tips.',
     '',
     'Type the username (no @, no .caw — just the name) and we\'ll look up the',
-    'token ID and owner address on-chain to confirm.',
+    'token ID + current owner on-chain to confirm.',
   ])
 
   const validatorId = await resolveValidatorByUsername(ctx)
@@ -221,10 +223,13 @@ async function resolveValidatorByUsername(ctx) {
 
     console.log()
     console.log(success(`  Found ${brand(username)}:`))
-    console.log(`    Token ID:     ${brand(String(tokenId))}`)
-    console.log(`    Owner wallet: ${brand(owner)}`)
+    console.log(`    Token ID:        ${brand(String(tokenId))}`)
+    console.log(`    Current owner:   ${brand(owner)}`)
     console.log()
-    console.log(warn(`  Validator tips for this node will be paid to ${owner}.`))
+    console.log(warn(`  Validator tips for this node will be paid to @${username}.`))
+    console.log(dim(`  Tips accrue to the username (the NFT). Whoever owns @${username} can`))
+    console.log(dim(`  withdraw them — today that's ${owner}. If you transfer the username,`))
+    console.log(dim('  the new owner withdraws future tips.'))
     console.log()
 
     const { confirmed } = await inquirer.prompt([
