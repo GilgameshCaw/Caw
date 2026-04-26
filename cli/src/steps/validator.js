@@ -56,6 +56,7 @@ export async function collectValidatorConfig(nodeType, installDir, ctx = {}) {
     console.log()
     console.log(brand('  Address: ') + address)
     console.log(err.bold(`  Fund ${address} with ETH on Base — this address pays gas for every action you submit.`))
+    console.log(dim('  Quick way: bridge a small amount via https://gas.zip → paste the address above.'))
     console.log()
 
     const { showKey } = await inquirer.prompt([

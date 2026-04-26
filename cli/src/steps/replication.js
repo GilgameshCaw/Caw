@@ -195,6 +195,7 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
     console.log()
     console.log(brand('  Address: ') + address)
     console.log(err.bold(`  Fund ${address} with ETH on ${chosenChain.label} — pays gas for batch submissions and challenges.`))
+    console.log(dim('  Quick way: bridge a small amount via https://gas.zip → paste the address above.'))
     console.log()
 
     const { showKey } = await inquirer.prompt([

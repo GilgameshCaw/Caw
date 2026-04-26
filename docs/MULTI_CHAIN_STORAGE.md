@@ -1,12 +1,23 @@
 # Multi-chain storage plan
 
-## What "storage chain" means today
+## Two separate concepts, often confused
+
+CAW has two chain-related axes that are easy to muddle:
+
+| Concept | What it controls | Who picks it | Per-what |
+|---|---|---|---|
+| **Storage chain** | Where `CawActions` runs. Validators submit batches here, balances + cawonces live here, indexers watch this chain. | Client owner sets at `createClient` time (`storageChainEid`) | One per client |
+| **Replication chain** | Where the optimistic archive lives. Validators commit hashes of each batch here for fraud-detection. | Each operator picks for their own node | One per validator process |
+
+These are independent. A client with `storageChainEid = base` could have validators replicating to Arbitrum, Optimism, or both — whichever each operator chooses.
+
+## Storage-chain support: per-client, on-chain enforced
 
 Every CAW client picks one `storageChainEid` at create time. That's the L2 chain where:
 
-- `CawActions` lives — validators submit batches of user actions here, and per-token CAW balances + cawonces are bookkept here.
-- `CawProfileL2` lives — the L2 mirror of the L1 username NFT, with on-chain message reception (auth, deposit, mint).
-- The validator's gas is spent — every action submission is an L2 tx.
+- `CawActions` runs — validators submit batches of user actions.
+- `CawProfileL2` runs — the L2 mirror of the L1 username NFT.
+- The validator's gas is spent — every action submission is a tx on this chain.
 - Indexers (`RawEventsGatherer`, `MarketplaceIndexer`) read events from.
 
 Today every client uses Base (Sepolia for testnet, Base mainnet for prod). That's hardcoded in two senses:
@@ -16,38 +27,53 @@ Today every client uses Base (Sepolia for testnet, Base mainnet for prod). That'
 
 But the contracts already speak `storageChainEid` as a per-client property — the data structure is multi-chain-ready.
 
-## What needs to change for Arbitrum-as-storage
+## Replication-chain support: per-operator, no on-chain enforcement
+
+The replication path is **already permissionless**:
+
+- `CawActionsArchive.submitReplication` only requires `stakes[msg.sender] >= MIN_STAKE`. It doesn't check anything client-related.
+- The slashing path (`resolveChallenge`, `slashIncoherentRoot`) works against any submission on any archive chain that has a peer relationship with the relay.
+- An operator with stake on chain X can replicate any client's batches to chain X, full stop.
+
+This means the CLI's replication question is a per-operator economic choice ("which chain do you have ETH on?"), not a per-client constraint. Today the CLI lists the one deployed archive chain (Arbitrum Sepolia / Arbitrum One); the structure scales to N.
+
+The legacy `clientReplications` mapping in `CawClientManager` exists from the old LZ-batch replication path and is no longer load-bearing — see `BACKLOG: contracts cleanup` below.
+
+## What needs to change to add Arbitrum (or any chain) as a *storage* chain
 
 ### Contracts (one-time per chain)
 
-For each new storage chain (e.g. Arbitrum One):
-
-1. **Deploy `CawProfileL2`** on the new chain. It's a self-contained OApp; just needs the chain's LayerZero endpoint address.
+1. **Deploy `CawProfileL2`** on the new chain. Self-contained OApp; needs the chain's LayerZero endpoint address.
 2. **Deploy `CawActions`** on the new chain, pointed at the new `CawProfileL2` and the chain's CAW token address.
-3. **Configure LayerZero peers**: pair the new `CawProfileL2` with the L1 `CawProfile` so deposit/mint messages flow.
-4. **Optionally deploy a `CawActionsArchive`** on whatever chain you want this storage chain to replicate to (could be the same Arbitrum, could be different).
+3. **Configure LayerZero peers**: pair the new `CawProfileL2` with the L1 `CawProfile` so deposit/mint/auth messages flow.
+4. **Deploy a `CawActionsArchive`** on whichever chain(s) this storage chain replicates *to*. Canonical pairing is symmetric: Base ↔ Arbitrum (Base storage archives to Arbitrum, Arbitrum storage archives to Base).
 
-The *L1 contracts don't change* — `CawClientManager` already accepts arbitrary `storageChainEid` values at `createClient` time.
+The L1 contracts don't change — `CawClientManager` already accepts arbitrary `storageChainEid` values at `createClient` time.
 
-### Indexer / runtime (per-instance, per-client)
+### Off-chain runtime
 
-Today a CAW node runs one `RawEventsGatherer` pointed at one L2. Multi-chain support means:
+A CAW node serves **one client per install**. The install needs to know which storage chain the client uses, then configure RPC + contract addresses for that chain. Pseudocode for the install flow:
 
-- **Each client has a storage chain.** When the indexer processes events, it has to be reading from *the chain that client uses*.
-- A node serving multiple clients on different storage chains needs **multiple `RawEventsGatherer` instances** (one per chain).
+```
+1. operator picks clientId
+2. CLI reads CawClientManager.getClient(clientId).storageChainEid
+3. CLI looks up STORAGE_CHAINS[eid] → { name, chainId, cawActions, cawProfileL2, ... }
+4. CLI asks for an RPC URL for that chain
+5. CLI asks for a replication chain (the canonical pair, default-filled, overridable)
+6. generated config + .env reflect the right chain's addresses
+```
 
-The simplest model: a CAW node serves **one** client per install, reads `storageChainEid` from `CawClientManager.getClient(clientId)` at startup, and configures everything (RPC, contract addresses, chain ID) from there. If you want to serve another client with a different storage chain, you spin up another node.
-
-That's the model the contracts already point at.
+If you want to serve two clients on different storage chains, you run two install dirs. The contracts don't constrain it; the runtime just doesn't bother multiplexing.
 
 ### CLI changes
 
 Today the CLI has `network=testnet|mainnet` and assumes Base for both. For multi-chain:
 
-1. **Drop "L2 RPC URL" as a single prompt.** Replace with: ask for the client ID first → query `CawClientManager.getClient(clientId).storageChainEid` from L1 → label the L2 RPC prompt with the actual chain name from a `EID → chain metadata` table.
-2. **Maintain a `STORAGE_CHAINS` table** keyed by EID with `{ name, chainId, rpcSampleUrl, cawActionsAddress, cawProfileL2Address }`. Today it'd have one entry per network. New chain = new entry.
-3. **`createClient` flow** (already in CLI as of `980bf3a`) extends naturally: instead of defaulting storage chain to Base, present the full list from `STORAGE_CHAINS[network]` and let the operator pick.
-4. **addresses.ts** becomes per-chain, not per-network. Probably need to rework as a structured map keyed by chain key — `addresses.base.CAW_ACTIONS`, `addresses.arbitrum.CAW_ACTIONS`, etc. Existing single-name exports become deprecated aliases.
+1. **Move the client-ID question earlier** — before RPC URLs. Once we know `clientId`, we can query `getClient(clientId).storageChainEid` and label every downstream RPC prompt correctly.
+2. **Maintain a `STORAGE_CHAINS` table** keyed by EID with `{ name, chainId, cawActionsAddress, cawProfileL2Address, defaultReplicationChain }`. Today it'd have one entry per network. New chain = new entry.
+3. **`createClient` flow** (already in CLI): instead of defaulting storage chain to Base, present the full list from `STORAGE_CHAINS[network]` and let the operator pick.
+4. **`addresses.ts` becomes per-chain, not per-network.** Probably reshape as `addresses.base.CAW_ACTIONS`, `addresses.arbitrum.CAW_ACTIONS`, etc., with the existing flat exports as deprecated aliases.
+5. **Replication chain default** — derive from the storage chain via `STORAGE_CHAINS[eid].defaultReplicationChain` rather than hardcoding "Arbitrum".
 
 ### Service configs
 
@@ -65,25 +91,28 @@ The generated `client/config.json` would change from one `RawEventsGatherer` ent
 }
 ```
 
-`cawActionsAddress` would become explicit instead of imported from `addresses.ts`. Similarly for `Validator` and any other service that references chain-specific addresses.
+`cawActionsAddress` becomes explicit instead of imported from `addresses.ts`. Similarly for `Validator` and any other service that references chain-specific addresses.
 
 ### Estimated scope
-
-Roughly:
 
 | Task | Estimate |
 |---|---|
 | Restructure `addresses.ts` as `addresses.<chain>.<symbol>` with deprecated flat aliases | 1–2 hours |
-| Build `STORAGE_CHAINS` table with chain metadata | 30 min |
-| CLI: read storageChainEid from chain → drive L2 RPC label + addresses | 1 hour |
+| Build `STORAGE_CHAINS` table with chain metadata + canonical replication pairs | 30 min |
+| CLI: ask clientId first, read storageChainEid, drive L2 RPC label + addresses | 1 hour |
 | `client/config.json` generation: parameterize chain-specific addresses | 1 hour |
-| `RawEventsGatherer` / `Validator` / `MarketplaceIndexer`: accept chain config from service config instead of importing addresses | 2–4 hours (touches running code) |
+| `RawEventsGatherer` / `Validator` / `MarketplaceIndexer`: accept chain config from service config instead of importing addresses | 2–4 hours |
 | Test on testnet by deploying `CawActions` to Arbitrum Sepolia and creating a test client | 1–2 hours |
 
-Total: ~one full day of focused work, mostly mechanical.
+Total: ~one full day of focused work.
 
 ## Recommended ordering
 
-1. Don't touch any of this until there's a real second-storage-chain driver (a client wanting to deploy to Arbitrum, etc.). The indirection costs zero today; the abstraction it enables is purely future-tense.
-2. When the driver shows up, do the contract deploy first, then the off-chain refactor. The off-chain refactor without a deployed second chain has nothing to test against.
-3. Migrate **one** existing reference (probably the validator service's chain ID + address lookup) to the new shape before changing everything — sanity-check the abstraction with a real diff before committing to it everywhere.
+1. **Deploy contracts to second chain first** so the off-chain refactor has something real to test against.
+2. **Migrate one reference** (probably `ValidatorService`'s chain ID + address lookup) to the new shape before changing everything.
+3. **CLI reorder is cheap** — move client-ID earlier, derive labels. Doable in a couple of commits.
+4. The replication-chain side of this is already "done" — it's per-operator and the CLI structure for picking a chain already exists. New chain = one entry in the replication-chain table.
+
+## Related: BACKLOG: contracts cleanup
+
+The `clientReplications` / `clientReplicationEnabled` plumbing in `CawClientManager` is dead code from the old LZ-batch replication path. With optimistic-archive, replication is per-operator and permissionless — nothing on-chain needs to know which chains a client "expects". See `PROJECT_BACKLOG.md` → "Remove `clientReplications` from CawClientManager" for the cleanup list. Worth doing at the next contract redeploy cycle.

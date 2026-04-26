@@ -6,6 +6,43 @@ Outstanding TODOs, security considerations, and planned features. Each entry has
 
 ## Smart Contracts
 
+### Remove `clientReplications` / `clientReplicationEnabled` from CawClientManager
+
+The `clientReplications[]` mapping, `clientReplicationEnabled` mapping, `addReplication` / `removeReplication` setters, `getClientChainEids`, `setClientReplicationEnabled`, and the L1→L2 sync logic that pushes them via `setClientChains` are all dead code from the old LZ-batch replication path.
+
+**Why nothing depends on this on-chain:**
+- `CawActionsArchive.submitReplication` (line 178) only checks `stakes[msg.sender] >= MIN_STAKE`. It does NOT consult `clientReplications[clientId]`.
+- The slashing path (`resolveChallenge`, `slashIncoherentRoot`) also doesn't consult it.
+- `CawProfileL2.setClientChains` is comment-flagged "this function only emits an event so indexers can observe config changes" — purely advisory.
+
+**With optimistic-archive, replication is per-operator and permissionless.** Anyone with stake on any peered archive chain can replicate any client's batches. The `clientReplications` mapping doesn't gate, doesn't constrain, doesn't earn.
+
+**Cleanup checklist** (do at next CawClientManager redeploy — it's an immutable contract, so this only happens when something else forces a redeploy anyway):
+
+Contracts:
+- [ ] Delete `ReplicationDestination` struct from `CawClientManager.sol`
+- [ ] Delete `clientReplications`, `clientReplicationEnabled` mappings
+- [ ] Delete `addReplication`, `removeReplication`, `setClientReplicationEnabled` functions
+- [ ] Delete `getClientChainEids`, `getClientReplicationCount`, `getClientReplications` view helpers
+- [ ] Delete `ClientReplicationAdded`, `ClientReplicationRemoved`, `ClientReplicationEnabledChanged` events
+- [ ] Drop the LZ-fee plumbing in `CawClientManager`'s `addReplication` / `removeReplication` (the `cawProfile.syncReplicationInternal{value: msg.value}` calls)
+- [ ] Drop the `receive() external payable` on `CawClientManager` (only existed for those LZ refunds)
+- [ ] In `CawProfile.sol`: delete `syncReplication`, `_syncClientChains`, `setClientChainsSelector`. The `setClientChainsSelector` is in the L2 selector whitelist too — remove it from `isAuthorizedFunction` on `CawProfileL2`.
+- [ ] In `CawProfileL2.sol`: delete `setClientChains` (the public function called via `_lzReceive`) and the `ClientChainsSet` event.
+
+Deployment:
+- [ ] `solidity/scripts/deploy.js` references — check whether the deploy still wires up the LZ peers / fees for replication-related routes. The challenge-relay path stays; only the `setClientChains` path goes away.
+
+Off-chain (touch lightly — these are read paths):
+- [ ] `MarketplaceIndexerService` / `ChainSyncService` / `InstanceRegistryService` — search for `getClientChainEids`, `clientReplications`, `ClientChainsSet`. Probably nothing reads these today, but verify.
+- [ ] Any frontend code displaying "this client replicates to chain X" (probably none — search for `getClientChainEids` or the event).
+- [ ] `client/src/abi/generated.ts` — regenerate from the new contracts.
+
+Test:
+- [ ] `solidity/test/multi-layer-test.js` and any client-creation tests that pass replication chain args — update signatures.
+
+This work is a clean half-day. Rationale for deferring until the next contract change: deploying contracts purely to remove dead code costs LZ peer-config gas and risks address churn for off-chain configs. Bundle it with whatever other contract change goes out next (e.g. multi-storage-chain support — see `docs/MULTI_CHAIN_STORAGE.md`).
+
 ### Mint flow — three modes (frontend work)
 
 The `mintSelector` / `mintAndUpdateOwners` plumbing is intentionally kept as latent capacity (see comments in `CawProfile.sol:44-50` and `CawProfileL2.sol:280-289`). Once mainnet contracts ship they're immutable, so removing the wiring would lock us out of a flow we might want.
