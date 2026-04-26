@@ -514,15 +514,6 @@ export async function getClient(clientId: number) {
   })
 }
 
-/**
- * Get replication count for a client (from cache/db)
- */
-export async function getReplicationCount(clientId: number): Promise<number> {
-  const client = await getClient(clientId)
-  if (!client?.replicationEnabled) return 0
-  return client.replicationCount
-}
-
 // ============================================================================
 // L2 Event Indexing (SessionKey + ClientAuth)
 // ============================================================================
@@ -800,13 +791,10 @@ export const chainSyncService = {
 
       stats: async () => {
         const clientCount = await prisma.client.count()
-        const replicationEnabledCount = await prisma.client.count({
-          where: { replicationEnabled: true }
-        })
         const cawPriceAge = cawPriceCache ? Math.floor((Date.now() - cawPriceCache.updatedAt) / 1000) : 'N/A'
         const ethPriceAge = ethPriceCache ? Math.floor((Date.now() - ethPriceCache.updatedAt) / 1000) : 'N/A'
         const ethPrice = ethPriceCache ? `$${(Number(ethPriceCache.usdPerEth) / 1e6).toFixed(2)}` : 'N/A'
-        return `Clients: ${clientCount} (${replicationEnabledCount} with replication), ETH: ${ethPrice}, Price ages: CAW ${cawPriceAge}s, ETH ${ethPriceAge}s`
+        return `Clients: ${clientCount}, ETH: ${ethPrice}, Price ages: CAW ${cawPriceAge}s, ETH ${ethPriceAge}s`
       }
     }
   }
