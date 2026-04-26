@@ -164,8 +164,10 @@ const countManager = {
 
   // =========================================================================
   // onLikeCreated
-  // Called when a pending Like record is created. Increments likeCount on
-  // the target caw and likeCount on the user.
+  // Called when a pending Like record is created. Increments:
+  //   - Caw.likeCount on the target caw (popularity)
+  //   - User.likedCount on the liker (likes given by them)
+  //   - User.likesReceivedCount on the caw owner (likes received on their content)
   // =========================================================================
   async onLikeCreated(
     tx: TxClient,
@@ -178,8 +180,18 @@ const countManager = {
     await safeIncrement(tx, 'Caw', 'id', like.cawId, 'likeCount')
     log(`likeCount +1 on caw ${like.cawId} (like by user ${like.userId}, pending=${like.pending})`)
 
-    await safeIncrement(tx, 'User', 'tokenId', like.userId, 'likeCount')
-    log(`likeCount +1 on user ${like.userId} (liked caw ${like.cawId})`)
+    await safeIncrement(tx, 'User', 'tokenId', like.userId, 'likedCount')
+    log(`likedCount +1 on user ${like.userId} (liked caw ${like.cawId})`)
+
+    // Bump the caw owner's likesReceivedCount. Look up the owner inside the tx
+    // so the read sees any pending writes from this transaction.
+    const caw = await (tx as any).caw.findUnique({ where: { id: like.cawId }, select: { userId: true } })
+    if (caw) {
+      await safeIncrement(tx, 'User', 'tokenId', caw.userId, 'likesReceivedCount')
+      log(`likesReceivedCount +1 on user ${caw.userId} (caw ${like.cawId} liked by user ${like.userId})`)
+    } else {
+      warn(`onLikeCreated: caw ${like.cawId} not found, skipping likesReceivedCount`)
+    }
   },
 
   // =========================================================================
@@ -273,8 +285,15 @@ const countManager = {
           await safeDecrement(tx, 'Caw', 'likeCount', 'id', likeCawId)
           log(`likeCount -1 on caw ${likeCawId} (like ${id} failed)`)
 
-          await safeDecrement(tx, 'User', 'likeCount', 'tokenId', likeUserId)
-          log(`likeCount -1 on user ${likeUserId} (like ${id} failed)`)
+          await safeDecrement(tx, 'User', 'likedCount', 'tokenId', likeUserId)
+          log(`likedCount -1 on user ${likeUserId} (like ${id} failed)`)
+
+          // Roll back the caw owner's likesReceivedCount that we bumped on create.
+          const failedCaw = await (tx as any).caw.findUnique({ where: { id: likeCawId }, select: { userId: true } })
+          if (failedCaw) {
+            await safeDecrement(tx, 'User', 'likesReceivedCount', 'tokenId', failedCaw.userId)
+            log(`likesReceivedCount -1 on user ${failedCaw.userId} (like ${id} on caw ${likeCawId} failed)`)
+          }
           break
         }
 
@@ -302,8 +321,10 @@ const countManager = {
 
   // =========================================================================
   // onLikeRemoved
-  // Called when a like is deleted (unlike action). Decrements likeCount on
-  // the target caw and likeCount on the user.
+  // Called when a like is deleted (unlike action). Decrements:
+  //   - Caw.likeCount on the target caw
+  //   - User.likedCount on the unliker (likes given by them)
+  //   - User.likesReceivedCount on the caw owner (likes received on their content)
   // =========================================================================
   async onLikeRemoved(
     tx: TxClient,
@@ -315,8 +336,15 @@ const countManager = {
     await safeDecrement(tx, 'Caw', 'likeCount', 'id', like.cawId)
     log(`likeCount -1 on caw ${like.cawId} (unlike by user ${like.userId})`)
 
-    await safeDecrement(tx, 'User', 'likeCount', 'tokenId', like.userId)
-    log(`likeCount -1 on user ${like.userId} (unliked caw ${like.cawId})`)
+    await safeDecrement(tx, 'User', 'likedCount', 'tokenId', like.userId)
+    log(`likedCount -1 on user ${like.userId} (unliked caw ${like.cawId})`)
+
+    // Roll back the caw owner's likesReceivedCount that we bumped on the original like.
+    const caw = await (tx as any).caw.findUnique({ where: { id: like.cawId }, select: { userId: true } })
+    if (caw) {
+      await safeDecrement(tx, 'User', 'likesReceivedCount', 'tokenId', caw.userId)
+      log(`likesReceivedCount -1 on user ${caw.userId} (caw ${like.cawId} unliked by user ${like.userId})`)
+    }
   },
 
   // =========================================================================

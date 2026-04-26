@@ -35,7 +35,13 @@ model User {
   followerCount         Int            @default(0)
   followingCount        Int            @default(0)
   image                 String?
-  likeCount             Int            @default(0)
+  // Cached like counters. Both maintained by CountManager on like/unlike/failure.
+  // - likedCount         = likes this user has GIVEN (was the field formerly named `likeCount`).
+  // - likesReceivedCount = total likes this user's caws have RECEIVED.
+  // Both are read-and-self-heal: routes recompute from the Like table when displaying
+  // and fire-and-forget an UPDATE if the cache drifts.
+  likedCount            Int            @default(0)
+  likesReceivedCount    Int            @default(0)
   tokenId               Int            @unique // Kept for backwards compatibility, always equals id
   username              String         @unique
   avatarUrl             String?

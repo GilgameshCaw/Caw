@@ -208,8 +208,9 @@ router.get('/top-followed', async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit as string) || 10, 20)
     const currentUserId = Number(req.header('x-user-id')) || undefined
 
-    // Get users ordered by follower count, falling back to caw count
-    // Only include users who have posted at least once
+    // Get users ordered by follower count, falling back to caw count.
+    // likesReceivedCount is read straight from the cached column maintained by
+    // CountManager — no per-user prisma.like.count round-trip.
     const users = await prisma.user.findMany({
       where: {
         cawCount: { gt: 0 },
@@ -222,6 +223,7 @@ router.get('/top-followed', async (req, res) => {
         defaultAvatarId: true,
         image: true,
         followerCount: true,
+        likesReceivedCount: true,
       },
       orderBy: [
         { followerCount: 'desc' },
@@ -230,45 +232,36 @@ router.get('/top-followed', async (req, res) => {
       take: limit
     })
 
-    // Get total likes received for each user
-    const usersWithLikes = await Promise.all(users.map(async (user) => {
-      const likeCount = await prisma.like.count({
-        where: {
-          caw: { userId: user.tokenId },
-          action: ActionType.LIKE
-        }
-      })
-
-      // Check if current user is following this user
-      let isFollowing = false
-      let followPending = false
-      if (currentUserId && currentUserId !== user.tokenId) {
-        const follow = await prisma.follow.findUnique({
+    // Resolve follow state for the current user against each candidate. One Prisma
+    // findMany covers all of them in a single round-trip.
+    const followsForCurrent = currentUserId
+      ? await prisma.follow.findMany({
           where: {
-            followerId_followingId: {
-              followerId: currentUserId,
-              followingId: user.tokenId
-            }
+            followerId: currentUserId,
+            followingId: { in: users.map(u => u.tokenId) },
           },
-          select: {
-            action: true,
-            status: true
-          }
+          select: { followingId: true, action: true, status: true },
         })
+      : []
+    const followByTarget = new Map(followsForCurrent.map(f => [f.followingId, f]))
 
-        if (follow) {
-          isFollowing = follow.action === 'FOLLOW' && follow.status === 'SUCCESS'
-          followPending = follow.status === 'PENDING'
-        }
-      }
-
+    const usersWithLikes = users.map(u => {
+      const f = followByTarget.get(u.tokenId)
+      const isFollowing = !!(f && f.action === 'FOLLOW' && f.status === 'SUCCESS')
+      const followPending = !!(f && f.status === 'PENDING')
       return {
-        ...user,
-        likeCount,
+        tokenId: u.tokenId,
+        username: u.username,
+        displayName: u.displayName,
+        avatarUrl: u.avatarUrl,
+        defaultAvatarId: u.defaultAvatarId,
+        image: u.image,
+        followerCount: u.followerCount,
+        likeCount: u.likesReceivedCount, // API field name = likes received (popularity)
         isFollowing,
-        followPending
+        followPending,
       }
-    }))
+    })
 
     // Filter out blocked users
     let filtered = usersWithLikes
@@ -355,6 +348,8 @@ router.get('/by-token/:tokenId', async (req, res) => {
       lastStakedAt: true,
       pendingDepositAmount: true,
       followerCount: true,
+      likedCount: true,
+      likesReceivedCount: true,
     } as const
 
     let user = await prisma.user.findUnique({
@@ -423,33 +418,14 @@ router.get('/by-token/:tokenId', async (req, res) => {
       where: { senderId: tokenId, status: 'waiting_for_deposit' }
     })
 
-    // Compute live counts in parallel. Cached counters on the User row can drift
-    // (DB rebuilds, pre-CountManager data, pending→failed races), so we recompute
-    // them and self-heal the cache via a fire-and-forget update — same pattern
-    // the username profile route uses (see GET /:username below).
-    const [likeCount, actualFollowerCount] = await Promise.all([
-      prisma.like.count({
-        where: {
-          caw: { userId: user.tokenId },
-          action: ActionType.LIKE,
-        },
-      }),
-      prisma.follow.count({
-        where: { followingId: user.tokenId, action: 'FOLLOW', status: 'SUCCESS' },
-      }),
-    ])
-
-    if (user.followerCount !== actualFollowerCount) {
-      prisma.user.update({
-        where: { tokenId: user.tokenId },
-        data: { followerCount: actualFollowerCount },
-      }).catch(() => {}) // fire-and-forget; the response uses the live count below
-    }
-
+    // API field names: `likeCount` = likes received (popularity); `likedCount` = likes given.
+    // Both come straight from the cached User columns maintained by CountManager.
+    // If those ever drift, the username route below has a recompute-and-self-heal path;
+    // we keep this hot read fast for the address-tokens grid + suggested users, etc.
     return res.json({
       ...user,
-      followerCount: actualFollowerCount,
-      likeCount,
+      likeCount: user.likesReceivedCount,
+      likedCount: user.likedCount,
       waitingForDepositCount: waitingCount,
     })
   } catch (err: any) {
@@ -854,6 +830,8 @@ router.get('/:username', async (req, res) => {
         recawCount: true,
         followerCount: true,
         followingCount: true,
+        likedCount: true,
+        likesReceivedCount: true,
       }
     })
 
@@ -865,25 +843,17 @@ router.get('/:username', async (req, res) => {
       return res.status(404).json({ error: 'User not found' })
     }
 
-    // Get actual like count (total likes received on all caws)
-    const likeCount = await prisma.like.count({
-      where: {
-        caw: {
-          userId: user.tokenId
-        },
-        action: ActionType.LIKE
-      }
-    })
-
-    // Caws this user has liked — drives the "Likes" tab on the Profile page,
-    // distinct from likeCount above (which is popularity, i.e. likes received).
-    // Match the tab's content query (no pending filter) so badge and list agree.
-    const likedCount = await prisma.like.count({
-      where: {
-        userId: user.tokenId,
-        action: ActionType.LIKE,
-      }
-    })
+    // Recompute likes (received + given) live for the canonical profile view —
+    // self-heals any drift in the cached counters back into the User row below.
+    // Other hot paths (by-token, top-followed) read the cache directly.
+    const [likeCount, likedCount] = await Promise.all([
+      prisma.like.count({
+        where: { caw: { userId: user.tokenId }, action: ActionType.LIKE },
+      }),
+      prisma.like.count({
+        where: { userId: user.tokenId, action: ActionType.LIKE },
+      }),
+    ])
 
     // Check if current user is following this user
     let isFollowing = false
@@ -979,11 +949,17 @@ router.get('/:username', async (req, res) => {
       }),
     ])
 
-    // Fix cached counters if they drifted
-    if (user.followerCount !== actualFollowerCount || user.followingCount !== actualFollowingCount) {
+    // Fix cached counters if they drifted (followers + likes both live here so
+    // any stale row visited via the canonical profile path gets healed).
+    const drift: any = {}
+    if (user.followerCount !== actualFollowerCount) drift.followerCount = actualFollowerCount
+    if (user.followingCount !== actualFollowingCount) drift.followingCount = actualFollowingCount
+    if (user.likesReceivedCount !== likeCount) drift.likesReceivedCount = likeCount
+    if (user.likedCount !== likedCount) drift.likedCount = likedCount
+    if (Object.keys(drift).length > 0) {
       prisma.user.update({
         where: { tokenId: user.tokenId },
-        data: { followerCount: actualFollowerCount, followingCount: actualFollowingCount }
+        data: drift,
       }).catch(() => {}) // fire-and-forget
     }
 
