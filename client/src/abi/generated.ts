@@ -206,6 +206,20 @@ export const cawActionsAbi = [
   },
   {
     type: 'function',
+    inputs: [
+      { name: 'validatorId', internalType: 'uint32', type: 'uint32' },
+      { name: 'groupBytes', internalType: 'bytes', type: 'bytes' },
+      { name: 'v', internalType: 'uint8', type: 'uint8' },
+      { name: 'r', internalType: 'bytes32', type: 'bytes32' },
+      { name: 's', internalType: 'bytes32', type: 'bytes32' },
+      { name: 'groupSize', internalType: 'uint16', type: 'uint16' },
+    ],
+    name: 'processGroupSingle',
+    outputs: [],
+    stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
     inputs: [],
     name: 'renounceOwnership',
     outputs: [],

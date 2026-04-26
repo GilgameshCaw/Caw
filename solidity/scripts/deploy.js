@@ -503,6 +503,11 @@ const LINKING_STEPS = [
     name: 'Configure LZ DVN set (3-of-3: LayerZero Labs + Nethermind + Google Cloud)',
     chain: 'L1',
     phase: 6,
+    // Mainnet-only: testnet/dev rely on LayerZero's default DVN config and
+    // there's no `configureLzDvns` implementation here. Without this guard
+    // every testnet run reports "Failed: configureLzDvns is not defined"
+    // even though nothing went wrong.
+    condition: (_state, _deployer, env) => env === 'mainnet',
     custom: async (state, deployer, chainConfig) => {
       await configureLzDvns(state, deployer, chainConfig, CHAINS, L2_CHAIN_KEYS);
     },
@@ -904,7 +909,7 @@ class MultiChainDeployer {
     const chainKey = this.getChainKey(step.chain);
     await this.initChain(chainKey);
 
-    if (step.condition && !step.condition(this.state)) {
+    if (step.condition && !step.condition(this.state, this, this.env)) {
       console.log(`  Skipping "${step.name}" - condition not met`);
       return;
     }
@@ -1102,6 +1107,21 @@ class MultiChainDeployer {
     for (const phase of [1, 2, 3, 4, 5, 6]) {
       await this.deployPhase(phase);
     }
+
+    // Record the L2 deploy block so RawEventsGatherer's startBlock can be
+    // updated post-deploy (mirrors the same step in redeploy()). Without
+    // this, a fresh `--reset` deploy left the indexer replaying from a
+    // stale startBlock that pre-dated the new contracts.
+    try {
+      const l2ChainKey = this.getChainKey('L2');
+      await this.initChain(l2ChainKey);
+      const currentBlock = await this.wallets[l2ChainKey].provider.getBlockNumber();
+      this.state.l2DeployBlock = currentBlock;
+      this.saveState();
+      console.log(`\n   Recorded L2 deploy block: ${currentBlock}`);
+    } catch (e) {
+      console.warn('   Could not record L2 deploy block:', e.message);
+    }
   }
 
   async redeploy(contractKey) {
@@ -1238,6 +1258,133 @@ class MultiChainDeployer {
 
     console.log('\nLinking state:', JSON.stringify(this.state.linking || {}, null, 2));
   }
+}
+
+// ============================================
+// Local install: per-client addresses.ts writer
+// ============================================
+//
+// After a fresh deploy/redeploy the operator's addresses.ts still points at
+// the OLD contracts — the indexer then watches the old address, pulls in
+// stale events, and the action processor crashes trying to apply them
+// against a freshly-reset DB. The CLI install step does this resolution
+// for new operator installs; we mirror it here so a local-dev redeploy
+// gets the same treatment without anyone having to re-run the CLI.
+async function writeAddressesForLocalInstall(deployer) {
+  const env = deployer.env;
+  const envBlock = buildEnvBlock(env, deployer.state.addresses);
+  if (!envBlock || !envBlock.L1?.CawClientManager) {
+    console.warn('  Skipping addresses.ts (no CawClientManager in deploy state).');
+    return;
+  }
+
+  // Resolve clientId=1's storage chain via on-chain CCM (canonical source).
+  // Local dev always uses clientId=1 — the single client created by the
+  // post-deploy linking step.
+  const clientId = 1;
+  const l1ChainKey = deployer.getChainKey('L1');
+  await deployer.initChain(l1ChainKey);
+  const ccm = new ethers.Contract(
+    envBlock.L1.CawClientManager,
+    ['function getStorageChainEid(uint32 clientId) view returns (uint32)'],
+    deployer.wallets[l1ChainKey].provider,
+  );
+  let eid;
+  try {
+    eid = Number(await ccm.getStorageChainEid(clientId));
+  } catch (e) {
+    console.warn(`  Couldn't read storageChainEid for client ${clientId}: ${e.message}`);
+    return;
+  }
+
+  // eid → chainKey (L2, L2b, ...)
+  let storageChainKey = null;
+  for (const L of L2_CHAIN_KEYS) {
+    if (CHAINS[env + L]?.lzEid === eid) { storageChainKey = L; break; }
+  }
+  if (!storageChainKey) {
+    // Could be L1 (clients can pick L1 as storage); resolve via CHAINS L1.
+    if (CHAINS[env + 'L1']?.lzEid === eid) storageChainKey = 'L1';
+  }
+  if (!storageChainKey) {
+    console.warn(`  Client ${clientId} reports storage eid ${eid}; no matching chain in CHAINS — skipping addresses.ts`);
+    return;
+  }
+
+  const l1 = envBlock.L1 || {};
+  const l2 = envBlock[storageChainKey] || {};
+  const consts = {
+    CAW_ADDRESS: l1.MintableCaw,
+    CAW_NAMES_ADDRESS: l1.CawProfile,
+    CAW_NAME_QUOTER_ADDRESS: l1.CawProfileQuoter,
+    CAW_NAMES_MINTER_ADDRESS: l1.CawProfileMinter,
+    URI_GENERATOR_ADDRESS: l1.CawProfileURI,
+    CLIENT_MANAGER_ADDRESS: l1.CawClientManager,
+    CAW_NAME_MARKETPLACE_ADDRESS: l1.CawProfileMarketplace,
+    CAW_NAMES_L2_MAINNET_ADDRESS: l1.CawProfileL2,
+    CAW_ACTIONS_MAINNET_ADDRESS: l1.CawActions,
+    // Per-client storage chain — for L1-storage clients these duplicate the
+    // L1 entries above, which is fine; the codebase reads singular constants.
+    CAW_NAMES_L2_ADDRESS: storageChainKey === 'L1' ? l1.CawProfileL2 : l2.CawProfileL2,
+    CAW_ACTIONS_ADDRESS: storageChainKey === 'L1' ? l1.CawActions : l2.CawActions,
+    CAW_ACTIONS_ARCHIVE_ADDRESS: l2.CawActionsArchive,
+    CAW_CHALLENGE_RELAY_ADDRESS: l2.CawChallengeRelay,
+  };
+  const staticConsts = {
+    WETH_ADDRESS: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
+    USDC_ADDRESS: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+    USDT_ADDRESS: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+  };
+  const lines = [
+    `// Generated by solidity/scripts/deploy.js after the deploy run.`,
+    `// Resolved for env=${env}, clientId=${clientId}, storage chain=${storageChainKey} (eid=${eid}).`,
+    `// To rebuild without redeploying: rerun the CLI install for this client.`,
+    ``,
+  ];
+  for (const [k, v] of Object.entries(staticConsts)) {
+    lines.push(`export const ${k} = "${v}" as const;`);
+  }
+  for (const [k, v] of Object.entries(consts)) {
+    if (v) lines.push(`export const ${k} = "${v}" as const;`);
+    else lines.push(`// export const ${k} = '...' — not deployed for ${env}/${storageChainKey} yet`);
+  }
+  const out = lines.join('\n') + '\n';
+  const outPath = path.join(__dirname, '../../client/src/abi/addresses.ts');
+  fs.writeFileSync(outPath, out);
+  console.log(`Wrote ${outPath} (client ${clientId} → ${storageChainKey}, eid ${eid})`);
+}
+
+/**
+ * Build a structured {L1: {...}, L2: {...}, L2b: {...}} block from the
+ * flat state.addresses map — same shape buildDeploymentsBlock emits, but
+ * returned as JS instead of stringified TypeScript.
+ */
+function buildEnvBlock(env, addresses) {
+  const block = { L1: {} };
+  // L1 contracts (per the buildDeploymentsBlock layout)
+  const l1Keys = [
+    'MintableCaw', 'CawProfile', 'CawProfileL2_L1', 'CawClientManager',
+    'CawProfileMinter', 'CawProfileQuoter', 'CawProfileMarketplace',
+    'CawProfileURI', 'CawFontDataA', 'CawFontDataB', 'CawBuyAndBurn',
+    'MockSwapRouter', 'CawActions_L1',
+  ];
+  for (const k of l1Keys) {
+    if (addresses[k]) {
+      // CawProfileL2_L1 → CawProfileL2 in the deployments block; CawActions_L1 → CawActions.
+      const dst = k === 'CawProfileL2_L1' ? 'CawProfileL2'
+                : k === 'CawActions_L1'  ? 'CawActions'
+                : k;
+      block.L1[dst] = addresses[k];
+    }
+  }
+  for (const L of L2_CHAIN_KEYS) {
+    block[L] = {};
+    for (const role of ['CawProfileL2', 'CawActions', 'CawActionsArchive', 'CawChallengeRelay']) {
+      const flatKey = `${role}_${L}`;
+      if (addresses[flatKey]) block[L][role] = addresses[flatKey];
+    }
+  }
+  return block;
 }
 
 // ============================================
@@ -1398,6 +1545,16 @@ After deployment, ABIs are automatically regenerated for the frontend.
       } catch (e) {
         console.warn('Failed to update config.json startBlock:', e.message);
       }
+    }
+
+    // Rewrite this install's per-client addresses.ts. The CLI's install step
+    // does the same thing for fresh operator installs; we run it inline here
+    // so the local dev environment doesn't keep pointing at the OLD contract
+    // addresses after a redeploy and silently process stale events.
+    try {
+      await writeAddressesForLocalInstall(deployer);
+    } catch (e) {
+      console.warn('Failed to update local addresses.ts:', e.message);
     }
 
     // Regenerate ABIs
