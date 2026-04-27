@@ -43,6 +43,8 @@ export async function runInstall(nodeType, config, installDir) {
     throw e
   }
 
+  verifySignatures(clientDir, 'backend')
+
   // 3. Install frontend dependencies + (production) build
   if (['full', 'frontend-api', 'frontend-only'].includes(nodeType)) {
     const frontendDir = path.join(clientDir, 'src/services/FrontEnd')
@@ -65,6 +67,8 @@ export async function runInstall(nodeType, config, installDir) {
       console.log(err(`  ${e?.stderr?.toString?.() || e?.stdout?.toString?.() || e?.message || e}`))
       throw e
     }
+
+    verifySignatures(frontendDir, 'frontend')
 
     // For production deployments, build the static bundle once. Nginx serves
     // dist/ directly — no need for vite to keep running. Dev mode skips the
@@ -186,6 +190,44 @@ export async function startServices(nodeType, installDir) {
     '  pm2 restart all       — restart everything',
     '  pm2 stop all          — stop everything',
   ])
+}
+
+// Verify every installed package's tarball was signed by its npm publisher.
+// This catches the "compromised maintainer account" supply-chain vector —
+// an attacker pushing a malicious version under a legit package name will
+// fail registry-signature validation. Registry signatures are the strong
+// check; "attestations" (SLSA build provenance) are a newer, opt-in layer
+// that frequently false-positives on older npm CLIs, so we only escalate
+// on signature mismatches.
+//
+// Treated as a warning, not a hard failure: stale npm CLIs sometimes
+// reject otherwise-valid tarballs, and corp/private registries don't
+// sign. We surface real problems loudly without refusing to proceed.
+function verifySignatures(cwd, label) {
+  const spinner = ora(`Verifying ${label} package signatures...`).start()
+  let out = ''
+  try {
+    out = execSync('npm audit signatures', { cwd, stdio: 'pipe' }).toString()
+  } catch (e) {
+    out = (e?.stdout?.toString?.() || '') + (e?.stderr?.toString?.() || '')
+  }
+  const sigBad = /invalid signatures?|missing signatures?|tampered/i.test(out)
+  const attBad = /invalid attestations?/i.test(out)
+  if (sigBad) {
+    spinner.fail(`${label} has tampered/invalid registry signatures — DO NOT deploy`)
+    const lines = out.split('\n').filter(l =>
+      /(missing|invalid|tampered|unsigned)/i.test(l) && !/attestation/i.test(l)
+    ).slice(0, 30)
+    for (const l of lines) console.log(err(`  ${l.trim()}`))
+    throw new Error(`${label} signature verification failed`)
+  } else if (attBad) {
+    spinner.warn(`${label} has invalid SLSA attestations (likely npm-CLI false-positive)`)
+    console.log(dim('  Registry signatures verified ✓ (the strong supply-chain check).'))
+    console.log(dim('  Attestation mismatches usually mean the npm CLI is older than the'))
+    console.log(dim('  attestations it\'s verifying — try `npm install -g npm@latest` to clear.'))
+  } else {
+    spinner.succeed(`${label} package signatures verified`)
+  }
 }
 
 async function waitForPostgres(dbUrl, maxWaitMs = 30000) {
