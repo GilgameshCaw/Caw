@@ -350,6 +350,15 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
       if (isShortUrl(trimmedLine)) {
         const code = getShortUrlCode(trimmedLine)
         if (code && !isMediaShortUrl(code) && !isVideoShortUrl(code)) {
+          // Show the resolved long URL as a clickable line above the preview
+          // card, with href pointing to the short URL. Mirrors the inline
+          // behavior — the user sees what they originally typed, while the
+          // on-chain text + analytics still flow through /s/CODE.
+          result.push(
+            <span key={`shortlink-${lineIndex}`} className="block">
+              <ShortUrlLink code={code} shortHref={trimmedLine} />
+            </span>
+          )
           // Render as link preview card (non-media short URLs)
           result.push(
             <LinkPreview
