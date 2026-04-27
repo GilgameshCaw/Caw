@@ -373,6 +373,13 @@ function buildEnvVars(nodeType, config) {
   if (config.l1RpcUrl) env.L1_RPC_URL = config.l1RpcUrl
   if (config.l1RpcUrlHttp) env.L1_RPC_URL_HTTP = config.l1RpcUrlHttp
   if (config.ethMainnetRpcUrl) env.ETH_MAINNET_RPC_URL = config.ethMainnetRpcUrl
+  // Optional Infura-style API Key Secrets. Backend-only — embedded as
+  // Basic Auth in the URL by rpcProvider.ts withSecret() so the same
+  // RPC project can have its origin allowlist locked down for the
+  // frontend bundle while server traffic still authorizes correctly.
+  if (config.l1RpcSecret) env.L1_RPC_SECRET = config.l1RpcSecret
+  if (config.l2RpcSecret) env.L2_RPC_SECRET = config.l2RpcSecret
+  if (config.ethMainnetRpcSecret) env.ETH_MAINNET_RPC_SECRET = config.ethMainnetRpcSecret
   if (config.validatorPrivateKey) env.VALIDATOR_PRIVATE_KEY = config.validatorPrivateKey
   if (config.validatorId) env.VALIDATOR_ID = String(config.validatorId)
   if (config.validatorUsername) env.VALIDATOR_USERNAME = config.validatorUsername

@@ -202,7 +202,35 @@ async function collectRpcPair(label, required, expectedChainId) {
     console.log(dim(`  ✓ Infura detected — auto-filled WSS endpoint.`))
   }
 
-  return { wss: wss.trim(), http }
+  // Optional API Key Secret for backend traffic. Lets the operator lock the
+  // project's origin allowlist down to their site (so the frontend bundle
+  // is safe to ship) while the backend bypasses that check via Basic Auth.
+  // Infura calls it "API Key Secret"; Alchemy and others have similar
+  // mechanisms. We just ask whether they have one and pass it through —
+  // the runtime helper (rpcProvider.ts withSecret) embeds it as Basic Auth
+  // in the URL. Non-Infura providers can paste whatever string serves the
+  // same role on their setup; if you don't know what this is, leave blank.
+  let secret = ''
+  if (isInfura) {
+    const { hasSecret } = await inquirer.prompt([{
+      type: 'confirm',
+      name: 'hasSecret',
+      message: `Use Infura's API Key Secret on the backend? ${dim('(lets you lock the project to your domains while backend traffic still works)')}`,
+      default: false,
+    }])
+    if (hasSecret) {
+      const { secretInput } = await inquirer.prompt([{
+        type: 'password',
+        name: 'secretInput',
+        message: 'Infura API Key Secret:',
+        mask: '*',
+        validate: (input) => input.trim().length > 0 ? true : 'Cannot be empty (Ctrl+C to skip)',
+      }])
+      secret = secretInput.trim()
+    }
+  }
+
+  return { wss: wss.trim(), http, secret }
 }
 
 /**
@@ -273,6 +301,7 @@ export async function collectL1Rpc(nodeType, network = 'testnet') {
   const answers = {
     l1RpcUrl: l1.wss,
     l1RpcUrlHttp: l1.http,
+    l1RpcSecret: l1.secret || '',
   }
 
   // Mainnet price feeds — only validators need this (CAW/ETH price for tip
@@ -315,6 +344,30 @@ export async function collectL1Rpc(nodeType, network = 'testnet') {
       if (!reenter) break
     }
     answers.ethMainnetRpcUrl = ethMainnetRpcUrl
+
+    // Same Infura secret opt-in as the L1/L2 collector — only meaningful
+    // when the operator has locked their mainnet project to a domain
+    // allowlist. ChainSyncService and ValidatorService do mainnet reads
+    // for Uniswap price feeds, both server-side, so the secret unblocks
+    // those without weakening frontend protection.
+    if (isInfuraUrl(ethMainnetRpcUrl)) {
+      const { hasSecret } = await inquirer.prompt([{
+        type: 'confirm',
+        name: 'hasSecret',
+        message: `Use Infura's API Key Secret on the mainnet RPC? ${dim('(server-side only)')}`,
+        default: false,
+      }])
+      if (hasSecret) {
+        const { secretInput } = await inquirer.prompt([{
+          type: 'password',
+          name: 'secretInput',
+          message: 'Mainnet Infura API Key Secret:',
+          mask: '*',
+          validate: (input) => input.trim().length > 0 ? true : 'Cannot be empty (Ctrl+C to skip)',
+        }])
+        answers.ethMainnetRpcSecret = secretInput.trim()
+      }
+    }
   }
 
   return answers
@@ -372,6 +425,7 @@ export async function collectL2Rpc(nodeType, storageChainLabel) {
   return {
     l2RpcUrl: l2.wss,
     l2RpcUrlHttp: l2.http,
+    l2RpcSecret: l2.secret || '',
   }
 }
 
