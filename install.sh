@@ -415,14 +415,69 @@ if [[ "$CAW_INFRA_MODE" != "native" || -n "${CAW_ES_URL:-}" ]]; then
   log "Skipping Elasticsearch config (infra mode: ${CAW_INFRA_MODE})"
 else
 
-step "Configuring Elasticsearch (localhost-only, no auth, 512MB heap)"
+# ES heap sizing. Three strategies:
+#   1. CAW_ES_HEAP=<size>  — explicit override (e.g. "2g", "1536m"). Always wins.
+#   2. Auto from RAM       — 12.5% of system RAM, clamped to [512m, 4g]. ES's
+#                            own guidance is 50% of RAM, but we share the box
+#                            with Postgres + Redis + Node + nginx, so we leave
+#                            most of RAM for everyone else and only give ES
+#                            what it needs to keep the working set in cache.
+#   3. Hard floor 512m     — for sub-4GB boxes (warned about earlier in the
+#                            host-spec check, but we still let them try).
+#
+# Real production-traffic nodes will outgrow 1g once their caw index passes
+# a few million docs. We surface a warning then so the operator knows when
+# to bump CAW_ES_HEAP.
+total_ram_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo 2>/dev/null || echo 0)
+total_ram_mb=$(( total_ram_kb / 1024 ))
+if [[ -n "${CAW_ES_HEAP:-}" ]]; then
+  es_heap="$CAW_ES_HEAP"
+  heap_source="CAW_ES_HEAP override"
+elif (( total_ram_mb >= 8192 )); then
+  # 12.5% of RAM, rounded to GB, capped at 4g
+  heap_gb=$(( total_ram_mb / 8 / 1024 ))
+  (( heap_gb > 4 )) && heap_gb=4
+  (( heap_gb < 1 )) && heap_gb=1
+  es_heap="${heap_gb}g"
+  heap_source="auto (~12.5% of ${total_ram_mb}MB RAM)"
+elif (( total_ram_mb >= 4096 )); then
+  es_heap="1g"
+  heap_source="auto (4-8GB box)"
+elif (( total_ram_mb >= 2048 )); then
+  es_heap="768m"
+  heap_source="auto (2-4GB box — tight)"
+else
+  es_heap="512m"
+  heap_source="auto (under 2GB — bare minimum)"
+fi
 
-# Cap heap so a 6GB VPS isn't suffocated. ES defaults to 1-8GB depending on
-# host RAM and we're sharing the box with Postgres + Redis + Node.
+# Disk watermarks. ES goes read-only when free disk hits the flood-stage
+# watermark — without these, a filled disk silently corrupts the indices and
+# the API starts erroring with no warning. We use absolute bytes (rather than
+# percentages) so the thresholds make sense across disk sizes:
+#   low    = 5 GB   — stops allocating new shards (we have one node so n/a)
+#   high   = 2 GB   — starts relocating shards off (also n/a single-node)
+#   flood  = 500 MB — read-only mode kicks in
+# 500MB headroom is enough for an emergency bulk delete + reindex without
+# the operator having to scramble.
+free_disk_kb=$(df --output=avail /var/lib/elasticsearch 2>/dev/null | tail -1 || \
+               df --output=avail / | tail -1)
+free_disk_gb=$(( free_disk_kb / 1024 / 1024 ))
+
+step "Configuring Elasticsearch (localhost-only, no auth, ${es_heap} heap)"
+log "Heap: ${es_heap} (${heap_source}). Free disk: ${free_disk_gb}GB."
+if (( free_disk_gb < 10 )); then
+  warn "Less than 10GB free for ES data. A real node fills this fast — consider a bigger disk."
+fi
+if [[ "${es_heap}" == "512m" || "${es_heap}" == "768m" ]]; then
+  warn "Heap under 1GB is fine for testnet / low-traffic nodes only."
+  warn "For real production traffic, set CAW_ES_HEAP=2g (or higher) and rerun."
+fi
+
 mkdir -p /etc/elasticsearch/jvm.options.d
-cat > /etc/elasticsearch/jvm.options.d/heap.options <<'EOF'
--Xms512m
--Xmx512m
+cat > /etc/elasticsearch/jvm.options.d/heap.options <<EOF
+-Xms${es_heap}
+-Xmx${es_heap}
 EOF
 
 # We disable xpack security entirely. ES listens on 127.0.0.1 only, ufw blocks
@@ -460,12 +515,21 @@ xpack.security.enabled: false
 xpack.security.enrollment.enabled: false
 xpack.security.http.ssl.enabled: false
 xpack.security.transport.ssl.enabled: false
+
+# Disk watermarks (absolute bytes, not %, so they make sense across disks).
+# When free disk hits flood_stage, ES marks indices read-only — better than
+# corrupting them on a full disk. The operator gets clear errors and can
+# free space before things get worse.
+cluster.routing.allocation.disk.threshold_enabled: true
+cluster.routing.allocation.disk.watermark.low: 5gb
+cluster.routing.allocation.disk.watermark.high: 2gb
+cluster.routing.allocation.disk.watermark.flood_stage: 500mb
 EOF
 
 systemctl daemon-reload
 systemctl enable elasticsearch >/dev/null 2>&1
 quiet "Starting Elasticsearch" systemctl restart elasticsearch
-ok "Elasticsearch configured"
+ok "Elasticsearch configured (${es_heap} heap, disk watermarks set)"
 
 fi  # end native ES config
 
