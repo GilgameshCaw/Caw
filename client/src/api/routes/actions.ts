@@ -924,15 +924,27 @@ router.post('/batch', async (req, res) => {
     if (!Array.isArray(actions) || actions.length === 0) {
       return res.status(400).json({ error: 'Expected non-empty actions array' })
     }
-    if (actions.length > 300) {
-      return res.status(400).json({ error: `Thread too long (${actions.length} posts). Maximum is 300.` })
-    }
-
     // batchSig path: one ActionBatch signature covers every action in the
     // group. Per-action `signature` fields are not required (and will be
     // ignored if present). When `batchSig` is absent we fall back to the
     // legacy per-action signing path below.
     const useBatchSig = typeof batchSig === 'string' && batchSig.length > 0
+
+    // Per-batch action cap. The contract limits processActions to 256
+    // actions per call, but we cap MUCH lower for two reasons:
+    //   1. UX: a 64-post thread is already extreme; threads beyond that
+    //      benefit nobody.
+    //   2. Safety margin against batch-sig truncation: a batch sig commits
+    //      to N actions via a single actionsHash, and the validator
+    //      cannot split the group across multiple txs without invalidating
+    //      the sig (the contract would recover a different signer from a
+    //      truncated actionsHash and revert with the misleading "Session
+    //      expired or not found" error from the session-key fallback).
+    //      Capping well under the contract's 256 + the validator's 120KB
+    //      calldata bound makes that overflow essentially unreachable.
+    if (actions.length > 64) {
+      return res.status(400).json({ error: `Thread too long (${actions.length} posts). Maximum is 64.` })
+    }
 
     // Validate pendingDepositTxHash shape (same rules as single-action endpoint).
     // When present, all resulting TxQueue rows get parked in waiting_for_deposit

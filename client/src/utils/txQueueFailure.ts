@@ -28,6 +28,17 @@ export async function markTxQueueFailed(
   senderId: number,
   actionData: any
 ): Promise<void> {
+  // Read the batchId BEFORE the update so we know whether this row is part
+  // of a batched-sig group. When N rows share a batchId they all fail
+  // together (one batch sig → one on-chain revert → N rows marked failed),
+  // and emitting N notifications floods the user. Coalesce them via a
+  // shared groupKey + a "first-row wins" check below.
+  const row = await prisma.txQueue.findUnique({
+    where: { id: txQueueId },
+    select: { batchId: true },
+  })
+  const batchId = row?.batchId ?? null
+
   await prisma.txQueue.update({
     where: { id: txQueueId },
     data: { status: 'failed', reason }
@@ -37,9 +48,23 @@ export async function markTxQueueFailed(
   // Don't notify for "Cawonce already used" — the action already succeeded
   // on-chain. This happens when the validator detects a revert but the tx
   // actually landed, or when a retry collides with the original.
-  if (!reason.includes('Cawonce already used')) {
-    await createActionFailedNotification(prisma, senderId, txQueueId, actionData, reason)
+  if (reason.includes('Cawonce already used')) return
+
+  // Batched failure: only the FIRST row in the group emits a notification.
+  // Subsequent rows in the same batch silently fail (their state is still
+  // updated above; only the user-facing notification is skipped).
+  if (batchId != null) {
+    const groupKey = `action_failed_batch_${batchId}`
+    const existing = await prisma.notification.findFirst({
+      where: { userId: senderId, type: 'ACTION_FAILED', groupKey },
+      select: { id: true },
+    })
+    if (existing) return
+    await createActionFailedNotification(prisma, senderId, txQueueId, actionData, reason, groupKey)
+    return
   }
+
+  await createActionFailedNotification(prisma, senderId, txQueueId, actionData, reason)
 }
 
 /**
@@ -145,7 +170,8 @@ export async function createActionFailedNotification(
   senderId: number,
   txQueueId: number,
   actionData: any,
-  reason: string
+  reason: string,
+  groupKey?: string,
 ): Promise<void> {
   try {
     // Skip action types that don't make sense to retry from a notification:
@@ -162,6 +188,7 @@ export async function createActionFailedNotification(
         userId: senderId,
         actorId: senderId,
         type: 'ACTION_FAILED',
+        groupKey: groupKey,
         actionPayload: {
           actionType,
           receiverId: actionData?.receiverId ?? null,

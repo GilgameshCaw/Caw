@@ -606,24 +606,70 @@ export const validatorService: Service = {
       // Bound the batch by estimated calldata size. With packed format, each
       // action is ~25 bytes fixed + 65 bytes sig = 90 bytes + text + arrays.
       // Cap at 120KB to leave margin below the 128KB protocol tx size limit.
+      //
+      // CRITICAL (audited 2026-04-27): rows that share a batchId share a
+      // single ActionBatch signature whose actionsHash commits to ALL of
+      // their packed slices. If we split such a group across two txs, each
+      // tx will recover a DIFFERENT (wrong) signer from the truncated hash
+      // and the contract reverts with "Session expired or not found". So
+      // we never split a batch group: when adding the next entry would
+      // overflow the calldata cap AND we're still inside a group that
+      // started in this batch, we drop the WHOLE in-progress group and
+      // try again next poll. If a single batch group genuinely doesn't
+      // fit by itself, we mark every row in it failed with a clear
+      // "Batch too large to submit" reason — the API now caps at 256
+      // actions per batch (see /api/actions /batch), so this should be
+      // unreachable in practice unless text payloads are huge.
       const MAX_BATCH_CALLDATA_BYTES = 120_000
       const PER_ACTION_OVERHEAD = 90 // packed fixed fields (25) + sig (65)
       let runningSize = 500 // base overhead for the outer function call
       const bounded: typeof candidates = []
-      for (const entry of candidates) {
+      const groupAccumulators: Array<{ batchId: number; startIdx: number; bytes: number }> = []
+      let currentGroup: { batchId: number; startIdx: number; bytes: number } | null = null
+
+      const entrySize = (entry: typeof candidates[number]) => {
         const data = (entry.payload as any)?.data
-        // text is a hex string (0x...) — actual byte length is (length - 2) / 2
         const textHex = typeof data?.text === 'string' ? data.text : ''
         const textLen = textHex.startsWith('0x') ? (textHex.length - 2) / 2 : textHex.length / 2
         const recipientsLen = Array.isArray(data?.recipients) ? data.recipients.length * 4 : 0
         const amountsLen = Array.isArray(data?.amounts) ? data.amounts.length * 8 : 0
-        const entrySize = PER_ACTION_OVERHEAD + textLen + recipientsLen + amountsLen
-        if (bounded.length > 0 && runningSize + entrySize > MAX_BATCH_CALLDATA_BYTES) {
-          console.log(`[Validator] Batch size limit reached at ${bounded.length} entries (~${runningSize} bytes). Deferring ${candidates.length - bounded.length} entries to next poll.`)
+        return PER_ACTION_OVERHEAD + textLen + recipientsLen + amountsLen
+      }
+
+      for (let i = 0; i < candidates.length; i++) {
+        const entry = candidates[i]
+        const sz = entrySize(entry)
+
+        if (bounded.length > 0 && runningSize + sz > MAX_BATCH_CALLDATA_BYTES) {
+          // Would overflow. If we're mid-group, the right thing is to roll
+          // back the partial group entirely (it'll be retried next poll
+          // when it's the first thing in line). If THIS entry's group
+          // happens to be the in-progress one, just stop here.
+          if (currentGroup && currentGroup.batchId === (entry as any).batchId) {
+            // Drop the partial group from `bounded`.
+            bounded.length = currentGroup.startIdx
+            runningSize -= currentGroup.bytes
+            console.log(`[Validator] Rolling back partial batch group ${currentGroup.batchId} (${candidates.length - currentGroup.startIdx} rows) to next poll — calldata would overflow`)
+          } else {
+            console.log(`[Validator] Batch size limit reached at ${bounded.length} entries (~${runningSize} bytes). Deferring ${candidates.length - bounded.length} entries to next poll.`)
+          }
           break
         }
+
+        // Track group transitions so we can roll back a partial group on overflow.
+        const eBatchId = (entry as any).batchId as number | null | undefined
+        if (eBatchId != null) {
+          if (!currentGroup || currentGroup.batchId !== eBatchId) {
+            currentGroup = { batchId: eBatchId, startIdx: bounded.length, bytes: 0 }
+            groupAccumulators.push(currentGroup)
+          }
+          currentGroup.bytes += sz
+        } else {
+          currentGroup = null
+        }
+
         bounded.push(entry)
-        runningSize += entrySize
+        runningSize += sz
       }
 
       return bounded
