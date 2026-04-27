@@ -438,14 +438,22 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
     uint256 expectedActions = numCp * CHECKPOINT_INTERVAL;
 
     // Fold the hash chain over submitter's data, collecting checkpoint hashes.
+    //
+    // packedActions layout: [uint16 count][action0][action1]…
+    // Each action is variable-length per CawActions._unpackAction:
+    //   21 fixed + 1 rc + 1 ac + 4*rc + 8*ac + 2 + textLength
+    // The on-chain hash chain uses keccak256(packedSlice) as actionHash
+    // (CawActions.sol:592), so we MUST walk the same layout — fixed-width
+    // slicing here used to silently produce garbage for any action whose
+    // recipients/amounts/text was non-empty, slashing honest submitters.
     bytes32[] memory cpHashes = new bytes32[](numCp);
     bytes32 h = entryHash;
+    uint256 pos = 2; // skip the uint16 count header
     for (uint256 i = 0; i < expectedActions; ) {
-      // packedActions layout: [uint16 count][action0 25B][action1 25B]...
-      // action slice for index i lives at offset 2 + i*25, length 25.
-      bytes calldata slice = packedActions[2 + i * 25 : 2 + i * 25 + 25];
-      bytes32 actionHash = keccak256(slice);
+      uint256 nextPos = _actionSliceEnd(packedActions, pos);
+      bytes32 actionHash = keccak256(packedActions[pos:nextPos]);
       h = keccak256(abi.encodePacked(h, r[i], actionHash));
+      pos = nextPos;
       unchecked {
         uint256 nextI = i + 1;
         if (nextI % CHECKPOINT_INTERVAL == 0) {
@@ -454,6 +462,7 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
         i = nextI;
       }
     }
+    require(pos == packedActions.length, "Trailing bytes in packedActions");
 
     // Rebuild the merkle root from checkpoint hashes (matches off-chain
     // buildCheckpointMerkleTree: double-hash leaves + sorted pairs).
@@ -487,6 +496,33 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
     }
 
     emit ValidatorSlashed(validator, msg.sender, submissionId, 0, reward);
+  }
+
+  /// @dev Compute the end offset of the action that starts at `pos` in
+  ///      `packed`. Mirrors CawActions._unpackAction's position math:
+  ///        21 fixed + 1 rc + 1 ac + 4*rc + 8*ac + 2 + textLength
+  ///      Used by slashIncoherentRoot to walk variable-length actions with
+  ///      the SAME boundaries the on-chain hash chain saw at submit time.
+  function _actionSliceEnd(bytes calldata packed, uint256 pos)
+    internal pure returns (uint256 nextPos)
+  {
+    uint256 rc;
+    uint256 ac;
+    uint256 textLength;
+    assembly {
+      let cdOff := add(packed.offset, pos)
+      let w := calldataload(cdOff)
+      // rc: 1 byte at bits [87..80]
+      rc := and(shr(80, w), 0xFF)
+      // ac: 1 byte at bits [79..72]
+      ac := and(shr(72, w), 0xFF)
+    }
+    nextPos = pos + 23 + rc * 4 + ac * 8;
+    assembly {
+      textLength := shr(240, calldataload(add(packed.offset, nextPos)))
+    }
+    nextPos += 2 + textLength;
+    require(nextPos <= packed.length, "Action slice overflow");
   }
 
   /// @dev Rebuild merkle root from an ordered list of checkpoint hashes.

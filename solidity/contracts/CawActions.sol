@@ -234,6 +234,14 @@ contract CawActions is Ownable {
       // one user's batch sig could authorize another user's actions.
       if (i > 0) {
         require(action.senderId == groupActions[0].senderId, "Mixed senders in batch");
+        // Cawonces in a batch must be strictly contiguous and ascending.
+        // The signed `firstCawonce` (committed in ACTIONBATCH_TYPEHASH) plus
+        // implicit-position `i` is what the user intended each action's
+        // cawonce to be — anything else means the on-chain action set
+        // doesn't match the off-chain one the user signed for. Without this
+        // check, `firstCawonce` would be redundant with `actionsHash` and
+        // a future tightening could silently change the signed semantics.
+        require(action.cawonce == groupActions[0].cawonce + i, "Non-contiguous cawonces in batch");
       }
 
       groupActions[i] = action;
@@ -471,9 +479,13 @@ contract CawActions is Ownable {
     if (groupSize == 1) {
       (signer, isSessionKey) = _verifySignatureMem(v, r, s, groupActions[0]);
     } else {
-      // Batch — all senders must match, then verify the ActionBatch sig
+      // Batch — all senders must match, cawonces must be strictly contiguous
+      // and ascending starting from groupActions[0].cawonce, then verify the
+      // ActionBatch sig. Contiguity must match the processActions enforcement
+      // exactly so safeProcessActions's pre-flight catches the same bad batches.
       for (uint256 i = 1; i < groupSize; ) {
         require(groupActions[i].senderId == groupActions[0].senderId, "Mixed senders in batch");
+        require(groupActions[i].cawonce == groupActions[0].cawonce + i, "Non-contiguous cawonces in batch");
         unchecked { ++i; }
       }
       (signer, isSessionKey) = _verifyBatchSignature(
@@ -792,18 +804,6 @@ contract CawActions is Ownable {
     pos += tl;
 
     nextPos = pos;
-  }
-
-  /// @dev Read a signature (v, r, s) from concatenated sigs using calldataload.
-  function _readSig(bytes calldata sigs, uint256 i)
-    internal pure returns (uint8 v, bytes32 r, bytes32 s)
-  {
-    assembly {
-      let off := add(sigs.offset, mul(i, 65))
-      v := shr(248, calldataload(off))
-      r := calldataload(add(off, 1))
-      s := calldataload(add(off, 33))
-    }
   }
 
   // ============================================

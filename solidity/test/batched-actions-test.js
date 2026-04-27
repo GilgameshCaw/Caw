@@ -475,13 +475,48 @@ contract('CawActions — batched signatures', function (accounts) {
     const batchSig = signActionBatch(userA, actions, domain);
     const sigsHex = packGroupedSigs([{ groupSize: 2, ...batchSig }]);
 
+    // The duplicate cawonce is also non-contiguous (the second action's
+    // cawonce is `start` but should be `start + 1`), so the contract reverts
+    // earlier with the cleaner "Non-contiguous cawonces in batch" message
+    // before useCawonce ever runs. That's the desired behavior — the batch
+    // sig now commits to a strictly ascending cawonce sequence.
     let reverted = false;
     try {
       await setup.cawActions.processActions(validatorTokenId, hex, sigsHex, 0, 0);
     } catch (e) {
-      reverted = e.message.includes('Cawonce already used');
+      reverted = e.message.includes('Non-contiguous cawonces in batch');
     }
     expect(reverted).to.equal(true);
+  });
+
+  // --------------------------------------------
+  // Reject non-contiguous cawonces within a batch (gap, not duplicate)
+  // --------------------------------------------
+  it('reverts when batch cawonces are non-contiguous (skip)', async function () {
+    const start = Number(await setup.cawActions.nextCawonce(userATokenId));
+    const actions = [
+      {
+        actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
+        clientId: setup.clientId, cawonce: start,
+        recipients: [], amounts: [0], text: '0x' + Buffer.from('a').toString('hex'),
+      },
+      {
+        actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
+        clientId: setup.clientId, cawonce: start + 2, // <-- gap; should be start + 1
+        recipients: [], amounts: [0], text: '0x' + Buffer.from('b').toString('hex'),
+      },
+    ];
+    const { hex } = packActions(actions);
+    const batchSig = signActionBatch(userA, actions, domain);
+    const sigsHex = packGroupedSigs([{ groupSize: 2, ...batchSig }]);
+
+    let reverted = false;
+    try {
+      await setup.cawActions.processActions(validatorTokenId, hex, sigsHex, 0, 0);
+    } catch (e) {
+      reverted = e.message.includes('Non-contiguous cawonces in batch');
+    }
+    expect(reverted).to.equal(true, 'expected revert with "Non-contiguous cawonces in batch"');
   });
 
   // --------------------------------------------
