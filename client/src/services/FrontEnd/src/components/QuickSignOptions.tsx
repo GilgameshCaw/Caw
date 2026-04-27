@@ -182,7 +182,7 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
                   : `${formatSpendLimit(spendLimit)} CAW`
               }
             </strong> from your deposits.<br className="hidden sm:block" /><br className="hidden sm:block" />
-            Validator tips approximately <strong className={isNoTip ? 'text-yellow-500' : 'text-white'}>{tipCeiling !== undefined ? formatTipCaw(tipCeiling) : '—'}</strong> per action and <strong className="text-white">{walletProtect ? 'unlock required' : 'no unlock per-session'}</strong>
+            Validator tips approximately <strong className={isNoTip ? 'text-yellow-500' : 'text-white'}>{tipCeiling !== undefined ? formatTipCaw(tipCeiling) : '—'}</strong> per action<br />and <strong className="text-white">{walletProtect ? 'wallet unlock required' : 'no need for wallet unlock per-session'}</strong>
           </span>
           <HiPencil className={`w-4.5 h-4.5 flex-shrink-0 ${themed ? (isDark ? 'text-white' : 'text-gray-600') : 'text-white'}`} />
         </button>

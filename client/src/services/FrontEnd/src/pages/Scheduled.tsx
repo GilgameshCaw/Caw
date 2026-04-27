@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { useAccount } from "wagmi"
@@ -291,14 +292,14 @@ const ScheduledPage: React.FC = () => {
                         </button>
                       )}
                       {item.status === 'published' && item.publishedId && (
-                        <a
-                          href={`/caws/${item.publishedId}`}
+                        <Link
+                          to={`/caws/${item.publishedId}`}
                           className={`text-sm px-3 py-1.5 rounded-full transition-colors ${
                             isDark ? 'text-yellow-400 hover:bg-yellow-500/20' : 'text-yellow-600 hover:bg-yellow-50'
                           }`}
                         >
                           View Post
-                        </a>
+                        </Link>
                       )}
                     </div>
                   </div>
@@ -368,14 +369,14 @@ const ScheduledPage: React.FC = () => {
                       </button>
                     )}
                     {aggregateStatus === 'published' && head.publishedId && (
-                      <a
-                        href={`/caws/${head.publishedId}`}
+                      <Link
+                        to={`/caws/${head.publishedId}`}
                         className={`text-sm px-3 py-1.5 rounded-full transition-colors ${
                           isDark ? 'text-yellow-400 hover:bg-yellow-500/20' : 'text-yellow-600 hover:bg-yellow-50'
                         }`}
                       >
                         View Thread
-                      </a>
+                      </Link>
                     )}
                   </div>
                 </div>

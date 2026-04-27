@@ -816,7 +816,7 @@ console.log("BALANCE:", balance)
                 return (
                     <div className="text-sm text-gray-500 text-center">
                         est. gas+fees: {totalEth.toFixed(4)} ETH{ethPrice > 0 && ` (~$${(totalEth * ethPrice).toFixed(2)})`}
-                        <span className="block text-xs mt-0.5 opacity-60">
+                        <span className={`block text-xs mt-0.5 font-medium ${isDark ? 'text-yellow-600' : 'text-amber-700'}`}>
                             Half of all fees are used to buy and burn CAW
                         </span>
                     </div>
