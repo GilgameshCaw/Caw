@@ -95,13 +95,20 @@ async function collectRpcPair(label, required) {
   // Step 2: WSS URL (optional). When the HTTP URL is Infura, offer the
   // auto-derived WSS as a default; otherwise leave blank — most providers
   // either give you a separate WSS URL or don't expose one at all.
+  //
+  // The hint text branches on whether we have a default: pre-filling with
+  // a default while telling the operator to "leave blank to skip" reads
+  // as a contradiction. With a default, just say "Enter to accept".
   const isInfura = isInfuraUrl(http)
   const wssDefault = isInfura ? inferWsFromHttp(http) : ''
+  const wssHint = wssDefault
+    ? '(optional — Enter to accept the auto-derived URL, or paste your own)'
+    : '(optional — leave blank to skip; HTTP polling is used otherwise)'
 
   const { wss } = await inquirer.prompt([{
     type: 'input',
     name: 'wss',
-    message: `${label} WebSocket RPC URL ${dim('(optional — leave blank to skip; HTTP polling is used otherwise)')}:`,
+    message: `${label} WebSocket RPC URL ${dim(wssHint)}:`,
     default: wssDefault || undefined,
     validate: (input) => {
       if (!input.trim()) return true // optional
