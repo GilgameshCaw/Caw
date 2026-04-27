@@ -15,7 +15,7 @@ const Config = z.object({
   // the classic dev-loop zombie cascade. Sweeping right before spawn is the
   // safest fix: it's idempotent, it only kills things on THIS port, and it
   // runs every restart (not just initial boot).
-  port: z.number().int().positive().default(5273),
+  port: z.number().int().positive().default(5274),
 })
 
 type Config = z.infer<typeof Config>
@@ -60,7 +60,7 @@ export const frontEndService: Service = {
     let proc: ChildProcess
 
     // Sweep BEFORE spawn. yarn → vite double-forks; a previous vite can
-    // outlive its yarn parent and hold 5273. Without this, the new yarn
+    // outlive its yarn parent and hold 5274. Without this, the new yarn
     // spawns vite which fails EADDRINUSE, exits 1, heartbeat stops,
     // watchdog restarts us, same failure — crash loop.
     sweepPort(port)

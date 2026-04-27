@@ -15,7 +15,7 @@ let stopping = false
 let ctrlCCount = 0
 
 function sweepStaleListeners() {
-  // Free ports 4000 (API) and 5273 (vite) from any process that outlived
+  // Free ports 4000 (API) and 5274 (vite) from any process that outlived
   // a previous session. start-dev.sh runs stop-dev.sh once at launch,
   // but that doesn't cover ctrl+c exits (common during dev) where the
   // old vite/API processes were orphaned and kept running.
@@ -23,7 +23,7 @@ function sweepStaleListeners() {
   // Narrow scope: only port-level kills. We can't invoke stop-dev.sh
   // directly because it contains `pkill -f dev-runner.js` which would
   // kill this very process mid-sweep.
-  for (const port of [4000, 5273]) {
+  for (const port of [4000, 5274]) {
     try {
       const pids = execSync(`lsof -iTCP:${port} -sTCP:LISTEN -t 2>/dev/null`, {
         encoding: 'utf8',
@@ -46,7 +46,7 @@ function startConcurrently() {
   // NOTE: `npm run web` is intentionally NOT in this list. The FrontEnd
   // service inside programs/start.ts (via config.json's "FrontEnd" entry)
   // already spawns `yarn dev` in src/services/FrontEnd/. Running both
-  // supervisors launched TWO vites that fought over port 5273, each one's
+  // supervisors launched TWO vites that fought over port 5274, each one's
   // failure cascading back through concurrently/watchdog/dev-api-runner
   // into a stack-wide restart storm. If you need vite without the full
   // server stack, run `npm run web` standalone in a separate terminal.

@@ -50,8 +50,8 @@ export default defineConfig({
     format: 'es'
   },
   server: {
-    port: 5273,
-    strictPort: true, // Fail loudly if 5273 is taken rather than silently climbing to the next port
+    port: 5274,
+    strictPort: true, // Fail loudly if 5274 is taken rather than silently climbing to the next port
     allowedHosts: true, // Allow all hosts in development
     // Note: COOP/COEP headers are set conditionally in coepHeadersPlugin()
     // They only work on localhost or HTTPS origins (browsers ignore them otherwise)

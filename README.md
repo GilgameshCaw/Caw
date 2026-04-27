@@ -180,7 +180,7 @@ cd cli && npm install && cd ..
 node cli/bin/caw.js install --dir "$PWD"
 ```
 
-Pick the `dev` deployment mode in the CLI — vite serves the frontend live at http://localhost:5273 and pm2 watches the API.
+Pick the `dev` deployment mode in the CLI — vite serves the frontend live at http://localhost:5274 and pm2 watches the API.
 
 ## ⚡ Quick Start (legacy)
 

@@ -8,7 +8,7 @@
     "config": {
       "port": 4000,
       "allowedOrigins": [
-        "http://localhost:5273"
+        "http://localhost:5274"
       ]
     }
   },

@@ -14,9 +14,9 @@ pkill    -f 'dev-runner.js'            2>/dev/null
 pkill    -f 'redis-server.*6379'       2>/dev/null
 pkill    -f 'elasticsearch'            2>/dev/null
 
-# Anything still listening on our known ports (API 4000, vite 5273) —
+# Anything still listening on our known ports (API 4000, vite 5274) —
 # catches orphans that don't match the pkill patterns above.
-for port in 4000 5273; do
+for port in 4000 5274; do
   pids=$(lsof -iTCP:${port} -sTCP:LISTEN -t 2>/dev/null)
   if [[ -n "$pids" ]]; then
     echo "  killing stale listener on :${port} (pid ${pids//$'\n'/, })"

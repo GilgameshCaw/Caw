@@ -255,8 +255,8 @@ function buildServiceList(nodeType, config) {
     const apiConfig = {
       port: config.apiPort || 4000,
       allowedOrigins: config.domain
-        ? [`https://${config.domain}`, 'http://localhost:5273']
-        : ['http://localhost:5273', 'http://localhost:5174']
+        ? [`https://${config.domain}`, 'http://localhost:5274']
+        : ['http://localhost:5274', 'http://localhost:5174']
     }
     if (config.domain) {
       apiConfig.shortUrlDomain = `https://${config.domain}`
