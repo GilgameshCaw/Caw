@@ -17,6 +17,7 @@ import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
 import { incrementSessionSpent } from '../../utils/sessionSpendTracker'
+import { span } from '../../utils/trace'
 
 // ABI for the new packed-calldata CawActions functions
 const PACKED_ABI = [
@@ -1458,7 +1459,11 @@ console.log("succeededKeys", succeededKeys)
             const subBatch = buildMultiActionData(subBatchEntries)
 
             try {
-              const simResult = await simulateActions(validatorId, subBatch)
+              const simResult = await span('validator.simulate', {
+                'batch.size': subBatch.actions.length,
+                'batch.kind': 'sub',
+                'client.id': clientId,
+              }, () => simulateActions(validatorId, subBatch))
               if (!simResult || !simResult.successfulActions?.length) {
                 console.log(`[Validator] Client ${clientId} simulation failed or no successful actions`)
                 await Promise.all(subBatchEntries.map(async (entry: any, idx) => {
@@ -1522,7 +1527,11 @@ console.log("succeededKeys", succeededKeys)
               const subPreSubmitTime = Date.now()
               const subAvgWait = succeededSubEntries.reduce((s, e) => s + (subPreSubmitTime - new Date(e.createdAt).getTime()), 0) / succeededSubEntries.length
 
-              const { processed: finalized, receipt: subReceipt } = await submitProcessActions(validatorId, succeededData, subQuote, gasLimit)
+              const { processed: finalized, receipt: subReceipt } = await span('validator.submit', {
+                'batch.size': succeededData.actions.length,
+                'batch.kind': 'sub',
+                'client.id': clientId,
+              }, () => submitProcessActions(validatorId, succeededData, subQuote, gasLimit))
               console.log(`[Validator] Client ${clientId}: ${finalized.length} actions finalized`)
 
               // Record analytics
@@ -1588,7 +1597,10 @@ console.log("succeededKeys", succeededKeys)
         })))
 
         // 1) simulate
-        const simulationResult = await simulateActions(validatorId, fullBatch)
+        const simulationResult = await span('validator.simulate', {
+          'batch.size': fullBatch.actions.length,
+          'batch.kind': 'full',
+        }, () => simulateActions(validatorId, fullBatch))
         console.log(`[Validator] Simulation completed. Result:`, simulationResult ? 'RECEIVED' : 'NULL/UNDEFINED')
 
       // Check if simulateActions returned undefined (error case)
@@ -1820,9 +1832,12 @@ console.log("succeededKeys", succeededKeys)
         // Capture wait time before submission (not after confirmation, which adds block time)
         const preSubmitTime = Date.now()
         const avgWait = succeededEntries.reduce((s: number, e: any) => s + (preSubmitTime - new Date(e.createdAt).getTime()), 0) / succeededEntries.length
-        const submitResult = await submitProcessActions(
+        const submitResult = await span('validator.submit', {
+          'batch.size': multiSucceeded.actions.length,
+          'batch.kind': 'full',
+        }, () => submitProcessActions(
            validatorId, multiSucceeded, succeededQuote, rawGasLimit
-         )
+         ))
         finalized = submitResult.processed
         const txReceipt = submitResult.receipt
         console.log(`[Validator] ✓ ${finalized.length} action(s) finalized on chain`)

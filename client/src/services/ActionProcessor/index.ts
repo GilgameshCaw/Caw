@@ -9,6 +9,8 @@ import { processDomainEffects, resolveActionUsers } from './domainProcessor'
 import type { RawAction } from './types'
 import { StaleTokenError } from '../UserService'
 import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
+import { span } from '../../utils/trace'
+import getActionType from '../../abi/getActionType'
 
 const Config = z.object({
   redisUrl: z.string().optional().default('redis://127.0.0.1:6379'),
@@ -140,18 +142,27 @@ async function handleRawEvent(raw: { id: number, chainId: number, data: any }) {
 
 async function handleRawAction(rawId: number, chainId: number, rawAction: RawAction): Promise<void> {
   try {
-    // Resolve users BEFORE opening the interactive transaction. Prisma's
-    // default 5s tx timeout was tripping when a batch of N actions opened
-    // N parallel transactions and each called findOrCreateUser inside —
-    // Postgres row-locks on the same user serialized them past 5s. User
-    // creation is idempotent, so it doesn't need tx semantics anyway.
-    const resolved = await resolveActionUsers(rawAction)
+    // One span per processed action — gives a per-action-type latency
+    // breakdown in SigNoz so we can see e.g. "tip actions are taking 800ms,
+    // likes are 50ms" without sifting through Prisma-only spans.
+    await span('actionprocessor.handle', {
+      'action.type': getActionType(Number(rawAction.actionType)),
+      'action.sender': Number(rawAction.senderId),
+      'raw_event.id': rawId,
+    }, async () => {
+      // Resolve users BEFORE opening the interactive transaction. Prisma's
+      // default 5s tx timeout was tripping when a batch of N actions opened
+      // N parallel transactions and each called findOrCreateUser inside —
+      // Postgres row-locks on the same user serialized them past 5s. User
+      // creation is idempotent, so it doesn't need tx semantics anyway.
+      const resolved = await resolveActionUsers(rawAction)
 
-    await prisma.$transaction(async (tx) => {
-      const { action, shouldProcessDomain } = await createOrFindAction(tx, rawId, chainId, rawAction)
-      if (!shouldProcessDomain) return
-      const validAction = await ensureActionExists(tx, rawId, action)
-      await processDomainEffects(tx, validAction, rawAction, resolved)
+      await prisma.$transaction(async (tx) => {
+        const { action, shouldProcessDomain } = await createOrFindAction(tx, rawId, chainId, rawAction)
+        if (!shouldProcessDomain) return
+        const validAction = await ensureActionExists(tx, rawId, action)
+        await processDomainEffects(tx, validAction, rawAction, resolved)
+      })
     })
   } catch (err: any) {
     // If we hit a race condition, retry once to process the action created by another process

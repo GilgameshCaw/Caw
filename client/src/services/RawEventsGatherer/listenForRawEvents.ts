@@ -6,6 +6,7 @@ import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, waitForRat
 import delay from '../../tools/delay'
 import SmlTxt from 'smltxt'
 import { unpackActions } from '../../utils/packActions'
+import { span } from '../../utils/trace'
 
 // smltxt singleton — events arrive with `bytes text` (compressed) but the
 // rest of the pipeline (ActionProcessor, hashtag/mention indexing, Caw.content
@@ -375,7 +376,14 @@ export default async function listenForRawEvents(
         ) as unknown as Log[]
 
         if (events.length > 0) {
-          await processEvents(events, httpContract)
+          // Span scope is "actually processing fetched events" — the
+          // getBlockNumber + queryFilter calls above are auto-instrumented
+          // by the http instrumentation, so they show up regardless.
+          await span('rawevents.process', {
+            'events.count': events.length,
+            'block.from': lastSyncedBlock + 1,
+            'block.to': toBlock,
+          }, () => processEvents(events, httpContract))
           console.log(`[RawEventsGatherer] Polled ${events.length} event(s)`)
         }
         lastSyncedBlock = toBlock
