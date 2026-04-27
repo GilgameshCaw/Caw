@@ -19,8 +19,8 @@ export async function collectNetworkAndMode(nodeType) {
       name: 'network',
       message: 'Which network?',
       choices: [
-        { value: 'testnet', name: `${brand('Testnet')} ${dim('(Base Sepolia / Ethereum Sepolia)')}` },
-        { value: 'mainnet', name: `${brand('Mainnet')} ${dim('(Base / Ethereum)')}` },
+        { value: 'testnet', name: `${brand('Testnet')} ${dim('(Sepolia chains)')}` },
+        { value: 'mainnet', name: `${brand('Mainnet')} ${dim('(Ethereum + L2s)')}` },
       ],
       default: 'testnet',
     },
