@@ -292,9 +292,17 @@ if [[ -z "${CAW_REDIS_URL:-}" ]]; then
   for env_file in /var/www/*/client/.env; do
     [[ -f "$env_file" ]] || continue
     [[ "$env_file" == "$CAW_DIR/client/.env" ]] && continue
-    # Match REDIS_URL=redis://...:6379/N  (optional /N at end).
-    db=$(grep -oE 'REDIS_URL=redis://[^[:space:]]+/[0-9]+' "$env_file" 2>/dev/null \
-      | grep -oE '/[0-9]+$' | tr -d '/')
+    # Match both forms operators may have written:
+    #   REDIS_URL=redis://...:6379/N      (path form, older installs)
+    #   REDIS_URL=redis://...:6379?db=N   (query form, ioredis-safe)
+    # Either way we extract the digits.
+    line=$(grep -E '^REDIS_URL=redis://' "$env_file" 2>/dev/null | head -1)
+    db=""
+    if [[ "$line" =~ \?db=([0-9]+) ]]; then
+      db="${BASH_REMATCH[1]}"
+    elif [[ "$line" =~ /([0-9]+)[[:space:]]*$ ]]; then
+      db="${BASH_REMATCH[1]}"
+    fi
     [[ -n "$db" ]] && used_dbs="$used_dbs $db"
   done
   next_db=0
@@ -304,7 +312,17 @@ if [[ -z "${CAW_REDIS_URL:-}" ]]; then
       break
     fi
   done
-  CAW_REDIS_URL="redis://127.0.0.1:6379/${next_db}"
+  # ioredis 5.x has parser bugs with the path-segment DB form
+  # (redis://host:port/N) — it sometimes concatenates the path into the
+  # port number, producing connect attempts to "127.0.0.1:63790" and
+  # similar nonsense. Use the query-string form (?db=N) which parses
+  # reliably across ioredis versions. Skip the parameter entirely when
+  # we land on db 0 (the default), so the simplest case stays simple.
+  if (( next_db == 0 )); then
+    CAW_REDIS_URL="redis://127.0.0.1:6379"
+  else
+    CAW_REDIS_URL="redis://127.0.0.1:6379?db=${next_db}"
+  fi
 fi
 export CAW_REDIS_URL
 log "Redis URL:         ${CAW_REDIS_URL}"
