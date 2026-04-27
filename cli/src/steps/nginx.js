@@ -71,11 +71,17 @@ export async function configureNginx(config, installDir) {
 
   let sslMode, certPath, keyPath
 
+  // install.sh can pre-resolve the TLS choice. Two fast paths:
+  //   • CAW_CERT_PATH + CAW_KEY_PATH set → own-cert with those files
+  //   • CAW_TLS_MODE=letsencrypt → skip the prompt, run certbot
   if (haveEnvPaths) {
     sslMode = 'own-cert'
     certPath = envCert
     keyPath = envKey
     console.log(dim(`  Using cert + key from CAW_CERT_PATH / CAW_KEY_PATH (set by install.sh).`))
+  } else if (process.env.CAW_TLS_MODE === 'letsencrypt') {
+    sslMode = 'letsencrypt'
+    console.log(dim(`  Using Let's Encrypt (CAW_TLS_MODE set by install.sh).`))
   } else {
     const answer = await inquirer.prompt([
       {

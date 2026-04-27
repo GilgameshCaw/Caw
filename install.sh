@@ -583,28 +583,100 @@ if [[ -n "${CAW_DOMAIN:-}" && "${CAW_TLS_MODE:-}" != "skip" ]]; then
     done
   fi
 
-  # Still missing? Wait for the user to scp the files in.
+  # Still missing? Walk the operator through the choices: HTTPS is required,
+  # so they need to either (a) upload their own cert, (b) let us run Let's
+  # Encrypt for them, or (c) get a primer on how to obtain a cert.
   if [[ -z "${CAW_CERT_PATH:-}" || -z "${CAW_KEY_PATH:-}" || ! -f "${CAW_CERT_PATH}" || ! -f "${CAW_KEY_PATH}" ]]; then
     mkdir -p "$domain_dir"
     chmod 700 "$domain_dir"
+
+    server_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    [[ -z "$server_ip" ]] && server_ip='<server>'
+
     echo
     log "No TLS files found for ${CAW_DOMAIN}."
-    log "From your local machine, copy your cert + key onto this server:"
     echo
-    echo -e "  ${GOLD}scp fullchain.pem your-key.key root@$(hostname -I | awk '{print $1}'):${domain_dir}/${RESET}"
+    echo -e "  ${GOLD}HTTPS is required.${RESET} Browsers, wallets, and most APIs refuse"
+    echo -e "  to talk to plain HTTP — and a CAW node serves wallet-signed content,"
+    echo -e "  so we won't ship without it."
     echo
-    log "Or use ${parent_dir}/ if you have a wildcard for *.${parent_domain}."
-    log "(If you'd rather the CLI handle TLS — Let's Encrypt or skip — just press Enter; the CLI will ask.)"
-    echo
-    if [[ -t 0 ]]; then
-      read -r -p "  Press Enter when ready (or skip): " _
-    elif [[ -r /dev/tty ]]; then
-      read -r -p "  Press Enter when ready (or skip): " _ < /dev/tty
-    fi
-    # Re-check after the wait
-    [[ -f "${domain_dir}/fullchain.pem" ]] && CAW_CERT_PATH="${domain_dir}/fullchain.pem"
-    for candidate in "${domain_dir}/${CAW_DOMAIN}.key" "${domain_dir}/privkey.pem"; do
-      [[ -f "$candidate" ]] && { CAW_KEY_PATH="$candidate"; break; }
+    echo -e "  ${GOLD}Two ways to get a cert:${RESET}"
+    echo -e "    ${GOLD}•${RESET} ${GOLD}Let's Encrypt${RESET} — free, automated service that issues SSL/TLS"
+    echo -e "      certificates so any site can use HTTPS. We run certbot for you,"
+    echo -e "      it auto-renews every 90 days. Requires DNS to already point at"
+    echo -e "      this server. Best for a single domain."
+    echo -e "    ${GOLD}•${RESET} ${GOLD}Manual / own cert${RESET} — you buy or obtain a cert from a CA"
+    echo -e "      (Namecheap, DigiCert, ZeroSSL, etc.) and install it yourself."
+    echo -e "      Best if you want a wildcard (*.${parent_domain}) covering many"
+    echo -e "      subdomains, or you already have a cert from somewhere else."
+
+    # Keep looping until something resolves the cert situation.
+    while true; do
+      echo
+      echo -e "  ${GOLD}What would you like to do?${RESET}"
+      echo "    1) I've uploaded the files — check again"
+      echo "    2) Use Let's Encrypt instead (free, automated)"
+      echo "    3) Explain how to get my own cert"
+      echo "    4) Skip for now — the CLI will ask again"
+      echo
+
+      tls_choice=""
+      if [[ -t 0 ]]; then
+        read -r -p "  Pick [1-4]: " tls_choice
+      elif [[ -r /dev/tty ]]; then
+        read -r -p "  Pick [1-4]: " tls_choice < /dev/tty
+      fi
+
+      case "${tls_choice:-4}" in
+        1)
+          # Re-check after upload
+          [[ -f "${domain_dir}/fullchain.pem" ]] && CAW_CERT_PATH="${domain_dir}/fullchain.pem"
+          for candidate in "${domain_dir}/${CAW_DOMAIN}.key" "${domain_dir}/privkey.pem"; do
+            [[ -f "$candidate" ]] && { CAW_KEY_PATH="$candidate"; break; }
+          done
+          if [[ -n "${CAW_CERT_PATH:-}" && -f "${CAW_CERT_PATH}" && -n "${CAW_KEY_PATH:-}" && -f "${CAW_KEY_PATH}" ]]; then
+            ok "Found cert + key."
+            break
+          fi
+          warn "Still don't see ${domain_dir}/fullchain.pem and a matching key."
+          warn "Make sure the scp finished and the files are at ${domain_dir}/."
+          ;;
+        2)
+          # Tell the CLI to use Let's Encrypt; clear any half-set paths.
+          export CAW_TLS_MODE=letsencrypt
+          unset CAW_CERT_PATH CAW_KEY_PATH
+          ok "Will request a Let's Encrypt cert in the next step."
+          break
+          ;;
+        3)
+          echo
+          echo -e "  ${GOLD}Getting your own cert (manual path):${RESET}"
+          echo
+          echo -e "    ${GOLD}a)${RESET} On this server, generate a CSR + private key:"
+          echo -e "       ${DIM}openssl req -new -newkey rsa:2048 -nodes \\${RESET}"
+          echo -e "         ${DIM}-keyout ${domain_dir}/${CAW_DOMAIN}.key \\${RESET}"
+          echo -e "         ${DIM}-out ${domain_dir}/${CAW_DOMAIN}.csr \\${RESET}"
+          echo -e "         ${DIM}-subj \"/CN=${CAW_DOMAIN}\"${RESET}"
+          echo
+          echo -e "    ${GOLD}b)${RESET} Submit the .csr to your CA (Namecheap, DigiCert, ZeroSSL, …)."
+          echo -e "       They'll verify domain ownership and email back the issued"
+          echo -e "       cert + intermediate chain (often two .crt files)."
+          echo
+          echo -e "    ${GOLD}c)${RESET} Concatenate cert + intermediates into ${GOLD}fullchain.pem${RESET}:"
+          echo -e "       ${DIM}cat your-cert.crt intermediate.crt > fullchain.pem${RESET}"
+          echo -e "       (Order matters: your cert first, then intermediates.)"
+          echo
+          echo -e "    ${GOLD}d)${RESET} If you generated the CSR locally instead, scp the result up:"
+          echo -e "       ${DIM}scp fullchain.pem your-key.key root@${server_ip}:${domain_dir}/${RESET}"
+          echo
+          echo -e "  ${DIM}If you have a wildcard for *.${parent_domain} already, you can"
+          echo -e "   drop it at ${parent_dir}/ instead — we auto-detect that.${RESET}"
+          ;;
+        4|*)
+          warn "Skipping — the CLI will offer Let's Encrypt or an own-cert prompt."
+          break
+          ;;
+      esac
     done
   fi
 
