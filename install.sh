@@ -588,7 +588,13 @@ if [[ -n "${CAW_DOMAIN:-}" && "${CAW_TLS_MODE:-}" != "skip" ]]; then
   # Encrypt for them, or (c) get a primer on how to obtain a cert.
   if [[ -z "${CAW_CERT_PATH:-}" || -z "${CAW_KEY_PATH:-}" || ! -f "${CAW_CERT_PATH}" || ! -f "${CAW_KEY_PATH}" ]]; then
     mkdir -p "$domain_dir"
-    chmod 700 "$domain_dir"
+    # 750 root:www-data so nginx workers can traverse to read the cert,
+    # but nothing else on the box can. Falls back to 750 root:root if
+    # www-data doesn't exist yet (apt installs nginx in step 6).
+    if getent group www-data >/dev/null 2>&1; then
+      chgrp www-data "$domain_dir"
+    fi
+    chmod 750 "$domain_dir"
 
     server_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
     [[ -z "$server_ip" ]] && server_ip='<server>'
@@ -681,10 +687,26 @@ if [[ -n "${CAW_DOMAIN:-}" && "${CAW_TLS_MODE:-}" != "skip" ]]; then
   fi
 
   if [[ -n "${CAW_CERT_PATH:-}" && -f "${CAW_CERT_PATH}" ]]; then
+    # Normalize permissions. scp inherits the source's mode, which is often
+    # wrong on a server (e.g. a 644 dir from upload doesn't let nginx
+    # workers cd into it). Set the canonical layout:
+    #   dir   root:www-data 750  (nginx can traverse, nothing else can)
+    #   cert  root:root     644  (public cert, readable to anyone allowed in)
+    #   key   root:root     600  (private key, root-only)
+    cert_dir="$(dirname "${CAW_CERT_PATH}")"
+    chown root:root "${CAW_CERT_PATH}" 2>/dev/null || true
     chmod 644 "${CAW_CERT_PATH}" 2>/dev/null || true
-    [[ -n "${CAW_KEY_PATH:-}" && -f "${CAW_KEY_PATH}" ]] && chmod 600 "${CAW_KEY_PATH}" 2>/dev/null || true
+    if [[ -n "${CAW_KEY_PATH:-}" && -f "${CAW_KEY_PATH}" ]]; then
+      chown root:root "${CAW_KEY_PATH}" 2>/dev/null || true
+      chmod 600 "${CAW_KEY_PATH}" 2>/dev/null || true
+    fi
+    if getent group www-data >/dev/null 2>&1; then
+      chown root:www-data "${cert_dir}" 2>/dev/null || true
+    fi
+    chmod 750 "${cert_dir}" 2>/dev/null || true
     ok "Cert: ${CAW_CERT_PATH}"
     ok "Key:  ${CAW_KEY_PATH}"
+    ok "Permissions: ${cert_dir} 750 / fullchain 644 / key 600"
     export CAW_CERT_PATH CAW_KEY_PATH
   else
     log "(No cert resolved — the CLI will offer Let's Encrypt or own-cert prompts.)"
