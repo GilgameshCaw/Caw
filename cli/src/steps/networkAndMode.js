@@ -8,23 +8,37 @@ import { section, dim, tipBlock, brand } from '../utils/ui.js'
  */
 export async function collectNetworkAndMode(nodeType) {
   // Network — drives chain IDs, contract addresses, and indexer behavior.
+  // Mainnet is gated behind CAW_ALLOW_MAINNET while we're in testnet-only
+  // launch phase. Removes the option from the picker entirely so operators
+  // can't pick a network whose contracts haven't shipped yet.
   section('Network')
-  tipBlock([
-    'Pick the network this node will run against.',
-    'Most public installs run testnet — it has no real funds at stake.',
-  ])
-  const { network } = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'network',
-      message: 'Which network?',
-      choices: [
-        { value: 'testnet', name: `${brand('Testnet')} ${dim('(Sepolia chains)')}` },
-        { value: 'mainnet', name: `${brand('Mainnet')} ${dim('(Ethereum + L2s)')}` },
-      ],
-      default: 'testnet',
-    },
-  ])
+  const allowMainnet = process.env.CAW_ALLOW_MAINNET === '1'
+  let network
+  if (allowMainnet) {
+    tipBlock([
+      'Pick the network this node will run against.',
+      'Most public installs run testnet — it has no real funds at stake.',
+    ])
+    const answer = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'network',
+        message: 'Which network?',
+        choices: [
+          { value: 'testnet', name: `${brand('Testnet')} ${dim('(Sepolia chains)')}` },
+          { value: 'mainnet', name: `${brand('Mainnet')} ${dim('(Ethereum + L2s)')}` },
+        ],
+        default: 'testnet',
+      },
+    ])
+    network = answer.network
+  } else {
+    network = 'testnet'
+    tipBlock([
+      `Running against ${brand('testnet')} (Sepolia chains).`,
+      'Mainnet is coming soon — testnet is the only target right now.',
+    ])
+  }
 
   // Deployment mode — drives whether we run vite dev or build the frontend
   // and let nginx serve dist/. Ask early because subsequent steps branch on it.
