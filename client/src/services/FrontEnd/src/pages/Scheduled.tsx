@@ -4,7 +4,7 @@ import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { useAccount } from "wagmi"
 import { useConnectModal } from "@rainbow-me/rainbowkit"
-import { HiOutlineClock, HiOutlineTrash, HiOutlineCheck, HiOutlineXCircle, HiChevronDown, HiChevronRight } from "react-icons/hi"
+import { HiOutlineClock, HiOutlineTrash, HiOutlineCheck, HiOutlineXCircle, HiChevronDown, HiChevronRight, HiOutlineInformationCircle } from "react-icons/hi"
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '~/api/client'
@@ -218,9 +218,12 @@ const ScheduledPage: React.FC = () => {
           }`}>
             Scheduled Posts
           </h1>
-          <p className={`mt-1 text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-            Manage your scheduled and past posts
-          </p>
+          <div className={`flex items-center gap-2 mt-2 text-sm ${
+            isDark ? 'text-gray-400' : 'text-gray-500'
+          }`}>
+            <HiOutlineInformationCircle className="w-4 h-4 flex-shrink-0" />
+            <span>Manage your scheduled and past posts</span>
+          </div>
         </div>
 
         {/* Tabs */}
@@ -229,7 +232,7 @@ const ScheduledPage: React.FC = () => {
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`px-4 py-3 font-medium text-sm transition-colors relative ${
+              className={`flex-1 px-4 py-3 font-medium text-sm transition-colors relative cursor-pointer ${
                 activeTab === tab.id
                   ? isDark ? 'text-white' : 'text-black'
                   : isDark ? 'text-gray-400 hover:text-gray-200' : 'text-gray-500 hover:text-gray-700'
@@ -249,12 +252,23 @@ const ScheduledPage: React.FC = () => {
             Loading...
           </div>
         ) : !scheduledData?.items?.length ? (
-          <div className={`text-center py-16 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-            <HiOutlineClock className="w-12 h-12 mx-auto mb-4 opacity-50" />
-            <p>
-              {activeTab === 'pending' && "No scheduled posts yet. Schedule a post to see it here."}
-              {activeTab === 'published' && "No published scheduled posts."}
-              {activeTab === 'failed' && "No failed posts."}
+          <div className="text-center py-12">
+            <HiOutlineClock className={`w-12 h-12 mx-auto mb-4 opacity-30 ${
+              isDark ? 'text-white' : 'text-black'
+            }`} />
+            <h3 className={`text-lg font-semibold mb-2 transition-colors duration-300 ${
+              isDark ? 'text-white' : 'text-black'
+            }`}>
+              {activeTab === 'pending' && 'No scheduled posts yet'}
+              {activeTab === 'published' && 'No published posts yet'}
+              {activeTab === 'failed' && 'No failed posts'}
+            </h3>
+            <p className={`transition-colors duration-300 ${
+              isDark ? 'text-gray-400' : 'text-gray-600'
+            }`}>
+              {activeTab === 'pending' && 'Schedule a post to see it here.'}
+              {activeTab === 'published' && 'Scheduled posts that have been sent will appear here.'}
+              {activeTab === 'failed' && "Scheduled posts that didn't publish will appear here."}
             </p>
           </div>
         ) : (

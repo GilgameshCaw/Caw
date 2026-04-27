@@ -8,10 +8,10 @@ const Trending: React.FC = () => {
 
   return (
     <>
-      <div className={`rounded-xl p-6 shadow-xl border mx-4 my-2 transition-all duration-300 ${
+      <div className={`rounded-xl p-6 border mx-4 my-2 transition-all duration-300 ${
         isDark
           ? 'bg-black border-yellow-500/30'
-          : 'bg-gray-100 border-gray-200'
+          : 'bg-white border-gray-200'
       }`}>
         <h2 className={`text-xl font-bold mb-6 transition-all duration-300 ${
           isDark ? 'text-white' : 'text-black'

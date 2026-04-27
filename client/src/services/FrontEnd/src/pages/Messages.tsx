@@ -799,14 +799,24 @@ const MessagesPage: React.FC = () => {
                   />
                 </div>
               )}
-              <h1
-                className={`text-2xl font-bold transition-colors duration-300 ${
-                  isDark ? 'text-white' : 'text-black'
-                } ${currentView === 'chat' && otherParticipant ? 'cursor-pointer hover:underline' : ''}`}
-                onClick={currentView === 'chat' && otherParticipant ? () => navigate(`/users/${otherParticipant.identity.user.username}`) : undefined}
-              >
-                {currentView === 'inbox' ? 'Messages' : currentView === 'setup' ? 'Enable DMs' : otherParticipant?.identity.user.displayName || otherParticipant?.identity.user.username || 'Chat'}
-              </h1>
+              <div className="flex flex-col">
+                <h1
+                  className={`text-2xl font-bold transition-colors duration-300 ${
+                    isDark ? 'text-white' : 'text-black'
+                  } ${currentView === 'chat' && otherParticipant ? 'cursor-pointer hover:underline' : ''}`}
+                  onClick={currentView === 'chat' && otherParticipant ? () => navigate(`/users/${otherParticipant.identity.user.username}`) : undefined}
+                >
+                  {currentView === 'inbox' ? 'Messages' : currentView === 'setup' ? 'Enable DMs' : otherParticipant?.identity.user.displayName || otherParticipant?.identity.user.username || 'Chat'}
+                </h1>
+                {currentView === 'inbox' && (
+                  <div className={`flex items-center gap-2 mt-2 text-sm ${
+                    isDark ? 'text-gray-400' : 'text-gray-500'
+                  }`}>
+                    <HiOutlineLockClosed className="w-4 h-4 flex-shrink-0" />
+                    <span>End-to-end encrypted · AES-256-GCM</span>
+                  </div>
+                )}
+              </div>
             </div>
             {currentView === 'chat' && (
               <div className="relative" ref={chatMenuRef}>
@@ -1062,14 +1072,17 @@ const MessagesPage: React.FC = () => {
                 <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-yellow-500"></div>
               </div>
             ) : conversationsLoaded && conversations.length === 0 ? (
-              <div className="text-center py-8">
-                <p className={`text-sm ${
-                  isDark ? 'text-gray-400' : 'text-gray-600'
+              <div className="text-center py-12">
+                <HiOutlineMail className={`w-12 h-12 mx-auto mb-4 opacity-30 ${
+                  isDark ? 'text-white' : 'text-black'
+                }`} />
+                <h3 className={`text-lg font-semibold mb-2 transition-colors duration-300 ${
+                  isDark ? 'text-white' : 'text-black'
                 }`}>
                   No conversations yet
-                </p>
-                <p className={`text-xs mt-2 ${
-                  isDark ? 'text-gray-500' : 'text-gray-500'
+                </h3>
+                <p className={`transition-colors duration-300 ${
+                  isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}>
                   Start a new message to begin a conversation
                 </p>

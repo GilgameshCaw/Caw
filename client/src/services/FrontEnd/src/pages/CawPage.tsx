@@ -334,7 +334,7 @@ export const CawPage: React.FC = () => {
                   }`}
                 >
                   {entry.kind === 'recaw'
-                    ? <Recaw className="w-4 h-4 opacity-60 flex-shrink-0" />
+                    ? <Recaw className="w-4 h-4 opacity-60 flex-shrink-0 translate-y-1" />
                     : <HiOutlineCurrencyDollar className="w-4 h-4 opacity-60 flex-shrink-0" />
                   }
                   <div className="w-6 h-6 rounded-full overflow-hidden flex-shrink-0">
@@ -405,4 +405,3 @@ export const CawPage: React.FC = () => {
     </MainLayout>
   )
 }
-

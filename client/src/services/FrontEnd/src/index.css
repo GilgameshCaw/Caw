@@ -11,6 +11,12 @@
   font-display: swap;
 }
 
+html.theme-switching *,
+html.theme-switching *::before,
+html.theme-switching *::after {
+  transition: none !important;
+}
+
 @theme {
   /* font-size */
   --text-3xs: /*  8 */ 0.5rem;
@@ -80,8 +86,8 @@
 
 :root:not(.dark) {
   color: #111;
-  background: #e5e7eb;
-  background-image: linear-gradient(to right, #e5e7eb 0%, #d1d5db 15%, #d1d5db 85%, #e5e7eb 100%);
+  background: #ffffff;
+  background-image: none;
   background-attachment: fixed;
 }
 
@@ -154,6 +160,28 @@
     rgb(229, 231, 235) 95%,
     transparent 100%
   );
+}
+
+.caw-logo-mark {
+  transform-origin: center;
+  backface-visibility: hidden;
+}
+
+.caw-logo-lockup:hover .caw-logo-mark,
+.caw-logo-mark:hover {
+  animation: caw-logo-gentle-spin 800ms cubic-bezier(0.22, 1, 0.36, 1) 1;
+}
+
+@keyframes caw-logo-gentle-spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  70% {
+    transform: rotate(390deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
 }
 
 /* Light mode: subtle shadow on primary action buttons and username cards */
@@ -471,6 +499,41 @@ box-shadow: 0px 0px 5px white;
 
 .custom-scrollbar-alt::-webkit-scrollbar {
   display: none; /* WebKit browsers */
+}
+
+/* Thin black-transparent scrollbar */
+.thin-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.3) transparent;
+}
+
+.thin-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.thin-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.thin-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.3);
+  border-radius: 3px;
+}
+
+.thin-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.5);
+}
+
+/* Hide native number input spinners (the ugly up/down arrows) */
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
 }
 
 /* DM message slide-in animation */

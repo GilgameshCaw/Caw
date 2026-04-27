@@ -1,5 +1,8 @@
 /** Common theme-aware class name helpers to reduce isDark ternary repetition */
 
+export const themeRootBgColor = (isDark: boolean) => isDark ? '#0A0A0A' : '#FFFFFF'
+export const themeLayoutShell = (isDark: boolean) => isDark ? 'bg-black' : 'bg-white'
+
 export const themeText = (isDark: boolean) => isDark ? 'text-white' : 'text-gray-900'
 export const themeTextMuted = (isDark: boolean) => isDark ? 'text-gray-400' : 'text-gray-500'
 export const themeTextSecondary = (isDark: boolean) => isDark ? 'text-gray-300' : 'text-gray-600'

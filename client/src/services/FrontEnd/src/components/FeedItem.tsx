@@ -889,12 +889,16 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   // Videos stored as URLs (always off-chain)
                   const videoUrls = useItem.videoData.split('|||')
                   return (
-                    <div className={`grid grid-cols-1 gap-2 max-w-2xl`}>
+                    <div className="grid grid-cols-1 gap-2 w-full">
                       {videoUrls.map((url, index) => (
                         <div key={index} className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 bg-black">
                           <video
+                            autoPlay
                             controls
-                            className="w-full h-auto max-h-96"
+                            className="w-full h-auto max-h-[32rem]"
+                            loop
+                            muted
+                            playsInline
                             preload="metadata"
                             onClick={(e) => {
                               e.stopPropagation()
@@ -959,13 +963,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     return (
                       <div className="relative">
                         {collapseBtn}
-                        <div className={`${urls.length > 1 ? 'grid grid-cols-2 gap-2 max-w-2xl' : 'inline-block'}`}>
+                        <div className={urls.length > 1 ? 'grid grid-cols-2 gap-2 w-full' : 'w-full'}>
                           {urls.map((url, index) => (
-                            <div key={index} className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 inline-block">
+                            <div key={index} className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 w-full">
                               <img
                                 src={url}
                                 alt={`Caw image ${index + 1}`}
-                                className="max-w-full max-h-96 h-auto cursor-pointer hover:opacity-90 transition-opacity"
+                                className="w-full max-h-96 h-auto cursor-pointer hover:opacity-90 transition-opacity"
                                 onClick={(e) => {
                                   e.preventDefault()
                                   e.stopPropagation()
@@ -987,13 +991,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     return (
                       <div className="relative">
                         {collapseBtn}
-                        <div className={`${images.length > 1 ? 'grid grid-cols-2 gap-2 max-w-2xl' : 'inline-block'}`}>
+                        <div className={images.length > 1 ? 'grid grid-cols-2 gap-2 w-full' : 'w-full'}>
                           {images.map((imageBase64, index) => (
-                            <div key={index} className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 inline-block">
+                            <div key={index} className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 w-full">
                               <img
                                 src={`data:image/jpeg;base64,${imageBase64}`}
                                 alt={`Caw image ${index + 1}`}
-                                className="max-w-full max-h-96 h-auto cursor-pointer hover:opacity-90 transition-opacity"
+                                className="w-full max-h-96 h-auto cursor-pointer hover:opacity-90 transition-opacity"
                                 onClick={(e) => {
                                   e.preventDefault()
                                   e.stopPropagation()
@@ -1016,12 +1020,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 } else if (useItem.imageUrl) {
                   // Legacy single image URL
                   return (
-                    <div className="relative inline-block rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
+                    <div className="relative w-full rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
                       {collapseBtn}
                       <img
                         src={useItem.imageUrl}
                         alt="Caw image"
-                        className="max-w-full max-h-96 h-auto cursor-pointer hover:opacity-90 transition-opacity"
+                        className="w-full max-h-96 h-auto cursor-pointer hover:opacity-90 transition-opacity"
                         onClick={(e) => {
                           e.preventDefault()
                           e.stopPropagation()
@@ -1135,11 +1139,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       <HiOutlineCheck className="absolute inset-0 w-3 h-3 m-auto text-green-500" />
                     </div>
                   ) : (
-                    <Recaw className={`w-5 h-5 transition-all duration-300 ${
+                    <Recaw className={`w-5 h-5 translate-y-1 transition-all duration-300 ${
                       (useItem.hasRecawed || isRecawByCurrentUser || recawPending) ? 'text-green-500' : ''
                     }`} />
                   )}
-                  <span className={`text-sm transition-colors duration-300 ${
+                  <span className={`text-sm translate-y-1 transition-colors duration-300 ${
                     (useItem.hasRecawed || isRecawByCurrentUser) ? 'text-green-500' : ''
                   }`}>{formatEngagementCount(useItem.recawCount + effectiveRecawAdj)}</span>
                 </button></Tooltip>
@@ -1183,7 +1187,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                           }
                         }}
                       >
-                        <Recaw className="w-5 h-5" /> Undo Repost
+                        <Recaw className="w-5 h-5 translate-y-0.5" /> Undo Repost
                       </button>
                     ) : (
                       <button
@@ -1192,7 +1196,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                         }`}
                         onClick={e => { e.preventDefault(); e.stopPropagation(); setShowRecawMenu(false); handleRecaw(e) }}
                       >
-                        <Recaw className={`w-5 h-5 transition-all duration-300 ${
+                        <Recaw className={`w-5 h-5 translate-y-0.5 transition-all duration-300 ${
                           isDark ? 'text-white' : 'text-gray-600'
                         }`} /> Repost
                       </button>

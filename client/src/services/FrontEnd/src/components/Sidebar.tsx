@@ -80,7 +80,7 @@ function CawPriceTicker() {
 
   if (!cawPrice || cawPrice <= 0) {
     return (
-      <div className={`mt-2 text-xs ml-[26px] ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
+      <div className={`mt-2 text-xs ml-[26px] ${isDark ? 'text-white/30' : 'text-gray-700'}`}>
         CAW price loading...
       </div>
     )
@@ -89,7 +89,7 @@ function CawPriceTicker() {
   const cawPerPenny = 0.01 / cawPrice
 
   return (
-    <div className={`mt-2 text-xs ml-[26px] ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
+    <div className={`mt-2 text-xs ml-[26px] ${isDark ? 'text-white/30' : 'text-gray-700'}`}>
       $0.01 ≈ {formatAmount(cawPerPenny)} CAW
     </div>
   )
@@ -121,7 +121,7 @@ const Sidebar: React.FC = () => {
     if (isActive) {
       return isDark
         ? 'bg-white/10 text-white'
-        : 'bg-gray-100 text-black shadow-xl border border-gray-200'
+        : 'bg-gray-100 text-black border border-gray-200'
     } else {
       return isDark
         ? 'text-gray-300 hover:text-white hover:bg-white/10'
@@ -140,19 +140,20 @@ const Sidebar: React.FC = () => {
         <div className="hidden sm:block p-4 pl-0">
           <NavLink
             to="/home"
-            className="flex items-center pl-3 cursor-pointer hover:opacity-80 transition-opacity duration-200"
+            className="caw-logo-lockup flex items-center pl-3 cursor-pointer hover:opacity-80 transition-opacity duration-200"
           >
-            <img
-              src={cawLogo}
-              alt="CAW Logo"
-              className={`w-10 h-10 object-contain ${isDark ? '' : 'drop-shadow-[1px_1px_1px_rgba(0,0,0,0.8)]'}`}
-            />
+              <img
+                src={cawLogo}
+                alt="CAW Logo"
+                className={`caw-logo-mark w-10 h-10 object-contain ${isDark ? '' : 'drop-shadow-[1px_1px_1px_rgba(0,0,0,0.8)]'}`}
+              />
             <span
               className="text-4xl"
               style={{
-                fontFamily: 'Fraunces',
+                fontFamily: 'Inter, sans-serif',
+                fontWeight: 800,
                 color: '#ebc046',
-                letterSpacing: '5px',
+                letterSpacing: '3px',
                 marginLeft: '10px',
                 textShadow: isDark
                   ? '0 1px 2px rgba(0, 0, 0, 0.6), 0 0 4px rgba(0, 0, 0, 0.3)'
@@ -166,7 +167,7 @@ const Sidebar: React.FC = () => {
         </div>
 
         {/* Navigation */}
-        <nav className="px-2 py-2 pt-20 sm:px-4 sm:py-4 sm:pr-2 sm:pl-2 sm:pt-4 space-y-1 sm:flex-1 sm:overflow-y-auto sm:min-h-0">
+        <nav className="px-2 py-2 pt-20 sm:px-4 sm:py-4 sm:pr-2 sm:pl-2 sm:pt-4 space-y-1 sm:flex-1 sm:overflow-y-auto sm:min-h-0 thin-scrollbar">
           <NavLink
           to="/home"
           onClick={guardClick}
@@ -314,4 +315,3 @@ const Sidebar: React.FC = () => {
 }
 
 export default Sidebar
-

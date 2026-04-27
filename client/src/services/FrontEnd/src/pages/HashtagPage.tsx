@@ -51,7 +51,7 @@ export const HashtagPage: React.FC = () => {
 
         {/* Trending Hashtags */}
         {trendingHashtags.length > 0 && (
-          <div className={`mb-6 p-4 rounded-lg ${isDark ? 'bg-gray-800' : 'bg-gray-100 border border-gray-200'}`}>
+          <div className={`mb-6 p-4 rounded-lg ${isDark ? 'bg-black border border-white/10' : 'bg-gray-100 border border-gray-200'}`}>
             <div className="flex items-center mb-3">
               <HiTrendingUp className="h-5 w-5 text-orange-500 mr-2" />
               <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>

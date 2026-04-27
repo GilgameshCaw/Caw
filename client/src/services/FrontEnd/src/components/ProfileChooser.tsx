@@ -233,7 +233,7 @@ const ProfileChooser: React.FC = () => {
     // Otherwise show "create your profile"
     return (
       <div className="mb-2">
-        <a href="/usernames/new" className={`inline-flex items-center gap-2 px-4 py-3 rounded-2xl transition-all duration-200 font-medium text-sm shadow-lg hover:shadow-xl hover:scale-105 ${
+        <a href="/usernames/new" className={`inline-flex items-center gap-2 px-4 py-3 rounded-2xl transition-all duration-200 font-medium text-sm hover:scale-105 ${
           isDark
             ? 'bg-white/10 text-white border border-white/20 hover:bg-white/20 hover:border-white/30'
             : 'bg-gray-200 text-black border border-gray-300 hover:bg-gray-300 hover:border-gray-400'
@@ -350,8 +350,8 @@ const ProfileChooser: React.FC = () => {
               }`}
             />
           </div>
-          <div className={`opacity-40 text-sm transition-all duration-300 ${
-            isDark ? 'text-gray-300' : 'text-gray-600'
+          <div className={`text-sm transition-all duration-300 ${
+            isDark ? 'text-gray-300' : 'text-gray-700'
           }`}>
             {selectedToken.stakedAmount > 0n ? formatUnitsCompact((selectedToken.stakedAmount / 10n**18n) * 10n**18n, 18) : "No"} CAW
           </div>
@@ -393,7 +393,7 @@ const ProfileChooser: React.FC = () => {
 
       {isDropdownOpen && (
         <ul
-          className={`${window.innerWidth < 1350 ? 'fixed' : 'absolute'} mt-2 shadow-lg rounded-md overflow-y-auto z-[9999] transition-all duration-300 max-h-[95vh] ${
+          className={`${window.innerWidth < 1350 ? 'fixed' : 'absolute'} mt-2 rounded-md overflow-y-auto z-[9999] transition-all duration-300 max-h-[95vh] ${
             isDark ? 'bg-black border border-white/20' : 'bg-white border border-gray-200'
           }`}
           style={{
@@ -472,4 +472,3 @@ const ProfileChooser: React.FC = () => {
 };
 
 export default ProfileChooser;
-

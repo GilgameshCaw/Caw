@@ -627,7 +627,7 @@ console.log("BALANCE:", balance)
                         
                         {/* Modal de precios */}
                         {showPricingModal && (
-                            <div className={`absolute top-1/2 -translate-y-1/2 right-full mr-3 w-72 border rounded-lg p-5 shadow-xl z-50 ${
+                            <div className={`absolute top-1/2 -translate-y-1/2 right-full mr-3 w-72 border rounded-lg p-5 z-50 ${
                               isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
                             }`}>
                                 <div className={`text-sm font-medium text-center mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>Username Pricing</div>
@@ -832,4 +832,3 @@ console.log("BALANCE:", balance)
 }
 
 export default NewProfile
-

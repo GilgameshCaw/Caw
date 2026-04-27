@@ -790,9 +790,10 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
           <h1
             className="text-4xl min-[800px]:text-5xl mb-3"
             style={{
-              fontFamily: 'Fraunces',
+              fontFamily: 'Inter, sans-serif',
+              fontWeight: 800,
               color: '#ebc046',
-              letterSpacing: '5px',
+              letterSpacing: '3px',
               textShadow: isDark
                 ? '0 1px 2px rgba(0, 0, 0, 0.6), 0 0 4px rgba(0, 0, 0, 0.3)'
                 : '0 1px 2px rgba(255, 255, 255, 0.6), 0 0 4px rgba(255, 255, 255, 0.3)',

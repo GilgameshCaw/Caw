@@ -34,7 +34,7 @@ const ListingFilters: React.FC = () => {
   const selectClass = `px-3 py-2 rounded-lg text-sm border outline-none transition cursor-pointer ${themeInput(isDark)} ${themeBorder(isDark)}`
 
   return (
-    <div className={`flex flex-wrap gap-3 p-4 rounded-xl ${themeBgSubtle(isDark)} ${themeBorder(isDark)} border ${isDark ? '' : 'shadow-xl'}`}>
+    <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 rounded-xl ${themeBgSubtle(isDark)} ${themeBorder(isDark)} border`}>
       <div className="flex flex-col gap-1">
         <label className={`text-xs font-medium ${themeTextSecondary(isDark)}`}>Type</label>
         <select
@@ -58,29 +58,28 @@ const ListingFilters: React.FC = () => {
       </div>
 
       <div className="flex flex-col gap-1">
-        <label className={`text-xs font-medium ${themeTextSecondary(isDark)}`}>Min Length</label>
-        <input
-          type="number"
-          min={0}
-          max={255}
-          value={filters.minLength || ''}
-          onChange={e => setFilter('minLength', parseInt(e.target.value) || 0)}
-          placeholder="1"
-          className={`w-20 ${selectClass}`}
-        />
-      </div>
-
-      <div className="flex flex-col gap-1">
-        <label className={`text-xs font-medium ${themeTextSecondary(isDark)}`}>Max Length</label>
-        <input
-          type="number"
-          min={0}
-          max={255}
-          value={filters.maxLength >= 999 ? '' : filters.maxLength}
-          onChange={e => setFilter('maxLength', parseInt(e.target.value) || 999)}
-          placeholder="Any"
-          className={`w-20 ${selectClass}`}
-        />
+        <label className={`text-xs font-medium ${themeTextSecondary(isDark)}`}>Length</label>
+        <div className="flex items-center gap-2">
+          <input
+            type="number"
+            min={0}
+            max={255}
+            value={filters.minLength || ''}
+            onChange={e => setFilter('minLength', parseInt(e.target.value) || 0)}
+            placeholder="Min"
+            className={`flex-1 min-w-0 ${selectClass}`}
+          />
+          <span className={`text-xs ${themeTextSecondary(isDark)}`}>–</span>
+          <input
+            type="number"
+            min={0}
+            max={255}
+            value={filters.maxLength >= 999 ? '' : filters.maxLength}
+            onChange={e => setFilter('maxLength', parseInt(e.target.value) || 999)}
+            placeholder="Max"
+            className={`flex-1 min-w-0 ${selectClass}`}
+          />
+        </div>
       </div>
 
       <div className="flex flex-col gap-1">
