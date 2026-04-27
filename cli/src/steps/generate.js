@@ -291,11 +291,32 @@ function buildServiceList(nodeType, config) {
   }
 
   if (RUNS_INDEXER) {
+    // Read l2DeployBlock from solidity/.deploy-state.json so RawEventsGatherer
+    // backfills from the right L2 block on a fresh DB. Without this, the
+    // gatherer falls back to "current head" and silently misses every
+    // historical event for this client.
+    //
+    // Failure modes are non-fatal: a missing / malformed deploy-state file
+    // just means we don't write startBlock and the gatherer stays at
+    // current-head behavior (the same default as today). Operators can
+    // also override START_BLOCK in client/.env for backfill repair.
+    const deployStatePath = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../../solidity/.deploy-state.json')
+    let l2DeployBlock
+    try {
+      const ds = JSON.parse(fs.readFileSync(deployStatePath, 'utf8'))
+      if (typeof ds?.l2DeployBlock === 'number' && ds.l2DeployBlock > 0) {
+        l2DeployBlock = ds.l2DeployBlock
+      }
+    } catch {
+      // .deploy-state.json missing on a contributor checkout that didn't
+      // run the deploy script — fine, just skip startBlock.
+    }
     services.push({
       service: 'RawEventsGatherer',
       config: {
         chainId: net.l2ChainId,
-        rpcUrl: '${L2_RPC_URL}'
+        rpcUrl: '${L2_RPC_URL}',
+        ...(l2DeployBlock ? { startBlock: l2DeployBlock } : {}),
       }
     })
     services.push({
