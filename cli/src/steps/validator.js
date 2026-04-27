@@ -28,6 +28,15 @@ export async function collectValidatorConfig(nodeType, installDir, ctx = {}) {
     '  2. Import an existing private key (hex format)',
   ])
 
+  // Defensive: drain stdin before this list prompt fires. Without this,
+  // the Enter the operator pressed at the previous prompt (Eth Mainnet
+  // RPC URL) can bleed through into the list prompt and immediately
+  // confirm the highlighted choice — picking "Generate" before they
+  // could see the menu. setImmediate after a small delay gives the
+  // keypress event loop time to process the buffered Enter before
+  // inquirer attaches its readline handler.
+  await new Promise(resolve => setTimeout(resolve, 50))
+
   const { keySource } = await inquirer.prompt([
     {
       type: 'list',
