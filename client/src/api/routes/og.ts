@@ -421,7 +421,7 @@ function profileCardTree(opts: {
                   ].filter(Boolean),
                 },
               },
-            ],
+            ].filter(Boolean) as any,
           },
         },
         {
@@ -536,7 +536,7 @@ function cawCardTree(opts: {
                         ].filter(Boolean),
                       },
                     },
-                  ],
+                  ].filter(Boolean) as any,
                 },
               },
               brandLockup({ logoSize: 56, fontSize: 44 }),
