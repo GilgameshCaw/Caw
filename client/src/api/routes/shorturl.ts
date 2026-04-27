@@ -32,6 +32,18 @@ function getExtension(url: string): string {
   return ''
 }
 
+// If the input is itself a /s/CODE URL, look up the existing entry instead
+// of creating a new one. Without this check, re-shortening a short URL
+// chains them: short → short → short, and the feed renderer eventually
+// resolves the chain to a short URL that gets displayed as link text
+// instead of the user's original long URL.
+async function findExistingShortUrlByCode(url: string): Promise<{ code: string; originalUrl: string; title: string | null; description: string | null; imageUrl: string | null; siteName: string | null } | null> {
+  const m = url.match(/\/s\/([a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)?)(?:[\?#].*)?$/)
+  if (!m) return null
+  const code = m[1]
+  return prisma.shortUrl.findUnique({ where: { code } })
+}
+
 // Generate a random short code
 function generateShortCode(length: number = 6): string {
   let code = ''
@@ -148,6 +160,21 @@ router.post('/', async (req, res) => {
     const ext = getExtension(url)
     const domain = getShortUrlDomain()
 
+    // If the URL is already one of our short URLs, return that entry
+    // verbatim instead of creating a chain.
+    const reused = await findExistingShortUrlByCode(url)
+    if (reused) {
+      return res.json({
+        code: reused.code,
+        shortUrl: `${domain}/s/${reused.code}`,
+        originalUrl: reused.originalUrl,
+        title: reused.title,
+        description: reused.description,
+        imageUrl: reused.imageUrl,
+        siteName: reused.siteName,
+      })
+    }
+
     // Check if URL already exists
     const existing = await prisma.shortUrl.findFirst({
       where: { originalUrl: url }
@@ -237,6 +264,21 @@ router.post('/bulk', async (req, res) => {
         new URL(url) // Validate URL
       } catch {
         continue // Skip invalid URLs
+      }
+
+      // If the URL is already one of our short URLs, reuse the existing
+      // entry — see findExistingShortUrlByCode for the rationale.
+      const reused = await findExistingShortUrlByCode(url)
+      if (reused) {
+        results[url] = {
+          code: reused.code,
+          shortUrl: `${domain}/s/${reused.code}`,
+          title: reused.title || undefined,
+          description: reused.description || undefined,
+          imageUrl: reused.imageUrl || undefined,
+          siteName: reused.siteName || undefined,
+        }
+        continue
       }
 
       // Get extension from original URL

@@ -242,8 +242,12 @@ async function shortenUrlsInText(text: string): Promise<string> {
   const urls = text.match(URL_REGEX)
   if (!urls || urls.length === 0) return text
 
-  // Deduplicate URLs
-  const uniqueUrls = [...new Set(urls)]
+  // Deduplicate URLs and skip already-shortened ones — re-shortening a
+  // /s/CODE produces a chain of short URLs whose terminal originalUrl is
+  // another short URL, which the feed renderer then displays as link text
+  // instead of the actual long URL the user originally typed.
+  const uniqueUrls = [...new Set(urls)].filter(u => !/\/s\/[a-zA-Z0-9]+/.test(u))
+  if (uniqueUrls.length === 0) return text
 
   try {
     const response = await apiFetch('/api/shorturl/bulk', {
