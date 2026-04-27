@@ -10,6 +10,7 @@ import { useViewTracking } from '~/hooks/useViewTracking'
 import { useMutePreferences, shouldFilterPost } from '~/hooks/useMutePreferences'
 import { setFeedRefreshCallback, setFeedItemUpdateCallback, setFeedRefreshVisibleCallback } from '~/hooks/useTxQueueMonitor'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
+import { useHiddenCawsStore } from '~/store/hiddenCawsStore'
 import SuggestedUsers from './SuggestedUsers'
 import { useHostVerification } from '~/hooks/useHostVerification'
 import { LoadingSpinner } from './Skeleton'
@@ -66,6 +67,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   const { isDark } = useTheme()
   const { preferences } = useMutePreferences()
   const blockedUsers = useBlockedUsersStore(s => s.blockedUsers)
+  const hiddenCawonces = useHiddenCawsStore(s => s.hiddenCawonces)
   const cacheKey = feedCacheKey(filter, activeTokenId, apiEndpoint, username)
   const cached = feedCache.get(cacheKey)
   const [items,      setItems]      = useState<CawItem[]>(cached?.items ?? [])
@@ -160,6 +162,9 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       if (shouldFilterPost(item, preferences)) return false
       // Filter out blocked users
       if (blockedUserIds.includes(item.user.tokenId)) return false
+      // Filter out posts the current user just deleted — the on-chain hide
+      // takes 5–60s to land, this keeps them gone immediately.
+      if (item.cawonce != null && hiddenCawonces[Number(item.cawonce)]) return false
       // Filter out DB PENDING posts that match local pending posts (same user + content + parent)
       if (item.status === 'PENDING') {
         if (pendingPostSignatures.has(pendingSig(item))) return false
@@ -228,7 +233,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       result.push(...queued)
     }
     return result
-  }, [items, preferences, blockedUsers, pendingPosts])
+  }, [items, preferences, blockedUsers, pendingPosts, hiddenCawonces])
 
   // Expose refresh method via ref
   useImperativeHandle(ref, () => ({

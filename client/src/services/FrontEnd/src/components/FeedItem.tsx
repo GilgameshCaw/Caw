@@ -33,6 +33,7 @@ import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import { ShareModal } from './ShareModal'
 import { useModalStore } from '~/store/modalStore'
 import { useOptimisticLikesStore } from '~/store/optimisticLikesStore'
+import { useHiddenCawsStore } from '~/store/hiddenCawsStore'
 import { useBookmarksStore } from '~/store/bookmarksStore'
 import { Link, useNavigate } from 'react-router-dom'
 import { User, CawItem } from '~/types'
@@ -151,6 +152,14 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     isRecaw = true;
     isRecawByCurrentUser = !!isCurrentUser;
   }
+
+  // True if the viewer just deleted this post (or its parent, for recaws).
+  // Subscribed to the store so unhide events re-render. Checked before the
+  // main render returns so the component renders nothing.
+  const isHiddenForViewer = useHiddenCawsStore(s =>
+    (useItem.cawonce != null && !!s.hiddenCawonces[Number(useItem.cawonce)]) ||
+    (item.cawonce != null && !!s.hiddenCawonces[Number(item.cawonce)])
+  )
 
   // Compute effective count adjustments: if the server count has moved past
   // the base snapshot (taken when the optimistic adj was applied), the server
@@ -695,6 +704,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
   // Hide the failed caw after a successful retry
   if (retrySucceeded) return null
+
+  // Hide posts the user just deleted (optimistic — server-side hide takes
+  // 5–60s to land via the indexer). Covers Feed lists AND the single-post
+  // page (CawPage), where Feed.tsx's filter doesn't run.
+  if (isHiddenForViewer) return null
 
   return (
     <>
@@ -1690,6 +1704,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         onConfirm={async () => {
           const effectiveTokenId = activeTokenId || activeToken?.tokenId
           if (!effectiveTokenId || !useItem.cawonce) return
+          // Optimistically hide before submitting so the deleter sees the
+          // post disappear immediately. The on-chain hide takes 5–60s to
+          // index; without this, the post stays visible to them in that
+          // window. Indexer-side hide eventually filters server responses
+          // too, so the optimistic entry becomes redundant.
+          useHiddenCawsStore.getState().hideCaw(Number(useItem.cawonce))
           try {
             await signAndSubmit({
               actionType: 'other',
