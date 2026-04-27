@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import { HiOutlineSearch, HiOutlineInformationCircle, HiOutlineCurrencyDollar, HiOutlineTag } from 'react-icons/hi'
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { themeText, themeTextMuted, themeTextSecondary, themeBorder, themeBgSubtle } from '~/utils/theme'
@@ -85,10 +86,17 @@ const Marketplace: React.FC = () => {
       <div className="max-w-5xl mx-auto px-6 py-4">
         {/* Hero */}
         <div className="mb-8">
-          <h1 className={`text-3xl font-bold mb-2 ${themeText(isDark)}`}>Usernames</h1>
-          <p className={`text-sm ${themeTextSecondary(isDark)}`}>
-            Your username is an NFT — create one, or buy and sell on the feeless marketplace.
-          </p>
+          <h1 className={`text-2xl font-bold transition-colors duration-300 ${
+            isDark ? 'text-white' : 'text-black'
+          }`}>
+            Usernames
+          </h1>
+          <div className={`flex items-center gap-2 mt-2 text-sm ${
+            isDark ? 'text-gray-400' : 'text-gray-500'
+          }`}>
+            <HiOutlineInformationCircle className="w-4 h-4 flex-shrink-0" />
+            <span>Your username is an NFT — create one, or buy and sell on the feeless marketplace.</span>
+          </div>
 
           {/* Stats row */}
           {stats && (
@@ -150,7 +158,7 @@ const Marketplace: React.FC = () => {
 
 const StatCard: React.FC<{ label: string; value: string; isDark: boolean }> = ({ label, value, isDark }) => (
   <div className={`px-1 py-6 rounded-lg border transition-all duration-300 flex flex-col items-center justify-between ${
-    isDark ? 'border-white/20 bg-black' : 'border-gray-200 bg-gray-50 shadow-xl'
+    isDark ? 'border-white/20 bg-black' : 'border-gray-200 bg-white'
   }`}>
     <div className={`text-3xl font-bold transition-colors duration-300 text-center flex-1 flex items-center ${
       isDark ? 'text-white' : 'text-black'
@@ -170,7 +178,7 @@ const TabButton: React.FC<{ active: boolean; onClick: () => void; isDark: boolea
 }) => (
   <button
     onClick={onClick}
-    className={`px-4 py-2.5 text-sm font-medium transition cursor-pointer -mb-px border-b-2 ${
+    className={`flex-1 inline-flex items-center justify-center px-4 py-2.5 text-sm font-medium transition cursor-pointer -mb-px border-b-2 ${
       active
         ? (isDark ? 'border-yellow-500 text-yellow-500' : 'border-yellow-600 text-yellow-700')
         : `border-transparent ${themeTextMuted(isDark)} hover:${isDark ? 'text-white' : 'text-gray-900'}`
@@ -197,9 +205,20 @@ const ListingsTab: React.FC = () => {
           {listings.map(l => <ListingCard key={l.id} listing={l} />)}
         </div>
       ) : !loading ? (
-        <div className={`text-center py-16 ${themeBgSubtle(isDark)} rounded-xl ${isDark ? '' : 'shadow-inner'}`}>
-          <p className={`text-lg ${themeTextMuted(isDark)}`}>No listings found</p>
-          <p className={`text-sm mt-1 ${themeTextMuted(isDark)}`}>Try adjusting your filters</p>
+        <div className={`text-center py-12 ${themeBgSubtle(isDark)} rounded-xl`}>
+          <HiOutlineSearch className={`w-12 h-12 mx-auto mb-4 opacity-30 ${
+            isDark ? 'text-white' : 'text-black'
+          }`} />
+          <h3 className={`text-lg font-semibold mb-2 transition-colors duration-300 ${
+            isDark ? 'text-white' : 'text-black'
+          }`}>
+            No listings found
+          </h3>
+          <p className={`transition-colors duration-300 ${
+            isDark ? 'text-gray-400' : 'text-gray-600'
+          }`}>
+            Try adjusting your filters
+          </p>
         </div>
       ) : null}
 
@@ -240,8 +259,20 @@ const SalesTab: React.FC = () => {
           {sales.map(s => <SaleCard key={s.id} sale={s} />)}
         </div>
       ) : !loading ? (
-        <div className={`text-center py-16 ${themeBgSubtle(isDark)} rounded-xl ${isDark ? '' : 'shadow-inner'}`}>
-          <p className={`text-lg ${themeTextMuted(isDark)}`}>No completed sales yet</p>
+        <div className={`text-center py-12 ${themeBgSubtle(isDark)} rounded-xl`}>
+          <HiOutlineCurrencyDollar className={`w-12 h-12 mx-auto mb-4 opacity-30 ${
+            isDark ? 'text-white' : 'text-black'
+          }`} />
+          <h3 className={`text-lg font-semibold mb-2 transition-colors duration-300 ${
+            isDark ? 'text-white' : 'text-black'
+          }`}>
+            No completed sales yet
+          </h3>
+          <p className={`transition-colors duration-300 ${
+            isDark ? 'text-gray-400' : 'text-gray-600'
+          }`}>
+            Completed marketplace sales will appear here.
+          </p>
         </div>
       ) : null}
 
@@ -697,9 +728,18 @@ const MyOffersTab: React.FC = () => {
               })}
             </div>
           ) : (
-            <div className={`text-center py-8 ${themeBgSubtle(isDark)} rounded-xl ${isDark ? '' : 'shadow-inner'}`}>
-              <p className={`text-sm ${themeTextMuted(isDark)}`}>No offers sent</p>
-              <p className={`text-xs mt-1 ${themeTextMuted(isDark)}`}>
+            <div className={`text-center py-12 ${themeBgSubtle(isDark)} rounded-xl`}>
+              <HiOutlineTag className={`w-12 h-12 mx-auto mb-4 opacity-30 ${
+                isDark ? 'text-white' : 'text-black'
+              }`} />
+              <h3 className={`text-lg font-semibold mb-2 transition-colors duration-300 ${
+                isDark ? 'text-white' : 'text-black'
+              }`}>
+                No offers sent
+              </h3>
+              <p className={`transition-colors duration-300 ${
+                isDark ? 'text-gray-400' : 'text-gray-600'
+              }`}>
                 Make an offer on any profile to buy it
               </p>
             </div>
@@ -794,8 +834,20 @@ const MyOffersTab: React.FC = () => {
               })}
             </div>
           ) : (
-            <div className={`text-center py-8 ${themeBgSubtle(isDark)} rounded-xl ${isDark ? '' : 'shadow-inner'}`}>
-              <p className={`text-sm ${themeTextMuted(isDark)}`}>No offers received</p>
+            <div className={`text-center py-12 ${themeBgSubtle(isDark)} rounded-xl`}>
+              <HiOutlineTag className={`w-12 h-12 mx-auto mb-4 opacity-30 ${
+                isDark ? 'text-white' : 'text-black'
+              }`} />
+              <h3 className={`text-lg font-semibold mb-2 transition-colors duration-300 ${
+                isDark ? 'text-white' : 'text-black'
+              }`}>
+                No offers received
+              </h3>
+              <p className={`transition-colors duration-300 ${
+                isDark ? 'text-gray-400' : 'text-gray-600'
+              }`}>
+                Offers from other users will appear here.
+              </p>
             </div>
           )}
         </div>

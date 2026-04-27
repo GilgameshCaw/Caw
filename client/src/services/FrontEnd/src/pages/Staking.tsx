@@ -23,6 +23,8 @@ import { chains } from '~/config/chains'
 import { useTheme } from '~/hooks/useTheme'
 import { HiOutlineTrendingUp, HiOutlineTrendingDown, HiOutlineInformationCircle, HiQuestionMarkCircle } from 'react-icons/hi'
 import Tooltip from '~/components/Tooltip'
+import Avatar from '~/components/Avatar'
+import { getUserAvatar } from '~/utils/defaultAvatar'
 import QuickSignModal from '~/components/modals/QuickSignModal'
 import LayerZeroStatus from '~/components/LayerZeroStatus'
 import StakingRewardsInfo from '~/components/StakingRewardsInfo'
@@ -83,6 +85,7 @@ const Staking = () => {
   const [isStakePending, setIsStakePending] = useState(false)
   const [isApprovePending, setIsApprovePending] = useState(false)
   const [lastStakedAt, setLastStakedAt] = useState<Date | null>(null)
+  const [activeProfile, setActiveProfile] = useState<any>(null)
   const [showQuickSignModal, setShowQuickSignModal] = useState(false)
   const hasSeenPrompt = useSessionKeyStore(s => s.hasSeenPrompt)
   const sessionEnabled = useSessionKeyStore(s => s.enabled)
@@ -169,6 +172,7 @@ const Staking = () => {
         if (data.lastStakedAt) {
           setLastStakedAt(new Date(data.lastStakedAt))
         }
+        setActiveProfile(data)
       } catch (err) {
         console.error('[Staking] Failed to fetch lastStakedAt:', err)
       }
@@ -913,7 +917,7 @@ const Staking = () => {
 
       {/* Requirements */}
       <div className={`p-4 rounded-lg border transition-all duration-300 ${
-        isDark ? 'bg-black border-white/20' : 'bg-gray-50 border-gray-200 shadow-xl'
+        isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
       }`}>
         <div className="flex items-start space-x-3">
           <div className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors duration-300 ${
@@ -940,7 +944,7 @@ const Staking = () => {
 
       {/* Reward Distribution */}
       <div className={`p-4 rounded-lg border transition-all duration-300 ${
-        isDark ? 'bg-black border-white/20' : 'bg-gray-50 border-gray-200 shadow-xl'
+        isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
       }`}>
         <div className="flex items-start space-x-3">
           <div className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors duration-300 ${
@@ -967,7 +971,7 @@ const Staking = () => {
 
       {/* Real-time Rewards */}
       <div className={`p-4 rounded-lg border transition-all duration-300 ${
-        isDark ? 'bg-black border-white/20' : 'bg-gray-50 border-gray-200 shadow-xl'
+        isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
       }`}>
         <div className="flex items-start space-x-3">
           <div className={`w-6 h-6 rounded-full flex items-center justify-center transition-colors duration-300 ${
@@ -999,29 +1003,53 @@ const Staking = () => {
       <div className={`max-w-2xl mx-auto px-6 py-4 ${isDark ? 'bg-black' : 'bg-white'}`}>
         {/* Header */}
         <div className="mb-8">
-          <h1 className={`text-3xl font-bold mb-6 transition-colors duration-300 ${
+          <h1 className={`text-2xl font-bold transition-colors duration-300 ${
             isDark ? 'text-white' : 'text-black'
           }`}>
             CAW Staking
           </h1>
+          <div className={`flex items-center gap-2 mt-2 mb-6 text-sm ${
+            isDark ? 'text-gray-400' : 'text-gray-500'
+          }`}>
+            <HiOutlineInformationCircle className="w-4 h-4 flex-shrink-0" />
+            <span>Stake CAW to earn rewards on every action — power your username and the network.</span>
+          </div>
           <StakingRewardsInfo isDark={isDark} />
         </div>
 
         {/* Active Account */}
         <div className="mb-6">
-          <div className={`inline-block px-4 py-2 rounded-full transition-all duration-300 ${
-            isDark ? 'bg-white/10' : 'bg-gray-200 shadow-xl'
-          }`}>
-            <span className={`text-sm font-medium transition-colors duration-300 ${
-              isDark ? 'text-white' : 'text-black'
+          {activeToken ? (
+            <button
+              onClick={() => navigate(`/users/${mockData.username}`)}
+              className={`inline-flex items-center gap-2 pl-1 pr-4 py-1 rounded-full transition-all duration-300 cursor-pointer hover:opacity-80 ${
+                isDark ? 'bg-white/10 hover:bg-white/15' : 'bg-gray-200 hover:bg-gray-300'
+              }`}
+            >
+              <div className="w-7 h-7 rounded-full overflow-hidden flex-shrink-0">
+                <Avatar
+                  src={getUserAvatar(activeProfile || { username: mockData.username, tokenId: mockData.tokenId })}
+                  alt={mockData.username}
+                  className="w-full h-full"
+                />
+              </div>
+              <span className={`text-sm font-medium transition-colors duration-300 ${
+                isDark ? 'text-white' : 'text-black'
+              }`}>
+                Active Account: @{mockData.username}
+              </span>
+            </button>
+          ) : (
+            <div className={`inline-block px-4 py-2 rounded-full transition-all duration-300 ${
+              isDark ? 'bg-white/10' : 'bg-gray-200'
             }`}>
-              {activeToken ? (
-                <>Active Account: @{mockData.username}</>
-              ) : (
-                'No Active Account'
-              )}
-            </span>
-          </div>
+              <span className={`text-sm font-medium transition-colors duration-300 ${
+                isDark ? 'text-white' : 'text-black'
+              }`}>
+                No Active Account
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Portfolio Overview */}
@@ -1032,7 +1060,7 @@ const Staking = () => {
             Portfolio Overview
           </h3>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 flex flex-col items-center justify-between ${isDark ? 'bg-black' : 'bg-gray-50 shadow-xl'} ${
+            <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 flex flex-col items-center justify-between ${isDark ? 'bg-black' : 'bg-white'} ${
               isDark ? 'border-white/20' : 'border-gray-300'
             }`} style={{ paddingTop: '10px' }}>
               <div className={`text-3xl font-bold transition-colors duration-300 text-center flex-1 flex items-center ${
@@ -1047,7 +1075,7 @@ const Staking = () => {
               </div>
             </div>
 
-            <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 flex flex-col items-center justify-between ${isDark ? 'bg-black' : 'bg-gray-50 shadow-xl'} relative ${
+            <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 flex flex-col items-center justify-between ${isDark ? 'bg-black' : 'bg-white'} relative ${
               isDark ? 'border-white/20' : 'border-gray-300'
             }`} style={{ paddingTop: '10px' }}>
               {/* Question mark icon in top right */}
@@ -1068,7 +1096,7 @@ const Staking = () => {
               </div>
             </div>
 
-            <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 flex flex-col items-center justify-between ${isDark ? 'bg-black' : 'bg-gray-50 shadow-xl'} ${
+            <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 flex flex-col items-center justify-between ${isDark ? 'bg-black' : 'bg-white'} ${
               isDark ? 'border-white/20' : 'border-gray-300'
             }`} style={{ paddingTop: '10px' }}>
               <div className={`text-3xl font-bold transition-colors duration-300 text-center flex-1 flex items-center ${
@@ -1083,7 +1111,7 @@ const Staking = () => {
               </div>
             </div>
 
-            <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 flex flex-col items-center justify-between ${isDark ? 'bg-black' : 'bg-gray-50 shadow-xl'} ${
+            <div className={`px-1 pb-1 rounded-lg border transition-all duration-300 flex flex-col items-center justify-between ${isDark ? 'bg-black' : 'bg-white'} ${
               isDark ? 'border-white/20' : 'border-gray-300'
             }`} style={{ paddingTop: '10px' }}>
               <div className={`text-3xl font-bold transition-colors duration-300 text-center flex-1 flex items-center ${
@@ -1104,13 +1132,13 @@ const Staking = () => {
         <div className="mb-6">
           <div className={`relative p-1 rounded-xl transition-all duration-300 ${
             isDark ? 'bg-white/10' : 'bg-gray-200'
-          } max-w-md mx-auto`}>
+          }`}>
             <div className="flex relative">
                                 <button
                     onClick={() => navigate('/staking')}
                     className={`flex-1 py-2 px-2 sm:px-6 text-center font-medium text-lg transition-all duration-200 flex items-center justify-center space-x-2 relative z-10 cursor-pointer ${
                       activeTab === 'stake'
-                        ? `${isDark ? 'bg-white text-black' : 'bg-black text-white'} rounded-lg shadow-lg`
+                        ? `${isDark ? 'bg-white text-black' : 'bg-black text-white'} rounded-lg`
                         : `${isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-black'}`
                     }`}
                   >
@@ -1122,7 +1150,7 @@ const Staking = () => {
                     onClick={() => navigate('/staking/unstake')}
                     className={`flex-1 py-2 px-2 sm:px-6 text-center font-medium text-lg transition-all duration-200 flex items-center justify-center space-x-2 relative z-10 cursor-pointer ${
                       activeTab === 'unstake'
-                        ? `${isDark ? 'bg-white text-black' : 'bg-black text-white'} rounded-lg shadow-lg`
+                        ? `${isDark ? 'bg-white text-black' : 'bg-black text-white'} rounded-lg`
                         : `${isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-black'}`
                     }`}
                   >
@@ -1134,7 +1162,7 @@ const Staking = () => {
                     onClick={() => navigate('/staking/info')}
                     className={`flex-1 py-2 px-2 sm:px-6 text-center font-medium text-lg transition-all duration-200 flex items-center justify-center space-x-2 relative z-10 cursor-pointer ${
                       activeTab === 'info'
-                        ? `${isDark ? 'bg-white text-black' : 'bg-black text-white'} rounded-lg shadow-lg`
+                        ? `${isDark ? 'bg-white text-black' : 'bg-black text-white'} rounded-lg`
                         : `${isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-black'}`
                     }`}
                   >

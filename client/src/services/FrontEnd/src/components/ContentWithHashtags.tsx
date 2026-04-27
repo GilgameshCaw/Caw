@@ -93,13 +93,17 @@ const ShortUrlVideo: React.FC<{
   if (!originalUrl || videoErrors.has(originalUrl)) return null
 
   return (
-    <div className="my-2 max-w-full">
+    <div className="my-2 w-full max-w-full">
       <video
         src={originalUrl}
+        autoPlay
         controls
-        className="max-w-full max-h-96 min-w-[100px] rounded-lg"
+        className="w-full max-h-[32rem] min-w-[100px] rounded-lg"
+        loop
+        muted
         onError={() => onError(originalUrl)}
         onClick={(e) => e.stopPropagation()}
+        playsInline
       />
     </div>
   )

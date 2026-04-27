@@ -49,7 +49,7 @@ router.get('/:tag/caws', async (req, res) => {
       include: {
         caw: {
           include: {
-            user: { select: { tokenId: true, username: true, image: true } },
+            user: { select: { tokenId: true, username: true, displayName: true, image: true, avatarUrl: true, defaultAvatarId: true } },
             likes: currentUserId
               ? { where: { userId: currentUserId }, select: { userId: true, pending: true } }
               : false,
@@ -61,7 +61,7 @@ router.get('/:tag/caws', async (req, res) => {
             },
             parent: {
               include: {
-                user: { select: { tokenId: true, username: true, image: true } },
+                user: { select: { tokenId: true, username: true, displayName: true, image: true, avatarUrl: true, defaultAvatarId: true } },
                 hashtags: {
                   include: { hashtag: { select: { name: true } } }
                 }

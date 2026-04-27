@@ -14,6 +14,7 @@ import { useActiveToken } from "~/store/tokenDataStore";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { useAccount } from "wagmi";
 import cawLogo from '~/assets/images/caw-logo.png';
+import { themeLayoutShell } from '~/utils/theme'
 
 const BoidsBg = lazy(() => import('~/components/BoidsBg'))
 
@@ -40,13 +41,13 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
     {/* Fixed backdrop so scrolling doesn't reveal the root gradient */}
     {!isDark && !hideSidebars && (
       <div className="fixed inset-0 z-0 flex justify-center pointer-events-none">
-        <div className="w-full max-w-[1050px] bg-white shadow-[0_0_40px_rgba(0,0,0,0.08)]" />
+        <div className={`w-full max-w-[1050px] ${themeLayoutShell(isDark)}`} />
       </div>
     )}
     <div className={`min-h-screen w-full flex transition-colors duration-300 relative z-[1] ${
       hideSidebars
         ? (isDark ? 'bg-black' : 'bg-gray-100')
-        : `max-w-[1050px] m-auto ${isDark ? 'bg-black' : 'bg-white shadow-[0_0_40px_rgba(0,0,0,0.08)]'}`
+        : `max-w-[1050px] m-auto ${themeLayoutShell(isDark)}`
     }`}>
       {/* Mobile Header */}
       {!hideSidebars && (
@@ -62,11 +63,11 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
             {isMobileMenuOpen ? <HiOutlineX className="w-6 h-6" /> : <HiOutlineMenu className="w-6 h-6" />}
           </button>
 
-          <Link to="/home" className="flex items-center justify-center w-full">
+          <Link to="/home" className="caw-logo-lockup flex items-center justify-center w-full">
             <img
               src={cawLogo}
               alt="CAW Logo"
-              className="w-10 h-10 object-contain"
+              className="caw-logo-mark w-10 h-10 object-contain"
             />
           </Link>
         </div>
@@ -147,14 +148,15 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
           isDark ? 'bg-black/10 border-white/10' : 'bg-white/10 border-gray-200'
         }`}>
           <div className="max-w-3xl mx-auto flex items-center justify-between px-5 py-3">
-            <Link to="/welcome" className="flex items-center gap-2.5">
-              <img src={cawLogo} alt="CAW" className="w-12 h-12 object-contain" />
+            <Link to="/welcome" className="caw-logo-lockup flex items-center gap-2.5">
+              <img src={cawLogo} alt="CAW" className="caw-logo-mark w-12 h-12 object-contain" />
               <span
                 className="text-4xl"
                 style={{
-                  fontFamily: 'Fraunces',
+                  fontFamily: 'Inter, sans-serif',
+                  fontWeight: 800,
                   color: '#ebc046',
-                  letterSpacing: '5px',
+                  letterSpacing: '3px',
                   textShadow: '0 1px 2px rgba(0, 0, 0, 0.6), 0 0 4px rgba(0, 0, 0, 0.3)',
                 }}
               >

@@ -1421,7 +1421,7 @@ export const Profile: React.FC = () => {
           onClick={() => { setIsEditModalOpen(false); setProfileError(null) }}
         >
           <div
-            className={`w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl transition-all duration-300 ${
+            className={`w-full max-w-2xl max-h-[90vh] overflow-y-auto thin-scrollbar rounded-2xl transition-all duration-300 ${
               isDark ? 'bg-black border border-yellow-500/30' : 'bg-white border border-gray-200'
             }`}
             onClick={(e) => e.stopPropagation()}

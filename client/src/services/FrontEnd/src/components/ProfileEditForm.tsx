@@ -341,7 +341,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
 
   return (
     <div className="flex flex-col">
-      <div className={`${containerSpacing} ${scrollFieldsMaxHeight ? `min-[800px]:overflow-y-auto min-[800px]:max-h-[50vh] min-[800px]:pr-2` : ''}`}>
+      <div className={`${containerSpacing} ${scrollFieldsMaxHeight ? `min-[800px]:overflow-y-auto min-[800px]:max-h-[50vh] min-[800px]:pr-2 thin-scrollbar` : ''}`}>
       {/* Hidden file inputs */}
       <input
         id="profile-form-avatar-upload"

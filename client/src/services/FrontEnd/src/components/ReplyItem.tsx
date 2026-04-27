@@ -249,10 +249,10 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
                   }`}
                   onClick={e => { e.preventDefault(); e.stopPropagation(); setShowRecawMenu(show => !show) }}
                 >
-                  <Recaw className={`w-5 h-5 transition-all duration-300 ${
+                  <Recaw className={`w-5 h-5 translate-y-1 transition-all duration-300 ${
                     isRecawed ? 'text-green-500' : ''
                   }`} />
-                  <span className={`text-sm transition-colors duration-300 ${
+                  <span className={`text-sm translate-y-1 transition-colors duration-300 ${
                     isRecawed ? 'text-green-500' : ''
                   }`}>{item.recawCount}</span>
                 </button>
@@ -274,7 +274,7 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
                       }`}
                       onClick={e => { e.preventDefault(); e.stopPropagation(); setShowRecawMenu(false); handleRecaw(e) }}
                     >
-                      <Recaw className={`w-4 h-4 transition-all duration-300 ${
+                      <Recaw className={`w-4 h-4 translate-y-0.5 transition-all duration-300 ${
                         isDark ? 'text-white' : 'text-gray-600'
                       }`} /> Repost
                     </button>
@@ -351,4 +351,3 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
 }
 
 export default ReplyItem
-

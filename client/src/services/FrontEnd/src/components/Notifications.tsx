@@ -15,7 +15,9 @@ import {
   HiBell,
   HiCheck,
   HiCurrencyDollar,
-  HiTag
+  HiTag,
+  HiOutlineBell,
+  HiOutlineAtSymbol
 } from 'react-icons/hi'
 import Tooltip from '~/components/Tooltip'
 import { useNotificationUnreadStore } from '~/store/notificationUnreadStore'
@@ -759,13 +761,26 @@ const Notifications: React.FC = () => {
         </div>
       ) : notifications.length === 0 ? (
         <div className="text-center py-12">
-          <HiBell className={`w-12 h-12 mx-auto mb-4 ${
-            isDark ? 'text-white/20' : 'text-gray-300'
-          }`} />
-          <p className={isDark ? 'text-white/60' : 'text-gray-600'}>
+          {activeTab === 'mentions' ? (
+            <HiOutlineAtSymbol className={`w-12 h-12 mx-auto mb-4 opacity-30 ${
+              isDark ? 'text-white' : 'text-black'
+            }`} />
+          ) : (
+            <HiOutlineBell className={`w-12 h-12 mx-auto mb-4 opacity-30 ${
+              isDark ? 'text-white' : 'text-black'
+            }`} />
+          )}
+          <h3 className={`text-lg font-semibold mb-2 transition-colors duration-300 ${
+            isDark ? 'text-white' : 'text-black'
+          }`}>
+            {activeTab === 'mentions' ? 'No mentions yet' : 'No notifications yet'}
+          </h3>
+          <p className={`transition-colors duration-300 ${
+            isDark ? 'text-gray-400' : 'text-gray-600'
+          }`}>
             {activeTab === 'mentions'
-              ? 'No mentions yet'
-              : 'No notifications yet'}
+              ? "When someone mentions you, it'll show up here."
+              : "You're all caught up."}
           </p>
         </div>
       ) : (

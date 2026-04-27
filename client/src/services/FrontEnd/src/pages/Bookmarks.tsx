@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react'
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
-import { HiOutlineSearch, HiOutlineInformationCircle } from 'react-icons/hi'
+import { HiOutlineSearch, HiOutlineInformationCircle, HiOutlineBookmark } from 'react-icons/hi'
 import FeedItem from '~/components/FeedItem'
 import type { CawItem } from '~/types'
 import { apiFetch } from '~/api/client'
@@ -147,11 +147,9 @@ const BookmarksPage: React.FC = () => {
         {/* Empty State */}
         {!loading && bookmarkedPosts.length === 0 && (
           <div className="text-center py-12">
-            <div className={`w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center ${
-              isDark ? 'bg-gray-800' : 'bg-gray-200'
-            }`}>
-              <span className="text-2xl">🔖</span>
-            </div>
+            <HiOutlineBookmark className={`w-12 h-12 mx-auto mb-4 opacity-30 ${
+              isDark ? 'text-white' : 'text-black'
+            }`} />
             <h3 className={`text-lg font-semibold mb-2 transition-colors duration-300 ${
               isDark ? 'text-white' : 'text-black'
             }`}>
