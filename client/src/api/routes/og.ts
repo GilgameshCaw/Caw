@@ -126,6 +126,7 @@ function profileCardTree(opts: {
   followerCount: number
   followingCount: number
   cawCount: number
+  likesReceivedCount: number
 }) {
   const hasDisplayName = !!opts.displayName && opts.displayName.trim() !== ''
   return {
@@ -222,7 +223,8 @@ function profileCardTree(opts: {
             children: [
               statTile(fmtCount(opts.followerCount), opts.followerCount === 1 ? 'Follower' : 'Followers'),
               statTile(fmtCount(opts.followingCount), 'Following'),
-              statTile(fmtCount(opts.cawCount), opts.cawCount === 1 ? 'Caw' : 'Caws'),
+              statTile(fmtCount(opts.cawCount), opts.cawCount === 1 ? 'Post' : 'Posts'),
+              statTile(fmtCount(opts.likesReceivedCount), 'Likes'),
             ],
           },
         },
@@ -527,7 +529,8 @@ router.get('/image/profile/:username', async (req, res) => {
     select: {
       tokenId: true, username: true, displayName: true, bio: true,
       avatarUrl: true, defaultAvatarId: true,
-      followerCount: true, followingCount: true, cawCount: true,
+      followerCount: true, followingCount: true,
+      cawCount: true, likesReceivedCount: true,
     },
   })
   if (!user) return res.redirect(302, '/api/og/image/default')
@@ -539,10 +542,11 @@ router.get('/image/profile/:username', async (req, res) => {
   const followersDisp = fmtCount(user.followerCount)
   const followingDisp = fmtCount(user.followingCount)
   const cawsDisp = fmtCount(user.cawCount)
+  const likesDisp = fmtCount(user.likesReceivedCount)
   const inputHash = crypto.createHash('sha1')
     .update([
       user.displayName, user.bio, user.avatarUrl, user.defaultAvatarId,
-      followersDisp, followingDisp, cawsDisp,
+      followersDisp, followingDisp, cawsDisp, likesDisp,
     ].join('|'))
     .digest('hex').slice(0, 8)
   const cacheKey = `profile-${user.tokenId}-${inputHash}`
@@ -555,6 +559,7 @@ router.get('/image/profile/:username', async (req, res) => {
     followerCount: user.followerCount,
     followingCount: user.followingCount,
     cawCount: user.cawCount,
+    likesReceivedCount: user.likesReceivedCount,
   })))
 })
 
