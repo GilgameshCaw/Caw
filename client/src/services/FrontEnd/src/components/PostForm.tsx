@@ -1,6 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useSignAndSubmitAction, buildTypedData, TYPES } from '../api/actions'
+
+/** Hard cap on thread length. Must match the API cap in
+ *  `client/src/api/routes/actions.ts` (POST /api/actions/batch). The cap
+ *  exists for both UX (64 posts is more than enough) and to keep the
+ *  ActionBatch sig safely below the validator's 120KB calldata bound —
+ *  see the comment on the API limit for the full safety reasoning. */
+const MAX_THREAD_LENGTH = 64
 import { useTokenDataStore, useActiveToken } from "~/store/tokenDataStore";
 import { useAccount, useConnections, useSignTypedData } from "wagmi";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
@@ -677,6 +684,13 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         // Split into thread chunks if needed — mirrors the immediate-post path.
         const chunks = splitTextIntoChunks(finalText, includePageIndicators)
 
+        // Same MAX_THREAD_LENGTH guard as the immediate-post path. Catch this
+        // before reserving cawonces so a bounced submit doesn't leave a gap
+        // in the local cawonce store. The submit button is also disabled
+        // when over the cap (see threadTooLong/threadTooLong2 below) — this
+        // is defense-in-depth for paste / programmatic flows.
+        if (chunks.length > MAX_THREAD_LENGTH) return
+
         // Reserve sequential cawonces for the whole thread up front so async
         // syncs don't reuse them. (Same approach as the immediate-post path.)
         const startCawonce = activeToken?.cawonce ?? 0
@@ -927,8 +941,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       }
     }
 
-    // Hard limit on thread length to prevent oversized API requests
-    if (chunks.length > 300) return
+    // Hard limit on thread length. The API + contract both reject anything
+    // over MAX_THREAD_LENGTH. The submit button is disabled when chunkCount
+    // exceeds the cap and an inline message is shown — this is the last-line
+    // defense for any path that bypasses the button (paste, programmatic).
+    if (chunks.length > MAX_THREAD_LENGTH) return
 
     // Pre-check: verify the user has enough CAW budget (staked + pending deposit
     // - in-flight spend) to cover all thread chunks. Without this, a multi-post
@@ -1418,7 +1435,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 // triggers the connect flow and should say "Post".
                 const wrongWallet = isConnected && !isTokenOwner && !hasActiveSession && activeToken?.tokenId
                 const tooltipText = wrongWallet ? 'Please switch to the correct wallet' : ''
-                const threadTooLong = isThreadMode && chunkCount > 300
+                const threadTooLong = isThreadMode && chunkCount > MAX_THREAD_LENGTH
                 const isDisabled = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isSubmitting || isScheduling || threadTooLong
                 const btn = (
                   <button
@@ -1435,8 +1452,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             }
           </div>
 
-        {isThreadMode && chunkCount > 300 && (
-          <p className="text-xs text-red-500 mt-1 text-right">Thread exceeds 300 post limit. Shorten your text to continue.</p>
+        {isThreadMode && chunkCount > MAX_THREAD_LENGTH && (
+          <p className="text-xs text-red-500 mt-1 text-right">Thread exceeds {MAX_THREAD_LENGTH} post limit. Shorten your text to continue.</p>
         )}
 
         {/* Mobile Thread Info */}
@@ -1791,7 +1808,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             {(() => {
                 const wrongWallet2 = isConnected && !isTokenOwner && !hasActiveSession && activeToken?.tokenId
                 const tooltipText2 = wrongWallet2 ? 'Please switch to the correct wallet' : ''
-                const threadTooLong2 = isThreadMode && chunkCount > 300
+                const threadTooLong2 = isThreadMode && chunkCount > MAX_THREAD_LENGTH
                 const isDisabled2 = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isSubmitting || isScheduling || threadTooLong2
                 const btn2 = (
                   <button
@@ -1809,8 +1826,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           </div>
         </div>
 
-        {isThreadMode && chunkCount > 300 && (
-          <p className="text-xs text-red-500 mt-1 text-right">Thread exceeds 300 post limit. Shorten your text to continue.</p>
+        {isThreadMode && chunkCount > MAX_THREAD_LENGTH && (
+          <p className="text-xs text-red-500 mt-1 text-right">Thread exceeds {MAX_THREAD_LENGTH} post limit. Shorten your text to continue.</p>
         )}
 
         {/* Desktop Thread Info */}
