@@ -7,8 +7,9 @@ import { prisma }  from '../../prismaClient'
 import getActionType from '../../abi/getActionType'
 import { cawActionsAbi } from '../../abi/generated'
 import { CAW_ACTIONS_ADDRESS, CAW_ADDRESS, WETH_ADDRESS, CAW_ACTIONS_ARCHIVE_ADDRESS, CAW_CHALLENGE_RELAY_ADDRESS } from '../../abi/addresses'
+import { deployments, type Env, type ChainKey } from '../../abi/deployments'
 import { WebSocketProvider, JsonRpcProvider, Contract, Wallet, Interface, keccak256, solidityPacked, AbiCoder } from 'ethers'
-import { packActions, packSignatures, packGroupedSignatures, bytesToHex, getPackedActionSlices, unpackActions } from '../../utils/packActions'
+import { packActions, packSignatures, packGroupedSignatures, bytesToHex, getPackedActionSlices, unpackActions, unpackPerActionSigs } from '../../utils/packActions'
 import { buildCheckpointMerkleTree } from '../../utils/checkpointMerkle'
 import { tryClaimChallengeLock, releaseChallengeLock } from '../../utils/challengeLock'
 import { foldCheckpointHashes } from '../../utils/foldCheckpointHashes'
@@ -2188,7 +2189,44 @@ console.log("succeededKeys", succeededKeys)
     // Optimistic replication: direct L2b submission with stake + fraud proofs
     // ================================================================
 
-    const OPTIMISTIC_ARCHIVE_ADDRESS = CAW_ACTIONS_ARCHIVE_ADDRESS
+    // Map REPLICATION_CHAIN → { chainId, env, chainKey } so we can resolve the
+    // archive address from deployments.ts at runtime. The per-install
+    // CAW_ACTIONS_ARCHIVE_ADDRESS in addresses.ts is the *storage-chain*
+    // archive (same chain as the client's CawActions), which is the wrong
+    // contract when an operator replicates *across* chains — the most
+    // common case. Reading deployments[env][chainKey].CawActionsArchive
+    // gives the archive that lives on the chain we're actually submitting to.
+    const REPLICATION_CHAIN_META: Record<string, { chainId: number; env: Env; chainKey: ChainKey }> = {
+      'arbitrum-sepolia': { chainId: 421614, env: 'testnet', chainKey: 'L2b' },
+      'arbitrum-one':     { chainId: 42161,  env: 'mainnet', chainKey: 'L2b' },
+      'arbitrum':         { chainId: 42161,  env: 'mainnet', chainKey: 'L2b' },
+      'base-sepolia':     { chainId: 84532,  env: 'testnet', chainKey: 'L2'  },
+      'base':             { chainId: 8453,   env: 'mainnet', chainKey: 'L2'  },
+    }
+    function resolveReplicationArchive(replicationChain: string): { address: string; chainId: number } {
+      const meta = REPLICATION_CHAIN_META[replicationChain]
+      if (!meta) {
+        throw new Error(
+          `REPLICATION_CHAIN="${replicationChain}" — supported keys: ${Object.keys(REPLICATION_CHAIN_META).join(', ')}`
+        )
+      }
+      const block = deployments[meta.env]?.[meta.chainKey]
+      const address = block?.CawActionsArchive
+      if (!address) {
+        throw new Error(
+          `No CawActionsArchive deployment for ${meta.env}/${meta.chainKey} ` +
+          `(REPLICATION_CHAIN=${replicationChain}) in client/src/abi/deployments.ts`
+        )
+      }
+      return { address, chainId: meta.chainId }
+    }
+
+    // Resolved once getL2bContracts() runs. The fallback to the install-time
+    // constant is for CLI / debug paths that read OPTIMISTIC_ARCHIVE_ADDRESS
+    // before getL2bContracts() has been called — only correct when the
+    // operator's storage chain happens to equal their replication chain
+    // (rare, but harmless when it's true).
+    let OPTIMISTIC_ARCHIVE_ADDRESS = CAW_ACTIONS_ARCHIVE_ADDRESS
     // One-shot guard so the CLI stake-setup prompt prints once per process,
     // not every 30s when the replicator loop re-fires.
     let underStakedWarned = false
@@ -2259,19 +2297,13 @@ console.log("succeededKeys", succeededKeys)
       const l2bRpcUrl = process.env.REPLICATION_RPC || process.env.L2B_RPC_URL
       if (!l2bRpcUrl) throw new Error('REPLICATION_RPC not set — required for optimistic replication')
 
-      // Map REPLICATION_CHAIN → chainId. Today only Arbitrum Sepolia ships
-      // with deployed contracts. When other chains come online, extend this
-      // map (and OPTIMISTIC_ARCHIVE_ADDRESS will need to become a per-chain
-      // lookup too — see the multi-chain backlog item).
-      const chainIdByKey: Record<string, number> = {
-        'arbitrum-sepolia': 421614,
-        'arbitrum-one': 42161,
-      }
+      // Resolve REPLICATION_CHAIN → { chainId, archive address } via the
+      // single source of truth in deployments.ts. Throws if the operator
+      // chose an unsupported chain or there's no archive deployed there.
       const replicationChain = process.env.REPLICATION_CHAIN || 'arbitrum-sepolia'
-      const chainId = chainIdByKey[replicationChain]
-      if (!chainId) {
-        throw new Error(`REPLICATION_CHAIN="${replicationChain}" — supported keys: ${Object.keys(chainIdByKey).join(', ')}`)
-      }
+      const resolved = resolveReplicationArchive(replicationChain)
+      OPTIMISTIC_ARCHIVE_ADDRESS = resolved.address
+      const chainId = resolved.chainId
 
       l2bProvider = makeJsonRpcProvider(l2bRpcUrl, chainId)
 
@@ -2382,10 +2414,17 @@ console.log("succeededKeys", succeededKeys)
 
         const sigBytes = new Uint8Array((sigsHex.startsWith('0x') ? sigsHex.slice(2) : sigsHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
 
+        // Wire format is grouped: [uint16 numGroups][per group: 2-byte size +
+        // 65-byte sig], with batch groups sharing one (v,r,s) across multiple
+        // actions. Expand to one entry per action so each action gets the r
+        // value the on-chain hash chain folded in (see CawActions.sol's
+        // _advanceHashChain — batch groups reuse the group's r per action).
+        const perActionSigs = unpackPerActionSigs(sigBytes, unpackedActions.length)
+
         for (let i = 0; i < unpackedActions.length; i++) {
           const a = unpackedActions[i]
           if (a.clientId !== clientId) continue
-          const sigOff = i * 65
+          const sig = perActionSigs[i]
           orderedEntries.push({
             blockNumber: tx.blockNumber!,
             txIndex: tx.index!,
@@ -2401,9 +2440,9 @@ console.log("succeededKeys", succeededKeys)
               amounts: a.amounts.map((x: any) => BigInt(x)),
               text: a.text,
             },
-            v: sigBytes[sigOff],
-            r: '0x' + Array.from(sigBytes.slice(sigOff + 1, sigOff + 33)).map(b => b.toString(16).padStart(2, '0')).join(''),
-            s: '0x' + Array.from(sigBytes.slice(sigOff + 33, sigOff + 65)).map(b => b.toString(16).padStart(2, '0')).join(''),
+            v: sig.v,
+            r: sig.r,
+            s: sig.s,
           })
         }
       }

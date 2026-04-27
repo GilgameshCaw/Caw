@@ -125,6 +125,52 @@ export function packGroupedSignatures(
   return buf
 }
 
+/**
+ * Inverse of packGroupedSignatures: walk the grouped sigs blob and emit one
+ * entry per action — each group's (v, r, s) repeated `groupSize` times. This
+ * matches the on-chain hash-chain convention (CawActions._processOneGroup
+ * uses the group's r for every action in the group), so the validator can
+ * reconstruct the per-action r[] needed for replication submission and the
+ * resolveChallenge / slashIncoherentRoot paths.
+ *
+ * Throws if the wire format is malformed (truncated, group count mismatch,
+ * etc.) — fail loudly rather than silently producing wrong sigs.
+ */
+export function unpackPerActionSigs(
+  sigs: Uint8Array,
+  expectedActionCount: number,
+): Array<{ v: number; r: string; s: string }> {
+  if (sigs.length < 2) throw new Error('Sigs too short: missing numGroups header')
+  const numGroups = (sigs[0] << 8) | sigs[1]
+  if (numGroups === 0) throw new Error('Sigs has zero groups')
+  if (numGroups > expectedActionCount) {
+    throw new Error(`numGroups=${numGroups} exceeds expectedActionCount=${expectedActionCount}`)
+  }
+
+  const out: Array<{ v: number; r: string; s: string }> = []
+  let pos = 2
+  for (let g = 0; g < numGroups; g++) {
+    if (pos + 67 > sigs.length) {
+      throw new Error(`Sigs truncated at group ${g}: need ${pos + 67} bytes, have ${sigs.length}`)
+    }
+    const groupSize = (sigs[pos] << 8) | sigs[pos + 1]
+    if (groupSize === 0) throw new Error(`Group ${g} has zero size`)
+    const v = sigs[pos + 2]
+    const r = bytesToHex(sigs.slice(pos + 3, pos + 35))
+    const s = bytesToHex(sigs.slice(pos + 35, pos + 67))
+    for (let i = 0; i < groupSize; i++) out.push({ v, r, s })
+    pos += 67
+  }
+
+  if (out.length !== expectedActionCount) {
+    throw new Error(
+      `Sig coverage mismatch: ${numGroups} groups expanded to ${out.length} actions, ` +
+      `expected ${expectedActionCount}`
+    )
+  }
+  return out
+}
+
 export function bytesToHex(bytes: Uint8Array): string {
   return '0x' + Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
 }
