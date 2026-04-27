@@ -347,8 +347,16 @@ contract CawActions is Ownable {
       emit ActionsProcessed(packedActions);
     }
 
-    if (sc.withdrawCount > 0 && withdrawFee > 0) {
+    // Mirror processActions: _handleWithdrawals always runs when there are
+    // withdraws so the per-action withdraw bookkeeping isn't lost; the
+    // _executeWithdrawals call is gated on a non-zero LZ fee (zero-fee
+    // clients in bypassLZ mode currently still skip the L1 hop here — see
+    // the matching note in processActions about that being a known
+    // tradeoff for fee-less LZ deployments).
+    if (sc.withdrawCount > 0) {
       _handleWithdrawals(sc.withdrawBitmap, sc.withdrawCount, actionCount, packedActions);
+    }
+    if (sc.withdrawCount > 0 && withdrawFee > 0) {
       _executeWithdrawals(withdrawFee, withdrawLzTokenAmount);
     }
   }
@@ -791,6 +799,32 @@ contract CawActions is Ownable {
   // ============================================
 
   /// @dev Scan packed actions to collect withdrawal IDs and amounts.
+  ///
+  /// SECURITY INVARIANT (audited 2026-04-27):
+  ///   This function reads `firstAmount` directly from calldata at the
+  ///   amounts-array offset, INCLUDING the case where `ac == 0`. The audit
+  ///   comment inside the assembly explains that ac==0 reads the textLength
+  ///   bytes harmlessly because the value is only used when `withdrawBitmap`
+  ///   marks the action as WITHDRAW. That safety relies on a hard ordering:
+  ///
+  ///     1. processActions / safeProcessActions runs the per-action loop
+  ///        (_processOneGroup → _applyAction → _distributeAmountsMem).
+  ///     2. _distributeAmountsMem requires that WITHDRAW actions have at
+  ///        least one entry in `amounts` (since `numAmounts == numRecipients
+  ///        + 1` is enforced when amounts are present).
+  ///     3. Only after that loop completes successfully does
+  ///        _handleWithdrawals run.
+  ///
+  ///   So by the time we reach this function, every action whose bit is set
+  ///   in `withdrawBitmap` is GUARANTEED to have a non-empty amounts array,
+  ///   and the calldataload at the amounts offset reads a real amount.
+  ///
+  ///   IF YOU REORDER THE CALLS — e.g. move _handleWithdrawals before the
+  ///   per-action loop, or skip the spend path for any reason — this
+  ///   invariant breaks and an attacker can credit themselves a withdrawal
+  ///   amount derived from the textLength field. DO NOT do that without
+  ///   adding an explicit per-action `ac > 0` check inside this loop, OR
+  ///   passing pre-validated amounts forward from _distributeAmountsMem.
   function _handleWithdrawals(
     uint256 withdrawBitmap,
     uint256 withdrawCount,

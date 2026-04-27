@@ -260,6 +260,29 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
   /// @dev Emitted when an LZ challenge message could not be processed — kept
   ///      so the channel stays alive. Off-chain tooling can resubmit via a
   ///      fresh relayChallenge call once the cause is identified.
+  ///
+  /// RECOVERY (audited 2026-04-27):
+  ///   The try/catch around _processChallenge prevents an LZ channel stall
+  ///   if a single message reverts, but it ALSO swallows legitimate failures
+  ///   (out-of-gas at the executor, malformed payload, future-added storage
+  ///   checks). When a fraud proof is dropped, `challengeHash` and
+  ///   `challengeDelivered` are NOT set for the affected checkpoint, and
+  ///   resolveChallenge will revert with "No challenge delivered" until
+  ///   someone re-relays.
+  ///
+  ///   The recovery path is to call CawChallengeRelay.relayChallenge or
+  ///   .relayChallengeBatch again with the same (submissionId, clientId,
+  ///   checkpointId(s)). The relay re-reads from CawActions checkpoint
+  ///   storage (which is permanent) and emits a fresh LZ message — anyone
+  ///   can call it, no operator privileges required. The archive's executor
+  ///   gas option (CHALLENGE_GAS_BASE = 60_000 + CHALLENGE_GAS_PER_CP =
+  ///   55_000 per checkpoint) provides ~30% headroom over the worst-case
+  ///   _processChallenge cost (2 SSTOREs + event per cp, ~50k gas each), so
+  ///   gas exhaustion at the executor should not be the failure mode in
+  ///   practice. If it ever is, callers can pre-quote a higher gas option
+  ///   (the relay's gas constants are not configurable post-deploy, so the
+  ///   safe path is to redeploy a new relay with higher constants and peer
+  ///   it via setPeer for a fresh eid — existing peers are immutable).
   event ChallengeDeliveryFailed(bytes payload, bytes reason);
 
   /// @dev Receives correct checkpoint hash from CawChallengeRelay via LZ.
@@ -274,6 +297,9 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
   ///      until someone manually retries the stuck nonce. With this
   ///      isolation, a single bad message is a logged failure, not an
   ///      infrastructure outage.
+  ///
+  ///      RECOVERY: see the ChallengeDeliveryFailed docstring above for the
+  ///      re-relay flow when this catch fires.
   function _lzReceive(
     Origin calldata,
     bytes32,
