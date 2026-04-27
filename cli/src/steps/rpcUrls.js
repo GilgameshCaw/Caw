@@ -42,6 +42,47 @@ function isPublicRpc(url) {
   }
 }
 
+// Hex → human-readable chain name. Used to flag RPCs that don't match the
+// expected chain (e.g. operator pastes an Ethereum mainnet URL into the
+// Arbitrum Sepolia prompt). Keep this list in sync with REPLICATION_CHAINS
+// and STORAGE_CHAINS in clientCreator.js when new chains land.
+const CHAIN_ID_NAMES = {
+  1: 'Ethereum Mainnet',
+  10: 'Optimism',
+  137: 'Polygon',
+  8453: 'Base',
+  42161: 'Arbitrum One',
+  // Testnets
+  11155111: 'Ethereum Sepolia',
+  84532: 'Base Sepolia',
+  421614: 'Arbitrum Sepolia',
+  11155420: 'Optimism Sepolia',
+}
+
+// Probe an RPC URL with eth_chainId. Returns the decimal chain ID, or null
+// if the call fails (network error, malformed response, timeout, etc.).
+// Caller treats null as "couldn't verify" — we don't punish the operator
+// for an offline RPC during install, just for one we proved is wrong.
+async function probeChainId(url, timeoutMs = 4000) {
+  try {
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), timeoutMs)
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_chainId', params: [] }),
+      signal: ctrl.signal,
+    })
+    clearTimeout(t)
+    if (!res.ok) return null
+    const data = await res.json()
+    if (typeof data?.result !== 'string') return null
+    return parseInt(data.result, 16)
+  } catch {
+    return null
+  }
+}
+
 /**
  * Collect an HTTP (required) + WSS (optional) RPC pair for a chain.
  *
@@ -57,22 +98,60 @@ function isPublicRpc(url) {
  * guess — guessing produced unreachable URLs that the user accepted by
  * hitting Enter.
  */
-async function collectRpcPair(label, required) {
-  // Step 1: HTTP URL (required for the chain to function at all).
-  const { http } = await inquirer.prompt([{
-    type: 'input',
-    name: 'http',
-    message: `${label} HTTP RPC URL (https://):`,
-    validate: (input) => {
-      if (!input.trim()) {
-        return required ? `${label} HTTP RPC URL is required` : true
-      }
-      if (!input.startsWith('https://') && !input.startsWith('http://')) {
-        return 'URL must start with https:// or http://'
-      }
-      return true
-    },
-  }])
+async function collectRpcPair(label, required, expectedChainId) {
+  // Step 1: HTTP URL (required for the chain to function at all). Loops
+  // until we get a URL that either matches `expectedChainId` (if provided)
+  // or the operator confirms the mismatch is intentional. Without this
+  // check, pasting e.g. an Ethereum mainnet URL into the Arbitrum Sepolia
+  // prompt produces a working-looking install that explodes at first
+  // contract read.
+  let http
+  while (true) {
+    const answer = await inquirer.prompt([{
+      type: 'input',
+      name: 'http',
+      message: `${label} HTTP RPC URL (https://):`,
+      validate: (input) => {
+        if (!input.trim()) {
+          return required ? `${label} HTTP RPC URL is required` : true
+        }
+        if (!input.startsWith('https://') && !input.startsWith('http://')) {
+          return 'URL must start with https:// or http://'
+        }
+        return true
+      },
+    }])
+    http = answer.http
+    if (!http.trim()) break
+    if (!expectedChainId) break
+
+    // Probe eth_chainId. If the RPC returns the wrong chain, give the
+    // operator a chance to re-enter without crashing the whole install.
+    const actual = await probeChainId(http.trim())
+    if (actual === null) {
+      // Couldn't verify — could be a transient network blip or a stricter
+      // RPC that needs auth headers we don't send. Warn but accept.
+      console.log(dim(`  (Couldn't verify chain ID via eth_chainId — RPC may be temporarily unreachable.)`))
+      break
+    }
+    if (actual === expectedChainId) {
+      console.log(dim(`  ✓ Chain ID ${actual} matches ${CHAIN_ID_NAMES[actual] || 'expected'}.`))
+      break
+    }
+    const actualName = CHAIN_ID_NAMES[actual] || `chain ${actual}`
+    const expectedName = CHAIN_ID_NAMES[expectedChainId] || `chain ${expectedChainId}`
+    console.log()
+    console.log(warn(`  Chain mismatch: that URL responded with ${brand(actualName)} (chainId ${actual}).`))
+    console.log(warn(`  Expected ${brand(expectedName)} (chainId ${expectedChainId}) for this prompt.`))
+    console.log()
+    const { reenter } = await inquirer.prompt([{
+      type: 'confirm',
+      name: 'reenter',
+      message: `Re-enter the ${expectedName} URL?`,
+      default: true,
+    }])
+    if (!reenter) break
+  }
 
   if (!http.trim()) return { wss: '', http: '' }
 
@@ -188,7 +267,8 @@ export async function collectL1Rpc(nodeType, network = 'testnet') {
   ])
 
   const labels = chainLabels(network)
-  const l1 = await collectRpcPair(labels.l1, true)
+  const l1ExpectedChainId = network === 'mainnet' ? 1 : 11155111
+  const l1 = await collectRpcPair(labels.l1, true, l1ExpectedChainId)
 
   const answers = {
     l1RpcUrl: l1.wss,
@@ -196,24 +276,61 @@ export async function collectL1Rpc(nodeType, network = 'testnet') {
   }
 
   // Mainnet price feeds — only validators need this (CAW/ETH price for tip
-  // accounting). Skip for non-validators.
+  // accounting). Skip for non-validators. Use collectRpcPair's HTTP-only
+  // path indirectly: we don't ask for a WSS pair for the price feed, so
+  // do a one-off prompt with the same chainId guard inlined.
   if (['full', 'validator'].includes(nodeType)) {
-    const { ethMainnetRpcUrl } = await inquirer.prompt([{
-      type: 'input',
-      name: 'ethMainnetRpcUrl',
-      message: `Ethereum Mainnet RPC URL ${dim('(for Uniswap price feeds — https://)')}:`,
-      validate: (input) => {
-        if (!input.trim()) return 'Mainnet RPC URL is required for validators (CAW/ETH price conversion)'
-        if (!input.startsWith('https://') && !input.startsWith('http://')) {
-          return 'URL must start with https:// or http://'
+    let ethMainnetRpcUrl
+    while (true) {
+      const ans = await inquirer.prompt([{
+        type: 'input',
+        name: 'ethMainnetRpcUrl',
+        message: `Ethereum Mainnet RPC URL ${dim('(for Uniswap price feeds — https://)')}:`,
+        validate: (input) => {
+          if (!input.trim()) return 'Mainnet RPC URL is required for validators (CAW/ETH price conversion)'
+          if (!input.startsWith('https://') && !input.startsWith('http://')) {
+            return 'URL must start with https:// or http://'
+          }
+          return true
         }
-        return true
+      }])
+      ethMainnetRpcUrl = ans.ethMainnetRpcUrl
+      const actual = await probeChainId(ethMainnetRpcUrl.trim())
+      if (actual === null || actual === 1) {
+        if (actual === 1) console.log(dim(`  ✓ Chain ID 1 matches Ethereum Mainnet.`))
+        else console.log(dim(`  (Couldn't verify chain ID via eth_chainId — RPC may be temporarily unreachable.)`))
+        break
       }
-    }])
+      const actualName = CHAIN_ID_NAMES[actual] || `chain ${actual}`
+      console.log()
+      console.log(warn(`  Chain mismatch: that URL responded with ${brand(actualName)} (chainId ${actual}).`))
+      console.log(warn(`  Expected ${brand('Ethereum Mainnet')} (chainId 1) — this is the price-feed RPC, must be mainnet.`))
+      console.log()
+      const { reenter } = await inquirer.prompt([{
+        type: 'confirm',
+        name: 'reenter',
+        message: 'Re-enter the Ethereum Mainnet URL?',
+        default: true,
+      }])
+      if (!reenter) break
+    }
     answers.ethMainnetRpcUrl = ethMainnetRpcUrl
   }
 
   return answers
+}
+
+// Map storage-chain labels (as set in clientCreator's STORAGE_CHAINS table)
+// to their EVM chain IDs. Used by collectL2Rpc to verify the operator's
+// pasted URL matches the chain their client actually stores on. Keep in
+// sync with STORAGE_CHAINS in clientCreator.js.
+const STORAGE_LABEL_TO_CHAIN_ID = {
+  'Base Sepolia': 84532,
+  'Arbitrum Sepolia': 421614,
+  'Ethereum Sepolia (L1)': 11155111,
+  'Base': 8453,
+  'Arbitrum': 42161,
+  'Ethereum Mainnet (L1)': 1,
 }
 
 /**
@@ -250,7 +367,8 @@ export async function collectL2Rpc(nodeType, storageChainLabel) {
     'on Infura / Alchemy / QuickNode all support Base + Arbitrum.',
   ])
 
-  const l2 = await collectRpcPair(storageChainLabel || 'L2', true)
+  const expectedChainId = STORAGE_LABEL_TO_CHAIN_ID[storageChainLabel] || null
+  const l2 = await collectRpcPair(storageChainLabel || 'L2', true, expectedChainId)
   return {
     l2RpcUrl: l2.wss,
     l2RpcUrlHttp: l2.http,

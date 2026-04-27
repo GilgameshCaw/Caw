@@ -186,18 +186,56 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
     'Alchemy, or QuickNode all work.',
   ])
 
-  const { replicationRpcUrl } = await inquirer.prompt([
-    {
-      type: 'input',
-      name: 'replicationRpcUrl',
-      message: `${chosenChain.label} HTTP RPC URL:`,
-      validate: (input) => {
-        if (!input.trim()) return 'Required'
-        if (!/^https?:\/\//.test(input)) return 'Must start with http:// or https://'
-        return true
+  // Map replication chain key → EVM chain ID so we can verify the operator
+  // pasted the right URL (vs. an Ethereum / wrong-L2 URL from another tab).
+  const REPLICATION_CHAIN_IDS = {
+    'arbitrum-sepolia': 421614,
+    'base-sepolia': 84532,
+    'sepolia': 11155111,
+    'arbitrum': 42161,
+    'base': 8453,
+    'ethereum': 1,
+  }
+  const expectedChainId = REPLICATION_CHAIN_IDS[chosenChain.key] || null
+
+  let replicationRpcUrl
+  while (true) {
+    const ans = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'replicationRpcUrl',
+        message: `${chosenChain.label} HTTP RPC URL:`,
+        validate: (input) => {
+          if (!input.trim()) return 'Required'
+          if (!/^https?:\/\//.test(input)) return 'Must start with http:// or https://'
+          return true
+        },
       },
-    },
-  ])
+    ])
+    replicationRpcUrl = ans.replicationRpcUrl
+    if (!expectedChainId) break
+
+    const actual = await probeReplicationChainId(replicationRpcUrl.trim())
+    if (actual === null) {
+      console.log(dim(`  (Couldn't verify chain ID via eth_chainId — RPC may be temporarily unreachable.)`))
+      break
+    }
+    if (actual === expectedChainId) {
+      console.log(dim(`  ✓ Chain ID ${actual} matches ${chosenChain.label}.`))
+      break
+    }
+    console.log()
+    console.log(warn(`  Chain mismatch: that URL responded with chainId ${actual}.`))
+    console.log(warn(`  Expected ${brand(chosenChain.label)} (chainId ${expectedChainId}) for replication.`))
+    console.log()
+    const { reenter } = await inquirer.prompt([{
+      type: 'confirm',
+      name: 'reenter',
+      message: `Re-enter the ${chosenChain.label} URL?`,
+      default: true,
+    }])
+    if (!reenter) break
+  }
 
   // ---- Which clients to replicate ----
   console.log()
@@ -324,5 +362,29 @@ async function importEthersUtils() {
     return { computeAddress: ethers.computeAddress }
   } catch {
     return { computeAddress: () => '(install ethers to see address)' }
+  }
+}
+
+// Probe an RPC URL with eth_chainId. Mirrors the helper in rpcUrls.js —
+// duplicated here rather than imported to keep the steps independent.
+// Returns the decimal chain ID, or null on any failure (timeout, malformed
+// response, network error). Caller treats null as "couldn't verify".
+async function probeReplicationChainId(url, timeoutMs = 4000) {
+  try {
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), timeoutMs)
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'eth_chainId', params: [] }),
+      signal: ctrl.signal,
+    })
+    clearTimeout(t)
+    if (!res.ok) return null
+    const data = await res.json()
+    if (typeof data?.result !== 'string') return null
+    return parseInt(data.result, 16)
+  } catch {
+    return null
   }
 }
