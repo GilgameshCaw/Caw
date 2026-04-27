@@ -4,6 +4,7 @@ import { writeFile, mkdir } from 'fs/promises'
 import path from 'path'
 import multer from 'multer'
 import { requireAuth } from '../middleware/auth'
+import { publicUrl } from '../util/publicUrl'
 
 const router = Router()
 
@@ -78,7 +79,7 @@ router.post('/', upload.array('media', 10), requireAuth({ field: 'tokenId' }), a
     }
 
     // Generate URLs for uploaded files based on their actual type
-    const apiHost = process.env.API_URL || `http://localhost:4000`
+    const apiHost = publicUrl()
 
     const urls = files.map(file => {
       const isVideo = file.mimetype.startsWith('video/')
@@ -181,7 +182,7 @@ router.post('/encrypted', requireAuth({ lookup: async (req) => {
 
     recordEncUpload(tokenId, data.length)
 
-    const apiHost = process.env.API_URL || `http://localhost:4000`
+    const apiHost = publicUrl()
     const url = `${apiHost}/uploads/encrypted/${filename}`
 
     res.json({ success: true, url })
@@ -228,7 +229,7 @@ router.post('/image', requireAuth({ field: 'tokenId' }), async (req, res) => {
     await writeFile(filePath, buffer)
 
     // Return the URL pointing to the API server where images are served
-    const apiHost = process.env.API_URL || `http://localhost:4000`
+    const apiHost = publicUrl()
     const imageUrl = `${apiHost}/uploads/images/${fileName}`
 
     res.json({
@@ -281,7 +282,7 @@ router.post('/images', requireAuth({ field: 'tokenId' }), async (req, res) => {
       await writeFile(filePath, buffer)
 
       // Add URL to array - pointing to API server
-      const apiHost = process.env.API_URL || `http://localhost:4000`
+      const apiHost = publicUrl()
       const imageUrl = `${apiHost}/uploads/images/${fileName}`
       uploadedUrls.push(imageUrl)
     }
