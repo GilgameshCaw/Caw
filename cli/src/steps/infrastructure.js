@@ -211,6 +211,11 @@ export async function collectInfraEarly(nodeType, ctx = {}) {
   // Sentry DSN (optional) — error reporting for both server + browser.
   const sentryDsn = await collectSentryDsn(nodeType)
 
+  // SigNoz / OTLP collector endpoint (optional) — performance tracing for
+  // the backend process. Same opt-in pattern as Sentry: leaving it blank
+  // is a no-op at runtime.
+  const signozEndpoint = await collectSignozEndpoint(nodeType)
+
   result.domain = domain
   result.adminPassword = adminPassword
   result.clientId = clientId
@@ -219,6 +224,7 @@ export async function collectInfraEarly(nodeType, ctx = {}) {
   result.giphyApiKey = giphyApiKey
   result.instanceApiUrl = instanceApiUrl
   result.sentryDsn = sentryDsn
+  result.signozEndpoint = signozEndpoint
   return result
 }
 
@@ -613,4 +619,62 @@ async function collectSentryDsn(nodeType) {
   ])
 
   return dsn.trim()
+}
+
+/**
+ * Ask for a SigNoz / OTLP collector endpoint. When set, the backend
+ * initializes the OpenTelemetry SDK and emits traces (HTTP routes, Prisma
+ * queries, Redis pub/sub, RPC calls, and any custom spans). Gated by env
+ * var presence so installs without it pay zero overhead.
+ *
+ * Honors CAW_SIGNOZ_ENDPOINT env override. The standard OTel env var
+ * (OTEL_EXPORTER_OTLP_ENDPOINT) is what gets written to .env, so this
+ * works against any OTLP/HTTP collector — not just SigNoz.
+ *
+ * Skipped for frontend-only nodes (no backend to instrument).
+ */
+async function collectSignozEndpoint(nodeType) {
+  if (nodeType === 'frontend-only') return ''
+
+  const fromEnv = process.env.CAW_SIGNOZ_ENDPOINT
+  if (fromEnv) return fromEnv
+
+  section('Performance tracing with SigNoz (optional)')
+  tipBlock([
+    `${brand('What is this?')}`,
+    'SigNoz is a self-hosted observability platform. When pointed at it, this',
+    'node emits traces for every HTTP request, Prisma query, Redis call, and',
+    'RPC call — so you can see which endpoints / queries / external calls are',
+    'slow, and where time is spent inside a request.',
+    '',
+    `${brand('How to run SigNoz (5–10 minutes, one-time):')}`,
+    `  ${brand('1.')} Clone their installer:`,
+    '       git clone -b main https://github.com/SigNoz/signoz.git',
+    '       cd signoz/deploy/docker',
+    `  ${brand('2.')} Bring it up:  ${brand('docker compose up -d')}`,
+    `  ${brand('3.')} UI lands on  ${brand('http://localhost:3301')}  — create your account.`,
+    `  ${brand('4.')} The OTLP collector listens on  ${brand('http://localhost:4318')}  — paste that below.`,
+    '',
+    'Leave blank to skip — tracing stays off and the SDK is a no-op. You can',
+    'add OTEL_EXPORTER_OTLP_ENDPOINT to .env later without re-running install.',
+  ])
+
+  const { endpoint } = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'endpoint',
+      message: 'SigNoz / OTLP collector endpoint (e.g. http://localhost:4318):',
+      default: '',
+      validate: (input) => {
+        const v = input.trim()
+        if (!v) return true // optional
+        if (!/^https?:\/\/.+/.test(v)) {
+          return 'Expected an http(s) URL pointing at the OTLP collector base'
+        }
+        return true
+      },
+    },
+  ])
+
+  return endpoint.trim()
 }

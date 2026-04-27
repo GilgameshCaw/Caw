@@ -264,6 +264,30 @@ Users -> Frontend -> API -> Database <- Validator -> Blockchain (L2)
 
 [Learn more about the architecture ->](./docs/ARCHITECTURE.md)
 
+## 📈 Observability
+
+Two optional integrations, both gated by env vars and no-op when unset. The CLI install asks for both.
+
+### Sentry — error reporting
+
+Set `SENTRY_DSN` (backend) and/or `VITE_SENTRY_DSN` (frontend) to forward uncaught exceptions to Sentry. The CLI prompts for one DSN that's used for both, since Sentry routes by source.
+
+### SigNoz — performance tracing
+
+Self-hosted [SigNoz](https://signoz.io) gives you traces for every HTTP route, Prisma query, Redis call, and outbound RPC — useful for finding slow endpoints and seeing where time is spent inside a request.
+
+```bash
+# 1. One-time SigNoz install on whichever box you want to host it
+git clone -b main https://github.com/SigNoz/signoz.git
+cd signoz/deploy/docker
+docker compose up -d
+# UI: http://localhost:3301   |   OTLP collector: http://localhost:4318
+```
+
+Then point the CAW backend at it by setting `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` in `client/.env` (the CLI install can do this for you). Restart the API and traces start landing in SigNoz on the next request.
+
+The endpoint is the standard [OTLP/HTTP](https://opentelemetry.io/docs/specs/otel/protocol/) base URL — anything OTLP-compatible (Grafana Tempo, Honeycomb, etc.) works as a drop-in replacement.
+
 ## 📜 Smart Contracts
 
 | Contract | Description |

@@ -1,3 +1,9 @@
+// OpenTelemetry MUST initialize before any module we want to instrument
+// (express, prisma, ioredis, http). Auto-instrumentation patches at import
+// time, so anything required before this point won't be traced. Keep this
+// the very first import — even before the File polyfill below.
+import { otelEnabled } from '../src/otel'
+
 // Polyfill File for Node.js 18
 if (typeof globalThis.File === 'undefined') {
   (globalThis as any).File = class File {
@@ -13,6 +19,7 @@ import 'reflect-metadata'
 import { logger } from '../src/utils/logger'
 
 if (sentryEnabled) logger.log('Sentry error reporting enabled')
+if (otelEnabled) logger.log('OpenTelemetry tracing enabled')
 
 if (!fs.existsSync('config.json')) {
   console.error('config.json not found; copy from template')

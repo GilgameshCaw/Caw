@@ -39,6 +39,7 @@ const ENV_TO_CAW = {
   ES_INDEX_PREFIX: 'CAW_ES_INDEX_PREFIX',
   GIPHY_API_KEY: 'CAW_GIPHY_API_KEY',
   SENTRY_DSN: 'CAW_SENTRY_DSN',
+  OTEL_EXPORTER_OTLP_ENDPOINT: 'CAW_SIGNOZ_ENDPOINT',
   INSTANCE_API_URL: 'CAW_INSTANCE_API_URL',
   // RPC URLs — paste-from-Infura values the operator definitely doesn't
   // want to retype after a hiccup. The collectL1Rpc / collectL2Rpc steps
