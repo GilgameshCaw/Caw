@@ -460,6 +460,59 @@ right scope before we ship.
 
 ### UX — features not started
 
+- [ ] **Image handling — full pipeline overhaul**
+  - **Status quo**: every uploaded image is stored as-is and served back full-size. Observed on test.caw.social — avatars are 1.9 MB PNGs. A 20-post feed pulls ~40 MB of avatars + post images on cold load. This compounds with the on-disk-forever orphan problem and lack of edge caching to make image-heavy installs both slow and expensive.
+  - **(1) Upload-side processing — compression, resizing, format normalization**
+    - On `POST /api/upload`, run uploads through sharp (or equivalent): re-encode to WebP/AVIF, strip EXIF, cap max dimension (e.g. 2048px for posts, 512px for avatars), enforce sane quality (~80). HEIC → JPEG/WebP conversion handled here too.
+    - Result: a 1.9 MB iPhone PNG becomes a ~150 KB WebP with no visible quality loss.
+    - The route already validates MIME types and sets safe extensions — extend the same place. Falls naturally where `multer.diskStorage` runs.
+  - **(2) Variants — generate sized derivatives at upload time**
+    - For each upload, write multiple sizes alongside the original: `original`, `large` (1024w), `medium` (512w), `thumb` (256w), `avatar` (128w). Use sharp's pipeline; it's fast (~50-100ms per image on a small VPS).
+    - URL convention: `/uploads/images/<hash>.webp`, `/uploads/images/<hash>-thumb.webp`, etc. Or `/uploads/images/<hash>/<size>.webp` if you want to keep them grouped.
+    - Frontend picks variant by context: `<Avatar>` requests avatar size, feed image previews request `medium`, full-screen image modal requests `original`.
+    - Single biggest win for perceived performance.
+  - **(3) Caching layer — push images to a CDN or at minimum let nginx serve them directly with strong cache headers**
+    - Today: nginx proxies `/uploads/` to the Node API which serves via `express.static`. Every cold request goes through Node.
+    - Cheap fix: change the nginx block to `root` directly into `client/public/uploads/` (skip the Node hop entirely). Add `expires 1y; add_header Cache-Control "public, immutable";` since filenames are content-hashes and never change.
+    - Better fix: optional Cloudflare/Bunny/S3 proxy. CLI prompt at install time — "host images locally / push to S3-compatible bucket / front with Cloudflare." Operator picks. Local default stays.
+    - The `caw install` writes nginx config from `cli/src/steps/nginx.js` — extend that template.
+  - **(4) Lifecycle / GC — orphan cleanup**
+    - When a post is deleted (`hide:caw:<cawonce>` action), the image file stays on disk forever. Same for profile picture changes — old avatars accumulate.
+    - Track image references via a `MediaAsset` table (or just a column on Caw / User pointing at the asset hash). On post hide / avatar replace, mark the asset as unreferenced. A daily DataCleaner sweep deletes assets unreferenced for >7 days (the buffer covers the indexer-lag window for hide actions).
+    - The DataCleaner service already exists (`client/src/services/DataCleaner/`) — slot a new sweep into it.
+    - **Open question**: do we *delete* on hide, or keep the image and serve a "removed" placeholder? If a user can resurrect a hidden post via re-cawing the same content, deleting the asset would break that. Probably keep for the soft-window, then GC.
+  - **(5) Storage backend — pluggable, with S3 as the obvious second option**
+    - Hardcoded to local disk today. Operators with low-disk VPSes can't run for long.
+    - Abstract the upload write path behind a `MediaStorage` interface — `local` (default, current behavior) and `s3` (writes to any S3-compatible bucket — DigitalOcean Spaces, Backblaze B2, AWS S3, MinIO).
+    - `caw install` prompts for storage backend choice. Local stays the path of least resistance; S3 is opt-in for operators who want it.
+    - URL generation logic stays the same (still public URLs); only the *write* side changes.
+  - **Suggested rollout order** (each step lands independently):
+    1. (1) + (2) — biggest perceived improvement, contained to the upload route. ~1 day.
+    2. (3) lite — switch nginx to serve `/uploads/` directly. 30 minutes. Compounds with (1)+(2).
+    3. (4) GC — solves the disk-fill bomb. Half-day.
+    4. (5) S3 backend — operator-facing, lands after the local pipeline is solid. 1-2 days including CLI integration.
+    5. (3) full — Cloudflare / S3-CDN integration. Ties into (5).
+  - **Side note on HEIC**: once (1) is in and runs through sharp, HEIC support comes for free since sharp handles it via libvips. No separate work needed; just don't reject `image/heic` in `fileFilter`.
+
+- [ ] **Rainbow Wallet connect failure**
+  - Reported on test.caw.social (HTTPS production install): Rainbow Wallet failed to connect via the RainbowKit connect modal. Other wallets work; this one specifically fails.
+  - **Likely culprits to investigate first**:
+    - WalletConnect / Reown project ID — Rainbow uses WC under the hood. If `VITE_PROJECT_ID` is missing or its origin allowlist on the WC dashboard doesn't include `https://test.caw.social`, Rainbow's WC handshake fails (other wallets that use injected providers — MetaMask, Coinbase desktop — would still work, masking the WC misconfig).
+    - `caw install` writes `VITE_PROJECT_ID` from the operator's input but does no live validation against the WC dashboard. Easy to typo.
+    - Browser console will have a clear "WalletConnect" error if this is the cause.
+  - **What to capture next session**: exact failure mode (modal didn't open / opened but errored / scanned QR but never connected / etc.) and the browser console output during the attempt.
+  - Reproduce on `test.caw.social` with Rainbow mobile + desktop QR flow to narrow it down.
+
+- [ ] **Canonical URLs (SEO + dedup across instances)**
+  - The same post / user / hashtag is reachable from every client domain (test.caw.social, caw.social, third-party clients) — search engines see N copies and split ranking, social embeds attribute to whichever URL was first scraped, and the protocol's "any client can render any content" property turns into an SEO liability.
+  - Add `<link rel="canonical" href="...">` to every shareable page so all clients point at one canonical origin.
+  - **Open question**: what *is* the canonical origin? Two reasonable answers:
+    1. **Author's home client** — `cawProfile.tokenURI` already encodes the user's instance. Resolves to "the URL the author would link." Downside: requires an on-chain read at render time, and a transferred profile changes the canonical mid-flight.
+    2. **A protocol-level canonical** (e.g. `caw.social`) — operationally simple, every page points to caw.social, but means caw.social earns all the search equity and other clients are second-class.
+  - **Implementation sketch**: SSR `<link rel="canonical">` in the prerender path (`spaPrerender.ts`) using whichever rule we settle on. Mirror in OG tags (`og:url`) so social embeds also point canonical. The SPA shell can render a placeholder canonical that the prerender catch-all overwrites for crawlers.
+  - **Where**: `/users/:username`, `/caws/:id`, `/hashtags/:tag`, profile pages, the home feed (canonical = root of canonical origin).
+  - Decide before we have meaningful crawl traffic — once Google indexes the wrong URLs, undoing it is slow.
+
 - [ ] **Image modal** (`client/src/services/FrontEnd/src/components/FeedItem.tsx:966, 994, 1022`)
   - Comment: `// TODO: Open image in modal`
   - Clicking on post images should open a full-size modal.
@@ -495,6 +548,15 @@ right scope before we ship.
     3. On all-validator rejection: explicit modal: *"All validators rejected your action because your tip is too low. Renew Quick Sign with a higher ceiling?"*
     4. `QuickSignRenewModal` opens with ceiling preset to `currentMarket × 3`.
   - **Why deferred**: the cap protection itself ships; this UX polish is only needed once validators actually raise tips significantly. Wait for real-use signal.
+
+- [ ] **Thread break marker — author-controlled post boundary**
+  - In long Twitter-style threads, readers can't tell where the author intended one "post" to end and the next to begin. The current UI hoists replies under their parent within an 8-post lookahead window, but that's a presentation heuristic — it doesn't capture *intent*.
+  - Add a "break thread" marker the author can drop on any of their own posts. Posts before the break render as a continuous thread; posts after the break visually separate (divider line, "↓ next thread" affordance, or just a larger gap).
+  - **Implementation sketch**:
+    - On-chain: piggyback on the same `text` channel deletes use — e.g. `break:caw:<cawonce>` action, signed by the post author. Indexer stores it on the Caw row as `threadBreakAfter: bool`.
+    - FE: small icon in the post action row (only visible to the author of the post, alongside the existing "Delete post" affordance). Clicking it submits the action; visual marker appears immediately optimistically (mirror the `hiddenCawsStore` pattern from the delete-post flow).
+    - Render: `Feed.tsx` reply-grouping pass checks `threadBreakAfter` — once set, replies after that point don't get hoisted under the original parent.
+  - **Why deferred**: not blocking anything; nice-to-have once we have heavy thread users.
 
 - [ ] **English auction "stuck" recovery UX (frontend)**
   - **Status**: contract-side mostly resolved. As of `db84bf7`, `cancelListing` works on English auctions even with active bids — the seller can back out cleanly and the bidder is refunded automatically. `reclaimBid` remains as a public safety valve for the rare case where the seller transferred the NFT away and won't act.
@@ -684,3 +746,26 @@ One-liner install: `curl -fsSL https://raw.githubusercontent.com/.../install.sh 
 - [x] **English auction `cancelListing` works with active bids** (2026-04-25, `db84bf7`) — refunds highest bidder automatically; seller no longer needs the transfer-NFT-away workaround
 - [x] **`mintSelector` kept as latent capacity** (2026-04-25) — comments now explain it's reserved for a future "mint + authenticate (no deposit)" flow rather than the misleading `// TODO: this one not used`
 - [x] **Stale `multi-layer-test.js` references** cleaned up (2026-04-25, by user)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+-----
+some notes:
+- create and deposit 2 sigs sholud say "2 sigs" and don't make users click twice
+- after creating account puts people on L1, but then quick sign 
+- "failed to verify wallet and register DM identity"
+- "API 403: SIgner does not own any CAW names"
+
+
+
