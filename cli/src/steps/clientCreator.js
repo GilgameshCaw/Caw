@@ -225,5 +225,39 @@ export async function createClientFlow(ctx) {
   console.log(success(`  Client #${newClientId} created.`))
   console.log(dim(`  Owner: ${wallet.address}`))
   console.log(dim(`  Block: ${receipt.blockNumber}`))
-  return newClientId
+  const chainEntry = chains.find(c => c.eid === storageChainEid)
+  return {
+    clientId: newClientId,
+    storageChainEid,
+    storageChainKey: chainEntry?.key,
+    storageChainLabel: chainEntry?.label,
+  }
 }
+
+/**
+ * Look up an existing client's storage chain on L1. Used to label the L2
+ * RPC prompt by the chain's actual name once the operator has picked an
+ * existing clientId.
+ *
+ * Returns the matched STORAGE_CHAINS entry ({ key, label, eid, ... }) or
+ * null if the client doesn't exist or the chain isn't in our table.
+ */
+export async function lookupClientStorageChain(clientId, l1RpcUrl, network = 'testnet') {
+  if (!l1RpcUrl || !clientId) return null
+  let cmAddress
+  try { cmAddress = addr('CLIENT_MANAGER_ADDRESS') } catch { return null }
+  if (!cmAddress) return null
+  try {
+    const { ethers } = await import('ethers')
+    const provider = new ethers.JsonRpcProvider(l1RpcUrl)
+    const cm = new ethers.Contract(cmAddress, CLIENT_MANAGER_ABI, provider)
+    const client = await cm.getClient(clientId)
+    const eid = Number(client.storageChainEid)
+    const chains = STORAGE_CHAINS[network] || []
+    return chains.find(c => c.eid === eid) || null
+  } catch {
+    return null
+  }
+}
+
+export { STORAGE_CHAINS }

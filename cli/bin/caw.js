@@ -7,10 +7,11 @@ import { fileURLToPath } from 'url'
 import { banner, section, success, brand, dim } from '../src/utils/ui.js'
 import { selectNodeType } from '../src/steps/nodeType.js'
 import { collectNetworkAndMode } from '../src/steps/networkAndMode.js'
-import { collectRpcUrls } from '../src/steps/rpcUrls.js'
+import { collectL1Rpc, collectL2Rpc } from '../src/steps/rpcUrls.js'
+import { chainLabels } from '../src/steps/networkAndMode.js'
 import { collectValidatorConfig } from '../src/steps/validator.js'
 import { collectReplicationConfig } from '../src/steps/replication.js'
-import { collectInfraConfig } from '../src/steps/infrastructure.js'
+import { collectInfraEarly, collectInfraLate } from '../src/steps/infrastructure.js'
 import { generateConfig } from '../src/steps/generate.js'
 import { runInstall, startServices } from '../src/steps/install.js'
 import { configureNginx } from '../src/steps/nginx.js'
@@ -43,38 +44,56 @@ program
       // Step 2: Network + deployment mode (drives chain labels in step 3)
       const networkConfig = await collectNetworkAndMode(nodeType)
 
-      // Step 3: RPC URLs (labels reflect the chosen network)
-      const rpcConfig = await collectRpcUrls(nodeType, networkConfig.network)
+      // Step 3: L1 RPC. Asked early — L1 is unambiguous (always Ethereum
+      // mainnet/Sepolia) and the validator + client-lookup steps both need
+      // it. The L2 RPC comes later, after we know which storage chain the
+      // operator's chosen client uses.
+      const l1RpcConfig = await collectL1Rpc(nodeType, networkConfig.network)
 
       // Step 4: Validator config (if applicable). Pass the L1 RPC + network
       // so we can look up the validator's tokenId by username on-chain.
       const validatorConfig = await collectValidatorConfig(nodeType, opts.dir, {
-        l1RpcUrl: rpcConfig.l1RpcUrlHttp || rpcConfig.l1RpcUrl,
+        l1RpcUrl: l1RpcConfig.l1RpcUrlHttp || l1RpcConfig.l1RpcUrl,
         network: networkConfig.network,
       })
 
-      // Step 5: Replication (optional). Asked separately because operators
-      // can run a validator without participating in fraud-detection.
-      const replicationConfig = await collectReplicationConfig(nodeType, {
-        network: networkConfig.network,
-      })
-
-      // Step 6: Infrastructure (DB, Redis, domain, client ID). Passes the
-      // L1 RPC + validator key so the client-creation sub-flow has what it
-      // needs to sign + broadcast the createClient tx.
-      const infraConfig = await collectInfraConfig(nodeType, {
-        l1RpcUrl: rpcConfig.l1RpcUrlHttp || rpcConfig.l1RpcUrl,
+      // Step 5: Infrastructure phase 1 — domain + admin password + client
+      // selection + WalletConnect ID. Returns the chosen storage chain so
+      // step 6 can name it in the L2 RPC prompt.
+      const infraEarly = await collectInfraEarly(nodeType, {
+        l1RpcUrl: l1RpcConfig.l1RpcUrlHttp || l1RpcConfig.l1RpcUrl,
         validatorPrivateKey: validatorConfig.validatorPrivateKey,
         network: networkConfig.network,
       })
 
+      // Step 6: L2 RPC, labeled by the actual storage chain (Base Sepolia /
+      // Arbitrum Sepolia / Ethereum Sepolia / …) when we managed to look it
+      // up. Falls back to the network's default L2 label otherwise.
+      const l2Label = infraEarly.storageChain?.label || chainLabels(networkConfig.network).l2
+      const l2RpcConfig = await collectL2Rpc(nodeType, l2Label)
+
+      // Step 7: Replication (optional). The replication step gets a hint
+      // about the storage chain so it can sort the canonical pairing
+      // (Base ↔ Arbitrum) to the top of the choices.
+      const replicationConfig = await collectReplicationConfig(nodeType, {
+        network: networkConfig.network,
+        storageChainKey: infraEarly.storageChain?.key,
+      })
+
+      // Step 8: Infrastructure phase 2 — DB / Redis / Elasticsearch / API
+      // port. None of these need on-chain state, so they happen after the
+      // chain-aware steps to keep the natural flow.
+      const infraLate = await collectInfraLate(nodeType)
+
       // Merge all config
       const fullConfig = {
         ...networkConfig,
-        ...rpcConfig,
+        ...l1RpcConfig,
+        ...l2RpcConfig,
         ...validatorConfig,
         ...replicationConfig,
-        ...infraConfig,
+        ...infraEarly,
+        ...infraLate,
       }
 
       // Step 5: Generate config files
@@ -94,11 +113,11 @@ program
       section('Setup Complete!')
       console.log(success.bold('  Your CAW node is running!'))
       console.log()
-      if (infraConfig.domain) {
-        console.log(brand(`  Frontend: https://${infraConfig.domain}`))
-        console.log(brand(`  API:      https://${infraConfig.domain}/api`))
+      if (fullConfig.domain) {
+        console.log(brand(`  Frontend: https://${fullConfig.domain}`))
+        console.log(brand(`  API:      https://${fullConfig.domain}/api`))
       } else {
-        console.log(brand(`  API:      http://localhost:${infraConfig.apiPort || 4000}`))
+        console.log(brand(`  API:      http://localhost:${fullConfig.apiPort || 4000}`))
         if (['full', 'frontend-api', 'frontend-only'].includes(nodeType)) {
           console.log(brand(`  Frontend: http://localhost:5173`))
         }
@@ -110,13 +129,13 @@ program
       // DevTools to anyone who loads the page. Without provider-side
       // allowlists this lets randos burn through your free-tier quota or
       // rack up your paid bill in a few hours.
-      if (infraConfig.domain && ['full', 'frontend-api'].includes(nodeType)) {
+      if (fullConfig.domain && ['full', 'frontend-api'].includes(nodeType)) {
         console.log(brand('  ⚠  Lock down your RPC URLs at the provider'))
         console.log(dim('     Your frontend RPC URLs ship in the public JS bundle and are'))
         console.log(dim('     visible in DevTools to anyone who loads your site. Allowlist them'))
         console.log(dim('     at your provider so other people can\'t use them on your dime.'))
         console.log()
-        console.log(`     ${brand('HTTP referer / domain allowlist:')} https://${infraConfig.domain}`)
+        console.log(`     ${brand('HTTP referer / domain allowlist:')} https://${fullConfig.domain}`)
         console.log(`     ${brand('Server IP allowlist (for backend calls):')} the public IP of this VPS`)
         console.log()
         console.log(dim('     Provider docs:'))

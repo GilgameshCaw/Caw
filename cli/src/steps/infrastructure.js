@@ -1,10 +1,195 @@
 import inquirer from 'inquirer'
 import { section, dim, tipBlock, brand } from '../utils/ui.js'
-import { createClientFlow } from './clientCreator.js'
+import { createClientFlow, lookupClientStorageChain } from './clientCreator.js'
 
-export async function collectInfraConfig(nodeType, ctx = {}) {
+/**
+ * Phase 1 of infra collection: domain + admin password + client selection
+ * + WalletConnect ID. These run BEFORE the L2 RPC step so the L2 prompt
+ * can name the actual storage chain (Base Sepolia / Arbitrum Sepolia / …)
+ * once we know which client the operator picked.
+ *
+ * Returns:
+ *   • domain, adminPassword          — for nodes that serve HTTP
+ *   • clientId, storageChain         — { key, label, eid } or null when
+ *                                       lookup fails / public client
+ *   • walletConnectProjectId
+ *
+ * The remaining infra config (DB / Redis / ES / docker mode / API port)
+ * is collected by collectInfraLate() AFTER the L2 RPC step.
+ */
+export async function collectInfraEarly(nodeType, ctx = {}) {
   if (nodeType === 'frontend-only') {
     return collectFrontendOnlyConfig()
+  }
+
+  const result = {}
+
+  // Domain (for nodes that serve HTTP). install.sh asks for the domain
+  // before cloning and exports it as CAW_DOMAIN. When set, take it as
+  // gospel — re-asking is friction. The only case we prompt is when the
+  // Node CLI is run standalone (without install.sh), e.g. local dev.
+  let domain = process.env.CAW_DOMAIN || ''
+  let adminPassword = ''
+
+  if (['full', 'frontend-api', 'api-only'].includes(nodeType) && !domain) {
+    section('Domain & Access')
+
+    const { hasDomain } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'hasDomain',
+        message: 'Do you have a domain name for this node?',
+        default: false,
+      },
+    ])
+
+    if (hasDomain) {
+      const { domainInput } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'domainInput',
+          message: 'Domain name (e.g., caw.example.com):',
+          validate: (input) => /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(input) ? true : 'Enter a valid domain',
+        },
+      ])
+      domain = domainInput
+    } else {
+      console.log(dim('  You can set up a domain later with `caw domain`.'))
+    }
+  }
+
+  if (['full', 'frontend-api', 'api-only'].includes(nodeType)) {
+    if (domain && process.env.CAW_DOMAIN) {
+      section('Domain & Access')
+      console.log(dim(`  Using domain ${domain} (from install.sh).`))
+    }
+    const { adminPw } = await inquirer.prompt([
+      {
+        type: 'password',
+        name: 'adminPw',
+        message: 'Admin password (for the admin dashboard):',
+        mask: '*',
+        validate: (input) => input.length >= 8 ? true : 'Password must be at least 8 characters',
+      },
+    ])
+    adminPassword = adminPw
+  }
+
+  // Client ID. Each clientId on-chain scopes a separate sub-network: only
+  // posts attributed to that client are visible to its users, and the client
+  // owner controls the fees (mint, auth, deposit, withdraw) charged on-chain.
+  // Most operators want to join the public network (clientId 1). Anyone with
+  // ETH on L1 can create a new client via CawClientManager.createClient —
+  // we offer that as a sub-flow when the validator key has the funds.
+  let clientId = 1
+  let storageChain = null // { key, label, eid } once known
+
+  if (['full', 'frontend-api'].includes(nodeType)) {
+    section('Client ID')
+    tipBlock([
+      'Each CAW frontend is registered on-chain under a clientId.',
+      '',
+      `${brand('What does it do?')}`,
+      '  • Scopes a sub-network: users on your frontend see posts attributed',
+      '    to your clientId. Different clientIds form independent networks.',
+      '  • The client owner sets the fees (mint / auth / deposit / withdraw)',
+      '    charged on-chain for actions submitted under that client.',
+      '  • The owner picks the storage chain and replication chains.',
+    ])
+
+    const choices = [
+      { value: 'public', name: `${brand('Use clientId 1')} ${dim('(public CAW network — recommended)')}` },
+      { value: 'existing', name: 'I already have a clientId' },
+    ]
+    if (ctx.l1RpcUrl && ctx.validatorPrivateKey) {
+      choices.push({
+        value: 'create',
+        name: `${brand('Create a new client with my validator address')} ${dim('(needs ETH on L1)')}`,
+      })
+    }
+
+    const { clientChoice } = await inquirer.prompt([
+      { type: 'list', name: 'clientChoice', message: 'Client setup:', choices, default: 'public' },
+    ])
+
+    if (clientChoice === 'public') {
+      clientId = 1
+    } else if (clientChoice === 'existing') {
+      const { clientIdInput } = await inquirer.prompt([
+        {
+          type: 'number',
+          name: 'clientIdInput',
+          message: 'Client ID:',
+          validate: (input) => input > 0 ? true : 'Must be a positive number',
+        },
+      ])
+      clientId = clientIdInput
+    } else {
+      const created = await createClientFlow({
+        l1RpcUrl: ctx.l1RpcUrl,
+        validatorPrivateKey: ctx.validatorPrivateKey,
+        network: ctx.network,
+      })
+      if (created && typeof created === 'object') {
+        clientId = created.clientId
+        storageChain = {
+          key: created.storageChainKey,
+          label: created.storageChainLabel,
+          eid: created.storageChainEid,
+        }
+      } else {
+        // Operator backed out or tx failed — fall back to existing-id prompt
+        // rather than crashing the whole install.
+        console.log(dim('  Falling back to existing-clientId prompt.'))
+        const { clientIdInput } = await inquirer.prompt([
+          {
+            type: 'number',
+            name: 'clientIdInput',
+            message: 'Client ID:',
+            default: 1,
+            validate: (input) => input > 0 ? true : 'Must be a positive number',
+          },
+        ])
+        clientId = clientIdInput
+      }
+    }
+
+    // For the public + existing-clientId branches we don't yet know the
+    // storage chain. Look it up on-chain so the next step (L2 RPC prompt)
+    // can name the actual chain. Lookup is best-effort — if it fails we'll
+    // fall back to a generic L2 label.
+    if (!storageChain && ctx.l1RpcUrl) {
+      storageChain = await lookupClientStorageChain(clientId, ctx.l1RpcUrl, ctx.network)
+      if (storageChain) {
+        console.log(dim(`  Client #${clientId} stores on ${storageChain.label}.`))
+      } else {
+        console.log(dim(`  Couldn't read client #${clientId}'s storage chain on-chain — L2 prompt will use a generic label.`))
+      }
+    }
+  }
+
+  // WalletConnect / Reown — frontend-bearing nodes only. Asked here so the
+  // operator doesn't bounce between phases.
+  const walletConnectProjectId = await collectWalletConnectProjectId(nodeType)
+
+  result.domain = domain
+  result.adminPassword = adminPassword
+  result.clientId = clientId
+  result.storageChain = storageChain
+  result.walletConnectProjectId = walletConnectProjectId
+  return result
+}
+
+/**
+ * Phase 2 of infra collection: DB + Redis + Elasticsearch + API port +
+ * docker mode. Runs AFTER the L2 RPC step. None of these depend on chain
+ * state, so we can collect them once we're past the on-chain bits.
+ */
+export async function collectInfraLate(nodeType) {
+  if (nodeType === 'frontend-only') {
+    // Frontend-only's infra was fully collected in collectInfraEarly via
+    // collectFrontendOnlyConfig. Nothing else to do.
+    return {}
   }
 
   // Infra mode is set by install.sh before we run; we just honor it here.
@@ -77,155 +262,31 @@ export async function collectInfraConfig(nodeType, ctx = {}) {
     }
   }
 
-  // Domain (for nodes that serve HTTP). install.sh asks for the domain
-  // before cloning and exports it as CAW_DOMAIN. When set, take it as
-  // gospel — re-asking is friction. The only case we prompt is when the
-  // Node CLI is run standalone (without install.sh), e.g. local dev.
-  let domain = process.env.CAW_DOMAIN || ''
-  let adminPassword = ''
-
-  if (['full', 'frontend-api', 'api-only'].includes(nodeType) && !domain) {
-    section('Domain & Access')
-
-    const { hasDomain } = await inquirer.prompt([
-      {
-        type: 'confirm',
-        name: 'hasDomain',
-        message: 'Do you have a domain name for this node?',
-        default: false,
-      },
-    ])
-
-    if (hasDomain) {
-      const { domainInput } = await inquirer.prompt([
-        {
-          type: 'input',
-          name: 'domainInput',
-          message: 'Domain name (e.g., caw.example.com):',
-          validate: (input) => /^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/.test(input) ? true : 'Enter a valid domain',
-        },
-      ])
-      domain = domainInput
-    } else {
-      console.log(dim('  You can set up a domain later with `caw domain`.'))
-    }
-  }
-
-  // Admin password (for the admin dashboard). Asked whenever the node
-  // serves HTTP, regardless of how the domain was supplied.
-  if (['full', 'frontend-api', 'api-only'].includes(nodeType)) {
-    // If the domain came from install.sh we never opened a Domain section
-    // above; print a tiny acknowledgement so the operator knows we're
-    // using their answer without re-asking.
-    if (domain && process.env.CAW_DOMAIN) {
-      section('Domain & Access')
-      console.log(dim(`  Using domain ${domain} (from install.sh).`))
-    }
-
-    const { adminPw } = await inquirer.prompt([
-      {
-        type: 'password',
-        name: 'adminPw',
-        message: 'Admin password (for the admin dashboard):',
-        mask: '*',
-        validate: (input) => input.length >= 8 ? true : 'Password must be at least 8 characters',
-      },
-    ])
-    adminPassword = adminPw
-  }
-
-  // Client ID. Each clientId on-chain scopes a separate sub-network: only
-  // posts attributed to that client are visible to its users, and the client
-  // owner controls the fees (mint, auth, deposit, withdraw) charged on-chain.
-  // Most operators want to join the public network (clientId 1). Anyone with
-  // ETH on L1 can create a new client via CawClientManager.createClient —
-  // we offer that as a sub-flow when the validator key has the funds.
-  let clientId = 1
-
-  if (['full', 'frontend-api'].includes(nodeType)) {
-    section('Client ID')
-    tipBlock([
-      'Each CAW frontend is registered on-chain under a clientId.',
-      '',
-      `${brand('What does it do?')}`,
-      '  • Scopes a sub-network: users on your frontend see posts attributed',
-      '    to your clientId. Different clientIds form independent networks.',
-      '  • The client owner sets the fees (mint / auth / deposit / withdraw)',
-      '    charged on-chain for actions submitted under that client.',
-      '  • The owner picks the storage chain and replication chains.',
-    ])
-
-    const choices = [
-      { value: 'public', name: `${brand('Use clientId 1')} ${dim('(public CAW network — recommended)')}` },
-      { value: 'existing', name: 'I already have a clientId' },
-    ]
-    if (ctx.l1RpcUrl && ctx.validatorPrivateKey) {
-      choices.push({
-        value: 'create',
-        name: `${brand('Create a new client with my validator address')} ${dim('(needs ETH on L1)')}`,
-      })
-    }
-
-    const { clientChoice } = await inquirer.prompt([
-      { type: 'list', name: 'clientChoice', message: 'Client setup:', choices, default: 'public' },
-    ])
-
-    if (clientChoice === 'public') {
-      clientId = 1
-    } else if (clientChoice === 'existing') {
-      const { clientIdInput } = await inquirer.prompt([
-        {
-          type: 'number',
-          name: 'clientIdInput',
-          message: 'Client ID:',
-          validate: (input) => input > 0 ? true : 'Must be a positive number',
-        },
-      ])
-      clientId = clientIdInput
-    } else {
-      const newId = await createClientFlow({
-        l1RpcUrl: ctx.l1RpcUrl,
-        validatorPrivateKey: ctx.validatorPrivateKey,
-        network: ctx.network,
-      })
-      if (newId) {
-        clientId = newId
-      } else {
-        // Operator backed out or tx failed — fall back to existing-id prompt
-        // rather than crashing the whole install.
-        console.log(dim('  Falling back to existing-clientId prompt.'))
-        const { clientIdInput } = await inquirer.prompt([
-          {
-            type: 'number',
-            name: 'clientIdInput',
-            message: 'Client ID:',
-            default: 1,
-            validate: (input) => input > 0 ? true : 'Must be a positive number',
-          },
-        ])
-        clientId = clientIdInput
-      }
-    }
-  }
-
   // API port — hardcoded with an env override (CAW_API_PORT) for the rare
   // case where 4000 is taken. We don't ask, because end-users never care
   // and the answer is meaningless to anyone debugging.
   const apiPort = Number(process.env.CAW_API_PORT) || 4000
-
-  const walletConnectProjectId = await collectWalletConnectProjectId(nodeType)
 
   return {
     useDocker,
     dbUrl,
     redisUrl,
     elasticsearchNode,
-    domain,
-    adminPassword,
-    clientId,
     apiPort,
-    walletConnectProjectId,
   }
+}
+
+/**
+ * Backwards-compat wrapper: collects everything in one shot in the OLD
+ * order (domain → DB → client → …). Kept so external callers / tests that
+ * import collectInfraConfig still work. Production CLI now uses
+ * collectInfraEarly + L2 RPC step + collectInfraLate to thread the chosen
+ * storage chain through to the L2 RPC prompt.
+ */
+export async function collectInfraConfig(nodeType, ctx = {}) {
+  const early = await collectInfraEarly(nodeType, ctx)
+  const late = await collectInfraLate(nodeType)
+  return { ...early, ...late }
 }
 
 async function collectFrontendOnlyConfig() {

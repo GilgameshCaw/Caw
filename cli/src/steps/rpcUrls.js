@@ -1,5 +1,5 @@
 import inquirer from 'inquirer'
-import { section, dim, tipBlock, warn } from '../utils/ui.js'
+import { section, dim, tipBlock, warn, brand } from '../utils/ui.js'
 import { chainLabels } from './networkAndMode.js'
 
 function inferWsFromHttp(httpUrl) {
@@ -126,44 +126,46 @@ async function collectRpcPair(label, required) {
   return { wss: wss.trim(), http }
 }
 
-export async function collectRpcUrls(nodeType, network = 'testnet') {
-  section('RPC Endpoints')
+/**
+ * L1 RPC + Ethereum Mainnet RPC (price feeds). Asked early in the install,
+ * BEFORE the operator picks a client, because L1 is unambiguous (always
+ * Ethereum) and the validator step + client lookup both need it.
+ *
+ * Returns: { l1RpcUrl, l1RpcUrlHttp, ethMainnetRpcUrl } — only the keys
+ * relevant for the current nodeType. Validator/full nodes get all three;
+ * api-only / frontend-api nodes get just the L1 pair (no price feeds
+ * because they don't run a validator); frontend-only gets nothing.
+ */
+export async function collectL1Rpc(nodeType, network = 'testnet') {
+  const needsL1 = ['full', 'validator', 'api-only', 'frontend-api'].includes(nodeType)
+  if (!needsL1) return {}
 
-  const labels = chainLabels(network)
-  const netSuffix = network === 'mainnet' ? 'mainnet' : 'Sepolia'
+  section('L1 RPC')
   tipBlock([
-    `CAW uses Ethereum L1 plus an L2 ${netSuffix} chain — typically Base or`,
-    'Arbitrum. Use the L2 your target client stores on (you\'ll pick the',
-    'client in a later step).',
+    'CAW uses Ethereum L1 for the canonical username registry — every',
+    'install reads from L1 to look up usernames, validate signatures, and',
+    `(for ${brand('full')} / ${brand('validator')} nodes) submit identity transactions.`,
     '',
-    'For each chain we need an HTTP (https://) RPC URL — that\'s what reads',
-    'and submissions use. WebSocket (wss://) is optional and only enables',
-    'real-time event subscription; with no WSS, the indexers fall back to',
-    'HTTP polling (works fine for most operators).',
+    'We need an HTTP (https://) URL — required, no fallback. WebSocket',
+    '(wss://) is optional and only enables real-time event subscription;',
+    'with no WSS, the indexers fall back to HTTP polling (works fine).',
     '',
     'Free options: Infura, Alchemy, QuickNode (all have free tiers).',
     'For Infura URLs, the WSS endpoint is offered as a default so you can',
-    'just press Enter. For other providers, leave WSS blank if you don\'t',
-    'have a dedicated WSS URL — guessing produces unreachable endpoints.',
+    'just press Enter.',
   ])
 
-  const needsL1 = ['full', 'validator'].includes(nodeType)
-  const needsL2 = nodeType !== 'frontend-only'
+  const labels = chainLabels(network)
+  const l1 = await collectRpcPair(labels.l1, true)
 
-  const answers = {}
-
-  if (needsL2) {
-    const l2 = await collectRpcPair(labels.l2, true)
-    answers.l2RpcUrl = l2.wss
-    answers.l2RpcUrlHttp = l2.http
+  const answers = {
+    l1RpcUrl: l1.wss,
+    l1RpcUrlHttp: l1.http,
   }
 
-  if (needsL1) {
-    const l1 = await collectRpcPair(labels.l1, true)
-    answers.l1RpcUrl = l1.wss
-    answers.l1RpcUrlHttp = l1.http
-
-    // Mainnet RPC (for price feeds) — HTTP only
+  // Mainnet price feeds — only validators need this (CAW/ETH price for tip
+  // accounting). Skip for non-validators.
+  if (['full', 'validator'].includes(nodeType)) {
     const { ethMainnetRpcUrl } = await inquirer.prompt([{
       type: 'input',
       name: 'ethMainnetRpcUrl',
@@ -180,4 +182,48 @@ export async function collectRpcUrls(nodeType, network = 'testnet') {
   }
 
   return answers
+}
+
+/**
+ * L2 RPC for the storage chain of the operator's chosen client. Asked AFTER
+ * client selection so the prompt label can name the actual chain (Base
+ * Sepolia / Arbitrum Sepolia / Ethereum Sepolia for L1-as-storage / etc.).
+ *
+ * `storageChainLabel` is the human-readable name (e.g. "Base Sepolia").
+ * Falls back to a generic label if the caller doesn't know the chain.
+ *
+ * Returns: { l2RpcUrl, l2RpcUrlHttp }. Empty {} for frontend-only callers
+ * that don't need to submit / index L2 events.
+ */
+export async function collectL2Rpc(nodeType, storageChainLabel) {
+  if (nodeType === 'frontend-only') return {}
+
+  section(`${storageChainLabel || 'L2'} RPC`)
+  tipBlock([
+    `Your client's storage chain is ${brand(storageChainLabel || 'an L2')}.`,
+    'Every action your node submits or indexes flows through this chain,',
+    'so a reliable RPC matters more here than for L1.',
+    '',
+    'Same rules as the L1 step: HTTP required, WSS optional. Free tiers',
+    'on Infura / Alchemy / QuickNode all support Base + Arbitrum.',
+  ])
+
+  const l2 = await collectRpcPair(storageChainLabel || 'L2', true)
+  return {
+    l2RpcUrl: l2.wss,
+    l2RpcUrlHttp: l2.http,
+  }
+}
+
+/**
+ * Backwards-compat wrapper used only when the caller doesn't yet know the
+ * storage chain (e.g. legacy code paths or tests). Asks both RPCs in the
+ * old order with generic labels. New code should call collectL1Rpc() and
+ * collectL2Rpc() separately so the L2 prompt can name the chain.
+ */
+export async function collectRpcUrls(nodeType, network = 'testnet') {
+  const l1 = await collectL1Rpc(nodeType, network)
+  const labels = chainLabels(network)
+  const l2 = await collectL2Rpc(nodeType, labels.l2)
+  return { ...l1, ...l2 }
 }
