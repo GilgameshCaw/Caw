@@ -343,7 +343,9 @@ function profileCardTree(opts: {
   displayName: string
   username: string
   bio: string
-  /** Pre-resolved data URI, or null to render the colored-initial fallback. */
+  /** Pre-resolved data URI. Always non-null in practice — see resolveAvatarDataUri's
+   *  fallback chain. null only happens in a broken install where every default
+   *  avatar PNG is missing from disk; the avatar slot is then omitted. */
   avatar: string | null
   followerCount: number
   followingCount: number
@@ -479,7 +481,9 @@ function cawCardTree(opts: {
   displayName: string
   username: string
   text: string
-  /** Pre-resolved data URI, or null to render the colored-initial fallback. */
+  /** Pre-resolved data URI. Always non-null in practice — see resolveAvatarDataUri's
+   *  fallback chain. null only happens in a broken install where every default
+   *  avatar PNG is missing from disk; the avatar slot is then omitted. */
   avatar: string | null
 }) {
   const hasDisplayName = !!opts.displayName && opts.displayName.trim() !== ''
