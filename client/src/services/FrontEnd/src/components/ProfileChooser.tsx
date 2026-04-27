@@ -16,7 +16,7 @@ import { useUserByUsername, useUserByToken } from '~/hooks/useUserData';
 import { getUserAvatar } from '~/utils/defaultAvatar';
 import Avatar from '~/components/Avatar';
 
-const ProfileChooser: React.FC = () => {
+const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
   const { isConnected, address } = useAccount();
   const { openConnectModal } = useConnectModal();
   const hasActiveSession = useHasActiveSession();
@@ -319,13 +319,13 @@ const ProfileChooser: React.FC = () => {
     <div ref={dropdownRef} className="relative flex flex-col text-left left-[0%]">
       <button
         onClick={toggleDropdown}
-        className="flex items-center p-1 cursor-pointer w-full min-w-0"
+        className={`flex items-center cursor-pointer w-full min-w-0 ${compact ? 'px-1 py-0.5' : 'p-1'}`}
       >
-        <div className="rounded-full overflow-hidden w-[50px] h-[50px] m-3 border border-gray-700 flex-shrink-0 aspect-square">
+        <div className={`rounded-full overflow-hidden border border-gray-700 flex-shrink-0 aspect-square ${compact ? 'w-11 h-11 mr-3' : 'w-[50px] h-[50px] m-3'}`}>
           <Avatar src={avatars[selectedToken.tokenId] || getUserAvatar({ tokenId: selectedToken.tokenId })} />
         </div>
         <div className="text-left flex-1 min-w-0">
-          <div className="m-5">
+          <div className={compact ? 'h-1' : 'm-5'}>
           </div>
 
           <div className="relative overflow-hidden">
@@ -335,8 +335,8 @@ const ProfileChooser: React.FC = () => {
               } ${
                 selectedToken.username.length > 16 ? 'text-xs'
                 : selectedToken.username.length > 12 ? 'text-sm'
-                : selectedToken.username.length > 9 ? 'text-base'
-                : 'text-lg'
+                : selectedToken.username.length > 9 ? (compact ? 'text-sm' : 'text-base')
+                : compact ? 'text-base' : 'text-lg'
               }`}
             >
               {selectedToken.username}
@@ -350,7 +350,7 @@ const ProfileChooser: React.FC = () => {
               }`}
             />
           </div>
-          <div className={`text-sm transition-all duration-300 ${
+          <div className={`${compact ? 'text-xs' : 'text-sm'} transition-all duration-300 ${
             isDark ? 'text-gray-300' : 'text-gray-700'
           }`}>
             {selectedToken.stakedAmount > 0n ? formatUnitsCompact((selectedToken.stakedAmount / 10n**18n) * 10n**18n, 18) : "No"} CAW

@@ -270,9 +270,10 @@ interface PostFormProps {
   quote?: CawItem;
   /** called after a successful sign+submit */
   onSuccess?: () => void;
+  placeholder?: string;
 }
 
-const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
+const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placeholder }) => {
   const { isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
   const hasActiveSession = useHasActiveSession();
@@ -1287,7 +1288,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                   replyTo
                     ? `Reply to @${replyTo.user.username}`
                     : (
-                      quote ? "Add a comment" : "What's happening?"
+                      placeholder ?? (quote ? "Add a comment" : "What's happening?")
                     )
                 }
                 textareaRef={textareaRef}
@@ -1544,7 +1545,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
               replyTo
                 ? `Reply to @${replyTo.user.username}`
                 : (
-                  quote ? "Add a comment" : "What's happening?"
+                  placeholder ?? (quote ? "Add a comment" : "What's happening?")
                 )
             }
             textareaRef={textareaRef}

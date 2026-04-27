@@ -29,6 +29,7 @@ import cawLogo from '~/assets/images/caw-logo.png'
 import { useInstanceStore } from '~/store/instanceStore'
 import { API_HOST } from '~/api/client'
 import { useSignInModalStore } from '~/store/signInModalStore'
+import { useModalStore } from '~/store'
 
 const links = ['Home','Explore','Notifications','Messages','Profile'] as const
 
@@ -106,6 +107,7 @@ const Sidebar: React.FC = () => {
   const navigate = useNavigate()
   const location = useLocation()
   const showSignIn = useSignInModalStore(s => s.show)
+  const openModal = useModalStore(s => s.openModal)
   const isCaptive = !activeToken?.username
 
   // Intercept nav clicks for captive users — show sign-in modal instead of navigating
@@ -114,6 +116,14 @@ const Sidebar: React.FC = () => {
       e.preventDefault()
       showSignIn()
     }
+  }
+
+  const handlePostClick = () => {
+    if (isCaptive) {
+      showSignIn()
+      return
+    }
+    openModal('post')
   }
 
   // Helper function for consistent NavLink styling
@@ -145,16 +155,16 @@ const Sidebar: React.FC = () => {
               <img
                 src={cawLogo}
                 alt="CAW Logo"
-                className={`caw-logo-mark w-10 h-10 object-contain ${isDark ? '' : 'drop-shadow-[1px_1px_1px_rgba(0,0,0,0.8)]'}`}
+                className={`caw-logo-mark w-9 h-9 object-contain ${isDark ? '' : 'drop-shadow-[1px_1px_1px_rgba(0,0,0,0.8)]'}`}
               />
             <span
-              className="text-4xl"
+              className="text-[2rem]"
               style={{
                 fontFamily: 'Inter, sans-serif',
                 fontWeight: 800,
                 color: '#ebc046',
                 letterSpacing: '3px',
-                marginLeft: '10px',
+                marginLeft: '8px',
                 textShadow: isDark
                   ? '0 1px 2px rgba(0, 0, 0, 0.6), 0 0 4px rgba(0, 0, 0, 0.3)'
                   : 'rgba(0,0,0,1) 0.5px 0.5px 1px, rgba(0,0,0,0.3) 1.5px 1.5px 1px, rgba(240,177,0,1) 0px 0px 3px',
@@ -167,12 +177,12 @@ const Sidebar: React.FC = () => {
         </div>
 
         {/* Navigation */}
-        <nav className="px-2 py-2 pt-20 sm:px-4 sm:py-4 sm:pr-2 sm:pl-2 sm:pt-4 space-y-1 sm:flex-1 sm:overflow-y-auto sm:min-h-0 thin-scrollbar">
+        <nav className="px-2 py-2 pt-20 sm:px-4 sm:py-3 sm:pr-2 sm:pl-2 sm:pt-1 space-y-0.5 sm:flex-1 sm:overflow-y-auto sm:min-h-0 thin-scrollbar">
           <NavLink
           to="/home"
           onClick={guardClick}
           className={({ isActive }) =>
-            `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+            `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
           }>
             <HiOutlineHome className="w-7 h-7 sm:w-7 sm:h-7" />
             <span className="font-medium text-lg sm:text-lg">Home</span>
@@ -181,7 +191,7 @@ const Sidebar: React.FC = () => {
           <NavLink
             to="/explore"
             className={({ isActive }) =>
-              `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
           >
             <HiOutlineSearch className="w-7 h-7 sm:w-7 sm:h-7" />
@@ -192,7 +202,7 @@ const Sidebar: React.FC = () => {
             to="/notifications"
             onClick={guardClick}
             className={({ isActive }) =>
-              `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
           >
             <div className="relative">
@@ -216,7 +226,7 @@ const Sidebar: React.FC = () => {
               }
             }}
             className={({ isActive }) =>
-              `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive || location.pathname.startsWith('/messages/'))}`
+               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive || location.pathname.startsWith('/messages/'))}`
             }
           >
             <div className="relative">
@@ -237,7 +247,7 @@ const Sidebar: React.FC = () => {
             to="/bookmarks"
             onClick={guardClick}
             className={({ isActive }) =>
-              `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
           >
             <HiOutlineBookmark className="w-7 h-7 sm:w-7 sm:h-7" />
@@ -248,7 +258,7 @@ const Sidebar: React.FC = () => {
             to="/scheduled"
             onClick={guardClick}
             className={({ isActive }) =>
-              `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
           >
             <HiOutlineClock className="w-7 h-7 sm:w-7 sm:h-7" />
@@ -259,7 +269,7 @@ const Sidebar: React.FC = () => {
             to="/staking"
             onClick={guardClick}
             className={({ isActive }) =>
-              `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
           >
             <HiOutlineCube className="w-7 h-7 sm:w-7 sm:h-7" />
@@ -269,7 +279,7 @@ const Sidebar: React.FC = () => {
           <NavLink
             to="/usernames"
             className={({ isActive }) =>
-              `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
           >
             <div className="relative">
@@ -287,7 +297,7 @@ const Sidebar: React.FC = () => {
             to={activeToken?.username ? `/users/${activeToken.username}` : "/welcome"}
             onClick={guardClick}
             className={({ isActive }) =>
-              `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
           >
             <HiOutlineUser className="w-7 h-7 sm:w-7 sm:h-7" />
@@ -298,17 +308,27 @@ const Sidebar: React.FC = () => {
             to="/settings"
             onClick={guardClick}
             className={({ isActive }) =>
-              `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-4 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
             }
           >
             <HiOutlineCog className="w-7 h-7 sm:w-7 sm:h-7" />
             <span className="font-medium text-lg sm:text-lg">Settings</span>
           </NavLink>
         </nav>
+
+        <div className="hidden sm:block px-4 pt-2 pb-3">
+          <button
+            type="button"
+            onClick={handlePostClick}
+            className="w-full rounded-full bg-yellow-500 px-5 py-3 text-base font-semibold text-black transition-colors duration-200 hover:bg-yellow-400 cursor-pointer"
+          >
+            Post
+          </button>
+        </div>
       </div>
 
-      <div className="pl-3 pr-0 -mt-4 pb-0 sm:pl-4 sm:pr-0 sm:py-4 w-full shrink-0">
-        <ProfileChooser/>
+      <div className="pl-3 pr-0 mt-2 pb-0 sm:pl-4 sm:pr-0 sm:py-3 sm:mt-0 w-full shrink-0">
+        <ProfileChooser compact />
       </div>
     </div>
   )
