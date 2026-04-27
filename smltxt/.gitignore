@@ -1,5 +1,11 @@
 /node_modules
 /data
-/dist
-/dist-esm
 /package-lock.json
+# dist/ and dist-esm/ are intentionally tracked. CAW's frontend imports
+# smltxt as a file: dependency from this directory, and vite resolves
+# the package via its main / exports entries (dist/src/index.js,
+# dist-esm/src/index.js). Operators installing CAW shouldn't need to
+# build smltxt themselves — keeping the built artifacts in git makes
+# every install reproducible without an extra toolchain step.
+# Rebuild and re-commit when src/ changes:
+#   cd smltxt && npm install && npm run build
