@@ -64,6 +64,49 @@ The `mintSelector` / `mintAndUpdateOwners` plumbing is intentionally kept as lat
 
 ## Security & Pre-Launch
 
+### Withdrawals silently dropped when `withdrawFee == 0`
+
+**Severity:** Low (no asset loss; user re-submits a withdraw and gets credited next time). **Discovered:** 2026-04-27. **Affected:** `processActions` and `safeProcessActions` in `solidity/contracts/CawActions.sol`.
+
+When a batch contains WITHDRAW actions but the validator passes `withdrawFee == 0`, `_handleWithdrawals` runs (populating the in-storage `_pendingWithdrawIds` / `_pendingWithdrawAmounts`) but `_executeWithdrawals` is skipped — the LZ message to L1 is never sent. The user's `usedCawonce` bit is set, so the action *did* land, but the withdrawable balance never reaches L1. The pending storage arrays sit until the next batch with withdraws clobbers them.
+
+**Why it exists today:**
+
+Both call sites are gated:
+```solidity
+if (sc.withdrawCount > 0) {
+  _handleWithdrawals(...);
+}
+if (sc.withdrawCount > 0 && withdrawFee > 0) {
+  _executeWithdrawals(...);
+}
+```
+
+The split was original code (since `822a35d`, the packed-binary refactor) — it was never the case that `_handleWithdrawals` ran inside the same `if` as `_executeWithdrawals` in `processActions`. The asymmetry between `processActions` (split) and `safeProcessActions` (combined) was fixed in `55bcb17` by mirroring the split in `safeProcessActions`. **No on-chain behavior changed there** — `processActions` was already this shape.
+
+**The two real failure modes:**
+
+1. **bypassLZ mode (storage on Ethereum):** `withdrawFee` is *legitimately zero* — `CawProfileL2.setWithdrawable` short-circuits to call `cawProfile.setWithdrawable(...)` directly with no LZ involvement. Today, `_executeWithdrawals` is gated off and the user's withdraw is silently dropped despite zero fee being correct.
+2. **LZ mode (storage on Base/Arbitrum) with an under-funded validator:** validator forgets to compute `withdrawFee` via `withdrawQuote`, passes 0. Today: silent drop. With the gate removed: `lzSend` reverts the whole batch (LayerZero rejects underpriced messages). Failing loud is arguably better.
+
+**Proposed fix (one-liner):**
+
+Drop the `&& withdrawFee > 0` gate. `CawProfileL2.setWithdrawable` already handles bypassLZ correctly (no LZ fee needed). For LZ mode, an underpriced send will revert with a clear LayerZero error instead of silently dropping. Operators are forced to compute the quote correctly.
+
+**What we don't know yet (must verify before fixing):**
+- That LayerZero's `_lzSend` actually reverts with `msg.value == 0` rather than silently dropping. Documented behavior says it reverts; not yet confirmed against the LZ OApp source.
+- That no operator tooling intentionally calls `processActions` with `withdrawFee == 0` while expecting silent skipping. (Audit `client/src/services/ValidatorService/index.ts`'s tx-build path.)
+- That the stale `_pendingWithdrawIds` / `_pendingWithdrawAmounts` arrays don't leak into a later call's accounting. (Confirmed harmless on read because the next `_handleWithdrawals` overwrites with `=`-assignment, and `_executeWithdrawals` self-deletes after use — but worth re-checking with a unit test before the fix lands.)
+
+**Pre-fix checklist:**
+
+- [ ] Test: bypassLZ mode + WITHDRAW + `withdrawFee == 0`. Today: withdrawable balance NOT updated on L1. After fix: balance IS updated.
+- [ ] Test: LZ mode + WITHDRAW + `withdrawFee == 0`. Today: silent drop. After fix: tx reverts with LZ underpayment error.
+- [ ] Test: two consecutive batches, first with WITHDRAW + zero fee, second with no withdraws. Verify `_pendingWithdrawIds` / `_pendingWithdrawAmounts` aren't incorrectly applied to the second batch.
+- [ ] Audit `ValidatorService` to confirm `withdrawFee` is always quoted via `withdrawQuote` (or `0` only when bypassLZ). Today's silent-drop covers up any missing quote logic; the fix will surface it.
+
+**Why it's not blocking testnet launch:** the failure mode is at most "user re-submits a withdraw" — no funds are stuck and no signatures are wasted (the `usedCawonce` bit prevents replay, but the user can submit a fresh withdraw with a new cawonce). The risk of touching this without proper tests is higher than the risk of leaving it.
+
 ### LZ DVN 3-of-3 config — verify before mainnet
 
 **Status:** Implemented in `solidity/scripts/deploy.js` phase 6 (and `solidity/scripts/lz-dvn-config.js`). Runs automatically on mainnet deploys; testnet intentionally uses LZ defaults.
