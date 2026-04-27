@@ -148,7 +148,7 @@ const Sidebar: React.FC = () => {
     }`}>
       <div className="flex flex-col sm:flex-1 sm:min-h-0">
         {/* Logo Section - Hidden on mobile */}
-        <div className="hidden sm:block p-4 pl-0">
+        <div className="hidden sm:block p-4">
           <NavLink
             to="/home"
             className="caw-logo-lockup flex items-center pl-3 cursor-pointer hover:opacity-80 transition-opacity duration-200"
