@@ -24,6 +24,7 @@ import {
   HiOutlineUserAdd,
   HiOutlineColorSwatch,
   HiOutlineUser,
+  HiOutlinePencilAlt,
 } from 'react-icons/hi'
 import cawLogo from '~/assets/images/caw-logo.png'
 import { useInstanceStore } from '~/store/instanceStore'
@@ -320,9 +321,10 @@ const Sidebar: React.FC = () => {
           <button
             type="button"
             onClick={handlePostClick}
-            className="w-full rounded-full bg-yellow-500 px-5 py-3 text-base font-semibold text-black transition-colors duration-200 hover:bg-yellow-400 cursor-pointer"
+            className="w-full inline-flex items-center justify-center gap-2 rounded-full bg-yellow-500 px-5 py-3 text-base font-semibold text-black transition-colors duration-200 hover:bg-yellow-400 cursor-pointer"
           >
-            Post
+            <HiOutlinePencilAlt className="w-5 h-5" />
+            Write Something
           </button>
         </div>
       </div>
