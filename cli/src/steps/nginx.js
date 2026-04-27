@@ -255,9 +255,32 @@ function renderNginxConf({ domain, apiPort, frontendDist, tls }) {
         add_header Cache-Control "public, immutable";
     }
 
-    # SPA fallback — everything else serves index.html
+    # SPA fallback. Real users get the static dist/index.html. Crawlers
+    # (Twitter, Slack, Discord, iMessage, Facebook, etc.) are routed
+    # through the API's catch-all prerender, which reads the URL, looks
+    # up per-route data (profile / post / hashtag) and returns the same
+    # HTML shell with og:* / twitter:* meta tags injected. Real users
+    # never touch the API for the HTML shell — zero perf cost.
     location / {
+        if (\$http_user_agent ~* "(twitterbot|facebookexternalhit|slackbot|discordbot|telegrambot|whatsapp|linkedinbot|skypeuripreview|googlebot|bingbot|applebot|redditbot|preview|embedly|nuzzel|pinterest|rogerbot|showyoubot|outbrain|w3c_validator)") {
+            rewrite ^ /__prerender\$request_uri last;
+        }
         try_files \$uri \$uri/ /index.html;
+    }
+
+    # Internal-only proxy: the SPA prerender catch-all on the API. The
+    # 'internal' directive means external requests to /__prerender are
+    # rejected — only the 'rewrite ... last' above can land here.
+    location /__prerender {
+        internal;
+        rewrite ^/__prerender(.*)\$ \$1 break;
+        proxy_pass http://127.0.0.1:${apiPort};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 30s;
     }
 `
 

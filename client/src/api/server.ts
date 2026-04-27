@@ -33,6 +33,8 @@ import marketplaceRouter from './routes/marketplace'
 import bookmarksRouter from './routes/bookmarks'
 import meRouter from './routes/me'
 import adminDbRouter from './routes/admin-db'
+import ogRouter from './routes/og'
+import { spaPrerender } from './util/spaPrerender'
 import { getSession } from './sessionStore'
 import { prisma } from '../prismaClient'
 import { Sentry, sentryEnabled } from '../sentry'
@@ -189,10 +191,20 @@ export function createApp() {
   app.use('/api/bookmarks', bookmarksRouter)
   app.use('/api/me', meRouter)
   app.use('/api/admin/db', adminDbRouter)
+  app.use('/api/og', ogRouter)
 
   app.get('/api/__sentry-test', (_req, _res) => {
     throw new Error('Sentry backend test error')
   })
+
+  // SPA prerender for crawler User-Agents (Twitterbot, Slackbot, Discordbot,
+  // facebookexternalhit, etc.). nginx routes only matching UAs through to
+  // this catch-all; real users get the static dist/index.html from nginx
+  // directly. The handler mirrors React Router's path patterns and injects
+  // per-URL og:* / twitter:* meta tags into the SPA shell.
+  // Express 5: a regex catches everything that didn't match an /api/*
+  // route above without tripping path-to-regexp on the literal '*'.
+  app.get(/.*/, spaPrerender)
 
   if (sentryEnabled) Sentry.setupExpressErrorHandler(app)
 

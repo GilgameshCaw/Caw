@@ -82,6 +82,26 @@ export async function runInstall(nodeType, config, installDir) {
         spinner3b.fail('Frontend build failed')
         throw e
       }
+
+      // Replace the __CAW_PUBLIC_URL__ sentinel in dist/index.html with the
+      // operator's actual public URL. The static index.html ships sentinels
+      // so the homepage's default OG/Twitter card has correct absolute URLs
+      // (og:url, og:image) without needing the API in the loop. Crawlers
+      // hitting per-URL routes get fully-prerendered tags from the API
+      // (see client/src/api/util/spaPrerender.ts) — this is the fallback.
+      try {
+        const distIndex = path.join(frontendDir, 'dist', 'index.html')
+        if (fs.existsSync(distIndex)) {
+          const publicUrl = config.domain
+            ? `https://${config.domain}`
+            : 'http://local.caw.com:5274'
+          const html = fs.readFileSync(distIndex, 'utf8')
+          fs.writeFileSync(distIndex, html.replace(/__CAW_PUBLIC_URL__/g, publicUrl))
+          console.log(dim(`  Wrote public URL into dist/index.html OG tags: ${publicUrl}`))
+        }
+      } catch (e) {
+        console.log(warn(`  Could not substitute public URL into dist/index.html: ${e.message}`))
+      }
     }
   }
 

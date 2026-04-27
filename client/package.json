@@ -41,6 +41,7 @@
   "dependencies": {
     "@elastic/elasticsearch": "^8.11.0",
     "@prisma/client": "^6.18.0",
+    "@resvg/resvg-js": "^2.6.2",
     "@sentry/node": "^10.50.0",
     "@types/cors": "^2.8.19",
     "@types/jsonwebtoken": "^9.0.10",
@@ -60,6 +61,7 @@
     "pg": "^8.12.0",
     "redis": "^5.8.2",
     "reflect-metadata": "^0.2.2",
+    "satori": "^0.26.0",
     "smltxt": "file:../smltxt",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",

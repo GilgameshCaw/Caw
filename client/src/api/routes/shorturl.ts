@@ -1,11 +1,13 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
+import { publicUrl } from '../util/publicUrl'
 
 const router = Router()
 
-// Get the short URL domain from config (set via environment variable)
+// Short URLs use the install's public URL — same env var (SHORTURL_DOMAIN)
+// also drives og:url / og:image absolute paths in the prerender layer.
 function getShortUrlDomain(): string {
-  return process.env.SHORTURL_DOMAIN || 'https://caw.is'
+  return publicUrl()
 }
 
 // Health check

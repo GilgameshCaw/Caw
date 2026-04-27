@@ -14,7 +14,29 @@
       content="Decentralized Social Clearing House"
     />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>CAW</title>
+    <title>CAW — Decentralized Social Clearing House</title>
+
+    <!--
+      Default Open Graph + Twitter card. Crawlers (Twitter, Slack,
+      Discord, iMessage, Facebook, etc.) get per-URL versions of these
+      injected by the API's spaPrerender route — see
+      client/src/api/util/spaPrerender.ts. These static defaults are the
+      fallback for crawlers whose UA we don't catch and for the homepage
+      itself. The __CAW_PUBLIC_URL__ sentinel is replaced by the
+      operator's domain during `caw install` (cli/src/steps/install.js).
+    -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="CAW — Decentralized Social Clearing House" />
+    <meta property="og:description" content="Decentralized Social Clearing House" />
+    <meta property="og:url" content="__CAW_PUBLIC_URL__" />
+    <meta property="og:image" content="__CAW_PUBLIC_URL__/api/og/image/default" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:site_name" content="CAW" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="CAW — Decentralized Social Clearing House" />
+    <meta name="twitter:description" content="Decentralized Social Clearing House" />
+    <meta name="twitter:image" content="__CAW_PUBLIC_URL__/api/og/image/default" />
   </head>
   <body style="background-color: #0A0A0A; color-scheme: dark; margin: 0">
     <div id="theme-bg" style="position: fixed; inset: 0; z-index: 0; background-color: #0A0A0A"></div>
