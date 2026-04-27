@@ -277,6 +277,23 @@ function renderNginxConf({ domain, apiPort, frontendDist, tls, nginxSupportsHttp
         proxy_read_timeout 86400s;
     }
 
+    # User-uploaded media (avatars, post images, encrypted DM blobs).
+    # The API writes files under client/public/uploads and serves them
+    # via express.static at /uploads. Without this block, requests for
+    # /uploads/* fall through to the SPA index.html and the browser
+    # tries to render the HTML shell as an image.
+    location /uploads/ {
+        proxy_pass http://127.0.0.1:${apiPort};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        # Uploads are immutable (filename = random hex). Cache aggressively.
+        expires 30d;
+        add_header Cache-Control "public, max-age=2592000, immutable";
+    }
+
     # Long cache for hashed asset bundles
     location /assets/ {
         expires 1y;
