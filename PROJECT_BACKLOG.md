@@ -127,6 +127,62 @@ DVN addresses are per-chain, pulled from LayerZero's metadata API on 2026-04-24.
 - [ ] Send one test cross-chain message and observe all 3 DVNs sign before delivery.
 - [ ] Renounce the ability to alter `setConfig` for each OApp (or move to multisig) once verified — otherwise a compromised deployer key can downgrade the DVN set.
 
+### Install CLI privilege split — drop frontend build to caw user
+
+**Status:** Filed 2026-04-27 to unblock testnet launch. install.sh currently
+runs the entire Node CLI as root because two of its responsibilities require
+root (writing /etc/nginx/sites-available + reloading nginx, and starting pm2
+with `user:` directives in the ecosystem). Side effect: the frontend `yarn
+build` step runs as root.
+
+**Why it matters:** signatures verify upstream package integrity, but a
+build-time side effect in a vite plugin or rollup transform that slipped
+through (zero-day, sigstore compromise, transient typosquat before audit
+catches it) executes with full filesystem write access. Running as the
+`caw` user contains the blast radius — same package compromise becomes
+EACCES instead of `unlink('/etc/something_important')`.
+
+**Proposed split:**
+
+  • Phase A (caw user) — clone, npm install, yarn install, yarn build,
+    prisma db push, file writes under $CAW_DIR. The bulk of install.
+  • Phase B (root) — only the two privileged actions:
+      1. Write /etc/nginx/sites-available/<domain> + nginx -t + systemctl reload
+      2. pm2 start (so the ecosystem's user: caw directive can drop
+         privileges to caw at app launch)
+
+**Implementation outline:**
+
+  1. Refactor `cli/bin/caw.js` so the install action ends after writing
+     ecosystem.config.cjs + the env files. Move `configureNginx` and
+     `startServices` to standalone subcommands: `caw nginx` and `caw start`.
+  2. install.sh runs the main CLI as caw (back to current pre-1ae6871
+     behavior, minus the chown step), then `sudo node cli/bin/caw.js nginx
+     --dir $CAW_DIR` and `sudo node cli/bin/caw.js start --dir $CAW_DIR`
+     as root.
+  3. The standalone subcommands no-op when run twice (nginx config write
+     is idempotent; pm2 start handles already-running apps).
+
+**Why option 1 (this) over option 2 (vendor a prebuilt dist):**
+
+  • dist/ embeds per-install env vars (VITE_CLIENT_ID, VITE_PROJECT_ID,
+    L1/L2 RPC URLs) at build time — can't ship a generic dist
+  • Frontend changes from any contributor would need a dist rebuild +
+    commit; people will forget; stale builds will ship
+  • +5-10 MB per build in the repo, churning often
+
+The privilege-split is mechanical (a few hours of careful work) and
+matches every other principle-of-least-privilege production setup.
+
+**Tests after refactor:**
+
+  • Fresh install via curl one-liner ends with services running, nginx
+    serving the site, cert valid
+  • Re-run on the same host doesn't break anything (idempotency)
+  • A node not running install.sh's bootstrap (e.g. dev box) can still
+    `node cli/bin/caw.js install --dir .` — the new subcommand split
+    shouldn't require sudo for the dev path
+
 ### Admin/owner abilities — verify before mainnet
 
 **Core lockdown is DONE** via the `OnlyOnce` pattern (`solidity/contracts/OnlyOnce.sol`). All protocol-critical setters are gated by `onlyOnce(key)` and permanently disabled after their first successful call:
