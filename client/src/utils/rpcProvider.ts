@@ -143,11 +143,70 @@ export function wsToHttp(wsUrl: string): string {
 }
 
 export function getL2HttpRpcUrl(fallbackWsUrl?: string): string {
-  return process.env.L2_RPC_URL_HTTP || wsToHttp(fallbackWsUrl || process.env.L2_RPC_URL || '')
+  return withSecret(
+    process.env.L2_RPC_URL_HTTP || wsToHttp(fallbackWsUrl || process.env.L2_RPC_URL || ''),
+    process.env.L2_RPC_SECRET,
+  )
 }
 
 export function getL1HttpRpcUrl(fallbackWsUrl?: string): string {
-  return process.env.L1_RPC_URL_HTTP || wsToHttp(fallbackWsUrl || process.env.L1_RPC_URL || '')
+  return withSecret(
+    process.env.L1_RPC_URL_HTTP || wsToHttp(fallbackWsUrl || process.env.L1_RPC_URL || ''),
+    process.env.L1_RPC_SECRET,
+  )
+}
+
+/** Mainnet RPC for Uniswap price feeds. Honors ETH_MAINNET_RPC_SECRET. */
+export function getEthMainnetHttpRpcUrl(fallback?: string): string {
+  return withSecret(
+    process.env.ETH_MAINNET_RPC_URL || fallback || '',
+    process.env.ETH_MAINNET_RPC_SECRET,
+  )
+}
+
+/** Replication chain RPC. Honors REPLICATION_RPC_SECRET. */
+export function getReplicationHttpRpcUrl(fallback?: string): string {
+  return withSecret(
+    process.env.REPLICATION_RPC || process.env.L2B_RPC_URL || fallback || '',
+    process.env.REPLICATION_RPC_SECRET,
+  )
+}
+
+/**
+ * Embed the L2 secret in a WSS URL too. Same /ws/ path adjustment as the
+ * HTTP form — Infura accepts Basic Auth in the WebSocket handshake URL.
+ */
+export function getL2WsRpcUrl(): string {
+  return withSecret(process.env.L2_RPC_URL || '', process.env.L2_RPC_SECRET)
+}
+
+export function getL1WsRpcUrl(): string {
+  return withSecret(process.env.L1_RPC_URL || '', process.env.L1_RPC_SECRET)
+}
+
+/**
+ * Embed an Infura-style API Key Secret as Basic Auth in the RPC URL.
+ * When the operator restricts a provider's project to a domain allowlist
+ * (so the frontend bundle can ship the project ID safely), the backend
+ * still needs to call that same provider — but it has no Origin header to
+ * pass the allowlist. Infura's escape hatch is a per-project "API Key
+ * Secret" sent as Basic Auth, which bypasses the origin check.
+ *
+ * Format produced: `https://:SECRET@host/v3/KEY`. ethers' JsonRpcProvider
+ * forwards the userinfo as a Basic Auth header automatically. If the URL
+ * already carries userinfo we leave it alone (operator knows what they're
+ * doing). Empty / undefined secret is a no-op.
+ */
+export function withSecret(url: string, secret?: string): string {
+  if (!url || !secret) return url
+  try {
+    const u = new URL(url)
+    if (u.username || u.password) return url // already has auth
+    u.password = secret
+    return u.toString()
+  } catch {
+    return url
+  }
 }
 
 // ============================================

@@ -1,7 +1,7 @@
 import { prisma } from '../prismaClient'
 import { CAW_NAMES_L2_ADDRESS, CAW_NAMES_ADDRESS } from '../abi/addresses'
 import { Contract, WebSocketProvider, JsonRpcProvider } from 'ethers'
-import { makeJsonRpcProvider, makeWebSocketProvider, getL1HttpRpcUrl } from '../utils/rpcProvider'
+import { makeJsonRpcProvider, makeWebSocketProvider, getL1HttpRpcUrl, getL1WsRpcUrl, getL2WsRpcUrl } from '../utils/rpcProvider'
 
 /** Thrown when a token ID doesn't exist on the current L1 contract (old deployment) */
 export class StaleTokenError extends Error {
@@ -103,7 +103,7 @@ async function createWebSocketProvider(rpcUrl: string, name: string): Promise<We
 
 async function getL2Provider() {
   if (!l2Provider) {
-    const rpcUrl = process.env.L2_RPC_URL
+    const rpcUrl = getL2WsRpcUrl()
     if (!rpcUrl) {
       throw new Error('Missing L2_RPC_URL in environment variables')
     }
@@ -145,7 +145,7 @@ async function getL2Provider() {
 
 async function getL1Provider() {
   if (!l1Provider) {
-    const rpcUrl = process.env.L1_RPC_URL
+    const rpcUrl = getL1WsRpcUrl()
     if (!rpcUrl) {
       throw new Error('Missing L1_RPC_URL in environment variables')
     }

@@ -6,6 +6,7 @@ import listenForRawEvents, { RawEventInput } from './listenForRawEvents'
 import { convertBigIntsToStrings } from "./utils";
 import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
 import { prisma } from '../../prismaClient'
+import { getL2WsRpcUrl } from '../../utils/rpcProvider'
 
 const Config = z.object({
   chainId:         z.number().int().positive(),
@@ -34,7 +35,7 @@ export const rawEventsGathererService: Service = {
     const cfg = Config.parse(configParam)
     ctx.declareLoop('poll', 90_000) // 3× the 15s poll interval + buffer
     // Prefer environment variable for RPC URL (never commit API keys to config)
-    const rpcUrl = process.env.L2_RPC_URL || cfg.rpcUrl
+    const rpcUrl = getL2WsRpcUrl() || cfg.rpcUrl
     const { chainId, redisUrl } = cfg
 
     // Resolve clientId — this instance scopes to one client. Falls through

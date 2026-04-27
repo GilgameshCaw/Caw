@@ -13,7 +13,7 @@ import { packActions, packSignatures, packGroupedSignatures, bytesToHex, getPack
 import { buildCheckpointMerkleTree } from '../../utils/checkpointMerkle'
 import { tryClaimChallengeLock, releaseChallengeLock } from '../../utils/challengeLock'
 import { foldCheckpointHashes } from '../../utils/foldCheckpointHashes'
-import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
+import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, getL2WsRpcUrl, getEthMainnetHttpRpcUrl, getReplicationHttpRpcUrl } from '../../utils/rpcProvider'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
 import { incrementSessionSpent } from '../../utils/sessionSpendTracker'
@@ -340,9 +340,9 @@ export const validatorService: Service = {
   start(rawCfg, ctx) {
     const cfg = ValidatorConfig.parse(rawCfg)
     // Prefer environment variable for RPC URL (never commit API keys to config)
-    const l2RpcUrl = process.env.L2_RPC_URL || cfg.l2RpcUrl
+    const l2RpcUrl = getL2WsRpcUrl() || cfg.l2RpcUrl
     // ETH L1 mainnet RPC for Uniswap CAW price queries (separate from L2 RPC)
-    const ethMainnetRpcUrl = process.env.ETH_MAINNET_RPC_URL || cfg.ethMainnetRpcUrl || 'https://eth.llamarpc.com'
+    const ethMainnetRpcUrl = getEthMainnetHttpRpcUrl(cfg.ethMainnetRpcUrl) || 'https://eth.llamarpc.com'
     const { validatorId, checkInterval } = cfg
 
     if (!l2RpcUrl || l2RpcUrl.includes('${')) {
@@ -2309,7 +2309,7 @@ console.log("succeededKeys", succeededKeys)
       // REPLICATION_RPC + REPLICATION_CHAIN are the canonical names; falls
       // back to L2B_RPC_URL when an operator hasn't set the dedicated
       // replicator RPC (the two are typically the same chain anyway).
-      const l2bRpcUrl = process.env.REPLICATION_RPC || process.env.L2B_RPC_URL
+      const l2bRpcUrl = getReplicationHttpRpcUrl()
       if (!l2bRpcUrl) throw new Error('REPLICATION_RPC not set — required for optimistic replication')
 
       // Resolve REPLICATION_CHAIN → { chainId, archive address } via the

@@ -7,7 +7,7 @@ import { z } from 'zod'
 import 'dotenv/config'
 import { Service } from '../../Service'
 import { JsonRpcProvider, Contract, Wallet } from 'ethers'
-import { makeJsonRpcProvider } from '../../utils/rpcProvider'
+import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../../utils/rpcProvider'
 import { cawClientManagerAbi } from '../../abi/generated'
 import { CLIENT_MANAGER_ADDRESS } from '../../abi/addresses'
 
@@ -31,7 +31,7 @@ export const instanceRegistryService: Service = {
   // monitors it via stats() (which is fine — there's nothing to watch).
   start(rawCfg, _ctx) {
     const cfg = InstanceRegistryConfig.parse(rawCfg)
-    const l1RpcUrl = process.env.L1_RPC_URL || cfg.l1RpcUrl
+    const l1RpcUrl = getL1HttpRpcUrl() || cfg.l1RpcUrl
     const clientId = Number(process.env.CLIENT_ID || cfg.clientId)
     const apiUrl = process.env.INSTANCE_API_URL || cfg.apiUrl
 

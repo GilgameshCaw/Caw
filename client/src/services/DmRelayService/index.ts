@@ -6,7 +6,7 @@
 
 import 'dotenv/config'
 import { Contract } from 'ethers'
-import { makeJsonRpcProvider } from '../../utils/rpcProvider'
+import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../../utils/rpcProvider'
 import { cawClientManagerAbi } from '../../abi/generated'
 import { CLIENT_MANAGER_ADDRESS } from '../../abi/addresses'
 
@@ -31,19 +31,22 @@ function requireClientId(): number {
   }
   return n
 }
-const l1RpcUrl = process.env.L1_RPC_URL || ''
+// Lazy: read on first use so dotenv has finished loading and so any operator
+// edits to .env between restarts take effect without rebuilding.
+const l1RpcUrl = () => getL1HttpRpcUrl()
 const ownApiUrl = process.env.INSTANCE_API_URL || ''
 
 /**
  * Refresh the list of peer instances from on-chain events.
  */
 async function refreshPeerInstances(): Promise<void> {
-  if (!l1RpcUrl) return
+  const url = l1RpcUrl()
+  if (!url) return
   if (Date.now() - lastRefresh < REFRESH_INTERVAL) return
 
   try {
     const clientId = requireClientId()
-    const provider = makeJsonRpcProvider(l1RpcUrl, 11155111)
+    const provider = makeJsonRpcProvider(url, 11155111)
     const clientManager = new Contract(CLIENT_MANAGER_ADDRESS, cawClientManagerAbi, provider)
 
     // Fetch InstanceRegistered events for our clientId

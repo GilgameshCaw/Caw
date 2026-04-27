@@ -3,7 +3,7 @@
 
 import { prisma } from '../../prismaClient'
 import { JsonRpcProvider, Contract } from 'ethers'
-import { makeJsonRpcProvider, getL1HttpRpcUrl, getL2HttpRpcUrl } from '../../utils/rpcProvider'
+import { makeJsonRpcProvider, getL1HttpRpcUrl, getL2HttpRpcUrl, getEthMainnetHttpRpcUrl } from '../../utils/rpcProvider'
 import { cawClientManagerAbi } from '../../abi/generated'
 import { CLIENT_MANAGER_ADDRESS, CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 
@@ -720,13 +720,15 @@ export const chainSyncService = {
   start(cfg: ChainSyncConfig, ctx: import('../../Service').HeartbeatContext) {
     console.log('[ChainSync] Starting service...')
 
-    // Resolve env vars — config.json may contain "${VAR}" literals
-    const mainnetRpc = process.env.ETH_MAINNET_RPC_URL || cfg.ethMainnetRpcUrl || ''
+    // Resolve env vars — config.json may contain "${VAR}" literals.
+    // Helpers also wrap the URL with the optional Basic Auth secret when
+    // <RPC>_SECRET is set, so backend traffic can bypass an Infura origin
+    // allowlist that's locked down for the frontend bundle's safety.
     const resolvedCfg: ChainSyncConfig = {
       // L1 RPC is Sepolia (where CawClientManager lives) — NOT mainnet
-      l1RpcUrl: process.env.L1_RPC_URL || cfg.l1RpcUrl,
-      l2RpcUrl: process.env.L2_RPC_URL_HTTP || process.env.L2_RPC_URL || cfg.l2RpcUrl,
-      ethMainnetRpcUrl: mainnetRpc,
+      l1RpcUrl: getL1HttpRpcUrl() || cfg.l1RpcUrl,
+      l2RpcUrl: getL2HttpRpcUrl() || cfg.l2RpcUrl,
+      ethMainnetRpcUrl: getEthMainnetHttpRpcUrl(cfg.ethMainnetRpcUrl) || '',
     }
 
     // Guard against unresolved template strings

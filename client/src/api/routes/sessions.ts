@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { randomUUID } from 'crypto'
 import { ethers, Contract, Wallet, JsonRpcProvider, WebSocketProvider } from 'ethers'
-import { makeJsonRpcProvider, makeWebSocketProvider } from '../../utils/rpcProvider'
+import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import { cawProfileL2Abi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 import { prisma } from '../../prismaClient'
@@ -52,7 +52,7 @@ let _contract: Contract | null = null
 
 function getContract() {
   if (_contract) return _contract
-  const rpcUrl = process.env.L2_RPC_URL_HTTP || process.env.L2_RPC_URL
+  const rpcUrl = getL2HttpRpcUrl()
   if (!rpcUrl) throw new Error('L2 RPC not configured')
   const validatorKey = process.env.VALIDATOR_PRIVATE_KEY
   if (!validatorKey) throw new Error('Validator not configured')

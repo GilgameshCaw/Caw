@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { ethers, JsonRpcProvider, WebSocketProvider, Contract } from 'ethers'
-import { makeJsonRpcProvider, makeWebSocketProvider } from '../../utils/rpcProvider'
+import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import SmlTxt from 'smltxt'
 import { prisma } from '../../prismaClient'
 
@@ -62,7 +62,7 @@ let _readContract: Contract | null = null
 
 function getReadContract(): Contract {
   if (_readContract) return _readContract
-  const rpcUrl = process.env.L2_RPC_URL_HTTP || process.env.L2_RPC_URL
+  const rpcUrl = getL2HttpRpcUrl()
   if (!rpcUrl) throw new Error('L2 RPC not configured')
   _readProvider = rpcUrl.startsWith('wss://') || rpcUrl.startsWith('ws://')
     ? makeWebSocketProvider(rpcUrl, 84532)
