@@ -52,6 +52,7 @@ export default defineConfig({
   server: {
     port: 5274,
     strictPort: true, // Fail loudly if 5274 is taken rather than silently climbing to the next port
+    host: true, // Bind to 0.0.0.0 so other devices on the LAN (e.g. a phone) can hit the dev server
     allowedHosts: true, // Allow all hosts in development
     // Note: COOP/COEP headers are set conditionally in coepHeadersPlugin()
     // They only work on localhost or HTTPS origins (browsers ignore them otherwise)
