@@ -101,7 +101,8 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
     uint256 indexed submissionId,
     uint32 indexed clientId,
     bytes packedActions,
-    bytes32[] r
+    bytes32[] r,
+    bytes32 entryHash
   );
 
   event SubmissionFinalized(uint256 indexed submissionId);
@@ -235,7 +236,11 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
     validatorSubmissions[msg.sender].push(submissionId);
 
     emit SubmissionCreated(submissionId, msg.sender, clientId, startCheckpointId, endCheckpointId, merkleRoot);
-    emit ActionsArchived(submissionId, clientId, packedActions, r);
+    // Emit entryHash separately so off-chain monitors can compare it against
+    // the source L2's clientHashAtCheckpoint(clientId, startCheckpointId-1)
+    // and trigger slashIncoherentRoot pre-emptively if a submitter committed
+    // a wrong entryHash — without waiting for the full LZ challenge round-trip.
+    emit ActionsArchived(submissionId, clientId, packedActions, r, entryHash);
   }
 
   // ============================================

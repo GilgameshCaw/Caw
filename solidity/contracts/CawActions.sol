@@ -205,7 +205,11 @@ contract CawActions is Ownable {
     c.pos = nextPos;
     _trackClientAndWithdraw(c, action, c.actionsSeen);
     (address signer, bool isSessionKey) = _verifySignatureMem(v, r, s, action);
-    _applyAction(validatorId, action, r, signer, isSessionKey, packedActions[actionStart:nextPos]);
+    BatchAuth memory ba;
+    ba.signer = signer;
+    ba.isSessionKey = isSessionKey;
+    ba.r = r;
+    _applyAction(validatorId, action, ba, packedActions[actionStart:nextPos]);
     c.actionsSeen += 1;
   }
 
@@ -223,33 +227,7 @@ contract CawActions is Ownable {
     uint256[] memory sliceStarts = new uint256[](groupSize);
     uint256[] memory sliceEnds = new uint256[](groupSize);
 
-    for (uint256 i = 0; i < groupSize; ) {
-      uint256 sliceStart = c.pos;
-      (ActionData memory action, uint256 nextPos) = _unpackAction(packedActions, c.pos);
-      c.pos = nextPos;
-
-      _trackClientAndWithdraw(c, action, c.actionsSeen + i);
-
-      // All actions in a batch must share the same senderId. Without this,
-      // one user's batch sig could authorize another user's actions.
-      if (i > 0) {
-        require(action.senderId == groupActions[0].senderId, "Mixed senders in batch");
-        // Cawonces in a batch must be strictly contiguous and ascending.
-        // The signed `firstCawonce` (committed in ACTIONBATCH_TYPEHASH) plus
-        // implicit-position `i` is what the user intended each action's
-        // cawonce to be — anything else means the on-chain action set
-        // doesn't match the off-chain one the user signed for. Without this
-        // check, `firstCawonce` would be redundant with `actionsHash` and
-        // a future tightening could silently change the signed semantics.
-        require(action.cawonce == groupActions[0].cawonce + i, "Non-contiguous cawonces in batch");
-      }
-
-      groupActions[i] = action;
-      sliceStarts[i] = sliceStart;
-      sliceEnds[i] = nextPos;
-      perActionHashes[i] = keccak256(packedActions[sliceStart:nextPos]);
-      unchecked { ++i; }
-    }
+    _unpackBatchGroup(packedActions, c, groupSize, perActionHashes, groupActions, sliceStarts, sliceEnds);
 
     BatchAuth memory ba;
     (ba.signer, ba.isSessionKey) = _verifyBatchSignature(
@@ -261,25 +239,72 @@ contract CawActions is Ownable {
     );
     ba.r = r;
     if (ba.isSessionKey) {
-      address owner = cawProfile.ownerOf(groupActions[0].senderId);
-      (, ba.scopeBitmap,) = cawProfile.sessions(owner, ba.signer);
+      ba.owner = cawProfile.ownerOf(groupActions[0].senderId);
+      (, ba.scopeBitmap, ba.spendLimit) = cawProfile.sessions(ba.owner, ba.signer);
     }
 
     _applyBatch(validatorId, packedActions, groupActions, sliceStarts, sliceEnds, ba);
     c.actionsSeen += groupSize;
   }
 
+  /// @dev Walk `groupSize` actions starting at `c.pos`, unpacking each one,
+  ///      tracking client/withdraw bookkeeping, and asserting the batch
+  ///      invariants (same sender, contiguous cawonces). Splits the per-batch
+  ///      preamble out of _processBatchSig to keep that function's stack
+  ///      shallow enough for the via-IR optimizer.
+  function _unpackBatchGroup(
+    bytes calldata packedActions,
+    BatchCursor memory c,
+    uint256 groupSize,
+    bytes32[] memory perActionHashes,
+    ActionData[] memory groupActions,
+    uint256[] memory sliceStarts,
+    uint256[] memory sliceEnds
+  ) internal pure {
+    for (uint256 i = 0; i < groupSize; ) {
+      uint256 sliceStart = c.pos;
+      (ActionData memory action, uint256 nextPos) = _unpackAction(packedActions, c.pos);
+      c.pos = nextPos;
+
+      _trackClientAndWithdraw(c, action, c.actionsSeen + i);
+
+      // All actions in a batch must share the same senderId. Without this,
+      // one user's batch sig could authorize another user's actions.
+      // Cawonces must be strictly contiguous and ascending — without this
+      // check, `firstCawonce` in ACTIONBATCH_TYPEHASH would be redundant
+      // with `actionsHash` and a future tightening could silently change
+      // the signed semantics.
+      if (i > 0) {
+        require(action.senderId == groupActions[0].senderId, "Mixed senders in batch");
+        require(action.cawonce == groupActions[0].cawonce + i, "Non-contiguous cawonces in batch");
+      }
+
+      groupActions[i] = action;
+      sliceStarts[i] = sliceStart;
+      sliceEnds[i] = nextPos;
+      perActionHashes[i] = keccak256(packedActions[sliceStart:nextPos]);
+      unchecked { ++i; }
+    }
+  }
+
   /// @dev Bundle of fields produced by batch-sig recovery, threaded into
   ///      _applyBatch as one struct to keep the inner loop's stack shallow.
+  ///      `owner` and `spendLimit` are populated once at sig recovery (when
+  ///      the signer is a session key) and reused for every action in the
+  ///      group, eliminating an N-fold cawProfile.sessions(...) re-fetch.
   struct BatchAuth {
     address signer;
     bool    isSessionKey;
     uint8   scopeBitmap;
     bytes32 r;
+    address owner;       // cawProfile.ownerOf(senderId), only when isSessionKey
+    uint256 spendLimit;  // session.spendLimit, only when isSessionKey
   }
 
   /// @dev Apply each action in a verified batch group, doing the per-action
-  ///      session-scope check before _applyAction.
+  ///      session-scope check before _applyAction. Threads the cached
+  ///      session (owner, spendLimit) into _applyAction so the inner loop
+  ///      doesn't re-read cawProfile.sessions(...) per action.
   function _applyBatch(
     uint32 validatorId,
     bytes calldata packedActions,
@@ -294,10 +319,7 @@ contract CawActions is Ownable {
       if (ba.isSessionKey) {
         require((ba.scopeBitmap & (1 << uint8(action.actionType))) != 0, "Action not in session scope");
       }
-      _applyAction(
-        validatorId, action, ba.r, ba.signer, ba.isSessionKey,
-        packedActions[sliceStarts[i]:sliceEnds[i]]
-      );
+      _applyAction(validatorId, action, ba, packedActions[sliceStarts[i]:sliceEnds[i]]);
       unchecked { ++i; }
     }
   }
@@ -473,11 +495,19 @@ contract CawActions is Ownable {
       unchecked { ++i; }
     }
 
-    address signer;
-    bool isSessionKey;
-    uint8 scopeBitmap;
+    BatchAuth memory ba;
+    ba.r = r;
     if (groupSize == 1) {
-      (signer, isSessionKey) = _verifySignatureMem(v, r, s, groupActions[0]);
+      (ba.signer, ba.isSessionKey) = _verifySignatureMem(v, r, s, groupActions[0]);
+      // _applyBatch's per-action scope check below is redundant for the
+      // single-sig path (already enforced inside _verifySignatureMem), but
+      // populating the bitmap here keeps the unified loop correct rather
+      // than special-casing groupSize==1. owner/spendLimit are cached for
+      // parity even though a single-action group has nothing to amortize.
+      if (ba.isSessionKey) {
+        ba.owner = cawProfile.ownerOf(groupActions[0].senderId);
+        (, ba.scopeBitmap, ba.spendLimit) = cawProfile.sessions(ba.owner, ba.signer);
+      }
     } else {
       // Batch — all senders must match, cawonces must be strictly contiguous
       // and ascending starting from groupActions[0].cawonce, then verify the
@@ -488,30 +518,23 @@ contract CawActions is Ownable {
         require(groupActions[i].cawonce == groupActions[0].cawonce + i, "Non-contiguous cawonces in batch");
         unchecked { ++i; }
       }
-      (signer, isSessionKey) = _verifyBatchSignature(
+      (ba.signer, ba.isSessionKey) = _verifyBatchSignature(
         v, r, s,
         groupActions[0].senderId,
         groupActions[0].cawonce,
         uint32(groupSize),
         keccak256(abi.encodePacked(perActionHashes))
       );
-      if (isSessionKey) {
-        address owner = cawProfile.ownerOf(groupActions[0].senderId);
-        (, scopeBitmap,) = cawProfile.sessions(owner, signer);
+      if (ba.isSessionKey) {
+        ba.owner = cawProfile.ownerOf(groupActions[0].senderId);
+        (, ba.scopeBitmap, ba.spendLimit) = cawProfile.sessions(ba.owner, ba.signer);
       }
     }
 
-    for (uint256 i = 0; i < groupSize; ) {
-      ActionData memory action = groupActions[i];
-      if (groupSize > 1 && isSessionKey) {
-        require((scopeBitmap & (1 << uint8(action.actionType))) != 0, "Action not in session scope");
-      }
-      _applyAction(
-        validatorId, action, r, signer, isSessionKey,
-        groupBytes[sliceStarts[i]:sliceEnds[i]]
-      );
-      unchecked { ++i; }
-    }
+    // Reuse _applyBatch's loop so processActions and safeProcessActions share
+    // a single per-action application path (and one stack frame depth, which
+    // matters for the via-IR optimizer's reach).
+    _applyBatch(validatorId, groupBytes, groupActions, sliceStarts, sliceEnds, ba);
   }
 
   /// @notice External entry for legacy single-sig path. Only callable by self.
@@ -539,19 +562,26 @@ contract CawActions is Ownable {
     bytes calldata packedSlice
   ) internal {
     (address signer, bool isSessionKey) = _verifySignatureMem(v, r, s, action);
-    _applyAction(validatorId, action, r, signer, isSessionKey, packedSlice);
+    BatchAuth memory ba;
+    ba.signer = signer;
+    ba.isSessionKey = isSessionKey;
+    ba.r = r;
+    _applyAction(validatorId, action, ba, packedSlice);
   }
 
   /// @dev Apply a single already-authenticated action: protocol costs,
   ///      amount distribution, session spend, cawonce burn, hash-chain link.
   ///      Caller is responsible for verifying the signature (single or batch)
   ///      and for the per-action session-scope check on batch sigs.
+  ///
+  ///      `ba.owner` and `ba.spendLimit` are session lookups the caller has
+  ///      already done — for batch sigs the lookup is amortized once per
+  ///      group. Single-sig callers can pass an empty BatchAuth (with
+  ///      isSessionKey/owner/spendLimit zeroed) to fetch lazily.
   function _applyAction(
     uint32 validatorId,
     ActionData memory action,
-    bytes32 r,
-    address signer,
-    bool isSessionKey,
+    BatchAuth memory ba,
     bytes calldata packedSlice
   ) internal {
     require(!isCawonceUsed(action.senderId, action.cawonce), "Cawonce already used");
@@ -584,13 +614,18 @@ contract CawActions is Ownable {
     // Distribute amounts (tips, validator fees)
     actionCost += _distributeAmountsMem(validatorId, action);
 
-    // Session spend limit
-    if (isSessionKey && actionCost > 0) {
-      address owner = cawProfile.ownerOf(action.senderId);
-      (,, uint256 spendLimit) = cawProfile.sessions(owner, signer);
+    // Session spend limit. Use cached (owner, spendLimit) when the caller
+    // already resolved them (batch path); otherwise fetch lazily.
+    if (ba.isSessionKey && actionCost > 0) {
+      address owner = ba.owner;
+      uint256 spendLimit = ba.spendLimit;
+      if (owner == address(0)) {
+        owner = cawProfile.ownerOf(action.senderId);
+        (,, spendLimit) = cawProfile.sessions(owner, ba.signer);
+      }
       if (spendLimit > 0) {
-        sessionSpent[owner][signer] += actionCost;
-        require(sessionSpent[owner][signer] <= spendLimit, "Session spend limit exceeded");
+        sessionSpent[owner][ba.signer] += actionCost;
+        require(sessionSpent[owner][ba.signer] <= spendLimit, "Session spend limit exceeded");
       }
     }
 
@@ -602,7 +637,7 @@ contract CawActions is Ownable {
     // unique actionHash per action so links are non-degenerate.
     uint32 clientId = action.clientId;
     bytes32 actionHash = keccak256(packedSlice);
-    clientCurrentHash[clientId] = keccak256(abi.encodePacked(clientCurrentHash[clientId], r, actionHash));
+    clientCurrentHash[clientId] = keccak256(abi.encodePacked(clientCurrentHash[clientId], ba.r, actionHash));
     clientActionCount[clientId]++;
 
     if (clientActionCount[clientId] % CHECKPOINT_INTERVAL == 0)

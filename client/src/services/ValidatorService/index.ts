@@ -2265,7 +2265,7 @@ console.log("succeededKeys", succeededKeys)
       'function getSubmission(uint256) view returns (address submitter, bytes32 merkleRoot, uint32 clientId, uint256 startCheckpointId, uint256 endCheckpointId, uint256 finalizedAt, uint8 status)',
       'function nextSubmissionId() view returns (uint256)',
       'event SubmissionCreated(uint256 indexed submissionId, address indexed submitter, uint32 indexed clientId, uint256 startCheckpointId, uint256 endCheckpointId, bytes32 merkleRoot)',
-      'event ActionsArchived(uint256 indexed submissionId, uint32 indexed clientId, bytes packedActions, bytes32[] r)',
+      'event ActionsArchived(uint256 indexed submissionId, uint32 indexed clientId, bytes packedActions, bytes32[] r, bytes32 entryHash)',
     ]
 
     // Lazily initialized L2b provider + contracts (only when optimistic mode is enabled)
