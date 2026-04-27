@@ -95,14 +95,30 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
     '  fraud-detection coverage and may earn you slashing rewards.',
   ])
 
-  const { participate } = await inquirer.prompt([
-    {
-      type: 'confirm',
-      name: 'participate',
-      message: 'Participate in replication?',
-      default: false,
-    },
-  ])
+  // --env preload: presence of CAW_REPLICATION_RPC implies the previous
+  // install opted in, so skip the participate question and pre-fill every
+  // downstream prompt that has a recognized value. Sensitive bits (the
+  // replicator key) still re-prompt — same pattern as the validator key.
+  const preloadRpc = process.env.CAW_REPLICATION_RPC || ''
+  const preloadChain = process.env.CAW_REPLICATION_CHAIN || ''
+  const preloadClientIds = process.env.CAW_REPLICATE_CLIENT_IDS || ''
+  const preloaded = preloadRpc || preloadChain || preloadClientIds
+
+  let participate
+  if (preloaded) {
+    console.log(dim('  Replication settings found in --env preload — keeping participation on.'))
+    participate = true
+  } else {
+    const ans = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'participate',
+        message: 'Participate in replication?',
+        default: false,
+      },
+    ])
+    participate = ans.participate
+  }
 
   if (!participate) {
     console.log(dim('  Skipping replication setup — you can enable it later by setting'))
@@ -133,7 +149,14 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
   }
 
   let replicationChain
-  if (chains.length === 1) {
+  // Preload from --env: if the previous .env named a chain we still
+  // support, skip the picker.
+  const preloadedChainEntry = preloadChain && chains.find(c => c.key === preloadChain)
+  if (preloadedChainEntry) {
+    replicationChain = preloadedChainEntry.key
+    console.log()
+    console.log(dim(`  Using ${brand(preloadedChainEntry.label)} (from --env preload).`))
+  } else if (chains.length === 1) {
     // Single-chain shortcut: with two L2s deployed today (Base + Arbitrum),
     // a client storing on one L2 has exactly one valid archive choice — the
     // other. Skip the picker; the operator's only meaningful input here is
@@ -199,7 +222,13 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
   const expectedChainId = REPLICATION_CHAIN_IDS[chosenChain.key] || null
 
   let replicationRpcUrl
-  while (true) {
+  // Preload RPC URL only when the preloaded chain matches the one we
+  // ended up using (could have been auto-picked instead of preloaded).
+  if (preloadRpc && preloadedChainEntry && preloadedChainEntry.key === replicationChain) {
+    replicationRpcUrl = preloadRpc
+    console.log(dim(`  Using replication RPC from --env preload.`))
+  }
+  while (!replicationRpcUrl) {
     const ans = await inquirer.prompt([
       {
         type: 'input',
@@ -238,29 +267,36 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
   }
 
   // ---- Which clients to replicate ----
-  console.log()
-  tipBlock([
-    `${brand('Which clients do you replicate?')}`,
-    'Replication is per-validator: you decide which clients\' actions you',
-    'archive. Most operators replicate the client they run a node for.',
-    'Multiple comma-separated IDs are fine if you replicate for several.',
-  ])
-  const { replicateClientIds } = await inquirer.prompt([
-    {
-      type: 'input',
-      name: 'replicateClientIds',
-      message: 'Client IDs to replicate (comma-separated):',
-      default: ctx.clientId ? String(ctx.clientId) : '1',
-      validate: (input) => {
-        const ids = input.split(',').map(s => s.trim()).filter(Boolean)
-        if (ids.length === 0) return 'At least one client ID required'
-        for (const id of ids) {
-          if (!/^\d+$/.test(id) || Number(id) <= 0) return `Invalid client ID: ${id}`
-        }
-        return true
+  let replicateClientIds
+  if (preloadClientIds) {
+    replicateClientIds = preloadClientIds
+    console.log(dim(`  Using replicate client IDs from --env preload: ${preloadClientIds}`))
+  } else {
+    console.log()
+    tipBlock([
+      `${brand('Which clients do you replicate?')}`,
+      'Replication is per-validator: you decide which clients\' actions you',
+      'archive. Most operators replicate the client they run a node for.',
+      'Multiple comma-separated IDs are fine if you replicate for several.',
+    ])
+    const ans = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'replicateClientIds',
+        message: 'Client IDs to replicate (comma-separated):',
+        default: ctx.clientId ? String(ctx.clientId) : '1',
+        validate: (input) => {
+          const ids = input.split(',').map(s => s.trim()).filter(Boolean)
+          if (ids.length === 0) return 'At least one client ID required'
+          for (const id of ids) {
+            if (!/^\d+$/.test(id) || Number(id) <= 0) return `Invalid client ID: ${id}`
+          }
+          return true
+        },
       },
-    },
-  ])
+    ])
+    replicateClientIds = ans.replicateClientIds
+  }
 
   // ---- Replicator key ----
   console.log()

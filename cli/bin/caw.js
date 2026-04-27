@@ -48,6 +48,12 @@ const ENV_TO_CAW = {
   L2_RPC_URL: 'CAW_L2_RPC_URL',
   L2_RPC_URL_HTTP: 'CAW_L2_RPC_URL_HTTP',
   ETH_MAINNET_RPC_URL: 'CAW_ETH_MAINNET_RPC_URL',
+  // Replication — collectReplicationConfig skips the entire participate +
+  // chain + RPC + client-IDs prompt sequence when these are preloaded.
+  // The replicator key still re-prompts (sensitive, same as validator key).
+  REPLICATION_RPC: 'CAW_REPLICATION_RPC',
+  REPLICATION_CHAIN: 'CAW_REPLICATION_CHAIN',
+  REPLICATE_CLIENT_IDS: 'CAW_REPLICATE_CLIENT_IDS',
   // VITE_PROJECT_ID lives in the FRONTEND .env, handled separately.
 }
 
