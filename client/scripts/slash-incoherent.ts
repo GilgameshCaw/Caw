@@ -9,25 +9,55 @@
 //   cd client
 //   npx tsx scripts/slash-incoherent.ts <submissionId>
 //
-// Reads RPC + key from .env (VALIDATOR_PRIVATE_KEY, L2B_RPC_URL,
-// L2_RPC_URL). Archive + CawActions addresses come from addresses.ts.
+// Reads RPC + key from .env (VALIDATOR_PRIVATE_KEY, REPLICATION_RPC or
+// L2B_RPC_URL, L2_RPC_URL). Archive address resolves from
+// REPLICATION_CHAIN via deployments.ts (NOT the per-install
+// CAW_ACTIONS_ARCHIVE_ADDRESS, which is the storage chain's archive
+// and would point at the wrong address when replicating across chains).
 import 'dotenv/config'
 import { ethers } from 'ethers'
-import {
-  CAW_ACTIONS_ARCHIVE_ADDRESS,
-  CAW_ACTIONS_ADDRESS,
-} from '../src/abi/addresses'
+import { CAW_ACTIONS_ADDRESS } from '../src/abi/addresses'
+import { deployments, type Env, type ChainKey } from '../src/abi/deployments'
+
+const REPLICATION_CHAIN_META: Record<string, { env: Env; chainKey: ChainKey }> = {
+  'arbitrum-sepolia': { env: 'testnet', chainKey: 'L2b' },
+  'arbitrum-one':     { env: 'mainnet', chainKey: 'L2b' },
+  'arbitrum':         { env: 'mainnet', chainKey: 'L2b' },
+  'base-sepolia':     { env: 'testnet', chainKey: 'L2'  },
+  'base':             { env: 'mainnet', chainKey: 'L2'  },
+}
+
+function resolveReplicationArchive(): string {
+  const replicationChain = process.env.REPLICATION_CHAIN || 'arbitrum-sepolia'
+  const meta = REPLICATION_CHAIN_META[replicationChain]
+  if (!meta) {
+    throw new Error(
+      `REPLICATION_CHAIN="${replicationChain}" — supported keys: ${Object.keys(REPLICATION_CHAIN_META).join(', ')}`
+    )
+  }
+  const address = deployments[meta.env]?.[meta.chainKey]?.CawActionsArchive
+  if (!address) {
+    throw new Error(
+      `No CawActionsArchive deployment for ${meta.env}/${meta.chainKey} ` +
+      `(REPLICATION_CHAIN=${replicationChain}) in client/src/abi/deployments.ts`
+    )
+  }
+  return address
+}
 
 async function main() {
   const subIdArg = process.argv[2]
   if (!subIdArg) throw new Error('usage: slash-incoherent.ts <submissionId>')
   const SUBID = BigInt(subIdArg)
 
-  const arbRpc = process.env.L2B_RPC_URL
+  const arbRpc = process.env.REPLICATION_RPC || process.env.L2B_RPC_URL
   const baseRpc = process.env.L2_RPC_URL_HTTP || process.env.L2_RPC_URL || 'https://sepolia.base.org'
   const pk = process.env.VALIDATOR_PRIVATE_KEY
-  if (!arbRpc) throw new Error('L2B_RPC_URL not set')
+  if (!arbRpc) throw new Error('REPLICATION_RPC (or L2B_RPC_URL) not set')
   if (!pk) throw new Error('VALIDATOR_PRIVATE_KEY not set')
+
+  const archiveAddress = resolveReplicationArchive()
+  console.log(`Archive: ${archiveAddress} on ${process.env.REPLICATION_CHAIN || 'arbitrum-sepolia'}`)
 
   const arb = new ethers.JsonRpcProvider(arbRpc)
   const base = new ethers.JsonRpcProvider(baseRpc)
@@ -41,8 +71,8 @@ async function main() {
   ]
   const cawActionsAbi = ['function clientHashAtCheckpoint(uint32,uint256) view returns (bytes32)']
 
-  const archive = new ethers.Contract(CAW_ACTIONS_ARCHIVE_ADDRESS, archiveAbi, arb)
-  const archiveW = new ethers.Contract(CAW_ACTIONS_ARCHIVE_ADDRESS, archiveAbi, wallet)
+  const archive = new ethers.Contract(archiveAddress, archiveAbi, arb)
+  const archiveW = new ethers.Contract(archiveAddress, archiveAbi, wallet)
   const cawActions = new ethers.Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi, base)
 
   const sub = await archive.submissions(SUBID)
