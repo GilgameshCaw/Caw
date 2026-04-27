@@ -41,3 +41,28 @@ export function extractHashtagBodies(content: string, maxLen = 100): string[] {
   }
   return out;
 }
+
+/**
+ * Like extractHashtagBodies but also returns the original casing of each
+ * tag's first occurrence in the text. The lowercased `name` is the canonical
+ * lookup key; `displayName` is what the *first* author typed and is what
+ * read paths render. Multiple casings of the same tag in one post collapse
+ * to the first occurrence.
+ */
+export function extractHashtagBodiesWithDisplay(
+  content: string,
+  maxLen = 100,
+): Array<{ name: string; displayName: string }> {
+  const out: Array<{ name: string; displayName: string }> = [];
+  const seen = new Set<string>();
+  for (const m of content.matchAll(HASHTAG_REGEX)) {
+    const original = m[1];
+    const body = original.toLowerCase();
+    if (!isValidTagBody(body)) continue;
+    if (body.length > maxLen) continue;
+    if (seen.has(body)) continue;
+    seen.add(body);
+    out.push({ name: body, displayName: original });
+  }
+  return out;
+}

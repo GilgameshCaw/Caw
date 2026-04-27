@@ -83,7 +83,9 @@ router.get('/:tag/caws', async (req, res) => {
     return res.json({
       items,
       nextCursor,
-      hashtag: { name: hashtag.name, usageCount: hashtag.usageCount }
+      // Prefer displayName (original casing from first author) when present;
+      // fall back to canonical lowercase for older rows.
+      hashtag: { name: hashtag.displayName || hashtag.name, usageCount: hashtag.usageCount }
     })
 
   } catch (err: any) {
@@ -155,6 +157,7 @@ router.get('/:tag', async (req, res) => {
       where: { name: hashtagName },
       select: {
         name: true,
+        displayName: true,
         usageCount: true,
         createdAt: true,
         updatedAt: true
@@ -165,7 +168,14 @@ router.get('/:tag', async (req, res) => {
       return res.status(404).json({ error: 'Hashtag not found' })
     }
 
-    return res.json({ hashtag })
+    return res.json({
+      hashtag: {
+        ...hashtag,
+        // Prefer original-case displayName for the canonical name field;
+        // older rows without displayName fall back to the lowercase name.
+        name: hashtag.displayName || hashtag.name,
+      },
+    })
 
   } catch (err: any) {
     console.error(`GET /api/hashtags/${req.params.tag} error`, err)

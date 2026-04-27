@@ -229,12 +229,17 @@ model Action {
 }
 
 model Hashtag {
-  id         Int          @id @default(autoincrement())
-  name       String       @unique
-  usageCount Int          @default(0)
-  createdAt  DateTime     @default(now())
-  updatedAt  DateTime     @updatedAt
-  caws       CawHashtag[]
+  id          Int          @id @default(autoincrement())
+  // Canonical lowercase form — used for uniqueness, joins, route keys.
+  name        String       @unique
+  // Original casing as typed by the first author to use this hashtag.
+  // Read paths prefer this when rendering; falls back to `name` when null
+  // (older rows pre-dating this column).
+  displayName String?
+  usageCount  Int          @default(0)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  caws        CawHashtag[]
 
   @@index([name])
   @@index([usageCount])

@@ -818,7 +818,7 @@ router.get('/image/hashtag/:tag', async (req, res) => {
   if (!tag || !/^[\w-]+$/.test(tag)) return res.redirect(302, '/api/og/image/default')
   const hashtag = await prisma.hashtag.findUnique({
     where: { name: tag },
-    select: { name: true, usageCount: true },
+    select: { name: true, displayName: true, usageCount: true },
   })
   // Cache key includes count so the card updates as the tag grows. Bucketed
   // so we don't blow the cache every single new caw — bumps every order of
@@ -826,8 +826,10 @@ router.get('/image/hashtag/:tag', async (req, res) => {
   const count = hashtag?.usageCount ?? 0
   const bucket = count === 0 ? 0 : Math.floor(Math.log10(count))
   const cacheKey = `hashtag-${tag}-${bucket}`
+  // Render with original casing when we have it; URL still uses lowercase.
+  const displayTag = hashtag?.displayName || hashtag?.name || tag
   return serveCachedOrRender(res, cacheKey, () => renderToPng(hashtagCardTree({
-    tag, usageCount: count,
+    tag: displayTag, usageCount: count,
   })))
 })
 

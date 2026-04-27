@@ -182,6 +182,7 @@ CREATE TABLE "Action" (
 CREATE TABLE "Hashtag" (
     "id" SERIAL NOT NULL,
     "name" TEXT NOT NULL,
+    "displayName" TEXT,
     "usageCount" INTEGER NOT NULL DEFAULT 0,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,

@@ -1,6 +1,6 @@
 import { prisma } from '../prismaClient'
 import { PrismaClient } from '@prisma/client'
-import { extractHashtagBodies } from './hashtagRegex'
+import { extractHashtagBodies, extractHashtagBodiesWithDisplay } from './hashtagRegex'
 
 type TxClient = Parameters<Parameters<PrismaClient['$transaction']>[0]>[0]
 
@@ -23,7 +23,7 @@ export function extractHashtags(content: string): string[] {
 export async function processHashtagsForCaw(cawId: number, content: string, txClient?: TxClient): Promise<void> {
   const db = txClient || prisma
   console.log(`[processHashtagsForCaw] Called with cawId=${cawId}, content="${content}"`)
-  const hashtags = extractHashtags(content)
+  const hashtags = extractHashtagBodiesWithDisplay(content)
   console.log(`[processHashtagsForCaw] Extracted hashtags:`, hashtags)
 
   if (hashtags.length === 0) {
@@ -32,7 +32,7 @@ export async function processHashtagsForCaw(cawId: number, content: string, txCl
   }
 
   // Process each hashtag
-  for (const hashtagName of hashtags) {
+  for (const { name: hashtagName, displayName } of hashtags) {
     try {
       // First, check if this caw-hashtag association already exists
       // to avoid double-counting when called multiple times for the same caw
@@ -72,10 +72,15 @@ export async function processHashtagsForCaw(cawId: number, content: string, txCl
           }
         })
       } else {
-        // Hashtag doesn't exist, create it with count 1
+        // Hashtag doesn't exist, create it with count 1.
+        // displayName captures the casing as the *first* author typed it —
+        // subsequent uses with different casing don't overwrite it. That's
+        // why we only set it here in the create path, not in the update
+        // path above.
         const newHashtag = await db.hashtag.create({
           data: {
             name: hashtagName,
+            displayName,
             usageCount: 1
           }
         })
@@ -159,26 +164,28 @@ export async function updateHashtagsForCaw(cawId: number, newContent: string): P
  */
 async function getHashtagsInWindow(since: Date | null, limit: number): Promise<Array<{name: string, usageCount: number}>> {
   if (since) {
-    const hashtags = await prisma.$queryRaw<Array<{name: string, usageCount: bigint}>>`
-      SELECT h.name, COUNT(ch.id) as "usageCount"
+    const hashtags = await prisma.$queryRaw<Array<{name: string, displayName: string | null, usageCount: bigint}>>`
+      SELECT h.name, h."displayName", COUNT(ch.id) as "usageCount"
       FROM "Hashtag" h
       INNER JOIN "CawHashtag" ch ON ch."hashtagId" = h.id
       INNER JOIN "Caw" c ON c.id = ch."cawId"
       WHERE c.status = 'SUCCESS'
         AND c."createdAt" >= ${since}
-      GROUP BY h.id, h.name
+      GROUP BY h.id, h.name, h."displayName"
       ORDER BY COUNT(ch.id) DESC
       LIMIT ${limit}
     `
-    return hashtags.map(h => ({ name: h.name, usageCount: Number(h.usageCount) }))
+    // Prefer original-casing displayName when present; fall back to the
+    // canonical lowercase name for older rows without displayName.
+    return hashtags.map(h => ({ name: h.displayName || h.name, usageCount: Number(h.usageCount) }))
   } else {
     // All time - use the simpler indexed query
     const hashtags = await prisma.hashtag.findMany({
       orderBy: { usageCount: 'desc' },
       take: limit,
-      select: { name: true, usageCount: true }
+      select: { name: true, displayName: true, usageCount: true }
     })
-    return hashtags
+    return hashtags.map(h => ({ name: h.displayName || h.name, usageCount: h.usageCount }))
   }
 }
 
@@ -217,9 +224,9 @@ export async function getTrendingHashtags(limit: number = 20): Promise<Array<{na
       const hashtags = await prisma.hashtag.findMany({
         orderBy: { usageCount: 'desc' },
         take: limit,
-        select: { name: true, usageCount: true }
+        select: { name: true, displayName: true, usageCount: true }
       })
-      return hashtags
+      return hashtags.map(h => ({ name: h.displayName || h.name, usageCount: h.usageCount }))
     } catch {
       return []
     }
@@ -243,11 +250,12 @@ export async function searchHashtags(searchTerm: string, limit: number = 10): Pr
       take: limit,
       select: {
         name: true,
+        displayName: true,
         usageCount: true
       }
     })
 
-    return hashtags
+    return hashtags.map(h => ({ name: h.displayName || h.name, usageCount: h.usageCount }))
   } catch (error) {
     console.error('Error searching hashtags:', error)
     return []

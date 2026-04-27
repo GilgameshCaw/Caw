@@ -297,10 +297,12 @@ router.get('/', async (req, res) => {
         orderBy: { usageCount: 'desc' },
         select: {
           name: true,
+          displayName: true,
           usageCount: true
         }
       })
-      results.hashtags = hashtags.map(h => ({ tag: h.name, usageCount: h.usageCount }))
+      // Prefer original-case displayName for the tag label.
+      results.hashtags = hashtags.map(h => ({ tag: h.displayName || h.name, usageCount: h.usageCount }))
     }
 
     // Filter out blocked users from results
@@ -380,15 +382,19 @@ router.get('/suggestions', async (req, res) => {
         orderBy: { usageCount: 'desc' },
         select: {
           name: true,
+          displayName: true,
           usageCount: true
         }
       })
 
       hashtags.forEach(hashtag => {
+        const label = hashtag.displayName || hashtag.name
         suggestions.push({
           type: 'hashtag',
-          value: `#${hashtag.name}`,
-          display: `#${hashtag.name}`,
+          // value is the navigation key — keep it the original-case label so
+          // the route renders consistently with the displayed casing.
+          value: `#${label}`,
+          display: `#${label}`,
           count: hashtag.usageCount
         })
       })
@@ -415,29 +421,36 @@ router.get('/trending', async (req, res) => {
     if (useES) {
       const esHashtags = await elasticsearchService.getTrendingHashtags('24h', 10)
       if (esHashtags.length > 0) {
-        // Get usage counts from database
+        // Get usage counts AND original-case displayName from database.
+        // ES tags are lowercase; we join on lowercase and surface displayName.
         const hashtagData = await prisma.hashtag.findMany({
           where: { name: { in: esHashtags } },
-          select: { name: true, usageCount: true }
+          select: { name: true, displayName: true, usageCount: true }
         })
-        const countMap = new Map(hashtagData.map(h => [h.name.toLowerCase(), h.usageCount]))
-        trendingHashtags = esHashtags.map(tag => ({
-          name: tag.replace('#', ''),
-          usageCount: countMap.get(tag.replace('#', '').toLowerCase()) || 0
-        }))
+        const dataMap = new Map(hashtagData.map(h => [h.name.toLowerCase(), h]))
+        trendingHashtags = esHashtags.map(tag => {
+          const lower = tag.replace('#', '').toLowerCase()
+          const row = dataMap.get(lower)
+          return {
+            name: row?.displayName || row?.name || tag.replace('#', ''),
+            usageCount: row?.usageCount || 0,
+          }
+        })
       }
     }
 
     // Fall back to Prisma if ES not available or returned no results
     if (trendingHashtags.length === 0) {
-      trendingHashtags = await prisma.hashtag.findMany({
+      const rows = await prisma.hashtag.findMany({
         take: 10,
         orderBy: { usageCount: 'desc' },
         select: {
           name: true,
+          displayName: true,
           usageCount: true
         }
       })
+      trendingHashtags = rows.map(h => ({ name: h.displayName || h.name, usageCount: h.usageCount }))
     }
 
     // Get trending users (most followed recently)
