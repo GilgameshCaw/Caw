@@ -60,19 +60,68 @@ quiet() {
 }
 
 # ---------- Banner -----------------------------------------------------------
+#
+# 3D-style banner. Mirrors the colorization rules in cli/src/utils/ui.js so
+# the one-liner and the Node CLI render visually identical banners. ASCII
+# source is inlined here (install.sh runs before the repo is cloned, so we
+# can't read cli/asci.txt). The colorize awk pass applies:
+#   _   horizontals          → dark red
+#   \   front face            → brightest gold
+#   /   bottom face           → darkest gold
+#   \/  inside-corner left    → medium gold (the digraph + a / preceding \)
 
-cat <<EOF
+# 256-color palette (close to the truecolor values used in ui.js).
+BANNER_RED=$'\033[38;5;88m'
+BANNER_GOLD_BRIGHT=$'\033[38;5;220m'
+BANNER_GOLD_MID=$'\033[38;5;172m'
+BANNER_GOLD_DARK=$'\033[38;5;94m'
 
-${GOLD}  ██████╗ █████╗ ██╗    ██╗${RESET}
-${GOLD}  ██╔═══╝██╔══██╗██║    ██║${RESET}
-${GOLD}  ██║    ███████║██║ █╗ ██║${RESET}
-${GOLD}  ██║    ██╔══██║██║███╗██║${RESET}
-${GOLD}  ██████╗██║  ██║╚███╔███╔╝${RESET}
-${GOLD}  ╚═════╝╚═╝  ╚═╝ ╚══╝╚══╝${RESET}
+print_banner() {
+  # Read each line, walk char by char with awk, emit colored output. The
+  # awk script implements the same rules as colorBannerLine() in ui.js.
+  local line
+  while IFS= read -r line; do
+    awk -v RED="$BANNER_RED" -v BRIGHT="$BANNER_GOLD_BRIGHT" \
+        -v MID="$BANNER_GOLD_MID" -v DARK="$BANNER_GOLD_DARK" \
+        -v RESET="$RESET" \
+        'BEGIN {
+           n = split(ARGV[1], chars, "")
+           out = ""
+           for (i = 1; i <= n; i++) {
+             c    = chars[i]
+             prev = (i > 1) ? chars[i-1] : ""
+             next_= (i < n) ? chars[i+1] : ""
+             if      (c == "_")  out = out RED c RESET
+             else if (c == "\\") {
+               if (next_ == "/") out = out MID c RESET
+               else              out = out BRIGHT c RESET
+             }
+             else if (c == "/") {
+               if (prev == "\\" || next_ == "\\") out = out MID c RESET
+               else                                out = out DARK c RESET
+             }
+             else                out = out c
+           }
+           print out
+         }' "$line"
+  done <<'BANNER_EOF'
+________/\\\\\\\\\_____/\\\\\\\\\_____/\\\______________/\\\_
+ _____/\\\////////____/\\\\\\\\\\\\\__\/\\\_____________\/\\\_
+  ___/\\\/____________/\\\/////////\\\_\/\\\_____________\/\\\_
+   __/\\\_____________\/\\\_______\/\\\_\//\\\____/\\\____/\\\__
+    _\/\\\_____________\/\\\\\\\\\\\\\\\__\//\\\__/\\\\\__/\\\___
+     _\//\\\____________\/\\\/////////\\\___\//\\\/\\\/\\\/\\\____
+      __\///\\\__________\/\\\_______\/\\\____\//\\\\\\//\\\\\_____
+       ____\////\\\\\\\\\_\/\\\_______\/\\\_____\//\\\__\//\\\______
+        _______\/////////__\///________\///_______\///____\///_______
+BANNER_EOF
+}
 
-${DIM}  CAW Protocol Node Installer${RESET}
-
-EOF
+echo
+print_banner
+echo
+echo -e "${DIM}  CAW Protocol Node Installer${RESET}"
+echo
 
 # ---------- Sanity checks ----------------------------------------------------
 
