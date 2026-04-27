@@ -841,14 +841,35 @@ cd "$CAW_DIR"
 # we pass each var explicitly. CAW_DOMAIN is consumed by infrastructure.js as
 # the default for the domain prompt. CAW_INFRA_MODE / CAW_*_URL drive the infra
 # branching. CAW_CERT_PATH / CAW_KEY_PATH let the nginx step skip its prompt.
-exec sudo -u "$CAW_USER" -H \
-  CAW_DOMAIN="${CAW_DOMAIN:-}" \
-  CAW_INFRA_MODE="${CAW_INFRA_MODE:-native}" \
-  CAW_DB_URL="${CAW_DB_URL:-}" \
-  CAW_REDIS_URL="${CAW_REDIS_URL:-}" \
-  CAW_ES_URL="${CAW_ES_URL:-}" \
-  CAW_CERT_PATH="${CAW_CERT_PATH:-}" \
-  CAW_KEY_PATH="${CAW_KEY_PATH:-}" \
-  CAW_API_PORT="${CAW_API_PORT:-}" \
-  CAW_ES_INDEX_PREFIX="${CAW_ES_INDEX_PREFIX:-}" \
-  node "$CAW_DIR/cli/bin/caw.js" install --dir "$CAW_DIR"
+#
+# Stdin comes from /dev/tty so inquirer's prompts get a real terminal —
+# without this, when install.sh is piped from curl (the one-liner case),
+# stdin is the pipe and inquirer's readline falls back to a dumb mode where
+# arrow keys land as literal "^[[D" instead of moving the cursor.
+if [[ -r /dev/tty ]]; then
+  exec sudo -u "$CAW_USER" -H \
+    CAW_DOMAIN="${CAW_DOMAIN:-}" \
+    CAW_INFRA_MODE="${CAW_INFRA_MODE:-native}" \
+    CAW_DB_URL="${CAW_DB_URL:-}" \
+    CAW_REDIS_URL="${CAW_REDIS_URL:-}" \
+    CAW_ES_URL="${CAW_ES_URL:-}" \
+    CAW_CERT_PATH="${CAW_CERT_PATH:-}" \
+    CAW_KEY_PATH="${CAW_KEY_PATH:-}" \
+    CAW_API_PORT="${CAW_API_PORT:-}" \
+    CAW_ES_INDEX_PREFIX="${CAW_ES_INDEX_PREFIX:-}" \
+    CAW_TLS_MODE="${CAW_TLS_MODE:-}" \
+    node "$CAW_DIR/cli/bin/caw.js" install --dir "$CAW_DIR" < /dev/tty
+else
+  exec sudo -u "$CAW_USER" -H \
+    CAW_DOMAIN="${CAW_DOMAIN:-}" \
+    CAW_INFRA_MODE="${CAW_INFRA_MODE:-native}" \
+    CAW_DB_URL="${CAW_DB_URL:-}" \
+    CAW_REDIS_URL="${CAW_REDIS_URL:-}" \
+    CAW_ES_URL="${CAW_ES_URL:-}" \
+    CAW_CERT_PATH="${CAW_CERT_PATH:-}" \
+    CAW_KEY_PATH="${CAW_KEY_PATH:-}" \
+    CAW_API_PORT="${CAW_API_PORT:-}" \
+    CAW_ES_INDEX_PREFIX="${CAW_ES_INDEX_PREFIX:-}" \
+    CAW_TLS_MODE="${CAW_TLS_MODE:-}" \
+    node "$CAW_DIR/cli/bin/caw.js" install --dir "$CAW_DIR"
+fi
