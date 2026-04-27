@@ -54,6 +54,14 @@ const ENV_TO_CAW = {
   REPLICATION_RPC: 'CAW_REPLICATION_RPC',
   REPLICATION_CHAIN: 'CAW_REPLICATION_CHAIN',
   REPLICATE_CLIENT_IDS: 'CAW_REPLICATE_CLIENT_IDS',
+  // Identity — preloading these skips the whole validator + admin pw +
+  // clientId prompt sequence. The values are already on disk in the
+  // previous .env; re-asking just re-types the same answers.
+  VALIDATOR_PRIVATE_KEY: 'CAW_VALIDATOR_PRIVATE_KEY',
+  VALIDATOR_ID: 'CAW_VALIDATOR_ID',
+  VALIDATOR_USERNAME: 'CAW_VALIDATOR_USERNAME',
+  ADMIN_PASSWORD: 'CAW_ADMIN_PASSWORD',
+  CLIENT_ID: 'CAW_CLIENT_ID',
   // VITE_PROJECT_ID lives in the FRONTEND .env, handled separately.
 }
 

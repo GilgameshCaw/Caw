@@ -16,6 +16,24 @@ export async function collectValidatorConfig(nodeType, installDir, ctx = {}) {
 
   section('Validator Configuration')
 
+  // --env preload: if both the key AND the validator identity are in the
+  // previous .env, skip every prompt in this step. The values are already
+  // on disk; re-asking just makes the operator type the same answers
+  // again (or worse, silently rotate the validator key by re-typing it).
+  const preloadKey = process.env.CAW_VALIDATOR_PRIVATE_KEY || ''
+  const preloadId = process.env.CAW_VALIDATOR_ID || ''
+  const preloadUsername = process.env.CAW_VALIDATOR_USERNAME || ''
+  if (preloadKey && preloadId) {
+    console.log(dim(`  Loaded validator key + identity from --env preload (validatorId ${preloadId}${preloadUsername ? `, @${preloadUsername}` : ''}).`))
+    console.log(dim('  To rotate: clear VALIDATOR_PRIVATE_KEY / VALIDATOR_ID from .env and re-run.'))
+    return {
+      validatorPrivateKey: preloadKey,
+      validatorId: Number(preloadId),
+      validatorUsername: preloadUsername,
+      checkInterval: Number(process.env.CAW_TX_POLL_INTERVAL) || 3000,
+    }
+  }
+
   tipBlock([
     'The validator needs a private key to sign and submit transactions on L2.',
     'This key will hold ETH on Base (for gas fees) and be used to submit',
@@ -117,14 +135,14 @@ export async function collectValidatorConfig(nodeType, installDir, ctx = {}) {
     'token ID + current owner on-chain to confirm.',
   ])
 
-  const validatorId = await resolveValidatorByUsername(ctx)
+  const { validatorId, validatorUsername } = await resolveValidatorByUsername(ctx)
 
   // TxQueue poll interval — operators don't have a meaningful answer to this
   // and 3000ms is correct for >99% of installs. Hardcode with an env override
   // (CAW_TX_POLL_INTERVAL) for the rare case someone genuinely needs to tune it.
   const checkInterval = Number(process.env.CAW_TX_POLL_INTERVAL) || 3000
 
-  return { validatorPrivateKey: privateKey, validatorId, checkInterval }
+  return { validatorPrivateKey: privateKey, validatorId, validatorUsername, checkInterval }
 }
 
 /**
@@ -171,7 +189,7 @@ async function resolveValidatorByUsername(ctx) {
         validate: (input) => input > 0 ? true : 'Token ID must be a positive number',
       },
     ])
-    return tokenId
+    return { validatorId: tokenId, validatorUsername: '' }
   }
 
   // Username lookup — loop until the operator either confirms a result or
@@ -230,7 +248,7 @@ async function resolveValidatorByUsername(ctx) {
     const { confirmed } = await inquirer.prompt([
       { type: 'confirm', name: 'confirmed', message: 'Use this validator identity?', default: true },
     ])
-    if (confirmed) return tokenId
+    if (confirmed) return { validatorId: tokenId, validatorUsername: username.trim() }
   }
 }
 

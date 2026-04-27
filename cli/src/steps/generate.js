@@ -337,6 +337,8 @@ function buildEnvVars(nodeType, config) {
   if (config.l1RpcUrlHttp) env.L1_RPC_URL_HTTP = config.l1RpcUrlHttp
   if (config.ethMainnetRpcUrl) env.ETH_MAINNET_RPC_URL = config.ethMainnetRpcUrl
   if (config.validatorPrivateKey) env.VALIDATOR_PRIVATE_KEY = config.validatorPrivateKey
+  if (config.validatorId) env.VALIDATOR_ID = String(config.validatorId)
+  if (config.validatorUsername) env.VALIDATOR_USERNAME = config.validatorUsername
   if (config.adminPassword) env.ADMIN_PASSWORD = config.adminPassword
 
   // Giphy API key for the /api/giphy proxy that backs the GIF picker. No

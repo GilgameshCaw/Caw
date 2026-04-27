@@ -63,16 +63,26 @@ export async function collectInfraEarly(nodeType, ctx = {}) {
       section('Domain & Access')
       console.log(dim(`  Using domain ${domain} (from install.sh).`))
     }
-    const { adminPw } = await inquirer.prompt([
-      {
-        type: 'password',
-        name: 'adminPw',
-        message: 'Admin password (for the admin dashboard):',
-        mask: '*',
-        validate: (input) => input.length >= 8 ? true : 'Password must be at least 8 characters',
-      },
-    ])
-    adminPassword = adminPw
+    // --env preload: reuse admin password rather than re-prompting. Re-typing
+    // a password the operator already chose is friction; silently rotating
+    // it (which is what re-prompting does) invalidates existing admin
+    // sessions. The .env value is a hash, not the plaintext, so this is
+    // just file-to-env passthrough.
+    if (process.env.CAW_ADMIN_PASSWORD) {
+      adminPassword = process.env.CAW_ADMIN_PASSWORD
+      console.log(dim('  Using admin password from --env preload.'))
+    } else {
+      const { adminPw } = await inquirer.prompt([
+        {
+          type: 'password',
+          name: 'adminPw',
+          message: 'Admin password (for the admin dashboard):',
+          mask: '*',
+          validate: (input) => input.length >= 8 ? true : 'Password must be at least 8 characters',
+        },
+      ])
+      adminPassword = adminPw
+    }
   }
 
   // Client ID. Each clientId on-chain scopes a separate sub-network: only
@@ -86,6 +96,21 @@ export async function collectInfraEarly(nodeType, ctx = {}) {
 
   if (['full', 'frontend-api'].includes(nodeType)) {
     section('Client ID')
+    // --env preload: skip the entire public/existing/create picker when we
+    // have a clientId already. Operators almost never want to switch the
+    // node's clientId mid-install — that's a fresh-install operation.
+    if (process.env.CAW_CLIENT_ID && Number(process.env.CAW_CLIENT_ID) > 0) {
+      clientId = Number(process.env.CAW_CLIENT_ID)
+      console.log(dim(`  Using clientId ${clientId} from --env preload.`))
+      // Look up the storage chain on-chain so the next step (L2 RPC)
+      // can name it. Same lookup the regular path does later.
+      if (ctx.l1RpcUrl) {
+        storageChain = await lookupClientStorageChain(clientId, ctx.l1RpcUrl, ctx.network)
+        if (storageChain) {
+          console.log(dim(`  Client #${clientId} stores on ${storageChain.label}.`))
+        }
+      }
+    } else {
     tipBlock([
       'Each CAW frontend is registered on-chain under a clientId.',
       '',
@@ -166,6 +191,7 @@ export async function collectInfraEarly(nodeType, ctx = {}) {
         console.log(dim(`  Couldn't read client #${clientId}'s storage chain on-chain — L2 prompt will use a generic label.`))
       }
     }
+    } // close --env preload else
   }
 
   // WalletConnect / Reown — frontend-bearing nodes only. Asked here so the
