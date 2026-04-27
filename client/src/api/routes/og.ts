@@ -102,26 +102,152 @@ function brandLockup(opts: {
   }
 }
 
-// Resolve a user's avatar to an absolute URL satori can fetch.
-// Mirrors client/src/services/FrontEnd/src/utils/defaultAvatar.ts.
-function resolveAvatarUrl(user: {
+// Default avatars live on disk under the FE's public/. Loaded once, lazy.
+const DEFAULT_AVATARS_DIR = path.join(
+  process.cwd(),
+  'src', 'services', 'FrontEnd', 'public', 'images', 'avatars',
+)
+const defaultAvatarCache = new Map<number, string | null>()
+function loadDefaultAvatarDataUri(id: number): string | null {
+  const clamped = Math.max(1, Math.min(100, id))
+  if (defaultAvatarCache.has(clamped)) return defaultAvatarCache.get(clamped)!
+  try {
+    const bytes = fs.readFileSync(path.join(DEFAULT_AVATARS_DIR, `${clamped}.png`))
+    const uri = `data:image/png;base64,${bytes.toString('base64')}`
+    defaultAvatarCache.set(clamped, uri)
+    return uri
+  } catch {
+    defaultAvatarCache.set(clamped, null)
+    return null
+  }
+}
+
+function defaultAvatarIdFor(user: {
+  defaultAvatarId?: number | null
+  tokenId?: number
+}): number {
+  return Math.max(1, Math.min(100, user.defaultAvatarId || ((user.tokenId || 0) % 100) + 1))
+}
+
+// Resolve a user's avatar to a data URI satori can render directly. Tries
+// custom avatarUrl first, then the user's default avatar (by id or
+// tokenId%100), then any default we can read off disk. Returns null only
+// when literally nothing on disk works — callers render a placeholder.
+//
+// Why data URIs and not URLs: satori's <img src="https://..."> path makes
+// a network request that can race, time out, or hit DNS issues. A custom
+// avatar that 404s used to bake into the card (the disk cache then froze
+// a "broken" render in place). Pre-fetching with a 4s budget + falling
+// back lets us produce a valid card every time.
+async function resolveAvatarDataUri(user: {
   avatarUrl?: string | null
   defaultAvatarId?: number | null
   tokenId?: number
-}): string {
+}): Promise<string | null> {
+  // 1. Custom avatar — fetch and validate. Tight timeout so we never block
+  //    the render on a slow user-uploaded host.
   if (user.avatarUrl) {
-    if (/^https?:\/\//.test(user.avatarUrl)) return user.avatarUrl
-    return `${publicUrl()}${user.avatarUrl.startsWith('/') ? '' : '/'}${user.avatarUrl}`
+    const url = /^https?:\/\//.test(user.avatarUrl)
+      ? user.avatarUrl
+      : `${publicUrl()}${user.avatarUrl.startsWith('/') ? '' : '/'}${user.avatarUrl}`
+    try {
+      const ctrl = new AbortController()
+      const t = setTimeout(() => ctrl.abort(), 4000)
+      const res = await fetch(url, { signal: ctrl.signal })
+      clearTimeout(t)
+      if (res.ok) {
+        const ct = (res.headers.get('content-type') || '').toLowerCase()
+        if (ct.startsWith('image/')) {
+          const buf = Buffer.from(await res.arrayBuffer())
+          // Sanity-check magic bytes to reject HTML "soft 404s" served as
+          // image/* (e.g. a CDN's branded not-found page).
+          if (looksLikeImage(buf)) {
+            return `data:${ct};base64,${buf.toString('base64')}`
+          }
+        }
+      }
+    } catch {
+      // Fall through to defaults below.
+    }
   }
-  const id = user.defaultAvatarId
-    || (user.tokenId ? (user.tokenId % 100) + 1 : 1)
-  const clamped = Math.max(1, Math.min(100, id))
-  return `${publicUrl()}/images/avatars/${clamped}.png`
+  // 2. Default avatar from disk.
+  const fromDisk = loadDefaultAvatarDataUri(defaultAvatarIdFor(user))
+  if (fromDisk) return fromDisk
+  // 3. Last resort: avatar 1, then nothing.
+  return loadDefaultAvatarDataUri(1)
+}
+
+// Quick magic-byte check — covers the formats browsers/satori actually
+// render (PNG, JPEG, GIF, WebP). Cheap and correct enough for our purposes.
+function looksLikeImage(buf: Buffer): boolean {
+  if (buf.length < 12) return false
+  // PNG: 89 50 4E 47 0D 0A 1A 0A
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return true
+  // JPEG: FF D8 FF
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return true
+  // GIF: GIF87a / GIF89a
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return true
+  // WebP: RIFF....WEBP
+  if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46
+      && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50) return true
+  return false
 }
 
 function truncate(s: string, n: number): string {
   if (!s) return ''
   return s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s
+}
+
+// Render an avatar as either a real image (when we have one) or a
+// colored-circle initial fallback. Used wherever a user avatar appears
+// so a broken/missing image still produces a clean card.
+function avatarNode(opts: {
+  src: string | null
+  size: number
+  username: string
+  marginRight?: number
+}) {
+  if (opts.src) {
+    return {
+      type: 'img',
+      props: {
+        src: opts.src,
+        width: opts.size,
+        height: opts.size,
+        style: {
+          borderRadius: opts.size / 2,
+          ...(opts.marginRight ? { marginRight: opts.marginRight } : {}),
+        },
+      },
+    }
+  }
+  // Fallback: deterministic colored circle keyed off the username so the
+  // same user always gets the same color. Inter doesn't ship the regular
+  // weight glyph for "?" at huge sizes, so we use the first letter or '@'.
+  const initial = (opts.username || '?').charAt(0).toUpperCase()
+  // Cheap hash → hue. Pastel-ish saturation/lightness so it reads on dark bg.
+  let h = 0
+  for (let i = 0; i < opts.username.length; i++) h = (h * 31 + opts.username.charCodeAt(i)) >>> 0
+  const hue = h % 360
+  return {
+    type: 'div',
+    props: {
+      style: {
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: opts.size,
+        height: opts.size,
+        borderRadius: opts.size / 2,
+        backgroundColor: `hsl(${hue}, 60%, 35%)`,
+        color: '#ffffff',
+        fontSize: opts.size * 0.5,
+        fontWeight: 700,
+        ...(opts.marginRight ? { marginRight: opts.marginRight } : {}),
+      },
+      children: initial,
+    },
+  }
 }
 
 // Build a profile card (1200x630). Layout:
@@ -132,7 +258,8 @@ function profileCardTree(opts: {
   displayName: string
   username: string
   bio: string
-  avatarUrl: string
+  /** Pre-resolved data URI, or null to render the colored-initial fallback. */
+  avatar: string | null
   followerCount: number
   followingCount: number
   cawCount: number
@@ -172,15 +299,7 @@ function profileCardTree(opts: {
               marginTop: 24,
             },
             children: [
-              {
-                type: 'img',
-                props: {
-                  src: opts.avatarUrl,
-                  width: 320,
-                  height: 320,
-                  style: { borderRadius: '160px', marginRight: '56px' },
-                },
-              },
+              avatarNode({ src: opts.avatar, size: 320, username: opts.username, marginRight: 56 }),
               {
                 type: 'div',
                 props: {
@@ -275,7 +394,8 @@ function cawCardTree(opts: {
   displayName: string
   username: string
   text: string
-  avatarUrl: string
+  /** Pre-resolved data URI, or null to render the colored-initial fallback. */
+  avatar: string | null
 }) {
   const hasDisplayName = !!opts.displayName && opts.displayName.trim() !== ''
   return {
@@ -308,15 +428,7 @@ function cawCardTree(opts: {
                 props: {
                   style: { display: 'flex', flexDirection: 'row', alignItems: 'center' },
                   children: [
-                    {
-                      type: 'img',
-                      props: {
-                        src: opts.avatarUrl,
-                        width: 96,
-                        height: 96,
-                        style: { borderRadius: '48px', marginRight: '24px' },
-                      },
-                    },
+                    avatarNode({ src: opts.avatar, size: 96, username: opts.username, marginRight: 24 }),
                     {
                       type: 'div',
                       props: {
@@ -561,16 +673,19 @@ router.get('/image/profile/:username', async (req, res) => {
     .digest('hex').slice(0, 8)
   const cacheKey = `profile-${user.tokenId}-${inputHash}`
 
-  return serveCachedOrRender(res, cacheKey, () => renderToPng(profileCardTree({
-    displayName: user.displayName || '',
-    username: user.username,
-    bio: truncate(user.bio || '', 140),
-    avatarUrl: resolveAvatarUrl(user),
-    followerCount: user.followerCount,
-    followingCount: user.followingCount,
-    cawCount: user.cawCount,
-    likesReceivedCount: user.likesReceivedCount,
-  })))
+  return serveCachedOrRender(res, cacheKey, async () => {
+    const avatar = await resolveAvatarDataUri(user)
+    return renderToPng(profileCardTree({
+      displayName: user.displayName || '',
+      username: user.username,
+      bio: truncate(user.bio || '', 140),
+      avatar,
+      followerCount: user.followerCount,
+      followingCount: user.followingCount,
+      cawCount: user.cawCount,
+      likesReceivedCount: user.likesReceivedCount,
+    }))
+  })
 })
 
 router.get('/image/caw/:id', async (req, res) => {
@@ -595,15 +710,18 @@ router.get('/image/caw/:id', async (req, res) => {
 
   // Posts are immutable so no input hash needed.
   const cacheKey = `caw-${caw.id}`
-  return serveCachedOrRender(res, cacheKey, () => renderToPng(cawCardTree({
-    displayName: caw.user.displayName || '',
-    username: caw.user.username,
-    // ~200 chars fits ≈3 lines at 48px on a 1072px-wide content column —
-    // any longer and the text crowds the chrome. The maxHeight clip in
-    // cawCardTree is the belt-and-suspenders.
-    text: truncate(caw.content || '', 200),
-    avatarUrl: resolveAvatarUrl(caw.user),
-  })))
+  return serveCachedOrRender(res, cacheKey, async () => {
+    const avatar = await resolveAvatarDataUri(caw.user)
+    return renderToPng(cawCardTree({
+      displayName: caw.user.displayName || '',
+      username: caw.user.username,
+      // ~200 chars fits ≈3 lines at 48px on a 1072px-wide content column —
+      // any longer and the text crowds the chrome. The maxHeight clip in
+      // cawCardTree is the belt-and-suspenders.
+      text: truncate(caw.content || '', 200),
+      avatar,
+    }))
+  })
 })
 
 router.get('/image/hashtag/:tag', async (req, res) => {
