@@ -456,9 +456,13 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   const [setupBusy, setSetupBusy] = useState(false)
   const [setupSubStep, setSetupSubStep] = useState<'idle' | 'dms' | 'quicksign' | 'done'>('idle')
   const [setupError, setSetupError] = useState<string | null>(null)
+  // User can opt out of DM setup here. Treat that as "DM step done" for the
+  // combined-setup loop (skip the signature) without ever calling initDm.
+  // The Sidebar still nudges them to enable later if they change their mind.
+  const [dmSkipped, setDmSkipped] = useState(false)
 
   // Track which sub-steps already succeeded (persists across retries)
-  const setupDmDone = dmComplete || !!dmAlreadyEnabled
+  const setupDmDone = dmComplete || !!dmAlreadyEnabled || dmSkipped
   const setupQsDone = qsComplete || hasActiveSession
 
   const handleCombinedSetup = async () => {
@@ -1024,35 +1028,58 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                 </div>
                 <h2 className={`text-2xl font-bold ${tc.textPrimary}`}>Set Up Your Account</h2>
                 <p className={`text-sm ${tc.textMuted}`}>
-                  Two quick signatures to enable encrypted messaging and frictionless posting.
+                  {dmSkipped
+                    ? 'One quick signature to enable frictionless posting.'
+                    : 'Two quick signatures to enable encrypted messaging and frictionless posting.'}
                 </p>
               </div>
 
               {/* Sub-step progress indicators */}
               <div className="space-y-3">
                 <div className={`flex items-center gap-3 p-3 rounded-xl border ${
-                  setupDmDone
+                  // Skipped reads as "configured, but inactive" — neutral border, not green.
+                  dmSkipped
+                    ? `${tc.cardBorderMuted} ${tc.cardMuted}`
+                    : setupDmDone
                     ? `border-green-500/30 ${tc.cardDoneBg}`
                     : setupSubStep === 'dms'
                     ? `border-yellow-500/30 ${tc.cardActiveBg}`
                     : `${tc.cardBorderMuted} ${tc.cardMuted}`
                 }`}>
-                  <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-                    setupDmDone ? 'bg-green-500' : tc.stepperInactive
-                  }`}>
-                    {setupDmDone
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 transition-opacity ${
+                    setupDmDone && !dmSkipped ? 'bg-green-500' : tc.stepperInactive
+                  } ${dmSkipped ? 'opacity-40' : ''}`}>
+                    {dmSkipped
+                      ? <HiOutlineLockClosed className={`w-4 h-4 ${isDark ? 'text-white/50' : 'text-black/50'}`} />
+                      : setupDmDone
                       ? <HiCheck className="w-4 h-4 text-white" />
                       : setupSubStep === 'dms'
                       ? <div className="w-4 h-4 border-2 border-yellow-500 border-t-transparent rounded-full animate-spin" />
                       : <HiOutlineLockClosed className={`w-4 h-4 ${isDark ? 'text-white/50' : 'text-black/50'}`} />
                     }
                   </div>
-                  <div className="flex-1">
-                    <p className={`text-sm font-medium ${setupDmDone ? 'text-green-400' : tc.textPrimary}`}>
+                  <div className={`flex-1 transition-opacity ${dmSkipped ? 'opacity-40' : ''}`}>
+                    <p className={`text-sm font-medium ${setupDmDone && !dmSkipped ? 'text-green-400' : tc.textPrimary}`}>
                       Encrypted DMs & Login
                     </p>
                     <p className={`text-xs ${tc.textSubtle}`}>End-to-end encrypted messaging</p>
                   </div>
+                  {/* Skip toggle — only meaningful before DMs are actually enabled.
+                      Click once to opt out (label flips amber); click again to undo. */}
+                  {!dmComplete && !dmAlreadyEnabled && (
+                    <button
+                      type="button"
+                      onClick={() => setDmSkipped(v => !v)}
+                      className={`text-xs px-2 py-1 rounded-md transition-colors cursor-pointer flex-shrink-0 ${
+                        dmSkipped
+                          ? 'text-amber-500 hover:text-amber-400'
+                          : `${tc.textSubtle} hover:${isDark ? 'text-white/80' : 'text-black/80'}`
+                      }`}
+                      aria-label={dmSkipped ? 'Undo skip — enable DMs' : 'Skip DM setup'}
+                    >
+                      {dmSkipped ? 'Skipping' : 'Skip'}
+                    </button>
+                  )}
                 </div>
 
                 <div className={`p-3 rounded-xl border ${
