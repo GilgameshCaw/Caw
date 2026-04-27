@@ -417,10 +417,20 @@ else
   # Stateful services — only install the ones the user wants natively, and
   # only the ones they didn't already override with their own URL. (E.g. if
   # they set CAW_DB_URL=postgres://external-host... we skip postgresql.)
+  # Install Postgres / Redis only when we'll actually use a LOCAL server.
+  # Earlier in install.sh we always set defaults (CAW_DB_URL=postgres://...
+  # localhost, CAW_REDIS_URL=redis://127.0.0.1:6379) so a "is var set" check
+  # would skip apt every time. Inspect the URL: if it points at 127.0.0.1
+  # / localhost, install the local server. Otherwise the operator has set
+  # an external URL and we just need the client tooling.
   NATIVE_INFRA_PKGS=()
   if [[ "$CAW_INFRA_MODE" == "native" ]]; then
-    [[ -z "${CAW_DB_URL:-}" ]]    && NATIVE_INFRA_PKGS+=(postgresql postgresql-contrib)
-    [[ -z "${CAW_REDIS_URL:-}" ]] && NATIVE_INFRA_PKGS+=(redis-server)
+    if [[ -z "${CAW_DB_URL:-}" ]] || [[ "${CAW_DB_URL:-}" =~ @(127\.0\.0\.1|localhost): ]]; then
+      NATIVE_INFRA_PKGS+=(postgresql postgresql-contrib)
+    fi
+    if [[ -z "${CAW_REDIS_URL:-}" ]] || [[ "${CAW_REDIS_URL:-}" =~ //(127\.0\.0\.1|localhost): ]]; then
+      NATIVE_INFRA_PKGS+=(redis-server)
+    fi
     # Elasticsearch handled separately (different apt repo).
   fi
 
