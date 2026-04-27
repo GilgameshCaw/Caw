@@ -140,6 +140,38 @@ export async function collectL1Rpc(nodeType, network = 'testnet') {
   const needsL1 = ['full', 'validator', 'api-only', 'frontend-api'].includes(nodeType)
   if (!needsL1) return {}
 
+  // Skip the prompt entirely if --env preloaded values for this step.
+  // CAW_L1_RPC_URL_HTTP is the required one; WSS + ETH-mainnet are
+  // optional (WSS) or only-validators (ETH-mainnet) so we mirror the
+  // same conditional.
+  if (process.env.CAW_L1_RPC_URL_HTTP) {
+    section('L1 RPC')
+    console.log(dim('  Using L1 RPC from --env preload (CAW_L1_RPC_URL_HTTP).'))
+    const answers = {
+      l1RpcUrl: process.env.CAW_L1_RPC_URL || '',
+      l1RpcUrlHttp: process.env.CAW_L1_RPC_URL_HTTP,
+    }
+    if (['full', 'validator'].includes(nodeType) && process.env.CAW_ETH_MAINNET_RPC_URL) {
+      answers.ethMainnetRpcUrl = process.env.CAW_ETH_MAINNET_RPC_URL
+    } else if (['full', 'validator'].includes(nodeType)) {
+      // Mainnet RPC wasn't preloaded — still need to ask.
+      const { ethMainnetRpcUrl } = await inquirer.prompt([{
+        type: 'input',
+        name: 'ethMainnetRpcUrl',
+        message: `Ethereum Mainnet RPC URL ${dim('(for Uniswap price feeds — https://)')}:`,
+        validate: (input) => {
+          if (!input.trim()) return 'Mainnet RPC URL is required for validators (CAW/ETH price conversion)'
+          if (!input.startsWith('https://') && !input.startsWith('http://')) {
+            return 'URL must start with https:// or http://'
+          }
+          return true
+        }
+      }])
+      answers.ethMainnetRpcUrl = ethMainnetRpcUrl
+    }
+    return answers
+  }
+
   section('L1 RPC')
   tipBlock([
     'CAW uses Ethereum L1 for the canonical username registry — every',
@@ -197,6 +229,16 @@ export async function collectL1Rpc(nodeType, network = 'testnet') {
  */
 export async function collectL2Rpc(nodeType, storageChainLabel) {
   if (nodeType === 'frontend-only') return {}
+
+  // Skip the prompt if --env preloaded the L2 HTTP URL.
+  if (process.env.CAW_L2_RPC_URL_HTTP) {
+    section(`${storageChainLabel || 'L2'} RPC`)
+    console.log(dim('  Using L2 RPC from --env preload (CAW_L2_RPC_URL_HTTP).'))
+    return {
+      l2RpcUrl: process.env.CAW_L2_RPC_URL || '',
+      l2RpcUrlHttp: process.env.CAW_L2_RPC_URL_HTTP,
+    }
+  }
 
   section(`${storageChainLabel || 'L2'} RPC`)
   tipBlock([

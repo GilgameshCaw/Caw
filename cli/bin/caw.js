@@ -2,6 +2,7 @@
 
 import { Command } from 'commander'
 import { execSync } from 'child_process'
+import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import { banner, section, success, brand, dim } from '../src/utils/ui.js'
@@ -27,10 +28,79 @@ program
   .description('CAW Protocol node installer and manager')
   .version('0.1.0')
 
+// Map .env keys (as written by generate.js) → CAW_* env-override keys that
+// the individual install steps already honor for skip-the-prompt behavior.
+// Used by --env to pre-populate process.env from an existing .env so the
+// operator can re-run after a failure without re-typing every answer.
+const ENV_TO_CAW = {
+  DATABASE_URL: 'CAW_DB_URL',
+  REDIS_URL: 'CAW_REDIS_URL',
+  ELASTICSEARCH_NODE: 'CAW_ES_URL',
+  ES_INDEX_PREFIX: 'CAW_ES_INDEX_PREFIX',
+  GIPHY_API_KEY: 'CAW_GIPHY_API_KEY',
+  SENTRY_DSN: 'CAW_SENTRY_DSN',
+  INSTANCE_API_URL: 'CAW_INSTANCE_API_URL',
+  // RPC URLs — paste-from-Infura values the operator definitely doesn't
+  // want to retype after a hiccup. The collectL1Rpc / collectL2Rpc steps
+  // honor these CAW_* keys and skip the whole prompt.
+  L1_RPC_URL: 'CAW_L1_RPC_URL',
+  L1_RPC_URL_HTTP: 'CAW_L1_RPC_URL_HTTP',
+  L2_RPC_URL: 'CAW_L2_RPC_URL',
+  L2_RPC_URL_HTTP: 'CAW_L2_RPC_URL_HTTP',
+  ETH_MAINNET_RPC_URL: 'CAW_ETH_MAINNET_RPC_URL',
+  // VITE_PROJECT_ID lives in the FRONTEND .env, handled separately.
+}
+
+function loadEnvFile(envPath) {
+  if (!fs.existsSync(envPath)) return {}
+  const out = {}
+  const src = fs.readFileSync(envPath, 'utf8')
+  for (const line of src.split('\n')) {
+    const m = line.match(/^\s*([A-Z_][A-Z0-9_]*)\s*=\s*(.*?)\s*$/)
+    if (!m) continue
+    let val = m[2]
+    // Strip matching quotes if present.
+    if ((val.startsWith('"') && val.endsWith('"')) ||
+        (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1)
+    }
+    out[m[1]] = val
+  }
+  return out
+}
+
+// When --env points at a previous install, read every supported value out
+// and stash it into process.env under the CAW_* override key the steps
+// already check. Lets the operator re-run install end-to-end without
+// re-typing values they got right last time.
+function preloadFromEnv(envFilePath, frontendEnvFilePath) {
+  const backend = loadEnvFile(envFilePath)
+  const frontend = frontendEnvFilePath ? loadEnvFile(frontendEnvFilePath) : {}
+  let loaded = 0
+  for (const [k, v] of Object.entries(backend)) {
+    const target = ENV_TO_CAW[k]
+    if (target && !process.env[target] && v) {
+      process.env[target] = v
+      loaded++
+    }
+  }
+  // Backend domain isn't written to .env directly, but install.sh already
+  // forwards CAW_DOMAIN. If the operator wants to reuse, they should keep
+  // CAW_DOMAIN set in their shell — we don't try to derive it from the .env.
+
+  // VITE_PROJECT_ID from the frontend .env — same skip-the-prompt pattern.
+  if (frontend.VITE_PROJECT_ID && !process.env.CAW_WALLETCONNECT_PROJECT_ID) {
+    process.env.CAW_WALLETCONNECT_PROJECT_ID = frontend.VITE_PROJECT_ID
+    loaded++
+  }
+  return loaded
+}
+
 program
   .command('install')
   .description('Interactive setup wizard for a new CAW node')
   .option('--dir <path>', 'Installation directory', ROOT_DIR)
+  .option('--env <path>', 'Reuse values from an existing .env (skips prompts that already have answers)')
   .action(async (opts) => {
     try {
       banner()
@@ -38,6 +108,27 @@ program
       console.log(dim('  Welcome to the CAW node setup wizard.'))
       console.log(dim('  This will walk you through configuring and starting your node.'))
       console.log()
+
+      // --env: pre-populate process.env from a previous install's .env files
+      // so prompts that have answers there get auto-skipped. Resolves the
+      // path against opts.dir if relative — `--env client/.env` is the
+      // common case when re-running after a hiccup.
+      if (opts.env) {
+        const envPath = path.isAbsolute(opts.env) ? opts.env : path.resolve(opts.dir, opts.env)
+        // The frontend has its own .env (VITE_*); look for it next to the
+        // backend one when --env points at client/.env.
+        const feEnvGuess = envPath.endsWith('/.env')
+          ? envPath.replace(/\/\.env$/, '/src/services/FrontEnd/.env')
+          : null
+        const loaded = preloadFromEnv(envPath, feEnvGuess)
+        if (loaded > 0) {
+          console.log(dim(`  Loaded ${loaded} value(s) from ${envPath} — those prompts will skip.`))
+          console.log()
+        } else {
+          console.log(dim(`  --env ${envPath}: no recognized values found.`))
+          console.log()
+        }
+      }
 
       // Step 1: Node type
       const nodeType = await selectNodeType()

@@ -647,6 +647,33 @@ if [[ "$CAW_INFRA_MODE" == "native" && -z "${CAW_DB_URL:-}" ]]; then
       exit 1
     fi
   done
+
+  # Set the `postgres` superuser password. The CLI's default DATABASE_URL is
+  # postgresql://postgres:postgres@127.0.0.1:5432/<db> — but a fresh apt-installed
+  # PG cluster has no password set on the postgres role, so prisma db push
+  # fails with P1000: "Authentication failed". Force the password to "postgres"
+  # so the default URL works. Operators who want a real password should set
+  # CAW_DB_URL before running install.sh; that path skips this whole branch.
+  #
+  # Also flip pg_hba.conf's local 'postgres' line from peer → md5 so password
+  # auth is honored on 127.0.0.1. Idempotent; re-runs are no-ops.
+  step "Configuring PostgreSQL auth"
+  sudo -u postgres psql -tAc "ALTER USER postgres WITH PASSWORD 'postgres';" >/dev/null 2>&1 \
+    && ok "Set postgres user password" \
+    || warn "Couldn't set postgres password — DB connection may fail"
+
+  # Find pg_hba.conf and ensure 127.0.0.1 connections use md5 not peer/ident.
+  # The deb package puts it under /etc/postgresql/<version>/main/pg_hba.conf.
+  PG_HBA="$(sudo -u postgres psql -tAc 'SHOW hba_file;' 2>/dev/null | tr -d ' ')"
+  if [[ -n "$PG_HBA" && -f "$PG_HBA" ]]; then
+    # Replace peer/ident with md5 on the IPv4 localhost line. Idempotent — sed
+    # only matches lines that aren't already md5.
+    if grep -qE "^host\s+all\s+all\s+127\.0\.0\.1/32\s+(peer|ident|trust)" "$PG_HBA"; then
+      sed -i -E 's|^(host\s+all\s+all\s+127\.0\.0\.1/32\s+)(peer|ident|trust)|\1md5|' "$PG_HBA"
+      systemctl reload postgresql >/dev/null 2>&1 || systemctl restart postgresql >/dev/null 2>&1
+      ok "Enabled password auth for 127.0.0.1"
+    fi
+  fi
 fi
 
 # ---------- Step 7: Install CLI deps + hand off ------------------------------
