@@ -167,49 +167,65 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       return true
     })
 
-    // Group thread replies with their parent post and sort by cawonce ascending.
-    // The feed comes in desc order, so a thread's replies appear before the parent.
-    // We collect runs of replies to the same parent, find the parent post if it's
-    // nearby in the array, and reorder so: parent → reply 1 → reply 2 → ...
+    // Hoist a reply down so it renders right under its parent post, leaving
+    // every other item (quotes, unrelated posts) at its natural desc position.
+    // The feed comes in desc order, so a reply written AFTER its parent
+    // appears BEFORE it in the array; we want the visual to be:
     //
-    // Triggers for any size run (1+) so a 2-post thread (parent + 1 reply) gets
-    // grouped too, not just 3+ post threads. We only emit a group if the parent
-    // is actually present in the nearby window — otherwise the reply renders
-    // alone in its original position (don't promote orphan replies).
-    const consumed = new Set<number>()
+    //   ...other newer posts...
+    //   [original post]
+    //   [reply 1, reply 2, ...]
+    //   ...older posts...
+    //
+    // Quotes (RECAW with content) are NOT replies — they share parent.id but
+    // visually they're standalone posts. They keep their natural position so
+    // a desc feed shows quote → original → reply, not original → quote → reply.
+    //
+    // Algorithm: walk desc-order, build the result preserving each item's
+    // natural position UNLESS it's a reply whose parent appears later in the
+    // window. In that case skip it for now and re-emit it the moment we
+    // place its parent. Replies whose parent isn't in the nearby window are
+    // dropped at their natural position (don't promote orphans).
+    const isReply = (it: CawItem) => it.parent?.id && !it.isQuote && it.action !== 'RECAW'
+    const PARENT_LOOKAHEAD = 8
+    // Map parentId -> queued replies waiting to be emitted under it.
+    const pendingByParent = new Map<string, CawItem[]>()
     const result: CawItem[] = []
-    let i = 0
-    while (i < filtered.length) {
-      if (consumed.has(i)) { i++; continue }
+    for (let i = 0; i < filtered.length; i++) {
       const item = filtered[i]
-      if (item.parent?.id) {
-        const parentId = item.parent.id
-        const userId = item.user.tokenId
-        // Collect consecutive replies to the same parent by the same user
-        let j = i + 1
-        while (j < filtered.length && filtered[j].parent?.id === parentId && filtered[j].user.tokenId === userId) {
-          j++
+
+      if (isReply(item)) {
+        // Look ahead for the parent post within the window. If found,
+        // hold this reply until we emit the parent.
+        const parentId = item.parent!.id
+        let parentFoundAhead = false
+        for (let k = i + 1; k < filtered.length && k <= i + PARENT_LOOKAHEAD; k++) {
+          if (filtered[k].id === parentId) { parentFoundAhead = true; break }
         }
-        // Look for the parent post in the nearby window (5 items past the run)
-        let parentIdx = -1
-        for (let k = j; k < filtered.length && k < j + 5; k++) {
-          if (filtered[k].id === parentId && !consumed.has(k)) {
-            parentIdx = k
-            break
-          }
-        }
-        if (parentIdx >= 0) {
-          // Sort replies by cawonce ascending so 1/N renders before 2/N
-          const run = filtered.slice(i, j).sort((a, b) => (a.cawonce ?? 0) - (b.cawonce ?? 0))
-          consumed.add(parentIdx)
-          result.push(filtered[parentIdx])
-          result.push(...run)
-          i = j
+        if (parentFoundAhead) {
+          const list = pendingByParent.get(parentId) || []
+          list.push(item)
+          pendingByParent.set(parentId, list)
           continue
         }
+        // Parent not nearby — emit reply at natural position.
       }
+
       result.push(item)
-      i++
+
+      // If this item is a parent of any queued replies, emit them now,
+      // sorted by cawonce ascending so 1/N renders before 2/N.
+      const queued = pendingByParent.get(item.id)
+      if (queued && queued.length) {
+        queued.sort((a, b) => (a.cawonce ?? 0) - (b.cawonce ?? 0))
+        result.push(...queued)
+        pendingByParent.delete(item.id)
+      }
+    }
+    // Anything still in pendingByParent didn't find its parent (lookahead
+    // ran out) — emit at end so we don't lose them.
+    for (const queued of pendingByParent.values()) {
+      result.push(...queued)
     }
     return result
   }, [items, preferences, blockedUsers, pendingPosts])
@@ -718,14 +734,18 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
               // Skip items hoisted inline under a parent elsewhere in the feed
               if (hoistedIds.has(caw.id)) return null
               // Hide parent preview if the previous item is the parent post itself,
-              // or another reply to the same parent
+              // or another reply to the same parent. Quotes (RECAW with content)
+              // share parent.id with replies but render as standalone posts —
+              // treating a quote-then-reply pair as a "reply chain" makes the
+              // reply look like a reply to the quote, hiding its real target.
               const prevItem = idx > 0 ? filteredItems[idx - 1] : null
-              const parentIsAbove = !!(caw.parent?.id && prevItem?.id === caw.parent.id)
-              const sameParentAsPrev = !!(
-                caw.parent?.id &&
+              const prevIsReply = !!(
                 prevItem?.parent?.id &&
-                caw.parent.id === prevItem.parent.id
+                !prevItem.isQuote &&
+                prevItem.action !== 'RECAW'
               )
+              const parentIsAbove = !!(caw.parent?.id && prevItem?.id === caw.parent.id)
+              const sameParentAsPrev = prevIsReply && caw.parent?.id === prevItem!.parent!.id
               const hidePreview = parentIsAbove || sameParentAsPrev
               const inlinePending = sortPendingChildren(pendingRepliesByConfirmedParent.get(caw.id) || [])
               const inlinePinned = pinnedInlineByParent.get(caw.id) || []
