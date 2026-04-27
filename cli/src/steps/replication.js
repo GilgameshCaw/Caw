@@ -299,6 +299,32 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
   }
 
   // ---- Replicator key ----
+  // --env preload: same logic as the validator key. If the previous .env
+  // already has REPLICATOR_PRIVATE_KEY, reuse it — the value is on disk
+  // either way, re-prompting just makes the operator paste back the same
+  // hex they already had (or worse, silently rotate by generating a new
+  // one and stranding the old key).
+  let replicatorPrivateKey
+  const preloadReplicatorKey = process.env.CAW_REPLICATOR_PRIVATE_KEY || ''
+  if (preloadReplicatorKey) {
+    replicatorPrivateKey = preloadReplicatorKey
+    let address = '(install ethers to see)'
+    try {
+      const { computeAddress } = await importEthersUtils()
+      address = computeAddress(replicatorPrivateKey)
+    } catch {}
+    console.log()
+    console.log(dim(`  Loaded replicator key from --env preload (address ${address}).`))
+    console.log(dim('  To rotate: clear REPLICATOR_PRIVATE_KEY from .env and re-run.'))
+    return {
+      replicationRpcUrl,
+      replicationChain,
+      replicateClientIds,
+      replicatorPrivateKey,
+      replicationEnabled: true,
+    }
+  }
+
   console.log()
   tipBlock([
     `${brand('Replicator key')}`,
@@ -324,8 +350,6 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
       default: 'separate-generate',
     },
   ])
-
-  let replicatorPrivateKey
 
   if (keyChoice === 'reuse') {
     // Don't write REPLICATOR_PRIVATE_KEY at all — ValidatorService falls

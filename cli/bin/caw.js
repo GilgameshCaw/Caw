@@ -54,6 +54,7 @@ const ENV_TO_CAW = {
   REPLICATION_RPC: 'CAW_REPLICATION_RPC',
   REPLICATION_CHAIN: 'CAW_REPLICATION_CHAIN',
   REPLICATE_CLIENT_IDS: 'CAW_REPLICATE_CLIENT_IDS',
+  REPLICATOR_PRIVATE_KEY: 'CAW_REPLICATOR_PRIVATE_KEY',
   // Identity — preloading these skips the whole validator + admin pw +
   // clientId prompt sequence. The values are already on disk in the
   // previous .env; re-asking just re-types the same answers.
