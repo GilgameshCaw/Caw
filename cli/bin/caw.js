@@ -12,6 +12,7 @@ import { chainLabels } from '../src/steps/networkAndMode.js'
 import { collectValidatorConfig } from '../src/steps/validator.js'
 import { collectReplicationConfig } from '../src/steps/replication.js'
 import { collectInfraEarly, collectInfraLate } from '../src/steps/infrastructure.js'
+import { setNetwork as setAddressesNetwork } from '../src/addresses.js'
 import { generateConfig } from '../src/steps/generate.js'
 import { runInstall, startServices } from '../src/steps/install.js'
 import { configureNginx } from '../src/steps/nginx.js'
@@ -43,6 +44,12 @@ program
 
       // Step 2: Network + deployment mode (drives chain labels in step 3)
       const networkConfig = await collectNetworkAndMode(nodeType)
+
+      // Tell the addresses module which env block to fall back to in
+      // deployments.ts when the per-install addresses.ts isn't written
+      // yet (fresh checkout). Validator/client steps below call addr()
+      // before generate.js produces the real file.
+      setAddressesNetwork(networkConfig.network)
 
       // Step 3: L1 RPC. Asked early — L1 is unambiguous (always Ethereum
       // mainnet/Sepolia) and the validator + client-lookup steps both need
