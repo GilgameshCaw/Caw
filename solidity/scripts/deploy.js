@@ -58,6 +58,7 @@ const { ethers } = require('ethers');
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
+const { configureLzDvns } = require('./lz-dvn-config');
 require('dotenv').config();
 
 // ============================================
