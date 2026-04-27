@@ -5,6 +5,7 @@ const CawClientManager = artifacts.require("CawClientManager");
 const CawProfileMarketplace = artifacts.require("CawProfileMarketplace");
 const MintableCaw = artifacts.require("MintableCaw");
 const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
+const RevertingBidder = artifacts.require("RevertingBidder");
 
 const truffleAssert = require('truffle-assertions');
 const { BN, expectRevert, time } = require('@openzeppelin/test-helpers');
@@ -300,25 +301,26 @@ contract("CawProfileMarketplace", (accounts) => {
       );
     });
 
-    it("should accept higher bid and queue refund for outbid user", async () => {
+    it("should accept higher bid and push refund to outbid EOA", async () => {
+      // Hybrid refund: EOA bidders are pushed (2300-gas stipend is enough);
+      // contract bidders that revert in receive() get credited to
+      // pendingReturns instead. bidder1 is a Truffle EOA, so it should
+      // receive the refund directly and pendingReturns should stay zero.
       const bid = web3.utils.toWei("0.2", "ether");
-      await marketplace.placeBid(auctionListingId, { from: bidder2, value: bid });
-
-      // bidder1 should have pending returns
-      const pending = await marketplace.pendingReturns(bidder1, auctionListingId);
-      assert.equal(pending.toString(), web3.utils.toWei("0.1", "ether"));
-    });
-
-    it("should allow outbid user to withdraw", async () => {
       const balBefore = BigInt(await web3.eth.getBalance(bidder1));
-      await marketplace.withdrawBid(auctionListingId, { from: bidder1 });
+      await marketplace.placeBid(auctionListingId, { from: bidder2, value: bid });
       const balAfter = BigInt(await web3.eth.getBalance(bidder1));
 
-      assert(balAfter > balBefore, "Should have received refund");
+      // Refund pushed: bidder1's balance went up by the prior bid.
+      assert.equal(
+        (balAfter - balBefore).toString(),
+        web3.utils.toWei("0.1", "ether"),
+        "Outbid EOA should receive refund via push"
+      );
 
-      // Pending returns should be 0 now
+      // pendingReturns should NOT have been credited (push succeeded).
       const pending = await marketplace.pendingReturns(bidder1, auctionListingId);
-      assert.equal(pending.toString(), "0");
+      assert.equal(pending.toString(), "0", "pendingReturns should be empty for EOA");
     });
 
     it("should extend deadline on anti-snipe bid", async () => {
@@ -366,6 +368,65 @@ contract("CawProfileMarketplace", (accounts) => {
       // Seller gets the payment
       const sellerBalAfter = BigInt(await web3.eth.getBalance(seller));
       assert(sellerBalAfter > sellerBalBefore, "Seller should receive ETH");
+    });
+  });
+
+  describe("English Auction — push-with-pull refund fallback", () => {
+    // Hybrid refund: placeBid attempts a 2300-gas push to the prior high
+    // bidder and falls back to pendingReturns on failure. EOAs always succeed
+    // (covered above). This block covers the contract-bidder fallback —
+    // RevertingBidder reverts in receive(), so the push fails and the
+    // pendingReturns mapping must hold the credit instead. Critically, the
+    // outbid tx itself must still succeed (otherwise a malicious contract
+    // bidder could grief the auction by blocking all subsequent bids).
+
+    it("credits pendingReturns when refund push reverts; outbid still succeeds", async () => {
+      // Fresh token to keep this block independent of the stateful sequence above.
+      const freshTokenId = (await cawProfiles.nextId()).toNumber();
+      await minter.mint(1, "carol", 0, { from: seller, value: web3.utils.toWei("0.01", "ether") });
+
+      const minBid = web3.utils.toWei("0.1", "ether");
+      await marketplace.createListing(
+        freshTokenId, 2, "0x0000000000000000000000000000000000000000",
+        minBid, 0, 3600, { from: seller }
+      );
+      const lid = (await marketplace.nextListingId()).toNumber() - 1;
+
+      // Deploy a contract bidder that reverts on receive().
+      const revertingBidder = await RevertingBidder.new(marketplace.address);
+
+      // Fund + place the first bid via the contract.
+      const firstBid = web3.utils.toWei("0.1", "ether");
+      await revertingBidder.placeBid(lid, { from: bidder1, value: firstBid });
+
+      // Sanity: contract is the highest bidder.
+      let listing = await marketplace.listings(lid);
+      assert.equal(listing.highestBidder, revertingBidder.address);
+      assert.equal(listing.highestBid.toString(), firstBid);
+      // pendingReturns empty so far — no outbid yet.
+      let pending = await marketplace.pendingReturns(revertingBidder.address, lid);
+      assert.equal(pending.toString(), "0");
+
+      // Outbid by an EOA. The push to revertingBidder.receive() will fail;
+      // the contract should fall back to crediting pendingReturns. The
+      // outbid tx itself must still succeed.
+      const secondBid = web3.utils.toWei("0.2", "ether");
+      const tx = await marketplace.placeBid(lid, { from: bidder2, value: secondBid });
+      truffleAssert.eventEmitted(tx, 'BidPlaced', (ev) => {
+        return ev.bidder === bidder2 && ev.amount.toString() === secondBid;
+      });
+
+      // The reverting bidder is credited via the pull path.
+      pending = await marketplace.pendingReturns(revertingBidder.address, lid);
+      assert.equal(pending.toString(), firstBid, "Reverting bidder should be credited via pendingReturns");
+
+      // New high bidder is set correctly.
+      listing = await marketplace.listings(lid);
+      assert.equal(listing.highestBidder, bidder2);
+      assert.equal(listing.highestBid.toString(), secondBid);
+
+      // Clean up so the freshTokenId/listing don't bleed into later tests.
+      await marketplace.cancelListing(lid, { from: seller });
     });
   });
 

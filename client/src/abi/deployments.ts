@@ -70,7 +70,7 @@ export const deployments: Deployments = {
       CawClientManager: '0xA5C515D35C291110090b6edc4278acdEf1424C7a',
       CawProfileMinter: '0x8D65D141a60b1E1136Be62604783AADe8E7290D9',
       CawProfileQuoter: '0x3100B1e890B7a4F3dA0B6Be0388A9b2aFF9c8e79',
-      CawProfileMarketplace: '0x6DF8A5eD4350535B55F79AA22b162d248a3A8eDe',
+      CawProfileMarketplace: '0x6404d1D3D878407a0977d99C832453f235DA67C3',
       CawProfileURI: '0x9CEffADC838a39D10a241d9A473844Ef0cB6274f',
       CawFontDataA: '0xB7ec882a2a8Fc7aDDa25492b4440da5A0a43B8cf',
       CawFontDataB: '0x1D084Cb5F219627285a83A8ce6F70d4EBa98fBf3',

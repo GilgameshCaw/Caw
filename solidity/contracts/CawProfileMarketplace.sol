@@ -265,13 +265,23 @@ contract CawProfileMarketplace is ReentrancyGuard {
             : listing.highestBid + (listing.highestBid * MIN_BID_INCREMENT_BPS / 10000);
         require(msg.value >= minBid, "Bid too low");
 
-        // Queue refund for previous high bidder (pull pattern)
-        if (listing.highestBidder != address(0)) {
-            pendingReturns[listing.highestBidder][listingId] += listing.highestBid;
-        }
+        // Snapshot the prior bidder before mutating state (CEI), then attempt
+        // a push refund and fall back to pendingReturns on failure. The 2300
+        // gas stipend is enough for an EOA receive but not for a malicious
+        // contract to do work or burn meaningful gas. Smart-wallet bidders
+        // (Safes, etc.) will hit the fallback and need to call withdrawBid.
+        address prevBidder = listing.highestBidder;
+        uint256 prevAmount = listing.highestBid;
 
         listing.highestBid = msg.value;
         listing.highestBidder = msg.sender;
+
+        if (prevBidder != address(0)) {
+            (bool ok, ) = prevBidder.call{value: prevAmount, gas: 2300}("");
+            if (!ok) {
+                pendingReturns[prevBidder][listingId] += prevAmount;
+            }
+        }
 
         // Anti-snipe: extend deadline if bid placed in last 10 minutes
         if (listing.endTime - uint64(block.timestamp) < ANTI_SNIPE_DURATION) {
