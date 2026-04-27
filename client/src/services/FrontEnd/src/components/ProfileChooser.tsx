@@ -15,6 +15,7 @@ import { usePendingSpendStore } from '~/store/pendingSpendStore';
 import { useUserByUsername, useUserByToken } from '~/hooks/useUserData';
 import { getUserAvatar } from '~/utils/defaultAvatar';
 import Avatar from '~/components/Avatar';
+import { useQuickSignPromptStore } from '~/components/modals/QuickSignModal';
 
 const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
   const { isConnected, address } = useAccount();
@@ -379,7 +380,24 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
           })()}
           {notCurrentAddress && (
             <div className="text-2xs text-red-500">
-              {isConnected ? "(Wrong Address)" : "not connected"}
+              <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  useQuickSignPromptStore.getState().show()
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    useQuickSignPromptStore.getState().show()
+                  }
+                }}
+                className="underline hover:text-red-400 cursor-pointer"
+              >
+                {isConnected ? "(Wrong Address)" : "not connected"}
+              </span>
             </div>
           )}
           {quickSignWithWrongWallet && (

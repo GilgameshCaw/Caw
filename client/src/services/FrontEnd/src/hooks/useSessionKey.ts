@@ -24,11 +24,11 @@ export const SESSION_DURATION_OPTIONS = [
 // Bit 6 (withdraw) is the only one excluded
 const DEFAULT_SCOPE = 0xBF // 0b10111111
 
-// Default spend limit: $5 worth of CAW at current price, with a generous fallback
-const DEFAULT_SPEND_USD = 5
+// Default spend limit: $10 worth of CAW at current price, with a generous fallback
+const DEFAULT_SPEND_USD = 10
 const FALLBACK_SPEND_LIMIT = BigInt(500_000_000) // 500M CAW fallback if price unavailable
 
-/** Get the default spend limit ($5 worth of CAW at current price) */
+/** Get the default spend limit ($10 worth of CAW at current price) */
 export function getDefaultSpendLimit(): bigint {
   const cawPrice = usePriceStore.getState().priceMap['a-hunters-dream'] ?? 0
   if (cawPrice > 0) {
