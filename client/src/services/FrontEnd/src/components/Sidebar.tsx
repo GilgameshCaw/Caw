@@ -321,7 +321,7 @@ const Sidebar: React.FC = () => {
           <button
             type="button"
             onClick={handlePostClick}
-            className="w-full inline-flex items-center justify-center gap-2 rounded-full bg-yellow-500 px-5 py-3 text-base font-semibold text-black transition-colors duration-200 hover:bg-yellow-400 cursor-pointer"
+            className="w-full inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full bg-yellow-500 px-3 py-3 text-sm font-semibold text-black transition-colors duration-200 hover:bg-yellow-400 cursor-pointer"
           >
             <HiOutlinePencilAlt className="w-5 h-5" />
             Write Something
