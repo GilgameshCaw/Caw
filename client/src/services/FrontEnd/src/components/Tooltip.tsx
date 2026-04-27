@@ -101,7 +101,7 @@ const Tooltip: React.FC<TooltipProps> = ({
       {visible && !tooltipDisabled && createPortal(
         <div
           ref={tooltipRef}
-          className={`fixed px-3 py-2 text-xs font-medium rounded-lg whitespace-nowrap pointer-events-none z-[9999] ${bgClass}`}
+          className={`fixed px-3 py-2 text-xs font-medium text-center rounded-lg whitespace-nowrap pointer-events-none z-[9999] ${bgClass}`}
           style={{ top: coords.top, left: coords.left }}
         >
           {text.split('\n').map((line, i, arr) => (
