@@ -830,13 +830,56 @@ if [[ -n "${CAW_DOMAIN:-}" && "${CAW_TLS_MODE:-}" != "skip" ]]; then
   fi
 
   if [[ -n "${CAW_CERT_PATH:-}" && -f "${CAW_CERT_PATH}" ]]; then
+    # Normalize line endings + framing. Cert files downloaded from CA
+    # dashboards (Namecheap, ZeroSSL, etc.) often arrive with Windows-style
+    # CRLFs, trailing whitespace, or stray text after the final
+    # -----END CERTIFICATE----- line. OpenSSL rejects all three with the
+    # cryptic "PEM_read_bio_X509_AUX() failed (bad end line)" — nginx then
+    # refuses to start. Strip CRs and keep only well-formed cert blocks.
+    # awk preserves cert ordering (operator's cert first, then intermediates).
+    cert_dir="$(dirname "${CAW_CERT_PATH}")"
+    cert_tmp="${CAW_CERT_PATH}.normalize.$$"
+    if tr -d '\r' < "${CAW_CERT_PATH}" \
+         | awk '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/' \
+         > "${cert_tmp}" 2>/dev/null \
+       && [[ -s "${cert_tmp}" ]]; then
+      # Only swap if the awk pass actually produced cert content (defends
+      # against an unreadable source file truncating us to empty).
+      if ! cmp -s "${cert_tmp}" "${CAW_CERT_PATH}"; then
+        mv "${cert_tmp}" "${CAW_CERT_PATH}"
+        log "Normalized cert line endings + framing"
+      else
+        rm -f "${cert_tmp}"
+      fi
+    else
+      rm -f "${cert_tmp}"
+    fi
+
+    # Same treatment for the key — CRLF in a private key kills openssl just
+    # as quickly. Don't strip-by-marker like the cert (key block markers
+    # vary: BEGIN PRIVATE KEY / BEGIN RSA PRIVATE KEY / BEGIN EC PRIVATE
+    # KEY) — just drop CRs.
+    if [[ -n "${CAW_KEY_PATH:-}" && -f "${CAW_KEY_PATH}" ]]; then
+      key_tmp="${CAW_KEY_PATH}.normalize.$$"
+      if tr -d '\r' < "${CAW_KEY_PATH}" > "${key_tmp}" 2>/dev/null \
+         && [[ -s "${key_tmp}" ]]; then
+        if ! cmp -s "${key_tmp}" "${CAW_KEY_PATH}"; then
+          mv "${key_tmp}" "${CAW_KEY_PATH}"
+          log "Normalized key line endings"
+        else
+          rm -f "${key_tmp}"
+        fi
+      else
+        rm -f "${key_tmp}"
+      fi
+    fi
+
     # Normalize permissions. scp inherits the source's mode, which is often
     # wrong on a server (e.g. a 644 dir from upload doesn't let nginx
     # workers cd into it). Set the canonical layout:
     #   dir   root:www-data 750  (nginx can traverse, nothing else can)
     #   cert  root:root     644  (public cert, readable to anyone allowed in)
     #   key   root:root     600  (private key, root-only)
-    cert_dir="$(dirname "${CAW_CERT_PATH}")"
     chown root:root "${CAW_CERT_PATH}" 2>/dev/null || true
     chmod 644 "${CAW_CERT_PATH}" 2>/dev/null || true
     if [[ -n "${CAW_KEY_PATH:-}" && -f "${CAW_KEY_PATH}" ]]; then
@@ -847,6 +890,17 @@ if [[ -n "${CAW_DOMAIN:-}" && "${CAW_TLS_MODE:-}" != "skip" ]]; then
       chown root:www-data "${cert_dir}" 2>/dev/null || true
     fi
     chmod 750 "${cert_dir}" 2>/dev/null || true
+
+    # Last-line defense: validate that openssl can actually parse the cert.
+    # If this fails after the normalization above, the file is fundamentally
+    # broken (truncated, wrong format, etc.) and the operator should fix it
+    # before nginx blows up on reload. Surface it loudly here rather than
+    # leaving a confusing nginx error 30 seconds later.
+    if ! openssl x509 -in "${CAW_CERT_PATH}" -noout >/dev/null 2>&1; then
+      warn "openssl can't parse ${CAW_CERT_PATH} — nginx will reject it on reload."
+      warn "Verify the file with: openssl x509 -in ${CAW_CERT_PATH} -text -noout"
+    fi
+
     ok "Cert: ${CAW_CERT_PATH}"
     ok "Key:  ${CAW_KEY_PATH}"
     ok "Permissions: ${cert_dir} 750 / fullchain 644 / key 600"
