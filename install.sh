@@ -831,15 +831,26 @@ if [[ -n "${CAW_DOMAIN:-}" && "${CAW_TLS_MODE:-}" != "skip" ]]; then
 
   if [[ -n "${CAW_CERT_PATH:-}" && -f "${CAW_CERT_PATH}" ]]; then
     # Normalize line endings + framing. Cert files downloaded from CA
-    # dashboards (Namecheap, ZeroSSL, etc.) often arrive with Windows-style
-    # CRLFs, trailing whitespace, or stray text after the final
-    # -----END CERTIFICATE----- line. OpenSSL rejects all three with the
-    # cryptic "PEM_read_bio_X509_AUX() failed (bad end line)" — nginx then
-    # refuses to start. Strip CRs and keep only well-formed cert blocks.
-    # awk preserves cert ordering (operator's cert first, then intermediates).
+    # dashboards (Namecheap, ZeroSSL, Sectigo, etc.) often arrive with:
+    #   • Windows-style CRLFs
+    #   • Stray text before the first BEGIN or after the last END
+    #   • END/BEGIN on the same line ("-----END CERTIFICATE----------BEGIN
+    #     CERTIFICATE-----") when the dashboard concatenates without a
+    #     separator newline. Awk's range filter sees that as a one-line
+    #     cert and silently drops the next block — so we have to split it
+    #     before extracting.
+    # OpenSSL rejects all three with the cryptic
+    #   "PEM_read_bio_X509_AUX() failed (bad end line)"
+    # — nginx then refuses to start. Three-pass cleanup:
+    #   1. tr -d '\r'                        drop CRLFs
+    #   2. sed                               split joined END/BEGIN markers
+    #   3. awk '/BEGIN/,/END/'              keep only well-formed blocks
+    # Cert ordering (operator's leaf first, then intermediates) is
+    # preserved because awk processes the file top-to-bottom.
     cert_dir="$(dirname "${CAW_CERT_PATH}")"
     cert_tmp="${CAW_CERT_PATH}.normalize.$$"
     if tr -d '\r' < "${CAW_CERT_PATH}" \
+         | sed 's|-----END CERTIFICATE----------BEGIN CERTIFICATE-----|-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----|g' \
          | awk '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/' \
          > "${cert_tmp}" 2>/dev/null \
        && [[ -s "${cert_tmp}" ]]; then
