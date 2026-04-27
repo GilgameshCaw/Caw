@@ -337,6 +337,10 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
     // Split by lines first to handle URLs on their own lines
     const lines = processedText.split('\n')
     const result: React.ReactNode[] = []
+    // Track whether we've already emitted a preview card so we don't stack
+    // a second one when the post has both a standalone short-URL line *and*
+    // additional inline short URLs elsewhere.
+    let previewEmitted = false
 
     lines.forEach((line, lineIndex) => {
       const trimmedLine = line.trim()
@@ -371,6 +375,7 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
               className="my-2"
             />
           )
+          previewEmitted = true
           return
         }
       }
@@ -387,6 +392,26 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
         result.push(<br key={`br-${lineIndex}`} />)
       }
     })
+
+    // If no preview card was emitted (because every short URL was inline
+    // alongside other text), append one for the *first* non-media short URL
+    // we can find anywhere in the post. Single card per post is enough —
+    // additional URLs still render as inline ShortUrlLinks above.
+    if (!previewEmitted) {
+      const firstShortMatch = processedText.match(/(?:https?:\/\/[^\s]+)?\/s\/([a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)?)/)
+      if (firstShortMatch) {
+        const firstCode = firstShortMatch[1]
+        if (!isMediaShortUrl(firstCode) && !isVideoShortUrl(firstCode)) {
+          result.push(
+            <LinkPreview
+              key={`link-inline-first`}
+              code={firstCode}
+              className="my-2"
+            />
+          )
+        }
+      }
+    }
 
     // Render all media in order (sorted by original position in text)
     mediaMatches.forEach((media, idx) => {
