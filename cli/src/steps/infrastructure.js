@@ -176,12 +176,23 @@ export async function collectInfraEarly(nodeType, ctx = {}) {
   // via /api/giphy proxy. Asked for any node that runs the API.
   const giphyApiKey = await collectGiphyApiKey(nodeType)
 
+  // On-chain instance announcement. Only meaningful when this node serves
+  // an API (other nodes need a URL to talk to) AND we have a domain to
+  // announce. The InstanceRegistryService handles the actual registration
+  // tx on first boot — we just decide whether to give it a URL.
+  const instanceApiUrl = await collectInstanceRegistration(nodeType, domain)
+
+  // Sentry DSN (optional) — error reporting for both server + browser.
+  const sentryDsn = await collectSentryDsn(nodeType)
+
   result.domain = domain
   result.adminPassword = adminPassword
   result.clientId = clientId
   result.storageChain = storageChain
   result.walletConnectProjectId = walletConnectProjectId
   result.giphyApiKey = giphyApiKey
+  result.instanceApiUrl = instanceApiUrl
+  result.sentryDsn = sentryDsn
   return result
 }
 
@@ -324,8 +335,9 @@ async function collectFrontendOnlyConfig() {
   ])
 
   const walletConnectProjectId = await collectWalletConnectProjectId('frontend-only')
+  const sentryDsn = await collectSentryDsn('frontend-only')
 
-  return { apiUrl, domain, useDocker: false, walletConnectProjectId }
+  return { apiUrl, domain, useDocker: false, walletConnectProjectId, sentryDsn }
 }
 
 /**
@@ -455,4 +467,124 @@ async function collectGiphyApiKey(nodeType) {
   ])
 
   return apiKey.trim()
+}
+
+/**
+ * Ask whether to announce this node's API URL on-chain so other CAW
+ * instances can find it (DM relay, mention propagation across instances,
+ * etc.). The InstanceRegistryService handles the actual registerInstance
+ * tx on first boot — this prompt just decides whether to give it a URL.
+ *
+ * Only relevant for API-serving node types with a domain. Honors
+ * CAW_INSTANCE_API_URL env override (e.g. to announce a different URL
+ * than the install's own domain).
+ */
+async function collectInstanceRegistration(nodeType, domain) {
+  if (!['full', 'frontend-api', 'api-only'].includes(nodeType)) return ''
+
+  const fromEnv = process.env.CAW_INSTANCE_API_URL
+  if (fromEnv) return fromEnv
+
+  if (!domain) {
+    // Without a public domain there's nothing useful to announce; other
+    // nodes can't route to localhost. Skip silently.
+    return ''
+  }
+
+  section('Announce this node on-chain (optional)')
+  tipBlock([
+    `${brand('What is this?')}`,
+    'Each CAW instance can register its API URL on-chain via',
+    `${brand('CawClientManager.registerInstance')}. Other instances read the registry`,
+    'to route DMs and mentions to your users when they see activity from',
+    'someone authenticated against your client.',
+    '',
+    `${brand('What does it cost?')}`,
+    '  • One L1 tx (one-time, only if you change your URL or validator).',
+    '    Updates use the same fn — no new registration needed.',
+    '  • Your validator address ↔ domain pairing becomes publicly visible',
+    '    on-chain. Most operators are fine with this; if you\'d rather not,',
+    '    skip.',
+    '',
+    `${brand('What if I skip?')}`,
+    '  Your node still works. Users on YOUR domain see everything. But other',
+    '  instances can\'t route inbound DMs / mentions to your users; they show',
+    '  up at your node only if they hit your URL directly.',
+    '',
+    `Will announce: ${brand('https://' + domain)}`,
+  ])
+
+  const { announce } = await inquirer.prompt([
+    {
+      type: 'confirm',
+      name: 'announce',
+      message: 'Announce this node on-chain?',
+      default: true,
+    },
+  ])
+
+  return announce ? `https://${domain}` : ''
+}
+
+/**
+ * Ask for a Sentry DSN. When set, the backend forwards uncaught
+ * exceptions / rejections to Sentry; the frontend bundles VITE_SENTRY_DSN
+ * for browser-side error reporting via @sentry/react. Both are gated by
+ * env var presence so the install works fine without it.
+ *
+ * Honors CAW_SENTRY_DSN env override. The same DSN is used for both
+ * server and browser — Sentry differentiates by event source. Operators
+ * with a separate browser DSN can edit the .env files manually.
+ *
+ * Only relevant for node types that run code (full / api-only /
+ * frontend-api / validator / frontend-only). Validator-only and
+ * api-only nodes still benefit from server-side error reporting.
+ */
+async function collectSentryDsn(nodeType) {
+  if (nodeType === 'frontend-only' && !process.env.CAW_SENTRY_DSN) {
+    // Frontend-only nodes don't have a backend to report to — only the
+    // browser side benefits, but we still ask if the operator wants it.
+  }
+
+  const fromEnv = process.env.CAW_SENTRY_DSN
+  if (fromEnv) return fromEnv
+
+  section('Sentry error tracking (optional)')
+  tipBlock([
+    `${brand('What is this?')}`,
+    'Sentry collects uncaught exceptions and errors from your running node',
+    'so you can see what\'s breaking in production. Both the API server and',
+    'the frontend report to the same DSN.',
+    '',
+    `${brand('How to get a DSN (about 60 seconds):')}`,
+    `  ${brand('1.')} Open ${brand('https://sentry.io')} and sign in (or sign up — free tier`,
+    '     covers small operators).',
+    `  ${brand('2.')} Create a project → pick "Browser JavaScript" or "Node.js" (either`,
+    '     works; Sentry routes events by source).',
+    `  ${brand('3.')} Copy the DSN URL (looks like https://abc...@oxxxx.ingest.sentry.io/N).`,
+    `  ${brand('4.')} Paste below.`,
+    '',
+    'Leave blank to skip — error handling falls back to plain console logs',
+    'and pm2 log files. You can add SENTRY_DSN / VITE_SENTRY_DSN to the env',
+    'files later without re-running install.',
+  ])
+
+  const { dsn } = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'dsn',
+      message: 'Sentry DSN URL:',
+      default: '',
+      validate: (input) => {
+        const v = input.trim()
+        if (!v) return true // optional
+        if (!/^https:\/\/[a-zA-Z0-9]+@[a-zA-Z0-9.-]+\.ingest(\.[a-z]+)?\.sentry\.io\/\d+$/.test(v)) {
+          return 'Doesn\'t look like a Sentry DSN URL (expected https://KEY@oXXXX.ingest.sentry.io/N)'
+        }
+        return true
+      },
+    },
+  ])
+
+  return dsn.trim()
 }

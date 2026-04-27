@@ -345,6 +345,16 @@ function buildEnvVars(nodeType, config) {
   // unaffected.
   if (config.giphyApiKey) env.GIPHY_API_KEY = config.giphyApiKey
 
+  // INSTANCE_API_URL drives the on-chain registerInstance call in
+  // InstanceRegistryService — the gossip layer other CAW nodes use to
+  // route DMs / mentions to this instance. Empty = skip registration.
+  if (config.instanceApiUrl) env.INSTANCE_API_URL = config.instanceApiUrl
+
+  // Sentry — same DSN serves both backend (SENTRY_DSN) and the frontend
+  // bundle (VITE_SENTRY_DSN); Sentry routes events by source. Both unset =
+  // no error reporting (instrument.ts and the start.ts handlers are no-ops).
+  if (config.sentryDsn) env.SENTRY_DSN = config.sentryDsn
+
   // CLIENT_ID is the same value the frontend reads as VITE_CLIENT_ID — the
   // duplication exists only because Vite requires the VITE_ prefix to expose
   // a var to the browser bundle. Backend services (RawEventsGatherer,
@@ -406,6 +416,13 @@ function buildFrontendEnv(nodeType, config) {
   // origin allowlist, and rotating it would break every install at once.
   if (config.walletConnectProjectId) {
     env.VITE_PROJECT_ID = config.walletConnectProjectId
+  }
+
+  // Sentry DSN for the browser bundle (instrument.ts gates its init on
+  // this var). Same value the backend reads as SENTRY_DSN; Sentry routes
+  // events by source so one DSN works for both.
+  if (config.sentryDsn) {
+    env.VITE_SENTRY_DSN = config.sentryDsn
   }
 
   return env
