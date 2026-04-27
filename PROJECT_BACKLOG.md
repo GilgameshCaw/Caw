@@ -214,6 +214,41 @@ The replication path was rewritten as the optimistic archive + trustless `CawCha
 
 ## Frontend
 
+### Re-enable tsc in the production build
+
+**Status:** Disabled 2026-04-27 to unblock testnet launch. The build script
+went from `tsc -b && vite build` → `vite build`; type errors no longer fail
+the build. A `yarn typecheck` script still exists for CI / dev use.
+
+**Why disabled:** 17 latent type errors that ran fine in dev (vite ignores
+tsc errors when bundling) but blocked production install. Hitting them
+under time pressure during the testnet launch wasn't worth the risk of a
+half-applied fix.
+
+**The 17 errors when this was filed:**
+
+- `Feed.tsx(256,19)` — `string[]` passed where `number[]` expected
+- `Notifications.tsx(443,45)` — `string | undefined` passed where `string` expected
+- `Notifications.tsx(565,37)` — `undefined` used as index type
+- `ProfileChooser.tsx(325–356)` — 8× `selectedToken` possibly undefined (needs an early-return guard or `?` chains)
+- `ShareModal.tsx(130,14)` — function name truthiness check (`if (closeModal)`) — should be calling it
+- `ShareModal.tsx(191,14)` — `<style jsx>` not in `StyleHTMLAttributes` (drop `jsx` prop or switch to `<style dangerouslySetInnerHTML>`)
+- `tokens.ts(7,3)` and `(13,3)` — `Token` type requires `price` field; objects defined without it
+- `useCawonce.ts(46,58)` — `.toBigInt()` on `never`-typed value (likely a type narrowing issue around viem return types)
+- `AccountSettings.tsx(32,7)` — `string` indexing into `Record<\`0x${string}\`, …>`; needs a type assertion or branded address
+- `AccountSettings.tsx(221,30)` — `token` parameter implicitly `any`
+- `MutedContent.tsx(87,39)` — `createdAt` not on `CawItem` (renamed somewhere?)
+- `optimisticPostsStore.ts(2,10)` — imports `FeedItem` from `~/types` but the type isn't exported there
+
+**Re-enable steps:**
+
+1. `cd client/src/services/FrontEnd && yarn typecheck` to see the live list (errors may have changed since this was filed).
+2. Fix each. Most are 1-3 line edits. The `Notifications.tsx` ones share root causes and likely fix together.
+3. Restore the build script in `package.json` to `tsc -b && vite build`.
+4. Add a CI check that runs `yarn typecheck` so this doesn't regress silently again.
+
+---
+
 ### UX — features not started
 
 - [ ] **Image modal** (`client/src/services/FrontEnd/src/components/FeedItem.tsx:966, 994, 1022`)

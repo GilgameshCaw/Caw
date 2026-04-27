@@ -80,6 +80,20 @@ export async function runInstall(nodeType, config, installDir) {
         spinner3b.succeed('Frontend built — dist/ ready for nginx')
       } catch (e) {
         spinner3b.fail('Frontend build failed')
+        // Surface what tsc / vite actually said. With stdio: 'pipe' we
+        // get the captured streams on the error object; without printing
+        // them the operator sees only "Command failed: yarn build" and
+        // has no actionable signal.
+        const out = (e?.stdout?.toString?.() || '').trim()
+        const errOut = (e?.stderr?.toString?.() || '').trim()
+        if (out) {
+          console.log(err('  yarn build stdout:'))
+          for (const line of out.split('\n').slice(-60)) console.log(dim('    ' + line))
+        }
+        if (errOut) {
+          console.log(err('  yarn build stderr:'))
+          for (const line of errOut.split('\n').slice(-60)) console.log(dim('    ' + line))
+        }
         throw e
       }
 
