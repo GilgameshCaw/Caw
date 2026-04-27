@@ -8,6 +8,8 @@
  * - BroadcastChannel syncs the decrypted key to other same-origin tabs (no extra popups)
  */
 
+import { requireSecureCrypto } from '~/utils/secureContext'
+
 const ENCRYPTION_MESSAGE = 'CAW Quick Sign Encryption Key'
 const CHANNEL_NAME = 'caw-session-key-sync'
 const ALGORITHM = 'AES-GCM'
@@ -38,6 +40,7 @@ async function deriveKey(signature: string): Promise<CryptoKey> {
 
 /** Encrypt a private key string. Returns base64-encoded iv+ciphertext. */
 export async function encryptPrivateKey(privateKey: string, walletSignature: string): Promise<string> {
+  requireSecureCrypto('Quick Sign encryption')
   const key = await deriveKey(walletSignature)
   const iv = crypto.getRandomValues(new Uint8Array(12))
   const encoded = new TextEncoder().encode(privateKey)
@@ -55,6 +58,7 @@ export async function encryptPrivateKey(privateKey: string, walletSignature: str
 
 /** Decrypt a private key. Returns the plaintext private key string. */
 export async function decryptPrivateKey(encryptedData: string, walletSignature: string): Promise<string> {
+  requireSecureCrypto('Quick Sign encryption')
   const key = await deriveKey(walletSignature)
   const combined = Uint8Array.from(atob(encryptedData), c => c.charCodeAt(0))
   const iv = combined.slice(0, 12)

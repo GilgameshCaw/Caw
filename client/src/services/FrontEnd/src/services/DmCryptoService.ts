@@ -1,4 +1,5 @@
 import { secp256k1 } from '@noble/curves/secp256k1'
+import { requireSecureCrypto } from '~/utils/secureContext'
 
 // Key cache: conversationId -> shared secret (CryptoKey)
 const sharedSecretCache = new Map<string, CryptoKey>()
@@ -54,6 +55,12 @@ export async function deriveKeyPair(
   tokenId: number,
   username?: string
 ): Promise<{ privateKey: Uint8Array; publicKeyHex: string; rawSignature?: string; sigMessage?: string }> {
+  // Fail fast with a clear message before triggering a wallet signature: if
+  // the browser doesn't expose crypto.subtle (HTTP on a network host, some
+  // in-app browsers), the SHA-256 step below would crash with "Cannot read
+  // properties of undefined (reading 'digest')".
+  requireSecureCrypto('DM encryption')
+
   // Return cached if available and for the same tokenId
   if (cachedPrivateKey && cachedPublicKey && cachedTokenId === tokenId) {
     return { privateKey: cachedPrivateKey, publicKeyHex: cachedPublicKey }
