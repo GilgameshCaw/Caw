@@ -305,6 +305,43 @@ half-applied fix.
 
 ---
 
+### Spurious "access other apps and services" prompt during DM enable
+
+**Reported:** 2026-04-28. Operator hit Chrome's *"test.caw.social wants to:
+Access other apps and services on this device"* permission dialog while
+enabling DMs (which triggers a `wallet_signTypedData_v4`). It's the
+WebUSB / WebHID permission, fired by RainbowKit / WalletConnect's
+hardware-wallet connectors (Ledger, Trezor) initializing on first wallet
+interaction — even when the operator is using MetaMask / Rainbow.
+
+**Why it's bad UX:** the dialog mentions "other apps and services" without
+context, no Web3 user expects a hardware-wallet permission prompt unless
+they're plugging one in, and the alarming wording can spook operators
+into blocking → which then degrades the actual flow if they ever DO
+want to use a hardware wallet.
+
+**Fix options:**
+
+1. **Filter the wallet list** in `client/src/services/FrontEnd/src/config/Web3Provider.tsx`'s
+   `getDefaultConfig()` to exclude Ledger / Trezor / hardware-wallet
+   connectors by default. Add a "More wallets…" affordance that
+   re-enables them when the user explicitly asks. Cleanest UX.
+2. **Defer connector init** — RainbowKit lazy-loads connectors on
+   wallet click, not on app boot. Verify we're not eagerly importing
+   Ledger / Trezor SDKs somewhere that's forcing them to register.
+
+Option 1 is the fix; option 2 is the diagnostic that confirms the
+right scope before we ship.
+
+**Steps:**
+
+- [ ] Audit `Web3Provider.tsx` to see which wallet connectors RainbowKit
+      registers by default.
+- [ ] Override `wallets` to exclude `ledgerWallet` / `trezorWallet`.
+- [ ] Add "Connect a hardware wallet" link/button on the connect modal
+      that re-adds them on demand.
+- [ ] Verify the WebUSB permission no longer fires on first signMessage.
+
 ### UX — features not started
 
 - [ ] **Image modal** (`client/src/services/FrontEnd/src/components/FeedItem.tsx:966, 994, 1022`)
