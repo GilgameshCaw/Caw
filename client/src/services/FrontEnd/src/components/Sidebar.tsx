@@ -317,16 +317,18 @@ const Sidebar: React.FC = () => {
           </NavLink>
         </nav>
 
-        <div className="hidden sm:block px-4 pt-2 pb-3">
-          <button
-            type="button"
-            onClick={handlePostClick}
-            className="w-full inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full bg-yellow-500 px-3 py-3 text-sm font-semibold text-black transition-colors duration-200 hover:bg-yellow-400 cursor-pointer"
-          >
-            <HiOutlinePencilAlt className="w-5 h-5" />
-            Write Something
-          </button>
-        </div>
+        {!isCaptive && (
+          <div className="hidden sm:block px-4 pt-2 pb-3">
+            <button
+              type="button"
+              onClick={handlePostClick}
+              className="w-full inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full bg-yellow-500 px-3 py-3 text-sm font-semibold text-black transition-colors duration-200 hover:bg-yellow-400 cursor-pointer"
+            >
+              <HiOutlinePencilAlt className="w-5 h-5" />
+              Write Something
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="pl-3 pr-0 mt-2 pb-0 sm:pl-4 sm:pr-0 sm:py-3 sm:mt-0 w-full shrink-0">
