@@ -339,6 +339,12 @@ function buildEnvVars(nodeType, config) {
   if (config.validatorPrivateKey) env.VALIDATOR_PRIVATE_KEY = config.validatorPrivateKey
   if (config.adminPassword) env.ADMIN_PASSWORD = config.adminPassword
 
+  // Giphy API key for the /api/giphy proxy that backs the GIF picker. No
+  // VITE_ prefix — server-side only. When unset, /api/giphy returns 500
+  // and the picker shows an error to the user; the rest of the app is
+  // unaffected.
+  if (config.giphyApiKey) env.GIPHY_API_KEY = config.giphyApiKey
+
   // CLIENT_ID is the same value the frontend reads as VITE_CLIENT_ID — the
   // duplication exists only because Vite requires the VITE_ prefix to expose
   // a var to the browser bundle. Backend services (RawEventsGatherer,

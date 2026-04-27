@@ -172,11 +172,16 @@ export async function collectInfraEarly(nodeType, ctx = {}) {
   // operator doesn't bounce between phases.
   const walletConnectProjectId = await collectWalletConnectProjectId(nodeType)
 
+  // Giphy API key — backend-only env var; powers the in-composer GIF picker
+  // via /api/giphy proxy. Asked for any node that runs the API.
+  const giphyApiKey = await collectGiphyApiKey(nodeType)
+
   result.domain = domain
   result.adminPassword = adminPassword
   result.clientId = clientId
   result.storageChain = storageChain
   result.walletConnectProjectId = walletConnectProjectId
+  result.giphyApiKey = giphyApiKey
   return result
 }
 
@@ -396,4 +401,58 @@ async function collectWalletConnectProjectId(nodeType) {
   ])
 
   return projectId.trim()
+}
+
+/**
+ * Ask for a Giphy API key. Powers the in-composer GIF picker via the
+ * backend's /api/giphy proxy (server-side only — the key never ships to
+ * the browser). Only relevant for node types that run the API.
+ *
+ * Honors CAW_GIPHY_API_KEY env override for non-interactive runs. Blank
+ * skips — /api/giphy returns a 500 when GIPHY_API_KEY is unset, so the
+ * GIF picker shows an error to the user but the rest of the app still
+ * works.
+ */
+async function collectGiphyApiKey(nodeType) {
+  if (!['full', 'frontend-api', 'api-only'].includes(nodeType)) return ''
+
+  const fromEnv = process.env.CAW_GIPHY_API_KEY
+  if (fromEnv) return fromEnv
+
+  section('Giphy API key (optional)')
+  tipBlock([
+    `${brand('What is this?')}`,
+    'The post composer has a GIF picker powered by Giphy. Your API server',
+    'proxies requests to Giphy with this key — the key never leaves your',
+    'server (no VITE_ prefix; it stays in the backend .env).',
+    '',
+    `${brand('How to get one (about 60 seconds):')}`,
+    `  ${brand('1.')} Open ${brand('https://developers.giphy.com')} in your browser`,
+    `  ${brand('2.')} Sign in (Google / Facebook / email)`,
+    `  ${brand('3.')} Click "Create an App" → "API" (not SDK)`,
+    `  ${brand('4.')} Name it whatever you like — only visible in your dashboard`,
+    `  ${brand('5.')} Copy the ${brand('API key')} (32 hex chars) and paste below`,
+    '',
+    'Leave blank to skip — the GIF picker just won\'t work until you add',
+    'GIPHY_API_KEY to client/.env later. The rest of the app is unaffected.',
+  ])
+
+  const { apiKey } = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'apiKey',
+      message: 'Giphy API key:',
+      default: '',
+      validate: (input) => {
+        const v = input.trim()
+        if (!v) return true // optional
+        if (!/^[a-zA-Z0-9]{20,}$/.test(v)) {
+          return 'Looks too short / has unexpected characters (or leave blank to skip)'
+        }
+        return true
+      },
+    },
+  ])
+
+  return apiKey.trim()
 }

@@ -113,35 +113,53 @@ export async function collectReplicationConfig(nodeType, ctx = {}) {
 
   // ---- Archive chain selection ----
   const network = ctx.network || 'testnet'
-  const chains = REPLICATION_CHAINS[network] || []
-  if (chains.length === 0) {
+  const allChains = REPLICATION_CHAINS[network] || []
+  if (allChains.length === 0) {
     console.log(warn(`  No replication chains are deployed yet for ${network}.`))
     return {}
   }
 
-  // If the caller knows which storage chain the operator's primary client
-  // uses (storageChainKey, e.g. "base-sepolia"), prefer the canonical
-  // partner — sort it to the top + show as the default. Operators can
-  // still pick another chain, just doesn't bury the obvious answer.
+  // Filter out the operator's storage chain — replicating to the same
+  // chain you store on defeats the purpose (the archive must live on a
+  // *different* chain so a single chain failure doesn't take both copies
+  // out at once). Also defends against the matching `addReplication`
+  // contract revert.
   const storageChainKey = ctx.storageChainKey || ''
-  const recommendedKey = chains.find(c => c.pairsWith?.includes(storageChainKey))?.key
-    || chains[0].key
+  const chains = allChains.filter(c => c.key !== storageChainKey)
 
-  console.log()
-  tipBlock([
-    'Pick the chain you want to replicate to. The canonical pairing is',
-    `${brand('Base ↔ Arbitrum')} — clients on one typically replicate to the other`,
-    'so the validator only needs ETH on two L2s instead of three.',
-    '',
-    'You can pick any chain you have ETH on; the protocol doesn\'t care.',
-  ])
+  if (chains.length === 0) {
+    console.log(warn(`  No replication chains available besides your storage chain (${storageChainKey}) — skipping.`))
+    return {}
+  }
 
   let replicationChain
   if (chains.length === 1) {
-    // Single-chain shortcut: don't make the operator pick from a list of one.
+    // Single-chain shortcut: with two L2s deployed today (Base + Arbitrum),
+    // a client storing on one L2 has exactly one valid archive choice — the
+    // other. Skip the picker; the operator's only meaningful input here is
+    // the RPC URL for that chain (asked next).
     replicationChain = chains[0].key
-    console.log(dim(`  Using ${chains[0].label} (only chain available on ${network}).`))
+    console.log()
+    console.log(dim(`  Auto-selected ${brand(chains[0].label)} as the archive chain.`))
+    console.log(dim(`  (Your client stores on ${storageChainKey || 'L1'}; replicating to a different L2`))
+    console.log(dim(`   so a single-chain failure can't take both copies out at once.)`))
   } else {
+    // Multi-chain picker. Today this only fires when storage is L1
+    // (sepolia / ethereum) — both L2s are valid archive targets. Once a
+    // third L2 lands in REPLICATION_CHAINS, L2-storage clients will land
+    // here too and the recommendation logic below picks the partner.
+    const recommendedKey = chains.find(c => c.pairsWith?.includes(storageChainKey))?.key
+      || chains[0].key
+
+    console.log()
+    tipBlock([
+      'Pick the chain you want to replicate to. The canonical pairing is',
+      `${brand('Base ↔ Arbitrum')} — clients on one typically replicate to the other`,
+      'so the validator only needs ETH on two L2s instead of three.',
+      '',
+      'You can pick any chain you have ETH on; the protocol doesn\'t care.',
+    ])
+
     const answer = await inquirer.prompt([
       {
         type: 'list',
