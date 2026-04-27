@@ -1,5 +1,33 @@
 #!/usr/bin/env node
 
+// Defensive stdin reopen for piped invocations. When the CLI is launched
+// from a curl-piped install.sh, stdin is the pipe — not the terminal.
+// Inquirer's `list` prompts can't get arrow-key input over a pipe and
+// silently auto-select the first choice; `input` prompts echo escape
+// codes literally instead of moving the cursor. Force-reopen stdin from
+// /dev/tty when (a) we're not on a tty AND (b) /dev/tty is readable.
+// install.sh already redirects, but this catches every other invocation
+// path (direct `node cli/bin/caw.js`, npm scripts, etc.).
+import fs from 'fs'
+import tty from 'tty'
+try {
+  if (!process.stdin.isTTY && fs.existsSync('/dev/tty')) {
+    const ttyFd = fs.openSync('/dev/tty', 'r')
+    // Replace stdin with the controlling terminal at the FD level. inquirer
+    // (and node-readline) read from process.stdin; reassigning via
+    // Object.defineProperty is the simplest way that works across Node
+    // versions without monkey-patching streams.
+    Object.defineProperty(process, 'stdin', {
+      value: new tty.ReadStream(ttyFd),
+      configurable: true,
+      writable: true,
+    })
+  }
+} catch {
+  // Best-effort; if we can't reopen, fall through and let inquirer fail
+  // visibly rather than block startup.
+}
+
 import { Command } from 'commander'
 import { execSync } from 'child_process'
 import path from 'path'
