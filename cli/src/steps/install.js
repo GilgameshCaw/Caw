@@ -1,8 +1,43 @@
-import { execSync, exec } from 'child_process'
+import { execSync, exec, spawn } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import ora from 'ora'
 import { section, success, warn, err, dim, brand, tipBlock } from '../utils/ui.js'
+
+/**
+ * Run a long command without freezing the spinner. execSync blocks the
+ * Node event loop for the entire child duration — meaning the ora ticker
+ * can't update and the operator stares at a frozen ⠋ for 30+ seconds
+ * wondering if the install died. spawn keeps the loop alive so the
+ * spinner animates; we still capture stdout/stderr for the error path.
+ *
+ * Returns when the child exits with code 0. Throws on non-zero exit; the
+ * thrown error has .stdout / .stderr / .code populated like execSync's
+ * does, so existing catch blocks that surface those fields keep working.
+ */
+function runStreamed(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(command, args, { ...options, stdio: ['ignore', 'pipe', 'pipe'] })
+    const stdoutChunks = []
+    const stderrChunks = []
+    proc.stdout.on('data', d => stdoutChunks.push(d))
+    proc.stderr.on('data', d => stderrChunks.push(d))
+    proc.on('error', reject)
+    proc.on('exit', code => {
+      const stdout = Buffer.concat(stdoutChunks).toString()
+      const stderr = Buffer.concat(stderrChunks).toString()
+      if (code === 0) {
+        resolve({ stdout, stderr })
+      } else {
+        const e = new Error(`Command failed (exit ${code}): ${command} ${args.join(' ')}`)
+        e.stdout = stdout
+        e.stderr = stderr
+        e.code = code
+        reject(e)
+      }
+    })
+  })
+}
 
 export async function runInstall(nodeType, config, installDir) {
   section('Installing Dependencies')
@@ -36,7 +71,7 @@ export async function runInstall(nodeType, config, installDir) {
   // matches what the dev environment uses.
   const spinner2 = ora('Installing Node.js dependencies...').start()
   try {
-    execSync('npm install --legacy-peer-deps', { cwd: clientDir, stdio: 'pipe' })
+    await runStreamed('npm', ['install', '--legacy-peer-deps'], { cwd: clientDir })
     spinner2.succeed('Node.js dependencies installed')
   } catch (e) {
     spinner2.fail('Failed to install dependencies')
@@ -56,10 +91,7 @@ export async function runInstall(nodeType, config, installDir) {
       // Drop --frozen-lockfile because the lockfile is generated on a Mac
       // and re-resolves on Linux — strict mode rejects legitimate platform
       // differences.
-      execSync('yarn install --ignore-platform', {
-        cwd: frontendDir,
-        stdio: 'pipe',
-      })
+      await runStreamed('yarn', ['install', '--ignore-platform'], { cwd: frontendDir })
       spinner3.succeed('Frontend dependencies installed')
     } catch (e) {
       spinner3.fail('Failed to install frontend dependencies')
@@ -76,7 +108,7 @@ export async function runInstall(nodeType, config, installDir) {
     if (config.deployment === 'production') {
       const spinner3b = ora('Building frontend (production)...').start()
       try {
-        execSync('yarn build', { cwd: frontendDir, stdio: 'pipe' })
+        await runStreamed('yarn', ['build'], { cwd: frontendDir })
         spinner3b.succeed('Frontend built — dist/ ready for nginx')
       } catch (e) {
         spinner3b.fail('Frontend build failed')
@@ -154,8 +186,8 @@ export async function runInstall(nodeType, config, installDir) {
 
     const spinner4 = ora('Setting up database schema...').start()
     try {
-      execSync('npx prisma db push --skip-generate', { cwd: clientDir, stdio: 'pipe' })
-      execSync('npx prisma generate', { cwd: clientDir, stdio: 'pipe' })
+      await runStreamed('npx', ['prisma', 'db', 'push', '--skip-generate'], { cwd: clientDir })
+      await runStreamed('npx', ['prisma', 'generate'], { cwd: clientDir })
       spinner4.succeed('Database schema ready')
     } catch (e) {
       spinner4.fail('Failed to set up database')

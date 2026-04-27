@@ -139,7 +139,14 @@ export async function configureNginx(config, installDir) {
   // the HTTP-01 challenge. Once it succeeds, certbot rewrites our config to
   // add the TLS server and 80→443 redirect.
   const tls = sslMode === 'letsencrypt' ? null : { certPath, keyPath, mode: sslMode }
-  const conf = renderNginxConf({ domain: config.domain, apiPort, frontendDist, tls })
+  const nginxSupportsHttp2Directive = detectNginxHttp2DirectiveSupport()
+  const conf = renderNginxConf({
+    domain: config.domain,
+    apiPort,
+    frontendDist,
+    tls,
+    nginxSupportsHttp2Directive,
+  })
 
   const spinner = ora('Writing nginx server block...').start()
   try {
@@ -224,7 +231,28 @@ function detectParentWildcard(domain) {
  * Render the nginx server block. Kept pure (no fs/exec) so we can test it
  * without touching the system.
  */
-function renderNginxConf({ domain, apiPort, frontendDist, tls }) {
+// Detect whether the local nginx supports the standalone `http2 on;` directive.
+// nginx 1.25.1+ deprecates `listen ssl http2;` in favor of `listen ssl;` +
+// `http2 on;`. Older nginx (1.18 on Ubuntu 22.04, 1.24 on Debian 12) reject
+// the new directive with "unknown directive http2". Pick the syntax that
+// matches what the local binary actually parses.
+function detectNginxHttp2DirectiveSupport() {
+  try {
+    const out = execSync('nginx -v 2>&1', { encoding: 'utf8' })
+    // Output looks like: "nginx version: nginx/1.24.0 (Ubuntu)"
+    const m = out.match(/nginx\/(\d+)\.(\d+)\.(\d+)/)
+    if (!m) return false
+    const [, major, minor] = m.map(Number)
+    // 1.25.1 introduced `http2 on;`. Be conservative — require >= 1.25.
+    return major > 1 || (major === 1 && minor >= 25)
+  } catch {
+    // No nginx installed yet or not on PATH — fall back to the old syntax,
+    // which works on every nginx version still receiving security updates.
+    return false
+  }
+}
+
+function renderNginxConf({ domain, apiPort, frontendDist, tls, nginxSupportsHttp2Directive }) {
   // The built frontend is a SPA — every unknown path falls through to
   // index.html so React Router handles the route. /api and /socket.io go to
   // the Node server. Static assets in /assets/ get long cache headers.
@@ -310,9 +338,12 @@ server {
 }
 
 server {
-    listen 443 ssl;
+${nginxSupportsHttp2Directive
+  ? `    listen 443 ssl;
     listen [::]:443 ssl;
-    http2 on;
+    http2 on;`
+  : `    listen 443 ssl http2;
+    listen [::]:443 ssl http2;`}
     server_name ${domain};
 
     ssl_certificate     ${tls.certPath};
