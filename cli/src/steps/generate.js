@@ -393,6 +393,15 @@ function buildFrontendEnv(nodeType, config) {
   if (config.l1RpcUrlHttp) env.VITE_L1_RPC_URL = config.l1RpcUrlHttp
   if (config.l2RpcUrlHttp) env.VITE_L2_RPC_URL = config.l2RpcUrlHttp
 
+  // WalletConnect / Reown project ID — per-operator, asked at install time.
+  // When blank, Web3Provider.tsx falls back to a placeholder and WC wallets
+  // simply won't connect until the operator fills it in. We don't bake in a
+  // shared project ID because IDs are tied to one dashboard's quota /
+  // origin allowlist, and rotating it would break every install at once.
+  if (config.walletConnectProjectId) {
+    env.VITE_PROJECT_ID = config.walletConnectProjectId
+  }
+
   return env
 }
 

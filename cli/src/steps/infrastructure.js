@@ -213,6 +213,8 @@ export async function collectInfraConfig(nodeType, ctx = {}) {
   // and the answer is meaningless to anyone debugging.
   const apiPort = Number(process.env.CAW_API_PORT) || 4000
 
+  const walletConnectProjectId = await collectWalletConnectProjectId(nodeType)
+
   return {
     useDocker,
     dbUrl,
@@ -222,6 +224,7 @@ export async function collectInfraConfig(nodeType, ctx = {}) {
     adminPassword,
     clientId,
     apiPort,
+    walletConnectProjectId,
   }
 }
 
@@ -254,5 +257,62 @@ async function collectFrontendOnlyConfig() {
     }
   ])
 
-  return { apiUrl, domain, useDocker: false }
+  const walletConnectProjectId = await collectWalletConnectProjectId('frontend-only')
+
+  return { apiUrl, domain, useDocker: false, walletConnectProjectId }
+}
+
+/**
+ * Ask for the operator's WalletConnect / Reown project ID. Only applies to
+ * node types that bundle the frontend (full / frontend-api / frontend-only).
+ *
+ * Why we don't bake one in: project IDs are tied to *one* dashboard at
+ * cloud.reown.com. Quotas, analytics, and origin allowlists all live there.
+ * Sharing the project author's ID across every install would mean every
+ * operator's traffic counts against one dashboard's quota and any rotation
+ * breaks every install at once.
+ *
+ * Honors CAW_WALLETCONNECT_PROJECT_ID env override for non-interactive
+ * runs (CI, install.sh pre-set, etc.).
+ */
+async function collectWalletConnectProjectId(nodeType) {
+  if (!['full', 'frontend-api', 'frontend-only'].includes(nodeType)) return ''
+
+  const fromEnv = process.env.CAW_WALLETCONNECT_PROJECT_ID
+  if (fromEnv) return fromEnv
+
+  section('WalletConnect (Reown) project ID')
+  tipBlock([
+    'The frontend uses WalletConnect (Reown) for wallet connections.',
+    `Each operator needs ${brand('their own project ID')} — IDs are tied to a`,
+    'single dashboard for analytics, origin allowlists, and rate limits.',
+    '',
+    `Get one in 30 seconds at ${brand('https://cloud.reown.com')}:`,
+    '  1. Sign in (Google / GitHub / wallet)',
+    '  2. Click "Create Project"',
+    '  3. Copy the Project ID — paste it below',
+    '',
+    'You can leave this blank to skip; the frontend will fall back to a',
+    'placeholder and WalletConnect-based wallets won\'t connect until you',
+    'set VITE_PROJECT_ID in client/src/services/FrontEnd/.env later.',
+  ])
+
+  const { projectId } = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'projectId',
+      message: 'WalletConnect project ID (32-char hex):',
+      default: '',
+      validate: (input) => {
+        const v = input.trim()
+        if (!v) return true // optional
+        if (!/^[a-f0-9]{32}$/i.test(v)) {
+          return 'Project ID should be 32 hex characters (or leave blank to skip)'
+        }
+        return true
+      },
+    },
+  ])
+
+  return projectId.trim()
 }
