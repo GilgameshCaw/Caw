@@ -4,9 +4,10 @@ import { CommentModal } from "~/components/modals/CommentModal";
 import QuoteModal   from '~/components/modals/QuoteModal'
 import MessageModal from '~/components/modals/MessageModal'
 import FollowListModal from '~/components/modals/FollowListModal'
+import ComposePostModal from '~/components/modals/ComposePostModal'
 
 
-const KEEP_MODALS: Modal[] = ["network", "comment", "quote", "message", "followingList", "followersList"];
+const KEEP_MODALS: Modal[] = ["network", "comment", "quote", "message", "post", "followingList", "followersList"];
 
 export const Modals: React.FC = () => {
   const { modal, modalData, closeModal, onSuccess } = useModalStore();
@@ -41,6 +42,12 @@ export const Modals: React.FC = () => {
         <MessageModal
           isOpen={true}
           recipient={modalData}
+          onClose={closeModal}
+        />
+      )}
+      {modal === 'post' && (
+        <ComposePostModal
+          isOpen={true}
           onClose={closeModal}
         />
       )}
