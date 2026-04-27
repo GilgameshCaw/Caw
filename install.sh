@@ -13,11 +13,14 @@
 #   sudo bash install.sh
 #
 # Environment overrides:
-#   CAW_DIR       — install directory (default: /var/www/caw)
-#   CAW_REPO      — git remote (default: https://github.com/GilgameshCaw/Caw.git)
-#   CAW_USER      — system user that will own the install (default: caw)
-#   CAW_BRANCH    — branch to check out (default: master)
+#   CAW_DIR        — install directory (default: /var/www/caw)
+#   CAW_REPO       — git remote (default: https://github.com/GilgameshCaw/Caw.git)
+#   CAW_USER       — system user that will own the install (default: caw)
+#   CAW_BRANCH     — branch to check out (default: master)
 #   SKIP_BOOTSTRAP=1 — skip apt installs (assume system deps already there)
+#   CAW_REUSE_ENV  — path to a previous install's .env to reuse values from.
+#                    Auto-detects $CAW_DIR/client/.env if it exists. Set to
+#                    "0" to disable auto-detection and re-prompt everything.
 
 set -euo pipefail
 
@@ -873,6 +876,23 @@ cd "$CAW_DIR"
 # without this, when install.sh is piped from curl (the one-liner case),
 # stdin is the pipe and inquirer's readline falls back to a dumb mode where
 # arrow keys land as literal "^[[D" instead of moving the cursor.
+
+# Auto-detect a previous install's .env so a re-run after a hiccup skips
+# every prompt that already has an answer (DB url, RPCs, Giphy, Sentry,
+# etc. — secrets like the validator key still re-prompt). Operators can
+# point at a different .env via CAW_REUSE_ENV=/path/to/.env, or skip
+# auto-detection entirely with CAW_REUSE_ENV=0.
+REUSE_ENV_ARGS=()
+if [[ "${CAW_REUSE_ENV:-}" == "0" ]]; then
+  : # explicit opt-out
+elif [[ -n "${CAW_REUSE_ENV:-}" && -f "${CAW_REUSE_ENV}" ]]; then
+  REUSE_ENV_ARGS=(--env "${CAW_REUSE_ENV}")
+  log "Reusing values from ${CAW_REUSE_ENV}"
+elif [[ -f "${CAW_DIR}/client/.env" ]]; then
+  REUSE_ENV_ARGS=(--env "${CAW_DIR}/client/.env")
+  log "Found ${CAW_DIR}/client/.env — reusing recognized values (set CAW_REUSE_ENV=0 to skip)"
+fi
+
 if [[ -r /dev/tty ]]; then
   exec sudo -u "$CAW_USER" -H \
     CAW_DOMAIN="${CAW_DOMAIN:-}" \
@@ -885,7 +905,7 @@ if [[ -r /dev/tty ]]; then
     CAW_API_PORT="${CAW_API_PORT:-}" \
     CAW_ES_INDEX_PREFIX="${CAW_ES_INDEX_PREFIX:-}" \
     CAW_TLS_MODE="${CAW_TLS_MODE:-}" \
-    node "$CAW_DIR/cli/bin/caw.js" install --dir "$CAW_DIR" < /dev/tty
+    node "$CAW_DIR/cli/bin/caw.js" install --dir "$CAW_DIR" "${REUSE_ENV_ARGS[@]}" < /dev/tty
 else
   exec sudo -u "$CAW_USER" -H \
     CAW_DOMAIN="${CAW_DOMAIN:-}" \
@@ -898,5 +918,5 @@ else
     CAW_API_PORT="${CAW_API_PORT:-}" \
     CAW_ES_INDEX_PREFIX="${CAW_ES_INDEX_PREFIX:-}" \
     CAW_TLS_MODE="${CAW_TLS_MODE:-}" \
-    node "$CAW_DIR/cli/bin/caw.js" install --dir "$CAW_DIR"
+    node "$CAW_DIR/cli/bin/caw.js" install --dir "$CAW_DIR" "${REUSE_ENV_ARGS[@]}"
 fi
