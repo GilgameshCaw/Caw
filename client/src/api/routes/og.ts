@@ -44,11 +44,21 @@ const W = 1200
 const H = 630
 const CAW_GOLD = '#ebc046'
 
-// Format counts the way Twitter does: 1.2K, 5.4M.
+// Format counts the way Twitter does: 999, 1.2K, 17K, 1.5M, 1.2B.
+// Boundary check uses the rounded value (not the input) so 999_999 doesn't
+// show as "1000K" — once it would round to 1.0K of the next magnitude,
+// promote to that magnitude. Decimal only when < 10 of the unit.
 function fmtCount(n: number): string {
+  const fmt = (val: number, suffix: string) => {
+    const s = val < 10 ? val.toFixed(1).replace(/\.0$/, '') : Math.round(val).toString()
+    return `${s}${suffix}`
+  }
   if (n < 1000) return String(n)
-  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0).replace(/\.0$/, '')}K`
-  return `${(n / 1_000_000).toFixed(n < 10_000_000 ? 1 : 0).replace(/\.0$/, '')}M`
+  const k = n / 1000
+  if (k < 1000 && Math.round(k) < 1000) return fmt(k, 'K')
+  const m = n / 1_000_000
+  if (m < 1000 && Math.round(m) < 1000) return fmt(m, 'M')
+  return fmt(n / 1_000_000_000, 'B')
 }
 
 // Branded "CAW" wordmark + logo lockup, mirroring the Sidebar's top-left
