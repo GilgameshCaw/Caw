@@ -64,6 +64,122 @@ The `mintSelector` / `mintAndUpdateOwners` plumbing is intentionally kept as lat
 
 ## Security & Pre-Launch
 
+### Host hardening — operator runbook + install.sh defaults
+
+**Status:** Filed 2026-04-28 after a security review of a live testnet
+install. Several host-level issues are easy wins that the CLI / install.sh
+can either set automatically or document as a post-install checklist.
+
+**Items (ordered by impact):**
+
+#### SSH hardening (highest impact)
+
+A fresh Ubuntu / Debian VPS ships with `PermitRootLogin yes` +
+`PasswordAuthentication yes` — bots brute-force these constantly. Operators
+running CAW have a high-value target (validator key on disk) so the
+default config is genuinely dangerous.
+
+- [ ] **Document an SSH hardening checklist in README** for operators to
+      run BEFORE the first install:
+        ```
+        # 1. Set up SSH key auth (from local machine)
+        ssh-copy-id user@server
+        # 2. Disable password auth + root login on the server
+        sudo sed -i 's/^PermitRootLogin yes/PermitRootLogin no/; \
+                     s/^PasswordAuthentication yes/PasswordAuthentication no/' \
+                     /etc/ssh/sshd_config
+        sudo systemctl reload ssh
+        ```
+- [ ] **Optionally: install.sh detects + warns** when the running config
+      has either set to `yes`. Don't *change* without explicit operator
+      consent (lockout risk if no key auth is configured), but flag it
+      loudly with a tipBlock + the exact sed commands above.
+
+#### fail2ban as a default install package
+
+[fail2ban](https://github.com/fail2ban/fail2ban) watches auth logs and
+temporarily bans IPs that fail too many SSH login attempts. With it
+running, brute-force attempts get blocked after 5 failures for ~10
+minutes — bots move on. Default config covers SSH out of the box;
+nginx + postfix jails available with one-line additions.
+
+- [ ] **Add `fail2ban` to install.sh's `ALWAYS_PKGS` apt list** so every
+      CAW host gets it preinstalled. Default config (the systemd-journal
+      backend on Ubuntu 22.04+) just works for SSH; we don't need to
+      configure anything beyond `apt-get install -y fail2ban`.
+- [ ] Verify the systemd unit autostarts:
+      `sudo systemctl status fail2ban`. Should be `active (running)` after
+      install.
+
+#### .env file permissions on disk
+
+**Status:** Partially fixed in generate.js (writes new .env files at mode
+0600 / 0640). Existing installs from before this change still have the
+group/world-readable mode 0664 — operators should chmod manually.
+
+- [ ] **Document a one-time fix for existing installs:**
+        ```
+        sudo chmod 600 /var/www/<domain>/client/.env
+        sudo chmod 640 /var/www/<domain>/client/src/services/FrontEnd/.env
+        ```
+- [ ] Already wired: generate.js writes new files at the right mode +
+      explicitly chmods after write to handle the "file already exists"
+      case (Node's writeFileSync mode option is ignored when the target
+      already exists).
+
+#### Validator key off the API host (mainnet)
+
+For testnet, having `VALIDATOR_PRIVATE_KEY` in `client/.env` on the same
+host as the public-facing API is fine. For **mainnet**, an RCE in the
+API immediately exfiltrates the validator key.
+
+- [ ] Document a "two-host topology" in README:
+        - Host A: validator-only node (no public ingress, validator key
+          here, talks to L2 to submit batches)
+        - Host B: api-only / frontend-api node (public ingress, no
+          validator key, talks to host A's API for tx submission)
+- [ ] Or: move the key into a sealed-secrets store (HashiCorp Vault, AWS
+      Secrets Manager, or systemd's `LoadCredential=`) — backend reads
+      from FD instead of env. Bigger lift; document for mainnet only.
+
+#### npm install-script hardening
+
+**Status:** Discussed earlier and decided against for testnet because
+`prisma`, `@swc/core`, and `@tailwindcss/oxide` legitimately need
+postinstalls — the allowlist gets brittle. For mainnet this is the
+single highest-impact mitigation against the supply-chain attack class.
+
+- [ ] Configure `npm config set ignore-scripts true` in `client/.npmrc`.
+- [ ] Maintain an explicit allowlist of packages whose install scripts
+      we DO run, via `npm rebuild <pkg>` after install.
+- [ ] CI test that exercises a fresh install + first prisma migration to
+      catch any silently-broken postinstall before release.
+
+#### Process inspection / .env exposure via /proc
+
+Anyone with shell access as `caw` can `ps eauxwww` or `cat
+/proc/<pid>/environ` and see every env var the running node has,
+including `VALIDATOR_PRIVATE_KEY`. The fix is reading the key from a
+file pm2 doesn't put in env — but that's a real refactor.
+
+- [ ] Backlog: validator/replicator services read keys from
+      `/etc/caw/keys/validator.key` (mode 0400, owned by caw) instead of
+      `process.env.VALIDATOR_PRIVATE_KEY`. ecosystem.config.cjs drops
+      the env-var line.
+
+#### Outbound firewall for the validator host
+
+The validator only needs outbound to: L1 RPC, L2 RPC, replication-archive
+RPC, mainnet RPC (for prices), Reown WebSocket, Sentry (if enabled),
+Giphy (if enabled), npm registry (during install), apt mirror (during
+bootstrap). A `ufw default deny outgoing` policy with allowlists
+constrains an RCE's exfiltration paths.
+
+- [ ] Backlog (mainnet): add `ufw default deny outgoing` to install.sh's
+      firewall step, with allow-rules for the destinations above.
+      Operators with custom RPC hosts will need a hook to add their own
+      allows.
+
 ### Withdrawals silently dropped when `withdrawFee == 0`
 
 **Severity:** Low (no asset loss; user re-submits a withdraw and gets credited next time). **Discovered:** 2026-04-27. **Affected:** `processActions` and `safeProcessActions` in `solidity/contracts/CawActions.sol`.

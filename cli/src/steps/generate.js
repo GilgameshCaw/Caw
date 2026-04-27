@@ -34,24 +34,34 @@ export async function generateConfig(nodeType, config, installDir) {
   fs.writeFileSync(configJsonPath, JSON.stringify(services, null, 2) + '\n')
   console.log(success(`  Created ${dim(configJsonPath)}`))
 
-  // Build .env
+  // Build .env. Mode 0600 — backend .env carries VALIDATOR_PRIVATE_KEY,
+  // REPLICATOR_PRIVATE_KEY, JWT_SECRET, ADMIN_PASSWORD, and DB credentials.
+  // World-readable would let any user on the box read keys that authorize
+  // L2 submissions and admin-dashboard access. {mode: 0o600} on the
+  // initial write covers fresh installs; existing files we explicitly
+  // chmod afterward (writeFileSync's mode option is ignored for files
+  // that already exist — Node's documented behavior).
   const envVars = buildEnvVars(nodeType, config)
   const envPath = path.join(clientDir, '.env')
   const envContent = Object.entries(envVars)
     .map(([key, value]) => `${key}=${value}`)
     .join('\n') + '\n'
-  fs.writeFileSync(envPath, envContent)
-  console.log(success(`  Created ${dim(envPath)}`))
+  fs.writeFileSync(envPath, envContent, { mode: 0o600 })
+  fs.chmodSync(envPath, 0o600)
+  console.log(success(`  Created ${dim(envPath)} (mode 600)`))
 
-  // Build .env for frontend (Vite)
+  // Build .env for frontend (Vite). Less sensitive than the backend .env
+  // (only VITE_* values, which all end up in the public JS bundle anyway),
+  // but no reason to leak. 0640 — owner write, owner+group read.
   if (['full', 'frontend-api', 'frontend-only'].includes(nodeType)) {
     const frontendEnv = buildFrontendEnv(nodeType, config)
     const frontendEnvPath = path.join(clientDir, 'src/services/FrontEnd/.env')
     const frontendEnvContent = Object.entries(frontendEnv)
       .map(([key, value]) => `${key}=${value}`)
       .join('\n') + '\n'
-    fs.writeFileSync(frontendEnvPath, frontendEnvContent)
-    console.log(success(`  Created ${dim(frontendEnvPath)}`))
+    fs.writeFileSync(frontendEnvPath, frontendEnvContent, { mode: 0o640 })
+    fs.chmodSync(frontendEnvPath, 0o640)
+    console.log(success(`  Created ${dim(frontendEnvPath)} (mode 640)`))
   }
 
   // Build docker-compose.yml if needed
@@ -377,6 +387,10 @@ function buildEnvVars(nodeType, config) {
   // bundle (VITE_SENTRY_DSN); Sentry routes events by source. Both unset =
   // no error reporting (instrument.ts and the start.ts handlers are no-ops).
   if (config.sentryDsn) env.SENTRY_DSN = config.sentryDsn
+
+  // OpenTelemetry / SigNoz — backend-only. The standard OTLP env var name
+  // gets the OTel SDK initialized in src/otel.ts; unset = no-op.
+  if (config.signozEndpoint) env.OTEL_EXPORTER_OTLP_ENDPOINT = config.signozEndpoint
 
   // CLIENT_ID is the same value the frontend reads as VITE_CLIENT_ID — the
   // duplication exists only because Vite requires the VITE_ prefix to expose
