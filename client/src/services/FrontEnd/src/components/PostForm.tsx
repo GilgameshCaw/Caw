@@ -1880,7 +1880,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess }) => {
                   />
                 </button>
                 <span className={`text-sm ${isDark ? 'text-gray-300' : 'text-gray-700'}`}>
-                  Shorten URLs
+                  Shorten URLs on chain
                 </span>
               </label>
             </Tooltip>
