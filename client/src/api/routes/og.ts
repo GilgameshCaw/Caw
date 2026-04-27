@@ -29,8 +29,68 @@ function loadFonts() {
   ]
 }
 
+// Logo embedded as a data URI so satori doesn't have to make a network
+// request on every cold render. Loaded lazily once.
+const LOGO_PATH = path.join(process.cwd(), 'public', 'images', 'caw-logo.png')
+let logoDataUri: string | null = null
+function getLogoDataUri(): string {
+  if (logoDataUri) return logoDataUri
+  const bytes = fs.readFileSync(LOGO_PATH)
+  logoDataUri = `data:image/png;base64,${bytes.toString('base64')}`
+  return logoDataUri
+}
+
 const W = 1200
 const H = 630
+const CAW_GOLD = '#ebc046'
+
+// Format counts the way Twitter does: 1.2K, 5.4M.
+function fmtCount(n: number): string {
+  if (n < 1000) return String(n)
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0).replace(/\.0$/, '')}K`
+  return `${(n / 1_000_000).toFixed(n < 10_000_000 ? 1 : 0).replace(/\.0$/, '')}M`
+}
+
+// Branded "CAW" wordmark + logo lockup, mirroring the Sidebar's top-left
+// element. Used as a corner badge on every card.
+function brandLockup(opts: {
+  logoSize?: number
+  fontSize?: number
+} = {}) {
+  const logoSize = opts.logoSize ?? 64
+  const fontSize = opts.fontSize ?? 56
+  return {
+    type: 'div',
+    props: {
+      style: { display: 'flex', alignItems: 'center', gap: 16 },
+      children: [
+        {
+          type: 'img',
+          props: {
+            src: getLogoDataUri(),
+            width: logoSize,
+            height: logoSize,
+            style: { objectFit: 'contain' },
+          },
+        },
+        {
+          type: 'div',
+          props: {
+            style: {
+              fontSize,
+              fontWeight: 700, // satori only has the two weights we loaded
+              color: CAW_GOLD,
+              fontFamily: 'Inter',
+              letterSpacing: '-0.01em',
+              lineHeight: 1,
+            },
+            children: 'CAW',
+          },
+        },
+      ],
+    },
+  }
+}
 
 // Resolve a user's avatar to an absolute URL satori can fetch.
 // Mirrors client/src/services/FrontEnd/src/utils/defaultAvatar.ts.
@@ -54,92 +114,20 @@ function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s
 }
 
-// Build a profile card (1200x630) — large avatar left, name + handle + bio right.
+// Build a profile card (1200x630). Layout:
+//   • Avatar (left), name + @handle + bio (right)
+//   • Stats row at the bottom: followers · following · caws
+//   • CAW logo+wordmark in the top-right corner
 function profileCardTree(opts: {
   displayName: string
   username: string
   bio: string
   avatarUrl: string
+  followerCount: number
+  followingCount: number
+  cawCount: number
 }) {
-  return {
-    type: 'div',
-    props: {
-      style: {
-        display: 'flex',
-        flexDirection: 'row',
-        alignItems: 'center',
-        width: '100%',
-        height: '100%',
-        backgroundColor: '#0A0A0A',
-        padding: '64px',
-        color: '#ffffff',
-        fontFamily: 'Inter',
-      },
-      children: [
-        {
-          type: 'img',
-          props: {
-            src: opts.avatarUrl,
-            width: 360,
-            height: 360,
-            style: { borderRadius: '180px', marginRight: '64px' },
-          },
-        },
-        {
-          type: 'div',
-          props: {
-            style: { display: 'flex', flexDirection: 'column', flex: 1 },
-            children: [
-              {
-                type: 'div',
-                props: {
-                  style: { fontSize: 72, fontWeight: 700, lineHeight: 1.1 },
-                  children: opts.displayName || `@${opts.username}`,
-                },
-              },
-              {
-                type: 'div',
-                props: {
-                  style: { fontSize: 36, color: '#9ca3af', marginTop: 8 },
-                  children: `@${opts.username}`,
-                },
-              },
-              {
-                type: 'div',
-                props: {
-                  style: { fontSize: 32, color: '#d1d5db', marginTop: 32, lineHeight: 1.35 },
-                  children: opts.bio,
-                },
-              },
-              {
-                type: 'div',
-                props: {
-                  style: {
-                    fontSize: 24,
-                    color: '#6b7280',
-                    marginTop: 'auto',
-                    paddingTop: 32,
-                    fontWeight: 700,
-                    letterSpacing: '0.1em',
-                  },
-                  children: 'CAW',
-                },
-              },
-            ],
-          },
-        },
-      ],
-    },
-  }
-}
-
-// Build a single-caw card — small avatar + handle on top, post text dominates.
-function cawCardTree(opts: {
-  displayName: string
-  username: string
-  text: string
-  avatarUrl: string
-}) {
+  const hasDisplayName = !!opts.displayName && opts.displayName.trim() !== ''
   return {
     type: 'div',
     props: {
@@ -149,45 +137,73 @@ function cawCardTree(opts: {
         width: '100%',
         height: '100%',
         backgroundColor: '#0A0A0A',
-        padding: '64px',
+        padding: '56px 64px',
         color: '#ffffff',
         fontFamily: 'Inter',
+        position: 'relative',
       },
       children: [
         {
           type: 'div',
           props: {
-            style: { display: 'flex', flexDirection: 'row', alignItems: 'center' },
+            style: { display: 'flex', position: 'absolute', top: 56, right: 64 },
+            children: [brandLockup()],
+          },
+        },
+        {
+          type: 'div',
+          props: {
+            style: {
+              display: 'flex',
+              flexDirection: 'row',
+              alignItems: 'center',
+              flex: 1,
+              marginTop: 24,
+            },
             children: [
               {
                 type: 'img',
                 props: {
                   src: opts.avatarUrl,
-                  width: 96,
-                  height: 96,
-                  style: { borderRadius: '48px', marginRight: '24px' },
+                  width: 320,
+                  height: 320,
+                  style: { borderRadius: '160px', marginRight: '56px' },
                 },
               },
               {
                 type: 'div',
                 props: {
-                  style: { display: 'flex', flexDirection: 'column' },
+                  style: { display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 },
                   children: [
                     {
                       type: 'div',
                       props: {
-                        style: { fontSize: 36, fontWeight: 700, lineHeight: 1.1 },
-                        children: opts.displayName || `@${opts.username}`,
+                        style: { fontSize: 64, fontWeight: 700, lineHeight: 1.1 },
+                        children: hasDisplayName ? opts.displayName : `@${opts.username}`,
                       },
                     },
-                    {
+                    hasDisplayName ? {
                       type: 'div',
                       props: {
-                        style: { fontSize: 28, color: '#9ca3af', marginTop: 4 },
+                        style: { fontSize: 32, color: '#9ca3af', marginTop: 8 },
                         children: `@${opts.username}`,
                       },
-                    },
-                  ],
+                    } : null,
+                    opts.bio ? {
+                      type: 'div',
+                      props: {
+                        style: {
+                          fontSize: 28,
+                          color: '#d1d5db',
+                          marginTop: 24,
+                          lineHeight: 1.35,
+                          maxHeight: 120,
+                          overflow: 'hidden',
+                        },
+                        children: opts.bio,
+                      },
+                    } : null,
+                  ].filter(Boolean),
                 },
               },
             ],
@@ -197,26 +213,17 @@ function cawCardTree(opts: {
           type: 'div',
           props: {
             style: {
-              fontSize: 48,
-              lineHeight: 1.3,
-              marginTop: 48,
-              flex: 1,
-              color: '#f3f4f6',
+              display: 'flex',
+              flexDirection: 'row',
+              gap: 48,
+              borderTop: '1px solid #1f2937',
+              paddingTop: 24,
             },
-            children: opts.text,
-          },
-        },
-        {
-          type: 'div',
-          props: {
-            style: {
-              fontSize: 24,
-              color: '#6b7280',
-              fontWeight: 700,
-              letterSpacing: '0.1em',
-              marginTop: 16,
-            },
-            children: 'CAW',
+            children: [
+              statTile(fmtCount(opts.followerCount), opts.followerCount === 1 ? 'Follower' : 'Followers'),
+              statTile(fmtCount(opts.followingCount), 'Following'),
+              statTile(fmtCount(opts.cawCount), opts.cawCount === 1 ? 'Caw' : 'Caws'),
+            ],
           },
         },
       ],
@@ -224,7 +231,133 @@ function cawCardTree(opts: {
   }
 }
 
-// Hashtag card — large #tag, with usage count below.
+function statTile(value: string, label: string) {
+  return {
+    type: 'div',
+    props: {
+      style: { display: 'flex', flexDirection: 'row', alignItems: 'baseline', gap: 10 },
+      children: [
+        {
+          type: 'div',
+          props: {
+            style: { fontSize: 36, fontWeight: 700, color: '#ffffff' },
+            children: value,
+          },
+        },
+        {
+          type: 'div',
+          props: {
+            style: { fontSize: 26, color: '#9ca3af' },
+            children: label,
+          },
+        },
+      ],
+    },
+  }
+}
+
+// Build a single-caw card — avatar + handle top-left, brand lockup
+// top-right, post text dominates. Caps text at ~3 lines so it doesn't
+// overflow into the chrome.
+function cawCardTree(opts: {
+  displayName: string
+  username: string
+  text: string
+  avatarUrl: string
+}) {
+  const hasDisplayName = !!opts.displayName && opts.displayName.trim() !== ''
+  return {
+    type: 'div',
+    props: {
+      style: {
+        display: 'flex',
+        flexDirection: 'column',
+        width: '100%',
+        height: '100%',
+        backgroundColor: '#0A0A0A',
+        padding: '56px 64px',
+        color: '#ffffff',
+        fontFamily: 'Inter',
+      },
+      children: [
+        // Top row: author left, brand lockup right
+        {
+          type: 'div',
+          props: {
+            style: {
+              display: 'flex',
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            },
+            children: [
+              {
+                type: 'div',
+                props: {
+                  style: { display: 'flex', flexDirection: 'row', alignItems: 'center' },
+                  children: [
+                    {
+                      type: 'img',
+                      props: {
+                        src: opts.avatarUrl,
+                        width: 96,
+                        height: 96,
+                        style: { borderRadius: '48px', marginRight: '24px' },
+                      },
+                    },
+                    {
+                      type: 'div',
+                      props: {
+                        style: { display: 'flex', flexDirection: 'column' },
+                        children: [
+                          {
+                            type: 'div',
+                            props: {
+                              style: { fontSize: 36, fontWeight: 700, lineHeight: 1.1 },
+                              children: hasDisplayName ? opts.displayName : `@${opts.username}`,
+                            },
+                          },
+                          hasDisplayName ? {
+                            type: 'div',
+                            props: {
+                              style: { fontSize: 26, color: '#9ca3af', marginTop: 4 },
+                              children: `@${opts.username}`,
+                            },
+                          } : null,
+                        ].filter(Boolean),
+                      },
+                    },
+                  ],
+                },
+              },
+              brandLockup({ logoSize: 56, fontSize: 44 }),
+            ],
+          },
+        },
+        // Post text — capped height so a long caw can't push the lockup
+        // off-screen. Satori clips overflow when overflow:hidden is set.
+        {
+          type: 'div',
+          props: {
+            style: {
+              fontSize: 48,
+              lineHeight: 1.3,
+              marginTop: 48,
+              color: '#f3f4f6',
+              maxHeight: 380,
+              overflow: 'hidden',
+              display: 'flex',
+            },
+            children: opts.text,
+          },
+        },
+      ],
+    },
+  }
+}
+
+// Hashtag card — big #tag (white), usage count below, brand lockup at
+// the bottom. Lockup uses the same logo + gold wordmark as the page.
 function hashtagCardTree(opts: { tag: string; usageCount: number }) {
   return {
     type: 'div',
@@ -238,43 +371,51 @@ function hashtagCardTree(opts: { tag: string; usageCount: number }) {
         backgroundColor: '#0A0A0A',
         color: '#ffffff',
         fontFamily: 'Inter',
+        position: 'relative',
       },
       children: [
         {
           type: 'div',
           props: {
-            style: { display: 'flex', flexDirection: 'column', alignItems: 'center' },
+            style: {
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              padding: 64,
+            },
             children: [
               {
                 type: 'div',
                 props: {
-                  style: { fontSize: 140, fontWeight: 700, lineHeight: 1 },
+                  style: { fontSize: 160, fontWeight: 700, lineHeight: 1, letterSpacing: '-0.02em' },
                   children: `#${opts.tag}`,
                 },
               },
               {
                 type: 'div',
                 props: {
-                  style: { fontSize: 36, color: '#9ca3af', marginTop: 24 },
+                  style: { fontSize: 40, color: '#9ca3af', marginTop: 24 },
                   children: opts.usageCount > 0
                     ? `${opts.usageCount.toLocaleString()} ${opts.usageCount === 1 ? 'caw' : 'caws'} on CAW`
                     : 'on CAW',
                 },
               },
-              {
-                type: 'div',
-                props: {
-                  style: {
-                    fontSize: 24,
-                    color: '#6b7280',
-                    marginTop: 64,
-                    fontWeight: 700,
-                    letterSpacing: '0.1em',
-                  },
-                  children: 'CAW',
-                },
-              },
             ],
+          },
+        },
+        // Brand lockup pinned to the bottom-center.
+        {
+          type: 'div',
+          props: {
+            style: {
+              display: 'flex',
+              position: 'absolute',
+              bottom: 48,
+              left: 0,
+              right: 0,
+              justifyContent: 'center',
+            },
+            children: [brandLockup({ logoSize: 56, fontSize: 48 })],
           },
         },
       ],
@@ -282,7 +423,8 @@ function hashtagCardTree(opts: { tag: string; usageCount: number }) {
   }
 }
 
-// Default card — just a CAW logo / wordmark, used for unknown routes.
+// Default card — big logo + CAW wordmark in brand color, tagline below.
+// Used for the homepage and any route not handled above.
 function defaultCardTree() {
   return {
     type: 'div',
@@ -306,14 +448,37 @@ function defaultCardTree() {
               {
                 type: 'div',
                 props: {
-                  style: { fontSize: 200, fontWeight: 700, letterSpacing: '0.1em' },
-                  children: 'CAW',
+                  style: { display: 'flex', flexDirection: 'row', alignItems: 'center', gap: 32 },
+                  children: [
+                    {
+                      type: 'img',
+                      props: {
+                        src: getLogoDataUri(),
+                        width: 200,
+                        height: 200,
+                        style: { objectFit: 'contain' },
+                      },
+                    },
+                    {
+                      type: 'div',
+                      props: {
+                        style: {
+                          fontSize: 220,
+                          fontWeight: 700,
+                          color: CAW_GOLD,
+                          letterSpacing: '-0.02em',
+                          lineHeight: 1,
+                        },
+                        children: 'CAW',
+                      },
+                    },
+                  ],
                 },
               },
               {
                 type: 'div',
                 props: {
-                  style: { fontSize: 36, color: '#9ca3af', marginTop: 16 },
+                  style: { fontSize: 36, color: '#9ca3af', marginTop: 32 },
                   children: 'Decentralized Social Clearing House',
                 },
               },
@@ -362,13 +527,23 @@ router.get('/image/profile/:username', async (req, res) => {
     select: {
       tokenId: true, username: true, displayName: true, bio: true,
       avatarUrl: true, defaultAvatarId: true,
+      followerCount: true, followingCount: true, cawCount: true,
     },
   })
   if (!user) return res.redirect(302, '/api/og/image/default')
 
-  // Cache key includes a hash of the inputs so name/bio/avatar edits invalidate.
+  // Cache key includes a hash of the inputs so name/bio/avatar/count edits
+  // invalidate. Counts are bucketed by the formatted display value so we
+  // don't blow the cache on every new follower — the card only changes
+  // when the displayed number changes (e.g. 999 → 1K).
+  const followersDisp = fmtCount(user.followerCount)
+  const followingDisp = fmtCount(user.followingCount)
+  const cawsDisp = fmtCount(user.cawCount)
   const inputHash = crypto.createHash('sha1')
-    .update([user.displayName, user.bio, user.avatarUrl, user.defaultAvatarId].join('|'))
+    .update([
+      user.displayName, user.bio, user.avatarUrl, user.defaultAvatarId,
+      followersDisp, followingDisp, cawsDisp,
+    ].join('|'))
     .digest('hex').slice(0, 8)
   const cacheKey = `profile-${user.tokenId}-${inputHash}`
 
@@ -377,6 +552,9 @@ router.get('/image/profile/:username', async (req, res) => {
     username: user.username,
     bio: truncate(user.bio || '', 140),
     avatarUrl: resolveAvatarUrl(user),
+    followerCount: user.followerCount,
+    followingCount: user.followingCount,
+    cawCount: user.cawCount,
   })))
 })
 
@@ -405,7 +583,10 @@ router.get('/image/caw/:id', async (req, res) => {
   return serveCachedOrRender(res, cacheKey, () => renderToPng(cawCardTree({
     displayName: caw.user.displayName || '',
     username: caw.user.username,
-    text: truncate(caw.content || '', 280),
+    // ~200 chars fits ≈3 lines at 48px on a 1072px-wide content column —
+    // any longer and the text crowds the chrome. The maxHeight clip in
+    // cawCardTree is the belt-and-suspenders.
+    text: truncate(caw.content || '', 200),
     avatarUrl: resolveAvatarUrl(caw.user),
   })))
 })
