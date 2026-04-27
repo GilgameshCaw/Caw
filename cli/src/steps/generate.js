@@ -353,8 +353,16 @@ function buildEnvVars(nodeType, config) {
   // the service falls back to the validator key).
   if (config.replicationRpcUrl) env.REPLICATION_RPC = config.replicationRpcUrl
   if (config.replicationChain) env.REPLICATION_CHAIN = config.replicationChain
-  if (config.replicateClientIds) env.REPLICATE_CLIENT_IDS = config.replicateClientIds
   if (config.replicatorPrivateKey) env.REPLICATOR_PRIVATE_KEY = config.replicatorPrivateKey
+
+  // REPLICATE_CLIENT_IDS defaults to this install's own clientId — the common
+  // case is "I run a node for client N, so I replicate N." When replication
+  // is enabled, prefer the operator's explicit answer (which may list
+  // multiple); otherwise mirror CLIENT_ID so the var isn't missing. Skip
+  // entirely when replication is off — writing it would be misleading.
+  if (config.replicationRpcUrl) {
+    env.REPLICATE_CLIENT_IDS = config.replicateClientIds || String(config.clientId || 1)
+  }
 
   // JWT signs API session tokens. Generate a fresh one per install — leaking
   // a JWT secret across deployments would let one node's tokens authorize
