@@ -50,12 +50,14 @@ export async function collectNetworkAndMode(nodeType) {
 }
 
 /**
- * Human-readable chain labels for prompts. Keep in lockstep with NETWORKS in
- * generate.js — both encode the same fact.
+ * Human-readable chain labels for prompts. The L1 is fixed (Ethereum) but
+ * the L2 is whichever chain the operator's target client stores on (Base,
+ * Arbitrum, …) — we don't know which until later, so the L2 label stays
+ * generic. Keep in lockstep with NETWORKS in generate.js.
  */
 export function chainLabels(network) {
   if (network === 'mainnet') {
-    return { l1: 'L1 (Ethereum Mainnet)', l2: 'L2 (Base)' }
+    return { l1: 'L1 (Ethereum Mainnet)', l2: 'L2 (your client\'s storage chain)' }
   }
-  return { l1: 'L1 (Ethereum Sepolia)', l2: 'L2 (Base Sepolia)' }
+  return { l1: 'L1 (Ethereum Sepolia)', l2: 'L2 Sepolia (your client\'s storage chain)' }
 }

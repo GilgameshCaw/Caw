@@ -123,8 +123,12 @@ export async function collectRpcUrls(nodeType, network = 'testnet') {
   section('RPC Endpoints')
 
   const labels = chainLabels(network)
+  const netSuffix = network === 'mainnet' ? 'mainnet' : 'Sepolia'
   tipBlock([
-    `CAW uses Ethereum L1 and Base L2 on ${network === 'mainnet' ? 'mainnet' : 'testnet'}.`,
+    `CAW uses Ethereum L1 plus an L2 ${netSuffix} chain — typically Base or`,
+    'Arbitrum. Use the L2 your target client stores on (you\'ll pick the',
+    'client in a later step).',
+    '',
     'For each chain we need an HTTP (https://) RPC URL — that\'s what reads',
     'and submissions use. WebSocket (wss://) is optional and only enables',
     'real-time event subscription; with no WSS, the indexers fall back to',
