@@ -649,6 +649,18 @@ contract CawActions is Ownable {
   ///      owner-or-session-key resolution as _verifySignatureMem, except the
   ///      per-action scope check is the caller's job (batch covers many
   ///      actions, each of which must be checked against the bitmap).
+  ///
+  /// @dev On the no-valid-signer path this reverts with "Batch signature did
+  ///      not recover a valid signer" rather than the single-sig path's
+  ///      "Session expired or not found". For batch sigs, the failure is
+  ///      most often that the validator submitted a different actionsHash
+  ///      than what the user signed (e.g. the group was truncated across
+  ///      txs) — ecrecover returns a random non-zero address that has no
+  ///      session, and the misleading "session expired" message used to
+  ///      bubble up to the UI as "Quick Sign expired", confusing users who
+  ///      had perfectly fine sessions. The new message is accurate to the
+  ///      contract's view (the signer is wrong), regardless of whether the
+  ///      cause was message tampering, a stale session, or a forged sig.
   function _verifyBatchSignature(
     uint8 v, bytes32 r, bytes32 s,
     uint32 senderId,
@@ -664,13 +676,13 @@ contract CawActions is Ownable {
       actionsHash
     ));
     signer = getSigner(structHash, v, r, s);
-    require(signer != address(0), "Invalid batch signature");
+    require(signer != address(0), "Batch signature did not recover a valid signer");
 
     address owner = cawProfile.ownerOf(senderId);
     if (signer == owner) return (signer, false);
 
     (uint64 expiry,,) = cawProfile.sessions(owner, signer);
-    require(expiry > block.timestamp, "Session expired or not found");
+    require(expiry > block.timestamp, "Batch signature did not recover a valid signer");
     return (signer, true);
   }
 

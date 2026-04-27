@@ -557,4 +557,42 @@ contract('CawActions — batched signatures', function (accounts) {
     }
     expect(revertReason).to.include('Action not in session scope');
   });
+
+  // --------------------------------------------
+  // Tampered batch reverts with the new clear message (not "Session expired")
+  // --------------------------------------------
+  it('reverts with "Batch signature did not recover a valid signer" when the submitted actions differ from the signed actions', async function () {
+    // Sign a 3-action batch, then submit only 2 of them under the same sig.
+    // The contract recomputes actionsHash over those 2 actions, gets a
+    // different hash than what was signed, ecrecover returns a wrong
+    // signer, and the contract should now surface a clear error instead
+    // of falsely claiming the user's session expired.
+    const start = Number(await setup.cawActions.nextCawonce(userATokenId));
+    const signedActions = [0, 1, 2].map(i => ({
+      actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
+      clientId: setup.clientId, cawonce: start + i,
+      recipients: [], amounts: [0],
+      text: '0x' + Buffer.from(`signed${i}`).toString('hex'),
+    }));
+    // User signs over all 3.
+    const batchSig = signActionBatch(userA, signedActions, domain);
+
+    // Validator (or attacker) submits only 2 of the 3 actions under that sig.
+    const truncated = signedActions.slice(0, 2);
+    const { hex } = packActions(truncated);
+    const sigsHex = packGroupedSigs([{ groupSize: 2, ...batchSig }]);
+
+    let revertReason = null;
+    try {
+      await setup.cawActions.processActions(validatorTokenId, hex, sigsHex, 0, 0);
+    } catch (e) {
+      revertReason = e.message;
+    }
+    if (!revertReason) {
+      throw new Error('Expected a revert but the call succeeded');
+    }
+    expect(revertReason).to.include('Batch signature did not recover a valid signer');
+    // And critically, NOT the misleading message:
+    expect(revertReason).to.not.include('Session expired');
+  });
 });
