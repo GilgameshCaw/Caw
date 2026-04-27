@@ -189,6 +189,23 @@ export async function runInstall(nodeType, config, installDir) {
 export async function startServices(nodeType, installDir) {
   section('Starting Services')
 
+  // The CLI runs as root (see install.sh's exec env ... node ...), so files
+  // it created during install (logs/, .env, dist/, etc.) end up root-owned.
+  // pm2 launches the apps as the caw user (via the ecosystem's `user:`
+  // directive), and those apps need to write to logs/ and read from .env.
+  // Chown the install dir to caw:caw so the running services have access.
+  // Skip when not running as root (dev / non-sudo invocation).
+  const runAsUser = process.env.SUDO_USER
+  if (runAsUser && process.getuid && process.getuid() === 0) {
+    const spinner0 = ora(`Chowning ${installDir} to ${runAsUser}...`).start()
+    try {
+      execSync(`chown -R ${runAsUser}:${runAsUser} ${installDir}`, { stdio: 'pipe' })
+      spinner0.succeed(`Files now owned by ${runAsUser}`)
+    } catch (e) {
+      spinner0.warn(`Couldn't chown — pm2 apps may have permission issues: ${e.message}`)
+    }
+  }
+
   const ecosystemPath = path.join(installDir, 'ecosystem.config.cjs')
 
   const spinner = ora('Starting CAW services with pm2...').start()

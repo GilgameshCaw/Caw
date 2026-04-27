@@ -893,8 +893,23 @@ elif [[ -f "${CAW_DIR}/client/.env" ]]; then
   log "Found ${CAW_DIR}/client/.env — reusing recognized values (set CAW_REUSE_ENV=0 to skip)"
 fi
 
+# Run the Node CLI as root, NOT as the caw user. Reasons:
+#   • The nginx step writes to /etc/nginx/sites-available + reloads nginx.
+#   • The pm2 ecosystem uses `user: caw` so workloads drop privileges; for
+#     pm2 to honor that, pm2 itself must run as root (otherwise it errors
+#     with "To use --uid and --gid please run pm2 as root").
+#   • prisma db push needs to talk to Postgres as the postgres superuser.
+#
+# We pass SUDO_USER=$CAW_USER so generate.js's runAsUser heuristic picks
+# the right unprivileged user for the pm2 ecosystem entries.
+#
+# Files written by the CLI inherit root:root. We chown the install dir to
+# caw:caw afterward (handled by `pm2 startup` and the running services
+# themselves; new files written by the running pm2 apps will be caw-owned
+# because the apps drop privileges via the ecosystem's user: directive).
 if [[ -r /dev/tty ]]; then
-  exec sudo -u "$CAW_USER" -H \
+  exec env \
+    SUDO_USER="$CAW_USER" \
     CAW_DOMAIN="${CAW_DOMAIN:-}" \
     CAW_INFRA_MODE="${CAW_INFRA_MODE:-native}" \
     CAW_DB_URL="${CAW_DB_URL:-}" \
@@ -907,7 +922,8 @@ if [[ -r /dev/tty ]]; then
     CAW_TLS_MODE="${CAW_TLS_MODE:-}" \
     node "$CAW_DIR/cli/bin/caw.js" install --dir "$CAW_DIR" "${REUSE_ENV_ARGS[@]}" < /dev/tty
 else
-  exec sudo -u "$CAW_USER" -H \
+  exec env \
+    SUDO_USER="$CAW_USER" \
     CAW_DOMAIN="${CAW_DOMAIN:-}" \
     CAW_INFRA_MODE="${CAW_INFRA_MODE:-native}" \
     CAW_DB_URL="${CAW_DB_URL:-}" \
