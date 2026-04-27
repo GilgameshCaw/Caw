@@ -2,6 +2,8 @@ import { Router } from 'express'
 import path from 'path'
 import fs from 'fs'
 import crypto from 'crypto'
+import dns from 'dns/promises'
+import net from 'net'
 import satori from 'satori'
 import { Resvg } from '@resvg/resvg-js'
 import { prisma } from '../../prismaClient'
@@ -129,6 +131,106 @@ function defaultAvatarIdFor(user: {
   return Math.max(1, Math.min(100, user.defaultAvatarId || ((user.tokenId || 0) % 100) + 1))
 }
 
+// Universal "always works" fallback. Resolved once at module init by
+// scanning 1.png, 2.png, ... until one reads. Used as the bottom of the
+// avatar fallback chain so we *always* have a real image to render —
+// even when a user's specifically-assigned default avatar is missing
+// from disk. If literally no default reads, we return null and the
+// caller hides the avatar slot — but the card still renders.
+let universalFallbackAvatar: string | null | undefined
+function getUniversalFallbackAvatar(): string | null {
+  if (universalFallbackAvatar !== undefined) return universalFallbackAvatar
+  for (let i = 1; i <= 100; i++) {
+    const uri = loadDefaultAvatarDataUri(i)
+    if (uri) {
+      universalFallbackAvatar = uri
+      return uri
+    }
+  }
+  universalFallbackAvatar = null
+  return null
+}
+
+// SSRF guard for user-supplied URLs (currently: avatarUrl). Without this,
+// a malicious user could set their avatarUrl to http://169.254.169.254/...
+// (cloud metadata) or http://localhost:9200 (Elasticsearch) and we'd
+// fetch + base64 the response into the rendered OG card. Even though
+// extracting useful data from a rasterized PNG is hard, we still don't
+// want our box reaching into its own private network on a stranger's
+// behalf. Refuse anything that resolves to a non-public IP.
+//
+// Three checks:
+//   1. Protocol must be http: or https:.
+//   2. If hostname is a literal IP, it must be public.
+//   3. Otherwise resolve via DNS — ALL returned addresses must be public
+//      (a single private match means reject; defends against DNS records
+//      that splice 127.0.0.1 into a public-looking host).
+async function isSafePublicUrl(rawUrl: string): Promise<boolean> {
+  let parsed: URL
+  try { parsed = new URL(rawUrl) } catch { return false }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false
+
+  const host = parsed.hostname
+  if (!host) return false
+
+  // Hostname can be a literal IPv4/IPv6 — check directly. Otherwise resolve.
+  const literalFamily = net.isIP(host) // 0 = not an IP, 4 or 6 otherwise
+  const ips: string[] = literalFamily ? [host] : []
+  if (!literalFamily) {
+    try {
+      const records = await dns.lookup(host, { all: true })
+      for (const r of records) ips.push(r.address)
+    } catch {
+      return false // DNS failure → can't verify, refuse
+    }
+  }
+  if (ips.length === 0) return false
+  for (const ip of ips) if (!isPublicIp(ip)) return false
+  return true
+}
+
+// True only for IPs we're willing to reach from the server. Excludes:
+// loopback (127/8, ::1), link-local (169.254/16, fe80::/10 — covers AWS
+// metadata at 169.254.169.254), RFC1918 (10/8, 172.16/12, 192.168/16),
+// CGNAT (100.64/10), unspecified (0.0.0.0, ::), private IPv6 (fc00::/7),
+// IPv4-mapped IPv6 (::ffff:0:0/96 — block to prevent IPv6-tunnel bypass).
+function isPublicIp(ip: string): boolean {
+  // IPv4
+  if (net.isIPv4(ip)) {
+    const [a, b] = ip.split('.').map(Number)
+    if (a === 0) return false                                  // 0.0.0.0/8
+    if (a === 10) return false                                 // 10/8
+    if (a === 127) return false                                // loopback
+    if (a === 169 && b === 254) return false                   // link-local + AWS metadata
+    if (a === 172 && b >= 16 && b <= 31) return false          // 172.16/12
+    if (a === 192 && b === 168) return false                   // 192.168/16
+    if (a === 100 && b >= 64 && b <= 127) return false         // CGNAT 100.64/10
+    if (a >= 224) return false                                 // multicast / reserved
+    return true
+  }
+  // IPv6
+  if (net.isIPv6(ip)) {
+    const lower = ip.toLowerCase()
+    if (lower === '::' || lower === '::1') return false         // unspec + loopback
+    if (lower.startsWith('fe8') || lower.startsWith('fe9') ||
+        lower.startsWith('fea') || lower.startsWith('feb')) return false // fe80::/10 link-local
+    if (lower.startsWith('fc') || lower.startsWith('fd')) return false   // fc00::/7 ULA
+    // IPv4-mapped IPv6 (::ffff:a.b.c.d) — re-check the embedded v4.
+    const v4 = lower.match(/^::ffff:([0-9.]+)$/)?.[1]
+    if (v4 && net.isIPv4(v4)) return isPublicIp(v4)
+    // ::ffff:hex:hex form — extract last 32 bits as v4.
+    const hexMapped = lower.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/)
+    if (hexMapped) {
+      const hi = parseInt(hexMapped[1], 16)
+      const lo = parseInt(hexMapped[2], 16)
+      const v4back = `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`
+      return isPublicIp(v4back)
+    }
+    return true
+  }
+  return false
+}
+
 // Resolve a user's avatar to a data URI satori can render directly. Tries
 // custom avatarUrl first, then the user's default avatar (by id or
 // tokenId%100), then any default we can read off disk. Returns null only
@@ -145,36 +247,45 @@ async function resolveAvatarDataUri(user: {
   tokenId?: number
 }): Promise<string | null> {
   // 1. Custom avatar — fetch and validate. Tight timeout so we never block
-  //    the render on a slow user-uploaded host.
+  //    the render on a slow user-uploaded host. Absolute URLs go through
+  //    the SSRF guard (refuse private/loopback/metadata IPs); relative
+  //    URLs hit our own public origin so they're fine without the check.
   if (user.avatarUrl) {
-    const url = /^https?:\/\//.test(user.avatarUrl)
+    const isAbsolute = /^https?:\/\//.test(user.avatarUrl)
+    const url = isAbsolute
       ? user.avatarUrl
       : `${publicUrl()}${user.avatarUrl.startsWith('/') ? '' : '/'}${user.avatarUrl}`
-    try {
-      const ctrl = new AbortController()
-      const t = setTimeout(() => ctrl.abort(), 4000)
-      const res = await fetch(url, { signal: ctrl.signal })
-      clearTimeout(t)
-      if (res.ok) {
-        const ct = (res.headers.get('content-type') || '').toLowerCase()
-        if (ct.startsWith('image/')) {
-          const buf = Buffer.from(await res.arrayBuffer())
-          // Sanity-check magic bytes to reject HTML "soft 404s" served as
-          // image/* (e.g. a CDN's branded not-found page).
-          if (looksLikeImage(buf)) {
-            return `data:${ct};base64,${buf.toString('base64')}`
+    const safe = isAbsolute ? await isSafePublicUrl(url) : true
+    if (safe) {
+      try {
+        const ctrl = new AbortController()
+        const t = setTimeout(() => ctrl.abort(), 4000)
+        const res = await fetch(url, { signal: ctrl.signal })
+        clearTimeout(t)
+        if (res.ok) {
+          const ct = (res.headers.get('content-type') || '').toLowerCase()
+          if (ct.startsWith('image/')) {
+            const buf = Buffer.from(await res.arrayBuffer())
+            // Sanity-check magic bytes to reject HTML "soft 404s" served as
+            // image/* (e.g. a CDN's branded not-found page).
+            if (looksLikeImage(buf)) {
+              return `data:${ct};base64,${buf.toString('base64')}`
+            }
           }
         }
+      } catch {
+        // Fall through to defaults below.
       }
-    } catch {
-      // Fall through to defaults below.
     }
   }
-  // 2. Default avatar from disk.
+  // 2. Default avatar from disk, deterministic per user. defaultAvatarId
+  //    is set at signup; tokenId%100 is the legacy-user fallback. Either
+  //    way the same user gets the same default every render.
   const fromDisk = loadDefaultAvatarDataUri(defaultAvatarIdFor(user))
   if (fromDisk) return fromDisk
-  // 3. Last resort: avatar 1, then nothing.
-  return loadDefaultAvatarDataUri(1)
+  // 3. Universal fallback — first default that reads off disk. Used only
+  //    when this user's specific default avatar file is missing.
+  return getUniversalFallbackAvatar()
 }
 
 // Quick magic-byte check — covers the formats browsers/satori actually
@@ -198,54 +309,28 @@ function truncate(s: string, n: number): string {
   return s.length > n ? s.slice(0, n - 1).trimEnd() + '…' : s
 }
 
-// Render an avatar as either a real image (when we have one) or a
-// colored-circle initial fallback. Used wherever a user avatar appears
-// so a broken/missing image still produces a clean card.
+// Render an avatar as a real image. resolveAvatarDataUri's three-tier
+// chain (custom → user's default → universal fallback) means src is
+// effectively always non-null; the null branch only fires in a broken
+// install where every default avatar PNG is missing from disk, in
+// which case we omit the avatar rather than showing a placeholder.
 function avatarNode(opts: {
   src: string | null
   size: number
   username: string
   marginRight?: number
 }) {
-  if (opts.src) {
-    return {
-      type: 'img',
-      props: {
-        src: opts.src,
-        width: opts.size,
-        height: opts.size,
-        style: {
-          borderRadius: opts.size / 2,
-          ...(opts.marginRight ? { marginRight: opts.marginRight } : {}),
-        },
-      },
-    }
-  }
-  // Fallback: deterministic colored circle keyed off the username so the
-  // same user always gets the same color. Inter doesn't ship the regular
-  // weight glyph for "?" at huge sizes, so we use the first letter or '@'.
-  const initial = (opts.username || '?').charAt(0).toUpperCase()
-  // Cheap hash → hue. Pastel-ish saturation/lightness so it reads on dark bg.
-  let h = 0
-  for (let i = 0; i < opts.username.length; i++) h = (h * 31 + opts.username.charCodeAt(i)) >>> 0
-  const hue = h % 360
+  if (!opts.src) return null
   return {
-    type: 'div',
+    type: 'img',
     props: {
+      src: opts.src,
+      width: opts.size,
+      height: opts.size,
       style: {
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        width: opts.size,
-        height: opts.size,
         borderRadius: opts.size / 2,
-        backgroundColor: `hsl(${hue}, 60%, 35%)`,
-        color: '#ffffff',
-        fontSize: opts.size * 0.5,
-        fontWeight: 700,
         ...(opts.marginRight ? { marginRight: opts.marginRight } : {}),
       },
-      children: initial,
     },
   }
 }
