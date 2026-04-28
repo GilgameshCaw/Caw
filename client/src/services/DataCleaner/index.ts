@@ -965,7 +965,28 @@ async function runDataCleanup() {
   // Promote waiting_for_deposit rows once their L1 deposit has landed on L2
   await cleanupPendingMintDeposits()
 
+  // Sweep abandoned cawonce reservations. The allocate-cawonce endpoint
+  // does opportunistic per-sender cleanup, but global expiry catches
+  // reservations from senders who never came back at all (signature
+  // cancelled, browser closed, network drop). 5 minutes is the same
+  // staleness threshold the endpoint uses.
+  await cleanupAbandonedCawonceReservations()
+
   logger.log('All cleanup tasks completed')
+}
+
+async function cleanupAbandonedCawonceReservations() {
+  try {
+    const cutoff = new Date(Date.now() - 5 * 60_000)
+    const result = await prisma.cawonceReservation.deleteMany({
+      where: { reservedAt: { lt: cutoff } },
+    })
+    if (result.count > 0) {
+      logger.log(`Swept ${result.count} abandoned cawonce reservation(s)`)
+    }
+  } catch (err) {
+    logger.error('Error sweeping cawonce reservations:', err)
+  }
 }
 
 /**

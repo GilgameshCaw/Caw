@@ -851,7 +851,7 @@ router.post('/', async (req, res) => {
           console.log(`[Actions] Marked TxQueue ${parsedRetryId} as retried`)
         }
 
-        return tx.txQueue.create({
+        const created = await tx.txQueue.create({
           data: {
             senderId: data.senderId,
             payload: { data, domain, types },
@@ -859,6 +859,15 @@ router.post('/', async (req, res) => {
             pendingDepositTxHash: sanitizedPendingDepositTxHash
           }
         })
+        // Release the cawonce reservation now that it's been "spent" on a
+        // real TxQueue row. The DataCleaner sweep would catch this in 5
+        // minutes, but cleaning it up now keeps the next allocator's
+        // gap-search query from briefly seeing both the reservation AND
+        // the queue row pointing at the same cawonce.
+        await tx.cawonceReservation.deleteMany({
+          where: { senderId: data.senderId, cawonce: data.cawonce },
+        })
+        return created
       })
     } catch (err: any) {
       if (err.retryConflict) {
@@ -1162,6 +1171,26 @@ router.post('/batch', async (req, res) => {
             }))
           )
           txqRows.push(...created)
+        }
+
+        // Release any cawonce reservations the client allocated for this
+        // batch — they've been spent on real TxQueue rows now. Group by
+        // senderId since a batch is single-signer (enforced upstream).
+        const reservationGroups = new Map<number, number[]>()
+        for (let i = 0; i < actions.length; i++) {
+          if (!resultIndexToRowIndex.has(i)) continue
+          const a = actions[i]
+          const senderId = Number(a.data?.senderId)
+          const cawonce = Number(a.data?.cawonce)
+          if (!senderId || !Number.isFinite(cawonce)) continue
+          const list = reservationGroups.get(senderId) || []
+          list.push(cawonce)
+          reservationGroups.set(senderId, list)
+        }
+        for (const [senderId, cawonces] of reservationGroups) {
+          await tx.cawonceReservation.deleteMany({
+            where: { senderId, cawonce: { in: cawonces } },
+          })
         }
 
         // Step 2: build optimistic Caw records for CAW (0) / RECAW (3) actions.

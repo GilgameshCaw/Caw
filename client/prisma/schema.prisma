@@ -228,6 +228,23 @@ model Action {
   @@index([actionType, createdAt])
 }
 
+// Atomic cawonce reservations. The frontend calls allocate-cawonce just
+// before signing; the server inserts a row here to claim the cawonce
+// against concurrent allocators. Reservations are deleted on successful
+// submission OR swept after 5 minutes by DataCleaner — whichever first.
+//
+// The unique constraint on (senderId, cawonce) is the entire point: two
+// concurrent allocators racing for the same number get one success and
+// one ON CONFLICT, which the endpoint retries with +1.
+model CawonceReservation {
+  senderId   Int
+  cawonce    Int
+  reservedAt DateTime @default(now())
+
+  @@unique([senderId, cawonce])
+  @@index([reservedAt])
+}
+
 model Hashtag {
   id          Int          @id @default(autoincrement())
   // Canonical lowercase form — used for uniqueness, joins, route keys.

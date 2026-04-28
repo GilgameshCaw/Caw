@@ -148,6 +148,43 @@ export async function findSafeCawonceStart(tokenId: number, start: number, count
   return result.nextSafe
 }
 
+/**
+ * Atomically allocate the next safe cawonce(s) for a sender. The server
+ * inserts CawonceReservation rows under a unique constraint, so two
+ * concurrent submissions can never get the same number — eliminating the
+ * "Cawonce already used" failure mode that the localStorage-based
+ * allocation suffered from. Reservations are short-lived (released on
+ * submission, swept after 5 min if abandoned).
+ *
+ * Returns numbers in the order the server allocated them; the caller
+ * can use them as they please. For threads (need a contiguous block),
+ * findSafeCawonceStart + sequential issuance is still the right tool.
+ */
+export async function allocateCawonces(tokenId: number, count = 1): Promise<number[]> {
+  const result = await apiFetch<{ cawonces: number[] }>('/api/users/allocate-cawonce', {
+    method: 'POST',
+    body: JSON.stringify({ tokenId, count }),
+  })
+  return result.cawonces
+}
+
+/**
+ * Release reserved cawonces the client decided not to use (sig cancelled,
+ * pre-submit validation failed). Idempotent and best-effort — the
+ * DataCleaner sweep covers anything that goes unreleased.
+ */
+export async function releaseCawonces(tokenId: number, cawonces: number[]): Promise<void> {
+  if (cawonces.length === 0) return
+  try {
+    await apiFetch('/api/users/release-cawonce', {
+      method: 'POST',
+      body: JSON.stringify({ tokenId, cawonces }),
+    })
+  } catch {
+    // Non-fatal — server-side sweep will catch them in 5 minutes.
+  }
+}
+
 
 /** natstat: EIP-712 domain */
 export const DOMAIN = {
@@ -270,7 +307,10 @@ export function useSignAndSubmitAction() {
   const { signTypedDataAsync } = useSignTypedData()
   const activeToken = useActiveToken();
   const cawonce       = activeToken?.cawonce;
-  const bumpCawonce   = useTokenDataStore(s => s.bumpCawonce)
+  // Kept as a UI hint refresher — server allocate-cawonce is the
+  // authority, but we still set the store optimistically so any UI
+  // showing "next post will be #N" stays roughly accurate.
+  const setCawonce    = useTokenDataStore(s => s.setCawonce)
   const activeTokenId = activeToken?.tokenId
 
   // ⬇️ buffer for the action the user tried to do before they were connected
@@ -577,17 +617,32 @@ export function useSignAndSubmitAction() {
       throw new Error('Token data not loaded. Please refresh and try again.')
     }
 
-    // Use explicitly provided cawonce if given (e.g., pre-allocated thread cawonces),
-    // otherwise read from the store and bump it for the next caller.
-    // When cawonce is pre-allocated, the caller already bumped the store past the
-    // entire range, so we must NOT bump again here to avoid wasting cawonces.
-    const useCawonce = params.cawonce ?? currentCawonce
-    if (params.cawonce == null) {
-      // Normal path: read from store, bump for next action
-      console.log(`[signAndSubmit] Using cawonce=${useCawonce} for ${params.actionType}, bumping to ${currentCawonce + 1}`)
-      bumpCawonce(activeTokenId)
+    // Resolve the cawonce. Two paths:
+    //
+    //   - Explicit `params.cawonce` (threads): the caller has pre-allocated
+    //     a contiguous block via findSafeCawonceStart and is issuing them
+    //     one at a time. We trust the input and don't allocate again.
+    //
+    //   - Default (single action): server-side allocation. POST
+    //     /api/users/allocate-cawonce atomically reserves the next free
+    //     cawonce against confirmed Actions, in-flight TxQueue rows,
+    //     scheduled posts, and existing reservations. Eliminates the
+    //     localStorage race that produced "Cawonce already used" failures
+    //     when concurrent submissions read+bumped the store at the same
+    //     time. ~1 round-trip; bench at <10ms server-side. The reservation
+    //     is released by the action submission step on success or swept
+    //     after 5 minutes by DataCleaner if the client never came back.
+    let useCawonce: number
+    if (params.cawonce != null) {
+      useCawonce = params.cawonce
+      console.log(`[signAndSubmit] Using pre-allocated cawonce=${useCawonce} for ${params.actionType}`)
     } else {
-      console.log(`[signAndSubmit] Using pre-allocated cawonce=${useCawonce} for ${params.actionType} (store already bumped)`)
+      const [allocated] = await allocateCawonces(activeTokenId, 1)
+      useCawonce = allocated
+      // Update the UI hint so any "next post #N" indicator stays roughly
+      // accurate. This is non-authoritative — server is the source of truth.
+      setCawonce(activeTokenId, allocated + 1)
+      console.log(`[signAndSubmit] Server-allocated cawonce=${useCawonce} for ${params.actionType}`)
     }
 
     // Check for an active session key that covers this action type.
@@ -792,9 +847,16 @@ export function useSignAndSubmitAction() {
 
       return { ...response, cawonce: useCawonce } // Include cawonce for pending post tracking
     } catch (error: any) {
-      // If submission fails, we should ideally roll back the cawonce bump
-      // but for now we'll leave it incremented to avoid conflicts
       console.error('Failed to submit action:', error)
+
+      // Release the server-side reservation so the next allocator sees this
+      // cawonce as free again. Only fires for server-allocated cawonces;
+      // pre-allocated thread cawonces are managed by the caller (PostForm
+      // handles its own thread-level rollback). Best-effort — DataCleaner
+      // sweeps any reservations we miss after 5 minutes.
+      if (params.cawonce == null && activeTokenId) {
+        releaseCawonces(activeTokenId, [useCawonce]).catch(() => { /* swallowed in helper */ })
+      }
 
       const errMsg = (error?.message || error?.shortMessage || '').toLowerCase()
 
@@ -842,7 +904,7 @@ export function useSignAndSubmitAction() {
 
       throw error
     }
-  }, [activeTokenId, address, signTypedDataAsync, bumpCawonce])
+  }, [activeTokenId, address, signTypedDataAsync, setCawonce])
 
   // as soon as we become connected with the correct wallet, replay the pending action
   useEffect(() => {
