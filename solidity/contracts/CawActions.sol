@@ -847,13 +847,15 @@ contract CawActions is Ownable {
 
   /// @dev Scan packed actions to collect withdrawal IDs and amounts.
   ///
-  /// SECURITY INVARIANT (audited 2026-04-27):
+  /// SECURITY INVARIANT (audited 2026-04-27, hardened 2026-04-28):
   ///   This function reads `firstAmount` directly from calldata at the
-  ///   amounts-array offset, INCLUDING the case where `ac == 0`. The audit
-  ///   comment inside the assembly explains that ac==0 reads the textLength
-  ///   bytes harmlessly because the value is only used when `withdrawBitmap`
-  ///   marks the action as WITHDRAW. That safety relies on a hard ordering:
+  ///   amounts-array offset, INCLUDING the case where `ac == 0` (where the
+  ///   load picks up the textLength bytes instead). The if-block guarding
+  ///   the consumption of `firstAmount` now requires `acOut > 0` locally,
+  ///   so even if _distributeAmountsMem's upstream enforcement ever changes,
+  ///   no withdrawal amount can be credited from the textLength field.
   ///
+  ///   The upstream chain that previously made this safe end-to-end:
   ///     1. processActions / safeProcessActions runs the per-action loop
   ///        (_processOneGroup → _applyAction → _distributeAmountsMem).
   ///     2. _distributeAmountsMem requires that WITHDRAW actions have at
@@ -861,17 +863,7 @@ contract CawActions is Ownable {
   ///        + 1` is enforced when amounts are present).
   ///     3. Only after that loop completes successfully does
   ///        _handleWithdrawals run.
-  ///
-  ///   So by the time we reach this function, every action whose bit is set
-  ///   in `withdrawBitmap` is GUARANTEED to have a non-empty amounts array,
-  ///   and the calldataload at the amounts offset reads a real amount.
-  ///
-  ///   IF YOU REORDER THE CALLS — e.g. move _handleWithdrawals before the
-  ///   per-action loop, or skip the spend path for any reason — this
-  ///   invariant breaks and an attacker can credit themselves a withdrawal
-  ///   amount derived from the textLength field. DO NOT do that without
-  ///   adding an explicit per-action `ac > 0` check inside this loop, OR
-  ///   passing pre-validated amounts forward from _distributeAmountsMem.
+  ///   The local require below is defense-in-depth for that chain.
   function _handleWithdrawals(
     uint256 withdrawBitmap,
     uint256 withdrawCount,
@@ -886,6 +878,7 @@ contract CawActions is Ownable {
     for (uint256 i = 0; i < actionCount; ) {
       uint32 senderId;
       uint64 firstAmount;
+      uint256 acOut;
       assembly {
         let cdOff := add(packedActions.offset, pos)
         let w := calldataload(cdOff)
@@ -894,12 +887,13 @@ contract CawActions is Ownable {
         // rc at offset 21 (bits 87..80), ac at offset 22 (bits 79..72)
         let rc := and(shr(80, w), 0xFF)
         let ac := and(shr(72, w), 0xFF)
+        acOut := ac
         // Skip: 23 fixed + rc*4 recipients
         let amtOff := add(add(cdOff, 23), mul(rc, 4))
-        // First amount (8 bytes). NOTE (audited 2026-04-20): when ac==0 this reads
-        // the textLength bytes, not an amount — but the value is only used when
-        // withdrawBitmap marks this action as WITHDRAW, and WITHDRAW actions always
-        // have amounts (enforced by _distributeAmountsMem). So the read is harmless.
+        // First amount (8 bytes). When ac==0 this reads the textLength bytes,
+        // not an amount — harmless because the if-block below requires ac > 0
+        // before consuming firstAmount, and _distributeAmountsMem enforces
+        // that WITHDRAW actions always have amounts upstream.
         firstAmount := and(shr(192, calldataload(amtOff)), 0xFFFFFFFFFFFFFFFF)
         // Skip: amounts + textLength + text
         amtOff := add(amtOff, mul(ac, 8))
@@ -908,6 +902,11 @@ contract CawActions is Ownable {
       }
 
       if ((withdrawBitmap & (1 << i)) != 0) {
+        // Defense-in-depth: make the "WITHDRAW has at least one amount"
+        // invariant local. If _distributeAmountsMem's upstream enforcement
+        // ever changes, this catches the mismatch instead of crediting a
+        // withdrawal amount derived from the textLength field.
+        require(acOut > 0, "WITHDRAW must have amount");
         withdrawIds[wIdx] = senderId;
         withdrawAmounts[wIdx] = uint256(firstAmount) * 10**18;
         unchecked { ++wIdx; }

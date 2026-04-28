@@ -594,6 +594,123 @@ contract('CawActions — batched signatures', function (accounts) {
   });
 
   // --------------------------------------------
+  // Session-key spendLimit: batch path uses cached (owner, spendLimit) once
+  // per group. Exact-hit boundary — sum equals limit on the last action.
+  // --------------------------------------------
+  it('session-key batch: spendLimit exactly reached on last action succeeds', async function () {
+    const block = await web3.eth.getBlock('latest');
+    const expiry = Number(block.timestamp) + 3600;
+    // CAW costs 5000 (whole-CAW units, NOT wei) per action. _applyAction
+    // accumulates `actionCost` in whole-CAW units, so spendLimit is in the
+    // same unit. 3 CAWs * 5000 = 15000 spendLimit.
+    const scopeBitmap = 1 << ACTION_TYPE.caw;
+    const spendLimit = 15000;
+    await registerSessionFor(userA, sessionKeyEoa, scopeBitmap, spendLimit, expiry);
+
+    const start = Number(await setup.cawActions.nextCawonce(userATokenId));
+    const actions = [0, 1, 2].map(i => ({
+      actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
+      clientId: setup.clientId, cawonce: start + i,
+      recipients: [], amounts: [0],
+      text: '0x' + Buffer.from(`exact${i}`).toString('hex'),
+    }));
+    const { hex } = packActions(actions);
+    const batchSig = signActionBatch(sessionKeyEoa, actions, domain);
+    const sigsHex = packGroupedSigs([{ groupSize: 3, ...batchSig }]);
+
+    // Should succeed — sum-on-last-action == spendLimit (boundary <= test).
+    await setup.cawActions.processActions(validatorTokenId, hex, sigsHex, 0, 0);
+    expect(Number(await setup.cawActions.nextCawonce(userATokenId))).to.equal(start + 3);
+  });
+
+  // --------------------------------------------
+  // Session-key spendLimit: cumulative spend tracked across batch (sum > limit
+  // reverts on the action that crosses, with all prior batch state rolled back).
+  // --------------------------------------------
+  it('session-key batch: reverts whole batch when spendLimit is exceeded mid-stream', async function () {
+    const block = await web3.eth.getBlock('latest');
+    const expiry = Number(block.timestamp) + 3600;
+    // 3 CAWs need 15000; set limit at 10000 so the third trips the require.
+    const scopeBitmap = 1 << ACTION_TYPE.caw;
+    const spendLimit = 10000; // whole-CAW units
+    // Use a fresh session key (accounts[5]) so we don't collide with prior
+    // sessionSpent state that the last test left behind.
+    const freshSessionKey = accounts[5];
+    await registerSessionFor(userA, freshSessionKey, scopeBitmap, spendLimit, expiry);
+
+    const start = Number(await setup.cawActions.nextCawonce(userATokenId));
+    const actions = [0, 1, 2].map(i => ({
+      actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
+      clientId: setup.clientId, cawonce: start + i,
+      recipients: [], amounts: [0],
+      text: '0x' + Buffer.from(`exceed${i}`).toString('hex'),
+    }));
+    const { hex } = packActions(actions);
+    const batchSig = signActionBatch(freshSessionKey, actions, domain);
+    const sigsHex = packGroupedSigs([{ groupSize: 3, ...batchSig }]);
+
+    let revertReason = null;
+    try {
+      await setup.cawActions.processActions(validatorTokenId, hex, sigsHex, 0, 0);
+    } catch (e) {
+      revertReason = e.message;
+    }
+    expect(revertReason).to.not.equal(null, 'expected revert on exceeded spend limit');
+    expect(revertReason).to.include('Session spend limit exceeded');
+    // None of the batch's cawonces should have been consumed (full rollback).
+    expect(Number(await setup.cawActions.nextCawonce(userATokenId))).to.equal(start);
+  });
+
+  // --------------------------------------------
+  // Session-key SINGLE-SIG path through processActions — exercises the
+  // BatchAuth lazy-fetch in _applyAction (single-sig leaves owner/spendLimit
+  // zero in BatchAuth and _applyAction must fall back to fetching them).
+  // --------------------------------------------
+  it('session-key single-sig: BatchAuth lazy-fetch resolves owner+spendLimit', async function () {
+    const block = await web3.eth.getBlock('latest');
+    const expiry = Number(block.timestamp) + 3600;
+    const scopeBitmap = 1 << ACTION_TYPE.caw;
+    const spendLimit = 5000; // exactly one CAW (whole-CAW units)
+    const freshSessionKey = accounts[6];
+    await registerSessionFor(userA, freshSessionKey, scopeBitmap, spendLimit, expiry);
+
+    const start = Number(await setup.cawActions.nextCawonce(userATokenId));
+    const action = {
+      actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
+      clientId: setup.clientId, cawonce: start,
+      recipients: [], amounts: [0],
+      text: '0x' + Buffer.from('single-sig session').toString('hex'),
+    };
+    const { hex } = packActions([action]);
+    // Single-action group means groupSize=1 — the legacy single-sig flow.
+    const sig = signActionData(freshSessionKey, action, domain);
+    const sigsHex = packGroupedSigs([{ groupSize: 1, ...sig }]);
+
+    await setup.cawActions.processActions(validatorTokenId, hex, sigsHex, 0, 0);
+    expect(Number(await setup.cawActions.nextCawonce(userATokenId))).to.equal(start + 1);
+
+    // A second action should now exceed the spend limit (lazy-fetch must
+    // observe the cumulative sessionSpent state from the first call).
+    const action2 = {
+      actionType: ACTION_TYPE.caw, senderId: userATokenId, receiverId: 0, receiverCawonce: 0,
+      clientId: setup.clientId, cawonce: start + 1,
+      recipients: [], amounts: [0],
+      text: '0x' + Buffer.from('over limit').toString('hex'),
+    };
+    const { hex: hex2 } = packActions([action2]);
+    const sig2 = signActionData(freshSessionKey, action2, domain);
+    const sigsHex2 = packGroupedSigs([{ groupSize: 1, ...sig2 }]);
+
+    let revertReason = null;
+    try {
+      await setup.cawActions.processActions(validatorTokenId, hex2, sigsHex2, 0, 0);
+    } catch (e) {
+      revertReason = e.message;
+    }
+    expect(revertReason).to.include('Session spend limit exceeded');
+  });
+
+  // --------------------------------------------
   // Tampered batch reverts with the new clear message (not "Session expired")
   // --------------------------------------------
   it('reverts with "Batch signature did not recover a valid signer" when the submitted actions differ from the signed actions', async function () {

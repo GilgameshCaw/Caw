@@ -511,6 +511,12 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
   function _actionSliceEnd(bytes calldata packed, uint256 pos)
     internal pure returns (uint256 nextPos)
   {
+    // Defensive leading bounds — without this we'd be relying on EVM's
+    // calldataload-past-end-returns-zero behavior for the rc/ac read. The
+    // final require below catches it, but checking up-front makes the
+    // invariant explicit and survives any future calldata-handling change.
+    require(pos + 23 <= packed.length, "Action header overflow");
+
     uint256 rc;
     uint256 ac;
     uint256 textLength;
@@ -523,6 +529,7 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
       ac := and(shr(72, w), 0xFF)
     }
     nextPos = pos + 23 + rc * 4 + ac * 8;
+    require(nextPos + 2 <= packed.length, "Action body overflow");
     assembly {
       textLength := shr(240, calldataload(add(packed.offset, nextPos)))
     }
