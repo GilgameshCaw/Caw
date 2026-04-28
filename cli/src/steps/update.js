@@ -337,17 +337,104 @@ export async function applyCodeUpdate(installDir, prevHead) {
 /**
  * Phase 4: prisma migrate deploy. Idempotent — no-op if no pending
  * migrations. Caller has already screened destructive ones.
+ *
+ * Auto-baselines on the specific case we keep hitting: a DB created
+ * directly from the squashed init migration's SQL (without going
+ * through prisma migrate) has no `_prisma_migrations` row, so deploy
+ * errors with P3005 ("schema is not empty"). We detect that exact
+ * shape, mark the init migration applied via `migrate resolve`, and
+ * retry deploy. Any other P3005 (real schema drift) still surfaces
+ * the original error so the operator can investigate.
  */
 export async function applyMigrations(installDir) {
+  const clientDir = path.join(installDir, 'client')
   const sp = ora('Applying database migrations...').start()
+  sp.stop()
   try {
-    sp.stop()
-    runAsInstallUser(`npx prisma migrate deploy`, { cwd: path.join(installDir, 'client') })
+    deployMigrations(clientDir)
     console.log(success('  Migrations applied'))
+    return
   } catch (e) {
-    console.log(err('  Migration apply failed — service NOT restarted'))
-    throw e
+    // Only auto-baseline when the error is the specific P3005 shape AND
+    // the DB looks unbaselined (no _prisma_migrations table or it's
+    // empty). For any other failure mode, fall through to the throw.
+    const msg = (e.stdout || '') + (e.stderr || '') + (e.message || '')
+    const isP3005 = /P3005/.test(msg) || /schema is not empty/i.test(msg)
+    if (!isP3005) {
+      console.log(err('  Migration apply failed — service NOT restarted'))
+      console.log(dim('  Error output:'))
+      if (msg) for (const line of msg.split('\n').slice(-15)) console.log(dim(`    ${line}`))
+      throw e
+    }
+
+    if (!isUnbaselined(installDir)) {
+      console.log(err('  Migration apply failed (P3005 but DB has migration history) — service NOT restarted'))
+      throw e
+    }
+
+    // Auto-baseline path. The squashed init's directory name is the
+    // first lexicographic entry under prisma/migrations/.
+    const initName = findInitMigrationName(installDir)
+    if (!initName) {
+      console.log(err('  Migration apply failed and no init migration found to baseline against'))
+      throw e
+    }
+    console.log(warn(`  P3005 detected — DB schema exists but no migration history.`))
+    console.log(dim(`  Auto-baselining against ${initName} and retrying...`))
+    try {
+      runAsInstallUser(`npx prisma migrate resolve --applied ${initName}`, { cwd: clientDir })
+    } catch (resolveErr) {
+      console.log(err('  Auto-baseline failed — service NOT restarted'))
+      throw resolveErr
+    }
+    try {
+      deployMigrations(clientDir)
+      console.log(success('  Migrations applied (after auto-baseline)'))
+    } catch (retryErr) {
+      console.log(err('  Migration retry after baseline still failed — service NOT restarted'))
+      throw retryErr
+    }
   }
+}
+
+function deployMigrations(clientDir) {
+  // Capture stdout/stderr so we can pattern-match P3005 above. We still
+  // print the output to the operator on success so they see what got
+  // applied — not silent.
+  const out = execSync(
+    process.getuid && process.getuid() === 0 && (process.env.SUDO_USER || 'caw') !== 'root'
+      ? `sudo -u ${process.env.SUDO_USER || 'caw'} -E npx prisma migrate deploy`
+      : `npx prisma migrate deploy`,
+    { cwd: clientDir, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] },
+  )
+  if (out) for (const line of out.split('\n')) if (line.trim()) console.log(dim(`    ${line}`))
+}
+
+function isUnbaselined(installDir) {
+  // Read DATABASE_URL and probe the migrations table. "Unbaselined" =
+  // either the table doesn't exist or has zero non-rolled-back rows.
+  const dbUrl = readDatabaseUrl(installDir)
+  if (!dbUrl) return false // Can't verify — be conservative, don't auto-baseline.
+  try {
+    const out = execSync(
+      `psql "${dbUrl}" -t -A -c 'select count(*) from "_prisma_migrations" where rolled_back_at is null'`,
+      { stdio: 'pipe', encoding: 'utf8' },
+    ).trim()
+    return out === '0'
+  } catch (e) {
+    // Table likely doesn't exist (`relation "_prisma_migrations" does not exist`).
+    if (/_prisma_migrations.*does not exist/i.test((e.stderr || '') + e.message)) return true
+    return false
+  }
+}
+
+function findInitMigrationName(installDir) {
+  const dir = path.join(installDir, 'client', 'prisma', 'migrations')
+  if (!fs.existsSync(dir)) return null
+  const names = fs.readdirSync(dir)
+    .filter(name => fs.statSync(path.join(dir, name)).isDirectory())
+    .sort()
+  return names[0] || null
 }
 
 /**
