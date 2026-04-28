@@ -1607,6 +1607,190 @@ contract("CawProfileMinter - mintAndDeposit", function(accounts) {
 });
 
 
+contract("CawProfileMinter - mintAndAuth", function(accounts) {
+  // mintAndAuth = mint a Profile + auth with a client, NO deposit. Verifies:
+  //   - L1 NFT minted, L1 authenticated flag set
+  //   - L2 mirror has username, ownerOf, authenticated flag (via LZ message)
+  //   - User cannot post until they later deposit (no balance)
+  //   - bypassLZ (L1-storage) variant takes the same shape via direct calls
+  var l1Endpoint, l2Endpoint;
+  var localToken, localMinter, localCawProfiles, localCawProfilesL2;
+  var localCawProfilesL2Mainnet, localCawActions, localCawActionsMainnet;
+  var localClientManager, localQuoter, localUriGenerator;
+  var l2ClientId, l1ClientId;
+
+  before(async function() {
+    this.timeout(120000);
+
+    l1Endpoint = await MockLayerZeroEndpoint.new(l1);
+    l2Endpoint = await MockLayerZeroEndpoint.new(l2);
+
+    localToken = await MintableCaw.new();
+    var mr = await MockSwapRouter.new(localToken.address);
+    var bb = await CawBuyAndBurn.new(localToken.address, mr.address);
+
+    localClientManager = await CawClientManager.new(bb.address);
+    localUriGenerator = await deployURI();
+
+    // Cross-chain L2 mirror (L2 storage)
+    localCawProfilesL2 = await CawProfileL2.new(l1, l2Endpoint.address);
+    await l1Endpoint.setDestLzEndpoint(localCawProfilesL2.address, l2Endpoint.address);
+
+    localCawProfiles = await CawProfile.new(
+      localToken.address, localUriGenerator.address, bb.address,
+      localClientManager.address, l1Endpoint.address, l1
+    );
+    await bb.setCawProfile(localCawProfiles.address);
+
+    await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
+    await l2Endpoint.setDestLzEndpoint(localCawProfiles.address, l1Endpoint.address);
+    await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
+
+    // Co-deployment L1 mirror (L1-storage clients use this — bypassLZ branch)
+    localCawProfilesL2Mainnet = await CawProfileL2.new(l1, l1Endpoint.address);
+    await localCawProfilesL2Mainnet.setL1Peer(l1, localCawProfiles.address, true);
+    await localCawProfiles.setL2Peer(l1, localCawProfilesL2Mainnet.address);
+
+    // CawActions on each L2 to exercise the "can't post without balance" check
+    localCawActions = await CawActions.new(localCawProfilesL2.address);
+    await localCawProfilesL2.setCawActions(localCawActions.address);
+    localCawActionsMainnet = await CawActions.new(localCawProfilesL2Mainnet.address);
+    await localCawProfilesL2Mainnet.setCawActions(localCawActionsMainnet.address);
+
+    // Two clients: one L2-storage, one L1-storage (so we cover both branches)
+    await localClientManager.createClient("L2 Client", accounts[0], l2, 1, 1, 1, 1);
+    l2ClientId = 1;
+    await localClientManager.createClient("L1 Client", accounts[0], l1, 1, 1, 1, 1);
+    l1ClientId = 2;
+
+    localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address);
+    await localCawProfiles.setMinter(localMinter.address);
+    localQuoter = await CawProfileQuoter.new(localCawProfiles.address);
+
+    // Fund the minting account
+    var mintAmount = BigInt(100) * 1_000_000_000n * 10n**18n;
+    await localToken.mint(accounts[1], mintAmount.toString());
+    await localToken.approve(localMinter.address, mintAmount.toString(), { from: accounts[1] });
+    await localToken.approve(localCawProfiles.address, mintAmount.toString(), { from: accounts[1] });
+  });
+
+  it("L2-storage: mints, auths on L1 + L2, no deposit, no balance", async function() {
+    this.timeout(60000);
+
+    var quote = await localQuoter.mintAndAuthQuote(l2ClientId, l2, false);
+    var balanceBefore = await localToken.balanceOf(accounts[1]);
+
+    await localMinter.mintAndAuth(l2ClientId, 'noauth', l2, 0, {
+      from: accounts[1],
+      value: (BigInt(quote.nativeFee)).toString(),
+    });
+
+    var tokenId = (await localCawProfiles.totalSupply()).toNumber();
+
+    // L1 NFT exists
+    expect(await localCawProfiles.ownerOf(tokenId)).to.equal(accounts[1]);
+    expect(await localCawProfiles.usernames(tokenId - 1)).to.equal('noauth');
+    expect(await localCawProfiles.authenticated(l2ClientId, tokenId)).to.be.true;
+
+    // L2 mirror brought in line via LZ
+    expect(await localCawProfilesL2.usernames(tokenId)).to.equal('noauth');
+    expect(await localCawProfilesL2.ownerOf(tokenId)).to.equal(accounts[1]);
+    expect(await localCawProfilesL2.authenticated(l2ClientId, tokenId)).to.be.true;
+
+    // No CAW was deposited — totalCaw is unchanged
+    expect(BigInt((await localCawProfiles.totalCaw()).toString())).to.equal(0n);
+
+    // User spent only the burn amount (no deposit)
+    var balanceAfter = await localToken.balanceOf(accounts[1]);
+    var burnCost = await localMinter.costOfName('noauth');
+    expect(BigInt(balanceBefore.toString()) - BigInt(balanceAfter.toString()))
+      .to.equal(BigInt(burnCost.toString()));
+
+    console.log("L2-storage mintAndAuth test passed");
+  });
+
+  it("L1-storage (bypassLZ): mints + auths on the co-deployed L2 mirror directly", async function() {
+    this.timeout(60000);
+
+    var quote = await localQuoter.mintAndAuthQuote(l1ClientId, l1, false);
+
+    await localMinter.mintAndAuth(l1ClientId, 'bypassed', l1, 0, {
+      from: accounts[1],
+      value: (BigInt(quote.nativeFee)).toString(),
+    });
+
+    var tokenId = (await localCawProfiles.totalSupply()).toNumber();
+
+    // L1 NFT
+    expect(await localCawProfiles.ownerOf(tokenId)).to.equal(accounts[1]);
+    expect(await localCawProfiles.authenticated(l1ClientId, tokenId)).to.be.true;
+
+    // L2 mirror (the L1-co-deployed one) was updated via the direct call path
+    expect(await localCawProfilesL2Mainnet.usernames(tokenId)).to.equal('bypassed');
+    expect(await localCawProfilesL2Mainnet.ownerOf(tokenId)).to.equal(accounts[1]);
+    expect(await localCawProfilesL2Mainnet.authenticated(l1ClientId, tokenId)).to.be.true;
+
+    console.log("L1-storage (bypassLZ) mintAndAuth test passed");
+  });
+
+  it("rejects mintAndAuth with taken username", async function() {
+    this.timeout(60000);
+
+    var quote = await localQuoter.mintAndAuthQuote(l2ClientId, l2, false);
+    await expectRevert(
+      localMinter.mintAndAuth(l2ClientId, 'noauth', l2, 0, {
+        from: accounts[1],
+        value: (BigInt(quote.nativeFee)).toString(),
+      }),
+      "Username has already been taken"
+    );
+  });
+
+  it("rejects mintAndAuth with insufficient CAW for the burn", async function() {
+    this.timeout(60000);
+
+    // accounts[2] starts with no CAW
+    var quote = await localQuoter.mintAndAuthQuote(l2ClientId, l2, false);
+    await expectRevert(
+      localMinter.mintAndAuth(l2ClientId, 'noburncaw', l2, 0, {
+        from: accounts[2],
+        value: (BigInt(quote.nativeFee)).toString(),
+      }),
+      "You do not have enough CAW to make this purchase"
+    );
+  });
+
+  it("user can deposit later and then post (cawBalance was zero pre-deposit)", async function() {
+    this.timeout(60000);
+
+    // Mint+auth a fresh profile via L2-storage
+    var quote = await localQuoter.mintAndAuthQuote(l2ClientId, l2, false);
+    await localMinter.mintAndAuth(l2ClientId, 'depositlater', l2, 0, {
+      from: accounts[1],
+      value: (BigInt(quote.nativeFee)).toString(),
+    });
+    var tokenId = (await localCawProfiles.totalSupply()).toNumber();
+
+    // Pre-deposit: L2 cawBalance is zero
+    var preBalance = await localCawProfilesL2.cawBalanceOf(tokenId);
+    expect(BigInt(preBalance.toString())).to.equal(0n);
+
+    // Deposit normally — uses the existing path, no new contract surface
+    var depositAmount = web3.utils.toWei('100000', 'ether');
+    var depQuote = await localQuoter.depositQuote(l2ClientId, tokenId, depositAmount, l2, false);
+    await localCawProfiles.deposit(l2ClientId, tokenId, depositAmount, l2, 0, {
+      from: accounts[1],
+      value: (BigInt(depQuote.nativeFee)).toString(),
+    });
+
+    var postBalance = await localCawProfilesL2.cawBalanceOf(tokenId);
+    expect(BigInt(postBalance.toString())).to.equal(BigInt(depositAmount));
+
+    console.log("post-mintAndAuth deposit test passed — balance funded");
+  });
+});
+
+
 contract("CawProfile - depositFor", function(accounts) {
   var localToken, localClientManager, localUriGenerator, localCawProfilesL2;
   var localCawProfiles, localMinter, localQuoter, localEndpointL1, localEndpointL2;

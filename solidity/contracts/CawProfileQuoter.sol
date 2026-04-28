@@ -16,6 +16,8 @@ interface ICawProfileForQuoter {
   function peerWithMaxPendingTransfers() external view returns (uint32);
   function addToBalanceSelector() external view returns (bytes4);
   function mintSelector() external view returns (bytes4);
+  function mintAuthSelector() external view returns (bytes4);
+  function mainnetLzId() external view returns (uint32);
   function updateOwnersSelector() external view returns (bytes4);
   function authSelector() external view returns (bytes4);
   function lzQuote(bytes4 selector, uint256 n, bytes memory payload, uint32 lzDestId, bool _payInLzToken) external view returns (MessagingFee memory quote);
@@ -86,6 +88,37 @@ contract CawProfileQuoter {
     quote.nativeFee += cawProfile.clientManager().getMintFee(clientId) * 2;
     quote.nativeFee += cawProfile.clientManager().getDepositFee(clientId) * 2;
     quote.nativeFee += cawProfile.clientManager().getAuthFee(clientId) * 2;
+    return quote;
+  }
+
+  function mintAndAuthQuote(uint32 clientId, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+    // Storage-fee leg: mint + auth (the deposit fee is intentionally skipped).
+    quote.nativeFee = cawProfile.clientManager().getMintFee(clientId) * 2
+                    + cawProfile.clientManager().getAuthFee(clientId) * 2;
+
+    // LZ leg: only needed when the storage chain is a true L2 peer. In bypassLZ
+    // (lzDestId == mainnetLzId) the L2 mirror is updated via a direct call, so
+    // there's no LayerZero send and no LZ fee. (mintAndDepositQuote has the
+    // same gap today; this version short-circuits explicitly so the L1-storage
+    // path doesn't revert with NoPeer.)
+    if (lzDestId == cawProfile.mainnetLzId()) return quote;
+
+    uint32[] memory tokenIds; address[] memory owners;
+    (tokenIds, owners) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, 0);
+
+    bytes memory payload = abi.encodeWithSelector(
+      cawProfile.mintAuthSelector(),
+      clientId,
+      uint32(0),
+      msg.sender,
+      "placeholdr",  // ~10-char placeholder username for sizing
+      tokenIds,
+      owners
+    );
+
+    MessagingFee memory lz = cawProfile.lzQuote(cawProfile.mintAuthSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
+    quote.nativeFee += lz.nativeFee;
+    quote.lzTokenFee += lz.lzTokenFee;
     return quote;
   }
 

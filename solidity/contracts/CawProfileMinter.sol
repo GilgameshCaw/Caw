@@ -68,6 +68,32 @@ contract CawProfileMinter is Context {
     CawProfile.mintAndDeposit{value: msg.value}(clientId, msg.sender, username, newId, depositAmount, lzDestId, lzTokenAmount);
   }
 
+  /// @notice Mint a username and authenticate with a client in one transaction, with NO
+  ///         CAW deposit. The user pays the burn cost for the name and receives a Profile
+  ///         that's already authed on the chosen storage chain. They can post once they
+  ///         later call deposit() to fund their cawBalance.
+  /// @param clientId The client ID to authenticate with
+  /// @param username The username to mint
+  /// @param lzDestId The L2 chain endpoint ID for the auth message (= storage chain)
+  /// @param lzTokenAmount LZ token amount for fees (usually 0)
+  function mintAndAuth(uint32 clientId, string memory username, uint32 lzDestId, uint256 lzTokenAmount) public payable {
+    require(idByUsername[username] == 0, "Username has already been taken");
+    require(isValidUsername(username), "Username must only consist of 1-255 lowercase letters and numbers");
+    uint256 burnAmount = costOfName(username);
+
+    require(CAW.balanceOf(_msgSender()) >= burnAmount, "You do not have enough CAW to make this purchase");
+    require(CAW.allowance(_msgSender(), address(this)) >= burnAmount, "You must approve spending of your CAW");
+
+    // Burn CAW for the username
+    CAW.transferFrom(_msgSender(), address(0xdEAD000000000000000042069420694206942069), burnAmount);
+
+    uint32 newId = CawProfile.nextId();
+    idByUsername[username] = newId;
+
+    // Mint + auth (no deposit) in one call
+    CawProfile.mintAndAuth{value: msg.value}(clientId, msg.sender, username, newId, lzDestId, lzTokenAmount);
+  }
+
   function isValidUsername(string memory _input) public pure returns (bool) {
     bytes memory input = bytes(_input);
     if (input.length == 0 || input.length > 255) return false;

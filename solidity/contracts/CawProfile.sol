@@ -52,6 +52,9 @@ contract CawProfile is
   bytes4 public addToBalanceSelector = bytes4(keccak256("depositAndUpdateOwners(uint32,uint32,uint256,uint32[],address[])"));
   bytes4 public authSelector = bytes4(keccak256("authenticateAndUpdateOwners(uint32,uint32,uint32[],address[])"));
   bytes4 public updateOwnersSelector = bytes4(keccak256("updateOwners(uint32[],address[])"));
+  /// @notice Selector for the mint+auth (no deposit) flow. Brings the L2 mirror in line
+  ///         with the L1 NFT in one LZ message: sets username, owner, and the auth flag.
+  bytes4 public mintAuthSelector = bytes4(keccak256("mintAuthAndUpdateOwners(uint32,uint32,address,string,uint32[],address[])"));
 
   // Keeping track of clients to which the user has authenticated
   mapping(uint32 => mapping(uint32 => bool)) public authenticated;
@@ -170,6 +173,48 @@ contract CawProfile is
     uint256 lzEthAmount = msg.value - payFee(fee, feeAddress);
 
     _updateNewOwners(peerWithMaxPendingTransfers(), lzEthAmount, lzTokenAmount);
+  }
+
+  /// @notice Mint a username and authenticate it with a client in one transaction,
+  ///         WITHOUT depositing any CAW. The L2 mirror is brought in line via LZ
+  ///         (or a direct call in co-deployment mode) so the token has its username,
+  ///         owner, and auth flag on L2 from the start. Posts will revert until the
+  ///         user does a separate deposit to fund their cawBalance.
+  /// @dev Only callable by the minter. Mirror of mintAndDeposit but with depositAmount=0
+  ///      and the deposit-fee skipped. Reuses mintFee + authFee.
+  function mintAndAuth(
+    uint32 cawClientId, address owner, string memory username, uint32 newId,
+    uint32 lzDestId, uint256 lzTokenAmount
+  ) public payable {
+    require(minter == _msgSender(), "Not minter");
+    usernames.push(username);
+    _mint(owner, newId);
+
+    // Mint fee + auth fee (no deposit fee — this is the no-deposit variant)
+    uint256 totalFeesPaid = 0;
+    {
+      (uint256 mintFee, address mintFeeAddr) = clientManager.getMintFeeAndAddress(cawClientId);
+      totalFeesPaid += payFee(mintFee, mintFeeAddr);
+
+      (uint256 authFee, address authFeeAddr) = clientManager.getAuthFeeAndAddress(cawClientId);
+      totalFeesPaid += payFee(authFee, authFeeAddr);
+    }
+
+    authenticated[cawClientId][newId] = true;
+    _lockWithdrawFeeIfNeeded(cawClientId, newId);
+    chosenChainIds[newId].add(uint256(lzDestId));
+    uint256 lzEthAmount = msg.value - totalFeesPaid;
+
+    if (lzDestId == mainnetLzId) {
+      // Co-deployment (bypassLZ) — push username + owner + auth straight to L2 mirror.
+      cawProfileL2.mintAndAuth(newId, owner, username, cawClientId);
+    } else {
+      uint32[] memory tokenIds;
+      address[] memory owners;
+      (tokenIds, owners) = extractPendingTransferUpdates(lzDestId, owner, newId);
+      bytes memory payload = abi.encodeWithSelector(mintAuthSelector, cawClientId, newId, owner, username, tokenIds, owners);
+      lzSend(lzDestId, mintAuthSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
+    }
   }
 
   /// @notice Mint a username and deposit CAW in one transaction.
@@ -674,6 +719,10 @@ contract CawProfile is
     if (selector == mintSelector)              return uint128( 75_000 + 19_000 * n);  // measured n=0: 54k
     if (selector == updateOwnersSelector)      return uint128( 25_000 + 19_000 * n);  // measured n=0: 18k
     if (selector == authSelector)              return uint128( 50_000 + 19_000 * n);  // measured n=0: 36k
+    // mintAuthSelector = mint mirror + auth flag in one message. Sum of mint+auth bases
+    // (54k + 36k) plus margin, since the L2 handler does both writes plus the
+    // updateOwners loop.
+    if (selector == mintAuthSelector)          return uint128(125_000 + 19_000 * n);
     revert("Bad selector");
   }
 

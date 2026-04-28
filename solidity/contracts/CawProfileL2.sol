@@ -301,6 +301,44 @@ contract CawProfileL2 is
     updateOwners(tokenIds, owners);
   }
 
+  /// @notice Mint a new token mirror, mark it authenticated with `cawClientId`, and
+  ///         apply pending ownership updates — all in one LZ-delivered message.
+  /// @dev Only callable from `_lzReceive`. Used by the L1 `mintAndAuth` flow: a user
+  ///      pays mint+auth fees on L1, the L1 NFT is minted, and this function brings
+  ///      the L2 mirror in line with no balance change. Posts will still revert
+  ///      until the user does a separate `deposit()` to fund their cawBalance.
+  function mintAuthAndUpdateOwners(
+    uint32 cawClientId,
+    uint32 tokenId,
+    address owner,
+    string memory username,
+    uint32[] calldata tokenIds,
+    address[] calldata owners
+  ) public {
+    require(fromLZ, "mintAuthAndUpdateOwners only callable internally");
+    emit UsernameMinted(tokenId, owner);
+    emit Authenticated(cawClientId, tokenId);
+    usernames[tokenId] = username;
+    ownerOf[tokenId] = owner;
+    authenticated[cawClientId][tokenId] = true;
+
+    updateOwners(tokenIds, owners);
+  }
+
+  /// @notice Co-deployment (bypassLZ) variant: mint the L2 mirror AND auth in one call.
+  /// @dev Only callable when `bypassLZ` is true and the caller is the L1 CawProfile contract.
+  ///      Mirrors `mintAuthAndUpdateOwners` but without the LZ payload — pending owner
+  ///      updates aren't relevant in bypassLZ mode (L1 transfers update L2 directly).
+  function mintAndAuth(uint32 tokenId, address owner, string memory username, uint32 cawClientId)
+    external onlyOnMainnet
+  {
+    emit UsernameMinted(tokenId, owner);
+    emit Authenticated(cawClientId, tokenId);
+    usernames[tokenId] = username;
+    ownerOf[tokenId] = owner;
+    authenticated[cawClientId][tokenId] = true;
+  }
+
   /// @notice Mark a token as authenticated with a client. Only used in mainnet co-deployment mode.
   function auth(uint32 cawClientId, uint32 tokenId) public onlyOnMainnet {
     emit Authenticated(cawClientId, tokenId);
@@ -654,7 +692,7 @@ contract CawProfileL2 is
     // SECURITY NOTE (audited 2026-04-06): The fromLZ + delegatecall pattern is intentional and safe.
     // - The OApp base class already verifies msg.sender == endpoint and the peer before _lzReceive runs.
     // - All authorized functions (depositAndUpdateOwners, authenticateAndUpdateOwners,
-    //   mintAndUpdateOwners, updateOwners) perform only storage writes.
+    //   mintAndUpdateOwners, mintAuthAndUpdateOwners, updateOwners) perform only storage writes.
     // - fromLZ cannot get stuck: on success it resets below; on revert the entire tx rolls back.
     // - The endpoint is immutable (set once in constructor, can never change).
     // - These contracts are immutable post-deployment, so no new authorized functions can be added.
@@ -690,6 +728,7 @@ contract CawProfileL2 is
     return selector == bytes4(keccak256("depositAndUpdateOwners(uint32,uint32,uint256,uint32[],address[])")) ||
       selector == bytes4(keccak256("authenticateAndUpdateOwners(uint32,uint32,uint32[],address[])")) ||
       selector == bytes4(keccak256("mintAndUpdateOwners(uint32,address,string,uint32[],address[])")) ||
+      selector == bytes4(keccak256("mintAuthAndUpdateOwners(uint32,uint32,address,string,uint32[],address[])")) ||
       selector == bytes4(keccak256("updateOwners(uint32[],address[])"));
   }
 
