@@ -36,6 +36,49 @@ export function resolveInstallDir(opts, fallback) {
 }
 
 /**
+ * Symlink `caw` into /usr/local/bin so operators can run subcommands from
+ * anywhere. Idempotent — safe to call from both `install` (first-time
+ * setup) and `update` (so existing installs that pre-date this feature
+ * pick up the symlink on their next update). Tolerates failure: a
+ * non-symlink at the target path is left alone with a warning, and
+ * non-root invocations skip silently (no perms to write /usr/local/bin).
+ */
+export function ensureCliSymlink() {
+  if (!process.getuid || process.getuid() !== 0) return // non-root: silent skip
+  const cliEntry = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../bin/caw.js')
+  const linkPath = '/usr/local/bin/caw'
+
+  // If a symlink already exists, only re-create when it points elsewhere.
+  // If a real file lives there, the operator put it there on purpose —
+  // refuse to clobber.
+  try {
+    const existing = fs.readlinkSync(linkPath)
+    if (existing === cliEntry) return // already correct, nothing to do
+    fs.unlinkSync(linkPath) // points elsewhere; replace it
+  } catch (e) {
+    if (e.code === 'EINVAL') {
+      // It's a real file, not a symlink. Leave it alone but tell the
+      // operator so they know why `caw` may not pick up the new install.
+      console.log(warn(`  /usr/local/bin/caw exists but isn't a symlink — leaving it alone`))
+      return
+    }
+    if (e.code !== 'ENOENT') {
+      console.log(warn(`  Couldn't read /usr/local/bin/caw: ${e.message}`))
+      return
+    }
+    // ENOENT — no existing link, fall through to create.
+  }
+
+  try {
+    try { fs.chmodSync(cliEntry, 0o755) } catch { /* best effort */ }
+    fs.symlinkSync(cliEntry, linkPath)
+    console.log(success(`  Linked \`caw\` → ${dim(cliEntry)}`))
+  } catch (e) {
+    console.log(warn(`  Couldn't symlink \`caw\`: ${e.message}`))
+  }
+}
+
+/**
  * Detect the running pm2 app name for this install. Each install uses a
  * domain-based suffix (caw-server-test.caw.social, etc); we read it from
  * the ecosystem.config.cjs that `caw install` wrote.
@@ -471,6 +514,11 @@ export async function runUpdate(installDir, opts = {}) {
   if (appName && !opts.skipRestart) {
     await restartAndVerify(appName)
   }
+
+  // Re-establish the /usr/local/bin/caw symlink. Bootstraps operators who
+  // installed before the symlink was added, and re-points it if the
+  // install dir moved. Idempotent + silent when nothing needs doing.
+  ensureCliSymlink()
 
   console.log()
   console.log(success(`  Update complete (${codeResult.newHead.slice(0, 7)})`))

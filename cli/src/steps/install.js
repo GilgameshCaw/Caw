@@ -3,6 +3,7 @@ import fs from 'fs'
 import path from 'path'
 import ora from 'ora'
 import { section, success, warn, err, dim, brand, tipBlock } from '../utils/ui.js'
+import { ensureCliSymlink } from './update.js'
 
 /**
  * Run a long command without freezing the spinner. execSync blocks the
@@ -260,51 +261,10 @@ export async function startServices(nodeType, installDir) {
     spinner2.warn('Could not save pm2 state — run `pm2 save` manually')
   }
 
-  // Symlink the `caw` command into /usr/local/bin so operators can run
-  // `caw update`, `caw logs`, etc. from anywhere instead of typing
-  // `node /var/www/<domain>/cli/bin/caw.js update`. Skip on non-root
-  // installs (no perms to write /usr/local/bin) and tolerate failure —
-  // it's a convenience, not a correctness requirement.
-  if (process.getuid && process.getuid() === 0) {
-    const spinner3 = ora('Linking `caw` command into /usr/local/bin...').start()
-    try {
-      // Resolve the target path relative to install.js. cli/src/steps/install.js
-      // → cli/bin/caw.js is one up + bin/.
-      const cliEntry = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../bin/caw.js')
-      const linkPath = '/usr/local/bin/caw'
-      // Force-replace any existing symlink (covers the "operator updated
-      // their install dir layout" case). Resolve readlink first to avoid
-      // unlinking a real binary the operator dropped there themselves.
-      try {
-        const existing = fs.readlinkSync(linkPath)
-        if (existing && existing !== cliEntry) fs.unlinkSync(linkPath)
-        else if (existing === cliEntry) {
-          spinner3.succeed('`caw` already linked to this install')
-        }
-      } catch (e) {
-        // ENOENT = no existing link, proceed. EINVAL = it's a real file
-        // (not a symlink), don't touch.
-        if (e.code === 'EINVAL') {
-          spinner3.warn(`/usr/local/bin/caw exists but isn't a symlink — leaving it alone`)
-          throw e
-        }
-      }
-      // Create only if we didn't already report "already linked"
-      if (!fs.existsSync(linkPath)) {
-        // chmod the target to executable in case the package was unpacked
-        // without preserved bits.
-        try { fs.chmodSync(cliEntry, 0o755) } catch { /* best effort */ }
-        fs.symlinkSync(cliEntry, linkPath)
-        spinner3.succeed(`\`caw\` now runs from anywhere → ${dim(cliEntry)}`)
-      }
-    } catch (e) {
-      if (!spinner3.isSpinning) {
-        // Already terminated above (warn or succeed); nothing to do.
-      } else {
-        spinner3.warn(`Couldn't symlink \`caw\`: ${e.message}`)
-      }
-    }
-  }
+  // Symlink `caw` into /usr/local/bin so operators can run subcommands
+  // from anywhere. The shared helper (also called from `caw update`) is
+  // idempotent + silent on no-op, so it's safe to invoke unconditionally.
+  ensureCliSymlink()
 
   console.log()
   tipBlock([
