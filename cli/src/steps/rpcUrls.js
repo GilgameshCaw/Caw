@@ -230,7 +230,57 @@ async function collectRpcPair(label, required, expectedChainId) {
     }
   }
 
-  return { wss: wss.trim(), http, secret }
+  // Optional separate frontend RPC URL. Two-key flow: the URL above goes
+  // into the backend's .env (with secret if provided), while a *different*
+  // URL goes into VITE_L*_RPC_URL for the browser bundle. Useful when the
+  // operator wants the strongest separation: backend key is wide-open and
+  // secret-protected, frontend key is its own project that only allows
+  // requests from their domains. Either project alone leaking doesn't
+  // expose the other.
+  //
+  // If the operator says no, the same URL is used for both (the existing
+  // behavior — backend uses secret if set, frontend just uses the URL).
+  const { useDifferentFrontendUrl } = await inquirer.prompt([{
+    type: 'confirm',
+    name: 'useDifferentFrontendUrl',
+    message: `Use a different RPC URL for the frontend? ${dim('(if you have a separate origin-locked key for the browser)')}`,
+    default: false,
+  }])
+  let frontendHttp = ''
+  if (useDifferentFrontendUrl) {
+    while (true) {
+      const ans = await inquirer.prompt([{
+        type: 'input',
+        name: 'http',
+        message: `${label} HTTP RPC URL for the frontend (https://):`,
+        validate: (input) => {
+          if (!input.trim()) return 'Cannot be empty (or answer No to the previous question to reuse the backend URL)'
+          if (!input.startsWith('https://') && !input.startsWith('http://')) {
+            return 'URL must start with https:// or http://'
+          }
+          return true
+        },
+      }])
+      frontendHttp = ans.http.trim()
+      if (!expectedChainId) break
+      const actual = await probeChainId(frontendHttp)
+      if (actual === null || actual === expectedChainId) {
+        if (actual === expectedChainId) console.log(dim(`  ✓ Chain ID ${actual} matches expected.`))
+        else console.log(dim(`  (Couldn't verify chain ID — proceeding.)`))
+        break
+      }
+      const actualName = CHAIN_ID_NAMES[actual] || `chain ${actual}`
+      const expectedName = CHAIN_ID_NAMES[expectedChainId] || `chain ${expectedChainId}`
+      console.log()
+      console.log(warn(`  Chain mismatch: that URL responded with ${brand(actualName)} (chainId ${actual}); expected ${brand(expectedName)}.`))
+      const { reenter } = await inquirer.prompt([{
+        type: 'confirm', name: 'reenter', message: 'Re-enter?', default: true,
+      }])
+      if (!reenter) break
+    }
+  }
+
+  return { wss: wss.trim(), http, secret, frontendHttp }
 }
 
 /**
@@ -257,9 +307,16 @@ export async function collectL1Rpc(nodeType, network = 'testnet') {
     const answers = {
       l1RpcUrl: process.env.CAW_L1_RPC_URL || '',
       l1RpcUrlHttp: process.env.CAW_L1_RPC_URL_HTTP,
+      // Preserve HTTP-auth secrets (Infura, etc.) on re-runs. Dropping these
+      // breaks RPC calls silently — providers respond with 401 to unauth'd
+      // requests but our error path treats it as a generic network error.
+      l1RpcSecret: process.env.CAW_L1_RPC_SECRET || '',
     }
     if (['full', 'validator'].includes(nodeType) && process.env.CAW_ETH_MAINNET_RPC_URL) {
       answers.ethMainnetRpcUrl = process.env.CAW_ETH_MAINNET_RPC_URL
+      if (process.env.CAW_ETH_MAINNET_RPC_SECRET) {
+        answers.ethMainnetRpcSecret = process.env.CAW_ETH_MAINNET_RPC_SECRET
+      }
     } else if (['full', 'validator'].includes(nodeType)) {
       // Mainnet RPC wasn't preloaded — still need to ask.
       const { ethMainnetRpcUrl } = await inquirer.prompt([{
@@ -302,6 +359,9 @@ export async function collectL1Rpc(nodeType, network = 'testnet') {
     l1RpcUrl: l1.wss,
     l1RpcUrlHttp: l1.http,
     l1RpcSecret: l1.secret || '',
+    // Optional separate URL for the browser bundle. Falls back to
+    // l1RpcUrlHttp at write time when blank.
+    l1RpcUrlHttpFrontend: l1.frontendHttp || '',
   }
 
   // Mainnet price feeds — only validators need this (CAW/ETH price for tip
@@ -407,6 +467,8 @@ export async function collectL2Rpc(nodeType, storageChainLabel) {
     return {
       l2RpcUrl: process.env.CAW_L2_RPC_URL || '',
       l2RpcUrlHttp: process.env.CAW_L2_RPC_URL_HTTP,
+      // Preserve HTTP-auth secret on re-runs (see L1 collector for rationale).
+      l2RpcSecret: process.env.CAW_L2_RPC_SECRET || '',
     }
   }
 
@@ -426,6 +488,7 @@ export async function collectL2Rpc(nodeType, storageChainLabel) {
     l2RpcUrl: l2.wss,
     l2RpcUrlHttp: l2.http,
     l2RpcSecret: l2.secret || '',
+    l2RpcUrlHttpFrontend: l2.frontendHttp || '',
   }
 }
 

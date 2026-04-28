@@ -434,10 +434,23 @@ function buildEnvVars(nodeType, config) {
     env.REPLICATE_CLIENT_IDS = config.replicateClientIds || String(config.clientId || 1)
   }
 
-  // JWT signs API session tokens. Generate a fresh one per install — leaking
-  // a JWT secret across deployments would let one node's tokens authorize
-  // requests against another's API.
-  env.JWT_SECRET = config.jwtSecret || crypto.randomBytes(48).toString('hex')
+  // JWT signs API session tokens. Precedence:
+  //   1. CAW_JWT_SECRET — preloaded from a previous --env re-run. Critical:
+  //      regenerating this invalidates every signed-in user's session, so
+  //      we MUST honor the preload above any fresh-random fallback.
+  //   2. config.jwtSecret — set by callers that want to inject one explicitly.
+  //   3. fresh random — fresh installs only.
+  env.JWT_SECRET =
+    process.env.CAW_JWT_SECRET ||
+    config.jwtSecret ||
+    crypto.randomBytes(48).toString('hex')
+
+  // Preserve any custom Prisma engine selection across re-runs (default is
+  // the schema's setting; operators sometimes flip to 'binary' to avoid
+  // libssl version mismatches on older distros).
+  if (process.env.CAW_PRISMA_QUERY_ENGINE_TYPE) {
+    env.PRISMA_QUERY_ENGINE_TYPE = process.env.CAW_PRISMA_QUERY_ENGINE_TYPE
+  }
 
   env.L2_CHAIN_ID = String(net.l2ChainId)
   env.L1_CHAIN_ID = String(net.l1ChainId)
@@ -458,10 +471,18 @@ function buildFrontendEnv(nodeType, config) {
 
   env.VITE_CLIENT_ID = String(config.clientId || 1)
 
-  // Frontend RPC URLs — use the same HTTP endpoints as the server so wagmi
-  // reads don't depend on free public RPCs.
-  if (config.l1RpcUrlHttp) env.VITE_L1_RPC_URL = config.l1RpcUrlHttp
-  if (config.l2RpcUrlHttp) env.VITE_L2_RPC_URL = config.l2RpcUrlHttp
+  // Frontend RPC URLs. When the operator opted into a separate frontend
+  // key during the RPC step, use that — this is the two-key flow:
+  // backend gets L*_RPC_URL_HTTP (with optional secret); frontend gets
+  // a different VITE_L*_RPC_URL that's origin-locked at the provider.
+  // When no separate key was given, fall back to the shared URL (the
+  // single-key flow, where the backend secret unblocks the locked-down
+  // project for server traffic). Either way, never write a *_SECRET into
+  // VITE_* — those would end up in the public bundle.
+  const viteL1 = config.l1RpcUrlHttpFrontend || config.l1RpcUrlHttp
+  const viteL2 = config.l2RpcUrlHttpFrontend || config.l2RpcUrlHttp
+  if (viteL1) env.VITE_L1_RPC_URL = viteL1
+  if (viteL2) env.VITE_L2_RPC_URL = viteL2
 
   // WalletConnect / Reown project ID — per-operator, asked at install time.
   // When blank, Web3Provider.tsx falls back to a placeholder and WC wallets
