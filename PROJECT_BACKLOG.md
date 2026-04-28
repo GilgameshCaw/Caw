@@ -766,6 +766,18 @@ some notes:
 - after creating account puts people on L1, but then quick sign 
 - "failed to verify wallet and register DM identity"
 - "API 403: SIgner does not own any CAW names"
+- devault avatars should include some female forms
+- roll up notifications better. 
+- are notifications paginated ? I can't seem to scroll infinitely.
+- "If a bid is placed in the last 10 minutes" should be "If a bid is placed in the last 10 minutes of the auction"
+-  emoji button in DMs doesn't work
+- emojis show up too small
+- "start a conversation" showing in DMs before any messages exist
+- clicking a conversation loads messages slowly (show loader)
+- messages tab loads slowly
+- click number next to reply on replies takes you to the caw page
+- i get 500 error when i click on a single "message" in admin dashboard
+- i should be able to like DMs that I received.
 
 
 
