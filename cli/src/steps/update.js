@@ -79,6 +79,34 @@ export function ensureCliSymlink() {
 }
 
 /**
+ * Tell Git that operating on a repo owned by another user is fine here.
+ * Git refuses by default ("dubious ownership") to defend against an
+ * attacker writing a malicious .git/hooks into a directory you happen
+ * to cd into. In our case the repo is owned by the `caw` user (set by
+ * the install's chown step) and we're running as root via sudo, so the
+ * concern doesn't apply — the operator already trusts this directory.
+ *
+ * Adds an entry to root's global git config. Idempotent — re-runs are
+ * harmless. Only acts when running as root; non-root invocations don't
+ * trip the dubious-ownership check (root running git on a caw-owned
+ * dir is the specific case Git 2.35+ flags).
+ */
+export function ensureGitSafeDirectory(installDir) {
+  if (!process.getuid || process.getuid() !== 0) return
+  try {
+    // --add appends without dedup, but git silently ignores duplicates on
+    // the active config read, so re-running across many updates is cheap.
+    // Could check first with `git config --get-all safe.directory` but
+    // that's two calls instead of one; not worth it.
+    execSync(`git config --global --add safe.directory ${installDir}`, { stdio: 'pipe' })
+  } catch (e) {
+    // Best effort — if this fails, the next git command will surface
+    // the real "dubious ownership" error to the operator.
+    console.log(warn(`  Couldn't mark ${installDir} as a safe git directory: ${e.message?.split('\n')[0]}`))
+  }
+}
+
+/**
  * Detect the running pm2 app name for this install. Each install uses a
  * domain-based suffix (caw-server-test.caw.social, etc); we read it from
  * the ecosystem.config.cjs that `caw install` wrote.
@@ -401,6 +429,13 @@ function dumpRecentLogs(appName) {
  */
 export async function runUpdate(installDir, opts = {}) {
   section(`Updating install at ${dim(installDir)}`)
+
+  // The install dir is owned by `caw` (set by startServices' chown) but the
+  // CLI runs as root via sudo. Modern Git refuses to operate on repos owned
+  // by other users unless the path is in safe.directory. Add it for root's
+  // global config — idempotent, cheap, and saves the operator a googling
+  // detour the first time they run `caw update`.
+  ensureGitSafeDirectory(installDir)
 
   const appName = detectAppName(installDir)
   if (!appName && !opts.skipRestart) {
