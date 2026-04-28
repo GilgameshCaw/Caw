@@ -1,4 +1,4 @@
-import { JsonRpcProvider, WebSocketProvider, Network } from 'ethers'
+import { JsonRpcProvider, WebSocketProvider, Network, FallbackProvider, AbstractProvider } from 'ethers'
 
 // ============================================
 // GLOBAL RPC THROTTLE
@@ -149,6 +149,28 @@ export function getL2HttpRpcUrl(fallbackWsUrl?: string): string {
   )
 }
 
+/**
+ * Return the L2 HTTP URL plus any operator-configured fallback URLs.
+ * Fallbacks come from L2_RPC_URL_HTTP_FALLBACK as a comma-separated list,
+ * and each gets the matching secret from L2_RPC_SECRET_FALLBACK (also
+ * comma-separated, positionally aligned with the URL list — empty entries
+ * are fine).
+ *
+ * Returns at minimum [primary]. The array is the input to
+ * makeFallbackJsonRpcProvider — when the validator's primary RPC starts
+ * timing out, ethers' FallbackProvider rotates to the next one.
+ */
+export function getL2HttpRpcUrls(fallbackWsUrl?: string): string[] {
+  const primary = getL2HttpRpcUrl(fallbackWsUrl)
+  const extraRaw = process.env.L2_RPC_URL_HTTP_FALLBACK || ''
+  const secretRaw = process.env.L2_RPC_SECRET_FALLBACK || ''
+  if (!extraRaw.trim()) return primary ? [primary] : []
+  const extras = extraRaw.split(',').map(s => s.trim()).filter(Boolean)
+  const secrets = secretRaw.split(',').map(s => s.trim())
+  const withAuth = extras.map((u, i) => withSecret(u, secrets[i] || undefined))
+  return primary ? [primary, ...withAuth] : withAuth
+}
+
 export function getL1HttpRpcUrl(fallbackWsUrl?: string): string {
   return withSecret(
     process.env.L1_RPC_URL_HTTP || wsToHttp(fallbackWsUrl || process.env.L1_RPC_URL || ''),
@@ -226,6 +248,47 @@ export function makeJsonRpcProvider(url: string, chainId?: number): JsonRpcProvi
     provider = new JsonRpcProvider(url, undefined, { staticNetwork: true })
   }
   return wrapSend(provider)
+}
+
+/**
+ * Create a provider that fans out across multiple HTTP RPC URLs and routes
+ * around dead/flaky ones. With a single URL, returns a plain JsonRpcProvider
+ * (no quorum overhead). With 2+ URLs, returns a FallbackProvider — ethers
+ * will retry against the next provider when one times out / errors.
+ *
+ * Type erased to AbstractProvider because FallbackProvider and JsonRpcProvider
+ * both extend it; call sites that need JsonRpcProvider-specific APIs (rare —
+ * almost everything we use is on the AbstractProvider interface) should keep
+ * using makeJsonRpcProvider with a single URL.
+ *
+ * Quorum: 1 — accept the first non-error response. This is the right setting
+ * for "operator wants resilience, not consensus." If the operator wants
+ * quorum-style consensus across two providers (e.g. to defend against
+ * malicious RPC responses), they can configure that later — the protocol's
+ * trust model places that responsibility on the on-chain simulation, not
+ * the RPC layer.
+ */
+export function makeFallbackJsonRpcProvider(urls: string[], chainId?: number): AbstractProvider {
+  if (urls.length === 0) throw new Error('makeFallbackJsonRpcProvider: no URLs provided')
+  if (urls.length === 1) return makeJsonRpcProvider(urls[0], chainId)
+  const network = chainId != null ? Network.from(chainId) : undefined
+  const subproviders = urls.map(url => {
+    if (network) {
+      return new JsonRpcProvider(url, network, { staticNetwork: network })
+    }
+    return new JsonRpcProvider(url, undefined, { staticNetwork: true })
+  })
+  // Each subprovider gets equal weight; quorum 1 = first-success-wins.
+  // The 'priority' field defaults to 1 across configs, so all candidates
+  // are tried in order on each request. ethers internally rotates failing
+  // providers out of the active set after a few errors.
+  const configs = subproviders.map(provider => ({ provider, weight: 1 }))
+  const fallback = new FallbackProvider(configs, network, { quorum: 1 })
+  // wrapSend hooks the throttle into .send(); FallbackProvider itself
+  // doesn't expose .send() the same way, so throttle applies on each
+  // subprovider's individual calls instead.
+  for (const sp of subproviders) wrapSend(sp)
+  return fallback
 }
 
 /**

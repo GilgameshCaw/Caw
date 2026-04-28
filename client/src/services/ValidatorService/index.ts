@@ -13,7 +13,7 @@ import { packActions, packSignatures, packGroupedSignatures, bytesToHex, getPack
 import { buildCheckpointMerkleTree } from '../../utils/checkpointMerkle'
 import { tryClaimChallengeLock, releaseChallengeLock } from '../../utils/challengeLock'
 import { foldCheckpointHashes } from '../../utils/foldCheckpointHashes'
-import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, getL2WsRpcUrl, getEthMainnetHttpRpcUrl, getReplicationHttpRpcUrl } from '../../utils/rpcProvider'
+import { makeJsonRpcProvider, makeFallbackJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, getL2HttpRpcUrls, getL2WsRpcUrl, getEthMainnetHttpRpcUrl, getReplicationHttpRpcUrl } from '../../utils/rpcProvider'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
 import { incrementSessionSpent } from '../../utils/sessionSpendTracker'
@@ -361,9 +361,20 @@ export const validatorService: Service = {
     // gas estimation, fee data). Infura WSS on Base Sepolia hangs/socket-hang-ups
     // under large eth_call payloads (we routinely simulate 50+ actions in one
     // call). HTTP handles these reliably. Subscriptions can stay on WSS.
-    const l2HttpRpcUrl = getL2HttpRpcUrl(l2RpcUrl)
-    const httpProvider = makeJsonRpcProvider(l2HttpRpcUrl, 84532)
-    console.log(`[Validator] HTTP RPC (for eth_call / gas): ${l2HttpRpcUrl.slice(0, 50)}...`)
+    //
+    // When L2_RPC_URL_HTTP_FALLBACK is set, this becomes a FallbackProvider
+    // that rotates around dead/flaky endpoints. Without fallbacks the provider
+    // collapses to a plain JsonRpcProvider (no quorum overhead). One sustained
+    // Infura outage on Base Sepolia is what motivated this — the operator
+    // can now drop in an Alchemy/Quicknode URL alongside Infura and the
+    // validator routes around either.
+    const l2HttpRpcUrls = getL2HttpRpcUrls(l2RpcUrl)
+    const httpProvider = makeFallbackJsonRpcProvider(l2HttpRpcUrls, 84532)
+    if (l2HttpRpcUrls.length > 1) {
+      console.log(`[Validator] HTTP RPC (with ${l2HttpRpcUrls.length - 1} fallback(s)): ${l2HttpRpcUrls[0].slice(0, 50)}...`)
+    } else {
+      console.log(`[Validator] HTTP RPC (for eth_call / gas): ${l2HttpRpcUrls[0]?.slice(0, 50)}...`)
+    }
 
     // Note: Uncaught exception handling is done at the process level in programs/start.ts
     // No need for service-specific handlers
@@ -1342,6 +1353,15 @@ console.log("succeededKeys", succeededKeys)
     /** natstat: core polling loop */
     async function pollLoop() {
       await refreshSettings(checkInterval)
+      // Track every row we mark 'processing' in this poll so the outer catch
+      // can roll them back to 'pending' on failure. Without this, an RPC
+      // hang anywhere downstream leaves rows stuck in 'processing' until the
+      // next poll's 30s stale-sweep rescues them — which loses work
+      // proportional to RPC failure rate when the L2 endpoint is flaky.
+      // We don't reset rows that the loop has already moved past 'processing'
+      // into a terminal state (done/failed/underpriced/awaiting_indexer);
+      // the WHERE clause guards that.
+      const markedAsProcessing: number[] = []
       try {
         const entries = await fetchPendingQueue()
         if (!entries.length) return
@@ -1374,10 +1394,12 @@ console.log("succeededKeys", succeededKeys)
         console.log(`[Validator] Queue IDs: ${entries.map(e => e.id).join(', ')}`)
 
         // Immediately mark entries as 'processing' to prevent duplicate pickup by next poll
+        const idsToMark = entries.map(e => e.id)
         await prisma.txQueue.updateMany({
-          where: { id: { in: entries.map(e => e.id) } },
+          where: { id: { in: idsToMark } },
           data: { status: 'processing' }
         })
+        markedAsProcessing.push(...idsToMark)
         console.log(`[Validator] Marked ${entries.length} entries as 'processing'`)
 
         // Log transaction details for debugging
@@ -2083,6 +2105,26 @@ console.log("succeededKeys", succeededKeys)
           stack: err.stack,
           rpcUrl: l2RpcUrl
         })
+        // Roll back any rows we marked 'processing' that the loop didn't get
+        // a chance to move to a terminal state. The WHERE-clause filter on
+        // status='processing' guarantees we never overwrite a row that
+        // already reached done/failed/underpriced/awaiting_indexer further
+        // down the loop. Without this rollback, an RPC hang strands rows
+        // until the next poll's 30s stale-sweep — which under sustained
+        // RPC flake means the queue grows faster than it drains.
+        if (markedAsProcessing.length > 0) {
+          try {
+            const reset = await prisma.txQueue.updateMany({
+              where: { id: { in: markedAsProcessing }, status: 'processing' },
+              data: { status: 'pending' },
+            })
+            if (reset.count > 0) {
+              console.log(`[Validator] Rolled back ${reset.count} 'processing' rows to 'pending' after poll error`)
+            }
+          } catch (rollbackErr: any) {
+            console.error("[Validator] Failed to roll back processing rows:", rollbackErr.message)
+          }
+        }
         // Don't crash on errors, will retry on next interval
       }
     }
