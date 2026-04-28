@@ -18,80 +18,78 @@ contract CawProfileMinter is Context {
     CawProfile = IMint(_cawProfiles);
   }
 
+  // ============================================
+  // PRIMARY ENTRYPOINTS — owner mints for themselves
+  // ============================================
+  // The plain `mint` / `mintAndAuth` / `mintAndDeposit` functions are thin
+  // recipient=msg.sender wrappers. The real work lives in their `*For`
+  // variants below — same pattern as `deposit` ↔ `depositFor` on CawProfile,
+  // so an external router contract can collect any currency from the user
+  // and call `mintFor`/`mintAndAuthFor`/`mintAndDepositFor` on their behalf
+  // (CAW for the burn + deposit comes from the router's balance).
+
   function mint(uint32 clientId, string memory username, uint256 lzTokenAmount) public payable {
-    require(idByUsername[username] == 0, "Username has already been taken");
-    require(isValidUsername(username), "Username must only consist of 1-255 lowercase letters and numbers");
-    uint256 amount = costOfName(username);
-
-    require(CAW.balanceOf(_msgSender()) >= amount, "You do not have enough CAW to make this purchase");
-    require(CAW.allowance(_msgSender(), address(this)) >= amount, "You must approve spending of your CAW");
-    CAW.transferFrom(_msgSender(), address(0xdEAD000000000000000042069420694206942069), amount);
-
-    uint32 newId = CawProfile.nextId();
-    idByUsername[username] = newId;
-
-    CawProfile.mint{value: msg.value}(clientId, msg.sender, username, newId, lzTokenAmount);
+    mintFor(clientId, msg.sender, username, lzTokenAmount);
   }
 
-  /// @notice Mint a username and deposit CAW in one transaction.
-  /// @dev The user only needs to approve the Minter for the full amount (burn + deposit).
-  ///      The Minter pulls all CAW from the user, burns the burn portion, and forwards
-  ///      the deposit portion to CawProfile.
-  /// @param clientId The client ID to authenticate with
-  /// @param username The username to mint
-  /// @param depositAmount The amount of CAW to deposit (in wei)
-  /// @param lzDestId The L2 chain endpoint ID for the deposit
-  /// @param lzTokenAmount LZ token amount for fees (usually 0)
+  function mintAndAuth(uint32 clientId, string memory username, uint32 lzDestId, uint256 lzTokenAmount) public payable {
+    mintAndAuthFor(clientId, msg.sender, username, lzDestId, lzTokenAmount);
+  }
+
   function mintAndDeposit(uint32 clientId, string memory username, uint256 depositAmount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
-    require(idByUsername[username] == 0, "Username has already been taken");
-    require(isValidUsername(username), "Username must only consist of 1-255 lowercase letters and numbers");
-    uint256 burnAmount = costOfName(username);
+    mintAndDepositFor(clientId, msg.sender, username, depositAmount, lzDestId, lzTokenAmount);
+  }
 
-    uint256 totalCawNeeded = burnAmount + depositAmount;
-    require(CAW.balanceOf(_msgSender()) >= totalCawNeeded, "You do not have enough CAW");
-    require(CAW.allowance(_msgSender(), address(this)) >= totalCawNeeded, "You must approve spending of your CAW");
+  // ============================================
+  // *For VARIANTS — caller pays in CAW, NFT goes to `recipient`
+  // ============================================
 
-    // Burn CAW for the username
-    CAW.transferFrom(_msgSender(), address(0xdEAD000000000000000042069420694206942069), burnAmount);
+  /// @notice Mint a username on behalf of `recipient`. The burn-cost CAW is pulled from
+  ///         `msg.sender`, but the Profile NFT (and ownership of any future deposit) goes
+  ///         to `recipient`. Mirrors depositFor's pattern so external routers can offer
+  ///         "pay in <other-currency>, get a CAW Profile" without holding the user's CAW.
+  function mintFor(uint32 clientId, address recipient, string memory username, uint256 lzTokenAmount) public payable {
+    uint32 newId = _burnAndAssignId(username, 0);
+    CawProfile.mint{value: msg.value}(clientId, recipient, username, newId, lzTokenAmount);
+  }
 
-    // Pull the deposit portion from the user into this contract,
-    // then approve CawProfile to transferFrom this contract during mintAndDeposit.
+  /// @notice mintAndAuth on behalf of `recipient`. The burn cost is pulled from msg.sender.
+  function mintAndAuthFor(uint32 clientId, address recipient, string memory username, uint32 lzDestId, uint256 lzTokenAmount) public payable {
+    uint32 newId = _burnAndAssignId(username, 0);
+    CawProfile.mintAndAuth{value: msg.value}(clientId, recipient, username, newId, lzDestId, lzTokenAmount);
+  }
+
+  /// @notice mintAndDeposit on behalf of `recipient`. burn + deposit CAW is pulled from
+  ///         msg.sender; the NFT and the deposit credit go to `recipient`.
+  function mintAndDepositFor(uint32 clientId, address recipient, string memory username, uint256 depositAmount, uint32 lzDestId, uint256 lzTokenAmount) public payable {
+    uint32 newId = _burnAndAssignId(username, depositAmount);
     if (depositAmount > 0) {
+      // Pull the deposit portion into this contract and approve CawProfile to pull it back —
+      // mirrors the original mintAndDeposit pattern (CawProfile expects the deposit CAW
+      // to be transferable from the Minter's allowance during its mintAndDeposit call).
       CAW.transferFrom(_msgSender(), address(this), depositAmount);
       CAW.approve(address(CawProfile), depositAmount);
     }
-
-    uint32 newId = CawProfile.nextId();
-    idByUsername[username] = newId;
-
-    // Mint + deposit in one call (CawProfile pulls depositAmount from this contract)
-    CawProfile.mintAndDeposit{value: msg.value}(clientId, msg.sender, username, newId, depositAmount, lzDestId, lzTokenAmount);
+    CawProfile.mintAndDeposit{value: msg.value}(clientId, recipient, username, newId, depositAmount, lzDestId, lzTokenAmount);
   }
 
-  /// @notice Mint a username and authenticate with a client in one transaction, with NO
-  ///         CAW deposit. The user pays the burn cost for the name and receives a Profile
-  ///         that's already authed on the chosen storage chain. They can post once they
-  ///         later call deposit() to fund their cawBalance.
-  /// @param clientId The client ID to authenticate with
-  /// @param username The username to mint
-  /// @param lzDestId The L2 chain endpoint ID for the auth message (= storage chain)
-  /// @param lzTokenAmount LZ token amount for fees (usually 0)
-  function mintAndAuth(uint32 clientId, string memory username, uint32 lzDestId, uint256 lzTokenAmount) public payable {
+  /// @dev Shared prologue for every mint path: validate the username, take the burn cost
+  ///      from msg.sender, register the new tokenId, and return it. `extraCawNeeded` is the
+  ///      additional CAW msg.sender must hold + have approved beyond burnAmount (e.g. the
+  ///      deposit portion in mintAndDepositFor). Pulling the extra is the caller's job —
+  ///      this function only verifies the headroom and burns the burn portion.
+  function _burnAndAssignId(string memory username, uint256 extraCawNeeded) internal returns (uint32 newId) {
     require(idByUsername[username] == 0, "Username has already been taken");
     require(isValidUsername(username), "Username must only consist of 1-255 lowercase letters and numbers");
     uint256 burnAmount = costOfName(username);
+    uint256 totalCawNeeded = burnAmount + extraCawNeeded;
 
-    require(CAW.balanceOf(_msgSender()) >= burnAmount, "You do not have enough CAW to make this purchase");
-    require(CAW.allowance(_msgSender(), address(this)) >= burnAmount, "You must approve spending of your CAW");
-
-    // Burn CAW for the username
+    require(CAW.balanceOf(_msgSender()) >= totalCawNeeded, "You do not have enough CAW to make this purchase");
+    require(CAW.allowance(_msgSender(), address(this)) >= totalCawNeeded, "You must approve spending of your CAW");
     CAW.transferFrom(_msgSender(), address(0xdEAD000000000000000042069420694206942069), burnAmount);
 
-    uint32 newId = CawProfile.nextId();
+    newId = CawProfile.nextId();
     idByUsername[username] = newId;
-
-    // Mint + auth (no deposit) in one call
-    CawProfile.mintAndAuth{value: msg.value}(clientId, msg.sender, username, newId, lzDestId, lzTokenAmount);
   }
 
   function isValidUsername(string memory _input) public pure returns (bool) {

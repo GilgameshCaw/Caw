@@ -1788,6 +1788,88 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
 
     console.log("post-mintAndAuth deposit test passed — balance funded");
   });
+
+  // ---------------------------------------------------------------------
+  // *For variants — caller pays in CAW, NFT goes to a different recipient
+  // ---------------------------------------------------------------------
+  // accounts[1] plays the "router" role: holds CAW, has approvals, calls *For.
+  // accounts[7] plays the "user" role: holds nothing, ends up owning the NFT.
+  // (One test per *For — the underlying mint/mintAndAuth/mintAndDeposit logic
+  // is already covered by the tests above; these only assert the recipient
+  // re-routing works end-to-end via the shared _burnAndAssignId prologue.)
+
+  it("mintFor: caller pays, NFT lands on recipient", async function() {
+    this.timeout(60000);
+    var router = accounts[1], user = accounts[7];
+
+    var quote = await localQuoter.mintQuote(l2ClientId, false);
+    var routerBalanceBefore = await localToken.balanceOf(router);
+
+    await localMinter.mintFor(l2ClientId, user, 'forplain', 0, {
+      from: router,
+      value: (BigInt(quote.nativeFee)).toString(),
+    });
+    var tokenId = (await localCawProfiles.totalSupply()).toNumber();
+
+    expect(await localCawProfiles.ownerOf(tokenId)).to.equal(user);
+    expect(await localCawProfiles.usernames(tokenId - 1)).to.equal('forplain');
+
+    // Burn cost came from router, not user
+    var burnCost = await localMinter.costOfName('forplain');
+    var routerBalanceAfter = await localToken.balanceOf(router);
+    expect(BigInt(routerBalanceBefore.toString()) - BigInt(routerBalanceAfter.toString()))
+      .to.equal(BigInt(burnCost.toString()));
+    expect(BigInt((await localToken.balanceOf(user)).toString())).to.equal(0n);
+  });
+
+  it("mintAndAuthFor: caller pays burn, recipient owns the authed Profile", async function() {
+    this.timeout(60000);
+    var router = accounts[1], user = accounts[8];
+
+    var quote = await localQuoter.mintAndAuthQuote(l2ClientId, l2, false);
+
+    await localMinter.mintAndAuthFor(l2ClientId, user, 'forauth', l2, 0, {
+      from: router,
+      value: (BigInt(quote.nativeFee)).toString(),
+    });
+    var tokenId = (await localCawProfiles.totalSupply()).toNumber();
+
+    expect(await localCawProfiles.ownerOf(tokenId)).to.equal(user);
+    expect(await localCawProfiles.authenticated(l2ClientId, tokenId)).to.be.true;
+    // L2 mirror reflects the recipient too
+    expect(await localCawProfilesL2.ownerOf(tokenId)).to.equal(user);
+    expect(await localCawProfilesL2.authenticated(l2ClientId, tokenId)).to.be.true;
+  });
+
+  it("mintAndDepositFor: caller pays burn + deposit; recipient gets NFT and the credit", async function() {
+    this.timeout(60000);
+    var router = accounts[1], user = accounts[9];
+
+    var depositAmount = web3.utils.toWei('100000', 'ether');
+    var quote = await localQuoter.mintAndDepositQuote(l2ClientId, depositAmount, l2, false);
+    var routerBalanceBefore = await localToken.balanceOf(router);
+
+    await localMinter.mintAndDepositFor(l2ClientId, user, 'fordep', depositAmount, l2, 0, {
+      from: router,
+      value: (BigInt(quote.nativeFee)).toString(),
+    });
+    var tokenId = (await localCawProfiles.totalSupply()).toNumber();
+
+    expect(await localCawProfiles.ownerOf(tokenId)).to.equal(user);
+    expect(await localCawProfiles.authenticated(l2ClientId, tokenId)).to.be.true;
+
+    // Deposit credit landed on the recipient's L2 cawBalance, not the router's
+    var userBalance = await localCawProfilesL2.cawBalanceOf(tokenId);
+    expect(BigInt(userBalance.toString())).to.equal(BigInt(depositAmount));
+
+    // Router paid burn + deposit; user paid nothing in CAW
+    var burnCost = await localMinter.costOfName('fordep');
+    var totalSpent = BigInt(burnCost.toString()) + BigInt(depositAmount);
+    var routerBalanceAfter = await localToken.balanceOf(router);
+    expect(BigInt(routerBalanceBefore.toString()) - BigInt(routerBalanceAfter.toString()))
+      .to.equal(totalSpent);
+    expect(BigInt((await localToken.balanceOf(user)).toString())).to.equal(0n);
+  });
 });
 
 
