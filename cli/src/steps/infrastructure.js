@@ -1,5 +1,10 @@
 import inquirer from 'inquirer'
-import { section, dim, tipBlock, brand } from '../utils/ui.js'
+import { execSync, spawnSync } from 'child_process'
+import fs from 'fs'
+import net from 'net'
+import os from 'os'
+import path from 'path'
+import { section, dim, tipBlock, brand, success, warn } from '../utils/ui.js'
 import { createClientFlow, lookupClientStorageChain } from './clientCreator.js'
 
 /**
@@ -213,8 +218,10 @@ export async function collectInfraEarly(nodeType, ctx = {}) {
 
   // SigNoz / OTLP collector endpoint (optional) — performance tracing for
   // the backend process. Same opt-in pattern as Sentry: leaving it blank
-  // is a no-op at runtime.
-  const signozEndpoint = await collectSignozEndpoint(nodeType)
+  // is a no-op at runtime. Auto-installs SigNoz on this box if the
+  // operator picks that option; otherwise asks for an existing URL.
+  const { endpoint: signozEndpoint, serviceName: otelServiceName } =
+    await collectSignozEndpoint(nodeType, { domain, clientId })
 
   result.domain = domain
   result.adminPassword = adminPassword
@@ -225,6 +232,7 @@ export async function collectInfraEarly(nodeType, ctx = {}) {
   result.instanceApiUrl = instanceApiUrl
   result.sentryDsn = sentryDsn
   result.signozEndpoint = signozEndpoint
+  result.otelServiceName = otelServiceName
   return result
 }
 
@@ -621,23 +629,196 @@ async function collectSentryDsn(nodeType) {
   return dsn.trim()
 }
 
+// Default location for the SigNoz install when the operator picks "install
+// on this box". Box-level path (NOT per-installDir) so multiple CAW instances
+// on one host share a single collector — the second instance's CLI run will
+// detect the existing SigNoz via the localhost probe and just point at it.
+function defaultSignozInstallPath() {
+  const home = os.homedir()
+  if (home && home !== '/') return path.join(home, '.caw-signoz')
+  return '/opt/caw-signoz'
+}
+
+// Probe a TCP port with a tight timeout. Used to detect whether SigNoz's
+// OTLP collector is already running on this box without depending on the
+// full HTTP stack (the collector replies to anything but doesn't always
+// return 200 to a HEAD; a TCP-connect probe is the most reliable signal).
+async function probeTcp(host, port, timeoutMs = 500) {
+  return new Promise((resolve) => {
+    const sock = new net.Socket()
+    let done = false
+    const finish = (ok) => {
+      if (done) return
+      done = true
+      try { sock.destroy() } catch {}
+      resolve(ok)
+    }
+    sock.setTimeout(timeoutMs)
+    sock.once('connect', () => finish(true))
+    sock.once('timeout', () => finish(false))
+    sock.once('error', () => finish(false))
+    sock.connect(port, host)
+  })
+}
+
+// Detect docker + compose. SigNoz is docker-only, so the auto-install option
+// is hidden when neither is available. We accept both `docker compose` (v2
+// plugin, current) and `docker-compose` (v1 standalone, legacy) and report
+// which one to use later.
+function detectDocker() {
+  const has = (cmd) => spawnSync(cmd, ['--version'], { stdio: 'ignore' }).status === 0
+  if (!has('docker')) return null
+  // `docker compose version` exits 0 when the plugin is available.
+  const v2 = spawnSync('docker', ['compose', 'version'], { stdio: 'ignore' }).status === 0
+  if (v2) return { cmd: 'docker', composeArgs: ['compose'] }
+  if (has('docker-compose')) return { cmd: 'docker-compose', composeArgs: [] }
+  return null
+}
+
+// Returns null when this isn't an apt-based distro. When it is, returns
+// { sudoPrefix } — empty string when running as root, "sudo " otherwise.
+// Only sudo is supported (no doas / pkexec) because that's what the rest of
+// the CLI assumes; matches install.sh.
+function detectApt() {
+  if (process.platform !== 'linux') return null
+  if (spawnSync('command', ['-v', 'apt-get'], { stdio: 'ignore', shell: true }).status !== 0) return null
+  if (process.getuid && process.getuid() === 0) return { sudoPrefix: '' }
+  if (spawnSync('command', ['-v', 'sudo'], { stdio: 'ignore', shell: true }).status !== 0) return null
+  return { sudoPrefix: 'sudo ' }
+}
+
+// Install Docker engine + compose plugin via the official Docker apt repo.
+// Mirrors the recipe in install.sh — same keyring path, same package set,
+// same arch detection — so a box bootstrapped one way matches the other.
+// Throws on any step's failure; caller catches and falls back gracefully.
+function installDockerApt(apt) {
+  const { sudoPrefix } = apt
+  console.log(dim('  Installing Docker (engine + compose plugin) via apt — this is a one-time, box-level change.'))
+  const steps = [
+    `${sudoPrefix}install -m 0755 -d /etc/apt/keyrings`,
+    `curl -fsSL https://download.docker.com/linux/ubuntu/gpg | ${sudoPrefix}gpg --dearmor -o /etc/apt/keyrings/docker.gpg`,
+    `${sudoPrefix}chmod a+r /etc/apt/keyrings/docker.gpg`,
+    `echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo $VERSION_CODENAME) stable" | ${sudoPrefix}tee /etc/apt/sources.list.d/docker.list >/dev/null`,
+    `${sudoPrefix}apt-get update -qq`,
+    `${sudoPrefix}apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin`,
+  ]
+  for (const cmd of steps) {
+    try {
+      execSync(cmd, { stdio: 'pipe', shell: '/bin/bash' })
+    } catch (e) {
+      throw new Error(`apt step failed (${cmd.slice(0, 80)}…): ${e.message?.slice(0, 200) || e}`)
+    }
+  }
+  // Add the invoking user to the docker group so they don't need sudo for
+  // every docker command going forward. SigNoz auto-install runs as the
+  // same user (we don't sudo the docker compose), so without group
+  // membership the very next step would EACCES on the docker socket.
+  // SUDO_USER is set by sudo; falls back to USER for the run-as-root case.
+  const targetUser = process.env.SUDO_USER || process.env.USER
+  if (targetUser && targetUser !== 'root') {
+    try {
+      execSync(`${sudoPrefix}usermod -aG docker ${targetUser}`, { stdio: 'pipe', shell: '/bin/bash' })
+      console.log(dim(`  Added ${targetUser} to the docker group (takes effect on next login).`))
+    } catch (e) {
+      console.log(warn(`  Couldn't add ${targetUser} to the docker group: ${e.message?.slice(0, 200) || e}`))
+      console.log(dim('  You may need to run docker commands with sudo until the group membership refreshes.'))
+    }
+  }
+  console.log(success('  Docker installed.'))
+}
+
+// Auto-derive a service name from the operator's identity so multiple CAW
+// instances on one box (or on one shared SigNoz) appear as distinct services
+// in the UI instead of a confusing merged blob. Operator can override via
+// CAW_OTEL_SERVICE_NAME — same skip-the-prompt pattern as everything else.
+function deriveServiceName(config) {
+  const fromEnv = process.env.CAW_OTEL_SERVICE_NAME
+  if (fromEnv) return fromEnv
+  if (config.domain) return `caw-${String(config.domain).replace(/[^a-zA-Z0-9-]/g, '-')}`
+  if (config.clientId) return `caw-client-${config.clientId}`
+  return 'caw-backend'
+}
+
+// Clone (or update) SigNoz into installPath and run docker compose up. Polls
+// the OTLP port until ready or times out. Throws on hard failure so the
+// caller can fall back to "skip" or "different box". Idempotent — re-running
+// on an already-installed checkout is a no-op.
+async function installSignozOnThisBox(installPath, docker) {
+  fs.mkdirSync(installPath, { recursive: true })
+  const repoDir = path.join(installPath, 'signoz')
+  const composeFile = path.join(repoDir, 'deploy', 'docker', 'clickhouse-setup', 'docker-compose.yaml')
+
+  if (!fs.existsSync(path.join(repoDir, '.git'))) {
+    console.log(dim(`  Cloning SigNoz into ${repoDir} (~50MB, one-time)…`))
+    try {
+      execSync(`git clone --depth 1 -b main https://github.com/SigNoz/signoz.git "${repoDir}"`, {
+        stdio: 'pipe',
+      })
+    } catch (e) {
+      throw new Error(`git clone failed: ${e.message?.slice(0, 200) || e}`)
+    }
+  } else {
+    console.log(dim(`  SigNoz checkout already at ${repoDir} — reusing.`))
+  }
+
+  if (!fs.existsSync(composeFile)) {
+    throw new Error(`Expected compose file not found at ${composeFile}. The SigNoz repo layout may have changed — install manually and pick the "different box" option.`)
+  }
+
+  console.log(dim('  Starting SigNoz containers (ClickHouse migrations on first boot take 1–2 min)…'))
+  try {
+    execSync(`${docker.cmd} ${docker.composeArgs.join(' ')} -f "${composeFile}" up -d`, {
+      stdio: 'pipe',
+    })
+  } catch (e) {
+    throw new Error(`docker compose up failed: ${e.message?.slice(0, 300) || e}`)
+  }
+
+  // Poll OTLP port. ClickHouse's first-boot migrations take time; print
+  // periodic progress so it doesn't look hung.
+  const startedAt = Date.now()
+  const TIMEOUT_MS = 120_000
+  let lastProgress = 0
+  while (Date.now() - startedAt < TIMEOUT_MS) {
+    if (await probeTcp('127.0.0.1', 4318, 500)) {
+      const elapsed = Math.round((Date.now() - startedAt) / 1000)
+      console.log(success(`  SigNoz collector ready on :4318 (${elapsed}s)`))
+      console.log(dim(`  UI: ${brand('http://localhost:3301')}  (create your account on first visit)`))
+      return
+    }
+    if (Date.now() - lastProgress > 15_000) {
+      const elapsed = Math.round((Date.now() - startedAt) / 1000)
+      console.log(dim(`  …still waiting for SigNoz to boot (${elapsed}s elapsed)`))
+      lastProgress = Date.now()
+    }
+    await new Promise(r => setTimeout(r, 3000))
+  }
+  throw new Error(`SigNoz didn't become reachable on localhost:4318 within 120s. Check ${docker.cmd} ${docker.composeArgs.join(' ')} -f "${composeFile}" logs and re-run install once it's up, or pick "different box" and paste the URL manually.`)
+}
+
 /**
- * Ask for a SigNoz / OTLP collector endpoint. When set, the backend
- * initializes the OpenTelemetry SDK and emits traces (HTTP routes, Prisma
- * queries, Redis pub/sub, RPC calls, and any custom spans). Gated by env
- * var presence so installs without it pay zero overhead.
+ * Ask where the operator wants to send OTel traces, and (if they pick the
+ * auto-install option) actually install SigNoz on this box. Returns
+ * { endpoint, serviceName } — both written to .env by generate.js.
  *
- * Honors CAW_SIGNOZ_ENDPOINT env override. The standard OTel env var
- * (OTEL_EXPORTER_OTLP_ENDPOINT) is what gets written to .env, so this
- * works against any OTLP/HTTP collector — not just SigNoz.
+ * Behaviour matrix:
+ *   • CAW_SIGNOZ_ENDPOINT preset  → use it, skip prompt entirely
+ *   • SigNoz already on :4318     → offer "use existing" as an option
+ *   • Docker available            → offer "install on this box" as an option
+ *   • Always offer                → "different box" (paste URL) and "skip"
+ *
+ * The endpoint is the standard OTLP/HTTP base URL — works against any
+ * OTLP-compatible collector (Tempo, Honeycomb, etc.), not just SigNoz.
  *
  * Skipped for frontend-only nodes (no backend to instrument).
  */
-async function collectSignozEndpoint(nodeType) {
-  if (nodeType === 'frontend-only') return ''
+async function collectSignozEndpoint(nodeType, config) {
+  if (nodeType === 'frontend-only') return { endpoint: '', serviceName: '' }
 
   const fromEnv = process.env.CAW_SIGNOZ_ENDPOINT
-  if (fromEnv) return fromEnv
+  if (fromEnv) {
+    return { endpoint: fromEnv, serviceName: deriveServiceName(config) }
+  }
 
   section('Performance tracing with SigNoz (optional)')
   tipBlock([
@@ -647,27 +828,108 @@ async function collectSignozEndpoint(nodeType) {
     'RPC call — so you can see which endpoints / queries / external calls are',
     'slow, and where time is spent inside a request.',
     '',
-    `${brand('How to run SigNoz (5–10 minutes, one-time):')}`,
-    `  ${brand('1.')} Clone their installer:`,
-    '       git clone -b main https://github.com/SigNoz/signoz.git',
-    '       cd signoz/deploy/docker',
-    `  ${brand('2.')} Bring it up:  ${brand('docker compose up -d')}`,
-    `  ${brand('3.')} UI lands on  ${brand('http://localhost:3301')}  — create your account.`,
-    `  ${brand('4.')} The OTLP collector listens on  ${brand('http://localhost:4318')}  — paste that below.`,
-    '',
-    'Leave blank to skip — tracing stays off and the SDK is a no-op. You can',
-    'add OTEL_EXPORTER_OTLP_ENDPOINT to .env later without re-running install.',
+    'One SigNoz collector can serve many CAW nodes — multiple instances on one',
+    'box should share a single install. They show up as separate services in',
+    'the UI via OTEL_SERVICE_NAME (auto-derived from your domain / clientId).',
   ])
 
+  let docker = detectDocker()
+  const alreadyRunning = await probeTcp('127.0.0.1', 4318, 500)
+  // When SigNoz is already up, we don't need Docker locally — we're just
+  // going to write the URL. Docker only matters for the auto-install path.
+  const apt = !docker && !alreadyRunning ? detectApt() : null
+
+  // "Install on this box" and "use existing on this box" collapse into one
+  // option — they yield the same endpoint (http://localhost:4318) and the
+  // user shouldn't have to know whether SigNoz happens to already be running
+  // before they answer. The action behind the option diverges based on the
+  // probe: install fresh when nothing's there, just point at it when it is.
+  // When Docker is missing on an apt-based system, we also offer to install
+  // Docker first — same recipe install.sh uses for the docker infra mode.
+  const localOptionAvailable = alreadyRunning || !!docker || !!apt
+  const choices = []
+  if (localOptionAvailable) {
+    let label
+    if (alreadyRunning) {
+      label = `Use SigNoz on this box (already running at ${brand('http://localhost:4318')})`
+    } else if (docker) {
+      label = `Use SigNoz on this box (Docker required, ~2GB RAM, ~30GB disk — auto-installs)`
+    } else {
+      label = `Use SigNoz on this box (auto-installs Docker via apt + SigNoz, ~2GB RAM, ~30GB disk)`
+    }
+    choices.push({ name: label, value: 'local' })
+  }
+  choices.push({ name: `Use SigNoz running on a different box (I'll paste the URL)`, value: 'remote' })
+  choices.push({ name: `Skip — no performance tracing`, value: 'skip' })
+
+  if (!localOptionAvailable) {
+    console.log(dim('  Docker not detected and nothing on :4318. This box isn\'t apt-based either, so'))
+    console.log(dim('  the CLI can\'t auto-install Docker for you. Install Docker manually'))
+    console.log(dim('  (https://docs.docker.com/get-docker/) and re-run, or pick "different box".'))
+  }
+
+  const { mode } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'mode',
+      message: 'How do you want to handle performance tracing?',
+      choices,
+      default: localOptionAvailable ? 'local' : 'skip',
+    },
+  ])
+
+  if (mode === 'skip') return { endpoint: '', serviceName: '' }
+
+  if (mode === 'local') {
+    if (alreadyRunning) {
+      return {
+        endpoint: 'http://localhost:4318',
+        serviceName: deriveServiceName(config),
+      }
+    }
+    // Install Docker first if we got here via the apt-no-docker path. Re-detect
+    // afterwards so we have the right { cmd, composeArgs } shape for SigNoz.
+    if (!docker && apt) {
+      try {
+        installDockerApt(apt)
+      } catch (e) {
+        console.log(warn(`  Docker install didn't complete: ${e.message}`))
+        console.log(dim('  Falling back to "skip" — you can install Docker manually and re-run install later.'))
+        return { endpoint: '', serviceName: '' }
+      }
+      docker = detectDocker()
+      if (!docker) {
+        console.log(warn('  Docker installed but the CLI can\'t see it — the apt install may need a fresh shell.'))
+        console.log(dim('  Falling back to "skip" — re-run install in a new shell to continue.'))
+        return { endpoint: '', serviceName: '' }
+      }
+    }
+    const installPath = defaultSignozInstallPath()
+    console.log(dim(`  Install location: ${installPath}`))
+    console.log(warn('  Heads up: SigNoz wants ~4GB RAM and ~30GB disk. Continuing anyway — it will fail loudly if the box is too small.'))
+    try {
+      await installSignozOnThisBox(installPath, docker)
+      return {
+        endpoint: 'http://localhost:4318',
+        serviceName: deriveServiceName(config),
+      }
+    } catch (e) {
+      console.log(warn(`  SigNoz install didn't complete: ${e.message}`))
+      console.log(dim('  Falling back to "skip" — you can add OTEL_EXPORTER_OTLP_ENDPOINT to .env later without re-running install.'))
+      return { endpoint: '', serviceName: '' }
+    }
+  }
+
+  // mode === 'remote'
   const { endpoint } = await inquirer.prompt([
     {
       type: 'input',
       name: 'endpoint',
-      message: 'SigNoz / OTLP collector endpoint (e.g. http://localhost:4318):',
+      message: 'OTLP collector endpoint (e.g. http://signoz.internal:4318):',
       default: '',
       validate: (input) => {
         const v = input.trim()
-        if (!v) return true // optional
+        if (!v) return 'Required when picking "different box" — pick "skip" if you don\'t have one yet'
         if (!/^https?:\/\/.+/.test(v)) {
           return 'Expected an http(s) URL pointing at the OTLP collector base'
         }
@@ -676,5 +938,8 @@ async function collectSignozEndpoint(nodeType) {
     },
   ])
 
-  return endpoint.trim()
+  return {
+    endpoint: endpoint.trim(),
+    serviceName: deriveServiceName(config),
+  }
 }

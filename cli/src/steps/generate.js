@@ -402,8 +402,12 @@ function buildEnvVars(nodeType, config) {
   if (config.sentryDsn) env.SENTRY_DSN = config.sentryDsn
 
   // OpenTelemetry / SigNoz — backend-only. The standard OTLP env var name
-  // gets the OTel SDK initialized in src/otel.ts; unset = no-op.
+  // gets the OTel SDK initialized in src/otel.ts; unset = no-op. Service
+  // name is auto-derived from domain/clientId in collectSignozEndpoint so
+  // multiple CAW instances sharing one collector don't collide as one
+  // merged "caw-backend" entry in the SigNoz UI.
   if (config.signozEndpoint) env.OTEL_EXPORTER_OTLP_ENDPOINT = config.signozEndpoint
+  if (config.otelServiceName) env.OTEL_SERVICE_NAME = config.otelServiceName
 
   // CLIENT_ID is the same value the frontend reads as VITE_CLIENT_ID — the
   // duplication exists only because Vite requires the VITE_ prefix to expose

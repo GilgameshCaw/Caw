@@ -276,15 +276,13 @@ Set `SENTRY_DSN` (backend) and/or `VITE_SENTRY_DSN` (frontend) to forward uncaug
 
 Self-hosted [SigNoz](https://signoz.io) gives you traces for every HTTP route, Prisma query, Redis call, and outbound RPC — useful for finding slow endpoints and seeing where time is spent inside a request.
 
-```bash
-# 1. One-time SigNoz install on whichever box you want to host it
-git clone -b main https://github.com/SigNoz/signoz.git
-cd signoz/deploy/docker
-docker compose up -d
-# UI: http://localhost:3301   |   OTLP collector: http://localhost:4318
-```
+The CLI walks you through it during install. You'll get three options:
 
-Then point the CAW backend at it by setting `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318` in `client/.env` (the CLI install can do this for you). Restart the API and traces start landing in SigNoz on the next request.
+- **Use SigNoz on this box** — auto-detects whether SigNoz is already running on `:4318`. If yes, just points at it; if no, the CLI clones SigNoz into `~/.caw-signoz/` and runs `docker compose up -d` for you (~4GB RAM, ~30GB disk). On apt-based hosts (Debian / Ubuntu) the CLI will offer to install Docker first if it's missing. Multiple CAW nodes on one host share the same install.
+- **Use SigNoz on a different box** — paste the URL (e.g. `http://signoz.internal:4318`).
+- **Skip** — no tracing; the SDK is a no-op.
+
+`OTEL_SERVICE_NAME` is auto-derived from your domain (falling back to `caw-client-{id}`) so multiple instances sharing one collector show up as distinct services in the UI.
 
 The endpoint is the standard [OTLP/HTTP](https://opentelemetry.io/docs/specs/otel/protocol/) base URL — anything OTLP-compatible (Grafana Tempo, Honeycomb, etc.) works as a drop-in replacement.
 
