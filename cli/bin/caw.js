@@ -17,6 +17,7 @@ import { setNetwork as setAddressesNetwork } from '../src/addresses.js'
 import { generateConfig } from '../src/steps/generate.js'
 import { runInstall, startServices } from '../src/steps/install.js'
 import { configureNginx } from '../src/steps/nginx.js'
+import { runUpdate, applyMigrations, buildFrontend, resolveInstallDir } from '../src/steps/update.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT_DIR = path.resolve(__dirname, '../..')
@@ -265,6 +266,58 @@ program
 
     } catch (error) {
       console.error('\n  Setup failed:', error.message)
+      process.exit(1)
+    }
+  })
+
+program
+  .command('update')
+  .description('Pull latest code, run migrations, rebuild FE if needed, restart services')
+  .option('--dir <path>', 'Installation directory', ROOT_DIR)
+  .option('--yes', 'Skip the confirmation prompt (for headless / cron use)')
+  .option('--force', 'Allow destructive migrations (DROP TABLE, DROP COLUMN, etc) — USE WITH CARE')
+  .option('--no-migrations', 'Skip the migration apply phase')
+  .option('--no-restart', 'Skip the pm2 restart phase')
+  .action(async (opts) => {
+    try {
+      const installDir = resolveInstallDir(opts, ROOT_DIR)
+      await runUpdate(installDir, {
+        yes: opts.yes,
+        force: opts.force,
+        skipMigrations: opts.migrations === false,
+        skipRestart: opts.restart === false,
+      })
+    } catch (e) {
+      console.error()
+      console.error('Update failed:', e.message)
+      process.exit(1)
+    }
+  })
+
+program
+  .command('migrate')
+  .description('Apply any pending Prisma migrations against this install\'s DB')
+  .option('--dir <path>', 'Installation directory', ROOT_DIR)
+  .action(async (opts) => {
+    try {
+      const installDir = resolveInstallDir(opts, ROOT_DIR)
+      await applyMigrations(installDir)
+    } catch (e) {
+      console.error('Migration failed:', e.message)
+      process.exit(1)
+    }
+  })
+
+program
+  .command('build')
+  .description('Rebuild the production frontend bundle (dist/) — no service restart needed')
+  .option('--dir <path>', 'Installation directory', ROOT_DIR)
+  .action(async (opts) => {
+    try {
+      const installDir = resolveInstallDir(opts, ROOT_DIR)
+      await buildFrontend(installDir)
+    } catch (e) {
+      console.error('Build failed:', e.message)
       process.exit(1)
     }
   })

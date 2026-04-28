@@ -1,0 +1,477 @@
+// Update an existing install: pull latest code, run pending migrations,
+// rebuild the frontend if it changed, restart pm2. The "I just want to
+// catch up to upstream" command. Composable: each phase is an exported
+// function the top-level orchestrator calls in sequence.
+
+import { execSync } from 'child_process'
+import fs from 'fs'
+import path from 'path'
+import inquirer from 'inquirer'
+import ora from 'ora'
+import { section, success, dim, brand, warn, err } from '../utils/ui.js'
+
+// Subset of SQL keywords that indicate a destructive migration. We refuse
+// to auto-apply migrations whose .sql contains any of these without an
+// explicit --force flag from the operator. The check is intentionally
+// fuzzy (substring) — a regex tighter than this would miss things like
+// `DROP    COLUMN` (extra whitespace) or `drop table if exists` (case).
+// False positives are operator-friendly: they get a chance to confirm.
+const DESTRUCTIVE_PATTERNS = [
+  /\bdrop\s+table\b/i,
+  /\bdrop\s+column\b/i,
+  /\btruncate\b/i,
+  /\bdrop\s+schema\b/i,
+  /\bdrop\s+database\b/i,
+  // ALTER ... DROP CONSTRAINT can lose data integrity — flag it.
+  /\balter\s+table\s+\S+\s+drop\s+constraint\b/i,
+]
+
+/**
+ * Resolve the install directory. Defaults to the CLI's repo root (the
+ * convention since `caw install` writes everything under cli/../..). The
+ * --dir flag overrides for unusual layouts.
+ */
+export function resolveInstallDir(opts, fallback) {
+  return path.resolve(opts?.dir || fallback)
+}
+
+/**
+ * Detect the running pm2 app name for this install. Each install uses a
+ * domain-based suffix (caw-server-test.caw.social, etc); we read it from
+ * the ecosystem.config.cjs that `caw install` wrote.
+ */
+export function detectAppName(installDir) {
+  const ecoPath = path.join(installDir, 'ecosystem.config.cjs')
+  if (!fs.existsSync(ecoPath)) return null
+  try {
+    const txt = fs.readFileSync(ecoPath, 'utf8')
+    // Match "name": "caw-server-..." — the first one wins (the API process).
+    const m = /"name":\s*"(caw-server-[^"]+)"/.exec(txt)
+    return m ? m[1] : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Run a command, streaming output. Throws on non-zero exit. Wraps execSync
+ * with stdio inherited so spinners stay clean (caller stops the spinner
+ * before/after).
+ */
+function run(cmd, opts = {}) {
+  return execSync(cmd, { stdio: 'inherit', ...opts })
+}
+
+/**
+ * Run a command capturing output (no streaming). Returns trimmed stdout
+ * or throws. For diagnostic reads where we need the result.
+ */
+function runCapture(cmd, opts = {}) {
+  return execSync(cmd, { encoding: 'utf8', ...opts }).trim()
+}
+
+/**
+ * Run a command as the install user (caw) when the CLI itself is running
+ * as root. Idempotent for cases where pm2 / nginx / system files need
+ * root but git / yarn / prisma should run unprivileged.
+ *
+ * SUDO_USER tells us who originally ran sudo. If we're running as root and
+ * SUDO_USER is set, drop to that user via `sudo -u`. Otherwise just exec.
+ */
+function runAsInstallUser(cmd, opts = {}) {
+  const isRoot = process.getuid && process.getuid() === 0
+  const installUser = process.env.SUDO_USER || 'caw'
+  if (isRoot && installUser !== 'root') {
+    // -E preserves env (so DATABASE_URL flows to prisma); cwd flag still applies.
+    return run(`sudo -u ${installUser} -E ${cmd}`, opts)
+  }
+  return run(cmd, opts)
+}
+
+/**
+ * Phase 1: fetch from origin, show what's incoming, refuse if working
+ * tree is dirty. Returns { incoming: [...commits], dirty: bool }.
+ */
+export async function previewUpdate(installDir) {
+  const spinner = ora('Fetching latest code from origin...').start()
+  try {
+    runCapture(`git -C ${installDir} fetch origin`, { stdio: 'pipe' })
+    spinner.succeed('Fetched origin')
+  } catch (e) {
+    spinner.fail('git fetch failed')
+    throw new Error(`git fetch failed: ${e.message?.split('\n')[0]}`)
+  }
+
+  // Working tree status (excluding untracked — operators frequently leave
+  // local notes/scratch around; we only care about modifications to
+  // tracked files).
+  const dirty = runCapture(
+    `git -C ${installDir} diff --shortstat`,
+    { stdio: 'pipe' },
+  )
+  const staged = runCapture(
+    `git -C ${installDir} diff --cached --shortstat`,
+    { stdio: 'pipe' },
+  )
+  const isDirty = !!(dirty || staged)
+
+  // Inbound commits (HEAD..origin/<branch>). Track whichever upstream
+  // branch HEAD is on. For a non-tracking branch, fall back to origin/master.
+  let upstream = ''
+  try {
+    upstream = runCapture(
+      `git -C ${installDir} rev-parse --abbrev-ref --symbolic-full-name @{u}`,
+      { stdio: 'pipe' },
+    )
+  } catch {
+    upstream = 'origin/master'
+  }
+  let incoming = []
+  try {
+    const log = runCapture(
+      `git -C ${installDir} log --oneline HEAD..${upstream}`,
+      { stdio: 'pipe' },
+    )
+    incoming = log ? log.split('\n') : []
+  } catch {
+    incoming = []
+  }
+
+  return { incoming, dirty: isDirty, upstream }
+}
+
+/**
+ * Phase 2: list pending Prisma migrations and check each for destructive
+ * SQL. Returns { pending: [migrationName...], destructive: [{name, patterns: [...]}] }.
+ *
+ * We don't trust prisma's own "needs apply" detection — it requires a DB
+ * connection and reflects state, not intent. Reading the filesystem tells
+ * us what migrations *exist* in the new code; comparing against the
+ * `_prisma_migrations` table tells us which need to be applied.
+ */
+export async function planMigrations(installDir) {
+  const migrationsDir = path.join(installDir, 'client', 'prisma', 'migrations')
+  if (!fs.existsSync(migrationsDir)) return { pending: [], destructive: [] }
+
+  const allMigrations = fs.readdirSync(migrationsDir)
+    .filter(name => fs.statSync(path.join(migrationsDir, name)).isDirectory())
+    .sort()
+
+  // Read what the DB already has applied. We use psql directly to avoid
+  // requiring a working prisma client at this point in the upgrade. If
+  // psql isn't available, fall back to "trust prisma migrate deploy" and
+  // just return the full list as pending — operator gets to decide.
+  let applied = new Set()
+  try {
+    const dbUrl = readDatabaseUrl(installDir)
+    if (dbUrl) {
+      const out = runCapture(
+        `psql "${dbUrl}" -t -A -c 'select migration_name from "_prisma_migrations" where rolled_back_at is null'`,
+        { stdio: 'pipe' },
+      )
+      applied = new Set(out.split('\n').map(s => s.trim()).filter(Boolean))
+    }
+  } catch {
+    // Couldn't reach DB or table doesn't exist (fresh install) — fall
+    // through, prisma migrate deploy will handle it.
+  }
+
+  const pending = allMigrations.filter(m => !applied.has(m))
+  const destructive = []
+  for (const name of pending) {
+    const sqlPath = path.join(migrationsDir, name, 'migration.sql')
+    if (!fs.existsSync(sqlPath)) continue
+    const sql = fs.readFileSync(sqlPath, 'utf8')
+    const matched = DESTRUCTIVE_PATTERNS
+      .filter(rx => rx.test(sql))
+      .map(rx => rx.source)
+    if (matched.length > 0) destructive.push({ name, patterns: matched })
+  }
+
+  return { pending, destructive }
+}
+
+function readDatabaseUrl(installDir) {
+  const envPath = path.join(installDir, 'client', '.env')
+  if (!fs.existsSync(envPath)) return null
+  const txt = fs.readFileSync(envPath, 'utf8')
+  const m = /^DATABASE_URL=(.+)$/m.exec(txt)
+  return m ? m[1].replace(/^["']|["']$/g, '') : null
+}
+
+/**
+ * Phase 3: pull, then run yarn install if package.json or yarn.lock changed
+ * in the pull. Returns { feChanged } so the caller can decide about the FE
+ * build step.
+ */
+export async function applyCodeUpdate(installDir, prevHead) {
+  const spinner = ora('Fast-forwarding to origin...').start()
+  try {
+    run(`git -C ${installDir} pull --ff-only`, { stdio: 'pipe' })
+    spinner.succeed('Pulled latest code')
+  } catch (e) {
+    spinner.fail('git pull failed (non-fast-forward?)')
+    throw new Error(`git pull failed: ${e.message?.split('\n')[0]}`)
+  }
+
+  const newHead = runCapture(`git -C ${installDir} rev-parse HEAD`, { stdio: 'pipe' })
+
+  // Detect what changed in this pull. Used to decide whether to rebuild
+  // FE / re-yarn-install / re-generate prisma client.
+  let changed = []
+  try {
+    const out = runCapture(
+      `git -C ${installDir} diff --name-only ${prevHead} ${newHead}`,
+      { stdio: 'pipe' },
+    )
+    changed = out.split('\n').filter(Boolean)
+  } catch {
+    // Couldn't diff — assume everything changed and rebuild the lot.
+    changed = ['package.json', 'client/src/services/FrontEnd/_changed_']
+  }
+
+  const yarnLockChanged = changed.some(f => f.endsWith('yarn.lock') || f.endsWith('package.json'))
+  const prismaChanged = changed.some(f => f.startsWith('client/prisma/'))
+  const feChanged = changed.some(f => f.startsWith('client/src/services/FrontEnd/'))
+
+  if (yarnLockChanged) {
+    const sp = ora('Installing dependencies (yarn changed)...').start()
+    try {
+      sp.stop()
+      runAsInstallUser(`yarn install --frozen-lockfile`, { cwd: path.join(installDir, 'client') })
+      console.log(success('  Dependencies up to date'))
+    } catch (e) {
+      sp.fail('yarn install failed')
+      throw e
+    }
+  } else {
+    console.log(dim('  Dependencies unchanged — skipping yarn install'))
+  }
+
+  if (prismaChanged) {
+    const sp = ora('Regenerating Prisma client...').start()
+    try {
+      sp.stop()
+      runAsInstallUser(`npx prisma generate`, { cwd: path.join(installDir, 'client') })
+      console.log(success('  Prisma client regenerated'))
+    } catch (e) {
+      sp.fail('prisma generate failed')
+      throw e
+    }
+  }
+
+  return { feChanged, prismaChanged, newHead, changed }
+}
+
+/**
+ * Phase 4: prisma migrate deploy. Idempotent — no-op if no pending
+ * migrations. Caller has already screened destructive ones.
+ */
+export async function applyMigrations(installDir) {
+  const sp = ora('Applying database migrations...').start()
+  try {
+    sp.stop()
+    runAsInstallUser(`npx prisma migrate deploy`, { cwd: path.join(installDir, 'client') })
+    console.log(success('  Migrations applied'))
+  } catch (e) {
+    console.log(err('  Migration apply failed — service NOT restarted'))
+    throw e
+  }
+}
+
+/**
+ * Phase 5: yarn build for the production frontend. Skipped when the FE
+ * didn't change in this update; nginx serves dist/ directly so no
+ * service restart is needed for FE-only changes.
+ */
+export async function buildFrontend(installDir) {
+  const sp = ora('Building frontend...').start()
+  try {
+    sp.stop()
+    runAsInstallUser(`yarn build`, {
+      cwd: path.join(installDir, 'client', 'src', 'services', 'FrontEnd'),
+    })
+    console.log(success('  Frontend built — dist/ ready'))
+  } catch (e) {
+    sp.fail('Frontend build failed')
+    throw e
+  }
+}
+
+/**
+ * Phase 6: pm2 restart with health check. We restart, wait 3 seconds,
+ * then check the process is `online` and the restart counter didn't
+ * jump (indicating a crash loop). Failure dumps the last 30 lines of
+ * pm2 log so the operator sees why immediately.
+ */
+export async function restartAndVerify(appName) {
+  const before = pm2State(appName)
+  const sp = ora(`Restarting ${appName}...`).start()
+  try {
+    runCapture(`pm2 restart ${appName} --update-env`, { stdio: 'pipe' })
+    sp.text = 'Restart issued — waiting 3s for health check...'
+    await new Promise(r => setTimeout(r, 3000))
+    const after = pm2State(appName)
+    if (after.status !== 'online') {
+      sp.fail(`Process ${appName} is ${after.status} after restart`)
+      dumpRecentLogs(appName)
+      throw new Error('Restart failed: process not online')
+    }
+    if (before && after.restarts > before.restarts + 1) {
+      // +1 for the restart we just issued; >+1 means it's looping.
+      sp.fail(`Process ${appName} appears to be in a restart loop`)
+      dumpRecentLogs(appName)
+      throw new Error('Restart loop detected')
+    }
+    sp.succeed(`${appName} restarted cleanly`)
+  } catch (e) {
+    sp.fail(`Restart failed: ${e.message?.split('\n')[0]}`)
+    throw e
+  }
+}
+
+function pm2State(appName) {
+  try {
+    const out = runCapture(`pm2 jlist`, { stdio: 'pipe' })
+    const list = JSON.parse(out)
+    const found = list.find(p => p.name === appName)
+    if (!found) return null
+    return {
+      status: found.pm2_env?.status || 'unknown',
+      restarts: found.pm2_env?.restart_time ?? 0,
+    }
+  } catch {
+    return null
+  }
+}
+
+function dumpRecentLogs(appName) {
+  try {
+    console.log(dim('  Last 30 log lines:'))
+    run(`pm2 logs ${appName} --lines 30 --nostream`, { stdio: 'inherit' })
+  } catch { /* best effort */ }
+}
+
+/**
+ * Top-level update orchestrator. Composes the phases above and handles
+ * the confirmation flow. Called from cli/bin/caw.js as `caw update`.
+ */
+export async function runUpdate(installDir, opts = {}) {
+  section(`Updating install at ${dim(installDir)}`)
+
+  const appName = detectAppName(installDir)
+  if (!appName && !opts.skipRestart) {
+    console.log(warn('  Could not find ecosystem.config.cjs — skipping pm2 restart.'))
+    console.log(warn('  This is normal for a partially-installed environment; run `caw install` first.'))
+  }
+
+  const prevHead = runCapture(`git -C ${installDir} rev-parse HEAD`, { stdio: 'pipe' })
+  const { incoming, dirty, upstream } = await previewUpdate(installDir)
+
+  if (incoming.length === 0) {
+    console.log(success(`  Already at latest (${dim(upstream)})`))
+    return
+  }
+
+  console.log()
+  console.log(brand(`  ${incoming.length} commit${incoming.length === 1 ? '' : 's'} to apply:`))
+  for (const line of incoming.slice(0, 20)) console.log(dim(`    ${line}`))
+  if (incoming.length > 20) console.log(dim(`    ... +${incoming.length - 20} more`))
+  console.log()
+
+  if (dirty) {
+    console.log(warn('  ⚠ Working tree has uncommitted changes to tracked files.'))
+    console.log(warn('     `git pull --ff-only` may fail or conflict.'))
+    if (!opts.yes) {
+      const { proceed } = await inquirer.prompt([{
+        type: 'confirm', name: 'proceed',
+        message: 'Continue anyway?',
+        default: false,
+      }])
+      if (!proceed) {
+        console.log(dim('  Update cancelled.'))
+        return
+      }
+    }
+  }
+
+  // Plan migrations BEFORE pulling so we can warn about destructive
+  // SQL before the operator commits to the update. Note: this only sees
+  // migrations *currently* on disk — new migrations from the pull won't
+  // be visible yet. We re-check post-pull with a destructive guard.
+  const preMigPlan = await planMigrations(installDir)
+
+  // Confirmation gate. --yes skips for headless runs.
+  if (!opts.yes) {
+    const { confirm } = await inquirer.prompt([{
+      type: 'confirm', name: 'confirm',
+      message: 'Apply these updates?',
+      default: true,
+    }])
+    if (!confirm) {
+      console.log(dim('  Update cancelled.'))
+      return
+    }
+  }
+
+  // ---- Apply phase ----
+  const codeResult = await applyCodeUpdate(installDir, prevHead)
+
+  // Re-plan migrations: the pull may have added new ones we haven't seen.
+  // We don't currently surface "new since the pull" separately — the
+  // destructive-pattern guard runs against everything pending — but the
+  // pre-pull plan stays useful for the destructive prompt's wording.
+  void preMigPlan
+  const postMigPlan = await planMigrations(installDir)
+
+  if (postMigPlan.pending.length > 0) {
+    console.log()
+    console.log(brand(`  ${postMigPlan.pending.length} migration${postMigPlan.pending.length === 1 ? '' : 's'} to apply:`))
+    for (const name of postMigPlan.pending) console.log(dim(`    ${name}`))
+
+    if (postMigPlan.destructive.length > 0) {
+      console.log()
+      console.log(err('  ⚠ DESTRUCTIVE migrations detected:'))
+      for (const { name, patterns } of postMigPlan.destructive) {
+        console.log(err(`    ${name}: matched ${patterns.join(', ')}`))
+      }
+      if (!opts.force) {
+        console.log()
+        console.log(warn('  Refusing to auto-apply destructive migrations.'))
+        console.log(warn('  Re-run with `caw update --force` to override, or apply manually:'))
+        console.log(dim(`    cd ${installDir}/client && npx prisma migrate deploy`))
+        throw new Error('Destructive migration without --force')
+      }
+      // --force was given; explicit confirmation prompt unless --yes too.
+      if (!opts.yes) {
+        const { ack } = await inquirer.prompt([{
+          type: 'confirm', name: 'ack',
+          message: 'Proceed with destructive migrations? This may LOSE DATA.',
+          default: false,
+        }])
+        if (!ack) throw new Error('Destructive migration declined')
+      }
+    }
+
+    if (!opts.skipMigrations) {
+      await applyMigrations(installDir)
+    } else {
+      console.log(warn('  Skipping migrations per --no-migrations.'))
+    }
+  } else {
+    console.log(dim('  No pending migrations.'))
+  }
+
+  if (codeResult.feChanged) {
+    await buildFrontend(installDir)
+  } else {
+    console.log(dim('  Frontend unchanged — skipping build.'))
+  }
+
+  if (appName && !opts.skipRestart) {
+    await restartAndVerify(appName)
+  }
+
+  console.log()
+  console.log(success(`  Update complete (${codeResult.newHead.slice(0, 7)})`))
+}
