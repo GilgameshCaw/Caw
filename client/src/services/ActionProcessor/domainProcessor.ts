@@ -20,25 +20,49 @@ export interface ResolvedUsers {
 }
 
 /**
- * Resolve sender (and, when relevant, receiver) users BEFORE the interactive
- * transaction opens. Prevents `findOrCreateUser` from eating into the 5s tx
- * timeout when a batch of same-sender actions arrives in parallel.
+ * Resolve every user that the inside-tx code path might need BEFORE the
+ * interactive transaction opens. Prevents findOrCreateUser from eating
+ * into the 5s tx timeout — every inside-tx call must hit the user cache.
+ *
+ * Critical hazard this defends against: findCawId (called from
+ * processDomainEffects inside the tx) calls findOrCreateUser on the caw
+ * owner. If that caw owner is a brand-new user, the call falls back to
+ * an L1 RPC read with a 15s timeout — well past the 5s tx budget. The
+ * tx times out, every queued query inside it errors with "Transaction
+ * already closed", and the row partial-state is left behind.
+ *
+ * We pre-resolve:
+ *   - sender (always)
+ *   - receiverId, if present (covers FOLLOW/UNFOLLOW target, LIKE/RECAW
+ *     caw owner via findCawId, and any future receiver-flavored field)
+ *   - tip recipients (rawAction.recipients[0]) — handleTipAction calls
+ *     findOrCreateUser on it inside the tx
+ *
+ * Worst case: one extra cache entry for a tokenId that wasn't strictly
+ * required. Best case (the common case): the inside-tx code path never
+ * makes an L1 RPC call.
  */
 export async function resolveActionUsers(rawAction: RawAction): Promise<ResolvedUsers> {
-  const authorId = await findOrCreateUser(rawAction.senderId)
-  let receiverId: number | undefined
-  // rawAction.actionType is the raw enum *number* from the unpacked on-chain
-  // event (see packActions.ts). Convert once to the Prisma string form so
-  // comparisons here match the 'CAW'/'FOLLOW'/... switch in processDomainEffects
-  // just below — keeps the two sibling functions working off the same vocabulary.
+  // Pre-resolve in parallel — single L1 round-trip latency for the whole
+  // set instead of serial. findOrCreateUser is idempotent + cached, so
+  // duplicates (sender == receiver) just hit the cache.
+  const senderPromise = findOrCreateUser(rawAction.senderId)
+  const receiverPromise = rawAction.receiverId
+    ? findOrCreateUser(rawAction.receiverId)
+    : Promise.resolve(undefined)
+  // rawAction.actionType is the raw enum *number* from the unpacked
+  // on-chain event (see packActions.ts). Convert once for tip-recipient
+  // pre-resolution.
   const type = getActionType(Number(rawAction.actionType))
-  // For FOLLOW/UNFOLLOW, receiverId is the followed user's tokenId — pre-resolve
-  // it so the handler's findOrCreateUser(receiverId) call inside the tx is a
-  // cache hit. For LIKE/RECAW, receiverId is the caw *owner*'s tokenId; we
-  // don't pre-resolve that because findCawId handles it inside the tx.
-  if ((type === 'FOLLOW' || type === 'UNFOLLOW') && rawAction.receiverId) {
-    receiverId = await findOrCreateUser(rawAction.receiverId)
-  }
+  const recipientPromise = (type === 'OTHER' && rawAction.recipients?.[0])
+    ? findOrCreateUser(Number(rawAction.recipients[0]))
+    : Promise.resolve(undefined)
+
+  const [authorId, receiverId] = await Promise.all([
+    senderPromise,
+    receiverPromise,
+    recipientPromise,
+  ])
   return { authorId, receiverId }
 }
 

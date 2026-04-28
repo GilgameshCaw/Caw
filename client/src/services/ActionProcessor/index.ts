@@ -157,12 +157,16 @@ async function handleRawAction(rawId: number, chainId: number, rawAction: RawAct
       // creation is idempotent, so it doesn't need tx semantics anyway.
       const resolved = await resolveActionUsers(rawAction)
 
+      // 15s tx timeout (default 5s) — safety net for slow Postgres bursts and
+      // pool-saturation waits. resolveActionUsers above eliminates the main
+      // hazard (RPC inside tx); this guards against the next-most-likely
+      // cause: contention on hot rows + pool exhaustion under load.
       await prisma.$transaction(async (tx) => {
         const { action, shouldProcessDomain } = await createOrFindAction(tx, rawId, chainId, rawAction)
         if (!shouldProcessDomain) return
         const validAction = await ensureActionExists(tx, rawId, action)
         await processDomainEffects(tx, validAction, rawAction, resolved)
-      })
+      }, { timeout: 15_000 })
     })
   } catch (err: any) {
     // If we hit a race condition, retry once to process the action created by another process
@@ -175,7 +179,7 @@ async function handleRawAction(rawId: number, chainId: number, rawAction: RawAct
           if (!shouldProcessDomain) return
           const validAction = await ensureActionExists(tx, rawId, action)
           await processDomainEffects(tx, validAction, rawAction, resolved)
-        })
+        }, { timeout: 15_000 })
         console.log('[ActionProcessor] Successfully processed action after race condition retry')
       } catch (retryErr) {
         console.error('[ActionProcessor] Failed to handle raw action after retry:', retryErr)
