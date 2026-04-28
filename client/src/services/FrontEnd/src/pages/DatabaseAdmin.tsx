@@ -518,18 +518,24 @@ const DatabaseAdmin: React.FC = () => {
             <table className="w-full text-sm">
               <thead>
                 <tr className={isDark ? 'bg-white/5' : 'bg-gray-50'}>
-                  {columns.map(col => (
-                    <th
-                      key={col}
-                      onClick={() => handleSort(col)}
-                      className={`px-3 py-2 text-left font-medium cursor-pointer select-none whitespace-nowrap ${muted} hover:${text}`}
-                    >
-                      {col}
-                      {sortField === col && (
-                        <span className="ml-1">{sortOrder === 'desc' ? '▼' : '▲'}</span>
-                      )}
-                    </th>
-                  ))}
+                  {columns.map(col => {
+                    // The txQueue `text` column can hold long post bodies;
+                    // cap it so the rest of the row stays readable.
+                    const isText = col === 'text'
+                    return (
+                      <th
+                        key={col}
+                        onClick={() => handleSort(col)}
+                        style={isText ? { width: 100, maxWidth: 100 } : undefined}
+                        className={`px-3 py-2 text-left font-medium cursor-pointer select-none whitespace-nowrap ${muted} hover:${text}`}
+                      >
+                        {col}
+                        {sortField === col && (
+                          <span className="ml-1">{sortOrder === 'desc' ? '▼' : '▲'}</span>
+                        )}
+                      </th>
+                    )
+                  })}
                 </tr>
               </thead>
               <tbody className={isDark ? 'divide-y divide-white/5' : 'divide-y divide-gray-100'}>
@@ -550,8 +556,14 @@ const DatabaseAdmin: React.FC = () => {
                         const val = record[col]
                         const isStatus = col === 'status' || col === 'action'
                         const statusCls = isStatus && typeof val === 'string' ? statusColor(val) : ''
+                        const isText = col === 'text'
                         return (
-                          <td key={col} className={`px-3 py-2 whitespace-nowrap ${text}`}>
+                          <td
+                            key={col}
+                            style={isText ? { width: 100, maxWidth: 100 } : undefined}
+                            className={`px-3 py-2 whitespace-nowrap ${text} ${isText ? 'overflow-hidden text-ellipsis' : ''}`}
+                            title={isText && typeof val === 'string' ? val : undefined}
+                          >
                             {statusCls ? (
                               <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${statusCls}`}>
                                 {val}
