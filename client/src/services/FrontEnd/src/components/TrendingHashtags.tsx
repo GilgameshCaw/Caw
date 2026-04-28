@@ -61,11 +61,15 @@ const TrendingHashtags: React.FC = () => {
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center">
-              <span className={`font-medium transition-colors duration-200 ${
-                isDark
-                  ? 'text-gray-300 group-hover:text-white'
-                  : 'text-gray-600 group-hover:text-black'
-              }`}>
+              <span
+                className={`font-medium block overflow-hidden whitespace-nowrap transition-colors duration-200 ${
+                  isDark
+                    ? 'text-gray-300 group-hover:text-white'
+                    : 'text-gray-600 group-hover:text-black'
+                }`}
+                style={{ maxWidth: 132, textOverflow: 'ellipsis' }}
+                title={`#${item.name}`}
+              >
                 #{item.name}
               </span>
             </div>
