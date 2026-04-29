@@ -250,6 +250,22 @@ function getDelegate(model: string): any {
   return (prisma as any)[model]
 }
 
+// Resolve the (idField, idValue) pair for a model + url param.
+// validatorSetting + chainData use `key` as PK; everything else uses `id`.
+// Don't pre-coerce to Number unconditionally — some models (Message,
+// Conversation) use UUID String PKs, and Number("some-uuid") = NaN crashed
+// findUnique with a Prisma type error (the original "click on a single
+// message → 500" bug). Numeric-looking IDs coerce to Int; anything else
+// passes through as a string and Prisma rejects type mismatches cleanly.
+function resolveIdForLookup(model: string, id: string): { idField: string; idValue: string | number } {
+  const idField = model === 'validatorSetting' || model === 'chainData' ? 'key' : 'id'
+  let idValue: string | number = id
+  if (idField === 'id' && /^-?\d+$/.test(id)) {
+    idValue = Number(id)
+  }
+  return { idField, idValue }
+}
+
 /**
  * GET /api/admin/db/models
  * Returns the list of available models and their metadata.
@@ -392,12 +408,12 @@ router.get('/:model/:id', async (req, res) => {
   }
 
   const delegate = getDelegate(model)
+  if (!delegate) {
+    return res.status(404).json({ error: `Model ${model} not found in Prisma client` })
+  }
 
   try {
-    // Determine the ID field and type
-    const idField = model === 'validatorSetting' || model === 'chainData' ? 'key' : 'id'
-    const idValue = idField === 'key' ? id : Number(id)
-
+    const { idField, idValue } = resolveIdForLookup(model, id)
     const record = await delegate.findUnique({
       where: { [idField]: idValue },
     })
@@ -442,9 +458,7 @@ router.patch('/:model/:id', async (req, res) => {
   delete data.createdAt
 
   try {
-    const idField = model === 'validatorSetting' || model === 'chainData' ? 'key' : 'id'
-    const idValue = idField === 'key' ? id : Number(id)
-
+    const { idField, idValue } = resolveIdForLookup(model, id)
     const record = await delegate.update({
       where: { [idField]: idValue },
       data,
@@ -479,9 +493,7 @@ router.delete('/:model/:id', async (req, res) => {
   const delegate = getDelegate(model)
 
   try {
-    const idField = model === 'validatorSetting' || model === 'chainData' ? 'key' : 'id'
-    const idValue = idField === 'key' ? id : Number(id)
-
+    const { idField, idValue } = resolveIdForLookup(model, id)
     await delegate.delete({
       where: { [idField]: idValue },
     })
