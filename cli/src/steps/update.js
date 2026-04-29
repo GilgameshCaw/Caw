@@ -274,8 +274,14 @@ function readDatabaseUrl(installDir) {
  * Phase 3: pull, then run yarn install if package.json or yarn.lock changed
  * in the pull. Returns { feChanged } so the caller can decide about the FE
  * build step.
+ *
+ * `rebuild`: bypass the change-detection skips. Forces yarn install in both
+ * the API dir and the FE dir, treats FE as changed, and re-runs prisma
+ * generate. Used for recovering from a partial failure where a previous
+ * `caw update` got far enough to git-pull but bailed before yarn / build /
+ * restart finished.
  */
-export async function applyCodeUpdate(installDir, prevHead) {
+export async function applyCodeUpdate(installDir, prevHead, { rebuild = false } = {}) {
   const spinner = ora('Fast-forwarding to origin...').start()
   try {
     run(`git -C ${installDir} pull --ff-only`, { stdio: 'pipe' })
@@ -301,25 +307,52 @@ export async function applyCodeUpdate(installDir, prevHead) {
     changed = ['package.json', 'client/src/services/FrontEnd/_changed_']
   }
 
-  const yarnLockChanged = changed.some(f => f.endsWith('yarn.lock') || f.endsWith('package.json'))
+  // Detect changes that gate the heavier rebuild steps. Look at BOTH the
+  // API package.json/yarn.lock AND the FE one — they're separate trees.
+  // Earlier versions only checked the API dir, so a FE-only dep change
+  // (e.g. adding @emoji-mart/react) silently skipped FE yarn install
+  // and the next FE build failed to resolve the new import.
+  const apiYarnChanged = changed.some(f =>
+    f === 'client/yarn.lock' || f === 'client/package.json'
+  )
+  const feYarnChanged = changed.some(f =>
+    f === 'client/src/services/FrontEnd/yarn.lock' ||
+    f === 'client/src/services/FrontEnd/package.json'
+  )
   const prismaChanged = changed.some(f => f.startsWith('client/prisma/'))
-  const feChanged = changed.some(f => f.startsWith('client/src/services/FrontEnd/'))
+  const feChanged = rebuild || changed.some(f => f.startsWith('client/src/services/FrontEnd/'))
 
-  if (yarnLockChanged) {
-    const sp = ora('Installing dependencies (yarn changed)...').start()
+  if (apiYarnChanged || rebuild) {
+    const sp = ora('Installing API dependencies...').start()
     try {
       sp.stop()
       runAsInstallUser(`yarn install --frozen-lockfile`, { cwd: path.join(installDir, 'client') })
-      console.log(success('  Dependencies up to date'))
+      console.log(success('  API dependencies up to date'))
     } catch (e) {
-      sp.fail('yarn install failed')
+      sp.fail('yarn install (API) failed')
       throw e
     }
   } else {
-    console.log(dim('  Dependencies unchanged — skipping yarn install'))
+    console.log(dim('  API dependencies unchanged — skipping yarn install'))
   }
 
-  if (prismaChanged) {
+  if (feYarnChanged || rebuild) {
+    const sp = ora('Installing frontend dependencies...').start()
+    try {
+      sp.stop()
+      runAsInstallUser(`yarn install --frozen-lockfile`, {
+        cwd: path.join(installDir, 'client/src/services/FrontEnd'),
+      })
+      console.log(success('  Frontend dependencies up to date'))
+    } catch (e) {
+      sp.fail('yarn install (FE) failed')
+      throw e
+    }
+  } else {
+    console.log(dim('  Frontend dependencies unchanged — skipping yarn install'))
+  }
+
+  if (prismaChanged || rebuild) {
     const sp = ora('Regenerating Prisma client...').start()
     try {
       sp.stop()
@@ -533,16 +566,26 @@ export async function runUpdate(installDir, opts = {}) {
   const prevHead = runCapture(`git -C ${installDir} rev-parse HEAD`, { stdio: 'pipe' })
   const { incoming, dirty, upstream } = await previewUpdate(installDir)
 
-  if (incoming.length === 0) {
+  // --rebuild: re-run the full post-pull pipeline (yarn install, prisma
+  // generate, FE build, pm2 restart) even when there are no new commits.
+  // Recovers from a previous run that pulled the code but bailed before
+  // the dependent steps finished — common when the first run fails
+  // mid-deploy and the second sees "Already at latest" and short-circuits.
+  if (incoming.length === 0 && !opts.rebuild) {
     console.log(success(`  Already at latest (${dim(upstream)})`))
     return
   }
+  if (incoming.length === 0 && opts.rebuild) {
+    console.log(dim(`  Already at latest (${upstream}) — re-running post-pull steps anyway (--rebuild)`))
+  }
 
-  console.log()
-  console.log(brand(`  ${incoming.length} commit${incoming.length === 1 ? '' : 's'} to apply:`))
-  for (const line of incoming.slice(0, 20)) console.log(dim(`    ${line}`))
-  if (incoming.length > 20) console.log(dim(`    ... +${incoming.length - 20} more`))
-  console.log()
+  if (incoming.length > 0) {
+    console.log()
+    console.log(brand(`  ${incoming.length} commit${incoming.length === 1 ? '' : 's'} to apply:`))
+    for (const line of incoming.slice(0, 20)) console.log(dim(`    ${line}`))
+    if (incoming.length > 20) console.log(dim(`    ... +${incoming.length - 20} more`))
+    console.log()
+  }
 
   if (dirty) {
     console.log(warn('  ⚠ Working tree has uncommitted changes to tracked files.'))
@@ -568,9 +611,12 @@ export async function runUpdate(installDir, opts = {}) {
 
   // Confirmation gate. --yes skips for headless runs.
   if (!opts.yes) {
+    const message = incoming.length > 0
+      ? 'Apply these updates?'
+      : 'Re-run yarn install + build + restart?'
     const { confirm } = await inquirer.prompt([{
       type: 'confirm', name: 'confirm',
-      message: 'Apply these updates?',
+      message,
       default: true,
     }])
     if (!confirm) {
@@ -580,7 +626,7 @@ export async function runUpdate(installDir, opts = {}) {
   }
 
   // ---- Apply phase ----
-  const codeResult = await applyCodeUpdate(installDir, prevHead)
+  const codeResult = await applyCodeUpdate(installDir, prevHead, { rebuild: !!opts.rebuild })
 
   // Re-plan migrations: the pull may have added new ones we haven't seen.
   // We don't currently surface "new since the pull" separately — the

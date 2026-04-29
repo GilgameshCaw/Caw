@@ -379,6 +379,7 @@ program
   .option('--dir <path>', 'Installation directory', ROOT_DIR)
   .option('--yes', 'Skip the confirmation prompt (for headless / cron use)')
   .option('--force', 'Allow destructive migrations (DROP TABLE, DROP COLUMN, etc) — USE WITH CARE')
+  .option('--rebuild', 'Re-run yarn install + prisma generate + FE build + restart even if there are no new commits (recovery from a partial previous run)')
   .option('--no-migrations', 'Skip the migration apply phase')
   .option('--no-restart', 'Skip the pm2 restart phase')
   .action(async (opts) => {
@@ -387,6 +388,7 @@ program
       await runUpdate(installDir, {
         yes: opts.yes,
         force: opts.force,
+        rebuild: opts.rebuild,
         skipMigrations: opts.migrations === false,
         skipRestart: opts.restart === false,
       })
