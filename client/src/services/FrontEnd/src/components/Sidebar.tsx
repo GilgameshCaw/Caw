@@ -25,6 +25,8 @@ import {
   HiOutlineColorSwatch,
   HiOutlineUser,
   HiOutlinePencilAlt,
+  HiOutlineSun,
+  HiOutlineMoon,
 } from 'react-icons/hi'
 import cawLogo from '~/assets/images/caw-logo.png'
 import { useInstanceStore } from '~/store/instanceStore'
@@ -333,6 +335,18 @@ const Sidebar: React.FC = () => {
 
       <div className="pl-3 pr-0 mt-2 pb-0 sm:pl-4 sm:pr-0 sm:py-3 sm:mt-0 w-full shrink-0">
         <ProfileChooser compact />
+        {/* Theme toggle — mobile only (desktop has it elsewhere) */}
+        <button
+          type="button"
+          onClick={toggle}
+          aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+          className={`sm:hidden -ml-1 mt-8 mb-4 mr-3 flex items-center gap-2.5 pl-2 pr-3 py-2 rounded-2xl transition-colors duration-200 ${
+            isDark ? 'text-gray-300 hover:text-white hover:bg-white/10' : 'text-gray-600 hover:text-black hover:bg-gray-200/50'
+          }`}
+        >
+          {isDark ? <HiOutlineSun className="w-6 h-6" /> : <HiOutlineMoon className="w-6 h-6" />}
+          <span className="font-medium text-base">{isDark ? 'Light mode' : 'Dark mode'}</span>
+        </button>
       </div>
     </div>
   )

@@ -1175,7 +1175,7 @@ const MessagesPage: React.FC = () => {
         {currentView === 'chat' && selectedConversationId && (
           <div className="flex flex-col flex-1 md:flex-1 h-screen md:h-auto">
             {/* Encryption Status Banner */}
-            <div className={`flex items-center justify-center py-4 px-6 -mx-3 sm:-mx-6 ${
+            <div className={`flex items-center justify-center py-4 px-6 mx-3 sm:mx-6 ${
               isDark ? 'bg-green-900/20 border-b border-green-800/30' : 'bg-green-50 border-b border-green-200'
             }`}>
               <div className="flex items-center space-x-2">

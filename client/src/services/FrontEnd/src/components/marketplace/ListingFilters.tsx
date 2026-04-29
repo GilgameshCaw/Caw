@@ -2,6 +2,7 @@ import React from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { themeTextSecondary, themeBgSubtle, themeBorder, themeInput } from '~/utils/theme'
 import { useMarketplaceStore, ListingType, PaymentToken, SortOption } from '~/store/marketplaceStore'
+import ThemedListbox from '~/components/forms/ThemedListbox'
 
 const LISTING_TYPES: { value: ListingType; label: string }[] = [
   { value: 'all', label: 'All Types' },
@@ -37,24 +38,22 @@ const ListingFilters: React.FC = () => {
     <div className={`grid grid-cols-1 sm:grid-cols-2 gap-3 p-4 rounded-xl ${themeBgSubtle(isDark)} ${themeBorder(isDark)} border`}>
       <div className="flex flex-col gap-1">
         <label className={`text-xs font-medium ${themeTextSecondary(isDark)}`}>Type</label>
-        <select
+        <ThemedListbox
+          isDark={isDark}
           value={filters.listingType}
-          onChange={e => setFilter('listingType', e.target.value as ListingType)}
-          className={selectClass}
-        >
-          {LISTING_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-        </select>
+          onChange={(v: ListingType) => setFilter('listingType', v)}
+          options={LISTING_TYPES}
+        />
       </div>
 
       <div className="flex flex-col gap-1">
         <label className={`text-xs font-medium ${themeTextSecondary(isDark)}`}>Payment</label>
-        <select
+        <ThemedListbox
+          isDark={isDark}
           value={filters.paymentToken}
-          onChange={e => setFilter('paymentToken', e.target.value as PaymentToken)}
-          className={selectClass}
-        >
-          {PAYMENT_TOKENS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-        </select>
+          onChange={(v: PaymentToken) => setFilter('paymentToken', v)}
+          options={PAYMENT_TOKENS}
+        />
       </div>
 
       <div className="flex flex-col gap-1">
@@ -84,13 +83,12 @@ const ListingFilters: React.FC = () => {
 
       <div className="flex flex-col gap-1">
         <label className={`text-xs font-medium ${themeTextSecondary(isDark)}`}>Sort</label>
-        <select
+        <ThemedListbox
+          isDark={isDark}
           value={filters.sort}
-          onChange={e => setFilter('sort', e.target.value as SortOption)}
-          className={selectClass}
-        >
-          {SORT_OPTIONS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-        </select>
+          onChange={(v: SortOption) => setFilter('sort', v)}
+          options={SORT_OPTIONS}
+        />
       </div>
     </div>
   )

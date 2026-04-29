@@ -8,8 +8,9 @@ import BugIcon from "~/components/icons/BugIcon";
 import { useTheme } from "~/hooks/useTheme";
 import Tooltip from "~/components/Tooltip";
 import { useState, lazy, Suspense } from "react";
-import { HiOutlineMenu, HiOutlineX } from "react-icons/hi";
+import { HiOutlineMenu, HiOutlineX, HiOutlinePencilAlt } from "react-icons/hi";
 import { Link, useLocation } from "react-router-dom";
+import { useModalStore } from "~/store";
 import { useActiveToken } from "~/store/tokenDataStore";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { useAccount } from "wagmi";
@@ -31,6 +32,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
   const activeToken = useActiveToken()
   const { isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
+  const openModal = useModalStore(s => s.openModal)
 
   // Captive mode: no username and on a public page like /help/*
   const isCaptive = !activeToken?.username
@@ -76,7 +78,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
       {/* Mobile Sidebar Overlay */}
       {!hideSidebars && (
         <div
-          className={`md:hidden fixed inset-0 z-40 transition-all duration-300 ${
+          className={`md:hidden fixed inset-0 z-[70] transition-all duration-300 ${
             isMobileMenuOpen ? 'bg-black/50 opacity-100' : 'bg-black/0 opacity-0 pointer-events-none'
           }`}
           onClick={() => setIsMobileMenuOpen(false)}
@@ -191,6 +193,22 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
             )}
           </div>
         </div>
+      )}
+
+      {/* Mobile compose FAB */}
+      {!hideSidebars && !isCaptive && !(
+        location.pathname.startsWith('/messages') ||
+        location.pathname.startsWith('/usernames') ||
+        location.pathname.startsWith('/staking') ||
+        location.pathname.startsWith('/settings')
+      ) && (
+        <button
+          onClick={() => openModal('post')}
+          aria-label="Post"
+          className="md:hidden fixed right-10 bottom-12 z-[60] w-16 h-16 rounded-full bg-yellow-500 hover:bg-yellow-400 active:bg-yellow-600 text-black flex items-center justify-center shadow-lg shadow-black/30 transition-all cursor-pointer"
+        >
+          <HiOutlinePencilAlt className="w-8 h-8" />
+        </button>
       )}
 
       {/* Floating feedback button */}

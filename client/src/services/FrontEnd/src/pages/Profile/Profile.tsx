@@ -1177,7 +1177,7 @@ export const Profile: React.FC = () => {
                             onClick={() => setShowOwnProfileMenu(false)}
                           />
                           <div className={`absolute right-0 top-full mt-2 w-48 rounded-lg shadow-lg z-50 overflow-hidden ${
-                            isDark ? 'bg-gray-900 border border-white/20' : 'bg-white border border-gray-200'
+                            isDark ? 'bg-black border border-white/20' : 'bg-white border border-gray-200'
                           }`}>
                             <button
                               onClick={() => {
