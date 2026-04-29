@@ -3,7 +3,7 @@
   <!-- Brand-yellow circle that fills the full icon canvas. Android's
        circular and squircle home-screen masks are inscribed in this
        full-bleed circle, so the colored fill always reaches the edge. -->
-  <circle cx="512" cy="512" r="512" fill="#E4C25D"/>
+  <circle cx="512" cy="512" r="512" fill="#EBC046"/>
   <!-- Logo sized so its height fills 80% of the canvas vertically.
        Source viewBox is 436.65 × 450.02. Scale = (1024 × 0.8) / 450.02
        ≈ 1.8204 → glyph height 819.2px, width 794.78px. Horizontal margin
