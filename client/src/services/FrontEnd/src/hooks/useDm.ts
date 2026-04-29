@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useWalletClient } from 'wagmi'
-import { apiFetch, API_HOST, getAuthHeaders } from '~/api/client'
+import { apiFetch, API_HOST, getAuthHeaders, retryOnIndexing } from '~/api/client'
 import { useAuthStore } from '~/store/authStore'
 import { useVerifyWallet } from '~/hooks/useVerifyWallet'
 import {
@@ -283,29 +283,31 @@ export function useDmClient(tokenId?: number, username?: string) {
       // If identity already exists on server, just re-derive keys — no need to
       // re-register or re-verify auth (avoids logging out the other account)
       if (!needsKeyDerivation) {
-        // Fresh setup — use the DM signature for both auth + identity registration
+        // Fresh setup — use the DM signature for both auth + identity registration.
+        //
+        // Tier 3 of the "RPC out of API request handlers" refactor:
+        // /api/auth/verify-dm now returns 202 when the User row or
+        // ownership isn't indexed yet (fresh mint, fresh transfer).
+        // retryOnIndexing handles the backoff loop transparently.
         console.log('[DM] Fresh setup — calling verify-dm (combined auth + DM registration)...')
         const sessionToken = useAuthStore.getState().sessionToken
-        const res = await fetch(`${API_HOST}/api/auth/verify-dm`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(sessionToken ? { 'x-session-token': sessionToken } : {}),
-          },
-          body: JSON.stringify({
-            signature: rawSignature,
-            message: sigMessage,
-            userId: tokenId,
-            publicKey: publicKeyHex
+        const data = await retryOnIndexing(() =>
+          apiFetch<{
+            sessionToken: string
+            authorizedTokenIds: number[]
+            authorizedAddresses: string[]
+            expiresAt: number
+          }>('/api/auth/verify-dm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              signature: rawSignature,
+              message: sigMessage,
+              userId: tokenId,
+              publicKey: publicKeyHex
+            })
           })
-        })
-
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}))
-          throw new Error(data.error || 'Failed to verify wallet and register DM identity')
-        }
-
-        const data = await res.json()
+        )
 
         // Update auth store with session from the combined endpoint
         if (sessionToken && data.sessionToken === sessionToken) {

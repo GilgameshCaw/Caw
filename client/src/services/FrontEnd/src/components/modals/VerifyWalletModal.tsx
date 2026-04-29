@@ -6,7 +6,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { themeText, themeTextSecondary, themeSecondaryButton } from '~/utils/theme'
 import { useVerifyWalletStore } from '~/store/verifyWalletStore'
 import { useAuthStore } from '~/store/authStore'
-import { API_HOST } from '~/api/client'
+import { apiFetch, retryOnIndexing } from '~/api/client'
 
 const VerifyWalletModal: React.FC = () => {
   const { isDark } = useTheme()
@@ -29,21 +29,21 @@ const VerifyWalletModal: React.FC = () => {
 
         const signature = await signMessageAsync({ message })
 
-        const res = await fetch(`${API_HOST}/api/auth/verify`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...(sessionToken ? { 'x-session-token': sessionToken } : {}),
-          },
-          body: JSON.stringify({ message, signature }),
-        })
-
-        if (!res.ok) {
-          const data = await res.json().catch(() => ({}))
-          throw new Error(data.error || 'Verification failed')
-        }
-
-        const data = await res.json()
+        // Tier 3 of the "RPC out of API request handlers" refactor:
+        // /api/auth/verify returns 202 when ownership isn't indexed yet
+        // (fresh transfer). retryOnIndexing backs off and retries.
+        const data = await retryOnIndexing(() =>
+          apiFetch<{
+            sessionToken: string
+            authorizedTokenIds: number[]
+            authorizedAddresses: string[]
+            expiresAt: number
+          }>('/api/auth/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message, signature }),
+          })
+        )
 
         if (sessionToken && data.sessionToken === sessionToken) {
           addAuthorization(data.authorizedTokenIds, data.authorizedAddresses)
