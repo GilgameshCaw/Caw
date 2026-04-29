@@ -1,5 +1,31 @@
 #!/usr/bin/env node
 
+// Defensive Node-version check. Operators occasionally run the CLI via
+// `sudo node ...`, which strips $PATH and falls back to root's system
+// Node — often years older than what nvm has set up in their shell. The
+// resulting "ReferenceError: structuredClone is not defined" or
+// "SyntaxError: ?? unexpected" is opaque; a clear error here saves the
+// detour. Bail out fast on <20.
+{
+  const major = Number(process.versions.node.split('.')[0])
+  if (Number.isFinite(major) && major < 20) {
+    const which = (() => {
+      try { return require('child_process').execSync('command -v node', { stdio: ['ignore','pipe','ignore'], shell: '/bin/bash' }).toString().trim() }
+      catch { return process.execPath }
+    })()
+    process.stderr.write(
+      `\nNode ${process.versions.node} is too old — this CLI needs Node 20+.\n` +
+      `Running: ${which}\n\n` +
+      `If you have a newer Node via nvm: sudo strips your PATH so it doesn't see it.\n` +
+      `Either:\n` +
+      `  • Use sudo -E so your env (and PATH) carry through:\n` +
+      `      sudo -E env "PATH=$PATH" node cli/bin/caw.js install --env client/.env\n` +
+      `  • Or run without sudo and let the CLI prompt for sudo where it needs it.\n`
+    )
+    process.exit(1)
+  }
+}
+
 import { Command } from 'commander'
 import { execSync } from 'child_process'
 import fs from 'fs'
