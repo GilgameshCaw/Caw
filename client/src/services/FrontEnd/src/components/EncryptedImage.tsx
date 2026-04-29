@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { decryptBinary } from '~/services/DmCryptoService'
+import ImageLightbox from './ImageLightbox'
 
 interface EncryptedImageProps {
   url: string
@@ -16,6 +17,7 @@ const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sharedSecret, mime
   const [objectUrl, setObjectUrl] = useState<string | null>(null)
   const [error, setError] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [lightboxOpen, setLightboxOpen] = useState(false)
 
   useEffect(() => {
     if (!sharedSecret) return
@@ -78,7 +80,30 @@ const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sharedSecret, mime
       />
     )
   }
-  return <img src={objectUrl} alt={alt} className={className || 'max-w-[240px] max-h-[240px] rounded-lg object-contain'} loading="lazy" />
+  // Image case: click to open the lightbox. We re-use the same blob URL
+  // for the modal — the data is already decrypted in memory, no need to
+  // re-fetch + re-decrypt. No `largeSrc` because encrypted attachments
+  // only have one variant (server can't recompress an opaque blob).
+  return (
+    <>
+      <img
+        src={objectUrl}
+        alt={alt}
+        className={`${className || 'max-w-[240px] max-h-[240px] rounded-lg object-contain'} cursor-zoom-in`}
+        loading="lazy"
+        onClick={(e) => {
+          e.stopPropagation()
+          setLightboxOpen(true)
+        }}
+      />
+      <ImageLightbox
+        src={objectUrl}
+        alt={alt}
+        isOpen={lightboxOpen}
+        onClose={() => setLightboxOpen(false)}
+      />
+    </>
+  )
 }
 
 export default EncryptedImage

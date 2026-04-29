@@ -3,8 +3,10 @@ import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import LinkPreview from './LinkPreview'
 import Tooltip from '~/components/Tooltip'
+import ImageLightbox from './ImageLightbox'
 import { useCachedFetch } from '~/hooks/useCachedFetch'
 import { useTheme } from '~/hooks/useTheme'
+import { feedImageLargeUrl } from '~/utils/imageVariants'
 import { TAG_CHAR_CLASS } from '~/../../../tools/hashtagRegex'
 
 // Caches. Keyed by `${host}|${code}` so cross-node short URLs with the
@@ -50,20 +52,38 @@ const ShortUrlImage: React.FC<{
     (data: { originalUrl: string }) => data.originalUrl
   )
 
+  const [lightboxOpen, setLightboxOpen] = useState(false)
+
   if (loading) return <MediaSkeleton />
   if (!originalUrl || imageErrors.has(originalUrl)) return null
 
+  // feedImageLargeUrl returns undefined for URLs outside /uploads/images/,
+  // and the lightbox falls back to `src` if the variant 404s — so it's
+  // safe to pass through unconditionally.
+  const largeSrc = feedImageLargeUrl(originalUrl)
+
   return (
-    <div className="my-2 max-w-full">
-      <img
+    <>
+      <div className="my-2 max-w-full">
+        <img
+          src={originalUrl}
+          alt="Embedded content"
+          className="max-w-full max-h-96 rounded-lg object-contain cursor-zoom-in"
+          loading="lazy"
+          onError={() => onError(originalUrl)}
+          onClick={(e) => {
+            e.stopPropagation()
+            setLightboxOpen(true)
+          }}
+        />
+      </div>
+      <ImageLightbox
         src={originalUrl}
-        alt="Embedded content"
-        className="max-w-full max-h-96 rounded-lg object-contain"
-        loading="lazy"
-        onError={() => onError(originalUrl)}
-        onClick={(e) => e.stopPropagation()}
+        largeSrc={largeSrc}
+        isOpen={lightboxOpen}
+        onClose={() => setLightboxOpen(false)}
       />
-    </div>
+    </>
   )
 }
 
@@ -157,6 +177,9 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
     ? 'text-yellow-400 hover:text-yellow-300'
     : 'text-amber-800 hover:text-amber-900'
   const [imageErrors, setImageErrors] = useState<Set<string>>(new Set())
+  // One lightbox slot for the whole post — clicking any inline image
+  // sets it; the modal closes on Esc / backdrop / swipe down.
+  const [lightbox, setLightbox] = useState<{ src: string; largeSrc?: string } | null>(null)
 
   const handleHashtagClick = (hashtag: string, event: React.MouseEvent) => {
     event.preventDefault()
@@ -463,15 +486,21 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
           />
         )
       } else if (media.type === 'image') {
+        const url = media.data
+        // External images don't have variants — the inline render IS the
+        // biggest version we have. Lightbox just gives full-viewport space.
         result.push(
           <div key={`img-${idx}`} className="my-2 max-w-full">
             <img
-              src={media.data}
+              src={url}
               alt="Embedded content"
-              className="max-w-full max-h-96 rounded-lg object-contain"
+              className="max-w-full max-h-96 rounded-lg object-contain cursor-zoom-in"
               loading="lazy"
-              onError={() => handleImageError(media.data)}
-              onClick={(e) => e.stopPropagation()}
+              onError={() => handleImageError(url)}
+              onClick={(e) => {
+                e.stopPropagation()
+                setLightbox({ src: url, largeSrc: feedImageLargeUrl(url) })
+              }}
             />
           </div>
         )
@@ -484,6 +513,14 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
   return (
     <div className={`break-words ${className}`}>
       {parseContent(content)}
+      {lightbox && (
+        <ImageLightbox
+          src={lightbox.src}
+          largeSrc={lightbox.largeSrc}
+          isOpen={true}
+          onClose={() => setLightbox(null)}
+        />
+      )}
     </div>
   )
 }
