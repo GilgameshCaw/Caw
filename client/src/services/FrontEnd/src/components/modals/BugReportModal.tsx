@@ -4,6 +4,7 @@ import ModalHeader from './ModalHeader'
 import { useTheme } from '~/hooks/useTheme'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { apiFetch } from '~/api/client'
+import { uploadMedia } from '~/api/upload'
 import { useFormSubmit } from '~/hooks/useFormSubmit'
 import { HiOutlineX } from 'react-icons/hi'
 import { themeBgSubtle, themeInput } from '~/utils/theme'
@@ -75,22 +76,7 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
     }
 
     formSubmit(async () => {
-      let imageUrls: string[] = []
-      if (images.length > 0) {
-        const formData = new FormData()
-        images.forEach(img => formData.append('media', img))
-        formData.append('tokenId', String(activeToken?.tokenId || 0))
-
-        const { getAuthHeaders } = await import('~/api/client')
-        const uploadRes = await fetch('/api/upload', {
-          method: 'POST',
-          headers: getAuthHeaders(),
-          body: formData
-        })
-        if (!uploadRes.ok) throw new Error('Image upload failed')
-        const uploadData = await uploadRes.json()
-        imageUrls = uploadData.urls || []
-      }
+      const imageUrls = await uploadMedia(images, activeToken?.tokenId || 0, 'report')
 
       await apiFetch('/api/bug-reports', {
         method: 'POST',

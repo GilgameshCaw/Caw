@@ -1,10 +1,49 @@
-import { apiFetch } from './client'
+import { apiFetch, getAuthHeaders } from './client'
+import { compressImages, type CompressionPreset } from '~/utils/compressImage'
 
 export interface UploadImageResponse {
   success: boolean
   url?: string
   urls?: string[]
   error?: string
+}
+
+/**
+ * Upload one or more files (images or videos) via multipart /api/upload.
+ * Image files are compressed client-side per the chosen preset before upload.
+ * Videos pass through unchanged. Non-image files are rejected by the server's
+ * MIME allowlist.
+ *
+ * Centralized so the compress→FormData→fetch dance lives in exactly one
+ * place. Also dodges a class of 500s from iPhone HEIC uploads — the canvas
+ * re-encode in compressImage() turns HEIC into WebP, which the server allows.
+ */
+export async function uploadMedia(
+  files: File[],
+  tokenId: number,
+  preset: CompressionPreset = 'feed',
+): Promise<string[]> {
+  if (files.length === 0) return []
+
+  const compressed = await compressImages(files, preset)
+
+  const formData = new FormData()
+  compressed.forEach(file => formData.append('media', file))
+  formData.append('tokenId', String(tokenId))
+
+  const res = await fetch('/api/upload', {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: formData,
+  })
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Upload failed' }))
+    throw new Error(err.error || `Upload failed (${res.status})`)
+  }
+
+  const data = await res.json()
+  return data.urls || []
 }
 
 /**

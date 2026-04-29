@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { HiCamera, HiLink, HiLocationMarker } from 'react-icons/hi'
 import Tooltip from '~/components/Tooltip'
-import { apiFetch, getAuthHeaders } from '~/api/client'
+import { apiFetch } from '~/api/client'
 import { useSignAndSubmitAction } from '~/api/actions'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
@@ -124,19 +124,12 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
     setProfileError(null)
     setIsUploading(true)
     try {
-      const uploadFormData = new FormData()
-      uploadFormData.append('media', file)
-      uploadFormData.append('tokenId', String(activeToken?.tokenId || 0))
-
-      const response = await fetch('/api/upload', {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: uploadFormData,
-      })
-      if (!response.ok) throw new Error('Upload failed')
-      const data = await response.json()
-      if (!data.urls || !data.urls[0]) throw new Error('No URL returned from upload')
-      const imageUrl = data.urls[0]
+      // Avatars get the smaller preset (256px max) since they're never
+      // displayed bigger; covers use the feed preset (1024px max).
+      const { uploadMedia } = await import('~/api/upload')
+      const urls = await uploadMedia([file], activeToken?.tokenId || 0, type === 'avatar' ? 'avatar' : 'feed')
+      if (!urls[0]) throw new Error('No URL returned from upload')
+      const imageUrl = urls[0]
 
       if (type === 'avatar') {
         const reader = new FileReader()

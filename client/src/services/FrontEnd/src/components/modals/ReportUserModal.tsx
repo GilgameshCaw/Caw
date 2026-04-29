@@ -1,7 +1,8 @@
 import React, { useState, useRef } from 'react'
 import { HiFlag, HiOutlinePhotograph, HiOutlineX } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
-import { apiFetch, getAuthHeaders } from '~/api/client'
+import { apiFetch } from '~/api/client'
+import { uploadMedia } from '~/api/upload'
 import ModalWrapper from './ModalWrapper'
 
 export type ReportReason = 'SPAM' | 'HARASSMENT' | 'INAPPROPRIATE' | 'SCAM' | 'OTHER'
@@ -58,24 +59,7 @@ const ReportUserModal: React.FC<ReportUserModalProps> = ({ isOpen, onClose, user
     setError(null)
 
     try {
-      // Upload images first if any
-      let imageUrls: string[] = []
-      if (images.length > 0) {
-        const formData = new FormData()
-        images.forEach(img => formData.append('media', img.file))
-        formData.append('type', 'image')
-        formData.append('tokenId', '0') // system upload
-
-        const uploadRes = await fetch('/api/upload', {
-          method: 'POST',
-          headers: getAuthHeaders(),
-          body: formData,
-        })
-        if (uploadRes.ok) {
-          const uploadData = await uploadRes.json()
-          imageUrls = uploadData.urls || []
-        }
-      }
+      const imageUrls = await uploadMedia(images.map(i => i.file), 0, 'report')
 
       // Submit the report
       await apiFetch('/api/reports/user', {

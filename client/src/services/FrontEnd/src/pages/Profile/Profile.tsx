@@ -474,28 +474,10 @@ export const Profile: React.FC = () => {
     setIsUploading(true)
 
     try {
-      // Upload image to server
-      const uploadFormData = new FormData()
-      uploadFormData.append('media', file)
-      uploadFormData.append('tokenId', String(activeToken?.tokenId || 0))
-
-      const { getAuthHeaders } = await import('~/api/client')
-      const response = await fetch('/api/upload', {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: uploadFormData
-      })
-
-      if (!response.ok) throw new Error('Upload failed')
-
-      const data = await response.json()
-
-      // Backend returns { urls: [...] } for the /api/upload endpoint
-      if (!data.urls || !data.urls[0]) {
-        throw new Error('No URL returned from upload')
-      }
-
-      const imageUrl = data.urls[0]
+      const { uploadMedia } = await import('~/api/upload')
+      const urls = await uploadMedia([file], activeToken?.tokenId || 0, type === 'avatar' ? 'avatar' : 'feed')
+      if (!urls[0]) throw new Error('No URL returned from upload')
+      const imageUrl = urls[0]
 
       // Set both preview and URL
       if (type === 'avatar') {

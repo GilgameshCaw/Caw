@@ -564,26 +564,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     }, 0)
   }
 
-  // Helper function to upload media files
-  const uploadMedia = async (files: File[], type: 'image' | 'video', tokenId: number) => {
-    const formData = new FormData()
-    files.forEach(file => formData.append('media', file))
-    formData.append('type', type)
-    formData.append('tokenId', tokenId.toString())
-
-    const { getAuthHeaders } = await import('~/api/client')
-    const response = await fetch('/api/upload', {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: formData
-    })
-
-    if (!response.ok) {
-      const text = await response.text()
-      throw new Error(`Upload failed: ${text}`)
-    }
-
-    return response.json()
+  // Thin wrapper around the shared uploadMedia() — preserves the local
+  // call sites' { success, urls } shape. Compression happens inside
+  // uploadMedia (no-op for video files, since the helper passes through
+  // anything that isn't image/*).
+  const uploadMedia = async (files: File[], _type: 'image' | 'video', tokenId: number) => {
+    const { uploadMedia: sharedUpload } = await import('~/api/upload')
+    const urls = await sharedUpload(files, tokenId, 'feed')
+    return { success: true, urls }
   }
 
   // Drag and drop handlers for textarea
