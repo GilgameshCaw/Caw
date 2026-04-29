@@ -603,7 +603,7 @@ console.log("BALANCE:", balance)
       <div className={`${isCaptive ? 'max-w-4xl' : 'max-w-md'} mx-auto p-6 ${isCaptive ? '' : 'space-y-4 mt-8'}`}>
         <div className={isCaptive ? 'flex flex-col md:flex-row gap-8 md:gap-0 items-start md:divide-x md:divide-white/10 pt-12 md:pt-20' : ''}>
           {/* Left column (captive) or full-width header (normal) */}
-          <div className={isCaptive ? 'w-full md:w-1/2 md:sticky md:top-8 md:pr-10' : ''}>
+          <div className={isCaptive ? 'w-full md:w-[45%] md:sticky md:top-8 md:pr-8' : ''}>
             <div className={isCaptive ? `px-6 py-6 rounded-2xl backdrop-blur-sm ${isDark ? 'bg-white/[0.04] border border-white/10' : 'bg-black/[0.03] border border-black/10'}` : ''}>
               <div className="text-center space-y-3">
                 <h1 className="text-4xl font-bold">Create a Profile</h1>
@@ -635,26 +635,13 @@ console.log("BALANCE:", balance)
           </div>
 
           {/* Right column (captive) or continuation (normal) */}
-          <div className={isCaptive ? 'w-full md:w-1/2 md:pl-[55px]' : ''}>
+          <div className={isCaptive ? 'w-full md:w-[55%] md:min-w-[380px] md:pl-8' : ''}>
             <div className={isCaptive ? `px-6 py-6 rounded-2xl backdrop-blur-sm ${isDark ? 'bg-white/[0.04] border border-white/10' : 'bg-black/[0.03] border border-black/10'}` : ''}>
             {isCaptive && (
               <h2 className="text-2xl font-bold text-center md:text-left mb-4 mt-2.5">Choose Your Username</h2>
             )}
 
         <div className={`${isCaptive ? '' : 'mt-16'} space-y-4`}>
-            {usernameTaken && username && (
-              <div className="text-sm text-red-400 text-left">
-                This username{' '}
-                <a
-                  href={`/users/${username}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline"
-                >
-                  is taken
-                </a>.
-              </div>
-            )}
             <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -718,8 +705,20 @@ console.log("BALANCE:", balance)
                 </div>
             </div>
 
-            <div className="flex justify-between items-center text-sm">
-                {useAddress ? (
+            <div className="flex justify-between items-center text-sm gap-2">
+                {usernameTaken && username && typewriterStopped ? (
+                  <div className="text-red-400 text-left">
+                    Already{' '}
+                    <a
+                      href={`/users/${username}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="underline"
+                    >
+                      taken
+                    </a>.
+                  </div>
+                ) : useAddress ? (
                   <div className="text-gray-400">
                     Balance: <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>{formatNumberCompact(convertToNumber(balance))} CAW</span>
                   </div>
