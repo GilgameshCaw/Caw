@@ -338,8 +338,21 @@ router.post('/bulk', async (req, res) => {
   }
 })
 
-// GET /api/shorturl/:code - Get metadata for a short URL (for previews)
+// GET /api/shorturl/:code - Get metadata for a short URL (for previews).
+//
+// Cross-origin allowed: the FE on a mirror node needs to resolve short
+// URLs that were minted on the originating node. The endpoint is
+// public-read (no auth, no cookies, returns the same data the /s/ 302
+// would expose anyway via `Location:` header), so opening it up to
+// any origin doesn't change the security posture.
+//
+// Importantly, NO `Access-Control-Allow-Credentials: true` here — the
+// combination with `*` is invalid per spec, and there's no auth state
+// for callers to leak. The FE's cross-node fetch in useCachedFetch and
+// LinkPreview goes through plain `fetch(url)` (not credentials:include).
 router.get('/:code', async (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Vary', 'Origin')
   try {
     const { code } = req.params
 
