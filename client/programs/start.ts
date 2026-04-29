@@ -1,20 +1,11 @@
-// Load .env into process.env before ANY other code reads it. Prisma has its
-// own .env loader (so DATABASE_URL has always worked) but everything else
-// in the process — Sentry, OTel, validator key, RPC URLs — reads
-// process.env directly, and pm2 doesn't pre-populate it from .env. Without
-// this call, OTEL_EXPORTER_OTLP_ENDPOINT etc. silently come back undefined
-// and the SDK's "if endpoint" gate skips initialization entirely (no traces,
-// no error log, no clue why).
+// .env is loaded via `node -r ./dotenv-preload.js` (see ecosystem.config.cjs
+// args) — it has to run via -r, not as a sibling require() at the top of
+// this file, because TypeScript hoists `import` statements above sibling
+// require() calls, which would let otel.ts run before dotenv populated env.
 //
-// require() instead of import to keep this absolutely first; ESM imports
-// hoist but their *side effects* run in module dep-graph order, and we'd
-// rather not depend on that ordering being stable across bundlers.
-require('dotenv').config()
-
 // OpenTelemetry MUST initialize before any module we want to instrument
 // (express, prisma, ioredis, http). Auto-instrumentation patches at import
-// time, so anything required before this point won't be traced. Keep this
-// the very first import after dotenv — even before the File polyfill below.
+// time, so anything required before this point won't be traced.
 import { otelEnabled } from '../src/otel'
 
 // Polyfill File for Node.js 18

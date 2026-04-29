@@ -554,7 +554,11 @@ function buildPm2Config(nodeType, config, installDir) {
       name: `caw-server-${suffix}`,
       cwd: path.join(installDir, 'client'),
       script: 'node',
-      args: '-r ./file-polyfill.js -r tsx/cjs programs/start.ts',
+      // dotenv-preload first so process.env is populated before any other
+      // require() runs. Has to be -r, not a top-of-start.ts line, because
+      // TypeScript hoists `import` statements above sibling `require()`
+      // calls — leaving Sentry / OTel / etc. seeing an unpopulated env.
+      args: '-r ./dotenv-preload.js -r ./file-polyfill.js -r tsx/cjs programs/start.ts',
       // PORT is referenced by the install-side port scan and is the single
       // source of truth for which port this install's API listens on.
       // config.json's Api.port should match (we set both from config.apiPort).
