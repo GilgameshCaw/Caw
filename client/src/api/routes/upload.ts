@@ -41,13 +41,20 @@ const storage = multer.diskStorage({
   }
 })
 
+// Per-file caps. Multer's fileSize limit is global, so we set it to the
+// LARGER ceiling (videos) and then enforce the tighter image cap inside
+// the route handler. Images come in pre-compressed from the client
+// (compressImage.ts ~1MB target), so 5MB leaves plenty of headroom for
+// edge cases. Videos are pass-through up to 25MB.
+const IMAGE_MAX_BYTES = 5 * 1024 * 1024
+const VIDEO_MAX_BYTES = 25 * 1024 * 1024
+
 const upload = multer({
   storage,
   limits: {
-    fileSize: 100 * 1024 * 1024, // 100MB max (for videos)
+    fileSize: VIDEO_MAX_BYTES,
   },
   fileFilter: (req, file, cb) => {
-    // Check file mimetype to determine if it's an image or video
     const imageMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
     const videoMimes = ['video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo', 'video/x-matroska', 'video/ogg']
 
@@ -76,6 +83,15 @@ router.post('/', upload.array('media', 10), requireAuth({ field: 'tokenId' }), a
 
     if (!tokenId) {
       return res.status(400).json({ error: 'Missing tokenId' })
+    }
+
+    // Per-file cap: images must be ≤5MB (clients compress before upload).
+    // Videos already capped by multer's global 25MB limit.
+    const oversized = files.find(f => f.mimetype.startsWith('image/') && f.size > IMAGE_MAX_BYTES)
+    if (oversized) {
+      return res.status(413).json({
+        error: `Image too large (${(oversized.size / 1024 / 1024).toFixed(1)}MB, max ${IMAGE_MAX_BYTES / 1024 / 1024}MB)`,
+      })
     }
 
     // Generate URLs for uploaded files based on their actual type
@@ -165,9 +181,11 @@ router.post('/encrypted', requireAuth({ lookup: async (req) => {
       return res.status(400).json({ error: 'No data received' })
     }
 
-    // 10MB limit per file
-    if (data.length > 10 * 1024 * 1024) {
-      return res.status(413).json({ error: 'File too large (max 10MB)' })
+    // 5MB limit per encrypted blob. Cleartext is compressed client-side
+    // via the 'dm' preset (~750KB target), so encrypted should be well
+    // under this cap with room for AES-GCM overhead and the occasional GIF.
+    if (data.length > 5 * 1024 * 1024) {
+      return res.status(413).json({ error: 'File too large (max 5MB)' })
     }
 
     // Rate limit
