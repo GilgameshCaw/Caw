@@ -7,6 +7,21 @@ import { elasticsearchService } from '../ElasticsearchService'
 import { countManager } from '../CountManager'
 import type { PrismaTransactionClient } from './types'
 
+/** Sentinel thrown by findCawId so callers (and the top-level
+ *  handleRawAction error handler) can distinguish "indexer doesn't have
+ *  this target row" from a real bug. The most common cause is that the
+ *  target was created against a different node's database — i.e. fresh
+ *  local node looking at chain history that includes likes/replies/tips
+ *  for caws that were authored on production, or events from another
+ *  clientId that we filter out. We don't want this to spew red errors
+ *  in those cases. */
+export class CawNotFoundError extends Error {
+  constructor(public userId: number, public cawonce: number) {
+    super(`target caw not found ${userId} cawonce: ${cawonce}`)
+    this.name = 'CawNotFoundError'
+  }
+}
+
 /**
  * Helper function to find a caw by cawonce and user.
  *
@@ -21,7 +36,7 @@ export async function findCawId(cawonce: number, userOnChain: number): Promise<n
   const c = await prisma.caw.findUnique({
     where: { userId_cawonce: { userId: uid, cawonce } }
   })
-  if (!c) throw new Error(`target caw not found ${uid} cawonce: ${cawonce}`)
+  if (!c) throw new CawNotFoundError(uid, cawonce)
   return c.id
 }
 

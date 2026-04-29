@@ -8,6 +8,7 @@ import { createOrFindAction, ensureActionExists } from './actionCreation'
 import { processDomainEffects, resolveActionUsers } from './domainProcessor'
 import type { RawAction } from './types'
 import { StaleTokenError } from '../UserService'
+import { CawNotFoundError } from './actionHandlers'
 import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
 import { span } from '../../utils/trace'
 import getActionType from '../../abi/getActionType'
@@ -187,6 +188,14 @@ async function handleRawAction(rawId: number, chainId: number, rawAction: RawAct
     } else if (err instanceof StaleTokenError) {
       // Token doesn't exist on current L1 contract — skip silently
       console.warn(`[ActionProcessor] Skipping stale action (sender=${rawAction.senderId}): ${err.message}`)
+    } else if (err instanceof CawNotFoundError) {
+      // Like/reply/tip targets a caw we don't have indexed — most often
+      // because the local node started after the original caw, was
+      // running a different clientId at the time, or is processing a
+      // backfill from another instance's chain history. Action row is
+      // still recorded above; the side-effect (Like/Reply/Tip row) just
+      // can't attach. Quiet warn, not red.
+      console.warn(`[ActionProcessor] Skipping action targeting unknown caw (user=${err.userId} cawonce=${err.cawonce}, type=${getActionType(Number(rawAction.actionType))})`)
     } else {
       console.error('[ActionProcessor] Failed to handle raw action:', err)
     }
