@@ -494,6 +494,23 @@ right scope before we ship.
     5. (3) full — Cloudflare / S3-CDN integration. Ties into (5).
   - **Side note on HEIC**: once (1) is in and runs through sharp, HEIC support comes for free since sharp handles it via libvips. No separate work needed; just don't reject `image/heic` in `fileFilter`.
 
+- [ ] **Put SigNoz behind admin auth (subdomain + nginx auth_request)**
+  - Today SigNoz is reachable only via SSH tunnel (`ssh -L 8080:127.0.0.1:8080`). Workable for solo operators but friction-heavy and confusing. Goal: gate it behind the same admin cookie used everywhere else (`requireAdmin` middleware) so admins can just visit a URL.
+  - **Why subdomain not subpath**: SigNoz's frontend bundles asset URLs hardcoded to `/assets/...` with no `BASE_PATH` support. Mounting at `/admin/signoz/` would require nginx `sub_filter` URL rewriting on every response, which breaks the moment SigNoz changes their bundle hashes. Verified on v0.120.0 — no env var or config flag for base path. Subdomain (`signoz.<domain>`) sidesteps the whole problem.
+  - **Cert**: `*.caw.social` wildcard already on the box covers `signoz.caw.social`. For installs on a non-wildcard cert, the CLI step should warn + offer to skip the SigNoz exposure.
+  - **Cookie domain**: today the admin cookie has no `Domain` attribute (exact-host only), so `test.caw.social`'s cookie won't be sent to `signoz.caw.social`. Two changes:
+    - `cli/src/api/middleware/auth.ts` — `adminCookieOptions()` adds `domain: '.caw.social'` (or derived from `SHORTURL_DOMAIN`/registrable suffix). Trade-off: any subdomain on the same registrable domain will receive the cookie; HttpOnly means JS can't read it, but a malicious subdomain backend could capture it. Acceptable in operator-controlled deployments.
+  - **API**: new `GET /api/admin/check` endpoint that runs `requireAdmin` and returns 200/401. nginx's `auth_request` calls it; on 401 it returns 401 to the browser (not redirect — SigNoz makes XHR/WebSocket requests, redirects break them). Frontend admin login flow already exists — operator logs in there first, then visits `signoz.<domain>`.
+  - **nginx**: new server block on `signoz.<domain>` with:
+    - `auth_request /__auth_check;` at the top
+    - `location = /__auth_check { internal; proxy_pass http://127.0.0.1:4000/api/admin/check; }` (passes the cookie through)
+    - `location / { proxy_pass http://127.0.0.1:8080; }` (the SigNoz UI)
+    - WebSocket upgrade headers (SigNoz uses WS for live trace tail) — same pattern as the existing `/socket.io/` block
+  - **CLI**: extend `cli/src/steps/nginx.js`'s template with a "expose SigNoz at signoz.<domain> behind admin auth?" question — only offered when SigNoz endpoint is `http://localhost:4318` (i.e., SigNoz is on this box) AND the cert covers wildcard / explicit subdomain.
+  - **SigNoz's own login**: still gates first-visit with its own admin-account-creation flow. Operator creates one shared account; subsequent visits hit our nginx gate first, then SigNoz's session cookie keeps them logged in inside SigNoz. Two-factor by accident, accepted.
+  - **Docs**: README section on admin dashboards (Bug Reports, DB browser, Reports) should mention SigNoz once shipped.
+  - Estimated effort: ~30 min API + ~15 min cookie domain + ~20 min nginx template + ~10 min CLI prompt + testing. Half-day at most.
+
 - [ ] **Rainbow Wallet connect failure**
   - Reported on test.caw.social (HTTPS production install): Rainbow Wallet failed to connect via the RainbowKit connect modal. Other wallets work; this one specifically fails.
   - **Likely culprits to investigate first**:
@@ -749,6 +766,10 @@ One-liner install: `curl -fsSL https://raw.githubusercontent.com/.../install.sh 
 
 
 
+## UX
+
+- **Ensure supporting other languages.** Audit text rendering, input handling, and storage end-to-end for non-Latin scripts (CJK, Cyrillic, Arabic, accented Latin, etc.). Hashtag recognition is already Unicode-aware (`tools/hashtagRegex.ts`). Still to verify: post composer length counting (bytes vs codepoints vs grapheme clusters), search/Elasticsearch analyzers, RTL layout for Arabic/Hebrew, font fallback in feed items, mute-word matching across scripts, username display in places that still use system fonts.
+
 
 
 
@@ -778,6 +799,6 @@ some notes:
 - click number next to reply on replies takes you to the caw page
 - i get 500 error when i click on a single "message" in admin dashboard
 - i should be able to like DMs that I received.
-
-
+- need user avatars in the DM convo pages.
+- caw pages are too chaoitic with lots of replies and tips. we need a way to hide/show other actions. 
 
