@@ -1,7 +1,7 @@
 import { prisma } from '../prismaClient'
 import { CAW_NAMES_L2_ADDRESS, CAW_NAMES_ADDRESS } from '../abi/addresses'
 import { Contract, WebSocketProvider, JsonRpcProvider } from 'ethers'
-import { makeJsonRpcProvider, makeWebSocketProvider, getL1HttpRpcUrl, getL1WsRpcUrl, getL2WsRpcUrl } from '../utils/rpcProvider'
+import { makeJsonRpcProvider, makeWebSocketProvider, getL1HttpRpcUrl, getL1WsRpcUrl, getL2WsRpcUrl, getL1WsSecret, getL2WsSecret } from '../utils/rpcProvider'
 
 /** Thrown when a token ID doesn't exist on the current L1 contract (old deployment) */
 export class StaleTokenError extends Error {
@@ -39,7 +39,7 @@ let l1LastAttempt = 0
 const MAX_RETRY_DELAY = 60000 // Max 60 seconds between retries
 
 // Helper to create WebSocket provider with error handling
-async function createWebSocketProvider(rpcUrl: string, name: string): Promise<WebSocketProvider> {
+async function createWebSocketProvider(rpcUrl: string, name: string, secret?: string): Promise<WebSocketProvider> {
   return new Promise((resolve, reject) => {
     let provider: WebSocketProvider | null = null
     let settled = false
@@ -52,7 +52,7 @@ async function createWebSocketProvider(rpcUrl: string, name: string): Promise<We
     }, 30000)
 
     try {
-      provider = makeWebSocketProvider(rpcUrl, 11155111)
+      provider = makeWebSocketProvider(rpcUrl, 11155111, secret)
 
       // Handle connection errors via websocket
       const ws = (provider as any)._websocket || (provider as any).websocket
@@ -121,7 +121,7 @@ async function getL2Provider() {
     console.log('[UserService] Initializing L2 WebSocket provider...')
 
     try {
-      l2Provider = await createWebSocketProvider(rpcUrl, 'L2')
+      l2Provider = await createWebSocketProvider(rpcUrl, 'L2', getL2WsSecret())
       l2NameContract = new Contract(
         CAW_NAMES_L2_ADDRESS,
         CawProfileL2Abi,
@@ -163,7 +163,7 @@ async function getL1Provider() {
     console.log('[UserService] Initializing L1 WebSocket provider...')
 
     try {
-      l1Provider = await createWebSocketProvider(rpcUrl, 'L1')
+      l1Provider = await createWebSocketProvider(rpcUrl, 'L1', getL1WsSecret())
       l1NameContract = new Contract(
         CAW_NAMES_ADDRESS,
         CawProfileL1Abi,

@@ -195,15 +195,30 @@ export function getReplicationHttpRpcUrl(fallback?: string): string {
 }
 
 /**
- * Embed the L2 secret in a WSS URL too. Same /ws/ path adjustment as the
- * HTTP form — Infura accepts Basic Auth in the WebSocket handshake URL.
+ * L2 / L1 WSS endpoint. We DO NOT embed the secret here — see the warning
+ * on withSecret() about percent-encoded `/`. Callers should hand the bare
+ * URL and the raw secret separately to makeWebSocketProvider, which routes
+ * the secret via an Authorization header.
+ *
+ * The legacy form (URL-embedded auth) is still returned by withSecret()
+ * for callers that haven't migrated yet — those keep working as long as
+ * the secret has no `/` in it. New code should pass the secret via the
+ * provider factory's `secret` parameter.
  */
 export function getL2WsRpcUrl(): string {
-  return withSecret(process.env.L2_RPC_URL || '', process.env.L2_RPC_SECRET)
+  return process.env.L2_RPC_URL || ''
 }
 
 export function getL1WsRpcUrl(): string {
-  return withSecret(process.env.L1_RPC_URL || '', process.env.L1_RPC_SECRET)
+  return process.env.L1_RPC_URL || ''
+}
+
+export function getL1WsSecret(): string | undefined {
+  return process.env.L1_RPC_SECRET || undefined
+}
+
+export function getL2WsSecret(): string | undefined {
+  return process.env.L2_RPC_SECRET || undefined
 }
 
 /**
@@ -218,6 +233,15 @@ export function getL1WsRpcUrl(): string {
  * forwards the userinfo as a Basic Auth header automatically. If the URL
  * already carries userinfo we leave it alone (operator knows what they're
  * doing). Empty / undefined secret is a no-op.
+ *
+ * BEWARE: when `secret` contains a `/`, URL serialization percent-encodes
+ * it to `%2F`. The ws / fetch implementations then Base64-encode the
+ * encoded form, which Infura rejects with 401 ("project secret is
+ * invalid") because it's expecting the raw secret in the Basic Auth
+ * blob. JsonRpcProvider over HTTPS happens to handle this correctly via
+ * Node's `URL`-aware http client, but `WebSocketProvider` does not —
+ * use makeWebSocketProvider directly with L1_RPC_URL + L1_RPC_SECRET
+ * and it'll route the secret via an explicit Authorization header.
  */
 export function withSecret(url: string, secret?: string): string {
   if (!url || !secret) return url
@@ -229,6 +253,16 @@ export function withSecret(url: string, secret?: string): string {
   } catch {
     return url
   }
+}
+
+/**
+ * Build a Basic Auth header value for a project-secret-style credential.
+ * Infura uses an empty username + the secret in the password slot. We
+ * Base64-encode the raw secret here (NOT a URL-encoded form), which is
+ * what every server expects.
+ */
+function basicAuthHeader(secret: string): string {
+  return 'Basic ' + Buffer.from(':' + secret).toString('base64')
 }
 
 // ============================================
@@ -294,14 +328,61 @@ export function makeFallbackJsonRpcProvider(urls: string[], chainId?: number): A
 /**
  * Create a WebSocketProvider with throttle.
  * Pass chainId to skip the initial eth_chainId call.
+ *
+ * If `secret` is provided we route it via an explicit Authorization
+ * header rather than embedding in the URL — see the warning on
+ * withSecret() for why URL-embedding breaks for any secret containing
+ * a `/`. The function builds its own ws.WebSocket and hands ethers a
+ * thunk that returns it.
  */
-export function makeWebSocketProvider(url: string, chainId?: number): WebSocketProvider {
+export function makeWebSocketProvider(url: string, chainId?: number, secret?: string): WebSocketProvider {
+  // Detect URL-embedded auth and migrate it to header-based auth. This
+  // fixes the percent-encoding round-trip bug where a `/` in the secret
+  // gets URL-encoded as `%2F`, then Base64-encoded by the ws library —
+  // Infura then decodes Base64 and rejects the encoded form as invalid.
+  // By extracting userinfo here and routing it via Authorization header,
+  // every existing caller (including ones using withSecret() URLs) gets
+  // the fix automatically without API changes.
+  let cleanUrl = url
+  let resolvedSecret = secret
+  try {
+    const u = new URL(url)
+    if (u.password && !resolvedSecret) {
+      // password was URL-decoded by the URL parser, so this gives us the
+      // original raw secret — exactly what we need for the auth header.
+      resolvedSecret = u.password
+    }
+    if (u.password || u.username) {
+      u.username = ''
+      u.password = ''
+      cleanUrl = u.toString()
+    }
+  } catch {
+    // Invalid URL — fall through; ethers will surface the error.
+  }
+
   let provider: WebSocketProvider
-  if (chainId != null) {
-    const network = Network.from(chainId)
-    provider = new WebSocketProvider(url, network)
+  if (resolvedSecret) {
+    const headers = { Authorization: basicAuthHeader(resolvedSecret) }
+    // ethers v6 accepts a WebSocketCreator: a thunk returning a
+    // WebSocketLike. Construct ws.WebSocket(url, options) directly so the
+    // Authorization header lands on the upgrade request.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const WebSocketImpl = require('ws')
+    const creator = () => new WebSocketImpl(cleanUrl, { headers }) as any
+    if (chainId != null) {
+      const network = Network.from(chainId)
+      provider = new WebSocketProvider(creator, network)
+    } else {
+      provider = new WebSocketProvider(creator)
+    }
   } else {
-    provider = new WebSocketProvider(url)
+    if (chainId != null) {
+      const network = Network.from(chainId)
+      provider = new WebSocketProvider(cleanUrl, network)
+    } else {
+      provider = new WebSocketProvider(cleanUrl)
+    }
   }
   return wrapSend(provider)
 }
