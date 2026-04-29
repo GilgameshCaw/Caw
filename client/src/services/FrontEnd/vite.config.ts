@@ -61,6 +61,13 @@ export default defineConfig({
         target: 'http://localhost:4000',
         changeOrigin: true,
       },
+      // Uploaded media files (avatars, post images, videos). The API
+      // returns absolute URLs built from publicUrl(), which in dev points
+      // at the Vite host (5274) — proxy to the API so those URLs resolve.
+      '/uploads': {
+        target: 'http://localhost:4000',
+        changeOrigin: true,
+      },
       // Only proxy /s/ paths (short URLs), not /src/
       '^/s/': {
         target: 'http://localhost:4000',

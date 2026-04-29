@@ -1,33 +1,33 @@
 import imageCompression from 'browser-image-compression'
 
-// Compression presets per upload context. Tuned to "looks fine to a human
-// at the displayed size + leaves the server's 5MB image cap with plenty of
-// headroom for almost any input." All targets are MAX values — smaller
-// inputs pass through near-unchanged, sometimes even smaller after
-// the re-encode.
+// Compression presets per upload context. Sized at 2× the largest place
+// the asset is displayed, so retina screens get a 1:1 pixel mapping and
+// non-retina screens get a single bilinear downscale. All targets are
+// MAX values — smaller inputs pass through near-unchanged.
 //
-// Why these specific numbers:
-//   - 1024px max: covers retina viewing of a feed image (the rendered
-//     element is ~600px wide on desktop, half that on mobile). 1024 is
-//     2x the largest realistic display dimension.
-//   - 256px avatar: the largest place an avatar renders is ~100px on
-//     a profile header. 256 is again 2x.
-//   - quality 0.8: the threshold below which compression artifacts
-//     start to be visible on photographs. Above this is wasted bytes.
-//   - WebP first, JPEG fallback: WebP is ~30% smaller than JPEG at the
-//     same visual quality. Every browser that survives the
-//     browser-image-compression check supports it. JPEG fallback is
-//     belt-and-suspenders.
+// Display sizes that drive these numbers:
+//   - avatar small (thumb): ~35px in feeds/comments/lists → 64
+//   - avatar large: 150px on profile page → 300
+//   - cover photo: 570×180 on profile → 1140 wide
+//   - feed image inline: ~600px wide on desktop → 1024 (display)
+//   - feed image lightbox: full viewport → 2048 (cap; "giant" is wasted)
+//   - quality 0.8: artifact threshold for photographs.
+//   - WebP throughout: ~30% smaller than JPEG at the same visual quality.
 const PRESETS = {
-  /** Post images, profile cover photos. */
-  feed:    { maxSizeMB: 1, maxWidthOrHeight: 1024, quality: 0.8 },
-  /** User avatars / profile pictures. */
-  avatar:  { maxSizeMB: 0.5, maxWidthOrHeight: 256, quality: 0.85 },
+  /** Tiny avatar variant for feed/comments/lists (display ~35px). */
+  thumb:        { maxSizeMB: 0.05, maxWidthOrHeight: 64,   quality: 0.85 },
+  /** Avatar at profile-page size (display 150px, 2× retina). */
+  avatar:       { maxSizeMB: 0.2,  maxWidthOrHeight: 300,  quality: 0.85 },
+  /** Profile cover photo (display 570×180, 2× retina). */
+  cover:        { maxSizeMB: 0.5,  maxWidthOrHeight: 1140, quality: 0.8 },
+  /** Inline feed image — what the post body shows. */
+  feed:         { maxSizeMB: 1,    maxWidthOrHeight: 1024, quality: 0.8 },
+  /** Lightbox/click-to-expand version of a feed image. */
+  feedLarge:    { maxSizeMB: 2,    maxWidthOrHeight: 2048, quality: 0.8 },
   /** Bug-report screenshots, moderator evidence — small but readable. */
-  report:  { maxSizeMB: 0.5, maxWidthOrHeight: 1280, quality: 0.75 },
-  /** DM attachments — encrypted, so we can't recompress server-side.
-   *  Keep them tighter so encrypted blobs stay manageable. */
-  dm:      { maxSizeMB: 0.75, maxWidthOrHeight: 1024, quality: 0.8 },
+  report:       { maxSizeMB: 0.5,  maxWidthOrHeight: 1280, quality: 0.75 },
+  /** DM attachments — encrypted, so we can't recompress server-side. */
+  dm:           { maxSizeMB: 0.75, maxWidthOrHeight: 1024, quality: 0.8 },
 } as const
 
 export type CompressionPreset = keyof typeof PRESETS

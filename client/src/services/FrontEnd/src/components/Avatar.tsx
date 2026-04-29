@@ -1,24 +1,41 @@
 import React, { useState, useEffect } from 'react'
 import { useTheme } from '~/hooks/useTheme'
+import { avatarThumbUrl } from '~/utils/imageVariants'
 
 interface AvatarProps {
   src: string
   alt?: string
   className?: string
+  /**
+   * "small" pulls the 64px thumb variant when one exists. Use anywhere the
+   * avatar renders ≤64px (feed items, comments, lists). Falls back to the
+   * main URL automatically if the thumb 404s — which it will for any
+   * avatar uploaded before the variant system shipped, until backfill runs.
+   *
+   * "large" uses the main URL directly. Use on the profile page (150px).
+   * Default is "large" so the rendering is conservative — switching a
+   * callsite to "small" is opt-in.
+   */
+  size?: 'small' | 'large'
 }
 
 /**
  * Avatar image with broken-image fallback.
  * Shows a user-silhouette icon if the image fails to load.
  */
-const Avatar: React.FC<AvatarProps> = ({ src, alt = '', className = 'w-full h-full' }) => {
+const Avatar: React.FC<AvatarProps> = ({ src, alt = '', className = 'w-full h-full', size = 'large' }) => {
+  // Resolve the URL we WANT to render (thumb or main) up-front, then track
+  // a "fell back to main" state so an onError on the thumb reroutes to the
+  // main URL exactly once before showing the broken-state silhouette.
+  const preferred = size === 'small' ? (avatarThumbUrl(src) || src) : src
+  const [currentSrc, setCurrentSrc] = useState(preferred)
   const [broken, setBroken] = useState(false)
   const { isDark } = useTheme()
 
-  // Reset broken state when src changes — otherwise navigating from a user
-  // with a failing avatar to one with a working avatar leaves the silhouette
-  // in place (the component is reused, only props change).
-  useEffect(() => { setBroken(false) }, [src])
+  useEffect(() => {
+    setBroken(false)
+    setCurrentSrc(preferred)
+  }, [preferred])
 
   if (broken) {
     return (
@@ -33,10 +50,14 @@ const Avatar: React.FC<AvatarProps> = ({ src, alt = '', className = 'w-full h-fu
 
   return (
     <img
-      src={src}
+      src={currentSrc}
       alt={alt}
       className={`${className} object-cover`}
-      onError={() => setBroken(true)}
+      onError={() => {
+        // Thumb missing? Try the main URL once before giving up.
+        if (currentSrc !== src) setCurrentSrc(src)
+        else setBroken(true)
+      }}
     />
   )
 }
