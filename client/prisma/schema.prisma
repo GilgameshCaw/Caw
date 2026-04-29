@@ -331,16 +331,21 @@ model Notification {
 }
 
 model DmIdentity {
-  id            Int                       @id @default(autoincrement())
-  userId        Int                       @unique
-  walletAddress String
-  publicKey     String                    // hex-encoded secp256k1 public key
-  dmPrivacy     DmPrivacy                 @default(EVERYONE)
-  createdAt     DateTime                  @default(now())
-  updatedAt     DateTime                  @updatedAt
-  conversations ConversationParticipant[]
-  sentMessages  Message[]                 @relation("MessageSender")
-  user          User                      @relation(fields: [userId], references: [tokenId])
+  id                   Int                       @id @default(autoincrement())
+  userId               Int                       @unique
+  walletAddress        String
+  publicKey            String                    // hex-encoded secp256k1 public key
+  dmPrivacy            DmPrivacy                 @default(EVERYONE)
+  // Per-user customization for the 5-emoji quick-reaction strip on DMs.
+  // Empty array = use server defaults; otherwise expected to hold exactly
+  // five emojis. We don't enforce length at the column level — UI clamps.
+  defaultDmReactions   String[]                  @default([])
+  createdAt            DateTime                  @default(now())
+  updatedAt            DateTime                  @updatedAt
+  conversations        ConversationParticipant[]
+  sentMessages         Message[]                 @relation("MessageSender")
+  reactions            MessageReaction[]
+  user                 User                      @relation(fields: [userId], references: [tokenId])
 
   @@index([walletAddress])
 }
@@ -390,9 +395,32 @@ model Message {
   sender           DmIdentity         @relation("MessageSender", fields: [senderId], references: [userId])
   receipts         MessageReceipt[]
   deletions        MessageDeletion[]
+  reactions        MessageReaction[]
 
   @@index([conversationId, createdAt])
   @@index([senderId])
+}
+
+// Plaintext reactions on a DM. Unlike the message body, the emoji isn't
+// encrypted: the server doesn't need to read the message to know "user X
+// reacted with ❤️", and keeping reactions cleartext avoids a per-recipient
+// ciphertext fan-out on every reaction tap. Both peers see them; the
+// server-as-adversary already knows who is talking to whom.
+model MessageReaction {
+  id        Int        @id @default(autoincrement())
+  messageId String
+  userId    Int
+  emoji     String     // Unicode emoji string (e.g. "❤️", "🌙")
+  createdAt DateTime   @default(now())
+  message   Message    @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      DmIdentity @relation(fields: [userId], references: [userId])
+
+  // Same user can stack different emojis on one message but can't double-
+  // react with the same emoji. Toggling re-uses this constraint as a
+  // delete-on-second-tap signal.
+  @@unique([messageId, userId, emoji])
+  @@index([messageId])
+  @@index([userId])
 }
 
 model MessageDeletion {

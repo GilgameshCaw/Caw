@@ -195,6 +195,21 @@ export class DmWebSocketService {
   notifyMessageDeleted(conversationId: string, messageId: string, senderId: number) {
     this.emitToConversation(conversationId, 'message-deleted', { messageId, senderId }, senderId)
   }
+
+  /**
+   * Reaction added/removed. Broadcast to everyone *including* the actor —
+   * unlike message edits where the actor already sees their own edit, the
+   * reaction strip on their UI updates from the same event so we keep the
+   * code path simple.
+   */
+  notifyReactionToggled(conversationId: string, payload: {
+    messageId: string
+    userId: number
+    emoji: string
+    added: boolean
+  }) {
+    this.emitToConversation(conversationId, payload.added ? 'reaction-added' : 'reaction-removed', payload)
+  }
 }
 
 export default new DmWebSocketService()

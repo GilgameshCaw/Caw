@@ -484,6 +484,51 @@ router.delete('/messages/:messageId',
   }
 )
 
+// Toggle a reaction on a DM. Idempotent toggle — same body twice removes,
+// re-adds. Caller must be a participant in the message's conversation;
+// the auth lookup verifies that.
+router.post('/messages/:messageId/reactions',
+  requireAuth({ lookup: async (req) => {
+    const userId = Number(req.body.userId)
+    if (!userId) return undefined
+    const msg = await prisma.message.findUnique({
+      where: { id: req.params.messageId },
+      include: { conversation: { include: { participants: true } } },
+    })
+    const isParticipant = msg?.conversation.participants.some(p => p.userId === userId)
+    return isParticipant ? userId : undefined
+  }}),
+  async (req: Request, res: Response) => {
+    try {
+      const { messageId } = req.params
+      const { userId, emoji } = req.body
+      if (!userId) return res.status(400).json({ error: 'userId is required' })
+      if (!emoji || typeof emoji !== 'string') {
+        return res.status(400).json({ error: 'emoji is required' })
+      }
+      // Length cap — emojis with skin-tone modifiers + ZWJ sequences can
+      // be ~14 chars; 32 covers everything sensible.
+      if (emoji.length > 32) return res.status(400).json({ error: 'emoji too long' })
+
+      const result = await dmService.toggleReaction(messageId, Number(userId), emoji)
+
+      // Broadcast to the conversation room — includes the actor so their
+      // own UI updates from the same code path other peers use.
+      dmWebSocketService.notifyReactionToggled(result.conversationId, {
+        messageId,
+        userId: Number(userId),
+        emoji,
+        added: result.added,
+      })
+
+      return res.json({ added: result.added })
+    } catch (error: any) {
+      console.error('POST /api/dm/messages/:messageId/reactions error:', error)
+      return res.status(500).json({ error: error.message })
+    }
+  }
+)
+
 // Get DM settings for a user
 router.get('/settings',
   async (req: any, res: any) => {
@@ -493,10 +538,13 @@ router.get('/settings',
 
       const identity = await prisma.dmIdentity.findUnique({
         where: { userId },
-        select: { dmPrivacy: true }
+        select: { dmPrivacy: true, defaultDmReactions: true }
       })
 
-      res.json({ dmPrivacy: identity?.dmPrivacy || 'EVERYONE' })
+      res.json({
+        dmPrivacy: identity?.dmPrivacy || 'EVERYONE',
+        defaultDmReactions: identity?.defaultDmReactions ?? [],
+      })
     } catch (error: any) {
       console.error('GET /api/dm/settings error:', error)
       res.status(500).json({ error: error.message })
@@ -504,25 +552,45 @@ router.get('/settings',
   }
 )
 
-// Update DM settings
+// Update DM settings. Both fields are optional — the client sends only
+// what changed, so toggling reactions doesn't require re-sending privacy
+// (and vice versa).
 router.put('/settings',
   requireAuth({ field: 'userId' }),
   async (req: any, res: any) => {
     try {
-      const { userId, dmPrivacy } = req.body
+      const { userId, dmPrivacy, defaultDmReactions } = req.body
       if (!userId) return res.status(400).json({ error: 'userId is required' })
 
-      const validValues = ['EVERYONE', 'FOLLOWERS', 'FOLLOWING']
-      if (!validValues.includes(dmPrivacy)) {
-        return res.status(400).json({ error: `dmPrivacy must be one of: ${validValues.join(', ')}` })
+      const update: any = {}
+
+      if (dmPrivacy !== undefined) {
+        const validValues = ['EVERYONE', 'FOLLOWERS', 'FOLLOWING']
+        if (!validValues.includes(dmPrivacy)) {
+          return res.status(400).json({ error: `dmPrivacy must be one of: ${validValues.join(', ')}` })
+        }
+        update.dmPrivacy = dmPrivacy
       }
 
-      await prisma.dmIdentity.update({
+      if (defaultDmReactions !== undefined) {
+        if (!Array.isArray(defaultDmReactions) || defaultDmReactions.some((e: any) => typeof e !== 'string')) {
+          return res.status(400).json({ error: 'defaultDmReactions must be an array of strings' })
+        }
+        // Cap to 10 to mirror the service-layer clamp.
+        update.defaultDmReactions = defaultDmReactions.slice(0, 10)
+      }
+
+      if (Object.keys(update).length === 0) {
+        return res.status(400).json({ error: 'no settings provided' })
+      }
+
+      const updated = await prisma.dmIdentity.update({
         where: { userId: Number(userId) },
-        data: { dmPrivacy }
+        data: update,
+        select: { dmPrivacy: true, defaultDmReactions: true },
       })
 
-      res.json({ success: true, dmPrivacy })
+      res.json({ success: true, ...updated })
     } catch (error: any) {
       console.error('PUT /api/dm/settings error:', error)
       res.status(500).json({ error: error.message })

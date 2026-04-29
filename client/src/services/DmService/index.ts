@@ -184,7 +184,10 @@ export class DmService {
       }
     }
 
-    // Fetch newest messages first, then reverse for chronological display
+    // Fetch newest messages first, then reverse for chronological display.
+    // Reactions ride along on the message row so the inbox doesn't need a
+    // follow-up request to render the reaction strip — same rationale as
+    // bundling peer publicKey on the conversation list.
     const messages = await prisma.message.findMany({
       where,
       orderBy: { createdAt: 'desc' },
@@ -194,7 +197,11 @@ export class DmService {
           include: {
             user: { select: { username: true, displayName: true, avatarUrl: true, defaultAvatarId: true, image: true, tokenId: true } }
           }
-        }
+        },
+        reactions: {
+          select: { id: true, userId: true, emoji: true, createdAt: true },
+          orderBy: { createdAt: 'asc' },
+        },
       }
     })
     messages.reverse()
@@ -312,6 +319,71 @@ export class DmService {
     }
 
     return { conversationIds }
+  }
+
+  /**
+   * Toggle a reaction on a DM. If the (messageId, userId, emoji) row
+   * already exists, delete it; otherwise insert it. Returns the new state
+   * (`added` true on insert, false on delete) plus the conversationId so
+   * callers can broadcast over the websocket.
+   *
+   * Caller must verify the user is a participant in the message's
+   * conversation — the route layer does this.
+   */
+  async toggleReaction(messageId: string, userId: number, emoji: string) {
+    // findUnique won't work for the compound unique key without the keys
+    // in the right shape, so we do a simple findFirst.
+    const existing = await prisma.messageReaction.findFirst({
+      where: { messageId, userId, emoji },
+      select: { id: true },
+    })
+
+    const message = await prisma.message.findUnique({
+      where: { id: messageId },
+      select: { conversationId: true },
+    })
+    if (!message) throw new Error('Message not found')
+
+    if (existing) {
+      await prisma.messageReaction.delete({ where: { id: existing.id } })
+      return { added: false, conversationId: message.conversationId }
+    }
+    await prisma.messageReaction.create({
+      data: { messageId, userId, emoji },
+    })
+    return { added: true, conversationId: message.conversationId }
+  }
+
+  /**
+   * Read the user's customized 5-emoji default reaction strip. Returns
+   * an empty array when the user hasn't customized — UI applies its own
+   * defaults in that case so the server can ship an updated default set
+   * without a migration.
+   */
+  async getDefaultReactions(userId: number): Promise<string[]> {
+    const identity = await prisma.dmIdentity.findUnique({
+      where: { userId },
+      select: { defaultDmReactions: true },
+    })
+    return identity?.defaultDmReactions ?? []
+  }
+
+  /**
+   * Set the user's customized default reaction strip. Caller is expected
+   * to have already validated the array length / emoji content; we store
+   * whatever they send (clamped to a sane upper bound).
+   */
+  async setDefaultReactions(userId: number, emojis: string[]) {
+    // Cap at 10 even though the UI uses 5 — gives the UI a small grace
+    // band for future expansion without another migration. The DB stores
+    // whatever's passed; downstream readers should slice to the count
+    // they want to display.
+    const clamped = emojis.slice(0, 10)
+    await prisma.dmIdentity.update({
+      where: { userId },
+      data: { defaultDmReactions: clamped },
+    })
+    return clamped
   }
 }
 
