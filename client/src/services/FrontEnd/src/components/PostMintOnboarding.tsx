@@ -21,7 +21,7 @@ import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../..
 import { cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { chains } from '~/config/chains'
 import { handleError } from '~/utils'
-import { apiFetch } from '~/api/client'
+import { apiFetch, retryOnIndexing } from '~/api/client'
 
 const persistOnboardingStep = (username: string, step: number) => {
   apiFetch(`/api/users/onboarding/${username}`, {
@@ -675,12 +675,14 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
     if (isWalletAuthorized) {
       if (tokenId && !authorizedTokenIds.includes(tokenId)) {
         const refreshSession = async () => {
-          // Ensure user record exists in DB first
+          // Ensure user record exists in DB first. After Tier 1, /ensure
+          // returns 202 (no RPC fallback) until the indexer writes the row;
+          // retryOnIndexing waits per the server's hint.
           try {
-            await apiFetch('/api/users/ensure', {
+            await retryOnIndexing(() => apiFetch('/api/users/ensure', {
               method: 'POST',
               body: JSON.stringify({ tokenId }),
-            })
+            }))
           } catch {}
           // Refresh session to pick up new tokenId
           try {
@@ -697,12 +699,13 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
   }, [isWalletAuthorized, tokenId])
 
   const handleVerify = async () => {
-    // Ensure user record exists in DB before verifying (new mint may not be indexed yet)
+    // Ensure user record exists in DB before verifying (new mint may not be
+    // indexed yet). retryOnIndexing handles the 202 -> backoff -> retry loop.
     try {
-      await apiFetch('/api/users/ensure', {
+      await retryOnIndexing(() => apiFetch('/api/users/ensure', {
         method: 'POST',
         body: JSON.stringify({ tokenId }),
-      })
+      }))
     } catch {}
 
     await verify()

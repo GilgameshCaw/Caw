@@ -13,7 +13,7 @@ import { useActiveToken } from '~/store/tokenDataStore'
 import { useModalStore } from '~/store/modalStore'
 import { HiPencil, HiX, HiCamera, HiGlobe, HiLink, HiLocationMarker, HiOutlineMail, HiDotsHorizontal, HiOutlineCurrencyDollar, HiOutlineLockClosed } from 'react-icons/hi'
 import CopyAddressButton from '~/components/CopyAddressButton'
-import { apiFetch } from '~/api/client'
+import { apiFetch, retryOnIndexing } from '~/api/client'
 import { useDmIdentity } from '~/hooks/useDmIdentity'
 import { useDmClient } from '~/hooks/useDm'
 import { useAccount, useSwitchChain, useChainId, useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi'
@@ -287,10 +287,13 @@ export const Profile: React.FC = () => {
 
     ;(async () => {
       try {
-        await apiFetch('/api/users/ensure', {
+        // /ensure now returns 202 until the indexer writes the row (Tier 1
+        // RPC-out-of-API refactor). retryOnIndexing waits for the indexer
+        // before we attempt to re-fetch the profile.
+        await retryOnIndexing(() => apiFetch('/api/users/ensure', {
           method: 'POST',
           body: JSON.stringify({ tokenId: onChainTokenId }),
-        })
+        }))
         // Re-fetch the user — if sync succeeded, dbNotFound flips back to false
         try {
           const data = await apiFetch<ProfileData>(`/api/users/${displayUsername}`)

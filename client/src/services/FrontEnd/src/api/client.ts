@@ -34,6 +34,59 @@ export class AuthError extends Error {
 }
 
 /**
+ * Server returned 202 — the data the request needed isn't in the DB yet.
+ * Most commonly this happens right after a fresh mint or NFT transfer:
+ * the API never falls back to RPC, the indexer (RawEventsGatherer +
+ * NftTransferWatcher) populates rows asynchronously, and the client retries.
+ *
+ * Tier 1 of the "RPC out of API request handlers" refactor — see
+ * PROJECT_BACKLOG.md.
+ */
+export class IndexingError extends Error {
+  constructor(
+    message: string,
+    public retryAfterSeconds: number
+  ) {
+    super(message)
+    this.name = 'IndexingError'
+  }
+}
+
+/**
+ * Retry an apiFetch (or anything that throws IndexingError) with exponential
+ * backoff. Honors the server's retryAfterSeconds hint as the first delay.
+ *
+ *   const user = await retryOnIndexing(() => apiFetch('/api/users/by-token/1'))
+ *
+ * Defaults: up to 5 attempts, max 10s between tries. Caps total wait around
+ * ~25s — long enough to cover the indexer's worst-case write delay, short
+ * enough that a genuinely missing user surfaces a real error to the caller.
+ */
+export async function retryOnIndexing<T>(
+  fn: () => Promise<T>,
+  opts: { maxAttempts?: number; maxDelayMs?: number } = {}
+): Promise<T> {
+  const maxAttempts = opts.maxAttempts ?? 5
+  const maxDelayMs = opts.maxDelayMs ?? 10_000
+  let attempt = 0
+  let lastError: unknown
+  while (attempt < maxAttempts) {
+    try {
+      return await fn()
+    } catch (err) {
+      if (!(err instanceof IndexingError)) throw err
+      lastError = err
+      const hint = err.retryAfterSeconds * 1000
+      const backoff = Math.min(hint * Math.pow(2, attempt), maxDelayMs)
+      attempt++
+      if (attempt >= maxAttempts) break
+      await new Promise(r => setTimeout(r, backoff))
+    }
+  }
+  throw lastError
+}
+
+/**
  * Build common request headers (auth, user ID, content type)
  */
 function buildHeaders(init?: RequestInit): Record<string, string> {
@@ -101,6 +154,18 @@ export async function apiFetch<T = any>(
       // Track response time for host ranking
       verificationStore.recordResponseTime(host, Date.now() - startTime)
 
+      // 202 = "still indexing" — the row isn't in the DB yet. The API never
+      // falls back to RPC; the indexer populates asynchronously and the
+      // caller retries. Throw IndexingError so React Query / retryOnIndexing
+      // can back off without us losing the retry hint.
+      if (res.status === 202) {
+        let data: any = {}
+        try { data = await res.json() } catch {}
+        const retryAfterHeader = Number(res.headers.get('Retry-After')) || 0
+        const retryAfter = Number(data?.retryAfterSeconds) || retryAfterHeader || 3
+        throw new IndexingError(data?.error || 'still indexing', retryAfter)
+      }
+
       // Auth errors are not failover-able — they mean the user needs to re-auth
       if (res.status === 401) {
         let errorData: any = {}
@@ -147,6 +212,10 @@ export async function apiFetch<T = any>(
     } catch (e: any) {
       // Network errors (ECONNREFUSED, timeout, etc.) — try next instance
       if (e instanceof AuthError) throw e
+      // 202 means this instance has authoritative state (its DB just hasn't
+      // caught up yet) — failing over to another instance doesn't help and
+      // would mask the indexing-in-progress signal from the caller.
+      if (e instanceof IndexingError) throw e
       lastError = e
       if (targets.length > 1) {
         console.warn(`[apiFetch] Instance ${host} failed, trying next...`, e.message)

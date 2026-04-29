@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import { useTokenDataStore } from '~/store/tokenDataStore'
-import { apiFetch } from '~/api/client'
+import { apiFetch, retryOnIndexing } from '~/api/client'
 import PostMintOnboarding from '~/components/PostMintOnboarding'
 import BugReportModal from '~/components/modals/BugReportModal'
 import BugIcon from '~/components/icons/BugIcon'
@@ -71,10 +71,10 @@ const WelcomePage: React.FC = () => {
               setLoadingMessage('Connecting to blockchain...')
               const ensureStart = Date.now()
               await Promise.race([
-                apiFetch('/api/users/ensure', {
+                retryOnIndexing(() => apiFetch('/api/users/ensure', {
                   method: 'POST',
                   body: JSON.stringify({ tokenId }),
-                }),
+                })),
                 new Promise((_, reject) =>
                   setTimeout(() => reject(new Error('Timeout creating user record')), remainingTime)
                 )

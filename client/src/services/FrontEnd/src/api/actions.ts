@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, useCallback } from "react";
-import { apiFetch }              from './client'
+import { apiFetch, retryOnIndexing }              from './client'
 import { baseSepolia }           from 'wagmi/chains'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useSignTypedData, useAccount, useSwitchChain, useChainId } from 'wagmi'
@@ -161,10 +161,16 @@ export async function findSafeCawonceStart(tokenId: number, start: number, count
  * findSafeCawonceStart + sequential issuance is still the right tool.
  */
 export async function allocateCawonces(tokenId: number, count = 1): Promise<number[]> {
-  const result = await apiFetch<{ cawonces: number[] }>('/api/users/allocate-cawonce', {
-    method: 'POST',
-    body: JSON.stringify({ tokenId, count }),
-  })
+  // The server returns 202 if the sender row hasn't been indexed yet (right
+  // after a fresh mint). retryOnIndexing waits per the server's hint and
+  // re-issues the request — RawEventsGatherer's Mint listener typically
+  // populates the row within a few seconds. Other errors propagate.
+  const result = await retryOnIndexing(() =>
+    apiFetch<{ cawonces: number[] }>('/api/users/allocate-cawonce', {
+      method: 'POST',
+      body: JSON.stringify({ tokenId, count }),
+    })
+  )
   return result.cawonces
 }
 
@@ -768,14 +774,18 @@ export function useSignAndSubmitAction() {
         }
       } catch { /* ignore */ }
 
-      const response = await apiFetch('/api/actions', {
+      // Retry on 202 ("user not yet indexed") — extremely rare here because
+      // allocate-cawonce already gated on the sender row existing, but
+      // possible if the User row was deleted between the two calls. Same
+      // backoff schedule as allocate.
+      const response = await retryOnIndexing(() => apiFetch('/api/actions', {
         method: 'POST',
         body: JSON.stringify({
           data: message, domain, types, signature,
           ...(pendingDepositTxHash ? { pendingDepositTxHash } : {}),
           ...(params.retriedTxQueueId ? { retriedTxQueueId: params.retriedTxQueueId } : {}),
         })
-      })
+      }))
 
       // If the server returned auth data (passive auth), store it immediately
       if (response.auth) {
