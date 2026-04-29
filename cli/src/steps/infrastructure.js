@@ -792,7 +792,10 @@ async function installSignozOnThisBox(installPath, docker) {
     if (await probeTcp('127.0.0.1', 4318, 500)) {
       const elapsed = Math.round((Date.now() - startedAt) / 1000)
       console.log(success(`  SigNoz collector ready on :4318 (${elapsed}s)`))
-      console.log(dim(`  UI: ${brand('http://localhost:3301')}  (create your account on first visit)`))
+      // SigNoz consolidated their UI onto port 8080 (same image as the
+      // backend). Older docs reference :3301 from the legacy split-image
+      // layout — current installs land on 8080.
+      console.log(dim(`  UI: ${brand('http://localhost:8080')}  (create your account on first visit)`))
       return
     }
     if (Date.now() - lastProgress > 15_000) {
