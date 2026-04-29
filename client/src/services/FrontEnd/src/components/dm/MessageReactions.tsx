@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import Picker from '@emoji-mart/react'
 import data from '@emoji-mart/data'
 import { HiOutlineEmojiHappy, HiOutlinePencil } from 'react-icons/hi'
@@ -56,13 +57,18 @@ export const MessageReactionStrip: React.FC<ReactionStripProps> = ({
   const { isDark } = useTheme()
   const [open, setOpen] = useState(false)
   const wrapperRef = useRef<HTMLDivElement>(null)
+  const stripRef = useRef<HTMLDivElement>(null)
+  const [coords, setCoords] = useState({ top: 0, left: 0 })
   const myEmojis = new Set(reactions.filter(r => r.userId === currentUserId).map(r => r.emoji))
 
   // Close on click outside or Escape — same UX as the dot-menu.
   useEffect(() => {
     if (!open) return
     const onPointerDown = (e: PointerEvent) => {
-      if (!wrapperRef.current?.contains(e.target as Node)) setOpen(false)
+      const target = e.target as Node
+      if (wrapperRef.current?.contains(target)) return
+      if (stripRef.current?.contains(target)) return
+      setOpen(false)
     }
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
     document.addEventListener('pointerdown', onPointerDown)
@@ -70,6 +76,59 @@ export const MessageReactionStrip: React.FC<ReactionStripProps> = ({
     return () => {
       document.removeEventListener('pointerdown', onPointerDown)
       document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  // Position the portal-rendered strip so it stays inside the viewport.
+  // Anchor below the trigger; if there's not enough room below, flip to
+  // above. Horizontal: prefer aligning to the trigger's leading edge
+  // (right edge for our-side bubbles, left for theirs), then clamp to
+  // viewport bounds with an 8px margin.
+  const reposition = () => {
+    const trigger = wrapperRef.current
+    const strip = stripRef.current
+    if (!trigger || !strip) return
+    const tRect = trigger.getBoundingClientRect()
+    const sRect = strip.getBoundingClientRect()
+    const margin = 8
+
+    // Vertical: below by default. Flip above if it would overflow.
+    let top = tRect.bottom + margin
+    if (top + sRect.height > window.innerHeight - margin) {
+      const above = tRect.top - sRect.height - margin
+      // Only flip if "above" itself fits — otherwise clamp to viewport.
+      top = above >= margin ? above : Math.max(margin, window.innerHeight - sRect.height - margin)
+    }
+
+    // Horizontal: align by alignRight — own bubble = right edge of strip
+    // sits at trigger right; their bubble = left edges align. Clamp to
+    // viewport so the strip can't run off either side.
+    let left = alignRight
+      ? tRect.right - sRect.width
+      : tRect.left
+    left = Math.max(margin, Math.min(left, window.innerWidth - sRect.width - margin))
+
+    setCoords({ top, left })
+  }
+
+  useLayoutEffect(() => {
+    if (open) reposition()
+    // We deliberately don't put `alignRight` in deps — when the trigger
+    // moves (resize, scroll), reposition runs anyway via the listeners
+    // below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const onScrollOrResize = () => reposition()
+    // Capture-phase scroll listener so nested scrolling containers
+    // (the messages list itself, primarily) trigger repositioning.
+    window.addEventListener('scroll', onScrollOrResize, true)
+    window.addEventListener('resize', onScrollOrResize)
+    return () => {
+      window.removeEventListener('scroll', onScrollOrResize, true)
+      window.removeEventListener('resize', onScrollOrResize)
     }
   }, [open])
 
@@ -91,11 +150,16 @@ export const MessageReactionStrip: React.FC<ReactionStripProps> = ({
         <HiOutlineEmojiHappy className="w-5 h-5" />
       </button>
 
-      {open && (
+      {/* Portal-render so the strip can never be clipped by a parent
+          with overflow:hidden (the messages list scroll container) and
+          can self-clamp to the viewport on narrow screens. */}
+      {open && createPortal(
         <div
-          className={`absolute top-full mt-1 z-30 flex items-center gap-1 px-2 py-1.5 rounded-full ${
+          ref={stripRef}
+          className={`fixed z-[9000] flex items-center gap-1 px-2 py-1.5 rounded-full ${
             isDark ? 'bg-black border border-white/15 shadow-lg' : 'bg-white border border-gray-200 shadow-lg'
-          } ${alignRight ? 'right-0' : 'left-0'}`}
+          }`}
+          style={{ top: coords.top, left: coords.left }}
         >
           {emojis.map(emoji => {
             const mine = myEmojis.has(emoji)
@@ -137,7 +201,8 @@ export const MessageReactionStrip: React.FC<ReactionStripProps> = ({
           >
             <HiOutlinePencil className="w-5 h-5" />
           </button>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )
