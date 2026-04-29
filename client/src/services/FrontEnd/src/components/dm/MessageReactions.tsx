@@ -1,0 +1,350 @@
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import Picker from '@emoji-mart/react'
+import data from '@emoji-mart/data'
+import { apiFetch } from '~/api/client'
+import { useTheme } from '~/hooks/useTheme'
+import type { UiReaction } from '~/hooks/useDm'
+
+/**
+ * Server defaults for the quick-reaction strip. Five slots — sixth is the
+ * `+` picker button. User-customized choices live on the DmIdentity row
+ * (defaultDmReactions) and override these when set.
+ */
+export const DEFAULT_DM_REACTIONS = ['❤️', '😆', '😮', '😢', '🌙']
+
+interface ReactionStripProps {
+  // Resolved defaults — caller decides whether to pass server-side
+  // customization or fall through to DEFAULT_DM_REACTIONS.
+  emojis: string[]
+  /** Existing reactions on the message — used to highlight ones the
+   *  current user has already added. */
+  reactions: UiReaction[]
+  /** Active token id of the current user, for "is this mine?" checks. */
+  currentUserId: number
+  onReact: (emoji: string) => void
+  /** Open the full picker (caller manages the modal). */
+  onOpenPicker: () => void
+  /** Open the customization modal — wired to the secondary right-click /
+   *  long-press path on the strip. */
+  onOpenCustomize: () => void
+  /** Pass true on the bubble's "isFromCurrentUser" branch so we anchor
+   *  the strip to the right edge instead of the left. */
+  alignRight?: boolean
+}
+
+/**
+ * The hover-revealed strip with 5 quick reactions + a `+` picker button.
+ * Designed to sit next to the bubble; opacity transitions are driven by
+ * the parent's `group` class so the strip fades in alongside the dot menu.
+ */
+export const MessageReactionStrip: React.FC<ReactionStripProps> = ({
+  emojis,
+  reactions,
+  currentUserId,
+  onReact,
+  onOpenPicker,
+  onOpenCustomize,
+  alignRight,
+}) => {
+  const { isDark } = useTheme()
+  const myEmojis = new Set(reactions.filter(r => r.userId === currentUserId).map(r => r.emoji))
+
+  return (
+    <div
+      className={`flex items-center gap-1 px-1.5 py-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity ${
+        isDark ? 'bg-black/60 border border-white/10' : 'bg-white/90 border border-gray-200 shadow-sm'
+      } ${alignRight ? 'mr-1' : 'ml-1'}`}
+    >
+      {emojis.map(emoji => {
+        const mine = myEmojis.has(emoji)
+        return (
+          <button
+            key={emoji}
+            type="button"
+            onClick={() => onReact(emoji)}
+            className={`text-base leading-none w-7 h-7 rounded-full flex items-center justify-center transition-transform hover:scale-125 cursor-pointer ${
+              mine ? (isDark ? 'bg-yellow-500/30' : 'bg-yellow-200/70') : ''
+            }`}
+            title={mine ? 'Remove reaction' : 'React'}
+          >
+            {emoji}
+          </button>
+        )
+      })}
+      <button
+        type="button"
+        onClick={onOpenPicker}
+        // Right-click → open the customize modal so users can swap their
+        // defaults without leaving the chat. Long-press would be nicer
+        // on touch but `+` is rare to long-press by accident.
+        onContextMenu={(e) => { e.preventDefault(); onOpenCustomize() }}
+        className={`w-7 h-7 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
+          isDark ? 'text-white/60 hover:bg-white/10 hover:text-white' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'
+        }`}
+        title="More reactions (right-click to customize)"
+      >
+        +
+      </button>
+    </div>
+  )
+}
+
+interface ReactionsBarProps {
+  reactions: UiReaction[]
+  currentUserId: number
+  onToggle: (emoji: string) => void
+  alignRight?: boolean
+}
+
+/**
+ * Inline display below the message bubble. Reactions group by emoji with
+ * a count; tapping a chip toggles your own reaction. Mine are highlighted
+ * so the user can tell what they've already left at a glance.
+ */
+export const MessageReactionsBar: React.FC<ReactionsBarProps> = ({
+  reactions,
+  currentUserId,
+  onToggle,
+  alignRight,
+}) => {
+  const { isDark } = useTheme()
+  const grouped = useMemo(() => {
+    const m = new Map<string, { count: number; mine: boolean }>()
+    for (const r of reactions) {
+      const cur = m.get(r.emoji) || { count: 0, mine: false }
+      cur.count++
+      if (r.userId === currentUserId) cur.mine = true
+      m.set(r.emoji, cur)
+    }
+    // Insertion order = first-seen — close enough to chronological for UI.
+    return [...m.entries()]
+  }, [reactions, currentUserId])
+
+  if (grouped.length === 0) return null
+
+  return (
+    <div className={`flex flex-wrap gap-1 mt-1 px-2 ${alignRight ? 'justify-end' : 'justify-start'}`}>
+      {grouped.map(([emoji, { count, mine }]) => (
+        <button
+          key={emoji}
+          type="button"
+          onClick={() => onToggle(emoji)}
+          className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs transition-colors cursor-pointer ${
+            mine
+              ? (isDark ? 'bg-yellow-500/25 text-yellow-200 border border-yellow-500/40' : 'bg-yellow-200 text-yellow-900 border border-yellow-300')
+              : (isDark ? 'bg-white/5 text-white/80 border border-white/10 hover:bg-white/10' : 'bg-gray-100 text-gray-700 border border-gray-200 hover:bg-gray-200')
+          }`}
+        >
+          <span className="text-sm leading-none">{emoji}</span>
+          <span className="font-medium">{count}</span>
+        </button>
+      ))}
+    </div>
+  )
+}
+
+interface EmojiPickerModalProps {
+  open: boolean
+  onClose: () => void
+  onPick: (emoji: string) => void
+}
+
+/**
+ * Full emoji picker. Closed by clicking the backdrop or pressing Escape.
+ */
+export const EmojiPickerModal: React.FC<EmojiPickerModalProps> = ({ open, onClose, onPick }) => {
+  const { isDark } = useTheme()
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
+  if (!open) return null
+  return (
+    <div
+      className="fixed inset-0 z-[9000] flex items-center justify-center bg-black/40"
+      onMouseDown={onClose}
+    >
+      <div onMouseDown={e => e.stopPropagation()}>
+        <Picker
+          data={data}
+          theme={isDark ? 'dark' : 'light'}
+          onEmojiSelect={(e: any) => { onPick(e.native); onClose() }}
+        />
+      </div>
+    </div>
+  )
+}
+
+interface CustomizeReactionsModalProps {
+  open: boolean
+  onClose: () => void
+  /** Caller's tokenId so we can persist via /api/dm/settings. */
+  userId: number
+  /** Currently-saved customization (or empty array → fall through to defaults). */
+  current: string[]
+  /** Called after a successful save with the new list (5 emojis). */
+  onSaved: (next: string[]) => void
+}
+
+/**
+ * Modal that lets the user replace any of their 5 default reactions.
+ * Click a slot → opens the picker → chosen emoji replaces that slot.
+ * Save persists to /api/dm/settings; reset clears customization so the
+ * server-side defaults take over on next read.
+ */
+export const CustomizeReactionsModal: React.FC<CustomizeReactionsModalProps> = ({
+  open,
+  onClose,
+  userId,
+  current,
+  onSaved,
+}) => {
+  const { isDark } = useTheme()
+  const initial = useMemo(
+    () => (current.length === 5 ? current.slice(0, 5) : DEFAULT_DM_REACTIONS),
+    [current],
+  )
+  const [draft, setDraft] = useState<string[]>(initial)
+  const [pickerSlot, setPickerSlot] = useState<number | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  // Reset the draft whenever the modal re-opens — avoids leftover
+  // "I started editing then closed" state from a previous open.
+  useEffect(() => {
+    if (open) {
+      setDraft(initial)
+      setError(null)
+    }
+  }, [open, initial])
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
+  if (!open) return null
+
+  const handleSave = async () => {
+    setSaving(true)
+    setError(null)
+    try {
+      await apiFetch('/api/dm/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ userId, defaultDmReactions: draft }),
+      })
+      onSaved(draft)
+      onClose()
+    } catch (e: any) {
+      setError(e?.message || 'Could not save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const handleReset = async () => {
+    setSaving(true)
+    setError(null)
+    try {
+      await apiFetch('/api/dm/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ userId, defaultDmReactions: [] }),
+      })
+      onSaved([])
+      onClose()
+    } catch (e: any) {
+      setError(e?.message || 'Could not reset')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-[8000] flex items-center justify-center bg-black/50 p-4"
+      onMouseDown={onClose}
+    >
+      <div
+        ref={containerRef}
+        onMouseDown={e => e.stopPropagation()}
+        className={`w-full max-w-sm rounded-2xl p-6 ${isDark ? 'bg-gray-900 border border-white/10' : 'bg-white border border-gray-200 shadow-xl'}`}
+      >
+        <h3 className={`text-lg font-bold mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>Customize reactions</h3>
+        <p className={`text-sm mb-4 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
+          Tap a slot to swap it. These appear on every DM message.
+        </p>
+
+        <div className="flex justify-between gap-2 mb-4">
+          {draft.map((emoji, idx) => (
+            <button
+              key={idx}
+              type="button"
+              onClick={() => setPickerSlot(idx)}
+              className={`w-12 h-12 rounded-xl text-2xl flex items-center justify-center transition-all hover:scale-105 cursor-pointer ${
+                isDark ? 'bg-white/10 hover:bg-white/15' : 'bg-gray-100 hover:bg-gray-200'
+              } ${pickerSlot === idx ? (isDark ? 'ring-2 ring-yellow-500' : 'ring-2 ring-yellow-500') : ''}`}
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+
+        {error && (
+          <div className={`text-sm mb-3 ${isDark ? 'text-red-400' : 'text-red-600'}`}>{error}</div>
+        )}
+
+        <div className="flex justify-between gap-2">
+          <button
+            type="button"
+            onClick={handleReset}
+            disabled={saving}
+            className={`px-3 py-2 rounded-lg text-sm transition-colors cursor-pointer ${
+              isDark ? 'text-white/60 hover:text-white hover:bg-white/10' : 'text-gray-500 hover:text-gray-900 hover:bg-gray-100'
+            }`}
+          >
+            Reset to defaults
+          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={saving}
+              className={`px-4 py-2 rounded-lg text-sm transition-colors cursor-pointer ${
+                isDark ? 'text-white/80 hover:bg-white/10' : 'text-gray-700 hover:bg-gray-100'
+              }`}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="px-4 py-2 rounded-lg text-sm font-semibold bg-yellow-500 hover:bg-yellow-400 text-black transition-colors cursor-pointer disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+
+        <EmojiPickerModal
+          open={pickerSlot !== null}
+          onClose={() => setPickerSlot(null)}
+          onPick={(emoji) => {
+            if (pickerSlot === null) return
+            setDraft(prev => {
+              const next = [...prev]
+              next[pickerSlot] = emoji
+              return next
+            })
+          }}
+        />
+      </div>
+    </div>
+  )
+}

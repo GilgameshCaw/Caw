@@ -46,6 +46,13 @@ import { useDmMuteStore } from '~/store/dmMuteStore'
 import MuteConfirmModal from '~/components/modals/MuteConfirmModal'
 import ReportUserModal from '~/components/modals/ReportUserModal'
 import { FollowButton } from '~/components/FollowButton'
+import {
+  MessageReactionStrip,
+  MessageReactionsBar,
+  EmojiPickerModal,
+  CustomizeReactionsModal,
+  DEFAULT_DM_REACTIONS,
+} from '~/components/dm/MessageReactions'
 
 const MessagesPage: React.FC = () => {
   const { isDark } = useTheme()
@@ -60,6 +67,12 @@ const MessagesPage: React.FC = () => {
   const [dmPrivacy, setDmPrivacy] = useState<'EVERYONE' | 'FOLLOWERS' | 'FOLLOWING'>('EVERYONE')
   const [dmPrivacyLoaded, setDmPrivacyLoaded] = useState(false)
   const [dmPrivacyError, setDmPrivacyError] = useState<{ message: string; reason: string; peer: any } | null>(null)
+  // User's customized 5-emoji default reaction strip. Empty = use the
+  // server defaults (DEFAULT_DM_REACTIONS).
+  const [defaultReactions, setDefaultReactions] = useState<string[]>([])
+  // Modals invoked from the reaction strip.
+  const [emojiPickerForMessage, setEmojiPickerForMessage] = useState<string | null>(null)
+  const [showCustomizeReactions, setShowCustomizeReactions] = useState(false)
   const [selectedUser, setSelectedUser] = useState<{name: string, handle: string, avatar: string} | null>(null)
   const [modalStep, setModalStep] = useState<'select' | 'compose'>('select')
   const [newMessageSearch, setNewMessageSearch] = useState('')
@@ -118,10 +131,11 @@ const MessagesPage: React.FC = () => {
   // Load DM privacy setting
   useEffect(() => {
     if (!currentUser?.id || dmPrivacyLoaded) return
-    apiFetch<{ dmPrivacy: 'EVERYONE' | 'FOLLOWERS' | 'FOLLOWING' }>(
+    apiFetch<{ dmPrivacy: 'EVERYONE' | 'FOLLOWERS' | 'FOLLOWING'; defaultDmReactions?: string[] }>(
       `/api/dm/settings?userId=${currentUser.id}`
     ).then(data => {
       setDmPrivacy(data.dmPrivacy)
+      setDefaultReactions(data.defaultDmReactions || [])
       setDmPrivacyLoaded(true)
     }).catch(() => setDmPrivacyLoaded(true))
   }, [currentUser?.id, dmPrivacyLoaded])
@@ -149,7 +163,7 @@ const MessagesPage: React.FC = () => {
   // "Wallet not connected".
   const initializeClientRef = useRef(initializeClient)
   useEffect(() => { initializeClientRef.current = initializeClient }, [initializeClient])
-  const { messages, isLoadingOlder, hasMoreMessages, loadOlderMessages, sendMessage: dmSendMessage, editMessage: dmEditMessage, deleteForMe: dmDeleteForMe, deleteForEveryone: dmDeleteForEveryone, isSending, markAsRead, addIncomingMessage, peerLastReadAt, getSharedSecret } = useDmMessages(selectedConversationId || '', currentUser?.id)
+  const { messages, isLoadingOlder, hasMoreMessages, loadOlderMessages, sendMessage: dmSendMessage, editMessage: dmEditMessage, deleteForMe: dmDeleteForMe, deleteForEveryone: dmDeleteForEveryone, isSending, markAsRead, addIncomingMessage, peerLastReadAt, getSharedSecret, toggleReaction: dmToggleReaction, applyReactionEvent } = useDmMessages(selectedConversationId || '', currentUser?.id)
   const { uploadEncryptedFile, isUploading, uploadProgress } = useDmFileUpload()
 
   // Scroll to bottom of messages
@@ -222,7 +236,8 @@ const MessagesPage: React.FC = () => {
     userId: currentUser?.id,
     username: currentUser?.username,
     enabled: !!currentUser && !!identity,
-    onNewMessage: addIncomingMessage
+    onNewMessage: addIncomingMessage,
+    onReaction: applyReactionEvent,
   })
 
   // Notifications
@@ -1479,6 +1494,26 @@ const MessagesPage: React.FC = () => {
                           </div>
                           </Tooltip>
 
+                          {/* Reaction strip — sits inside the same `group`
+                              wrapper so the same hover state that reveals
+                              the dot menu also reveals the strip. Mobile
+                              long-press shows it via the parent's :active
+                              variant if you ever style it that way; for
+                              now the dots fallback works on touch. */}
+                          {currentUser && (
+                            <div className="self-center flex-shrink-0">
+                              <MessageReactionStrip
+                                emojis={defaultReactions.length === 5 ? defaultReactions : DEFAULT_DM_REACTIONS}
+                                reactions={message.reactions || []}
+                                currentUserId={currentUser.id}
+                                onReact={(emoji) => dmToggleReaction(message.id, emoji)}
+                                onOpenPicker={() => setEmojiPickerForMessage(message.id)}
+                                onOpenCustomize={() => setShowCustomizeReactions(true)}
+                                alignRight={message.isFromCurrentUser}
+                              />
+                            </div>
+                          )}
+
                           {/* Hover actions — outside the bubble, to the side */}
                           <button
                             onClick={(e) => {
@@ -1496,6 +1531,17 @@ const MessagesPage: React.FC = () => {
                             <HiOutlineDotsHorizontal className="w-4 h-4 text-white/30" />
                           </button>
                         </div>
+
+                        {/* Reaction chips below the bubble — grouped by
+                            emoji with a count, tap to toggle yours. */}
+                        {currentUser && message.reactions && message.reactions.length > 0 && (
+                          <MessageReactionsBar
+                            reactions={message.reactions}
+                            currentUserId={currentUser.id}
+                            onToggle={(emoji) => dmToggleReaction(message.id, emoji)}
+                            alignRight={message.isFromCurrentUser}
+                          />
+                        )}
                         </>
                         )}
 
@@ -1799,6 +1845,29 @@ const MessagesPage: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Full emoji picker — opened from the `+` on a message's
+          reaction strip. Picking an emoji posts it as a reaction on
+          that specific message. */}
+      <EmojiPickerModal
+        open={emojiPickerForMessage !== null}
+        onClose={() => setEmojiPickerForMessage(null)}
+        onPick={(emoji) => {
+          if (emojiPickerForMessage) dmToggleReaction(emojiPickerForMessage, emoji)
+        }}
+      />
+
+      {/* Customize the 5 default reactions. Triggered by right-click
+          on the `+` button. */}
+      {currentUser && (
+        <CustomizeReactionsModal
+          open={showCustomizeReactions}
+          onClose={() => setShowCustomizeReactions(false)}
+          userId={currentUser.id}
+          current={defaultReactions}
+          onSaved={(next) => setDefaultReactions(next)}
+        />
+      )}
 
       {/* Block User Confirmation */}
       <MuteConfirmModal

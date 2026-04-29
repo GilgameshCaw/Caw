@@ -37,7 +37,14 @@ type UiConversation = {
   unreadCount: number
 }
 
-type UiMessage = {
+export type UiReaction = {
+  id: number
+  userId: number
+  emoji: string
+  createdAt: string
+}
+
+export type UiMessage = {
   id: string
   content: string
   contentType?: string        // "text" | "deleted"
@@ -47,6 +54,7 @@ type UiMessage = {
   status: string
   conversationId: string
   isFromCurrentUser: boolean
+  reactions?: UiReaction[]
   sender?: {
     user: {
       username: string
@@ -490,6 +498,7 @@ export function useDmMessages(conversationId: string, tokenId?: number) {
             status: msg.status,
             conversationId: msg.conversationId,
             isFromCurrentUser: msg.senderId === tokenId,
+            reactions: msg.reactions || [],
             sender: msg.sender ? {
               user: {
                 username: msg.sender.user?.username || 'Unknown',
@@ -516,6 +525,7 @@ export function useDmMessages(conversationId: string, tokenId?: number) {
               status: msg.status,
               conversationId: msg.conversationId,
               isFromCurrentUser: msg.senderId === tokenId,
+              reactions: msg.reactions || [],
               sender: msg.sender ? {
                 user: {
                   username: msg.sender.user?.username || 'Unknown',
@@ -563,6 +573,7 @@ export function useDmMessages(conversationId: string, tokenId?: number) {
             status: msg.status,
             conversationId: msg.conversationId,
             isFromCurrentUser: msg.senderId === tokenId,
+            reactions: msg.reactions || [],
             sender: msg.sender ? {
               user: {
                 username: msg.sender.user?.username || 'Unknown',
@@ -834,7 +845,92 @@ export function useDmMessages(conversationId: string, tokenId?: number) {
     ))
   }, [])
 
-  return { messages, isLoading, isLoadingOlder, hasMoreMessages, loadOlderMessages, isSending, sendMessage, editMessage, deleteForMe, deleteForEveryone, markAsRead, addIncomingMessage, peerLastReadAt, getSharedSecret }
+  /**
+   * Toggle a reaction on a message. Optimistic — flips local state
+   * immediately, the websocket event reconciles for everyone (and us)
+   * once the server has persisted. If the API rejects, the websocket
+   * event simply never arrives, so the local state stays optimistic;
+   * caller can verify by hitting the endpoint and checking the response
+   * body if they want strict accuracy.
+   */
+  const toggleReaction = useCallback(async (messageId: string, emoji: string) => {
+    if (!tokenId) return
+    setMessages(prev => prev.map(m => {
+      if (m.id !== messageId) return m
+      const reactions = m.reactions || []
+      const existing = reactions.find(r => r.userId === tokenId && r.emoji === emoji)
+      if (existing) {
+        return { ...m, reactions: reactions.filter(r => r.id !== existing.id) }
+      }
+      // Synthetic id — websocket event will replace with real one when it lands.
+      return {
+        ...m,
+        reactions: [
+          ...reactions,
+          { id: -Date.now(), userId: tokenId, emoji, createdAt: new Date().toISOString() },
+        ],
+      }
+    }))
+    try {
+      await apiFetch<{ added: boolean }>(`/api/dm/messages/${messageId}/reactions`, {
+        method: 'POST',
+        body: JSON.stringify({ userId: tokenId, emoji }),
+      })
+    } catch (err) {
+      console.error('[DM] Failed to toggle reaction:', err)
+      // Roll the optimistic flip back on error so the UI matches the
+      // server. The user can retry if it was transient.
+      setMessages(prev => prev.map(m => {
+        if (m.id !== messageId) return m
+        const reactions = m.reactions || []
+        const existing = reactions.find(r => r.userId === tokenId && r.emoji === emoji && r.id < 0)
+        if (existing) {
+          return { ...m, reactions: reactions.filter(r => r.id !== existing.id) }
+        }
+        // Couldn't find the optimistic insert — leave the (possibly
+        // stale) state and let the next page load reconcile.
+        return m
+      }))
+    }
+  }, [tokenId])
+
+  /**
+   * Apply a reaction-{added,removed} websocket event to local state.
+   * Idempotent against the optimistic insert from toggleReaction.
+   */
+  const applyReactionEvent = useCallback((payload: {
+    messageId: string
+    userId: number
+    emoji: string
+    added: boolean
+    id?: number
+  }) => {
+    setMessages(prev => prev.map(m => {
+      if (m.id !== payload.messageId) return m
+      const reactions = m.reactions || []
+      if (payload.added) {
+        // Replace any optimistic placeholder for the same (userId, emoji)
+        // with the canonical row. If neither exists yet (peer reacted),
+        // append.
+        const placeholderIdx = reactions.findIndex(r => r.userId === payload.userId && r.emoji === payload.emoji)
+        if (placeholderIdx >= 0) return m // already present, nothing to do
+        return {
+          ...m,
+          reactions: [
+            ...reactions,
+            { id: payload.id ?? Date.now(), userId: payload.userId, emoji: payload.emoji, createdAt: new Date().toISOString() },
+          ],
+        }
+      }
+      // Removed — drop matching (userId, emoji) regardless of id.
+      return {
+        ...m,
+        reactions: reactions.filter(r => !(r.userId === payload.userId && r.emoji === payload.emoji)),
+      }
+    }))
+  }, [])
+
+  return { messages, isLoading, isLoadingOlder, hasMoreMessages, loadOlderMessages, isSending, sendMessage, editMessage, deleteForMe, deleteForEveryone, markAsRead, addIncomingMessage, peerLastReadAt, getSharedSecret, toggleReaction, applyReactionEvent }
 }
 
 // Module-scoped cache for peer DM public keys. The conversation list refresh

@@ -5,18 +5,29 @@ import { useAuthStore } from '~/store/authStore'
 
 const SOCKET_URL = import.meta.env.VITE_API_HOST || 'http://localhost:4000'
 
+export type DmReactionEvent = {
+  messageId: string
+  userId: number
+  emoji: string
+  added: boolean
+  id?: number
+}
+
 interface UseDmWebSocketParams {
   userId?: number
   username?: string
   enabled?: boolean
   onNewMessage?: (message: any) => void
+  onReaction?: (event: DmReactionEvent) => void
 }
 
-export function useDmWebSocket({ userId, username, enabled = true, onNewMessage }: UseDmWebSocketParams) {
+export function useDmWebSocket({ userId, username, enabled = true, onNewMessage, onReaction }: UseDmWebSocketParams) {
   const socketRef = useRef<Socket | null>(null)
   const queryClient = useQueryClient()
   const onNewMessageRef = useRef(onNewMessage)
   onNewMessageRef.current = onNewMessage
+  const onReactionRef = useRef(onReaction)
+  onReactionRef.current = onReaction
 
   const connect = useCallback(() => {
     if (!userId || !username || !enabled) return
@@ -79,6 +90,15 @@ export function useDmWebSocket({ userId, username, enabled = true, onNewMessage 
         ['typing', data.conversationId],
         data.isTyping ? data.userId : null
       )
+    })
+
+    // Reaction add/remove from any participant in a conversation room
+    // we've joined. Forwarded to the message-list hook via onReaction.
+    socket.on('reaction-added', (data: { messageId: string; userId: number; emoji: string; id?: number }) => {
+      onReactionRef.current?.({ ...data, added: true })
+    })
+    socket.on('reaction-removed', (data: { messageId: string; userId: number; emoji: string }) => {
+      onReactionRef.current?.({ ...data, added: false })
     })
 
     return socket
