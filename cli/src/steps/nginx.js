@@ -279,6 +279,19 @@ function renderNginxConf({ domain, apiPort, frontendDist, uploadsDir, tls, nginx
         proxy_read_timeout 86400s;
     }
 
+    # Short-URL redirector: /s/<code> resolves to the original long URL via
+    # the API's ShortUrl table. Used in post bodies for image/video/external
+    # links to keep on-chain text under the gas-priced character cap.
+    # Also used by /s/<code>.jpg (image preview) and /s/<code>.mp4 (video).
+    location /s/ {
+        proxy_pass http://127.0.0.1:${apiPort};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
     # User-uploaded media (avatars, post images, encrypted DM blobs).
     # Served directly by nginx — no Node round-trip — since filenames are
     # content-hashes (immutable). Previously this was proxy_pass'd to the
