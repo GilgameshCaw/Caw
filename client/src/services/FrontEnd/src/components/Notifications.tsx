@@ -825,6 +825,7 @@ const Notifications: React.FC = () => {
                       <Avatar
                         src={getUserAvatar(notification.actor)}
                         className="w-[18px] h-[18px] rounded-full flex-shrink-0"
+                        size="small"
                       />
                     )}
                     <span className="font-semibold">

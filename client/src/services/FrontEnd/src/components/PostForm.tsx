@@ -564,11 +564,16 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     }, 0)
   }
 
-  // Thin wrapper around the shared uploadMedia() — preserves the local
-  // call sites' { success, urls } shape. Compression happens inside
-  // uploadMedia (no-op for video files, since the helper passes through
-  // anything that isn't image/*).
-  const uploadMedia = async (files: File[], _type: 'image' | 'video', tokenId: number) => {
+  // Thin wrapper preserving the local { success, urls } shape. Images
+  // route through uploadFeedImage so each one gets a 2048px lightbox
+  // variant alongside the 1024px inline display file. Videos go through
+  // the generic uploadMedia helper unchanged.
+  const uploadMedia = async (files: File[], type: 'image' | 'video', tokenId: number) => {
+    if (type === 'image') {
+      const { uploadFeedImage } = await import('~/api/upload')
+      const urls = await Promise.all(files.map(f => uploadFeedImage(f, tokenId)))
+      return { success: true, urls }
+    }
     const { uploadMedia: sharedUpload } = await import('~/api/upload')
     const urls = await sharedUpload(files, tokenId, 'feed')
     return { success: true, urls }

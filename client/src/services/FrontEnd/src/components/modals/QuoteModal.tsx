@@ -91,6 +91,7 @@ export const QuoteModal: React.FC<QuoteModalProps> = ({ isOpen, caw, onClose, on
               src={getUserAvatar(caw.user)}
               alt={`${caw.user.username} avatar`}
               className="w-10 h-10 rounded-full"
+              size="small"
             />
 
             {/* Name and username */}

@@ -1278,6 +1278,7 @@ const PostMintOnboarding: React.FC<PostMintOnboardingProps> = ({ username, token
                             src={getUserAvatar(user)}
                             alt={user.username}
                             className="w-full h-full"
+                            size="small"
                           />
                         </div>
                         <p className={`font-medium text-sm truncate ${tc.textPrimary}`}>

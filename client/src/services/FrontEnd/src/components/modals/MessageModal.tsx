@@ -69,6 +69,7 @@ export const MessageModal: React.FC<MessageModalProps> = ({ isOpen, recipient, o
           src={getUserAvatar({ tokenId: recipient.tokenId ?? Number(recipient.id) })}
           alt={recipient.username}
           className="w-10 h-10 rounded-full"
+          size="small"
         />
         <div>
           <div className="text-white font-medium">{recipient.username}</div>

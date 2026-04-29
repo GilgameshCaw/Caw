@@ -41,6 +41,7 @@ export const CommentModal: React.FC<CommentModalProps> = ({ isOpen, caw, onClose
             src={getUserAvatar(caw.user)}
             alt={`${caw.user.username} avatar`}
             className="w-10 h-10 rounded-full"
+            size="small"
           />
           <div className="flex-1 min-w-0">
             <div className="flex items-center space-x-2">

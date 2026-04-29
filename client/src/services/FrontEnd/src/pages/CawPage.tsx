@@ -342,6 +342,7 @@ export const CawPage: React.FC = () => {
                       src={getUserAvatar(indicatorUser)}
                       alt={`${indicatorUser.username} avatar`}
                       className="w-full h-full rounded-full"
+                      size="small"
                     />
                   </div>
                   <span className="truncate">

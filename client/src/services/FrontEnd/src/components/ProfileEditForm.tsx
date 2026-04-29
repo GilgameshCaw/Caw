@@ -124,12 +124,13 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
     setProfileError(null)
     setIsUploading(true)
     try {
-      // Avatars get the smaller preset (256px max) since they're never
-      // displayed bigger; covers use the feed preset (1024px max).
-      const { uploadMedia } = await import('~/api/upload')
-      const urls = await uploadMedia([file], activeToken?.tokenId || 0, type === 'avatar' ? 'avatar' : 'feed')
-      if (!urls[0]) throw new Error('No URL returned from upload')
-      const imageUrl = urls[0]
+      // Avatars upload as 300px main + 64px thumb variant. Covers go
+      // through uploadMedia with the 'cover' preset (1140px) for retina.
+      const { uploadAvatar, uploadMedia } = await import('~/api/upload')
+      const imageUrl = type === 'avatar'
+        ? await uploadAvatar(file, activeToken?.tokenId || 0)
+        : (await uploadMedia([file], activeToken?.tokenId || 0, 'cover'))[0]
+      if (!imageUrl) throw new Error('No URL returned from upload')
 
       if (type === 'avatar') {
         const reader = new FileReader()

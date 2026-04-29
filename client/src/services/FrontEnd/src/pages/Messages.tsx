@@ -846,6 +846,7 @@ const MessagesPage: React.FC = () => {
                     src={getUserAvatar(otherParticipant.identity.user)}
                     alt={otherParticipant.identity.user.username}
                     className="w-full h-full"
+                    size="small"
                   />
                 </a>
               )}
@@ -1177,6 +1178,7 @@ const MessagesPage: React.FC = () => {
                               src={getUserAvatar(otherUser.identity.user)}
                               alt={otherUser.identity.user.username}
                               className="w-10 h-10 rounded-full"
+                              size="small"
                             />
                           ) : (
                             <div className="w-10 h-10 rounded-full bg-gray-600 flex items-center justify-center">
@@ -1987,6 +1989,7 @@ const MessagesPage: React.FC = () => {
                               src={getUserAvatar(user)}
                               alt={user.username}
                               className="w-10 h-10 rounded-full"
+                              size="small"
                             />
                             <div className="flex-1 text-left">
                               <div className="font-semibold">{user.displayName || user.username}</div>
@@ -2029,6 +2032,7 @@ const MessagesPage: React.FC = () => {
                               src={getUserAvatar(user)}
                               alt={user.username}
                               className="w-10 h-10 rounded-full"
+                              size="small"
                             />
                             <div className="flex-1 text-left">
                               <div className="font-semibold">{user.displayName || user.username}</div>
@@ -2205,6 +2209,7 @@ const MessagesPage: React.FC = () => {
                     src={getUserAvatar(dmPrivacyError.peer)}
                     alt={dmPrivacyError.peer.username}
                     className="w-10 h-10 rounded-full"
+                    size="small"
                   />
                   <div>
                     <p className={`font-medium text-sm ${isDark ? 'text-white' : 'text-gray-900'}`}>

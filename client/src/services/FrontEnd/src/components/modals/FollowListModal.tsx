@@ -156,6 +156,7 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
                       src={getUserAvatar(user)}
                       alt={user.username}
                       className="w-full h-full rounded-full"
+                      size="small"
                     />
                   </div>
                   <div>

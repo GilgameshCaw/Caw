@@ -232,6 +232,7 @@ const AccountSettings: React.FC = () => {
                       src={getUserAvatar(token)}
                       alt={token.username}
                       className="w-10 h-10 rounded-full"
+                      size="small"
                     />
                     <div>
                       <p className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>

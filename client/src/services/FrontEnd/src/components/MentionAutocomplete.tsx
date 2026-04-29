@@ -231,6 +231,7 @@ const MentionAutocomplete: React.FC<MentionAutocompleteProps> = ({
               src={getUserAvatar(user)}
               alt={user.username}
               className="w-8 h-8 rounded-full"
+              size="small"
             />
             <div className="flex-1 min-w-0">
               <div className={`font-semibold text-sm truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>

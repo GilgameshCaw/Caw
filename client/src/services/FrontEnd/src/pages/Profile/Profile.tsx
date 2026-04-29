@@ -474,10 +474,11 @@ export const Profile: React.FC = () => {
     setIsUploading(true)
 
     try {
-      const { uploadMedia } = await import('~/api/upload')
-      const urls = await uploadMedia([file], activeToken?.tokenId || 0, type === 'avatar' ? 'avatar' : 'feed')
-      if (!urls[0]) throw new Error('No URL returned from upload')
-      const imageUrl = urls[0]
+      const { uploadAvatar, uploadMedia } = await import('~/api/upload')
+      const imageUrl = type === 'avatar'
+        ? await uploadAvatar(file, activeToken?.tokenId || 0)
+        : (await uploadMedia([file], activeToken?.tokenId || 0, 'cover'))[0]
+      if (!imageUrl) throw new Error('No URL returned from upload')
 
       // Set both preview and URL
       if (type === 'avatar') {

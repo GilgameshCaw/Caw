@@ -773,6 +773,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   src={getUserAvatar(useItem.user)}
                   alt={`${useItem.user.username} avatar`}
                   className="w-full h-full rounded-full hover:opacity-80 transition-opacity duration-200"
+                  size="small"
                 />
               </Link>
               
@@ -1078,6 +1079,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   <Avatar
                     src={getUserAvatar(item.parent.user)}
                     className="w-5 h-5 rounded-full border border-gray-700"
+                    size="small"
                   />
                   <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
                     {item.parent.user.displayName || item.parent.user.username}

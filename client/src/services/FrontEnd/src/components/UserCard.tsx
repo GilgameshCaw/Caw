@@ -88,7 +88,7 @@ const UserCard: React.FC<UserCardProps> = ({
 
       <Link to={`/users/${user.username}`} className="block text-center">
         <div className="w-16 h-16 rounded-full mx-auto mb-1 overflow-hidden">
-          <Avatar src={getUserAvatar(user)} alt={user.username} />
+          <Avatar src={getUserAvatar(user)} alt={user.username} size="small" />
         </div>
 
         <p className={`font-medium truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>

@@ -173,6 +173,7 @@ const ReplyItem: React.FC<{ item: CawItem; onLikeStateChange?: (cawId: string, l
               src={getUserAvatar(item.user)}
               alt={`${item.user.username} avatar`}
               className="w-full h-full rounded-full hover:opacity-80 transition-opacity duration-200"
+              size="small"
             />
           </Link>
           

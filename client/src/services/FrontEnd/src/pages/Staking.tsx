@@ -1056,6 +1056,7 @@ const Staking = () => {
                   src={getUserAvatar(activeProfile || { username: mockData.username, tokenId: mockData.tokenId })}
                   alt={mockData.username}
                   className="w-full h-full"
+                  size="small"
                 />
               </div>
               <span className={`text-sm font-medium transition-colors duration-300 ${
