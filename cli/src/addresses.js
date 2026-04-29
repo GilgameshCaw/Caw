@@ -24,9 +24,9 @@ import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-// addresses.ts lives at repo-root/client/src/abi/addresses.ts; the CLI lives
-// at repo-root/cli/src. Resolve once.
-const ADDRESSES_TS = path.resolve(__dirname, '../../client/src/abi/addresses.ts')
+// deployments.ts lives at repo-root/client/src/abi/deployments.ts; the CLI
+// lives at repo-root/cli/src. Resolve once. NOTE: we deliberately don't
+// read addresses.ts — that's the install OUTPUT, not its input.
 const DEPLOYMENTS_TS = path.resolve(__dirname, '../../client/src/abi/deployments.ts')
 
 // Optional network hint set by the CLI's networkAndMode step. The fallback
@@ -44,26 +44,26 @@ let _cache = null
 
 function load() {
   if (_cache) return _cache
-  // Primary source: per-install addresses.ts. Read if it exists.
-  if (fs.existsSync(ADDRESSES_TS)) {
-    const src = fs.readFileSync(ADDRESSES_TS, 'utf8')
-    const re = /export\s+const\s+([A-Z0-9_]+)\s*=\s*["']([^"']+)["']/g
-    const out = {}
-    let m
-    while ((m = re.exec(src)) !== null) {
-      out[m[1]] = m[2]
-    }
-    _cache = Object.freeze(out)
-    return _cache
-  }
-  // Fallback: parse deployments.ts and map L1 contract names to the
-  // semantic constants the CLI looks up.
+  // Source: deployments.ts ONLY. addresses.ts is intentionally not read here.
+  //
+  // Why: addresses.ts is the OUTPUT of the install flow — generate.js writes
+  // it for the API server to import at runtime. The install flow itself
+  // (validator step, clientCreator) does L1 lookups BEFORE that file gets
+  // (re-)written, so reading the existing file would mean we're querying the
+  // *previous* deploy's contracts during a fresh install. After a contract
+  // redeploy this surfaces as confusing "username not found" errors —
+  // CawProfileMinter on the old address has no idea what `gilgamesh` is on
+  // the new one. deployments.ts is checked into the repo alongside the
+  // contracts and is the canonical source of truth.
+  //
+  // The API server has no business reading deployments.ts — it imports the
+  // generated addresses.ts directly. So this fallback is install-only.
   if (fs.existsSync(DEPLOYMENTS_TS)) {
     _cache = Object.freeze(loadFromDeployments())
     return _cache
   }
   throw new Error(
-    `No address source available. Tried ${ADDRESSES_TS} and ${DEPLOYMENTS_TS}.`
+    `deployments.ts not found at ${DEPLOYMENTS_TS}. The CLI install flow needs this file — make sure you're running from a checkout that includes it.`
   )
 }
 
@@ -132,17 +132,18 @@ function parseEnvBlock(txt, env) {
 }
 
 /**
- * Return the address for a given symbol. Reads from per-install addresses.ts
- * when present, falls back to deployments.ts for L1 contracts on a fresh
- * checkout (before generate.js has run).
+ * Return the address for a given symbol. Reads exclusively from
+ * deployments.ts — the install flow's L1 lookups must use the canonical
+ * source, not whatever addresses.ts happens to be left over from a prior
+ * deploy.
  *
- * Throws if the symbol can't be resolved from either source — fail-fast
- * beats falling back to a stale shim.
+ * Throws if the symbol can't be resolved — fail-fast beats falling back
+ * to a stale shim.
  */
 export function addr(name) {
   const all = load()
   const v = all[name]
-  if (!v) throw new Error(`Address ${name} not found (looked in addresses.ts and deployments.ts[${_network}].L1)`)
+  if (!v) throw new Error(`Address ${name} not found in deployments.ts[${_network}].L1`)
   return v
 }
 
