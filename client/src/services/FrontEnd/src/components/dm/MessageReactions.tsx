@@ -83,12 +83,12 @@ export const MessageReactionStrip: React.FC<ReactionStripProps> = ({
       <button
         type="button"
         onClick={() => setOpen(o => !o)}
-        className={`p-1 rounded-full transition-opacity cursor-pointer ${
+        className={`p-1.5 rounded-full transition-opacity cursor-pointer ${
           open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
         } ${isDark ? 'hover:bg-white/10 text-white/40 hover:text-white/80' : 'hover:bg-gray-200 text-gray-400 hover:text-gray-700'}`}
         title="Add reaction"
       >
-        <HiOutlineEmojiHappy className="w-4 h-4" />
+        <HiOutlineEmojiHappy className="w-5 h-5" />
       </button>
 
       {open && (
@@ -104,7 +104,7 @@ export const MessageReactionStrip: React.FC<ReactionStripProps> = ({
                 key={emoji}
                 type="button"
                 onClick={performAndClose(() => onReact(emoji))}
-                className={`text-2xl leading-none w-10 h-10 rounded-full flex items-center justify-center transition-transform hover:scale-125 cursor-pointer ${
+                className={`text-3xl leading-none w-12 h-12 rounded-full flex items-center justify-center transition-transform hover:scale-125 cursor-pointer ${
                   mine ? (isDark ? 'bg-yellow-500/30' : 'bg-yellow-200/70') : ''
                 }`}
                 title={mine ? 'Remove reaction' : 'React'}
@@ -120,7 +120,7 @@ export const MessageReactionStrip: React.FC<ReactionStripProps> = ({
           <button
             type="button"
             onClick={performAndClose(onOpenPicker)}
-            className={`w-9 h-9 rounded-full flex items-center justify-center text-lg transition-colors cursor-pointer ${
+            className={`w-11 h-11 rounded-full flex items-center justify-center text-2xl transition-colors cursor-pointer ${
               isDark ? 'text-white/60 hover:bg-white/10 hover:text-white' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'
             }`}
             title="More reactions"
@@ -130,12 +130,12 @@ export const MessageReactionStrip: React.FC<ReactionStripProps> = ({
           <button
             type="button"
             onClick={performAndClose(onOpenCustomize)}
-            className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
+            className={`w-11 h-11 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
               isDark ? 'text-white/60 hover:bg-white/10 hover:text-white' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'
             }`}
             title="Customize default reactions"
           >
-            <HiOutlinePencil className="w-4 h-4" />
+            <HiOutlinePencil className="w-5 h-5" />
           </button>
         </div>
       )}

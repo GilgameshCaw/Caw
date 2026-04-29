@@ -1546,9 +1546,9 @@ const MessagesPage: React.FC = () => {
                                 createdAt: message.createdAt,
                               })
                             }}
-                            className="p-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer hover:bg-white/10 self-center flex-shrink-0"
+                            className="p-1.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer hover:bg-white/10 self-center flex-shrink-0"
                           >
-                            <HiOutlineDotsHorizontal className="w-4 h-4 text-white/30" />
+                            <HiOutlineDotsHorizontal className="w-5 h-5 text-white/30" />
                           </button>
                         </div>
 
