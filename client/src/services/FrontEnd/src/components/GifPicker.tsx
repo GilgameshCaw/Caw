@@ -92,10 +92,10 @@ const GifPicker: React.FC<GifPickerProps> = ({ initialQuery = '', onSelect, onCl
 
   return (
     <div className={`rounded-xl border overflow-hidden ${
-      isDark ? 'bg-gray-900 border-gray-700' : 'bg-white border-gray-200'
+      isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
     }`}>
       {/* Header with search */}
-      <div className={`p-3 border-b ${isDark ? 'border-gray-700' : 'border-gray-200'}`}>
+      <div className={`p-3 border-b ${isDark ? 'border-white/20' : 'border-gray-200'}`}>
         <div className="flex items-center justify-between mb-2">
           <span className={`text-sm font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
             Choose a GIF
@@ -103,7 +103,7 @@ const GifPicker: React.FC<GifPickerProps> = ({ initialQuery = '', onSelect, onCl
           <button
             onClick={onClose}
             className={`p-1 rounded-full transition-colors ${
-              isDark ? 'hover:bg-gray-700 text-gray-400' : 'hover:bg-gray-100 text-gray-500'
+              isDark ? 'hover:bg-white/10 text-gray-400' : 'hover:bg-gray-100 text-gray-500'
             }`}
           >
             <HiX className="w-5 h-5" />
@@ -123,7 +123,7 @@ const GifPicker: React.FC<GifPickerProps> = ({ initialQuery = '', onSelect, onCl
             placeholder="Search GIFs..."
             className={`w-full pl-9 pr-3 py-2 rounded-lg text-sm transition-colors ${
               isDark
-                ? 'bg-gray-800 text-white placeholder-gray-500 border-gray-600 focus:border-yellow-500'
+                ? 'bg-white/5 text-white placeholder-white/40 border-white/20 focus:border-yellow-500'
                 : 'bg-gray-100 text-gray-900 placeholder-gray-500 border-gray-200 focus:border-yellow-500'
             } border focus:outline-none`}
           />
@@ -131,7 +131,7 @@ const GifPicker: React.FC<GifPickerProps> = ({ initialQuery = '', onSelect, onCl
             <button
               onClick={() => setQuery('')}
               className={`absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-full ${
-                isDark ? 'hover:bg-gray-700 text-gray-400' : 'hover:bg-gray-200 text-gray-500'
+                isDark ? 'hover:bg-white/10 text-gray-400' : 'hover:bg-gray-200 text-gray-500'
               }`}
             >
               <HiX className="w-3 h-3" />
@@ -148,7 +148,7 @@ const GifPicker: React.FC<GifPickerProps> = ({ initialQuery = '', onSelect, onCl
               <div
                 key={i}
                 className={`aspect-square rounded-lg animate-pulse ${
-                  isDark ? 'bg-gray-800' : 'bg-gray-200'
+                  isDark ? 'bg-white/10' : 'bg-gray-200'
                 }`}
               />
             ))}

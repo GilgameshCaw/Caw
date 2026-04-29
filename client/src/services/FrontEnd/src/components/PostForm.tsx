@@ -1530,7 +1530,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         {/* Mobile Emoji Picker */}
         {showEmojiPicker && (
           <div className={`mt-4 p-4 border rounded-lg ${
-            isDark ? 'border-gray-600 bg-gray-800' : 'border-gray-200 bg-gray-50'
+            isDark ? 'border-white/20 bg-black' : 'border-gray-200 bg-gray-50'
           }`}>
             <div className="grid grid-cols-6 gap-2 max-h-32 overflow-y-auto">
               {['😀', '😂', '🤣', '😊', '😍', '🤔', '😎', '🔥', '💯', '❤️', '👍', '👎'].map(emoji => (
@@ -1540,7 +1540,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     setText(prev => prev + emoji)
                     setShowEmojiPicker(false)
                   }}
-                  className="p-1 text-xl hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
+                  className="p-1 text-xl hover:bg-gray-200 dark:hover:bg-white/10 rounded transition-colors"
                 >
                   {emoji}
                 </button>
@@ -1627,7 +1627,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         {/* Emoji Picker */}
         {showEmojiPicker && (
           <div className={`mt-4 p-4 border rounded-lg ${
-            isDark ? 'border-gray-600 bg-gray-800' : 'border-gray-200 bg-gray-50'
+            isDark ? 'border-white/20 bg-black' : 'border-gray-200 bg-gray-50'
           }`}>
             <div className="grid grid-cols-8 gap-2 max-h-48 overflow-y-auto">
               {['😀', '😂', '🤣', '😊', '😍', '🤔', '😎', '🔥', '💯', '❤️', '👍', '👎', '👏', '🙏', '💪', '🚀'].map(emoji => (
@@ -1637,7 +1637,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     setText(prev => prev + emoji)
                     setShowEmojiPicker(false)
                   }}
-                  className="p-2 text-2xl hover:bg-gray-200 dark:hover:bg-gray-700 rounded transition-colors"
+                  className="p-2 text-2xl hover:bg-gray-200 dark:hover:bg-white/10 rounded transition-colors"
                 >
                   {emoji}
                 </button>
@@ -1649,7 +1649,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         {/* Scheduler */}
         {showScheduler && (
           <div className={`mt-4 p-4 border rounded-lg ${
-            isDark ? 'border-gray-600 bg-gray-800' : 'border-gray-200 bg-gray-50'
+            isDark ? 'border-white/20 bg-black' : 'border-gray-200 bg-gray-50'
           }`}>
             <div className="flex items-center space-x-2 mb-3">
               <HiCalendar className={`w-5 h-5 ${isDark ? 'text-yellow-400' : 'text-yellow-600'}`} />

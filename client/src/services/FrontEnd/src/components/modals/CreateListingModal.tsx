@@ -7,6 +7,7 @@ import ModalHeader from './ModalHeader'
 import { useTheme } from '~/hooks/useTheme'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { themeTextSecondary, themeTextMuted, themeBgSubtle, themeSecondaryButton, themeInput, themeBorder } from '~/utils/theme'
+import ThemedListbox from '~/components/forms/ThemedListbox'
 import { useMarketplaceStore } from '~/store/marketplaceStore'
 import { usePriceStore, useTokenDataStore } from '~/store/tokenDataStore'
 import { chains } from '~/config/chains'
@@ -342,20 +343,12 @@ const CreateListingModal: React.FC = () => {
           <div className="space-y-4 mb-4">
             <div>
               <label className={`block text-sm font-medium mb-1 ${themeTextSecondary(isDark)}`}>Payment Token</label>
-              <div className="relative">
-                <select
-                  value={paymentToken}
-                  onChange={e => handleCurrencyChange(e.target.value)}
-                  className={`${inputClass} appearance-none pr-8`}
-                >
-                  {PAYMENT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-                <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-3">
-                  <svg className={`h-4 w-4 ${isDark ? 'text-gray-400' : 'text-gray-500'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                </div>
-              </div>
+              <ThemedListbox
+                isDark={isDark}
+                value={paymentToken}
+                onChange={(v: string) => handleCurrencyChange(v)}
+                options={PAYMENT_OPTIONS}
+              />
             </div>
 
             <div>
