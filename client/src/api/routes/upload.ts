@@ -118,6 +118,74 @@ router.post('/', upload.array('media', 10), requireAuth({ field: 'tokenId' }), a
 })
 
 /**
+ * Upload a sized variant of an existing image — e.g. `_64.webp` thumbnail
+ * for an avatar that was just uploaded as `abc12345.webp`.
+ *
+ * Naming: variant files live next to the base file, with `_<width>` inserted
+ * before the extension. Client derives URLs by string substitution, so the
+ * convention has to stay rigid: `abc12345.webp` → `abc12345_64.webp`.
+ *
+ * Validates that the base file already exists to prevent random variant
+ * spam from filling disk. Reuses the global multer config so the size cap
+ * is enforced.
+ */
+const variantUpload = multer({
+  storage,
+  limits: { fileSize: IMAGE_MAX_BYTES },
+  fileFilter: (req, file, cb) => {
+    const imageMimes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp']
+    if (imageMimes.includes(file.mimetype)) cb(null, true)
+    else cb(new Error(`Invalid variant format: ${file.mimetype}`))
+  },
+})
+
+router.post('/variant', variantUpload.single('media'), requireAuth({ field: 'tokenId' }), async (req: any, res: any) => {
+  try {
+    const { baseFilename, width } = req.body
+    const file = req.file as Express.Multer.File | undefined
+
+    if (!file) return res.status(400).json({ error: 'No file uploaded' })
+    if (!baseFilename || typeof baseFilename !== 'string') {
+      return res.status(400).json({ error: 'Missing baseFilename' })
+    }
+    if (!/^\d+$/.test(width)) {
+      return res.status(400).json({ error: 'Invalid width' })
+    }
+
+    // Reject path traversal — baseFilename must be just `<id>.<ext>`.
+    if (!/^[a-z0-9]+\.(webp|jpg|jpeg|png|gif)$/i.test(baseFilename)) {
+      // Drop the temp file multer just wrote.
+      await import('fs/promises').then(fs => fs.unlink(file.path).catch(() => {}))
+      return res.status(400).json({ error: 'Invalid baseFilename' })
+    }
+
+    const fs = await import('fs/promises')
+    const basePath = path.join(IMAGE_DIR, baseFilename)
+    try {
+      await fs.access(basePath)
+    } catch {
+      await fs.unlink(file.path).catch(() => {})
+      return res.status(404).json({ error: 'Base image not found' })
+    }
+
+    const dot = baseFilename.lastIndexOf('.')
+    const stem = baseFilename.slice(0, dot)
+    const ext = baseFilename.slice(dot)
+    const variantName = `${stem}_${width}${ext}`
+    const variantPath = path.join(IMAGE_DIR, variantName)
+
+    // Atomic move from multer's temp filename to the variant filename.
+    await fs.rename(file.path, variantPath)
+
+    const apiHost = publicUrl()
+    res.json({ success: true, url: `${apiHost}/uploads/images/${variantName}` })
+  } catch (error) {
+    console.error('Variant upload error:', error)
+    res.status(500).json({ error: 'Failed to upload variant' })
+  }
+})
+
+/**
  * Upload encrypted DM attachment.
  * Accepts raw encrypted binary (application/octet-stream).
  * Stores as .enc file, returns URL for retrieval.
