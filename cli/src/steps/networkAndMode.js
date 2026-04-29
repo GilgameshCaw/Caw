@@ -12,6 +12,35 @@ export async function collectNetworkAndMode(nodeType) {
   // launch phase. Removes the option from the picker entirely so operators
   // can't pick a network whose contracts haven't shipped yet.
   section('Network')
+  // --env preload: skip the prompt entirely when CAW_NETWORK is set. The
+  // network is locked in by every downstream answer (RPC URLs, contract
+  // addresses, validator's clientId), so re-asking on a re-run is just
+  // friction.
+  if (process.env.CAW_NETWORK === 'testnet' || process.env.CAW_NETWORK === 'mainnet') {
+    const network = process.env.CAW_NETWORK
+    console.log(dim(`  Using ${brand(network)} from --env preload (CAW_NETWORK).`))
+    let deployment = 'dev'
+    if (['full', 'frontend-api', 'frontend-only', 'api-only'].includes(nodeType)) {
+      // Deployment mode isn't preserved in .env, so we still ask if relevant.
+      // Most operators answer this the same way every time, but it's not in
+      // the .env so we don't have a value to skip with.
+      section('Deployment Mode')
+      const { mode } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'mode',
+          message: 'How are you running this node?',
+          choices: [
+            { value: 'production', name: `${brand('Production')} ${dim('(public domain, nginx serves built frontend)')}` },
+            { value: 'dev', name: `${brand('Development')} ${dim('(localhost, vite dev server)')}` },
+          ],
+          default: 'production',
+        },
+      ])
+      deployment = mode
+    }
+    return { network, deployment }
+  }
   const allowMainnet = process.env.CAW_ALLOW_MAINNET === '1'
   let network
   if (allowMainnet) {
