@@ -378,9 +378,9 @@ export function useSignAndSubmitAction() {
   const { signTypedDataAsync } = useSignTypedData()
   const activeToken = useActiveToken();
   const cawonce       = activeToken?.cawonce;
-  // Kept as a UI hint refresher — server allocate-cawonce is the
-  // authority, but we still set the store optimistically so any UI
-  // showing "next post will be #N" stays roughly accurate.
+  // Kept as a UI hint refresher — chain.nextCawonce is the authority,
+  // but we still set the store optimistically so any UI showing
+  // "next post will be #N" stays roughly accurate.
   const setCawonce    = useTokenDataStore(s => s.setCawonce)
   const activeTokenId = activeToken?.tokenId
 
@@ -694,15 +694,14 @@ export function useSignAndSubmitAction() {
     //     a contiguous block via findSafeCawonceStart and is issuing them
     //     one at a time. We trust the input and don't allocate again.
     //
-    //   - Default (single action): server-side allocation. POST
-    //     /api/users/allocate-cawonce atomically reserves the next free
-    //     cawonce against confirmed Actions, in-flight TxQueue rows,
-    //     scheduled posts, and existing reservations. Eliminates the
-    //     localStorage race that produced "Cawonce already used" failures
-    //     when concurrent submissions read+bumped the store at the same
-    //     time. ~1 round-trip; bench at <10ms server-side. The reservation
-    //     is released by the action submission step on success or swept
-    //     after 5 minutes by DataCleaner if the client never came back.
+    //   - Default (single action): chain-only allocation via allocateCawonces.
+    //     Reads cawProfileL2.getTokens([tokenId]).nextCawonce from L2 and
+    //     bumps a per-tab local watermark to keep concurrent in-tab calls
+    //     monotonic. The TxQueue partial unique index on (senderId, cawonce)
+    //     catches any cross-tab / cross-server race; on collision the
+    //     server returns 409 cawonce_collision and signAndSubmit's catch
+    //     block invalidates the watermark and retries once with a fresh
+    //     chain read.
     let useCawonce: number
     if (params.cawonce != null) {
       useCawonce = params.cawonce

@@ -992,13 +992,3 @@ ALTER TABLE "Bookmark" ADD CONSTRAINT "Bookmark_userId_fkey" FOREIGN KEY ("userI
 -- AddForeignKey
 ALTER TABLE "Bookmark" ADD CONSTRAINT "Bookmark_cawId_fkey" FOREIGN KEY ("cawId") REFERENCES "Caw"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
--- CreateTable: CawonceReservation
--- Atomic cawonce allocation backing the allocate-cawonce endpoint.
-CREATE TABLE "CawonceReservation" (
-    "senderId"   INTEGER NOT NULL,
-    "cawonce"    INTEGER NOT NULL,
-    "reservedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE UNIQUE INDEX "CawonceReservation_senderId_cawonce_key" ON "CawonceReservation" ("senderId", "cawonce");
-CREATE INDEX "CawonceReservation_reservedAt_idx" ON "CawonceReservation" ("reservedAt");
-
