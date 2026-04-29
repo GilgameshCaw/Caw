@@ -150,7 +150,14 @@ const liveSettings = {
   /** Tip at or above which an action gets priority processing (next poll cycle, no batch wait).
    *  Actions between baseTip and priorityTip are processed on the normal batch cadence. */
   priorityTip: DEFAULT_VALIDATOR_TIP * 3n,
-  checkInterval: 10_000,
+  // 30s default — actions are confirmed in the local feed optimistically
+  // before the validator picks them up, so the user-visible cost of a slower
+  // poll is just "the on-chain submission lands a beat later." Bumping from
+  // 10s to 30s also encourages more action grouping per batch (cheaper gas
+  // per user, more efficient validator), and matches a pure-RPC reduction
+  // (fewer fetchPendingQueue ticks per hour). Priority-tipped actions still
+  // skip the wait, so latency-sensitive flows are unaffected.
+  checkInterval: 30_000,
   minActionsPerBatch: 1,
   maxWaitTime: 10_000,    // 10s default — users shouldn't wait long for standard-tip posts
   replicationInterval: 60_000,
@@ -167,7 +174,7 @@ async function refreshSettings(configCheckInterval?: number) {
     const map = new Map(rows.map(r => [r.key, r.value]))
     if (map.has('validatorBaseTip'))    liveSettings.validatorBaseTip = BigInt(map.get('validatorBaseTip')!)
     if (map.has('priorityTip'))        liveSettings.priorityTip = BigInt(map.get('priorityTip')!) || DEFAULT_VALIDATOR_TIP * 3n
-    if (map.has('checkInterval'))       liveSettings.checkInterval = Number(map.get('checkInterval')!) || configCheckInterval || 10_000
+    if (map.has('checkInterval'))       liveSettings.checkInterval = Number(map.get('checkInterval')!) || configCheckInterval || 30_000
     if (map.has('minActionsPerBatch'))  liveSettings.minActionsPerBatch = Number(map.get('minActionsPerBatch')!) || 1
     if (map.has('maxWaitTime'))         liveSettings.maxWaitTime = Number(map.get('maxWaitTime')!) || 10_000
     if (map.has('replicationInterval')) liveSettings.replicationInterval = Number(map.get('replicationInterval')!) || 60_000
@@ -2576,6 +2583,11 @@ console.log("succeededKeys", succeededKeys)
       return { allActions, allR, packedBytes: packed, checkpointHashes, entryHash: prevHash }
     }
 
+    // Last-ran timestamp for autoFinalizeSubmissions. The replication loop
+    // ticks every replicationInterval (60s default) but finalization only
+    // needs to run hourly — see the gate inside the loop body.
+    let lastFinalizeRunAt = 0
+
     /**
      * Optimistic replication loop: submits checkpoint data directly to L2b
      * archive contract with stake-based security instead of LZ fees per batch.
@@ -2888,8 +2900,16 @@ console.log("succeededKeys", succeededKeys)
           }
         }
 
-        // 7. Auto-finalize past submissions
-        await autoFinalizeSubmissions()
+        // 7. Auto-finalize past submissions — gated to once per hour. Even
+        // with the checkpoint cutting per-call cost dramatically, there's no
+        // reason to scan every replicationInterval (60s default) when the
+        // challenge window is days. Hourly hits the right tradeoff between
+        // "stake released promptly" and "don't burn RPC for empty scans."
+        const FINALIZE_INTERVAL_MS = 60 * 60_000
+        if (Date.now() - lastFinalizeRunAt > FINALIZE_INTERVAL_MS) {
+          await autoFinalizeSubmissions()
+          lastFinalizeRunAt = Date.now()
+        }
 
         // 8. Auto-withdraw excess stake
         await autoWithdrawExcessStake()
@@ -2901,15 +2921,35 @@ console.log("succeededKeys", succeededKeys)
 
     /**
      * Finalize submissions whose challenge period has expired.
+     *
+     * Uses a ChainData checkpoint so each tick scans only NEW blocks since
+     * the last run instead of re-scanning ~115k blocks of Arbitrum every
+     * time. The eth_getLogs cost without a checkpoint is enormous — 4 days
+     * of blocks at every replicationInterval tick was the largest single
+     * source of Infura credit burn we measured.
+     *
+     * Cold start: the checkpoint key may be missing (first run after this
+     * code lands, or a fresh DB). Fall back to the original 4-day lookback
+     * once, then write the checkpoint so subsequent ticks are cheap.
      */
     async function autoFinalizeSubmissions() {
       try {
         const { archiveRead: archive, archiveWrite: archiveW, l2bProvider: provider, l2bWallet: w } = getL2bContracts()
 
-        // Query SubmissionCreated events from our address
         const latestBlock = await provider!.getBlockNumber()
-        // Look back ~4 days of blocks (~12s/block on Arbitrum = ~28800 blocks/day)
-        const fromBlock = Math.max(0, latestBlock - 28800 * 4)
+        const checkpointKey = `optimistic-finalize:${w.address.toLowerCase()}:last-block`
+        const cp = await prisma.chainData.findUnique({ where: { key: checkpointKey } })
+        // ~12s/block on Arbitrum = ~28800 blocks/day. 4-day cold-start lookback.
+        const cold = !cp
+        const fromBlock = cp
+          ? Math.max(0, Number(cp.value) + 1)
+          : Math.max(0, latestBlock - 28800 * 4)
+        if (cold) console.log(`[OptimisticReplication] Cold-start finalize scan: ${fromBlock}..${latestBlock}`)
+
+        if (fromBlock > latestBlock) {
+          // No new blocks since last check. Common case — nothing to do.
+          return
+        }
 
         const events = await archive.queryFilter(
           archive.filters.SubmissionCreated(null, w.address),
@@ -2941,6 +2981,15 @@ console.log("succeededKeys", succeededKeys)
             console.error(`[OptimisticReplication] Failed to finalize submission ${submissionId}: ${err?.shortMessage || err?.message}`)
           }
         }
+
+        // Advance the checkpoint regardless of whether we found events. The
+        // next tick should resume from latestBlock+1 either way; failures
+        // above don't invalidate the scan range we already covered.
+        await prisma.chainData.upsert({
+          where: { key: checkpointKey },
+          create: { key: checkpointKey, value: latestBlock as any },
+          update: { value: latestBlock as any },
+        })
       } catch (err: any) {
         console.error(`[OptimisticReplication] Auto-finalize error: ${err?.shortMessage || err?.message}`)
       }

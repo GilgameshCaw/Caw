@@ -20,7 +20,10 @@ const Config = z.object({
   l1RpcUrl:            z.string().optional(),
   chainId:             z.number().int().positive().default(11155111), // Sepolia today, mainnet later
   cawProfileAddress:   z.string().optional(),
-  pollIntervalMs:      z.number().int().positive().default(30_000),
+  // 60s default — Transfer events on the L1 Profile NFT are rare (a mint or
+  // a marketplace sale every few minutes in the busy case, hours otherwise).
+  // Shorter intervals just burn eth_getLogs credits to find empty windows.
+  pollIntervalMs:      z.number().int().positive().default(60_000),
   // First-run start block. Once we land #4 (per-client checkpointing) this
   // becomes redundant — discovered from the ClientCreated event. For now it's
   // a config knob.

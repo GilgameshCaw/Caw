@@ -93,6 +93,23 @@ export const marketplaceIndexerService: Service = {
         console.log(`[MarketplaceIndexer] First run, scanning from block ${lastBlock} (current: ${currentBlock})`)
       }
 
+      // Pre-resolve all event topic hashes once. Used to OR-filter a single
+      // getLogs call across every marketplace event we care about — replaces
+      // ten separate queryFilter calls that each hit eth_getLogs independently.
+      const EVENT_NAMES = [
+        'Listed', 'Sale', 'BidPlaced', 'BidWithdrawn', 'BidReclaimed',
+        'ListingCancelled', 'AuctionSettled',
+        'OfferCreated', 'OfferAccepted', 'OfferCancelled',
+      ] as const
+      const eventTopics: Record<string, string> = {}
+      const topicToName: Record<string, string> = {}
+      for (const name of EVENT_NAMES) {
+        const frag = marketplace.interface.getEvent(name)
+        if (!frag) continue
+        eventTopics[name] = frag.topicHash
+        topicToName[frag.topicHash] = name
+      }
+
       async function poll() {
         if (!alive) return
         try {
@@ -102,34 +119,42 @@ export const marketplaceIndexerService: Service = {
           const fromBlock = lastBlock + 1
           const toBlock = Math.min(currentBlock, fromBlock + 2000) // Max 2000 blocks per poll
 
-          // Fetch marketplace events
-          const listedFilter = marketplace.filters.Listed()
-          const saleFilter = marketplace.filters.Sale()
-          const bidFilter = marketplace.filters.BidPlaced()
-          const bidWithdrawnFilter = marketplace.filters.BidWithdrawn()
-          const bidReclaimedFilter = marketplace.filters.BidReclaimed()
-          const cancelledFilter = marketplace.filters.ListingCancelled()
-          const settledFilter = marketplace.filters.AuctionSettled()
-          const offerCreatedFilter = marketplace.filters.OfferCreated()
-          const offerAcceptedFilter = marketplace.filters.OfferAccepted()
-          const offerCancelledFilter = marketplace.filters.OfferCancelled()
-
           console.log(`[MarketplaceIndexer] Polling blocks ${fromBlock}–${toBlock}`)
 
-          // Sequential queryFilters — Promise.all lets ethers batch them
-          // into a single JSON-RPC request, and when one member 429s the
-          // partial-batch failure surfaces as a confusing "missing response"
-          // error. Sequential calls play nicer with the global throttle.
-          const listed = await marketplace.queryFilter(listedFilter, fromBlock, toBlock)
-          const sales = await marketplace.queryFilter(saleFilter, fromBlock, toBlock)
-          const bids = await marketplace.queryFilter(bidFilter, fromBlock, toBlock)
-          const bidWithdrawals = await marketplace.queryFilter(bidWithdrawnFilter, fromBlock, toBlock)
-          const bidReclaimed = await marketplace.queryFilter(bidReclaimedFilter, fromBlock, toBlock)
-          const cancelled = await marketplace.queryFilter(cancelledFilter, fromBlock, toBlock)
-          const settled = await marketplace.queryFilter(settledFilter, fromBlock, toBlock)
-          const offersCreated = await marketplace.queryFilter(offerCreatedFilter, fromBlock, toBlock)
-          const offersAccepted = await marketplace.queryFilter(offerAcceptedFilter, fromBlock, toBlock)
-          const offersCancelled = await marketplace.queryFilter(offerCancelledFilter, fromBlock, toBlock)
+          // ONE getLogs call covering every marketplace event. Topic OR
+          // (`topics[0]` as an array) is supported by every JSON-RPC node
+          // and saves ~90% of eth_getLogs credits vs the previous one-call-
+          // per-event approach.
+          const allLogs = await provider.getLogs({
+            address: marketplaceAddress,
+            fromBlock,
+            toBlock,
+            topics: [Object.values(eventTopics)],
+          })
+
+          // Bucket logs by event name for the per-event handler blocks below.
+          // Each bucket holds ethers EventLogs (with .args populated) so the
+          // existing handlers don't need to change.
+          const byName: Record<string, ethers.EventLog[]> = {}
+          for (const name of EVENT_NAMES) byName[name] = []
+          for (const log of allLogs) {
+            const name = topicToName[log.topics[0]]
+            if (!name) continue
+            const fragment = marketplace.interface.getEvent(name)
+            if (!fragment) continue
+            const args = marketplace.interface.decodeEventLog(fragment, log.data, log.topics)
+            byName[name].push(Object.assign(log, { args, fragment, eventName: name }) as any)
+          }
+          const listed = byName.Listed
+          const sales = byName.Sale
+          const bids = byName.BidPlaced
+          const bidWithdrawals = byName.BidWithdrawn
+          const bidReclaimed = byName.BidReclaimed
+          const cancelled = byName.ListingCancelled
+          const settled = byName.AuctionSettled
+          const offersCreated = byName.OfferCreated
+          const offersAccepted = byName.OfferAccepted
+          const offersCancelled = byName.OfferCancelled
 
           if (listed.length || sales.length || bids.length || bidWithdrawals.length || bidReclaimed.length || cancelled.length || settled.length || offersCreated.length || offersAccepted.length || offersCancelled.length) {
             console.log(`[MarketplaceIndexer] Found events: ${listed.length} listed, ${sales.length} sales, ${bids.length} bids, ${bidWithdrawals.length} bid-withdrawn, ${bidReclaimed.length} bid-reclaimed, ${cancelled.length} cancelled, ${settled.length} settled, ${offersCreated.length} offers created, ${offersAccepted.length} offers accepted, ${offersCancelled.length} offers cancelled`)

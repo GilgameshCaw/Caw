@@ -101,18 +101,91 @@ export function isRateLimitError(err: any): boolean {
 // ============================================
 
 /**
+ * Per-URL cache for eth_blockNumber. Every poller in the process calls
+ * getBlockNumber() at the top of its tick — RawEventsGatherer (15s),
+ * NftTransferWatcher (60s), MarketplaceIndexer (60s), ChainSync L2Events
+ * (60s), Validator replication (60s) — all hitting the same RPC. With ~5
+ * pollers and a tight throttle, that's still 4-5 redundant calls per
+ * 2-second window, every window.
+ *
+ * This cache collapses identical eth_blockNumber requests into one round
+ * trip when they fall within BLOCK_NUMBER_TTL_MS of each other. In-flight
+ * dedupe handles concurrent callers (they all await the same Promise);
+ * post-resolution caching handles the next-poller case. Keyed by URL so
+ * L1 / L2 / mainnet / replication-chain stay separate.
+ *
+ * Block latency cost: TTL_MS at worst. At 2s with 12s blocks on Base /
+ * Arbitrum and 12s on L1, the indexer is at most 2s "stale" — well under
+ * one block. Imperceptible to users.
+ */
+const BLOCK_NUMBER_TTL_MS = 2000
+type BlockNumberCacheEntry = { value: any; cachedAt: number; inFlight?: Promise<any> }
+const blockNumberCache = new Map<string, BlockNumberCacheEntry>()
+
+function getProviderUrl(provider: any): string | null {
+  try {
+    // ethers JsonRpcProvider keeps its FetchRequest on _getConnection()
+    if (typeof provider._getConnection === 'function') {
+      return provider._getConnection().url || null
+    }
+    // WebSocketProvider — the URL lives on the websocket creator's closure;
+    // not introspectable. Fall back to a stable identity (constructor name +
+    // network); the cache key just needs to be consistent for one provider.
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Wrap any provider's send() with throttle + rate-limit backoff.
  * This is the single choke point for ALL RPC calls in the process.
  */
 function wrapSend<T extends { send: (...args: any[]) => any }>(provider: T): T {
   const originalSend = provider.send.bind(provider)
+  // Stable per-provider key for the block-number cache. URL when available
+  // (HTTP), object identity otherwise (WSS). Either way it dedupes calls
+  // through the SAME provider instance — which is what every poller goes
+  // through anyway.
+  const cacheKey = getProviderUrl(provider) || `provider:${Math.random().toString(36).slice(2)}`
 
   provider.send = async function (method: string, params: any[]) {
+    // Block-number cache: collapse repeated eth_blockNumber calls within
+    // BLOCK_NUMBER_TTL_MS into one round trip. Check before the throttle
+    // because a cache hit doesn't need a slot.
+    if (method === 'eth_blockNumber') {
+      const entry = blockNumberCache.get(cacheKey)
+      const now = Date.now()
+      if (entry) {
+        if (entry.inFlight) return entry.inFlight
+        if (now - entry.cachedAt < BLOCK_NUMBER_TTL_MS) return entry.value
+      }
+    }
+
     // 1. Respect global rate-limit backoff
     if (isRateLimited()) await waitForRateLimit()
 
     // 2. Throttle: ensure MIN_CALL_GAP_MS between calls
     await throttle()
+
+    let inFlightPromise: Promise<any> | undefined
+    if (method === 'eth_blockNumber') {
+      inFlightPromise = (async () => {
+        try {
+          const result = await originalSend(method, params)
+          clearRateLimit()
+          blockNumberCache.set(cacheKey, { value: result, cachedAt: Date.now() })
+          return result
+        } catch (err: any) {
+          if (isRateLimitError(err)) recordRateLimit()
+          // Drop the failed in-flight entry so the next caller can retry.
+          blockNumberCache.delete(cacheKey)
+          throw err
+        }
+      })()
+      blockNumberCache.set(cacheKey, { value: undefined, cachedAt: 0, inFlight: inFlightPromise })
+      return inFlightPromise
+    }
 
     try {
       const result = await originalSend(method, params)

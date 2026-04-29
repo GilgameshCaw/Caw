@@ -295,7 +295,11 @@ function buildServiceList(nodeType, config) {
       config: {
         l2RpcUrl: '${L2_RPC_URL}',
         validatorId: config.validatorId,
-        checkInterval: config.checkInterval || 3000
+        // 30s default — see ValidatorService liveSettings comment. Optimistic
+        // UI hides the validator's poll cadence from end users, so the only
+        // cost of a slower poll is "more actions batched per submission",
+        // which is what we want for gas efficiency and Infura credit burn.
+        checkInterval: config.checkInterval || 30000
       }
     })
   }
