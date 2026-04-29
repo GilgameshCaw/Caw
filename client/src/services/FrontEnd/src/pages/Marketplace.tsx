@@ -98,12 +98,17 @@ const Marketplace: React.FC = () => {
             <span>Your username is an NFT — create one, or buy and sell on the feeless marketplace.</span>
           </div>
 
-          {/* Stats row */}
+          {/* Stats row. On mobile we'd otherwise show 2-on-row-1 + 1-orphan
+              left-aligned in row 2 — span the third card across both
+              columns at small widths so it centers, and reset on sm+ where
+              all three fit in one row. */}
           {stats && (
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mt-5">
               <StatCard label="Profiles Created" value={stats.totalUsers.toLocaleString()} isDark={isDark} />
               <StatCard label="For Sale" value={stats.activeListings.toLocaleString()} isDark={isDark} />
-              <StatCard label="CAW Burned" value={formatBurned(stats.totalCawBurned)} isDark={isDark} />
+              <div className="col-span-2 sm:col-span-1">
+                <StatCard label="CAW Burned" value={formatBurned(stats.totalCawBurned)} isDark={isDark} />
+              </div>
             </div>
           )}
 
