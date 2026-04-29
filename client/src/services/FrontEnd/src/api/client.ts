@@ -61,7 +61,15 @@ export class IndexingError extends Error {
  * silently re-submit the old signature.
  */
 export class CawonceCollisionError extends Error {
-  constructor(message: string, public senderId?: number, public cawonce?: number) {
+  constructor(
+    message: string,
+    public senderId?: number,
+    public cawonce?: number,
+    /** Server-suggested next cawonce: max(active TxQueue cawonces) + 1 for
+     *  this sender. Use as a floor on the retry — the chain alone won't
+     *  know about cawonces still in our own TxQueue. */
+    public suggestedCawonce?: number,
+  ) {
     super(message)
     this.name = 'CawonceCollisionError'
   }
@@ -196,6 +204,7 @@ export async function apiFetch<T = any>(
             data?.message || 'cawonce already in use',
             data?.senderId,
             data?.cawonce,
+            typeof data?.suggestedCawonce === 'number' ? data.suggestedCawonce : undefined,
           )
         }
         // Other 409s are different conflict shapes (e.g. retry-already-submitted);

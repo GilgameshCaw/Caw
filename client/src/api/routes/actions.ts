@@ -874,12 +874,28 @@ router.post('/', async (req, res) => {
       // chain, and re-sign. 409 is the right semantic; the body shape
       // mirrors other typed-error responses.
       if (err?.code === 'P2002') {
-        console.log(`[Actions] Cawonce collision: senderId=${data.senderId} cawonce=${data.cawonce} — telling client to retry with fresh chain read`)
+        // Tell the client what the highest active cawonce currently is for
+        // this sender so it can bump past it on retry. The chain.nextCawonce
+        // alone won't help — by definition, our TxQueue has rows for cawonces
+        // the chain hasn't yet processed. The client should use
+        // max(chain.nextCawonce, suggestedCawonce) on the next attempt.
+        const highest = await prisma.txQueue.findFirst({
+          where: {
+            senderId: data.senderId,
+            cawonce: { not: null },
+            status: { in: ['pending', 'processing', 'awaiting_indexer', 'waiting_for_deposit'] },
+          },
+          orderBy: { cawonce: 'desc' },
+          select: { cawonce: true },
+        })
+        const suggestedCawonce = (highest?.cawonce ?? data.cawonce) + 1
+        console.log(`[Actions] Cawonce collision: senderId=${data.senderId} cawonce=${data.cawonce} — suggesting ${suggestedCawonce}`)
         return res.status(409).json({
           error: 'cawonce_collision',
           message: 'Another action by this sender is already using this cawonce. Re-read chain and re-sign.',
           senderId: data.senderId,
           cawonce: data.cawonce,
+          suggestedCawonce,
         })
       }
       throw err
@@ -1300,10 +1316,25 @@ router.post('/batch', async (req, res) => {
         // breaks reply-grouping anyway. The frontend re-reads chain,
         // re-allocates the contiguous block, re-signs, and resubmits.
         if (err?.code === 'P2002') {
-          console.log(`[Actions/batch] Cawonce collision on batch — telling client to retry`)
+          // Tell the client where to start its next batch: highest active
+          // cawonce + 1. Same reasoning as the single-action path —
+          // chain.nextCawonce alone is insufficient because the TxQueue
+          // has rows the chain hasn't seen yet.
+          const highest = await prisma.txQueue.findFirst({
+            where: {
+              senderId: firstSenderId,
+              cawonce: { not: null },
+              status: { in: ['pending', 'processing', 'awaiting_indexer', 'waiting_for_deposit'] },
+            },
+            orderBy: { cawonce: 'desc' },
+            select: { cawonce: true },
+          })
+          const suggestedCawonce = (highest?.cawonce ?? 0) + 1
+          console.log(`[Actions/batch] Cawonce collision — suggesting start cawonce=${suggestedCawonce}`)
           return res.status(409).json({
             error: 'cawonce_collision',
             message: 'One or more actions in this batch are already using their cawonce. Re-read chain and re-sign.',
+            suggestedCawonce,
           })
         }
         throw err

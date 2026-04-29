@@ -253,6 +253,23 @@ export function invalidateLocalCawonce(tokenId: number) {
   localCawonceHigh.delete(tokenId)
 }
 
+/**
+ * Push the local watermark to a server-suggested floor. Called on a 409
+ * cawonce_collision when the server tells us the highest active cawonce in
+ * its TxQueue. The chain alone can't see that — it only knows what's
+ * confirmed on-chain. Setting the watermark to suggestedCawonce - 1 means
+ * the next getNextCawonce call returns suggestedCawonce (since it picks
+ * max(chain, localHigh + 1)).
+ */
+export function setLocalCawonceFloor(tokenId: number, suggestedCawonce: number) {
+  // suggestedCawonce is what the SERVER says the next free slot is. The
+  // watermark is the "highest issued so far" semantic, so store one less.
+  localCawonceHigh.set(tokenId, {
+    cawonce: suggestedCawonce - 1,
+    expiresAt: Date.now() + LOCAL_CAWONCE_TTL_MS,
+  })
+}
+
 
 /** natstat: EIP-712 domain */
 export const DOMAIN = {
@@ -923,34 +940,37 @@ export function useSignAndSubmitAction() {
     } catch (error: any) {
       console.error('Failed to submit action:', error)
 
-      // Invalidate the local cawonce watermark so the next signAndSubmit
-      // re-reads chain truth instead of trusting the (now-known-stale)
-      // local high-water. The TxQueue partial unique index will catch
-      // any actual on-chain race; this just prevents repeating the same
-      // bad bump.
-      if (params.cawonce == null && activeTokenId) {
-        invalidateLocalCawonce(activeTokenId)
-      }
-
       // Cawonce collision: TxQueue partial unique index fired because two
-      // submissions raced to the same cawonce. Retry up to 3x — the
-      // watermark invalidation above forces a fresh chain read on each
-      // pass, but the chain-truth race window is tight enough that two
-      // tabs hitting "post" simultaneously can still collide a second
-      // time before either's TxQueue insert lands. A small back-off
-      // between attempts converges fast. After 3 collisions in a row,
-      // surface the error — something more pathological is going on.
+      // submissions raced to the same cawonce. The 409 carries
+      // suggestedCawonce — the server's max(active TxQueue cawonces) + 1,
+      // which the chain CAN'T see (those rows haven't been confirmed on
+      // L2 yet). We push the local watermark to that floor so the next
+      // getNextCawonce call returns suggestedCawonce, not the stale
+      // chain.nextCawonce.
       if (error?.name === 'CawonceCollisionError') {
+        if (params.cawonce == null && activeTokenId) {
+          if (typeof error.suggestedCawonce === 'number') {
+            console.log(`[signAndSubmit] Server suggests next cawonce=${error.suggestedCawonce} — bumping local watermark`)
+            setLocalCawonceFloor(activeTokenId, error.suggestedCawonce)
+          } else {
+            // Older server without suggestedCawonce in the payload — fall
+            // back to invalidating the watermark (the previous behavior).
+            invalidateLocalCawonce(activeTokenId)
+          }
+        }
         const attempt = (params._cawonceRetryCount || 0) + 1
         const MAX_CAWONCE_RETRIES = 3
         if (attempt <= MAX_CAWONCE_RETRIES) {
           console.log(`[signAndSubmit] Cawonce collision (attempt ${attempt}/${MAX_CAWONCE_RETRIES}) — re-reading chain and re-signing`)
-          // Tiny back-off scaled by attempt to let any in-flight TxQueue
-          // insert land before we re-read chain. 200ms / 400ms / 600ms.
-          await new Promise(r => setTimeout(r, attempt * 200))
           return await requestAndSubmit({ ...params, _cawonceRetryCount: attempt } as ActionParams)
         }
         console.warn('[signAndSubmit] Cawonce collision persisted past max retries — surfacing')
+      }
+
+      // For non-collision errors, also invalidate the local watermark so
+      // a stale value doesn't poison the next attempt.
+      if (params.cawonce == null && activeTokenId && error?.name !== 'CawonceCollisionError') {
+        invalidateLocalCawonce(activeTokenId)
       }
 
       const errMsg = (error?.message || error?.shortMessage || '').toLowerCase()
