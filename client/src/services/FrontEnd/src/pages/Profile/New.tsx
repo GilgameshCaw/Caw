@@ -32,6 +32,70 @@ const COST_SCHEDULE: Record<number, bigint> = {
 }
 const DEFAULT_COST = 1_000_000n  // 8+ chars
 
+/**
+ * Tap-aware popover for the (i) icon next to "Deposit CAW". The whole row
+ * is wrapped in a <label> that toggles the deposit on click — so the icon
+ * needs to stop propagation, otherwise tapping it on mobile flips the
+ * deposit toggle. group-hover doesn't fire on touch devices either, so
+ * we drive open/closed with click state and dismiss on tap-outside,
+ * scroll, or 4s timeout.
+ */
+const DepositInfoPopover: React.FC = () => {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Node | null
+      if (!target || !ref.current?.contains(target)) setOpen(false)
+    }
+    const onScroll = () => setOpen(false)
+    const autoHide = setTimeout(() => setOpen(false), 4000)
+    document.addEventListener('pointerdown', onPointerDown)
+    window.addEventListener('scroll', onScroll, true)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      window.removeEventListener('scroll', onScroll, true)
+      clearTimeout(autoHide)
+    }
+  }, [open])
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        aria-label="Show deposit info"
+        onClick={(e) => {
+          // Don't let the click bubble up to the wrapping <label>, which
+          // would toggle the deposit-on/off switch.
+          e.preventDefault()
+          e.stopPropagation()
+          setOpen((v) => !v)
+        }}
+        // Hover-show on desktop preserves the original UX. Pointer events
+        // fire on both, but the click handler above is what makes mobile
+        // work — the hover handlers are pure additive niceness.
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={() => setOpen(false)}
+        className="flex items-center cursor-help"
+      >
+        <HiInformationCircle className="w-4 h-4 text-gray-400" />
+      </button>
+      {open && (
+        <div
+          className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 z-50 w-[min(450px,90vw)] bg-gray-900 rounded-lg shadow-lg"
+          // Stop propagation here too — taps inside the info card shouldn't
+          // toggle the deposit switch either.
+          onClick={(e) => e.stopPropagation()}
+        >
+          <StakingRewardsInfo alwaysDark />
+        </div>
+      )}
+    </div>
+  )
+}
+
 export const NewProfile: React.FC = () => {
   const { isDark } = useTheme()
   const { switchChain } = useSwitchChain();
@@ -684,13 +748,8 @@ console.log("BALANCE:", balance)
                 </button>
                 <div>
                   <div className="flex items-center gap-1.5">
-                  <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{username ? `Deposit CAW as @${username}` : 'Deposit CAW'}</span>
-                  <div className="relative group">
-                    <HiInformationCircle className="w-4 h-4 text-gray-400 cursor-help" />
-                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 w-[min(450px,100vw)] bg-gray-900 rounded-lg shadow-lg">
-                      <StakingRewardsInfo alwaysDark />
-                    </div>
-                  </div>
+                    <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{username ? `Deposit CAW as @${username}` : 'Deposit CAW'}</span>
+                    <DepositInfoPopover />
                   </div>
                   <ul className="text-yellow-500/80 text-xs mt-0.5 list-disc list-outside pl-4 space-y-0.5">
                     <li>Required to post, like, and follow</li>
