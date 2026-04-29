@@ -331,6 +331,39 @@ router.get('/:model', async (req, res) => {
       delegate.count({ where }),
     ])
 
+    // For models that reference users by tokenId via a *Id column, batch-fetch
+    // the corresponding usernames in one query and stamp `*Username` synthetic
+    // fields onto each record. The frontend renders these as "99 (gilga99)"
+    // — way more useful than scrolling through a wall of bare numeric IDs.
+    // Only one query per page; capped at 200 by the limit clause above.
+    const USER_ID_FIELDS = ['senderId', 'recipientId', 'userId', 'actorId',
+      'tokenId', 'followerId', 'followingId', 'blockerId', 'blockedId',
+      'reporterId', 'receiverId']
+    const presentIdFields = USER_ID_FIELDS.filter(f => meta.listFields.includes(f))
+    if (presentIdFields.length > 0 && records.length > 0) {
+      const tokenIds = new Set<number>()
+      for (const r of records) {
+        for (const f of presentIdFields) {
+          const v = (r as any)[f]
+          if (typeof v === 'number' && v > 0) tokenIds.add(v)
+        }
+      }
+      if (tokenIds.size > 0) {
+        const users = await prisma.user.findMany({
+          where: { tokenId: { in: Array.from(tokenIds) } },
+          select: { tokenId: true, username: true },
+        })
+        const usernameByTokenId = new Map(users.map(u => [u.tokenId, u.username]))
+        for (const r of records) {
+          for (const f of presentIdFields) {
+            const v = (r as any)[f]
+            const uname = typeof v === 'number' ? usernameByTokenId.get(v) : undefined
+            if (uname) (r as any)[`${f}Username`] = uname
+          }
+        }
+      }
+    }
+
     res.json({
       records: JSON.parse(JSON.stringify(records, (_key, value) =>
         typeof value === 'bigint' ? value.toString() : value

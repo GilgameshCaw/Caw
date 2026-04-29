@@ -66,12 +66,21 @@ const isDateField = (key: string) =>
 const truncate = (v: string, max = 60) =>
   v.length > max ? v.slice(0, max) + '...' : v
 
-/** Format a cell value for display */
-function formatCell(key: string, value: any): string {
+/** Format a cell value for display.
+ *
+ * For numeric *Id fields (senderId, recipientId, etc.) the backend stamps a
+ * synthetic `*Username` sibling on each record so we can render
+ * `"99 (gilga99)"` instead of bare token IDs — much easier to scan when
+ * triaging tx-queue rows. */
+function formatCell(key: string, value: any, record?: any): string {
   if (value === null || value === undefined) return '-'
   if (typeof value === 'boolean') return value ? 'Yes' : 'No'
   if (isDateField(key) && typeof value === 'string') return fmtDate(value)
   if (typeof value === 'object') return truncate(JSON.stringify(value), 80)
+  if (record && key.endsWith('Id')) {
+    const uname = record[`${key}Username`]
+    if (uname) return `${value} (${uname})`
+  }
   const str = String(value)
   return truncate(str)
 }
@@ -569,7 +578,7 @@ const DatabaseAdmin: React.FC = () => {
                                 {val}
                               </span>
                             ) : (
-                              formatCell(col, val)
+                              formatCell(col, val, record)
                             )}
                           </td>
                         )
