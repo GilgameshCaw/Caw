@@ -319,9 +319,9 @@ export type ActionParams = {
   amounts?:       BigInt[]
   text?:          string
   retriedTxQueueId?: number
-  /** Internal: set to true when re-entering after a cawonce collision so
-   *  we only auto-retry once. Don't set this manually. */
-  _cawonceRetried?: boolean
+  /** Internal: incremented when re-entering after a cawonce collision so
+   *  we cap auto-retries. Don't set this manually. */
+  _cawonceRetryCount?: number
 }
 
 /**
@@ -933,14 +933,24 @@ export function useSignAndSubmitAction() {
       }
 
       // Cawonce collision: TxQueue partial unique index fired because two
-      // submissions raced to the same cawonce. Retry once transparently —
-      // the watermark invalidation above means the next allocation will
-      // re-read chain. The user signs again (we can't replay an old sig
-      // against a new cawonce). If we collide a second time, surface the
-      // error rather than loop forever (suggests something pathological).
-      if (error?.name === 'CawonceCollisionError' && !params._cawonceRetried) {
-        console.log('[signAndSubmit] Cawonce collision — re-reading chain and re-signing')
-        return await requestAndSubmit({ ...params, _cawonceRetried: true } as ActionParams)
+      // submissions raced to the same cawonce. Retry up to 3x — the
+      // watermark invalidation above forces a fresh chain read on each
+      // pass, but the chain-truth race window is tight enough that two
+      // tabs hitting "post" simultaneously can still collide a second
+      // time before either's TxQueue insert lands. A small back-off
+      // between attempts converges fast. After 3 collisions in a row,
+      // surface the error — something more pathological is going on.
+      if (error?.name === 'CawonceCollisionError') {
+        const attempt = (params._cawonceRetryCount || 0) + 1
+        const MAX_CAWONCE_RETRIES = 3
+        if (attempt <= MAX_CAWONCE_RETRIES) {
+          console.log(`[signAndSubmit] Cawonce collision (attempt ${attempt}/${MAX_CAWONCE_RETRIES}) — re-reading chain and re-signing`)
+          // Tiny back-off scaled by attempt to let any in-flight TxQueue
+          // insert land before we re-read chain. 200ms / 400ms / 600ms.
+          await new Promise(r => setTimeout(r, attempt * 200))
+          return await requestAndSubmit({ ...params, _cawonceRetryCount: attempt } as ActionParams)
+        }
+        console.warn('[signAndSubmit] Cawonce collision persisted past max retries — surfacing')
       }
 
       const errMsg = (error?.message || error?.shortMessage || '').toLowerCase()
