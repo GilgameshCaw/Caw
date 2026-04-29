@@ -16,10 +16,20 @@ export async function collectValidatorConfig(nodeType, installDir, ctx = {}) {
 
   section('Validator Configuration')
 
-  // --env preload: if both the key AND the validator identity are in the
-  // previous .env, skip every prompt in this step. The values are already
-  // on disk; re-asking just makes the operator type the same answers
-  // again (or worse, silently rotate the validator key by re-typing it).
+  // --env preload: three states.
+  //
+  //   1. Key + ID both present → skip every prompt. Values are already
+  //      on disk; re-asking just makes the operator type them again
+  //      (or worse, silently rotate the key by re-typing).
+  //   2. Key present but ID missing → keep the preloaded key (don't
+  //      re-prompt; the key is sensitive and the operator already
+  //      committed it once), but do the username→tokenId lookup so
+  //      we can populate ID + username.
+  //   3. Neither → full flow.
+  //
+  // Username alone (key missing) doesn't get its own skip path; we'd
+  // still need to ask for the key, and at that point we may as well
+  // re-confirm the identity in the same flow.
   const preloadKey = process.env.CAW_VALIDATOR_PRIVATE_KEY || ''
   const preloadId = process.env.CAW_VALIDATOR_ID || ''
   const preloadUsername = process.env.CAW_VALIDATOR_USERNAME || ''
@@ -30,6 +40,18 @@ export async function collectValidatorConfig(nodeType, installDir, ctx = {}) {
       validatorPrivateKey: preloadKey,
       validatorId: Number(preloadId),
       validatorUsername: preloadUsername,
+      checkInterval: Number(process.env.CAW_TX_POLL_INTERVAL) || 3000,
+    }
+  }
+  if (preloadKey && !preloadId) {
+    console.log(dim('  Validator private key loaded from --env preload — keeping it.'))
+    console.log(dim('  Just need the validator username so we can resolve its token ID on-chain.'))
+    console.log()
+    const { validatorId, validatorUsername } = await resolveValidatorByUsername(ctx)
+    return {
+      validatorPrivateKey: preloadKey,
+      validatorId,
+      validatorUsername,
       checkInterval: Number(process.env.CAW_TX_POLL_INTERVAL) || 3000,
     }
   }
