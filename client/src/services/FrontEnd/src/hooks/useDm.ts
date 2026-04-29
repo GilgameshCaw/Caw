@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useWalletClient } from 'wagmi'
+import { useAccount, useWalletClient } from 'wagmi'
 import { apiFetch, API_HOST, getAuthHeaders, retryOnIndexing } from '~/api/client'
 import { useAuthStore } from '~/store/authStore'
 import { useVerifyWallet } from '~/hooks/useVerifyWallet'
+import { useActiveToken } from '~/store/tokenDataStore'
 import {
   deriveKeyPair,
   computeSharedSecret,
@@ -61,6 +62,8 @@ let privateKeyRef: Uint8Array | null = null
 
 export function useDmClient(tokenId?: number, username?: string) {
   const { data: walletClient } = useWalletClient()
+  const { address: connectedAddress } = useAccount()
+  const activeToken = useActiveToken()
   const { verify } = useVerifyWallet()
 
   const [isInitialized, setIsInitialized] = useState(false)
@@ -235,6 +238,26 @@ export function useDmClient(tokenId?: number, username?: string) {
     if (!walletClient || !tokenId) {
       const err = new Error('Wallet not connected')
       console.log('[DM] No wallet client or tokenId, throwing')
+      setError(err)
+      throw err
+    }
+
+    // Pre-flight: the connected wallet must own the active token. The
+    // server-side verify-dm rejects mismatches with a 403, but by that
+    // point the user has already gone through the wallet sign prompt for
+    // a request that was always going to fail. Surface the mismatch
+    // upfront so the message is "switch wallet" rather than a confusing
+    // signature failure.
+    if (
+      connectedAddress &&
+      activeToken?.address &&
+      connectedAddress.toLowerCase() !== activeToken.address.toLowerCase()
+    ) {
+      const err = new Error(
+        `Connected wallet (${connectedAddress.slice(0, 6)}…${connectedAddress.slice(-4)}) doesn't own @${username || tokenId}. Switch to ${activeToken.address.slice(0, 6)}…${activeToken.address.slice(-4)} or pick a different profile.`
+      )
+      ;(err as any).code = 'WRONG_WALLET'
+      console.log('[DM] Wrong wallet for active token — aborting before sign')
       setError(err)
       throw err
     }
