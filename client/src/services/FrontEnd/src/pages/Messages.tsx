@@ -411,6 +411,16 @@ const MessagesPage: React.FC = () => {
       console.log('[Messages] Sending message to conversation:', selectedConversationId)
       await dmSendMessage(content)
       console.log('[Messages] Message sent successfully')
+      // Force a scroll-to-bottom on send. The existing messages.length
+      // effect *should* fire when dmSendMessage flushes the new bubble
+      // into state, but the timing is racy: if the bubble's first paint
+      // (or any image inside it) lands after the 50ms scrollToBottom
+      // setTimeout, the scroll happens against the pre-bubble height
+      // and the user's own message ends up just below the visible
+      // viewport. rAF + a longer fallback ensures we land on the
+      // post-layout height.
+      requestAnimationFrame(() => scrollToBottom(false))
+      setTimeout(() => scrollToBottom(false), 200)
     } catch (err: any) {
       console.log('[Messages] Send message error:', err.code, err.message, err.reason, err.peer)
       if (err.code === 'DM_PRIVACY') {
