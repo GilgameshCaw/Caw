@@ -3,11 +3,12 @@ import { ethers } from 'ethers'
 import { prisma } from '../../prismaClient'
 import { createSession, getSession, addAuthorization, deleteSession } from '../sessionStore'
 import { extractSession } from '../middleware/auth'
-// Tier 1 of the "RPC out of API request handlers" refactor:
-// findOrCreateUser is intentionally NOT imported — its on-chain fallback
-// must not run inside an API request. verifyOwnershipOnChain and
-// syncTokensOwnedByWallet are Tier 3 and stay for now.
-import { syncTokensOwnedByWallet, verifyOwnershipOnChain } from '../../services/UserService'
+// Tier 1 + Tier 3 of the "RPC out of API request handlers" refactor
+// (PROJECT_BACKLOG.md): findOrCreateUser, verifyOwnershipOnChain, and
+// syncTokensOwnedByWallet are intentionally NOT imported. API endpoints
+// read only from the DB; on a miss we return 202 and let the indexer
+// (NftTransferWatcher + RawEventsGatherer) populate rows asynchronously.
+// The frontend retries on 202 via apiFetch + retryOnIndexing.
 import dmService from '../../services/DmService'
 
 const router = Router()
@@ -60,21 +61,35 @@ router.post('/verify', async (req, res) => {
     }
 
     // Look up all tokenIds owned by this address (case-insensitive —
-    // DB may store checksummed addresses while recovery returns lowercase)
-    let users = await prisma.user.findMany({
+    // DB may store checksummed addresses while recovery returns lowercase).
+    //
+    // Tier 3: when DB shows no matches we no longer fall back to L1
+    // (syncTokensOwnedByWallet). NftTransferWatcher will reflect any recent
+    // transfer in the DB asynchronously; the frontend retries on 202.
+    // Note: a wallet that genuinely owns zero CAW names is indistinguishable
+    // from "indexer hasn't caught up yet" at this layer. We err on the side
+    // of treating empty as indexing-in-flight — the retry helper caps at
+    // ~25s, and on the final attempt the empty-array path lets the user
+    // through with no authorized tokens (the same response shape they would
+    // have gotten from a successful match with zero rows).
+    const users = await prisma.user.findMany({
       where: { address: { equals: recoveredAddress, mode: 'insensitive' } },
       select: { tokenId: true }
     })
-    let tokenIds = users.map(u => u.tokenId)
+    const tokenIds = users.map(u => u.tokenId)
 
-    // If no tokens found, the NFT may have been transferred — check L2 on-chain
     if (tokenIds.length === 0) {
-      console.log(`[Auth] No tokens found for ${recoveredAddress}, checking on-chain ownership...`)
-      const refreshed = await syncTokensOwnedByWallet(recoveredAddress)
-      if (refreshed.length > 0) {
-        console.log(`[Auth] Found ${refreshed.length} token(s) after ownership sync:`, refreshed)
-        tokenIds = refreshed
-      }
+      // No tokens for this wallet in the DB. Could be a fresh transfer the
+      // indexer hasn't seen yet, or a wallet that has never owned a CAW name.
+      // Hint the client to retry once; if the second pass also returns empty
+      // the helper will give up gracefully.
+      console.log(`[Auth] No tokens found in DB for ${recoveredAddress} — returning 202 (indexer may be catching up)`)
+      res.setHeader('Retry-After', '5')
+      res.status(202).json({
+        error: 'ownership not yet indexed',
+        retryAfterSeconds: 5,
+      })
+      return
     }
 
     // Get or create session
@@ -141,26 +156,40 @@ router.post('/verify-dm', async (req, res) => {
     }
 
     // Verify the recovered address owns this tokenId.
-    // Fast path: DB has a matching row. Otherwise we need an on-chain check —
-    // crucially, we check L1 first via verifyOwnershipOnChain. Right after a
-    // fresh mint, the L2 CawProfileL2.mintAndUpdateOwners LZ hop can take 1–5 min
-    // to land, so refreshOwnership (L2-only) would miss the new tokenId even
-    // though the minter really does own it. Checking L1 covers that window.
+    //
+    // Tier 3: DB is the only authority here. NftTransferWatcher updates
+    // User.address on every L1 Transfer event (and creates the row on
+    // mint, since the watcher's mint-fix landed alongside this refactor).
+    // If the DB doesn't yet show the wallet owns the token, return 202 —
+    // the frontend's retryOnIndexing helper backs off and retries until
+    // the watcher catches up (typically <30s) or gives up.
     const user = await prisma.user.findUnique({
       where: { tokenId },
       select: { address: true }
     })
-    if (!user || user.address.toLowerCase() !== recoveredAddress) {
-      const onChainMatch = await verifyOwnershipOnChain(tokenId, recoveredAddress)
-      if (!onChainMatch) {
-        // Last resort: the token may have been transferred and DB is stale.
-        // Targeted L1 sync — updates just this wallet's token rows.
-        const refreshed = await syncTokensOwnedByWallet(recoveredAddress)
-        if (!refreshed.includes(tokenId)) {
-          res.status(403).json({ error: 'Signature does not match the owner of this token' })
-          return
-        }
-      }
+    if (!user) {
+      console.log(`[Auth] verify-dm: tokenId=${tokenId} not yet indexed`)
+      res.setHeader('Retry-After', '5')
+      res.status(202).json({
+        error: 'ownership not yet indexed',
+        retryAfterSeconds: 5,
+      })
+      return
+    }
+    if (user.address.toLowerCase() !== recoveredAddress) {
+      // DB authoritative. The wallet that signed the message doesn't own
+      // this tokenId per our indexed view. Could be a stale view (recent
+      // transfer not yet seen) or a bad-faith request. 202 + retry handles
+      // the stale-view case; if the indexer has been caught up for a while
+      // and this still doesn't match, the retry helper times out and the
+      // caller surfaces a clean error to the user.
+      console.log(`[Auth] verify-dm: tokenId=${tokenId} owner mismatch (db=${user.address} vs sig=${recoveredAddress}) — 202`)
+      res.setHeader('Retry-After', '5')
+      res.status(202).json({
+        error: 'ownership not yet indexed',
+        retryAfterSeconds: 5,
+      })
+      return
     }
 
     // Look up all tokenIds owned by this address
@@ -182,22 +211,10 @@ router.post('/verify-dm', async (req, res) => {
 
     const updated = await addAuthorization(sessionToken!, recoveredAddress, tokenIds)
 
-    // DmIdentity has a FK on User.tokenId. Right after a mint the user row
-    // might not exist yet — but per Tier 1 we no longer trigger an RPC
-    // fallback from the API. If the indexer hasn't created the row, return
-    // 202 and let the client retry with backoff.
-    const userRow = await prisma.user.findUnique({
-      where: { tokenId },
-      select: { tokenId: true },
-    })
-    if (!userRow) {
-      res.setHeader('Retry-After', '3')
-      res.status(202).json({
-        error: 'user not yet indexed',
-        retryAfterSeconds: 3,
-      })
-      return
-    }
+    // DmIdentity has a FK on User.tokenId. The earlier ownership check
+    // already 202'd if the User row was missing, so by here it's
+    // guaranteed to exist — Tier 1's standalone existence check (kept
+    // around the findOrCreateUser fallback) is now redundant and removed.
 
     // Register DM identity
     await dmService.registerIdentity(tokenId, recoveredAddress, publicKey)

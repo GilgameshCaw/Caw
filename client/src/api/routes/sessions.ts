@@ -5,7 +5,10 @@ import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../
 import { cawProfileL2Abi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 import { prisma } from '../../prismaClient'
-import { syncTokensOwnedByWallet } from '../../services/UserService'
+// Tier 3 of the "RPC out of API request handlers" refactor (PROJECT_BACKLOG.md):
+// syncTokensOwnedByWallet is intentionally NOT imported. POST /api/sessions
+// reads ownership from the DB only; on a miss we return 202 and let the
+// frontend retry while NftTransferWatcher catches up.
 import Redis from 'ioredis'
 
 const router = Router()
@@ -275,25 +278,22 @@ router.post('/', async (req: any, res: any) => {
       return res.status(409).json({ error: 'A session registration is already in progress for this address' })
     }
 
-    // Verify the signer actually owns at least one CAW name (prevents gas drain from random wallets)
-    let ownedName = await prisma.user.findFirst({
+    // Verify the signer actually owns at least one CAW name (prevents gas
+    // drain from random wallets). Tier 3: read DB only — no L1 fallback.
+    // NftTransferWatcher updates User.address asynchronously; if the wallet
+    // really does own a token the indexer hasn't seen yet, the frontend's
+    // retryOnIndexing loop will catch up and the second pass will succeed.
+    const ownedName = await prisma.user.findFirst({
       where: { address: { equals: recoveredAddress, mode: 'insensitive' } },
       select: { id: true },
     })
-    // If no match in DB, the NFT may have been transferred — check L2 on-chain
     if (!ownedName) {
-      console.log(`[Sessions] No tokens found for ${recoveredAddress} in DB, checking on-chain ownership...`)
-      const refreshed = await syncTokensOwnedByWallet(recoveredAddress)
-      if (refreshed.length > 0) {
-        console.log(`[Sessions] Found ${refreshed.length} token(s) after ownership refresh:`, refreshed)
-        ownedName = await prisma.user.findFirst({
-          where: { address: { equals: recoveredAddress, mode: 'insensitive' } },
-          select: { id: true },
-        })
-      }
-    }
-    if (!ownedName) {
-      return res.status(403).json({ error: 'Signer does not own any CAW names' })
+      console.log(`[Sessions] No tokens found in DB for ${recoveredAddress} — returning 202 (indexer may be catching up)`)
+      res.setHeader('Retry-After', '5')
+      return res.status(202).json({
+        error: 'ownership not yet indexed',
+        retryAfterSeconds: 5,
+      })
     }
 
     // Create request and process in background
