@@ -3,7 +3,11 @@ import { ethers } from 'ethers'
 import { prisma } from '../../prismaClient'
 import { createSession, getSession, addAuthorization, deleteSession } from '../sessionStore'
 import { extractSession } from '../middleware/auth'
-import { syncTokensOwnedByWallet, verifyOwnershipOnChain, findOrCreateUser } from '../../services/UserService'
+// Tier 1 of the "RPC out of API request handlers" refactor:
+// findOrCreateUser is intentionally NOT imported — its on-chain fallback
+// must not run inside an API request. verifyOwnershipOnChain and
+// syncTokensOwnedByWallet are Tier 3 and stay for now.
+import { syncTokensOwnedByWallet, verifyOwnershipOnChain } from '../../services/UserService'
 import dmService from '../../services/DmService'
 
 const router = Router()
@@ -179,14 +183,20 @@ router.post('/verify-dm', async (req, res) => {
     const updated = await addAuthorization(sessionToken!, recoveredAddress, tokenIds)
 
     // DmIdentity has a FK on User.tokenId. Right after a mint the user row
-    // might not exist yet — ensure it does before the upsert, otherwise the
-    // FK violation bubbles up as a 500 with no useful message.
-    try {
-      await findOrCreateUser(tokenId)
-    } catch (err: any) {
-      // If the tokenId really doesn't exist on L1 (stale request / bad input),
-      // fall through — registerIdentity will fail cleanly and we'll 500.
-      console.warn(`[Auth] findOrCreateUser(${tokenId}) before DM register failed:`, err?.message)
+    // might not exist yet — but per Tier 1 we no longer trigger an RPC
+    // fallback from the API. If the indexer hasn't created the row, return
+    // 202 and let the client retry with backoff.
+    const userRow = await prisma.user.findUnique({
+      where: { tokenId },
+      select: { tokenId: true },
+    })
+    if (!userRow) {
+      res.setHeader('Retry-After', '3')
+      res.status(202).json({
+        error: 'user not yet indexed',
+        retryAfterSeconds: 3,
+      })
+      return
     }
 
     // Register DM identity

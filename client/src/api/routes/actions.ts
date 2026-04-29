@@ -21,7 +21,9 @@ function decompressActionText(textField: unknown): string {
   for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16)
   try { return smlTxt().decompress(bytes) } catch { return '' }
 }
-import { findOrCreateUser } from '../../services/UserService'
+// Tier 1 of the "RPC out of API request handlers" refactor: do NOT call
+// findOrCreateUser from the request path. If the sender row is missing, we
+// 202 and let RawEventsGatherer's Mint listener / NftTransferWatcher backfill.
 import { countManager } from '../../services/CountManager'
 import { getSession, addAuthorization, createSession } from '../sessionStore'
 import { cawProfileL2Abi } from '../../abi/generated'
@@ -230,21 +232,19 @@ router.post('/', async (req, res) => {
     // This prevents queuing actions that will definitely fail on-chain.
     let recoveredAddress: string | null = null
     let ownerAddress: string | null = null
-    let sender = await prisma.user.findUnique({ where: { tokenId: data.senderId } })
+    const sender = await prisma.user.findUnique({ where: { tokenId: data.senderId } })
     mark('userLookup')
 
-    // Auto-create user from on-chain data if not in DB (e.g. after DB reset,
-    // or first action from a user on a new client instance)
+    // Tier 1: no RPC fallback. If the indexer hasn't seen this user yet,
+    // 202 immediately — DO NOT insert TxQueue rows for senderIds we haven't
+    // validated. The frontend retries with backoff; RawEventsGatherer's Mint
+    // listener (and NftTransferWatcher for transfers) populates the row.
     if (!sender?.address) {
-      try {
-        await findOrCreateUser(data.senderId)
-        sender = await prisma.user.findUnique({ where: { tokenId: data.senderId } })
-      } catch (err: any) {
-        console.log(`[Actions] Failed to auto-create user ${data.senderId}: ${err.message}`)
-      }
-      if (!sender?.address) {
-        return res.status(400).json({ error: 'Unknown sender — token does not exist on-chain' })
-      }
+      res.setHeader('Retry-After', '3')
+      return res.status(202).json({
+        error: 'user not yet indexed',
+        retryAfterSeconds: 3,
+      })
     }
 
     ownerAddress = sender.address.toLowerCase()
@@ -989,16 +989,14 @@ router.post('/batch', async (req, res) => {
       }
     }
 
-    // Shared lookup: sender
-    let sender = await prisma.user.findUnique({ where: { tokenId: firstSenderId } })
+    // Shared lookup: sender. Tier 1: no RPC fallback — 202 if not yet indexed.
+    const sender = await prisma.user.findUnique({ where: { tokenId: firstSenderId } })
     if (!sender?.address) {
-      try {
-        await findOrCreateUser(firstSenderId)
-        sender = await prisma.user.findUnique({ where: { tokenId: firstSenderId } })
-      } catch { /* non-fatal */ }
-      if (!sender?.address) {
-        return res.status(400).json({ error: 'Unknown sender — token does not exist on-chain' })
-      }
+      res.setHeader('Retry-After', '3')
+      return res.status(202).json({
+        error: 'user not yet indexed',
+        retryAfterSeconds: 3,
+      })
     }
     const ownerAddress = sender.address.toLowerCase()
 

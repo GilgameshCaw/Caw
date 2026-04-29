@@ -4,7 +4,11 @@ import { Contract, JsonRpcProvider, WebSocketProvider } from 'ethers'
 import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import { prisma } from '../../prismaClient'
 import { ActionType } from '@prisma/client'
-import { findOrCreateUser, StaleTokenError } from '../../services/UserService'
+// findOrCreateUser is intentionally NOT imported here — Tier 1 of the "RPC out
+// of API request handlers" refactor (see PROJECT_BACKLOG.md). API endpoints
+// must read only from the DB; on a miss we return 202 and let the indexer
+// (RawEventsGatherer + NftTransferWatcher) populate the row asynchronously.
+// The frontend retries with backoff until the row appears.
 import { getBlockedUserIds } from '../shared/blockUtils'
 import { requireAuth } from '../middleware/auth'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
@@ -79,9 +83,16 @@ const router = Router()
 
 /**
  * POST /api/users/ensure
- * Ensure a user record exists in the DB for a given tokenId.
- * If not found in DB, queries L1/L2 contracts to verify ownership and username
- * on-chain before creating. Will fail if the token doesn't exist on-chain.
+ * Look up a user record by tokenId.
+ *
+ * Tier 1 of the "RPC out of API request handlers" refactor: this endpoint
+ * no longer falls back to L1/L2 RPC reads on a DB miss. RawEventsGatherer
+ * (Mint event listener) and NftTransferWatcher populate the User row
+ * asynchronously — the frontend retries with backoff until that lands.
+ *
+ * - 200 + { user } when present in DB
+ * - 202 + { error: 'user not yet indexed', retryAfterSeconds } when absent
+ *
  * No auth required (called during onboarding before session is established).
  * IMPORTANT: This route must be defined BEFORE /:username to avoid conflicts.
  */
@@ -95,30 +106,26 @@ router.post('/ensure', async (req, res) => {
       return res.status(400).json({ error: 'tokenId is required' })
     }
 
-    // /api/users/ensure is called from PostMintOnboarding when the user has
-    // just minted a fresh name — they need to complete the welcome flow.
-    // Pass onboardingStep: 0 so the upsert creates them at the start of the
-    // flow (existing users are unchanged — upsert's update is a no-op).
-    console.log(`[/api/users/ensure] Calling findOrCreateUser(${tokenId})...`)
-    const resultTokenId = await findOrCreateUser(Number(tokenId), { onboardingStep: 0 })
-    const findDuration = Date.now() - startTime
-    console.log(`[/api/users/ensure] findOrCreateUser completed in ${findDuration}ms, resultTokenId=${resultTokenId}`)
-
-    console.log(`[/api/users/ensure] Fetching user from DB...`)
+    const numericTokenId = Number(tokenId)
     const user = await prisma.user.findUnique({
-      where: { tokenId: resultTokenId },
+      where: { tokenId: numericTokenId },
       select: { tokenId: true, username: true, address: true }
     })
     const totalDuration = Date.now() - startTime
-    console.log(`[/api/users/ensure] SUCCESS in ${totalDuration}ms, user=${JSON.stringify(user)}`)
 
+    if (!user) {
+      console.log(`[/api/users/ensure] tokenId=${numericTokenId} not yet indexed (${totalDuration}ms)`)
+      res.setHeader('Retry-After', '3')
+      return res.status(202).json({
+        error: 'user not yet indexed',
+        retryAfterSeconds: 3,
+      })
+    }
+
+    console.log(`[/api/users/ensure] SUCCESS in ${totalDuration}ms, user=${JSON.stringify(user)}`)
     return res.json({ user })
   } catch (error: any) {
     const totalDuration = Date.now() - startTime
-    if (error instanceof StaleTokenError) {
-      console.warn(`[/api/users/ensure] Token not found on chain after ${totalDuration}ms: ${error.message}`)
-      return res.status(404).json({ error: 'Token not found on current contract. It may still be propagating — try again in a moment.' })
-    }
     console.error(`[/api/users/ensure] ERROR after ${totalDuration}ms:`, error.message)
     console.error('Stack trace:', error.stack)
     return res.status(500).json({ error: error.message || 'Failed to ensure user' })
@@ -355,26 +362,19 @@ router.get('/by-token/:tokenId', async (req, res) => {
       likesReceivedCount: true,
     } as const
 
-    let user = await prisma.user.findUnique({
+    const user = await prisma.user.findUnique({
       where: { tokenId },
       select: userSelect,
     })
 
-    // Auto-create from chain if not in DB
+    // Tier 1: no RPC fallback in the request path. If the indexer hasn't
+    // produced a row yet, return 202 and let the frontend retry with backoff.
     if (!user) {
-      try {
-        await findOrCreateUser(tokenId)
-        user = await prisma.user.findUnique({
-          where: { tokenId },
-          select: userSelect,
-        })
-      } catch (err: any) {
-        console.log(`[users/by-token] Auto-create failed for tokenId ${tokenId}: ${err.message?.slice(0, 100)}`)
-      }
-    }
-
-    if (!user) {
-      return res.status(404).json({ error: 'User not found' })
+      res.setHeader('Retry-After', '3')
+      return res.status(202).json({
+        error: 'user not yet indexed',
+        retryAfterSeconds: 3,
+      })
     }
 
     // Lazy clear pendingDepositAmount: if the L1→L2 deposit has landed on L2
@@ -663,6 +663,23 @@ router.post('/allocate-cawonce', async (req, res) => {
     const requestedCount = Math.min(Math.max(Number(req.body?.count) || 1, 1), 50)
     if (!tokenId || !Number.isFinite(tokenId)) {
       return res.status(400).json({ error: 'tokenId is required' })
+    }
+
+    // Tier 1: refuse to allocate for a sender we haven't indexed yet. Without
+    // this guard the cawonce reservation would land but downstream sender
+    // resolution in /api/actions would 202, leaving the reservation orphaned
+    // until the 5-min sweep. The frontend retries on 202 with backoff and the
+    // indexer (RawEventsGatherer Mint event handler) populates the row.
+    const senderExists = await prisma.user.findUnique({
+      where: { tokenId },
+      select: { tokenId: true },
+    })
+    if (!senderExists) {
+      res.setHeader('Retry-After', '3')
+      return res.status(202).json({
+        error: 'user not yet indexed',
+        retryAfterSeconds: 3,
+      })
     }
 
     // Sweep stale reservations (>5 min old) for this sender first. Cheap
