@@ -1084,7 +1084,11 @@ export function useSignAndSubmitAction() {
 
     let batchResponse: any
     try {
-      batchResponse = await apiFetch('/api/actions/batch', {
+      // Wrap in retryOnIndexing for parity with the single-action path:
+      // /api/actions/batch returns 202 when the sender row isn't indexed
+      // yet (fresh-mint case). Without this wrap, IndexingError would
+      // surface as a flat batch failure to the user.
+      batchResponse = await retryOnIndexing(() => apiFetch('/api/actions/batch', {
         method: 'POST',
         body: JSON.stringify({
           actions: batchPayload,
@@ -1093,7 +1097,7 @@ export function useSignAndSubmitAction() {
           types: batchTypeDef,
           ...(pendingDepositTxHash ? { pendingDepositTxHash } : {}),
         }),
-      })
+      }))
     } catch (err: any) {
       console.error('[submitMany] Batch submit failed:', err.message)
       // Fill all with error so caller sees consistent shape
