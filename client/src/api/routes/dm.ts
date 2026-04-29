@@ -49,6 +49,38 @@ router.get('/identity/:userId', async (req: Request, res: Response) => {
   }
 })
 
+// POST /api/dm/identity/batch
+// Look up DM identities for many userIds in one round trip. The Messages
+// page used to fan out N parallel /identity/:userId requests when listing
+// "people you follow" or rendering search results; this endpoint replaces
+// that storm with a single query.
+router.post('/identity/batch', async (req: Request, res: Response) => {
+  try {
+    const { userIds } = req.body || {}
+    if (!Array.isArray(userIds)) {
+      return res.status(400).json({ error: 'userIds array required' })
+    }
+    // Cap to avoid runaway queries — UI lists are bounded anyway.
+    const ids = [...new Set(userIds.map(Number).filter(n => Number.isInteger(n) && n > 0))].slice(0, 100)
+    if (ids.length === 0) {
+      return res.json({ identities: {} })
+    }
+    const rows = await dmService.getPublicKeysBatch(ids)
+    // Shape: { [userId]: { hasIdentity, publicKey } }. Missing rows are
+    // included so callers can distinguish "no identity" from "not asked
+    // about" without inspecting the request.
+    const identities: Record<number, { hasIdentity: boolean; publicKey: string | null }> = {}
+    for (const id of ids) {
+      const publicKey = rows.get(id) ?? null
+      identities[id] = { hasIdentity: publicKey !== null, publicKey }
+    }
+    return res.json({ identities })
+  } catch (error: any) {
+    console.error('POST /api/dm/identity/batch error:', error)
+    return res.status(500).json({ error: error.message })
+  }
+})
+
 // Get or create a DM conversation
 router.post('/conversations',
   requireAuth({ field: 'userId' }),

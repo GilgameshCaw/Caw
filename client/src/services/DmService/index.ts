@@ -24,6 +24,22 @@ export class DmService {
   }
 
   /**
+   * Batched form of getPublicKey. Returns a Map keyed by userId so callers
+   * can answer "which users in this list have DM identities" with one
+   * round-trip instead of N. Missing keys are simply absent from the map.
+   */
+  async getPublicKeysBatch(userIds: number[]): Promise<Map<number, string>> {
+    if (userIds.length === 0) return new Map()
+    const rows = await prisma.dmIdentity.findMany({
+      where: { userId: { in: userIds } },
+      select: { userId: true, publicKey: true },
+    })
+    const out = new Map<number, string>()
+    for (const r of rows) out.set(r.userId, r.publicKey)
+    return out
+  }
+
+  /**
    * Check if a user has a DM identity
    */
   async hasIdentity(userId: number): Promise<boolean> {
