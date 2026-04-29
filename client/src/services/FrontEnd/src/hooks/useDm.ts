@@ -138,11 +138,16 @@ export function useDmClient(tokenId?: number, username?: string) {
 
       // The conversations response now includes each participant's DM
       // publicKey alongside their user fields, so seed the cache from
-      // that — no second request needed for the inbox load.
+      // that — no second request needed for the inbox load. We also
+      // seed the conversationId → peerUserId map so the encrypt path
+      // can find the peer without re-fetching the conversation list.
       for (const conv of data.conversations || []) {
         for (const p of conv.participants || []) {
           if (p.userId != null && p.identity?.publicKey) {
             peerPublicKeyCache.set(p.userId, p.identity.publicKey)
+          }
+          if (p.userId != null && p.userId !== tokenId) {
+            conversationPeerCache.set(conv.id, p.userId)
           }
         }
       }
@@ -413,12 +418,24 @@ export function useDmClient(tokenId?: number, username?: string) {
       throw new Error(conversation.error || `API ${convRes.status} ${convRes.statusText}`)
     }
 
+    // Seed both caches so the first sendMessage on this fresh conversation
+    // can resolve everything synchronously. Without this, the legacy
+    // /api/dm/conversations fallback inside getOrComputeSharedSecret
+    // can't find the brand-new empty conversation (the API filters them
+    // out of the inbox query) and surfaces "Cannot encrypt" to the user.
+    conversationPeerCache.set(conversation.id, peerUserId)
+    if (peerData.publicKey) {
+      peerPublicKeyCache.set(peerUserId, peerData.publicKey)
+    }
     // Compute shared secret for this conversation if we have the private key
     if (privateKeyRef && peerData.publicKey) {
       await computeSharedSecret(privateKeyRef, peerData.publicKey, conversation.id)
     }
 
-    // Reload conversations to get updated list
+    // Reload conversations to get updated list. This *won't* include the
+    // brand-new empty conversation we just created (the API filters them
+    // out), but the peer-key cache seed above keeps sendMessage working
+    // until the first message lands and the conversation joins the inbox.
     await loadConversations()
 
     return conversation
@@ -453,7 +470,7 @@ export function useDmClient(tokenId?: number, username?: string) {
   }
 }
 
-export function useDmMessages(conversationId: string, tokenId?: number) {
+export function useDmMessages(conversationId: string, tokenId?: number, peerUserId?: number) {
   const [messages, setMessages] = useState<UiMessage[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isLoadingOlder, setIsLoadingOlder] = useState(false)
@@ -486,7 +503,7 @@ export function useDmMessages(conversationId: string, tokenId?: number) {
         setPeerLastReadAt(data.peerLastReadAt || null)
 
         // Get peer's public key for this conversation
-        const sharedSecret = await getOrComputeSharedSecret(conversationId, tokenId)
+        const sharedSecret = await getOrComputeSharedSecret(conversationId, tokenId, peerUserId)
 
         if (!sharedSecret) {
           // Can't decrypt yet — show encrypted messages as-is
@@ -605,7 +622,7 @@ export function useDmMessages(conversationId: string, tokenId?: number) {
 
     setIsSending(true)
     try {
-      const sharedSecret = await getOrComputeSharedSecret(conversationId, tokenId)
+      const sharedSecret = await getOrComputeSharedSecret(conversationId, tokenId, peerUserId)
       if (!sharedSecret) throw new Error('Cannot encrypt: encryption key not available. Try re-enabling DMs.')
 
       const encryptedPayload = await encrypt(content, sharedSecret)
@@ -687,7 +704,7 @@ export function useDmMessages(conversationId: string, tokenId?: number) {
     if (encryptedMsg.senderId === tokenId) return // Skip own messages
 
     try {
-      const sharedSecret = await getOrComputeSharedSecret(conversationId, tokenId!)
+      const sharedSecret = await getOrComputeSharedSecret(conversationId, tokenId!, peerUserId)
       let content = '[Encrypted]'
       if (sharedSecret) {
         try {
@@ -742,7 +759,7 @@ export function useDmMessages(conversationId: string, tokenId?: number) {
         setHasMoreMessages(false)
       }
 
-      const sharedSecret = await getOrComputeSharedSecret(conversationId, tokenId)
+      const sharedSecret = await getOrComputeSharedSecret(conversationId, tokenId, peerUserId)
       if (!sharedSecret) return
 
       const decrypted: UiMessage[] = []
@@ -792,13 +809,13 @@ export function useDmMessages(conversationId: string, tokenId?: number) {
 
   const getSharedSecret = useCallback(async (): Promise<CryptoKey | null> => {
     if (!conversationId || !tokenId) return null
-    return getOrComputeSharedSecret(conversationId, tokenId)
+    return getOrComputeSharedSecret(conversationId, tokenId, peerUserId)
   }, [conversationId, tokenId])
 
   const editMessage = useCallback(async (messageId: string, newContent: string) => {
     if (!conversationId || !tokenId) return
 
-    const sharedSecret = await getOrComputeSharedSecret(conversationId, tokenId)
+    const sharedSecret = await getOrComputeSharedSecret(conversationId, tokenId, peerUserId)
     if (!sharedSecret) throw new Error('Cannot encrypt')
 
     // Find original message to pass its encrypted payload as history
@@ -940,6 +957,14 @@ export function useDmMessages(conversationId: string, tokenId?: number) {
 // "decrypt failed" path will refetch.
 const peerPublicKeyCache = new Map<number, string>()
 
+// Module-scoped cache mapping conversationId → peer userId so the encrypt
+// path can resolve the peer without the conversations list. Brand-new
+// conversations are absent from /api/dm/conversations (the API filters out
+// empty ones), so the legacy fallback inside getOrComputeSharedSecret would
+// fail on the user's first message; seeding this map at conversation
+// creation + load time keeps the encrypt path one-shot.
+const conversationPeerCache = new Map<string, number>()
+
 async function getPeerPublicKey(peerUserId: number): Promise<string | null> {
   const cached = peerPublicKeyCache.get(peerUserId)
   if (cached) return cached
@@ -966,16 +991,19 @@ async function getOrComputeSharedSecret(
   if (!privateKeyRef) return null
 
   try {
-    let resolvedPeerId = peerUserId
+    let resolvedPeerId = peerUserId ?? conversationPeerCache.get(conversationId)
     if (resolvedPeerId === undefined) {
       // Fallback: look up the conversation to find the peer. Kept for
-      // callers without the peer in hand (rare).
+      // callers without the peer in hand AND without a cached entry —
+      // mostly a safety net for legacy callers / WS message-arrival
+      // paths where the conversation list refresh hasn't run yet.
       const data = await apiFetch<{ conversations: any[] }>(`/api/dm/conversations?userId=${currentUserId}`)
       const conv = data.conversations?.find((c: any) => c.id === conversationId)
       if (!conv) return null
       const peer = conv.participants.find((p: any) => p.userId !== currentUserId)
       if (!peer) return null
       resolvedPeerId = peer.userId
+      conversationPeerCache.set(conversationId, peer.userId)
     }
 
     const publicKey = await getPeerPublicKey(resolvedPeerId!)

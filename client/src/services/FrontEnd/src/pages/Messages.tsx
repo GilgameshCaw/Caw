@@ -163,7 +163,19 @@ const MessagesPage: React.FC = () => {
   // "Wallet not connected".
   const initializeClientRef = useRef(initializeClient)
   useEffect(() => { initializeClientRef.current = initializeClient }, [initializeClient])
-  const { messages, isLoadingOlder, hasMoreMessages, loadOlderMessages, sendMessage: dmSendMessage, editMessage: dmEditMessage, deleteForMe: dmDeleteForMe, deleteForEveryone: dmDeleteForEveryone, isSending, markAsRead, addIncomingMessage, peerLastReadAt, getSharedSecret, toggleReaction: dmToggleReaction, applyReactionEvent } = useDmMessages(selectedConversationId || '', currentUser?.id)
+  // Peer userId for the currently-selected conversation, computed from the
+  // conversations list. Threaded into useDmMessages so the encrypt path
+  // can reach the peer's publicKey directly — without it, the legacy
+  // fallback queries /api/dm/conversations and finds nothing for brand-
+  // new conversations (the inbox query filters out empty ones), which
+  // surfaces as "Cannot encrypt: encryption key not available" on the
+  // user's first message.
+  const selectedPeerUserId = (() => {
+    const c = conversations.find(cv => cv.id === selectedConversationId)
+    if (!c || c.type !== 'DM') return undefined
+    return c.participants.find(p => p.userId !== currentUser?.id)?.userId
+  })()
+  const { messages, isLoadingOlder, hasMoreMessages, loadOlderMessages, sendMessage: dmSendMessage, editMessage: dmEditMessage, deleteForMe: dmDeleteForMe, deleteForEveryone: dmDeleteForEveryone, isSending, markAsRead, addIncomingMessage, peerLastReadAt, getSharedSecret, toggleReaction: dmToggleReaction, applyReactionEvent } = useDmMessages(selectedConversationId || '', currentUser?.id, selectedPeerUserId)
   const { uploadEncryptedFile, isUploading, uploadProgress } = useDmFileUpload()
 
   // Scroll to bottom of messages
