@@ -494,6 +494,48 @@ right scope before we ship.
     5. (3) full — Cloudflare / S3-CDN integration. Ties into (5).
   - **Side note on HEIC**: once (1) is in and runs through sharp, HEIC support comes for free since sharp handles it via libvips. No separate work needed; just don't reject `image/heic` in `fileFilter`.
 
+- [ ] **Move blockchain RPC out of API request handlers (architectural)**
+  - **Problem**: API request handlers call `findOrCreateUser`, `verifyOwnershipOnChain`, `readOnChainStake`, `syncTokensOwnedByWallet` — each of which falls back to L1/L2 RPC reads when the DB doesn't have what it needs. This couples API latency to Infura uptime. Today's incident: a fresh-mint user's `/api/users/ensure` call blocked for ~30s on an Infura WebSocket handshake then 500'd. Past incidents: validator wedge mode, tx_already_closed Prisma timeouts caused by RPC inside a 5s tx, ActionProcessor hung on receiver-tokenId resolution.
+  - **Architectural target**: API reads only from DB. Background services (RawEventsGatherer, NftTransferWatcher, DataCleaner, UserService) are the only code that holds blockchain providers. When the API needs chain-derived data the indexer hasn't yet observed, it returns HTTP 202 ("still indexing — try again") and the frontend retries with backoff. Operators get a knob: how stale is "fresh enough" per endpoint.
+  - **Scope inventory** (every API call site that touches RPC):
+    - **Flavor 1 — token ownership / username** (the `findOrCreateUser` path):
+      - `POST /api/users/ensure` — fresh mint onboarding (highest user-visible pain)
+      - `GET /api/users/by-token/:tokenId` — falls back to RPC on DB miss
+      - `POST /api/auth/verify` — calls `findOrCreateUser` for sender resolution
+      - `POST /api/auth/verify-dm` — same
+      - `POST /api/sessions` — same on signing
+      - `POST /api/actions` and `/api/actions/batch` — pre-resolves sender (already mostly fine after the 5s-tx fix; `findOrCreateUser` is now outside the tx but still in-request)
+    - **Flavor 2 — stake / balance reads**:
+      - `GET /api/users/by-token/:tokenId` calls `readOnChainStake()` to verify pending L1→L2 deposit landed; throttled per-token to once every 15s but still ~per-request on hot tokens (profile chooser polls)
+    - **Flavor 3 — live ownership verify (post-transfer)**:
+      - `POST /api/auth/verify` and `/api/auth/verify-dm` use `verifyOwnershipOnChain` and `syncTokensOwnedByWallet` to handle "user transferred their token, DB is stale" — rare-path, but blocking
+    - **Provider construction duplication**: `client/src/api/routes/users.ts:14`, `actions.ts:60-69`, `sessions.ts:55-64` each build their own L2 read provider, duplicating the singleton in UserService. Easy consolidation candidate even outside the bigger refactor.
+
+  - **Three implementation tiers** (each independently shippable):
+
+    **Tier 1 — minimum viable (~1 day)**:
+    - Strip `findOrCreateUser`'s RPC fallback out of every API endpoint listed under Flavor 1. If the user isn't in the DB, return 202 with `{ retryAfterSeconds: N }` instead of blocking on RPC.
+    - Frontend `useUserByToken` hook (and equivalents) handles 202 with exponential backoff; existing "user not found" UX already exists for the briefest window after mint.
+    - Move the actual L1/L2 read into a one-shot helper called by `RawEventsGatherer` when it sees a Mint event — populates the DB immediately on the indexer's schedule.
+    - For pre-existing tokens already on-chain but never indexed (theoretical, shouldn't happen with current indexer): a periodic `DataCleaner` sweep that scans recent L1 Transfer events and backfills any missing User rows.
+    - Eliminates the worst class of bug (the 30s blocking handshake that bit `/ensure` today). ~150 lines + frontend retry hook.
+
+    **Tier 2 — clean stake reads (~1 more day)**:
+    - Add `User.onChainStakeWei String?` (wei as string) and `User.onChainStakeUpdatedAt DateTime?`.
+    - Background poller (in `DataCleaner` or new tiny service) updates these periodically — every 30s for users with pending deposits, every 5min otherwise.
+    - `GET /api/users/by-token` reads only from DB, surfaces `onChainStakeUpdatedAt` so the FE can show staleness.
+    - Eliminates `readOnChainStake` from the request path entirely.
+
+    **Tier 3 — full cleanup (~1 more day)**:
+    - Move `verifyOwnershipOnChain` and `syncTokensOwnedByWallet` to async-first patterns. Auth flow returns 202 when it can't verify from DB; FE retries.
+    - Consolidate the three duplicate L2-read singletons in `users.ts`, `actions.ts`, `sessions.ts` into one shared helper from `UserService`.
+    - Document a "freshness contract" per endpoint: max staleness in seconds.
+    - Removes RPC providers from the API server's import graph entirely (defense in depth — even import-time side effects can't block on Infura).
+
+  - **Don't break**: action submission. The current `/api/actions` flow already pre-resolves the sender outside the tx, so removing the inside-handler RPC is a no-op for the happy path. Just make sure 202-on-miss happens BEFORE writes (don't insert TxQueue rows for senderIds we haven't validated).
+
+  - **Watch out for**: the recent cawonce-allocation endpoint depends on `senderId` being a known user. If we 202 before allocation, the frontend's signAndSubmit loop needs to handle that path — i.e., wait for the user to be indexed, THEN call allocate-cawonce. Order matters.
+
 - [ ] **Put SigNoz behind admin auth (subdomain + nginx auth_request)**
   - Today SigNoz is reachable only via SSH tunnel (`ssh -L 8080:127.0.0.1:8080`). Workable for solo operators but friction-heavy and confusing. Goal: gate it behind the same admin cookie used everywhere else (`requireAdmin` middleware) so admins can just visit a URL.
   - **Why subdomain not subpath**: SigNoz's frontend bundles asset URLs hardcoded to `/assets/...` with no `BASE_PATH` support. Mounting at `/admin/signoz/` would require nginx `sub_filter` URL rewriting on every response, which breaks the moment SigNoz changes their bundle hashes. Verified on v0.120.0 — no env var or config flag for base path. Subdomain (`signoz.<domain>`) sidesteps the whole problem.
