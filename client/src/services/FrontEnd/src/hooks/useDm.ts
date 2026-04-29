@@ -125,6 +125,16 @@ export function useDmClient(tokenId?: number, username?: string) {
       const offset = loadMore ? conversations.length : 0
       const data = await apiFetch<{ conversations: any[]; hasMore?: boolean }>(`/api/dm/conversations?userId=${tokenId}&limit=50&offset=${offset}`)
 
+      // Pre-fetch all peer public keys in one batch request so the
+      // Promise.all below resolves them from the in-memory cache instead
+      // of firing one /api/dm/identity/:id request per conversation.
+      const peerIds: number[] = []
+      for (const conv of data.conversations || []) {
+        const peer = conv.participants?.find?.((p: any) => p.userId !== tokenId)
+        if (peer?.userId != null) peerIds.push(peer.userId)
+      }
+      if (peerIds.length > 0) await prefetchPeerPublicKeys(peerIds)
+
       const uiConversations: UiConversation[] = await Promise.all(
         (data.conversations || []).map(async (conv: any) => {
           const otherParticipants = conv.participants.filter(
@@ -817,6 +827,28 @@ async function getPeerPublicKey(peerUserId: number): Promise<string | null> {
   if (!peerData?.publicKey) return null
   peerPublicKeyCache.set(peerUserId, peerData.publicKey)
   return peerData.publicKey
+}
+
+/**
+ * Seed peerPublicKeyCache for many users at once. Use before a Promise.all
+ * over conversations so the per-conversation getPeerPublicKey calls all
+ * hit the cache instead of fanning out one /identity/:id request each.
+ */
+async function prefetchPeerPublicKeys(peerUserIds: number[]): Promise<void> {
+  const missing = [...new Set(peerUserIds)].filter(id => !peerPublicKeyCache.has(id))
+  if (missing.length === 0) return
+  try {
+    const data = await apiFetch<{ identities: Record<number, { publicKey: string | null }> }>(
+      `/api/dm/identity/batch`,
+      { method: 'POST', body: JSON.stringify({ userIds: missing }) }
+    )
+    for (const [idStr, { publicKey }] of Object.entries(data.identities)) {
+      if (publicKey) peerPublicKeyCache.set(Number(idStr), publicKey)
+    }
+  } catch {
+    // Server may not have the batch endpoint yet — fall through to the
+    // per-id fetch path inside getPeerPublicKey.
+  }
 }
 
 /**
