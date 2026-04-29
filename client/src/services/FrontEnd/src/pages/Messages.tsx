@@ -805,26 +805,49 @@ const MessagesPage: React.FC = () => {
                 </button>
               )}
               {currentView === 'chat' && otherParticipant && (
-                <div
+                <a
+                  href={`/users/${otherParticipant.identity.user.username}`}
+                  // Render a real anchor so cmd/ctrl/middle-click open in a
+                  // new tab the way the browser already does for links —
+                  // intercept plain clicks for SPA navigation only.
+                  onClick={(e) => {
+                    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
+                    e.preventDefault()
+                    navigate(`/users/${otherParticipant.identity.user.username}`)
+                  }}
                   className="w-8 h-8 rounded-full overflow-hidden flex-shrink-0 cursor-pointer"
-                  onClick={() => navigate(`/users/${otherParticipant.identity.user.username}`)}
                 >
                   <Avatar
                     src={getUserAvatar(otherParticipant.identity.user)}
                     alt={otherParticipant.identity.user.username}
                     className="w-full h-full"
                   />
-                </div>
+                </a>
               )}
               <div className="flex flex-col">
-                <h1
-                  className={`text-2xl font-bold transition-colors duration-300 ${
-                    isDark ? 'text-white' : 'text-black'
-                  } ${currentView === 'chat' && otherParticipant ? 'cursor-pointer hover:underline' : ''}`}
-                  onClick={currentView === 'chat' && otherParticipant ? () => navigate(`/users/${otherParticipant.identity.user.username}`) : undefined}
-                >
-                  {currentView === 'inbox' ? 'Messages' : currentView === 'setup' ? 'Enable DMs' : otherParticipant?.identity.user.displayName || otherParticipant?.identity.user.username || 'Chat'}
-                </h1>
+                {currentView === 'chat' && otherParticipant ? (
+                  <a
+                    href={`/users/${otherParticipant.identity.user.username}`}
+                    onClick={(e) => {
+                      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
+                      e.preventDefault()
+                      navigate(`/users/${otherParticipant.identity.user.username}`)
+                    }}
+                    className={`text-2xl font-bold no-underline transition-colors duration-300 cursor-pointer hover:underline ${
+                      isDark ? 'text-white' : 'text-black'
+                    }`}
+                  >
+                    {otherParticipant.identity.user.displayName || otherParticipant.identity.user.username || 'Chat'}
+                  </a>
+                ) : (
+                  <h1
+                    className={`text-2xl font-bold transition-colors duration-300 ${
+                      isDark ? 'text-white' : 'text-black'
+                    }`}
+                  >
+                    {currentView === 'inbox' ? 'Messages' : currentView === 'setup' ? 'Enable DMs' : 'Chat'}
+                  </h1>
+                )}
                 {currentView === 'inbox' && (
                   <div className={`flex items-center gap-2 mt-2 text-sm ${
                     isDark ? 'text-gray-400' : 'text-gray-500'
