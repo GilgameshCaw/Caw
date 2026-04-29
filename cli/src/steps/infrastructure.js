@@ -746,7 +746,6 @@ function deriveServiceName(config) {
 async function installSignozOnThisBox(installPath, docker) {
   fs.mkdirSync(installPath, { recursive: true })
   const repoDir = path.join(installPath, 'signoz')
-  const composeFile = path.join(repoDir, 'deploy', 'docker', 'clickhouse-setup', 'docker-compose.yaml')
 
   if (!fs.existsSync(path.join(repoDir, '.git'))) {
     console.log(dim(`  Cloning SigNoz into ${repoDir} (~50MB, one-time)…`))
@@ -761,8 +760,18 @@ async function installSignozOnThisBox(installPath, docker) {
     console.log(dim(`  SigNoz checkout already at ${repoDir} — reusing.`))
   }
 
-  if (!fs.existsSync(composeFile)) {
-    throw new Error(`Expected compose file not found at ${composeFile}. The SigNoz repo layout may have changed — install manually and pick the "different box" option.`)
+  // SigNoz reorganized their repo: the compose file used to live under
+  // deploy/docker/clickhouse-setup/, then moved to deploy/docker/. Try
+  // the current layout first, fall back to the legacy path. If neither
+  // exists they've moved it again — fail loud so the operator gets a
+  // useful error rather than a silent docker-compose-up no-op.
+  const candidatePaths = [
+    path.join(repoDir, 'deploy', 'docker', 'docker-compose.yaml'),
+    path.join(repoDir, 'deploy', 'docker', 'clickhouse-setup', 'docker-compose.yaml'),
+  ]
+  const composeFile = candidatePaths.find(p => fs.existsSync(p))
+  if (!composeFile) {
+    throw new Error(`No SigNoz docker-compose file found. Looked at:\n  ${candidatePaths.join('\n  ')}\nThe SigNoz repo layout may have changed again — please file an issue or pick "different box" and run SigNoz manually.`)
   }
 
   console.log(dim('  Starting SigNoz containers (ClickHouse migrations on first boot take 1–2 min)…'))
