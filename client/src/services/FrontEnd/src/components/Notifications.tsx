@@ -607,32 +607,42 @@ const Notifications: React.FC = () => {
     }
   }
 
+  /**
+   * Resolve a notification to its target URL (or null for types that
+   * don't navigate at all, e.g. OFFER opens a modal). Pure function so
+   * we can use it both for the in-tab click handler and for `href`
+   * (which lets cmd/ctrl/middle-click open in a new tab natively).
+   */
+  const getNotificationHref = (notification: Notification): string | null => {
+    if (notification.type === 'FOLLOW') return `/users/${notification.actor.username}`
+    if (notification.type === 'OFFER') return null // modal-only
+    if (notification.type === 'OUTBID' || notification.type === 'AUCTION_WON') return '/usernames'
+    if (notification.type === 'TIP' && !notification.caw) return `/users/${notification.actor.username}`
+    if (notification.type === 'ACTION_FAILED') {
+      const payload = notification.actionPayload
+      if (!payload) return null
+      if (payload.receiverId && payload.receiverCawonce && payload.receiverUsername) {
+        return `/users/${payload.receiverUsername}`
+      }
+      if (payload.receiverId && payload.receiverCawonce) {
+        return `/users/${payload.receiverId}`
+      }
+      return null
+    }
+    if (notification.caw) return `/caws/${notification.caw.id}`
+    return null
+  }
+
   const handleNotificationClick = (notification: Notification) => {
-    if (notification.type === 'FOLLOW') {
-      navigate(`/users/${notification.actor.username}`)
-    } else if (notification.type === 'OFFER') {
-      // Open view offers modal for this token
+    if (notification.type === 'OFFER') {
+      // Open view offers modal for this token — no navigation.
       if (notification.offer) {
         useMarketplaceStore.getState().openViewOffers(notification.offer.tokenId, notification.offer.username)
       }
-    } else if (notification.type === 'OUTBID' || notification.type === 'AUCTION_WON') {
-      navigate('/usernames')
-    } else if (notification.type === 'TIP' && !notification.caw) {
-      // Direct tip - navigate to tipper's profile
-      navigate(`/users/${notification.actor.username}`)
-    } else if (notification.type === 'ACTION_FAILED') {
-      const payload = notification.actionPayload
-      if (!payload) return
-      // For replies/likes/recaws with a target user, navigate to their profile
-      if (payload.receiverId && payload.receiverCawonce && payload.receiverUsername) {
-        navigate(`/users/${payload.receiverUsername}`)
-      } else if (payload.receiverId && payload.receiverCawonce) {
-        navigate(`/users/${payload.receiverId}`)
-      }
-      // For plain posts: no navigation — retry button is the main affordance
-    } else if (notification.caw) {
-      navigate(`/caws/${notification.caw.id}`)
+      return
     }
+    const href = getNotificationHref(notification)
+    if (href) navigate(href)
   }
 
   useEffect(() => {
@@ -801,19 +811,38 @@ const Notifications: React.FC = () => {
         </div>
       ) : (
         <div className="space-y-2">
-          {notifications.map(notification => (
-            <div
+          {notifications.map(notification => {
+            // Render as <a href> when the notification has a real
+            // destination so cmd/ctrl/middle-click open it in a new tab
+            // the way the browser already does for links. Plain left-
+            // click is intercepted for SPA navigation. Non-navigating
+            // types (OFFER opens a modal) fall back to a plain div.
+            const href = getNotificationHref(notification)
+            const rowClass = `block p-4 rounded-lg transition cursor-pointer no-underline ${
+              !notification.isRead
+                ? isDark
+                  ? 'bg-blue-500/10 hover:bg-blue-500/20'
+                  : 'bg-blue-50 hover:bg-blue-100'
+                : isDark
+                  ? 'bg-white/5 hover:bg-white/10'
+                  : 'bg-gray-50 hover:bg-gray-100'
+            }`
+            const RowTag: any = href ? 'a' : 'div'
+            const rowProps: any = href
+              ? {
+                  href,
+                  onClick: (e: React.MouseEvent) => {
+                    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
+                    e.preventDefault()
+                    handleNotificationClick(notification)
+                  },
+                }
+              : { onClick: () => handleNotificationClick(notification) }
+            return (
+            <RowTag
               key={notification.id}
-              className={`p-4 rounded-lg transition cursor-pointer ${
-                !notification.isRead
-                  ? isDark
-                    ? 'bg-blue-500/10 hover:bg-blue-500/20'
-                    : 'bg-blue-50 hover:bg-blue-100'
-                  : isDark
-                    ? 'bg-white/5 hover:bg-white/10'
-                    : 'bg-gray-50 hover:bg-gray-100'
-              }`}
-              onClick={() => handleNotificationClick(notification)}
+              className={rowClass}
+              {...rowProps}
             >
               <div className="flex items-start space-x-3">
                 <div className="mt-1">
@@ -887,8 +916,9 @@ const Notifications: React.FC = () => {
                   ×
                 </button>
               </div>
-            </div>
-          ))}
+            </RowTag>
+            )
+          })}
 
           {hasMore && (
             <button
