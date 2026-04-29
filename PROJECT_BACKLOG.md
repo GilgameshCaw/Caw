@@ -572,6 +572,12 @@ right scope before we ship.
   - **Fix**: track which events in the batch succeeded; if any failed, don't advance `lastBlock` past the failed one. Re-poll from there next pass. Or: maintain a per-token "stuck" set and have a slow background sweeper retry them.
   - The bug existed before the refactor but the new architecture makes it user-visible because the API no longer compensates with its own RPC fallback. Higher priority than it would have been a week ago.
 
+- [ ] **"Switch wallet" button in ProfileChooser**
+  - Operators with multiple wallet extensions installed (Rabby + MetaMask + Coinbase, etc) hit a confusing dead-end: once wagmi has connected to one, there's no obvious in-app path to switch to another. Today's escape hatch is editing localStorage by hand or disconnecting from the wallet's own UI. Both are bad UX and easy to misdiagnose as "Wrong Address" bug reports.
+  - **Where**: ProfileChooser dropdown — add a "Switch wallet" item that calls wagmi's `disconnect()` and then `openConnectModal()` from RainbowKit. One click, picker appears, operator picks the wallet they actually meant.
+  - **Watch out for**: clearing the right state. wagmi's `disconnect()` should handle the recentConnectorId, but a belt-and-suspenders `localStorage.removeItem('wagmi.recentConnectorId')` before calling `openConnectModal` is cheap insurance.
+  - Tiny — ~15 lines.
+
 - [ ] **Rainbow Wallet connect failure**
   - Reported on test.caw.social (HTTPS production install): Rainbow Wallet failed to connect via the RainbowKit connect modal. Other wallets work; this one specifically fails.
   - **Likely culprits to investigate first**:
