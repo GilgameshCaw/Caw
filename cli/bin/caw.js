@@ -426,6 +426,43 @@ program
   })
 
 program
+  .command('regen-addresses')
+  .description('Regenerate client/src/abi/addresses.ts from deployments.ts (use after redeploying contracts)')
+  .option('--dir <path>', 'Installation directory', ROOT_DIR)
+  .option('--env <path>', 'Path to existing .env (default: <dir>/client/.env)')
+  .action(async (opts) => {
+    try {
+      const installDir = resolveInstallDir(opts, ROOT_DIR)
+      const envPath = opts.env
+        ? (path.isAbsolute(opts.env) ? opts.env : path.resolve(installDir, opts.env))
+        : path.join(installDir, 'client', '.env')
+      if (!fs.existsSync(envPath)) {
+        console.error(`No .env at ${envPath}. Specify with --env or run 'caw install' first.`)
+        process.exit(1)
+      }
+      // Pull just the values writeAddressesForClient needs out of the
+      // existing .env. No prompts, no preload trickery.
+      const { generateConfig: _generateConfig, writeAddressesForClient } = await import('../src/steps/generate.js')
+      void _generateConfig
+      const env = loadEnvFile(envPath)
+      const config = {
+        network: env.NETWORK || 'testnet',
+        clientId: Number(env.CLIENT_ID || 1),
+        l1RpcUrl: env.L1_RPC_URL,
+        l1RpcUrlHttp: env.L1_RPC_URL_HTTP,
+      }
+      const clientDir = path.join(installDir, 'client')
+      setAddressesNetwork(config.network)
+      console.log(brand(`Regenerating addresses.ts (network=${config.network}, clientId=${config.clientId})...`))
+      await writeAddressesForClient(config, clientDir)
+      console.log(success(`Done. addresses.ts now reflects deployments.ts for ${config.network}/client ${config.clientId}.`))
+    } catch (e) {
+      console.error('regen-addresses failed:', e.message)
+      process.exit(1)
+    }
+  })
+
+program
   .command('status')
   .description('Show status of CAW services')
   .action(() => {

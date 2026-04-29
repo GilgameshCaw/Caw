@@ -94,7 +94,7 @@ export async function generateConfig(nodeType, config, installDir) {
  * addresses.ts. The rest of the codebase imports singular constants from
  * addresses.ts and stays multi-chain-unaware.
  */
-async function writeAddressesForClient(config, clientDir) {
+export async function writeAddressesForClient(config, clientDir) {
   const env = config.network || 'testnet'
   const clientId = Number(config.clientId || 1)
   const l1RpcUrl = config.l1RpcUrlHttp || config.l1RpcUrl
