@@ -32,28 +32,16 @@ router.post('/identity',
   }
 )
 
-// Get a user's public key (public endpoint, no auth)
-router.get('/identity/:userId', async (req: Request, res: Response) => {
-  try {
-    const userId = Number(req.params.userId)
-    if (isNaN(userId)) {
-      return res.status(400).json({ error: 'Invalid userId' })
-    }
-
-    const publicKey = await dmService.getPublicKey(userId)
-    const hasIdentity = publicKey !== null
-    return res.json({ userId, publicKey, hasIdentity })
-  } catch (error: any) {
-    console.error('GET /api/dm/identity/:userId error:', error)
-    return res.status(500).json({ error: error.message })
-  }
-})
-
 // GET /api/dm/identity/batch?userIds=1,2,3
 // Read-only bulk lookup of DM identities — replaces the per-user
 // /identity/:userId fan-out from the Messages page (recent follows + new-
 // message search). Capped at 100 ids per request, so the comma-joined
 // querystring stays comfortably under typical URL limits.
+//
+// IMPORTANT: this route MUST be registered before /identity/:userId.
+// Express matches in declaration order, so registering :userId first
+// would let it swallow "/identity/batch" with userId = "batch" and the
+// batch endpoint would silently 400 with "Invalid userId" forever.
 router.get('/identity/batch', async (req: Request, res: Response) => {
   try {
     const raw = String(req.query.userIds || '')
@@ -78,6 +66,23 @@ router.get('/identity/batch', async (req: Request, res: Response) => {
     return res.json({ identities })
   } catch (error: any) {
     console.error('GET /api/dm/identity/batch error:', error)
+    return res.status(500).json({ error: error.message })
+  }
+})
+
+// Get a user's public key (public endpoint, no auth)
+router.get('/identity/:userId', async (req: Request, res: Response) => {
+  try {
+    const userId = Number(req.params.userId)
+    if (isNaN(userId)) {
+      return res.status(400).json({ error: 'Invalid userId' })
+    }
+
+    const publicKey = await dmService.getPublicKey(userId)
+    const hasIdentity = publicKey !== null
+    return res.json({ userId, publicKey, hasIdentity })
+  } catch (error: any) {
+    console.error('GET /api/dm/identity/:userId error:', error)
     return res.status(500).json({ error: error.message })
   }
 })
