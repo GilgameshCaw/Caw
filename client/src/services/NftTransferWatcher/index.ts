@@ -137,7 +137,14 @@ export const nftTransferWatcherService: Service = {
                     console.log(`[NftTransferWatcher] Transfer for unindexed tokenId=${tokenId} (joined late) — backfilling`)
                   }
                   try {
-                    await findOrCreateUser(tokenId)
+                    // For fresh mints, start at onboardingStep=0 so the
+                    // operator goes through the welcome stepper. Without
+                    // this, findOrCreateUser defaults to step=5 (complete)
+                    // and the watcher races ahead of /api/users/ensure to
+                    // create the row, which then makes WelcomePage redirect
+                    // straight to /home. Late-join transfers stay at the
+                    // default — the user is established, no welcome flow.
+                    await findOrCreateUser(tokenId, isMint ? { onboardingStep: 0 } : {})
                   } catch (err: any) {
                     if (err instanceof StaleTokenError) {
                       // Token doesn't exist on the L1 contract this watcher is
