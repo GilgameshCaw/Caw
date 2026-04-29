@@ -553,6 +553,25 @@ right scope before we ship.
   - **Docs**: README section on admin dashboards (Bug Reports, DB browser, Reports) should mention SigNoz once shipped.
   - Estimated effort: ~30 min API + ~15 min cookie domain + ~20 min nginx template + ~10 min CLI prompt + testing. Half-day at most.
 
+- [ ] **Move L2 tx submission out of `/api/sessions` request handler**
+  - `POST /api/sessions` is the last API request handler that holds an L2 wallet+contract and submits an on-chain tx (`registerSessionPersonal`). Tier 3 of the RPC-out-of-API refactor honored the principle for *blocking* RPC reads but didn't touch this endpoint because it's already async (returns 202 with a `requestId`, processes in a fire-and-forget background promise, client polls for status).
+  - **Why it's still worth fixing**: the L1/L2 provider plumbing still lives inside `client/src/api/routes/sessions.ts`. Defense-in-depth — even import-time side effects can't reach Infura when the API/`api/` folder doesn't import from `utils/rpcProvider`. Also: putting the registration in a real worker service makes it testable and observable (existing pm2 lifecycle, logs, restart on stuck-job). Today the fire-and-forget Promise has none of that.
+  - **Shape**: extract the contract-submission code into a tiny new `SessionRegistrationService` (or fold into `ValidatorService`, which already has a wallet+nonce-manager and submits L2 txs). The API endpoint inserts a row into a new `SessionRegistrationRequest` table; the service polls for `pending` rows and processes them. Status endpoint reads from the same table.
+  - **Effort**: ~half-day. Requires schema work (queue table) and worker glue, plus migrating the in-memory `requests` Map to DB-backed state. Worth doing once the rest of the RPC-out-of-API work has settled in production.
+
+- [ ] **Delete dead helpers `verifyOwnershipOnChain` + `syncTokensOwnedByWallet`**
+  - Tier 3 of the RPC-out-of-API refactor stopped calling these from API request handlers but left the helpers in place per spec — to avoid breaking other in-flight branches. Once master settles (no fresh PRs reference them), grep-and-delete:
+    - `client/src/services/UserService.ts` — both functions
+    - Their imports from any callers (none should remain in `client/src/api/routes/`)
+  - Keep `findOrCreateUser` — it's still legitimately called from background services (`NftTransferWatcher`, `RawEventsGatherer`, `ActionProcessor`).
+  - Five-minute follow-up. Just needs a `git grep` confirm no remaining callers before the delete.
+
+- [ ] **NftTransferWatcher: don't advance lastBlock on partial event-handler failures**
+  - Pre-existing bug, surfaced by the indexer-gap fix in commit `1ec33b3`. The watcher's inner per-event try/catch logs failures and continues, then the outer poll loop unconditionally advances `lastBlock` past the processed range. So if a single Mint event throws (e.g. L1 RPC down for `findOrCreateUser`'s metadata read), that event is permanently skipped — a User row never gets created for that tokenId.
+  - **Symptom**: a fresh-mint user whose Mint happened during an L1 outage stays stuck in 202-loop forever, even after L1 recovers. The `/api/users/by-token` retry helper times out and the user sees "we couldn't index your account" with no recovery path.
+  - **Fix**: track which events in the batch succeeded; if any failed, don't advance `lastBlock` past the failed one. Re-poll from there next pass. Or: maintain a per-token "stuck" set and have a slow background sweeper retry them.
+  - The bug existed before the refactor but the new architecture makes it user-visible because the API no longer compensates with its own RPC fallback. Higher priority than it would have been a week ago.
+
 - [ ] **Rainbow Wallet connect failure**
   - Reported on test.caw.social (HTTPS production install): Rainbow Wallet failed to connect via the RainbowKit connect modal. Other wallets work; this one specifically fails.
   - **Likely culprits to investigate first**:
