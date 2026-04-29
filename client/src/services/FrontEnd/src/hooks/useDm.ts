@@ -140,7 +140,10 @@ export function useDmClient(tokenId?: number, username?: string) {
           } else if (conv.lastMessage?.encryptedPayload && privateKeyRef) {
             lastMessageSenderId = conv.lastMessage.senderId
             try {
-              const sharedSecret = await getOrComputeSharedSecret(conv.id, tokenId)
+              // Pass the peer userId we already have on `conv` so the helper
+              // doesn't re-fetch /api/dm/conversations for every preview.
+              const peerId = otherParticipants[0]?.userId
+              const sharedSecret = await getOrComputeSharedSecret(conv.id, tokenId, peerId)
               if (sharedSecret) {
                 const decrypted = await decrypt(conv.lastMessage.encryptedPayload, sharedSecret)
 
@@ -798,30 +801,55 @@ export function useDmMessages(conversationId: string, tokenId?: number) {
   return { messages, isLoading, isLoadingOlder, hasMoreMessages, loadOlderMessages, isSending, sendMessage, editMessage, deleteForMe, deleteForEveryone, markAsRead, addIncomingMessage, peerLastReadAt, getSharedSecret }
 }
 
+// Module-scoped cache for peer DM public keys. The conversation list refresh
+// pulls a key per peer; without caching, switching tabs / reloading kicks N
+// requests for the same N peers we already saw last second. Keys are stable
+// per user — they only change if a peer re-derives, in which case the next
+// "decrypt failed" path will refetch.
+const peerPublicKeyCache = new Map<number, string>()
+
+async function getPeerPublicKey(peerUserId: number): Promise<string | null> {
+  const cached = peerPublicKeyCache.get(peerUserId)
+  if (cached) return cached
+  const peerData = await fetch(`${API_HOST}/api/dm/identity/${peerUserId}`).then(r => r.json())
+  if (!peerData?.publicKey) return null
+  peerPublicKeyCache.set(peerUserId, peerData.publicKey)
+  return peerData.publicKey
+}
+
 /**
  * Get or compute the shared secret for a conversation.
- * Fetches the peer's public key if needed.
+ * Pass `peerUserId` to skip the conversations-list fetch — the previous
+ * implementation called /api/dm/conversations on every invocation just to
+ * find the peer, so a 20-conversation inbox load triggered 20 redundant
+ * /api/dm/conversations requests. Callers that don't already know the peer
+ * (e.g. shared-secret used after a websocket message arrives without a
+ * cached conversation) can omit the param to keep the legacy behavior.
  */
 async function getOrComputeSharedSecret(
   conversationId: string,
-  currentUserId: number
+  currentUserId: number,
+  peerUserId?: number,
 ): Promise<CryptoKey | null> {
   if (!privateKeyRef) return null
 
   try {
-    // Fetch conversation participants to find the peer
-    const data = await apiFetch<{ conversations: any[] }>(`/api/dm/conversations?userId=${currentUserId}`)
-    const conv = data.conversations?.find((c: any) => c.id === conversationId)
-    if (!conv) return null
+    let resolvedPeerId = peerUserId
+    if (resolvedPeerId === undefined) {
+      // Fallback: look up the conversation to find the peer. Kept for
+      // callers without the peer in hand (rare).
+      const data = await apiFetch<{ conversations: any[] }>(`/api/dm/conversations?userId=${currentUserId}`)
+      const conv = data.conversations?.find((c: any) => c.id === conversationId)
+      if (!conv) return null
+      const peer = conv.participants.find((p: any) => p.userId !== currentUserId)
+      if (!peer) return null
+      resolvedPeerId = peer.userId
+    }
 
-    const peer = conv.participants.find((p: any) => p.userId !== currentUserId)
-    if (!peer) return null
+    const publicKey = await getPeerPublicKey(resolvedPeerId!)
+    if (!publicKey) return null
 
-    // Get peer's public key
-    const peerData = await fetch(`${API_HOST}/api/dm/identity/${peer.userId}`).then(r => r.json())
-    if (!peerData.publicKey) return null
-
-    return computeSharedSecret(privateKeyRef, peerData.publicKey, conversationId)
+    return computeSharedSecret(privateKeyRef, publicKey, conversationId)
   } catch (err) {
     console.error('[DM] Failed to compute shared secret:', err)
     return null
