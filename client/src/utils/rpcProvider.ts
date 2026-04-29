@@ -1,4 +1,4 @@
-import { JsonRpcProvider, WebSocketProvider, Network, FallbackProvider, AbstractProvider } from 'ethers'
+import { JsonRpcProvider, WebSocketProvider, Network, FallbackProvider, AbstractProvider, FetchRequest } from 'ethers'
 
 // ============================================
 // GLOBAL RPC THROTTLE
@@ -265,6 +265,55 @@ function basicAuthHeader(secret: string): string {
   return 'Basic ' + Buffer.from(':' + secret).toString('base64')
 }
 
+/**
+ * Strip URL-embedded basic auth from a URL and return the bare URL plus
+ * the original (URL-decoded) secret. This is the load-bearing helper for
+ * fixing the "secret contains `/`" bug:
+ *
+ *   1. callers historically build URLs with withSecret() — that does
+ *      `u.password = secret` which percent-encodes any `/` in the secret.
+ *   2. when the URL hits a Basic-Auth-aware fetch layer, the layer
+ *      Base64-encodes the percent-ENCODED form (not the raw form) and
+ *      Infura rejects it.
+ *
+ * By extracting the password BEFORE building any HTTP request and routing
+ * it via an explicit Authorization header, every code path bypasses the
+ * percent-encoding round-trip. We have to decodeURIComponent() it back
+ * ourselves — Node's URL.password property returns the percent-ENCODED
+ * form, not the raw form (a footgun, since most other URL libraries
+ * decode automatically).
+ */
+function extractEmbeddedAuth(url: string): { cleanUrl: string; secret: string | null } {
+  try {
+    const u = new URL(url)
+    if (!u.password) return { cleanUrl: url, secret: null }
+    let secret: string
+    try { secret = decodeURIComponent(u.password) }
+    catch { secret = u.password } // malformed encoding — best effort
+    u.username = ''
+    u.password = ''
+    return { cleanUrl: u.toString(), secret }
+  } catch {
+    return { cleanUrl: url, secret: null }
+  }
+}
+
+/**
+ * Build a FetchRequest for the given URL, attaching the operator's RPC
+ * secret as a Basic Authorization header if one was either passed
+ * explicitly or embedded in the URL.
+ *
+ * Used by makeJsonRpcProvider so all HTTP RPC calls go through a single
+ * code path that handles auth identically to the WebSocket factory.
+ */
+function buildAuthenticatedFetchRequest(url: string, explicitSecret?: string): FetchRequest {
+  const { cleanUrl, secret: embedded } = extractEmbeddedAuth(url)
+  const secret = explicitSecret ?? embedded
+  const req = new FetchRequest(cleanUrl)
+  if (secret) req.setHeader('Authorization', basicAuthHeader(secret))
+  return req
+}
+
 // ============================================
 // PROVIDER FACTORIES
 // ============================================
@@ -272,14 +321,22 @@ function basicAuthHeader(secret: string): string {
 /**
  * Create a JsonRpcProvider with staticNetwork + throttle.
  * Pass chainId to skip the initial eth_chainId call.
+ *
+ * Auth handling: if the URL has embedded Basic auth (the legacy form
+ * produced by withSecret()) OR if `secret` is passed explicitly, we route
+ * the credential via an Authorization header on a custom FetchRequest.
+ * This bypasses ethers' default URL-based auth handling, which Base64-
+ * encodes the URL-ENCODED password — broken for any secret containing
+ * a `/`. See extractEmbeddedAuth() for the full explanation.
  */
-export function makeJsonRpcProvider(url: string, chainId?: number): JsonRpcProvider {
+export function makeJsonRpcProvider(url: string, chainId?: number, secret?: string): JsonRpcProvider {
+  const fetchReq = buildAuthenticatedFetchRequest(url, secret)
   let provider: JsonRpcProvider
   if (chainId != null) {
     const network = Network.from(chainId)
-    provider = new JsonRpcProvider(url, network, { staticNetwork: network })
+    provider = new JsonRpcProvider(fetchReq, network, { staticNetwork: network })
   } else {
-    provider = new JsonRpcProvider(url, undefined, { staticNetwork: true })
+    provider = new JsonRpcProvider(fetchReq, undefined, { staticNetwork: true })
   }
   return wrapSend(provider)
 }
@@ -307,10 +364,13 @@ export function makeFallbackJsonRpcProvider(urls: string[], chainId?: number): A
   if (urls.length === 1) return makeJsonRpcProvider(urls[0], chainId)
   const network = chainId != null ? Network.from(chainId) : undefined
   const subproviders = urls.map(url => {
+    // Go through the same FetchRequest-based auth path as the single-URL
+    // factory above — otherwise URL-embedded secrets containing `/` break.
+    const fetchReq = buildAuthenticatedFetchRequest(url)
     if (network) {
-      return new JsonRpcProvider(url, network, { staticNetwork: network })
+      return new JsonRpcProvider(fetchReq, network, { staticNetwork: network })
     }
-    return new JsonRpcProvider(url, undefined, { staticNetwork: true })
+    return new JsonRpcProvider(fetchReq, undefined, { staticNetwork: true })
   })
   // Each subprovider gets equal weight; quorum 1 = first-success-wins.
   // The 'priority' field defaults to 1 across configs, so all candidates
@@ -336,30 +396,11 @@ export function makeFallbackJsonRpcProvider(urls: string[], chainId?: number): A
  * thunk that returns it.
  */
 export function makeWebSocketProvider(url: string, chainId?: number, secret?: string): WebSocketProvider {
-  // Detect URL-embedded auth and migrate it to header-based auth. This
-  // fixes the percent-encoding round-trip bug where a `/` in the secret
-  // gets URL-encoded as `%2F`, then Base64-encoded by the ws library —
-  // Infura then decodes Base64 and rejects the encoded form as invalid.
-  // By extracting userinfo here and routing it via Authorization header,
-  // every existing caller (including ones using withSecret() URLs) gets
-  // the fix automatically without API changes.
-  let cleanUrl = url
-  let resolvedSecret = secret
-  try {
-    const u = new URL(url)
-    if (u.password && !resolvedSecret) {
-      // password was URL-decoded by the URL parser, so this gives us the
-      // original raw secret — exactly what we need for the auth header.
-      resolvedSecret = u.password
-    }
-    if (u.password || u.username) {
-      u.username = ''
-      u.password = ''
-      cleanUrl = u.toString()
-    }
-  } catch {
-    // Invalid URL — fall through; ethers will surface the error.
-  }
+  // Detect URL-embedded auth and migrate it to header-based auth — see
+  // extractEmbeddedAuth() for why URL-embedded auth breaks for any secret
+  // containing a `/`.
+  const { cleanUrl, secret: embedded } = extractEmbeddedAuth(url)
+  const resolvedSecret = secret ?? embedded
 
   let provider: WebSocketProvider
   if (resolvedSecret) {

@@ -2,7 +2,7 @@
 import { ContractEventPayload, WebSocketProvider, Contract, keccak256, toUtf8Bytes, getBytes, concat } from 'ethers'
 import type { Log } from '@ethersproject/abstract-provider'
 import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
-import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, waitForRateLimit } from '../../utils/rpcProvider'
+import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, getL2WsSecret, waitForRateLimit } from '../../utils/rpcProvider'
 import delay from '../../tools/delay'
 import SmlTxt from 'smltxt'
 import { unpackActions } from '../../utils/packActions'
@@ -198,7 +198,10 @@ export default async function listenForRawEvents(
 
     try {
       console.log('[RawEventsGatherer] Setting up WebSocket connection...')
-      wsProvider = makeWebSocketProvider(config.rpcUrl, config.chainId)
+      // Pass the L2 WS secret through explicitly. config.rpcUrl is the bare
+      // wss:// URL from env; the secret lives in L2_RPC_SECRET and never
+      // gets URL-embedded — see extractEmbeddedAuth() comment for why.
+      wsProvider = makeWebSocketProvider(config.rpcUrl, config.chainId, getL2WsSecret())
       wsContract = new Contract(CAW_ACTIONS_ADDRESS, CONTRACT_ABI, wsProvider)
 
       wsContract.on('ActionsProcessed', async (packedHex: string, ev: ContractEventPayload) => {

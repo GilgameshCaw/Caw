@@ -13,7 +13,7 @@ import { packActions, packSignatures, packGroupedSignatures, bytesToHex, getPack
 import { buildCheckpointMerkleTree } from '../../utils/checkpointMerkle'
 import { tryClaimChallengeLock, releaseChallengeLock } from '../../utils/challengeLock'
 import { foldCheckpointHashes } from '../../utils/foldCheckpointHashes'
-import { makeJsonRpcProvider, makeFallbackJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, getL2HttpRpcUrls, getL2WsRpcUrl, getEthMainnetHttpRpcUrl, getReplicationHttpRpcUrl } from '../../utils/rpcProvider'
+import { makeJsonRpcProvider, makeFallbackJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, getL2HttpRpcUrls, getL2WsRpcUrl, getL2WsSecret, getEthMainnetHttpRpcUrl, getReplicationHttpRpcUrl } from '../../utils/rpcProvider'
 import { cawToEthCached, isPriceFresh } from '../ChainSyncService'
 import { markTxQueueFailed as sharedMarkTxQueueFailed } from '../../utils/txQueueFailure'
 import { incrementSessionSpent } from '../../utils/sessionSpendTracker'
@@ -451,7 +451,7 @@ export const validatorService: Service = {
 
       // Create new provider with error handling
       try {
-        provider = makeWebSocketProvider(l2RpcUrl, 84532) // Base Sepolia chainId
+        provider = makeWebSocketProvider(l2RpcUrl, 84532, getL2WsSecret()) // Base Sepolia chainId
 
         // Add error handler to the WebSocket immediately to catch connection errors
         const ws = (provider as any)._websocket || (provider as any).websocket
