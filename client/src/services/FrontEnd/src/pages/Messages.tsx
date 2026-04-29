@@ -1452,14 +1452,23 @@ const MessagesPage: React.FC = () => {
                             try {
                               const parsed = JSON.parse(messageContent)
                               if (parsed.msgType === 'encrypted-attachment' && parsed.url) {
-                                if (parsed.type === 'image') {
+                                // Dispatch on mimeType, NOT parsed.type. The
+                                // upload hook historically only set type to
+                                // 'image' or 'file' (no 'video'), so legacy
+                                // video DMs in DB have type='file' but a
+                                // video/* mimeType. Falling back to mimeType
+                                // means they render correctly going forward.
+                                const mt = String(parsed.mimeType || '')
+                                if (mt.startsWith('image/') || mt.startsWith('video/') || parsed.type === 'image') {
                                   return (
                                     <EncryptedImage
                                       url={parsed.url}
                                       sharedSecret={chatSharedSecret}
                                       mimeType={parsed.mimeType}
                                       alt={parsed.name}
-                                      className="max-w-[240px] max-h-[240px] rounded-lg object-contain"
+                                      className={mt.startsWith('video/')
+                                        ? 'max-w-[320px] max-h-[320px] rounded-lg'
+                                        : 'max-w-[240px] max-h-[240px] rounded-lg object-contain'}
                                     />
                                   )
                                 }

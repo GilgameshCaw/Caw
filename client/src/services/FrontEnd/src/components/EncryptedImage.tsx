@@ -58,11 +58,26 @@ const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sharedSecret, mime
   if (error || !objectUrl) {
     return (
       <div className="text-xs text-red-400 p-2 rounded bg-red-900/20">
-        Failed to decrypt image
+        Failed to decrypt {mimeType.startsWith('video/') ? 'video' : 'image'}
       </div>
     )
   }
 
+  // Dispatch on mimeType so a single component handles encrypted images,
+  // GIFs, and videos. The fetch / decrypt / blob-url flow above is
+  // identical for all three; only the rendered element differs.
+  if (mimeType.startsWith('video/')) {
+    return (
+      <video
+        src={objectUrl}
+        controls
+        playsInline
+        loop
+        muted
+        className={className || 'max-w-[240px] max-h-[240px] rounded-lg'}
+      />
+    )
+  }
   return <img src={objectUrl} alt={alt} className={className || 'max-w-[240px] max-h-[240px] rounded-lg object-contain'} loading="lazy" />
 }
 

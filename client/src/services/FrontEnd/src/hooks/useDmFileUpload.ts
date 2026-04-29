@@ -26,7 +26,7 @@ async function readImageDimensions(file: File): Promise<{ width: number; height:
 }
 
 export interface DmAttachment {
-  type: 'image' | 'file'
+  type: 'image' | 'video' | 'file'
   url: string
   name: string
   size: number
@@ -100,7 +100,11 @@ export function useDmFileUpload() {
       const result = await response.json()
 
       return {
-        type: file.type.startsWith('image/') ? 'image' : 'file',
+        type: file.type.startsWith('image/')
+          ? 'image'
+          : file.type.startsWith('video/')
+            ? 'video'
+            : 'file',
         url: result.url,
         name: file.name,
         size: data.length,
