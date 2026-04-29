@@ -9,6 +9,13 @@ interface TooltipProps {
   position?: 'top' | 'bottom' | 'left' | 'right'
   /** Force dark mode styling */
   forceDark?: boolean
+  /** Always render the tooltip with a black background regardless of
+   *  theme. Used when the surrounding bubble is dark in both modes
+   *  (e.g. DM message metadata). */
+  forceBlack?: boolean
+  /** Compact variant: smaller text, less padding. For metadata tooltips
+   *  (timestamps, etc.) where the trigger itself is small. */
+  compact?: boolean
   /** Additional className for the wrapper */
   className?: string
   /** When true, suppress the tooltip entirely */
@@ -20,6 +27,8 @@ const Tooltip: React.FC<TooltipProps> = ({
   children,
   position = 'top',
   forceDark,
+  forceBlack,
+  compact,
   className = '',
   disabled: tooltipDisabled,
 }) => {
@@ -119,7 +128,12 @@ const Tooltip: React.FC<TooltipProps> = ({
     if (visible) reposition()
   }, [visible, reposition])
 
-  const bgClass = isDark ? 'bg-white text-black' : 'bg-gray-900 text-white'
+  const bgClass = forceBlack
+    ? 'bg-black text-white border border-white/10'
+    : isDark
+      ? 'bg-white text-black'
+      : 'bg-gray-900 text-white'
+  const sizeClass = compact ? 'px-2 py-0.5 text-[11px]' : 'px-3 py-2 text-xs'
 
   return (
     <div
@@ -130,7 +144,7 @@ const Tooltip: React.FC<TooltipProps> = ({
       {visible && !tooltipDisabled && createPortal(
         <div
           ref={tooltipRef}
-          className={`fixed px-3 py-2 text-xs font-medium text-center rounded-lg whitespace-nowrap pointer-events-none z-[9999] ${bgClass}`}
+          className={`fixed font-medium text-center rounded-lg whitespace-nowrap pointer-events-none z-[9999] ${sizeClass} ${bgClass}`}
           style={{ top: coords.top, left: coords.left }}
         >
           {text.split('\n').map((line, i, arr) => (

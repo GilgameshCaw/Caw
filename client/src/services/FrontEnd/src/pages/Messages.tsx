@@ -1401,11 +1401,10 @@ const MessagesPage: React.FC = () => {
                         ))}
 
                         <div className={`flex items-start gap-1 group ${message.isFromCurrentUser ? 'flex-row-reverse' : 'flex-row'}`}>
-                          {/* Message bubble */}
-                          <Tooltip
-                            text={new Date(message.createdAt).toLocaleString()}
-                            position={message.isFromCurrentUser ? 'left' : 'right'}
-                          >
+                          {/* Message bubble — full timestamp lives on the
+                              "X minutes ago" line below now, so the bubble
+                              itself isn't a tooltip trigger and doesn't
+                              fight the reaction strip's hover area. */}
                           <div
                             className={`max-w-md lg:max-w-xl px-6 py-4 rounded-2xl relative ${
                               message.isFromCurrentUser
@@ -1516,7 +1515,6 @@ const MessagesPage: React.FC = () => {
                           </>
                           )}
                           </div>
-                          </Tooltip>
 
                           {/* Reaction strip — sits inside the same `group`
                               wrapper so the same hover state that reveals
@@ -1581,9 +1579,16 @@ const MessagesPage: React.FC = () => {
 
                           </div>
 
-                          <p className="text-xs text-white/50 font-medium">
-                            {formatMessageTime(message.createdAt)}
-                          </p>
+                          <Tooltip
+                            text={new Date(message.createdAt).toLocaleString()}
+                            position="bottom"
+                            forceBlack
+                            compact
+                          >
+                            <p className="text-xs text-white/50 font-medium">
+                              {formatMessageTime(message.createdAt)}
+                            </p>
+                          </Tooltip>
                         </div>
 
                         {/* Seen indicator — shown below the last message the peer has read */}
