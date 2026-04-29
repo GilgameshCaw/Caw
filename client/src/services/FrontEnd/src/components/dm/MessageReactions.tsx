@@ -1,14 +1,18 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import Picker from '@emoji-mart/react'
 import data from '@emoji-mart/data'
+import { HiOutlineEmojiHappy, HiOutlinePencil } from 'react-icons/hi'
 import { apiFetch } from '~/api/client'
 import { useTheme } from '~/hooks/useTheme'
+import ModalWrapper from '~/components/modals/ModalWrapper'
+import ModalHeader from '~/components/modals/ModalHeader'
 import type { UiReaction } from '~/hooks/useDm'
 
 /**
- * Server defaults for the quick-reaction strip. Five slots — sixth is the
- * `+` picker button. User-customized choices live on the DmIdentity row
- * (defaultDmReactions) and override these when set.
+ * Server defaults for the quick-reaction strip. Five slots — sixth+seventh
+ * are the `+` (full picker) and ✏️ (customize) buttons. User-customized
+ * choices live on the DmIdentity row (defaultDmReactions) and override
+ * these when set.
  */
 export const DEFAULT_DM_REACTIONS = ['❤️', '😆', '😮', '😢', '🌙']
 
@@ -24,8 +28,7 @@ interface ReactionStripProps {
   onReact: (emoji: string) => void
   /** Open the full picker (caller manages the modal). */
   onOpenPicker: () => void
-  /** Open the customization modal — wired to the secondary right-click /
-   *  long-press path on the strip. */
+  /** Open the customization modal. */
   onOpenCustomize: () => void
   /** Pass true on the bubble's "isFromCurrentUser" branch so we anchor
    *  the strip to the right edge instead of the left. */
@@ -33,9 +36,13 @@ interface ReactionStripProps {
 }
 
 /**
- * The hover-revealed strip with 5 quick reactions + a `+` picker button.
- * Designed to sit next to the bubble; opacity transitions are driven by
- * the parent's `group` class so the strip fades in alongside the dot menu.
+ * Two-stage hover UX. At rest a small smiley trigger sits next to the
+ * bubble; click it and the full strip slides out with the 5 quick
+ * reactions, a + button (opens the full picker) and a pencil button
+ * (opens the customize modal). Click outside the strip closes it.
+ *
+ * The smiley itself reveals on `group-hover` so the message bubble is
+ * uncluttered until the user reaches for it.
  */
 export const MessageReactionStrip: React.FC<ReactionStripProps> = ({
   emojis,
@@ -47,44 +54,91 @@ export const MessageReactionStrip: React.FC<ReactionStripProps> = ({
   alignRight,
 }) => {
   const { isDark } = useTheme()
+  const [open, setOpen] = useState(false)
+  const wrapperRef = useRef<HTMLDivElement>(null)
   const myEmojis = new Set(reactions.filter(r => r.userId === currentUserId).map(r => r.emoji))
 
+  // Close on click outside or Escape — same UX as the dot-menu.
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (e: PointerEvent) => {
+      if (!wrapperRef.current?.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  // Helper that closes the strip after performing an action — keeps the
+  // hover-strip from sticking open after the user picks something.
+  const performAndClose = (fn: () => void) => () => { fn(); setOpen(false) }
+
   return (
-    <div
-      className={`flex items-center gap-1 px-1.5 py-1 rounded-full opacity-0 group-hover:opacity-100 transition-opacity ${
-        isDark ? 'bg-black/60 border border-white/10' : 'bg-white/90 border border-gray-200 shadow-sm'
-      } ${alignRight ? 'mr-1' : 'ml-1'}`}
-    >
-      {emojis.map(emoji => {
-        const mine = myEmojis.has(emoji)
-        return (
-          <button
-            key={emoji}
-            type="button"
-            onClick={() => onReact(emoji)}
-            className={`text-base leading-none w-7 h-7 rounded-full flex items-center justify-center transition-transform hover:scale-125 cursor-pointer ${
-              mine ? (isDark ? 'bg-yellow-500/30' : 'bg-yellow-200/70') : ''
-            }`}
-            title={mine ? 'Remove reaction' : 'React'}
-          >
-            {emoji}
-          </button>
-        )
-      })}
+    <div ref={wrapperRef} className="relative self-center flex-shrink-0">
+      {/* Trigger — small smiley that fades in on hover, like the dot-menu. */}
       <button
         type="button"
-        onClick={onOpenPicker}
-        // Right-click → open the customize modal so users can swap their
-        // defaults without leaving the chat. Long-press would be nicer
-        // on touch but `+` is rare to long-press by accident.
-        onContextMenu={(e) => { e.preventDefault(); onOpenCustomize() }}
-        className={`w-7 h-7 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
-          isDark ? 'text-white/60 hover:bg-white/10 hover:text-white' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'
-        }`}
-        title="More reactions (right-click to customize)"
+        onClick={() => setOpen(o => !o)}
+        className={`p-1 rounded-full transition-opacity cursor-pointer ${
+          open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+        } ${isDark ? 'hover:bg-white/10 text-white/40 hover:text-white/80' : 'hover:bg-gray-200 text-gray-400 hover:text-gray-700'}`}
+        title="Add reaction"
       >
-        +
+        <HiOutlineEmojiHappy className="w-4 h-4" />
       </button>
+
+      {open && (
+        <div
+          className={`absolute top-full mt-1 z-30 flex items-center gap-1 px-2 py-1.5 rounded-full ${
+            isDark ? 'bg-black border border-white/15 shadow-lg' : 'bg-white border border-gray-200 shadow-lg'
+          } ${alignRight ? 'right-0' : 'left-0'}`}
+        >
+          {emojis.map(emoji => {
+            const mine = myEmojis.has(emoji)
+            return (
+              <button
+                key={emoji}
+                type="button"
+                onClick={performAndClose(() => onReact(emoji))}
+                className={`text-2xl leading-none w-10 h-10 rounded-full flex items-center justify-center transition-transform hover:scale-125 cursor-pointer ${
+                  mine ? (isDark ? 'bg-yellow-500/30' : 'bg-yellow-200/70') : ''
+                }`}
+                title={mine ? 'Remove reaction' : 'React'}
+              >
+                {emoji}
+              </button>
+            )
+          })}
+
+          {/* Divider between the 5 defaults and the meta buttons */}
+          <span className={`w-px self-stretch mx-1 ${isDark ? 'bg-white/10' : 'bg-gray-200'}`} aria-hidden />
+
+          <button
+            type="button"
+            onClick={performAndClose(onOpenPicker)}
+            className={`w-9 h-9 rounded-full flex items-center justify-center text-lg transition-colors cursor-pointer ${
+              isDark ? 'text-white/60 hover:bg-white/10 hover:text-white' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'
+            }`}
+            title="More reactions"
+          >
+            +
+          </button>
+          <button
+            type="button"
+            onClick={performAndClose(onOpenCustomize)}
+            className={`w-9 h-9 rounded-full flex items-center justify-center transition-colors cursor-pointer ${
+              isDark ? 'text-white/60 hover:bg-white/10 hover:text-white' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-900'
+            }`}
+            title="Customize default reactions"
+          >
+            <HiOutlinePencil className="w-4 h-4" />
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -136,7 +190,11 @@ export const MessageReactionsBar: React.FC<ReactionsBarProps> = ({
           }`}
         >
           <span className="text-sm leading-none">{emoji}</span>
-          <span className="font-medium">{count}</span>
+          {/* DM is always 1:1 — hide the count when it's just one
+              reaction, since "❤️ 1" is redundant. Show it the moment a
+              second reaction lands so the user can tell the difference
+              between "they reacted" and "we both reacted". */}
+          {count > 1 && <span className="font-medium">{count}</span>}
         </button>
       ))}
     </div>
@@ -194,6 +252,9 @@ interface CustomizeReactionsModalProps {
  * Click a slot → opens the picker → chosen emoji replaces that slot.
  * Save persists to /api/dm/settings; reset clears customization so the
  * server-side defaults take over on next read.
+ *
+ * Uses the shared ModalWrapper / ModalHeader so it matches the rest of
+ * the site (yellow border, dark backdrop, X-button header, etc).
  */
 export const CustomizeReactionsModal: React.FC<CustomizeReactionsModalProps> = ({
   open,
@@ -211,7 +272,6 @@ export const CustomizeReactionsModal: React.FC<CustomizeReactionsModalProps> = (
   const [pickerSlot, setPickerSlot] = useState<number | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
 
   // Reset the draft whenever the modal re-opens — avoids leftover
   // "I started editing then closed" state from a previous open.
@@ -219,17 +279,9 @@ export const CustomizeReactionsModal: React.FC<CustomizeReactionsModalProps> = (
     if (open) {
       setDraft(initial)
       setError(null)
+      setPickerSlot(null)
     }
   }, [open, initial])
-
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
-
-  if (!open) return null
 
   const handleSave = async () => {
     setSaving(true)
@@ -266,16 +318,21 @@ export const CustomizeReactionsModal: React.FC<CustomizeReactionsModalProps> = (
   }
 
   return (
-    <div
-      className="fixed inset-0 z-[8000] flex items-center justify-center bg-black/50 p-4"
-      onMouseDown={onClose}
+    <ModalWrapper
+      isOpen={open}
+      onClose={onClose}
+      maxWidth="max-w-sm"
+      zIndex={80}
+      backdropClass="bg-black/60"
+      className="shadow-2xl"
     >
-      <div
-        ref={containerRef}
-        onMouseDown={e => e.stopPropagation()}
-        className={`w-full max-w-sm rounded-2xl p-6 ${isDark ? 'bg-gray-900 border border-white/10' : 'bg-white border border-gray-200 shadow-xl'}`}
-      >
-        <h3 className={`text-lg font-bold mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>Customize reactions</h3>
+      <ModalHeader
+        title="Customize reactions"
+        onClose={onClose}
+        icon={<HiOutlinePencil className="w-5 h-5 text-yellow-500" />}
+      />
+
+      <div className="px-4 pb-4 pt-3">
         <p className={`text-sm mb-4 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
           Tap a slot to swap it. These appear on every DM message.
         </p>
@@ -288,7 +345,7 @@ export const CustomizeReactionsModal: React.FC<CustomizeReactionsModalProps> = (
               onClick={() => setPickerSlot(idx)}
               className={`w-12 h-12 rounded-xl text-2xl flex items-center justify-center transition-all hover:scale-105 cursor-pointer ${
                 isDark ? 'bg-white/10 hover:bg-white/15' : 'bg-gray-100 hover:bg-gray-200'
-              } ${pickerSlot === idx ? (isDark ? 'ring-2 ring-yellow-500' : 'ring-2 ring-yellow-500') : ''}`}
+              } ${pickerSlot === idx ? 'ring-2 ring-yellow-500' : ''}`}
             >
               {emoji}
             </button>
@@ -331,20 +388,23 @@ export const CustomizeReactionsModal: React.FC<CustomizeReactionsModalProps> = (
             </button>
           </div>
         </div>
-
-        <EmojiPickerModal
-          open={pickerSlot !== null}
-          onClose={() => setPickerSlot(null)}
-          onPick={(emoji) => {
-            if (pickerSlot === null) return
-            setDraft(prev => {
-              const next = [...prev]
-              next[pickerSlot] = emoji
-              return next
-            })
-          }}
-        />
       </div>
-    </div>
+
+      {/* Slot-swap picker — separate from the message-level picker so
+          opening it inside the customize modal doesn't conflict with
+          react-with-any-emoji on a specific message. */}
+      <EmojiPickerModal
+        open={pickerSlot !== null}
+        onClose={() => setPickerSlot(null)}
+        onPick={(emoji) => {
+          if (pickerSlot === null) return
+          setDraft(prev => {
+            const next = [...prev]
+            next[pickerSlot] = emoji
+            return next
+          })
+        }}
+      />
+    </ModalWrapper>
   )
 }

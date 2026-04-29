@@ -1523,17 +1523,15 @@ const MessagesPage: React.FC = () => {
                               variant if you ever style it that way; for
                               now the dots fallback works on touch. */}
                           {currentUser && (
-                            <div className="self-center flex-shrink-0">
-                              <MessageReactionStrip
-                                emojis={defaultReactions.length === 5 ? defaultReactions : DEFAULT_DM_REACTIONS}
-                                reactions={message.reactions || []}
-                                currentUserId={currentUser.id}
-                                onReact={(emoji) => dmToggleReaction(message.id, emoji)}
-                                onOpenPicker={() => setEmojiPickerForMessage(message.id)}
-                                onOpenCustomize={() => setShowCustomizeReactions(true)}
-                                alignRight={message.isFromCurrentUser}
-                              />
-                            </div>
+                            <MessageReactionStrip
+                              emojis={defaultReactions.length === 5 ? defaultReactions : DEFAULT_DM_REACTIONS}
+                              reactions={message.reactions || []}
+                              currentUserId={currentUser.id}
+                              onReact={(emoji) => dmToggleReaction(message.id, emoji)}
+                              onOpenPicker={() => setEmojiPickerForMessage(message.id)}
+                              onOpenCustomize={() => setShowCustomizeReactions(true)}
+                              alignRight={message.isFromCurrentUser}
+                            />
                           )}
 
                           {/* Hover actions — outside the bubble, to the side */}
