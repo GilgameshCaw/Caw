@@ -213,6 +213,15 @@ model TxQueue {
   // it's the batch sig that covers all of them.
   batchId              Int?
 
+  // Denormalized cawonce from payload.data.cawonce. Backs the partial
+  // unique index TxQueue_senderId_cawonce_active_unique (defined in
+  // a raw migration since Prisma's @@unique can't express partial
+  // constraints). Catches the same-sender-same-cawonce race at insert
+  // time — duplicate gets a P2002, the API responds 409, the frontend
+  // re-reads chain and re-signs. Replaces the CawonceReservation
+  // system that didn't see actions submitted by other servers.
+  cawonce              Int?
+
   @@index([senderId, status])
   @@index([batchId])
   @@index([signedTx])

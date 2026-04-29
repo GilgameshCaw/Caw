@@ -319,6 +319,9 @@ export type ActionParams = {
   amounts?:       BigInt[]
   text?:          string
   retriedTxQueueId?: number
+  /** Internal: set to true when re-entering after a cawonce collision so
+   *  we only auto-retry once. Don't set this manually. */
+  _cawonceRetried?: boolean
 }
 
 /**
@@ -928,6 +931,17 @@ export function useSignAndSubmitAction() {
       // bad bump.
       if (params.cawonce == null && activeTokenId) {
         invalidateLocalCawonce(activeTokenId)
+      }
+
+      // Cawonce collision: TxQueue partial unique index fired because two
+      // submissions raced to the same cawonce. Retry once transparently —
+      // the watermark invalidation above means the next allocation will
+      // re-read chain. The user signs again (we can't replay an old sig
+      // against a new cawonce). If we collide a second time, surface the
+      // error rather than loop forever (suggests something pathological).
+      if (error?.name === 'CawonceCollisionError' && !params._cawonceRetried) {
+        console.log('[signAndSubmit] Cawonce collision — re-reading chain and re-signing')
+        return await requestAndSubmit({ ...params, _cawonceRetried: true } as ActionParams)
       }
 
       const errMsg = (error?.message || error?.shortMessage || '').toLowerCase()

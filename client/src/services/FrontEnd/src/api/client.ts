@@ -53,6 +53,21 @@ export class IndexingError extends Error {
 }
 
 /**
+ * Server returned 409 with `error: cawonce_collision`. Two parallel
+ * submissions tried to claim the same cawonce slot — caller needs to
+ * invalidate its local cawonce watermark, re-read chain, re-sign, and
+ * resubmit. Caller code is responsible for that retry; we surface it
+ * as a typed error so the wallet sign prompt fires fresh and we don't
+ * silently re-submit the old signature.
+ */
+export class CawonceCollisionError extends Error {
+  constructor(message: string, public senderId?: number, public cawonce?: number) {
+    super(message)
+    this.name = 'CawonceCollisionError'
+  }
+}
+
+/**
  * Retry an apiFetch (or anything that throws IndexingError) with exponential
  * backoff. Honors the server's retryAfterSeconds hint as the first delay.
  *
@@ -166,6 +181,27 @@ export async function apiFetch<T = any>(
         throw new IndexingError(data?.error || 'still indexing', retryAfter)
       }
 
+      // 409 with cawonce_collision = the TxQueue partial unique index on
+      // (senderId, cawonce) for active rows fired. Two near-simultaneous
+      // signs picked the same chain-nextCawonce; the second one to insert
+      // gets caught here. Throw the typed error so the caller (signAndSubmit)
+      // can invalidate its local watermark, re-read chain, and re-sign.
+      // Don't failover — every instance has the same partial index, and
+      // the cawonce really is taken.
+      if (res.status === 409) {
+        let data: any = {}
+        try { data = await res.json() } catch {}
+        if (data?.error === 'cawonce_collision') {
+          throw new CawonceCollisionError(
+            data?.message || 'cawonce already in use',
+            data?.senderId,
+            data?.cawonce,
+          )
+        }
+        // Other 409s are different conflict shapes (e.g. retry-already-submitted);
+        // fall through to the generic !res.ok handler below.
+      }
+
       // Auth errors are not failover-able — they mean the user needs to re-auth
       if (res.status === 401) {
         let errorData: any = {}
@@ -216,6 +252,10 @@ export async function apiFetch<T = any>(
       // caught up yet) — failing over to another instance doesn't help and
       // would mask the indexing-in-progress signal from the caller.
       if (e instanceof IndexingError) throw e
+      // 409 cawonce_collision — every instance has the same active-cawonce
+      // unique index, and (more importantly) the cawonce really is taken.
+      // Failover would just re-collide; surface to the caller for re-sign.
+      if (e instanceof CawonceCollisionError) throw e
       lastError = e
       if (targets.length > 1) {
         console.warn(`[apiFetch] Instance ${host} failed, trying next...`, e.message)

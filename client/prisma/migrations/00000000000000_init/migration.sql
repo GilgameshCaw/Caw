@@ -159,9 +159,14 @@ CREATE TABLE "TxQueue" (
     "updatedAt" TIMESTAMP(3) NOT NULL,
     "senderId" INTEGER NOT NULL,
     "reason" TEXT,
+    "cawonce" INTEGER,
 
     CONSTRAINT "TxQueue_pkey" PRIMARY KEY ("id")
 );
+CREATE UNIQUE INDEX "TxQueue_senderId_cawonce_active_unique"
+    ON "TxQueue" ("senderId", "cawonce")
+ WHERE status IN ('pending', 'processing', 'awaiting_indexer', 'waiting_for_deposit')
+   AND "cawonce" IS NOT NULL;
 
 -- CreateTable
 CREATE TABLE "Action" (

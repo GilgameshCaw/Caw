@@ -854,24 +854,33 @@ router.post('/', async (req, res) => {
         const created = await tx.txQueue.create({
           data: {
             senderId: data.senderId,
+            cawonce: data.cawonce,
             payload: { data, domain, types },
             signedTx: signature,
             pendingDepositTxHash: sanitizedPendingDepositTxHash
           }
-        })
-        // Release the cawonce reservation now that it's been "spent" on a
-        // real TxQueue row. The DataCleaner sweep would catch this in 5
-        // minutes, but cleaning it up now keeps the next allocator's
-        // gap-search query from briefly seeing both the reservation AND
-        // the queue row pointing at the same cawonce.
-        await tx.cawonceReservation.deleteMany({
-          where: { senderId: data.senderId, cawonce: data.cawonce },
         })
         return created
       })
     } catch (err: any) {
       if (err.retryConflict) {
         return res.status(409).json({ error: err.message })
+      }
+      // P2002 = unique constraint violation. Our partial unique index on
+      // (senderId, cawonce) for active rows fires when two concurrent
+      // submissions try to claim the same cawonce slot — the chain race
+      // we expect occasionally with cross-tab / cross-server users. Tell
+      // the frontend to invalidate its local cawonce watermark, re-read
+      // chain, and re-sign. 409 is the right semantic; the body shape
+      // mirrors other typed-error responses.
+      if (err?.code === 'P2002') {
+        console.log(`[Actions] Cawonce collision: senderId=${data.senderId} cawonce=${data.cawonce} — telling client to retry with fresh chain read`)
+        return res.status(409).json({
+          error: 'cawonce_collision',
+          message: 'Another action by this sender is already using this cawonce. Re-read chain and re-sign.',
+          senderId: data.senderId,
+          cawonce: data.cawonce,
+        })
       }
       throw err
     }
@@ -1092,7 +1101,7 @@ router.post('/batch', async (req, res) => {
     // Verify every other signature matches the first signer
     // (and that action types are in the session scope if session-signed)
     const results: Array<{ index: number; txQueueId?: number; status?: string; error?: string }> = []
-    const rowsToInsert: Array<{ senderId: number; payload: any; signedTx: string; batchId: number | null }> = []
+    const rowsToInsert: Array<{ senderId: number; cawonce: number; payload: any; signedTx: string; batchId: number | null }> = []
 
     for (let i = 0; i < actions.length; i++) {
       const a = actions[i]
@@ -1128,6 +1137,7 @@ router.post('/batch', async (req, res) => {
 
       rowsToInsert.push({
         senderId: a.data.senderId,
+        cawonce: Number(a.data.cawonce),
         // Use the batch sig as signedTx for every row; the validator looks at
         // batchId to know rows share a sig group, then takes signedTx from
         // one row (any row in the group has the same batch sig).
@@ -1155,7 +1165,9 @@ router.post('/batch', async (req, res) => {
         resultIndexToRowIndex.set(i, r++)
       }
 
-      const created = await prisma.$transaction(async (tx) => {
+      let created: any
+      try {
+        created = await prisma.$transaction(async (tx) => {
         // Step 1: insert all TxQueue rows. Forward pendingDepositTxHash so
         // the validator parks them as waiting_for_deposit until LZ lands
         // client authentication on L2.
@@ -1169,26 +1181,6 @@ router.post('/batch', async (req, res) => {
             }))
           )
           txqRows.push(...created)
-        }
-
-        // Release any cawonce reservations the client allocated for this
-        // batch — they've been spent on real TxQueue rows now. Group by
-        // senderId since a batch is single-signer (enforced upstream).
-        const reservationGroups = new Map<number, number[]>()
-        for (let i = 0; i < actions.length; i++) {
-          if (!resultIndexToRowIndex.has(i)) continue
-          const a = actions[i]
-          const senderId = Number(a.data?.senderId)
-          const cawonce = Number(a.data?.cawonce)
-          if (!senderId || !Number.isFinite(cawonce)) continue
-          const list = reservationGroups.get(senderId) || []
-          list.push(cawonce)
-          reservationGroups.set(senderId, list)
-        }
-        for (const [senderId, cawonces] of reservationGroups) {
-          await tx.cawonceReservation.deleteMany({
-            where: { senderId, cawonce: { in: cawonces } },
-          })
         }
 
         // Step 2: build optimistic Caw records for CAW (0) / RECAW (3) actions.
@@ -1299,6 +1291,23 @@ router.post('/batch', async (req, res) => {
 
         return txqRows
       })
+      } catch (err: any) {
+        // P2002 = unique constraint violation on (senderId, cawonce)
+        // active partial index — one or more cawonces in this batch
+        // collide with another in-flight submission. Rejecting the whole
+        // batch is the correct (and simplest) call: thread cawonces are
+        // contiguous, so partial success would leave a sequence-gap that
+        // breaks reply-grouping anyway. The frontend re-reads chain,
+        // re-allocates the contiguous block, re-signs, and resubmits.
+        if (err?.code === 'P2002') {
+          console.log(`[Actions/batch] Cawonce collision on batch — telling client to retry`)
+          return res.status(409).json({
+            error: 'cawonce_collision',
+            message: 'One or more actions in this batch are already using their cawonce. Re-read chain and re-sign.',
+          })
+        }
+        throw err
+      }
 
       // Map created TxQueue IDs back to results
       let insertIdx = 0
