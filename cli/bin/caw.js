@@ -5,6 +5,7 @@ import { execSync } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import inquirer from 'inquirer'
 import { banner, section, success, brand, dim } from '../src/utils/ui.js'
 import { selectNodeType } from '../src/steps/nodeType.js'
 import { collectNetworkAndMode } from '../src/steps/networkAndMode.js'
@@ -48,9 +49,21 @@ const ENV_TO_CAW = {
   // honor these CAW_* keys and skip the whole prompt.
   L1_RPC_URL: 'CAW_L1_RPC_URL',
   L1_RPC_URL_HTTP: 'CAW_L1_RPC_URL_HTTP',
+  L1_RPC_SECRET: 'CAW_L1_RPC_SECRET',
   L2_RPC_URL: 'CAW_L2_RPC_URL',
   L2_RPC_URL_HTTP: 'CAW_L2_RPC_URL_HTTP',
+  L2_RPC_SECRET: 'CAW_L2_RPC_SECRET',
   ETH_MAINNET_RPC_URL: 'CAW_ETH_MAINNET_RPC_URL',
+  ETH_MAINNET_RPC_SECRET: 'CAW_ETH_MAINNET_RPC_SECRET',
+  // Generated-once values that MUST persist across re-runs. Without these
+  // in the preload map a `--env` re-run silently regenerates them, which
+  // for JWT_SECRET in particular invalidates every signed-in user's session.
+  JWT_SECRET: 'CAW_JWT_SECRET',
+  PRISMA_QUERY_ENGINE_TYPE: 'CAW_PRISMA_QUERY_ENGINE_TYPE',
+  // Network selection — collectNetworkAndMode honors CAW_NETWORK to skip
+  // the prompt on re-runs (otherwise it asks every time even though the
+  // answer is locked in by everything downstream).
+  NETWORK: 'CAW_NETWORK',
   // Replication — collectReplicationConfig skips the entire participate +
   // chain + RPC + client-IDs prompt sequence when these are preloaded.
   // The replicator key still re-prompts (sensitive, same as validator key).
@@ -87,19 +100,38 @@ function loadEnvFile(envPath) {
   return out
 }
 
+// Vars the wizard knows it doesn't preserve. Flagging them as "expected
+// drops" suppresses the unrecognized-key warning below — they'd otherwise
+// appear scary every re-run even though we deliberately re-derive them.
+const EXPECTED_DROPS = new Set([
+  // Re-derived from network/chain/clientId on every run; safe to drop.
+  'L1_CHAIN_ID', 'L2_CHAIN_ID', 'NETWORK',
+  // Re-derived from CAW_DOMAIN (shell env, not .env) on every run.
+  'SHORTURL_DOMAIN',
+  // Generated each install but the value doesn't matter (logger flags etc).
+  'NODE_ENV',
+])
+
 // When --env points at a previous install, read every supported value out
 // and stash it into process.env under the CAW_* override key the steps
 // already check. Lets the operator re-run install end-to-end without
 // re-typing values they got right last time.
+//
+// Returns { loaded, unrecognized } so the caller can warn about keys we
+// won't preserve — anything in the operator's .env that the wizard doesn't
+// know about would be silently dropped on rewrite.
 function preloadFromEnv(envFilePath, frontendEnvFilePath) {
   const backend = loadEnvFile(envFilePath)
   const frontend = frontendEnvFilePath ? loadEnvFile(frontendEnvFilePath) : {}
   let loaded = 0
+  const unrecognized = []
   for (const [k, v] of Object.entries(backend)) {
     const target = ENV_TO_CAW[k]
     if (target && !process.env[target] && v) {
       process.env[target] = v
       loaded++
+    } else if (!target && !EXPECTED_DROPS.has(k)) {
+      unrecognized.push(k)
     }
   }
   // Backend domain isn't written to .env directly, but install.sh already
@@ -111,7 +143,7 @@ function preloadFromEnv(envFilePath, frontendEnvFilePath) {
     process.env.CAW_WALLETCONNECT_PROJECT_ID = frontend.VITE_PROJECT_ID
     loaded++
   }
-  return loaded
+  return { loaded, unrecognized }
 }
 
 program
@@ -138,14 +170,58 @@ program
         const feEnvGuess = envPath.endsWith('/.env')
           ? envPath.replace(/\/\.env$/, '/src/services/FrontEnd/.env')
           : null
-        const loaded = preloadFromEnv(envPath, feEnvGuess)
+        const { loaded, unrecognized } = preloadFromEnv(envPath, feEnvGuess)
         if (loaded > 0) {
           console.log(dim(`  Loaded ${loaded} value(s) from ${envPath} — those prompts will skip.`))
-          console.log()
         } else {
           console.log(dim(`  --env ${envPath}: no recognized values found.`))
-          console.log()
         }
+        if (unrecognized.length > 0) {
+          // The wizard rewrites .env from scratch. Anything it doesn't
+          // recognize gets dropped on save. The operator gets to decide:
+          // back up first, ignore (and lose them), or abort. We previously
+          // just printed a warning and slept 5s — too quick to read,
+          // especially with N vars listed. An explicit prompt is safer.
+          console.log()
+          console.log(brand('  ⚠ Vars in your .env the wizard doesn\'t know about — these will be DROPPED on rewrite:'))
+          for (const k of unrecognized) console.log(dim(`     ${k}`))
+          console.log()
+
+          const { choice } = await inquirer.prompt([
+            {
+              type: 'list',
+              name: 'choice',
+              message: 'How do you want to handle these?',
+              choices: [
+                { name: `Back up to .env.bak and continue`, value: 'backup' },
+                { name: `Continue anyway (these vars will be lost)`, value: 'ignore' },
+                { name: `Abort — I'll fix this myself`, value: 'abort' },
+              ],
+              default: 'backup',
+            },
+          ])
+
+          if (choice === 'abort') {
+            console.log(dim('  Aborted. To preserve these vars, either add them to'))
+            console.log(dim('  ENV_TO_CAW in cli/bin/caw.js (open an issue if unsure) or'))
+            console.log(dim('  back them up manually with: cp .env .env.bak'))
+            process.exit(0)
+          }
+          if (choice === 'backup') {
+            const backupPath = `${envPath}.bak`
+            try {
+              fs.copyFileSync(envPath, backupPath)
+              console.log(dim(`  ✓ Backed up to ${backupPath}`))
+            } catch (e) {
+              console.log(dim(`  Could not write backup: ${e.message}`))
+              const { ack } = await inquirer.prompt([
+                { type: 'confirm', name: 'ack', message: 'Continue anyway?', default: false },
+              ])
+              if (!ack) process.exit(0)
+            }
+          }
+        }
+        console.log()
       }
 
       // Step 1: Node type
