@@ -132,6 +132,7 @@ export async function configureNginx(config, installDir) {
 
   const apiPort = config.apiPort || 4000
   const frontendDist = path.join(installDir, 'client/src/services/FrontEnd/dist')
+  const uploadsDir = path.join(installDir, 'client/public/uploads')
   const sitesAvailable = `/etc/nginx/sites-available/${config.domain}`
   const sitesEnabled = `/etc/nginx/sites-enabled/${config.domain}`
 
@@ -144,6 +145,7 @@ export async function configureNginx(config, installDir) {
     domain: config.domain,
     apiPort,
     frontendDist,
+    uploadsDir,
     tls,
     nginxSupportsHttp2Directive,
   })
@@ -252,7 +254,7 @@ function detectNginxHttp2DirectiveSupport() {
   }
 }
 
-function renderNginxConf({ domain, apiPort, frontendDist, tls, nginxSupportsHttp2Directive }) {
+function renderNginxConf({ domain, apiPort, frontendDist, uploadsDir, tls, nginxSupportsHttp2Directive }) {
   // The built frontend is a SPA — every unknown path falls through to
   // index.html so React Router handles the route. /api and /socket.io go to
   // the Node server. Static assets in /assets/ get long cache headers.
@@ -278,20 +280,27 @@ function renderNginxConf({ domain, apiPort, frontendDist, tls, nginxSupportsHttp
     }
 
     # User-uploaded media (avatars, post images, encrypted DM blobs).
-    # The API writes files under client/public/uploads and serves them
-    # via express.static at /uploads. Without this block, requests for
-    # /uploads/* fall through to the SPA index.html and the browser
-    # tries to render the HTML shell as an image.
+    # Served directly by nginx — no Node round-trip — since filenames are
+    # content-hashes (immutable). Previously this was proxy_pass'd to the
+    # API's express.static handler; nginx is dramatically faster for
+    # static files and offloads bandwidth from Node.
+    #
+    # The trailing slash on the alias path is required: nginx strips the
+    # location prefix before joining, so a request for /uploads/x.png
+    # becomes <uploadsDir>/x.png.
     location /uploads/ {
-        proxy_pass http://127.0.0.1:${apiPort};
-        proxy_http_version 1.1;
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        # Uploads are immutable (filename = random hex). Cache aggressively.
-        expires 30d;
-        add_header Cache-Control "public, max-age=2592000, immutable";
+        alias ${uploadsDir}/;
+        # Filenames are random-hex and never collide on rewrite, so files
+        # at a given URL never change content. Cache aggressively.
+        expires 1y;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        # If a file is missing (deleted post asset, future GC sweep), 404
+        # immediately rather than falling through to the SPA index.
+        try_files \$uri =404;
+        # Serve common image MIME types correctly even if the file
+        # extension casing is unusual. nginx's default mime.types is
+        # comprehensive; this is a no-op fallback.
+        access_log off;
     }
 
     # Long cache for hashed asset bundles
