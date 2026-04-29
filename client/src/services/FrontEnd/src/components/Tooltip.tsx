@@ -31,20 +31,49 @@ const Tooltip: React.FC<TooltipProps> = ({
   const wrapperRef = useRef<HTMLDivElement>(null)
   const tooltipRef = useRef<HTMLDivElement>(null)
 
-  // Use native DOM listeners to catch hover even over disabled children
+  // Use native DOM listeners to catch hover even over disabled children.
+  // Touch devices: mouseenter fires (synthesized) on tap but mouseleave
+  // never does until the user taps something else *that's also mouse-aware*,
+  // which leaves tooltips stuck open after a tap. Cover that with a
+  // document-level pointerdown listener that hides on any tap outside the
+  // trigger, plus a safety auto-hide after 4s.
   useEffect(() => {
     const el = wrapperRef.current
     if (!el) return
 
-    const show = () => setVisible(true)
-    const hide = () => setVisible(false)
+    let autoHideTimer: ReturnType<typeof setTimeout> | null = null
+
+    const show = () => {
+      setVisible(true)
+      if (autoHideTimer) clearTimeout(autoHideTimer)
+      // Auto-dismiss safety net for touch devices where the synthesized
+      // mouseleave never arrives. 4s is long enough to read most tooltips.
+      autoHideTimer = setTimeout(() => setVisible(false), 4000)
+    }
+    const hide = () => {
+      setVisible(false)
+      if (autoHideTimer) { clearTimeout(autoHideTimer); autoHideTimer = null }
+    }
+    const hideIfOutside = (e: Event) => {
+      const target = e.target as Node | null
+      if (!target || !el.contains(target)) hide()
+    }
 
     el.addEventListener('mouseenter', show)
     el.addEventListener('mouseleave', hide)
+    // pointerdown captures both mouse + touch — anywhere on the page that
+    // isn't the trigger dismisses. Scrolling also dismisses, since on
+    // mobile the absolute-positioned tooltip would otherwise float free
+    // of its trigger as the page scrolls underneath.
+    document.addEventListener('pointerdown', hideIfOutside)
+    window.addEventListener('scroll', hide, true)
 
     return () => {
       el.removeEventListener('mouseenter', show)
       el.removeEventListener('mouseleave', hide)
+      document.removeEventListener('pointerdown', hideIfOutside)
+      window.removeEventListener('scroll', hide, true)
+      if (autoHideTimer) clearTimeout(autoHideTimer)
     }
   }, [])
 
