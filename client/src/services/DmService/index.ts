@@ -214,8 +214,23 @@ export class DmService {
    * Get conversations for a user with unread counts
    */
   async getConversations(userId: number, limit = 50, offset = 0) {
+    // Filter out conversations that haven't seen any messages yet — when
+    // someone "starts" a conversation by tapping a username, we create the
+    // row eagerly so the encrypted handshake can land, but the inbox
+    // shouldn't show a row with no last-message preview. The participant
+    // record is preserved so that if/when the first message lands, this
+    // query starts returning it.
+    //
+    // Each peer's DM publicKey rides along on the participant's identity
+    // — the frontend uses it to compute the shared secret for the
+    // last-message preview without a follow-up /api/dm/identity request.
     const participations = await prisma.conversationParticipant.findMany({
-      where: { userId },
+      where: {
+        userId,
+        conversation: {
+          messages: { some: {} },
+        },
+      },
       take: limit + 1,
       skip: offset,
       include: {
@@ -224,7 +239,8 @@ export class DmService {
             participants: {
               include: {
                 identity: {
-                  include: {
+                  select: {
+                    publicKey: true,
                     user: {
                       select: { username: true, displayName: true, avatarUrl: true, defaultAvatarId: true, image: true, address: true, tokenId: true }
                     }
