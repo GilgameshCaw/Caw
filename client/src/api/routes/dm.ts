@@ -203,7 +203,7 @@ router.post('/messages',
   requireAuth({ field: 'senderId' }),
   async (req: Request, res: Response) => {
     try {
-      const { conversationId, senderId, encryptedPayload, contentType } = req.body
+      const { conversationId, senderId, encryptedPayload, contentType, replyToMessageId } = req.body
       if (!conversationId || !senderId || !encryptedPayload) {
         return res.status(400).json({ error: 'conversationId, senderId, and encryptedPayload are required' })
       }
@@ -228,7 +228,8 @@ router.post('/messages',
             senderId: Number(senderId),
             encryptedPayload,
             contentType: contentType || 'text',
-            shadowBlocked: true
+            shadowBlocked: true,
+            replyToMessageId: replyToMessageId || null,
           }
         })
         return res.json(message)
@@ -294,7 +295,8 @@ router.post('/messages',
         conversationId,
         senderId: Number(senderId),
         encryptedPayload,
-        contentType
+        contentType,
+        replyToMessageId,
       })
 
       // Broadcast via WebSocket

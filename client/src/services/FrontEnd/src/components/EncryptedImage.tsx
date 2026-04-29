@@ -18,6 +18,12 @@ const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sharedSecret, mime
   const [error, setError] = useState(false)
   const [loading, setLoading] = useState(true)
   const [lightboxOpen, setLightboxOpen] = useState(false)
+  // For videos: even after the blob URL exists, the browser still has
+  // to parse metadata + buffer enough to show a frame. Show a small
+  // spinner over the placeholder until `onLoadedData` fires (more
+  // reliable than `onLoadedMetadata` for "actually has a paintable
+  // frame" — Safari in particular often fires metadata well before).
+  const [videoReady, setVideoReady] = useState(false)
 
   useEffect(() => {
     if (!sharedSecret) return
@@ -70,14 +76,23 @@ const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sharedSecret, mime
   // identical for all three; only the rendered element differs.
   if (mimeType.startsWith('video/')) {
     return (
-      <video
-        src={objectUrl}
-        controls
-        playsInline
-        loop
-        muted
-        className={className || 'max-w-[240px] max-h-[240px] rounded-lg'}
-      />
+      <div className={`relative ${className || 'max-w-[240px] max-h-[240px]'} rounded-lg overflow-hidden`}>
+        <video
+          src={objectUrl}
+          controls
+          playsInline
+          loop
+          muted
+          preload="metadata"
+          onLoadedData={() => setVideoReady(true)}
+          className={`${className || 'max-w-[240px] max-h-[240px]'} rounded-lg block`}
+        />
+        {!videoReady && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/40 pointer-events-none">
+            <div className="w-6 h-6 rounded-full border-2 border-white/30 border-t-white animate-spin" />
+          </div>
+        )}
+      </div>
     )
   }
   // Image case: click to open the lightbox. We re-use the same blob URL

@@ -32,7 +32,8 @@ import { useAuthStore } from '~/store/authStore'
 import { useVerifyWallet } from '~/hooks/useVerifyWallet'
 import {
   useDmClient,
-  useDmMessages
+  useDmMessages,
+  type UiMessage
 } from '~/hooks/useDm'
 import { useDmWebSocket } from '~/hooks/useDmWebSocket'
 import { useMessageNotifications, useTypingStatus } from '~/hooks/useMessageNotifications'
@@ -96,6 +97,14 @@ const MessagesPage: React.FC = () => {
   const [chatSharedSecret, setChatSharedSecret] = useState<CryptoKey | null>(null)
   const [chatReady, setChatReady] = useState(false)
   const [contextMenu, setContextMenu] = useState<{ messageId: string; x: number; y: number; isOwn: boolean; createdAt: string } | null>(null)
+  // ID of the message we're replying to. Cleared on send, on Escape, or
+  // when the user X's the chip. Sent as plaintext to the server alongside
+  // the encrypted body — the server already knows the conversation graph,
+  // so the link adds no meaningful disclosure.
+  const [replyingToId, setReplyingToId] = useState<string | null>(null)
+  // Message ID we want to flash-highlight after scrolling — set when the
+  // user taps a quoted preview. Cleared after the animation settles.
+  const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null)
   const [errorModal, setErrorModal] = useState<{ title: string; message: string } | null>(null)
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
   const [editingContent, setEditingContent] = useState('')
@@ -407,6 +416,40 @@ const MessagesPage: React.FC = () => {
     refreshConversations()
   }
 
+  // Render a short text preview for a message — used by the reply chip
+  // and the in-bubble quoted preview. Mirrors the message-bubble render
+  // logic just enough to give a useful one-liner: text uses raw chars,
+  // attachments collapse to a generic label, encrypted-attachment JSON
+  // collapses by mimeType.
+  const previewForMessage = (m: UiMessage | undefined): string => {
+    if (!m) return 'Original message unavailable'
+    if (m.contentType === 'deleted') return 'Deleted message'
+    const c = m.content || ''
+    try {
+      const parsed = JSON.parse(c)
+      if (parsed?.msgType === 'encrypted-attachment') {
+        const mt = String(parsed.mimeType || '')
+        if (mt.startsWith('image/')) return '📷 Image'
+        if (mt.startsWith('video/')) return '🎥 Video'
+        return `📎 ${parsed.name || 'Attachment'}`
+      }
+      if (parsed?.text) return String(parsed.text).slice(0, 80)
+    } catch {}
+    return c.slice(0, 80)
+  }
+
+  // Scroll to a message by id and briefly highlight it. Used when the
+  // user taps the quoted preview above a reply.
+  const scrollToMessage = (messageId: string) => {
+    const el = document.querySelector<HTMLElement>(`[data-message-id="${messageId}"]`)
+    if (!el) return
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    setHighlightMessageId(messageId)
+    setTimeout(() => {
+      setHighlightMessageId(prev => (prev === messageId ? null : prev))
+    }, 1400)
+  }
+
   // Handle send message
   const handleSendMessage = async () => {
     if (!newMessageContent.trim() || !selectedConversationId) return
@@ -414,6 +457,8 @@ const MessagesPage: React.FC = () => {
     const content = newMessageContent.trim()
     setNewMessageContent('')
     setShowEmojiPicker(false)
+    const replyTo = replyingToId
+    setReplyingToId(null)
 
     // Stop typing indicator
     if (typingTimeoutRef.current) {
@@ -423,7 +468,7 @@ const MessagesPage: React.FC = () => {
 
     try {
       console.log('[Messages] Sending message to conversation:', selectedConversationId)
-      await dmSendMessage(content)
+      await dmSendMessage(content, replyTo || undefined)
       console.log('[Messages] Message sent successfully')
       // Force a scroll-to-bottom on send. The existing messages.length
       // effect *should* fire when dmSendMessage flushes the new bubble
@@ -1374,10 +1419,21 @@ const MessagesPage: React.FC = () => {
                   // Animate messages from the last 2 seconds
                   const isNew = Date.now() - new Date(message.createdAt).getTime() < 2000
 
+                  // Look up the parent message for the in-bubble quoted
+                  // preview. Local-only — if the parent is older than the
+                  // currently loaded window, the preview falls back to
+                  // "Original message unavailable" via previewForMessage.
+                  const parentMessage = message.replyToMessageId
+                    ? messages.find(m => m.id === message.replyToMessageId)
+                    : undefined
+
                   return (
                     <div
                       key={message.id}
-                      className={isNew ? (message.isFromCurrentUser ? 'dm-animate-in-right' : 'dm-animate-in-left') : ''}
+                      data-message-id={message.id}
+                      className={`${isNew ? (message.isFromCurrentUser ? 'dm-animate-in-right' : 'dm-animate-in-left') : ''} ${
+                        highlightMessageId === message.id ? 'dm-highlight-flash' : ''
+                      }`}
                     >
                       {/* Date divider */}
                       {showDateDivider && (
@@ -1417,6 +1473,35 @@ const MessagesPage: React.FC = () => {
                             </Tooltip>
                           </div>
                         ))}
+
+                        {/* Reply preview — small quoted block above the
+                            bubble. Tappable: scrolls to + briefly
+                            highlights the parent. Falls back to a
+                            disabled preview if the parent isn't in the
+                            currently-loaded message window. */}
+                        {message.replyToMessageId && (
+                          <button
+                            type="button"
+                            onClick={() => parentMessage && scrollToMessage(parentMessage.id)}
+                            disabled={!parentMessage}
+                            className={`mb-1 max-w-md lg:max-w-xl text-left px-3 py-1.5 rounded-lg border-l-2 text-xs flex flex-col gap-0.5 ${
+                              isDark
+                                ? 'bg-white/5 border-yellow-500/60 text-white/70 hover:bg-white/10'
+                                : 'bg-black/5 border-yellow-500/70 text-black/70 hover:bg-black/10'
+                            } ${parentMessage ? 'cursor-pointer' : 'cursor-default opacity-60'}`}
+                          >
+                            <span className="font-semibold opacity-80">
+                              {parentMessage
+                                ? (parentMessage.isFromCurrentUser
+                                    ? 'You'
+                                    : `@${parentMessage.sender?.user.username || 'unknown'}`)
+                                : 'Replying to'}
+                            </span>
+                            <span className="opacity-70 truncate">
+                              {previewForMessage(parentMessage)}
+                            </span>
+                          </button>
+                        )}
 
                         <div className={`flex items-start gap-1 group ${message.isFromCurrentUser ? 'flex-row-reverse' : 'flex-row'}`}>
                           {/* Message bubble — full timestamp lives on the
@@ -1640,6 +1725,25 @@ const MessagesPage: React.FC = () => {
                   className="fixed z-50 bg-gray-800 border border-white/20 rounded-lg shadow-xl py-1 min-w-[180px]"
                   style={{ top: contextMenu.y, left: contextMenu.x }}
                 >
+                  {/* Reply — always available; sets composer chip */}
+                  <button
+                    onClick={() => {
+                      setReplyingToId(contextMenu.messageId)
+                      setContextMenu(null)
+                      // Focus the composer so the user can start typing
+                      // immediately. Defer one frame so the chip has
+                      // mounted (and any layout shift settles) before
+                      // focus moves.
+                      requestAnimationFrame(() => {
+                        const ta = document.querySelector<HTMLTextAreaElement | HTMLInputElement>('[data-dm-composer]')
+                        ta?.focus()
+                      })
+                    }}
+                    className="w-full px-4 py-2 text-left text-sm text-white hover:bg-white/10 cursor-pointer"
+                  >
+                    Reply
+                  </button>
+
                   {/* Edit — only own messages within 15 min */}
                   {contextMenu.isOwn && (Date.now() - new Date(contextMenu.createdAt).getTime() < 15 * 60 * 1000) && (
                     <button
@@ -1818,6 +1922,36 @@ const MessagesPage: React.FC = () => {
                 </div>
               )}
 
+              {/* Reply chip — shown above the input when the user has
+                  selected a message to reply to. X button cancels;
+                  Escape inside the textarea cancels too (handled there). */}
+              {replyingToId && (() => {
+                const target = messages.find(m => m.id === replyingToId)
+                return (
+                  <div className={`mx-2 md:mx-4 mt-2 px-3 py-2 rounded-lg flex items-start gap-2 border-l-2 border-yellow-500/70 ${
+                    isDark ? 'bg-white/5' : 'bg-black/5'
+                  }`}>
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-xs font-semibold ${isDark ? 'text-white/80' : 'text-black/80'}`}>
+                        Replying to {target?.isFromCurrentUser
+                          ? 'yourself'
+                          : `@${target?.sender?.user.username || 'unknown'}`}
+                      </p>
+                      <p className={`text-xs truncate ${isDark ? 'text-white/60' : 'text-black/60'}`}>
+                        {previewForMessage(target)}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setReplyingToId(null)}
+                      className={`p-1 rounded-full ${isDark ? 'hover:bg-white/10 text-white/60' : 'hover:bg-black/10 text-black/60'}`}
+                      title="Cancel reply (Esc)"
+                    >
+                      <HiOutlineX className="w-4 h-4" />
+                    </button>
+                  </div>
+                )
+              })()}
+
               {/* Message Input */}
               <div className="border-t border-white/10 p-2 md:p-4">
               <div className={`flex items-center rounded-full border transition-all duration-300 focus-within:ring-2 focus-within:ring-gray-500/30 ${
@@ -1889,6 +2023,7 @@ const MessagesPage: React.FC = () => {
 
                 {/* Input area - where user can type */}
                 <textarea
+                  data-dm-composer
                   placeholder="Start a new message"
                   value={newMessageContent}
                   onChange={(e) => {
@@ -1901,6 +2036,14 @@ const MessagesPage: React.FC = () => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault()
                       handleSendMessage()
+                    }
+                    // Escape clears the reply chip — same UX as Slack /
+                    // iMessage. We only intercept when there's an active
+                    // reply target so plain Esc behavior elsewhere
+                    // (modals, etc.) is unaffected.
+                    if (e.key === 'Escape' && replyingToId) {
+                      e.preventDefault()
+                      setReplyingToId(null)
                     }
                   }}
                   rows={1}

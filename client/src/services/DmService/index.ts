@@ -114,8 +114,9 @@ export class DmService {
     senderId: number
     encryptedPayload: string
     contentType?: string
+    replyToMessageId?: string
   }) {
-    const { conversationId, senderId, encryptedPayload, contentType = 'text' } = params
+    const { conversationId, senderId, encryptedPayload, contentType = 'text', replyToMessageId } = params
 
     // Verify sender is a participant
     const participant = await prisma.conversationParticipant.findUnique({
@@ -123,12 +124,26 @@ export class DmService {
     })
     if (!participant) throw new Error('Not a participant in this conversation')
 
+    // Validate the reply target exists in the same conversation. We don't
+    // trust the client to scope this — without the conversation check, a
+    // sender could thread a message onto a parent from another room.
+    if (replyToMessageId) {
+      const parent = await prisma.message.findUnique({
+        where: { id: replyToMessageId },
+        select: { conversationId: true }
+      })
+      if (!parent || parent.conversationId !== conversationId) {
+        throw new Error('Reply target not found in this conversation')
+      }
+    }
+
     const message = await prisma.message.create({
       data: {
         conversationId,
         senderId,
         encryptedPayload,
-        contentType
+        contentType,
+        replyToMessageId: replyToMessageId || null,
       },
       include: {
         sender: {

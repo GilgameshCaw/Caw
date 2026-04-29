@@ -55,6 +55,13 @@ export type UiMessage = {
   conversationId: string
   isFromCurrentUser: boolean
   reactions?: UiReaction[]
+  // ID of the message this one is replying to. Stored plaintext on the
+  // server: the server already knows the (sender, recipient, time) graph
+  // for every conversation it relays, so a thread link between two of
+  // those messages adds no meaningful disclosure beyond what's already
+  // there. Keeping it plaintext lets the server do parent-message
+  // includes for the inbox without holding any decryption key.
+  replyToMessageId?: string | null
   sender?: {
     user: {
       username: string
@@ -516,6 +523,7 @@ export function useDmMessages(conversationId: string, tokenId?: number, peerUser
             conversationId: msg.conversationId,
             isFromCurrentUser: msg.senderId === tokenId,
             reactions: msg.reactions || [],
+            replyToMessageId: msg.replyToMessageId || null,
             sender: msg.sender ? {
               user: {
                 username: msg.sender.user?.username || 'Unknown',
@@ -543,6 +551,7 @@ export function useDmMessages(conversationId: string, tokenId?: number, peerUser
               conversationId: msg.conversationId,
               isFromCurrentUser: msg.senderId === tokenId,
               reactions: msg.reactions || [],
+              replyToMessageId: msg.replyToMessageId || null,
               sender: msg.sender ? {
                 user: {
                   username: msg.sender.user?.username || 'Unknown',
@@ -591,6 +600,7 @@ export function useDmMessages(conversationId: string, tokenId?: number, peerUser
             conversationId: msg.conversationId,
             isFromCurrentUser: msg.senderId === tokenId,
             reactions: msg.reactions || [],
+            replyToMessageId: msg.replyToMessageId || null,
             sender: msg.sender ? {
               user: {
                 username: msg.sender.user?.username || 'Unknown',
@@ -617,7 +627,7 @@ export function useDmMessages(conversationId: string, tokenId?: number, peerUser
     return () => { cancelled = true }
   }, [conversationId, tokenId])
 
-  const sendMessage = useCallback(async (content: string) => {
+  const sendMessage = useCallback(async (content: string, replyToMessageId?: string) => {
     if (!conversationId || !tokenId) return
 
     setIsSending(true)
@@ -639,7 +649,8 @@ export function useDmMessages(conversationId: string, tokenId?: number, peerUser
           conversationId,
           senderId: tokenId,
           encryptedPayload,
-          contentType: 'text'
+          contentType: 'text',
+          ...(replyToMessageId ? { replyToMessageId } : {}),
         })
       })
 
@@ -665,6 +676,7 @@ export function useDmMessages(conversationId: string, tokenId?: number, peerUser
         status: 'SENT',
         conversationId,
         isFromCurrentUser: true,
+        replyToMessageId: msg.replyToMessageId || null,
         sender: msg.sender ? {
           user: {
             username: msg.sender.user?.username || 'Unknown',
@@ -724,6 +736,7 @@ export function useDmMessages(conversationId: string, tokenId?: number, peerUser
           status: encryptedMsg.status || 'SENT',
           conversationId: encryptedMsg.conversationId,
           isFromCurrentUser: false,
+          replyToMessageId: encryptedMsg.replyToMessageId || null,
           sender: encryptedMsg.sender ? {
             user: {
               username: encryptedMsg.sender.user?.username || 'Unknown',
@@ -769,6 +782,7 @@ export function useDmMessages(conversationId: string, tokenId?: number, peerUser
             id: msg.id, content: '', contentType: 'deleted',
             senderId: msg.senderId, createdAt: msg.createdAt, status: msg.status,
             conversationId: msg.conversationId, isFromCurrentUser: msg.senderId === tokenId,
+            replyToMessageId: msg.replyToMessageId || null,
             sender: msg.sender ? { user: { username: msg.sender.user?.username || 'Unknown', displayName: msg.sender.user?.displayName, avatarUrl: msg.sender.user?.avatarUrl, tokenId: msg.senderId } } : undefined
           })
           continue
@@ -794,6 +808,7 @@ export function useDmMessages(conversationId: string, tokenId?: number, peerUser
           id: msg.id, content, contentType: msg.contentType, editHistory,
           senderId: msg.senderId, createdAt: msg.createdAt, status: msg.status,
           conversationId: msg.conversationId, isFromCurrentUser: msg.senderId === tokenId,
+          replyToMessageId: msg.replyToMessageId || null,
           sender: msg.sender ? { user: { username: msg.sender.user?.username || 'Unknown', displayName: msg.sender.user?.displayName, avatarUrl: msg.sender.user?.avatarUrl, tokenId: msg.senderId } } : undefined
         })
       }

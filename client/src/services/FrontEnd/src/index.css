@@ -566,3 +566,15 @@ input[type="number"] {
 .dm-animate-in-left {
   animation: slideInFromLeft 0.6s ease-out;
 }
+
+/* Brief yellow ring flash when scrolled-to via a quoted reply preview.
+   Uses a soft outer glow rather than border to avoid layout shift. */
+@keyframes dm-highlight-flash {
+  0%   { box-shadow: 0 0 0 0 rgba(234, 179, 8, 0); }
+  20%  { box-shadow: 0 0 0 6px rgba(234, 179, 8, 0.45); }
+  100% { box-shadow: 0 0 0 0 rgba(234, 179, 8, 0); }
+}
+.dm-highlight-flash {
+  animation: dm-highlight-flash 1.4s ease-out;
+  border-radius: 12px;
+}

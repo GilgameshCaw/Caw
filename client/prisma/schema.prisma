@@ -389,6 +389,12 @@ model Message {
   editHistory      String?            // encrypted JSON array of previous versions
   status           MessageStatus      @default(SENT)
   shadowBlocked    Boolean            @default(false) // hidden from recipient, visible to sender
+  // Self-reference for replies. SetNull (not Cascade) so deleting a parent
+  // doesn't delete every reply — replies just lose their thread anchor and
+  // the UI falls back to "Original message unavailable".
+  replyToMessageId String?
+  replyTo          Message?           @relation("MessageReplies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
+  replies          Message[]          @relation("MessageReplies")
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
   conversation     Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -399,6 +405,7 @@ model Message {
 
   @@index([conversationId, createdAt])
   @@index([senderId])
+  @@index([replyToMessageId])
 }
 
 // Plaintext reactions on a DM. Unlike the message body, the emoji isn't
