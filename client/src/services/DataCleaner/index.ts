@@ -972,6 +972,10 @@ async function runDataCleanup() {
   // staleness threshold the endpoint uses.
   await cleanupAbandonedCawonceReservations()
 
+  // Refresh User.onChainStakeWei for users with a pending L1→L2 deposit so
+  // /api/users/by-token can read the cached value instead of hitting L2 RPC.
+  await refreshOnChainStakeForPendingDeposits()
+
   logger.log('All cleanup tasks completed')
 }
 
@@ -986,6 +990,82 @@ async function cleanupAbandonedCawonceReservations() {
     }
   } catch (err) {
     logger.error('Error sweeping cawonce reservations:', err)
+  }
+}
+
+/**
+ * Refresh User.onChainStakeWei for users with a pending L1→L2 deposit.
+ *
+ * Tier 2 of the "RPC out of API request handlers" refactor: /api/users/by-token
+ * used to call cawBalanceOf on L2 inside the request handler whenever a user
+ * had pendingDepositAmount set. That coupled API latency to Infura uptime and
+ * — when WSS handshake stalled — caused 30s blocking 500s on a hot endpoint.
+ *
+ * Now the handler reads onChainStakeWei from the DB directly, and this
+ * sweeper keeps it fresh. Strategy:
+ *   1. Find every User with pendingDepositAmount set.
+ *   2. Read cawBalanceOf for each tokenId on L2.
+ *   3. Write the result to onChainStakeWei + onChainStakeUpdatedAt.
+ *   4. If the on-chain stake has caught up to (or exceeded) the pending
+ *      amount, clear pendingDepositAmount + lastStakedAt — same logic the
+ *      old in-handler path applied, just moved off the request path.
+ *
+ * Cadence: runs every DataCleaner pass (1 minute). For users WITHOUT a
+ * pending deposit we don't refresh — those rows aren't read by any endpoint
+ * and the indexer's natural Mint/Transfer event handlers will keep them
+ * accurate where it matters. If we ever surface staked-balance UI for
+ * non-pending users, add a slower (~5min) sweep here too.
+ */
+async function refreshOnChainStakeForPendingDeposits() {
+  try {
+    const usersWithPending = await prisma.user.findMany({
+      where: { pendingDepositAmount: { not: null } },
+      select: { tokenId: true, pendingDepositAmount: true },
+    })
+    if (usersWithPending.length === 0) return
+
+    let contract: Contract
+    try {
+      contract = getCawProfileL2()
+    } catch (err: any) {
+      logger.error(`[StakeRefresher] Cannot get L2 contract, skipping pass: ${err.message}`)
+      return
+    }
+
+    logger.log(`[StakeRefresher] Refreshing on-chain stake for ${usersWithPending.length} user(s) with pending deposits`)
+
+    for (const u of usersWithPending) {
+      try {
+        const balanceRaw: any = await contract.cawBalanceOf(u.tokenId)
+        const balance = BigInt(balanceRaw?.toString() ?? '0')
+        const pending = (() => {
+          try { return BigInt(u.pendingDepositAmount ?? '0') } catch { return 0n }
+        })()
+
+        const updateData: Record<string, any> = {
+          onChainStakeWei: balance.toString(),
+          onChainStakeUpdatedAt: new Date(),
+        }
+        if (pending > 0n && balance >= pending) {
+          // Deposit landed — clear the pending hint. Mirror the lazy-clear
+          // logic that used to live in /api/users/by-token. cleanupPendingMintDeposits
+          // also clears these on its own pass; either path getting there
+          // first is fine.
+          updateData.pendingDepositAmount = null
+          updateData.lastStakedAt = null
+          logger.log(`[StakeRefresher] Cleared pending deposit for tokenId=${u.tokenId} (on-chain ${balance} >= pending ${pending})`)
+        }
+
+        await prisma.user.update({
+          where: { tokenId: u.tokenId },
+          data: updateData,
+        })
+      } catch (err: any) {
+        logger.error(`[StakeRefresher] tokenId=${u.tokenId} refresh failed: ${err?.message}`)
+      }
+    }
+  } catch (err: any) {
+    logger.error(`[StakeRefresher] Fatal: ${err?.message}`)
   }
 }
 

@@ -14,6 +14,7 @@ import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../../utils/rpcProvider'
 import { Service } from '../../Service'
 import { prisma } from '../../prismaClient'
 import { CAW_NAMES_ADDRESS } from '../../abi/addresses'
+import { findOrCreateUser, StaleTokenError } from '../UserService'
 
 const Config = z.object({
   l1RpcUrl:            z.string().optional(),
@@ -109,17 +110,53 @@ export const nftTransferWatcherService: Service = {
             for (const ev of events) {
               const args = (ev as ethers.EventLog).args
               if (!args) continue
+              const fromAddr = (args[0] as string).toLowerCase()
               const toAddr = (args[1] as string).toLowerCase()
               const tokenId = Number(args[2])
 
-              // Update the User row's address. If the row doesn't exist yet
-              // (first time we've seen this token on this node), skip — the
-              // findOrCreateUser path during auth or event processing will
-              // populate it fresh from L1 with the correct current owner.
+              // Tier 3 of the "RPC out of API request handlers" refactor:
+              // /api/users/by-token, /api/auth/verify, etc. now return 202 on
+              // a DB miss instead of falling back to RPC. That means THIS
+              // service is the authoritative path for getting fresh-mint and
+              // post-transfer User rows into the DB. If we skip rows that
+              // don't yet exist, the API loops forever on 202.
+              //
+              // For Transfer-from-zero (mint), call findOrCreateUser to read
+              // the L1 metadata (owner + username) and create the row. For
+              // a regular transfer, update the address; if the row is missing
+              // (we joined the chain late), fall back to findOrCreateUser to
+              // backfill it.
               try {
+                const isMint = fromAddr === '0x0000000000000000000000000000000000000000'
                 const user = await prisma.user.findUnique({ where: { tokenId } })
-                if (!user) continue
-                if (user.address.toLowerCase() !== toAddr) {
+
+                if (!user) {
+                  if (isMint) {
+                    console.log(`[NftTransferWatcher] Mint detected — creating User row for tokenId=${tokenId} owner=${toAddr}`)
+                  } else {
+                    console.log(`[NftTransferWatcher] Transfer for unindexed tokenId=${tokenId} (joined late) — backfilling`)
+                  }
+                  try {
+                    await findOrCreateUser(tokenId)
+                  } catch (err: any) {
+                    if (err instanceof StaleTokenError) {
+                      // Token doesn't exist on the L1 contract this watcher is
+                      // pointed at — old deployment, ignore.
+                      console.warn(`[NftTransferWatcher] tokenId=${tokenId} not on current L1 contract — skipping`)
+                      continue
+                    }
+                    throw err
+                  }
+                  // findOrCreateUser writes the L1 owner; if the latest event
+                  // says someone else now owns it, apply that on top.
+                  const refreshed = await prisma.user.findUnique({ where: { tokenId } })
+                  if (refreshed && refreshed.address.toLowerCase() !== toAddr) {
+                    await prisma.user.update({
+                      where: { tokenId },
+                      data: { address: toAddr },
+                    })
+                  }
+                } else if (user.address.toLowerCase() !== toAddr) {
                   console.log(`[NftTransferWatcher] tokenId=${tokenId} transferred: ${user.address} → ${toAddr}`)
                   await prisma.user.update({
                     where: { tokenId },

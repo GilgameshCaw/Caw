@@ -56,6 +56,13 @@ model User {
   onboardingStep        Int            @default(0)
   lastStakedAt          DateTime?
   pendingDepositAmount  String?           // wei amount as string, pending L1→L2 bridge
+  // Cached L2 on-chain CAW staked balance, refreshed by DataCleaner. Tier 2
+  // of the "RPC out of API request handlers" refactor — see PROJECT_BACKLOG.md.
+  // /api/users/by-token reads this directly instead of calling cawBalanceOf
+  // on every request. Wei stored as a string so the JSON layer can pass it
+  // around without precision loss.
+  onChainStakeWei       String?
+  onChainStakeUpdatedAt DateTime?
   lastViewedOffersAt    DateTime?         // When the user last viewed the My Offers tab
   caws                  Caw[]
   followers             Follow[]       @relation("Follower")
