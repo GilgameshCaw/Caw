@@ -601,25 +601,34 @@ const MessagesPage: React.FC = () => {
     }
   }, [currentUser, isWalletAuthorized, identity, identityLoading])
 
-  // Load recent follows when new message modal opens
+  // Load recent follows when new message modal opens.
+  // One /api/dm/identity/batch call instead of one request per follow —
+  // the previous fan-out turned a 10-follow list into 11 parallel HTTP
+  // requests on every modal open.
   useEffect(() => {
     if (isNewMessageModalOpen && currentUser?.username) {
-      // Fetch recent follows then check DM identity for each
       apiFetch<{ items: Array<{ tokenId: number, username: string, displayName?: string, avatarUrl?: string }> }>(
         `/api/users/${currentUser.username}/following?limit=10`
       )
         .then(async (response) => {
           const items = (response.items || []).filter(u => u.tokenId !== currentUser?.id)
-          const withDm = await Promise.all(items.map(async (user) => {
-            try {
-              const res = await fetch(`${API_HOST}/api/dm/identity/${user.tokenId}`)
-              const data = await res.json()
-              return { ...user, hasDmIdentity: !!data.hasIdentity }
-            } catch {
-              return { ...user, hasDmIdentity: undefined }
-            }
-          }))
-          setRecentFollows(withDm)
+          if (items.length === 0) {
+            setRecentFollows([])
+            return
+          }
+          try {
+            const batch = await apiFetch<{ identities: Record<number, { hasIdentity: boolean }> }>(
+              `/api/dm/identity/batch`,
+              { method: 'POST', body: JSON.stringify({ userIds: items.map(u => u.tokenId) }) }
+            )
+            setRecentFollows(items.map(u => ({
+              ...u,
+              hasDmIdentity: !!batch.identities[u.tokenId]?.hasIdentity,
+            })))
+          } catch {
+            // Server probably old — fall back to "unknown" rather than crashing.
+            setRecentFollows(items.map(u => ({ ...u, hasDmIdentity: undefined })))
+          }
         })
         .catch(err => {
           console.error('Failed to fetch recent follows:', err)
@@ -644,16 +653,24 @@ const MessagesPage: React.FC = () => {
       )
         .then(async response => {
           const users = (response.users || []).filter(u => u.tokenId !== currentUser?.id)
-          const withDm = await Promise.all(users.map(async (user) => {
-            try {
-              const res = await fetch(`${API_HOST}/api/dm/identity/${user.tokenId}`)
-              const data = await res.json()
-              return { ...user, hasDmIdentity: !!data.hasIdentity }
-            } catch {
-              return { ...user, hasDmIdentity: undefined }
-            }
-          }))
-          setSearchResults(withDm)
+          if (users.length === 0) {
+            setSearchResults([])
+            return
+          }
+          // Same batching as the recent-follows path — one round-trip
+          // instead of one per result.
+          try {
+            const batch = await apiFetch<{ identities: Record<number, { hasIdentity: boolean }> }>(
+              `/api/dm/identity/batch`,
+              { method: 'POST', body: JSON.stringify({ userIds: users.map(u => u.tokenId) }) }
+            )
+            setSearchResults(users.map(u => ({
+              ...u,
+              hasDmIdentity: !!batch.identities[u.tokenId]?.hasIdentity,
+            })))
+          } catch {
+            setSearchResults(users.map(u => ({ ...u, hasDmIdentity: undefined })))
+          }
         })
         .catch(err => {
           console.error('Failed to search users:', err)
