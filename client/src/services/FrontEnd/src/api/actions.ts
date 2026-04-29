@@ -149,46 +149,108 @@ export async function findSafeCawonceStart(tokenId: number, start: number, count
 }
 
 /**
- * Atomically allocate the next safe cawonce(s) for a sender. The server
- * inserts CawonceReservation rows under a unique constraint, so two
- * concurrent submissions can never get the same number — eliminating the
- * "Cawonce already used" failure mode that the localStorage-based
- * allocation suffered from. Reservations are short-lived (released on
- * submission, swept after 5 min if abandoned).
+ * Read the next safe cawonce for a sender from the chain. cawProfileL2's
+ * Token struct exposes `nextCawonce` — a monotonically-increasing counter
+ * the contract maintains itself. This is the only authoritative source:
+ * the chain has every action that's ever been processed, regardless of
+ * which server submitted it. Server-side allocation (the prior approach)
+ * had a per-server view that broke as soon as a token was used across
+ * two installs.
  *
- * Returns numbers in the order the server allocated them; the caller
- * can use them as they please. For threads (need a contiguous block),
- * findSafeCawonceStart + sequential issuance is still the right tool.
+ * Concurrency note: two near-simultaneous calls (Quick Sign auto-loop,
+ * multi-tab) can both read the same `nextCawonce`, sign with it, and
+ * race for chain-confirmation order. The TxQueue partial unique index
+ * on (senderId, cawonce) catches the dup at insert time and the caller
+ * re-reads + retries. The localCawonceHigh map below additionally
+ * prevents in-tab races by tracking the highest cawonce we've recently
+ * issued; the next caller picks max(chain, localHigh + 1).
  */
+
+// In-tab high-watermark of cawonces we've recently issued, per tokenId.
+// Bumped synchronously on each allocation; cleared after 30s on the
+// assumption the action either confirmed (chain advanced) or got rejected
+// (caller will re-read chain anyway).
+const localCawonceHigh = new Map<number, { cawonce: number; expiresAt: number }>()
+const LOCAL_CAWONCE_TTL_MS = 30_000
+
+// Coalesce concurrent reads of the same tokenId so we don't burn N RPC
+// calls when the user fires N likes in quick succession. The mutex makes
+// the read-bump pair atomic per-tab.
+const inflightCawonceRead = new Map<number, Promise<number>>()
+
 export async function allocateCawonces(tokenId: number, count = 1): Promise<number[]> {
-  // The server returns 202 if the sender row hasn't been indexed yet (right
-  // after a fresh mint). retryOnIndexing waits per the server's hint and
-  // re-issues the request — RawEventsGatherer's Mint listener typically
-  // populates the row within a few seconds. Other errors propagate.
-  const result = await retryOnIndexing(() =>
-    apiFetch<{ cawonces: number[] }>('/api/users/allocate-cawonce', {
-      method: 'POST',
-      body: JSON.stringify({ tokenId, count }),
+  const out: number[] = []
+  for (let i = 0; i < count; i++) {
+    out.push(await getNextCawonce(tokenId))
+  }
+  return out
+}
+
+async function getNextCawonce(tokenId: number): Promise<number> {
+  // Mutex: serialize reads for the same tokenId so two parallel signAndSubmit
+  // calls don't both read the same chain value, both bump local, and
+  // race anyway. Sequential await means each caller sees the previous
+  // caller's bump.
+  const existing = inflightCawonceRead.get(tokenId)
+  if (existing) {
+    await existing
+  }
+
+  const promise = (async () => {
+    // 1. Chain truth. cawProfileL2.getTokens returns the user's nextCawonce.
+    let chainNext = 0
+    try {
+      const result = await readContract(wagmiConfig, {
+        address: CAW_NAMES_L2_ADDRESS,
+        abi: cawProfileL2Abi,
+        functionName: 'getTokens',
+        args: [[tokenId]], // uint32[]
+        chainId: baseSepolia.id,
+      }) as any
+      const tok = result?.[0]
+      const raw = tok?.nextCawonce ?? tok?.[4] // by name or by index
+      chainNext = Number(BigInt(raw?.toString() ?? '0'))
+    } catch (err) {
+      // RPC down or token not on L2 yet (post-mint pre-LZ). Fall back to
+      // the local watermark — better than crashing. If localHigh is also
+      // empty we start at 0 and let the TxQueue unique index catch any
+      // collision.
+      console.warn(`[getNextCawonce] chain read failed for tokenId=${tokenId}:`, err)
+    }
+
+    // 2. Local high-watermark. Counts cawonces signed-but-not-yet-confirmed
+    // in this tab. Cleared after TTL.
+    const now = Date.now()
+    const entry = localCawonceHigh.get(tokenId)
+    const localHigh = entry && entry.expiresAt > now ? entry.cawonce : -1
+
+    // 3. Pick the higher of the two. Bump local for the next caller.
+    const allocated = Math.max(chainNext, localHigh + 1)
+    localCawonceHigh.set(tokenId, {
+      cawonce: allocated,
+      expiresAt: now + LOCAL_CAWONCE_TTL_MS,
     })
-  )
-  return result.cawonces
+    return allocated
+  })()
+
+  inflightCawonceRead.set(tokenId, promise as any)
+  try {
+    return await promise
+  } finally {
+    if (inflightCawonceRead.get(tokenId) === (promise as any)) {
+      inflightCawonceRead.delete(tokenId)
+    }
+  }
 }
 
 /**
- * Release reserved cawonces the client decided not to use (sig cancelled,
- * pre-submit validation failed). Idempotent and best-effort — the
- * DataCleaner sweep covers anything that goes unreleased.
+ * Reset the in-tab cawonce watermark for a tokenId. Called when an action
+ * submission fails with a cawonce-collision — the next signAndSubmit will
+ * re-read fresh chain state instead of trusting the (now-known-stale)
+ * local watermark.
  */
-export async function releaseCawonces(tokenId: number, cawonces: number[]): Promise<void> {
-  if (cawonces.length === 0) return
-  try {
-    await apiFetch('/api/users/release-cawonce', {
-      method: 'POST',
-      body: JSON.stringify({ tokenId, cawonces }),
-    })
-  } catch {
-    // Non-fatal — server-side sweep will catch them in 5 minutes.
-  }
+export function invalidateLocalCawonce(tokenId: number) {
+  localCawonceHigh.delete(tokenId)
 }
 
 
@@ -859,13 +921,13 @@ export function useSignAndSubmitAction() {
     } catch (error: any) {
       console.error('Failed to submit action:', error)
 
-      // Release the server-side reservation so the next allocator sees this
-      // cawonce as free again. Only fires for server-allocated cawonces;
-      // pre-allocated thread cawonces are managed by the caller (PostForm
-      // handles its own thread-level rollback). Best-effort — DataCleaner
-      // sweeps any reservations we miss after 5 minutes.
+      // Invalidate the local cawonce watermark so the next signAndSubmit
+      // re-reads chain truth instead of trusting the (now-known-stale)
+      // local high-water. The TxQueue partial unique index will catch
+      // any actual on-chain race; this just prevents repeating the same
+      // bad bump.
       if (params.cawonce == null && activeTokenId) {
-        releaseCawonces(activeTokenId, [useCawonce]).catch(() => { /* swallowed in helper */ })
+        invalidateLocalCawonce(activeTokenId)
       }
 
       const errMsg = (error?.message || error?.shortMessage || '').toLowerCase()
