@@ -1571,7 +1571,7 @@ const MessagesPage: React.FC = () => {
                         }`}>
                           <div className="flex items-center space-x-1">
                             {/* Encryption indicator */}
-                            <Tooltip text="End-to-end encrypted" position={message.isFromCurrentUser ? 'left' : 'right'}>
+                            <Tooltip text="End-to-end encrypted" position={message.isFromCurrentUser ? 'left' : 'right'} forceBlack compact>
                               <HiOutlineLockClosed className="w-3 h-3 text-green-400" />
                             </Tooltip>
 
