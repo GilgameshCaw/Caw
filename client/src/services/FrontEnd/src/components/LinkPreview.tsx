@@ -5,6 +5,14 @@ import { HiOutlineExternalLink } from 'react-icons/hi'
 
 interface LinkPreviewProps {
   code: string
+  /**
+   * Origin host for the short URL (e.g. "https://node-a.com"). When set,
+   * the metadata fetch goes to that host's /api/shorturl/<code>. Used for
+   * cross-node mirroring: a post created on Node A and rendered on Node B
+   * still resolves correctly because Node A's DB is the source of truth
+   * for that code. Undefined means "use the local API" (same-node post).
+   */
+  originHost?: string
   className?: string
 }
 
@@ -18,31 +26,44 @@ interface ShortUrlMetadata {
   clickCount: number
 }
 
-// Cache for metadata to avoid repeated fetches
+// Cache for metadata to avoid repeated fetches. Keyed by `${host}|${code}`
+// so the same code on two mirroring nodes doesn't share resolved values.
 const metadataCache = new Map<string, ShortUrlMetadata | null>()
+const cacheKey = (host: string | undefined, code: string) =>
+  host ? `${host}|${code}` : code
 
-const LinkPreview: React.FC<LinkPreviewProps> = ({ code, className = '' }) => {
+const LinkPreview: React.FC<LinkPreviewProps> = ({ code, originHost, className = '' }) => {
   const { isDark } = useTheme()
-  const [metadata, setMetadata] = useState<ShortUrlMetadata | null>(metadataCache.get(code) || null)
-  const [loading, setLoading] = useState(!metadataCache.has(code))
+  const ck = cacheKey(originHost, code)
+  const [metadata, setMetadata] = useState<ShortUrlMetadata | null>(metadataCache.get(ck) || null)
+  const [loading, setLoading] = useState(!metadataCache.has(ck))
   const [error, setError] = useState(false)
   const [imageError, setImageError] = useState(false)
 
   useEffect(() => {
-    if (metadataCache.has(code)) {
-      setMetadata(metadataCache.get(code) || null)
+    if (metadataCache.has(ck)) {
+      setMetadata(metadataCache.get(ck) || null)
       setLoading(false)
       return
     }
 
     const fetchMetadata = async () => {
       try {
-        const data = await apiFetch(`/api/shorturl/${code}`) as ShortUrlMetadata
-        metadataCache.set(code, data)
+        let data: ShortUrlMetadata
+        if (originHost) {
+          // Cross-node short URL — fetch from the originating host directly,
+          // not via apiFetch (which only reaches local + discovered instances).
+          const res = await fetch(`${originHost}/api/shorturl/${code}`)
+          if (!res.ok) throw new Error(`HTTP ${res.status}`)
+          data = await res.json()
+        } else {
+          data = await apiFetch(`/api/shorturl/${code}`) as ShortUrlMetadata
+        }
+        metadataCache.set(ck, data)
         setMetadata(data)
       } catch (err) {
         console.error('Failed to fetch link preview:', err)
-        metadataCache.set(code, null)
+        metadataCache.set(ck, null)
         setError(true)
       } finally {
         setLoading(false)
@@ -50,7 +71,7 @@ const LinkPreview: React.FC<LinkPreviewProps> = ({ code, className = '' }) => {
     }
 
     fetchMetadata()
-  }, [code])
+  }, [ck, code, originHost])
 
   if (loading) {
     return (

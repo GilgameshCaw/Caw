@@ -7,24 +7,46 @@ import { useCachedFetch } from '~/hooks/useCachedFetch'
 import { useTheme } from '~/hooks/useTheme'
 import { TAG_CHAR_CLASS } from '~/../../../tools/hashtagRegex'
 
-// Caches
+// Caches. Keyed by `${host}|${code}` so cross-node short URLs with the
+// same code (e.g. coincidentally identical codes on two mirroring nodes)
+// don't clobber each other's resolved values.
 const shortUrlCache = new Map<string, string | null>()
+
+const cacheKey = (host: string | undefined, code: string) =>
+  host ? `${host}|${code}` : code
+
+// Build the resolver endpoint. When the short URL was fully-qualified
+// in the post (https://node-a.com/s/abc), we MUST resolve against that
+// node — the row only exists in that node's DB. Relative /s/abc URLs
+// resolve against the local API as before.
+const resolverEndpoint = (host: string | undefined, code: string) =>
+  host ? `${host}/api/shorturl/${code}` : `/api/shorturl/${code}`
+
+// Extract the origin from a short URL match. Returns undefined for
+// relative URLs (/s/abc) — those are local and use the current host.
+const extractShortUrlHost = (shortUrlText: string): string | undefined => {
+  const m = shortUrlText.match(/^(https?:\/\/[^\/]+)\/s\//)
+  return m ? m[1] : undefined
+}
 
 // Shared loading skeleton
 const MediaSkeleton = () => (
   <div className="my-2 max-w-full h-48 bg-gray-200 dark:bg-gray-700 rounded-lg animate-pulse" />
 )
 
-// Component to render short URL images
+// Component to render short URL images. `originHost` lets us resolve a
+// short URL against a different node when the post was created on a
+// mirror — see resolverEndpoint() comment.
 const ShortUrlImage: React.FC<{
   code: string
+  originHost?: string
   onError: (url: string) => void
   imageErrors: Set<string>
-}> = ({ code, onError, imageErrors }) => {
+}> = ({ code, originHost, onError, imageErrors }) => {
   const { url: originalUrl, loading } = useCachedFetch(
-    code,
+    cacheKey(originHost, code),
     shortUrlCache,
-    `/api/shorturl/${code}`,
+    resolverEndpoint(originHost, code),
     (data: { originalUrl: string }) => data.originalUrl
   )
 
@@ -47,12 +69,12 @@ const ShortUrlImage: React.FC<{
 
 // Component to render an inline short URL link — shows the original URL
 // (truncated) as link text, but the href points to the short URL for analytics.
-const ShortUrlLink: React.FC<{ code: string; shortHref: string }> = ({ code, shortHref }) => {
+const ShortUrlLink: React.FC<{ code: string; shortHref: string; originHost?: string }> = ({ code, shortHref, originHost }) => {
   const { isDark } = useTheme()
   const { url: originalUrl, loading } = useCachedFetch(
-    code,
+    cacheKey(originHost, code),
     shortUrlCache,
-    `/api/shorturl/${code}`,
+    resolverEndpoint(originHost, code),
     (data: { originalUrl: string }) => data.originalUrl
   )
 
@@ -79,13 +101,14 @@ const ShortUrlLink: React.FC<{ code: string; shortHref: string }> = ({ code, sho
 // Component to render short URL videos
 const ShortUrlVideo: React.FC<{
   code: string
+  originHost?: string
   onError: (url: string) => void
   videoErrors: Set<string>
-}> = ({ code, onError, videoErrors }) => {
+}> = ({ code, originHost, onError, videoErrors }) => {
   const { url: originalUrl, loading } = useCachedFetch(
-    code,
+    cacheKey(originHost, code),
     shortUrlCache,
-    `/api/shorturl/${code}`,
+    resolverEndpoint(originHost, code),
     (data: { originalUrl: string }) => data.originalUrl
   )
 
@@ -222,7 +245,7 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
         // Skip media short URLs — they're handled by parseContent as images/videos
         if (isMediaShortUrl(code) || isVideoShortUrl(code)) return part
         return (
-          <ShortUrlLink key={`${keyPrefix}-${index}`} code={code} shortHref={shortHref} />
+          <ShortUrlLink key={`${keyPrefix}-${index}`} code={code} shortHref={shortHref} originHost={extractShortUrlHost(shortHref)} />
         )
       }
 
@@ -286,7 +309,7 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
   const parseContent = (text: string) => {
     // Extract all media in a single pass to preserve order
     // Each match includes its position so we can sort by original order
-    const mediaMatches: { type: 'image' | 'shortImage' | 'shortVideo'; data: string; code?: string; position: number }[] = []
+    const mediaMatches: { type: 'image' | 'shortImage' | 'shortVideo'; data: string; code?: string; originHost?: string; position: number }[] = []
 
     // Pattern for short URLs with extensions (e.g., /s/abc123.png, /s/abc123.mov)
     const shortUrlWithExtPattern = /(?:https?:\/\/[^\s]+)?\/s\/([a-zA-Z0-9]+\.(gif|jpg|jpeg|png|webp|mp4|webm|mov))/g
@@ -304,6 +327,7 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
         type: isVideo ? 'shortVideo' : 'shortImage',
         data: match[0],
         code: code,
+        originHost: extractShortUrlHost(match[0]),
         position: match.index
       })
     }
@@ -362,9 +386,10 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
           // card, with href pointing to the short URL. Mirrors the inline
           // behavior — the user sees what they originally typed, while the
           // on-chain text + analytics still flow through /s/CODE.
+          const lineHost = extractShortUrlHost(trimmedLine)
           result.push(
             <span key={`shortlink-${lineIndex}`} className="block">
-              <ShortUrlLink code={code} shortHref={trimmedLine} />
+              <ShortUrlLink code={code} shortHref={trimmedLine} originHost={lineHost} />
             </span>
           )
           // Render as link preview card (non-media short URLs)
@@ -372,6 +397,7 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
             <LinkPreview
               key={`link-${lineIndex}`}
               code={code}
+              originHost={lineHost}
               className="my-2"
             />
           )
@@ -406,6 +432,7 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
             <LinkPreview
               key={`link-inline-first`}
               code={firstCode}
+              originHost={extractShortUrlHost(firstShortMatch[0])}
               className="my-2"
             />
           )
@@ -420,6 +447,7 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
           <ShortUrlImage
             key={`shortimg-${idx}`}
             code={media.code}
+            originHost={media.originHost}
             onError={handleImageError}
             imageErrors={imageErrors}
           />
@@ -429,6 +457,7 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
           <ShortUrlVideo
             key={`shortvid-${idx}`}
             code={media.code}
+            originHost={media.originHost}
             onError={handleImageError}
             videoErrors={imageErrors}
           />
