@@ -49,26 +49,27 @@ router.get('/identity/:userId', async (req: Request, res: Response) => {
   }
 })
 
-// POST /api/dm/identity/batch
-// Look up DM identities for many userIds in one round trip. The Messages
-// page used to fan out N parallel /identity/:userId requests when listing
-// "people you follow" or rendering search results; this endpoint replaces
-// that storm with a single query.
-router.post('/identity/batch', async (req: Request, res: Response) => {
+// GET /api/dm/identity/batch?userIds=1,2,3
+// Read-only bulk lookup of DM identities — replaces the per-user
+// /identity/:userId fan-out from the Messages page (recent follows + new-
+// message search). Capped at 100 ids per request, so the comma-joined
+// querystring stays comfortably under typical URL limits.
+router.get('/identity/batch', async (req: Request, res: Response) => {
   try {
-    const { userIds } = req.body || {}
-    if (!Array.isArray(userIds)) {
-      return res.status(400).json({ error: 'userIds array required' })
+    const raw = String(req.query.userIds || '')
+    if (!raw) {
+      return res.status(400).json({ error: 'userIds query parameter required' })
     }
-    // Cap to avoid runaway queries — UI lists are bounded anyway.
-    const ids = [...new Set(userIds.map(Number).filter(n => Number.isInteger(n) && n > 0))].slice(0, 100)
+    const ids = [...new Set(
+      raw.split(',').map(s => Number(s.trim())).filter(n => Number.isInteger(n) && n > 0)
+    )].slice(0, 100)
     if (ids.length === 0) {
       return res.json({ identities: {} })
     }
     const rows = await dmService.getPublicKeysBatch(ids)
     // Shape: { [userId]: { hasIdentity, publicKey } }. Missing rows are
-    // included so callers can distinguish "no identity" from "not asked
-    // about" without inspecting the request.
+    // still included so callers can distinguish "no identity" from "not
+    // asked about" without inspecting the request.
     const identities: Record<number, { hasIdentity: boolean; publicKey: string | null }> = {}
     for (const id of ids) {
       const publicKey = rows.get(id) ?? null
@@ -76,7 +77,7 @@ router.post('/identity/batch', async (req: Request, res: Response) => {
     }
     return res.json({ identities })
   } catch (error: any) {
-    console.error('POST /api/dm/identity/batch error:', error)
+    console.error('GET /api/dm/identity/batch error:', error)
     return res.status(500).json({ error: error.message })
   }
 })

@@ -617,9 +617,9 @@ const MessagesPage: React.FC = () => {
             return
           }
           try {
+            const ids = items.map(u => u.tokenId).join(',')
             const batch = await apiFetch<{ identities: Record<number, { hasIdentity: boolean }> }>(
-              `/api/dm/identity/batch`,
-              { method: 'POST', body: JSON.stringify({ userIds: items.map(u => u.tokenId) }) }
+              `/api/dm/identity/batch?userIds=${ids}`
             )
             setRecentFollows(items.map(u => ({
               ...u,
@@ -660,9 +660,9 @@ const MessagesPage: React.FC = () => {
           // Same batching as the recent-follows path — one round-trip
           // instead of one per result.
           try {
+            const ids = users.map(u => u.tokenId).join(',')
             const batch = await apiFetch<{ identities: Record<number, { hasIdentity: boolean }> }>(
-              `/api/dm/identity/batch`,
-              { method: 'POST', body: JSON.stringify({ userIds: users.map(u => u.tokenId) }) }
+              `/api/dm/identity/batch?userIds=${ids}`
             )
             setSearchResults(users.map(u => ({
               ...u,
