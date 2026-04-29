@@ -133,6 +133,7 @@ const MutedContentPage: React.FC = () => {
           }
         }))
       } catch (err) {
+        console.error('Failed to fetch user data:', err)
         setUserData(prev => ({
           ...prev,
           [tokenId]: { tokenId: Number(tokenId), username: '', loading: false, error: true }
@@ -175,6 +176,7 @@ const MutedContentPage: React.FC = () => {
           }
         }))
       } catch (err) {
+        console.error('Failed to fetch post data:', err)
         setPostData(prev => ({
           ...prev,
           [postId]: { id: postId, username: '', content: '', timestamp: '', loading: false, error: true }
@@ -480,39 +482,105 @@ const MutedContentPage: React.FC = () => {
                                   // Off-chain images stored as URLs (including Giphy)
                                   const urls = post.imageData.replace('urls:', '').split('|||')
                                   return (
-                                    <div className={`grid ${urls.length > 1 ? 'grid-cols-2 gap-2' : 'grid-cols-1'} max-w-md`}>
-                                      {urls.map((url, index) => (
-                                        <div key={index} className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
-                                          <img
-                                            src={url}
-                                            alt={`Post image ${index + 1}`}
-                                            className="w-full h-auto"
-                                            onError={(e) => {
-                                              e.currentTarget.style.display = 'none'
-                                            }}
-                                          />
+                                    (() => {
+                                      const count = urls.length
+                                      if (count <= 0) return null
+
+                                      if (count === 1) {
+                                        const url = urls[0]
+                                        return (
+                                          <div className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 w-full max-w-md">
+                                            <img
+                                              src={url}
+                                              alt="Post image"
+                                              className="block w-full h-auto"
+                                              onError={(e) => {
+                                                e.currentTarget.style.display = 'none'
+                                              }}
+                                            />
+                                          </div>
+                                        )
+                                      }
+
+                                      const gridClass =
+                                        count === 2
+                                            ? 'grid grid-cols-2 gap-2 aspect-video rounded-lg overflow-hidden max-w-md'
+                                            : count === 3
+                                              ? 'grid grid-cols-2 grid-rows-2 gap-2 aspect-video rounded-lg overflow-hidden max-w-md'
+                                              : 'grid grid-cols-2 grid-rows-2 gap-2 aspect-video rounded-lg overflow-hidden max-w-md'
+
+                                      const cellClass = (i: number) =>
+                                        count === 3 && i === 0 ? 'row-span-2 w-full h-full' : 'w-full h-full'
+
+                                      return (
+                                        <div className={gridClass}>
+                                          {urls.slice(0, 4).map((url, index) => (
+                                            <div key={index} className={`relative w-full h-full overflow-hidden border border-gray-200 dark:border-gray-700 ${cellClass(index)}`}>
+                                              <img
+                                                src={url}
+                                                alt={`Post image ${index + 1}`}
+                                                className="block w-full h-full object-cover"
+                                                onError={(e) => {
+                                                  e.currentTarget.style.display = 'none'
+                                                }}
+                                              />
+                                            </div>
+                                          ))}
                                         </div>
-                                      ))}
-                                    </div>
+                                      )
+                                    })()
                                   )
                                 } else {
                                   // On-chain images stored as base64
                                   const images = post.imageData.split('|||')
                                   return (
-                                    <div className={`grid ${images.length > 1 ? 'grid-cols-2 gap-2' : 'grid-cols-1'} max-w-md`}>
-                                      {images.map((imageBase64, index) => (
-                                        <div key={index} className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
-                                          <img
-                                            src={`data:image/jpeg;base64,${imageBase64}`}
-                                            alt={`Post image ${index + 1}`}
-                                            className="w-full h-auto"
-                                            onError={(e) => {
-                                              e.currentTarget.style.display = 'none'
-                                            }}
-                                          />
+                                    (() => {
+                                      const count = images.length
+                                      if (count <= 0) return null
+
+                                      if (count === 1) {
+                                        const imageBase64 = images[0]
+                                        return (
+                                          <div className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 w-full max-w-md">
+                                            <img
+                                              src={`data:image/jpeg;base64,${imageBase64}`}
+                                              alt="Post image"
+                                              className="block w-full h-auto"
+                                              onError={(e) => {
+                                                e.currentTarget.style.display = 'none'
+                                              }}
+                                            />
+                                          </div>
+                                        )
+                                      }
+
+                                      const gridClass =
+                                        count === 2
+                                            ? 'grid grid-cols-2 gap-2 aspect-video rounded-lg overflow-hidden max-w-md'
+                                            : count === 3
+                                              ? 'grid grid-cols-2 grid-rows-2 gap-2 aspect-video rounded-lg overflow-hidden max-w-md'
+                                              : 'grid grid-cols-2 grid-rows-2 gap-2 aspect-video rounded-lg overflow-hidden max-w-md'
+
+                                      const cellClass = (i: number) =>
+                                        count === 3 && i === 0 ? 'row-span-2 w-full h-full' : 'w-full h-full'
+
+                                      return (
+                                        <div className={gridClass}>
+                                          {images.slice(0, 4).map((imageBase64, index) => (
+                                            <div key={index} className={`relative w-full h-full overflow-hidden border border-gray-200 dark:border-gray-700 ${cellClass(index)}`}>
+                                              <img
+                                                src={`data:image/jpeg;base64,${imageBase64}`}
+                                                alt={`Post image ${index + 1}`}
+                                                className="block w-full h-full object-cover"
+                                                onError={(e) => {
+                                                  e.currentTarget.style.display = 'none'
+                                                }}
+                                              />
+                                            </div>
+                                          ))}
                                         </div>
-                                      ))}
-                                    </div>
+                                      )
+                                    })()
                                   )
                                 }
                               } else if (post.imageUrl) {
@@ -522,7 +590,7 @@ const MutedContentPage: React.FC = () => {
                                     <img
                                       src={post.imageUrl}
                                       alt="Post image"
-                                      className="w-full h-auto"
+                                      className="block w-full h-auto"
                                       onError={(e) => {
                                         e.currentTarget.style.display = 'none'
                                       }}

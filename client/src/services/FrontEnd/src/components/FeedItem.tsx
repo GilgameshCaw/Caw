@@ -566,7 +566,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
             `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(useItem.content)}`
           )
           const data = await response.json()
-          const translated = data[0]?.[0]?.[0]
+          // Google returns translation in multiple segments: data[0] = [[translatedChunk, originalChunk, ...], ...]
+          const translated = Array.isArray(data?.[0])
+            ? (data[0] as unknown[])
+                .map((seg) => (Array.isArray(seg) ? (seg as unknown[])[0] : ''))
+                .filter((s): s is string => typeof s === 'string')
+                .join('')
+            : undefined
 
           if (translated && translated !== useItem.content) {
             setTranslatedText(translated)
@@ -576,7 +582,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=${encodeURIComponent(useItem.content)}`
             )
             const enData = await enResponse.json()
-            const enTranslated = enData[0]?.[0]?.[0]
+            const enTranslated = Array.isArray(enData?.[0])
+              ? (enData[0] as unknown[])
+                  .map((seg) => (Array.isArray(seg) ? (seg as unknown[])[0] : ''))
+                  .filter((s): s is string => typeof s === 'string')
+                  .join('')
+              : undefined
             if (enTranslated) {
               setTranslatedText(enTranslated)
             }
@@ -728,7 +739,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
           {/* Recawed header */}
           {headline && (
-            <div className="text-xs mb-3 transition-all duration-300 text-yellow-500">
+            <div className="text-xs font-medium mb-3 transition-all duration-300 text-yellow-500">
               {headline}
             </div>
           )}
@@ -765,7 +776,43 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               {/* User info */}
               <div className="flex-1">
                 <div>
-                  {/* First line: Display name and status badges */}
+                  {/* Inline translate / translated status (same spot) */}
+                  {!isTranslating && useItem.content?.trim() && (
+                    translatedText ? (
+                      <div className="mb-1 flex items-center justify-between gap-2 min-w-0">
+                        <span className={`min-w-0 truncate text-xs ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>
+                          Translated from original
+                        </span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            setTranslatedText(null)
+                          }}
+                          className="inline-flex shrink-0 items-center gap-1 text-xs text-yellow-500/80 hover:text-yellow-500 transition-colors cursor-pointer"
+                        >
+                          <HiOutlineTranslate className="w-3.5 h-3.5" />
+                          Show original
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          void handleMenuAction('translate')
+                        }}
+                        className="mb-1 inline-flex items-center gap-1 text-xs text-yellow-500/80 hover:text-yellow-500 transition-colors cursor-pointer"
+                      >
+                        <HiOutlineTranslate className="w-3.5 h-3.5" />
+                        Translate
+                      </button>
+                    )
+                  )}
+
+                  {/* First line: Display name, username, time, and status badges */}
                   <div className="flex items-center space-x-2 mb-0.5">
                     <Link
                       to={`/users/${useItem.user.username}`}
@@ -775,6 +822,18 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     >
                       {useItem.user.displayName || useItem.user.username}
                     </Link>
+
+                    <span className={`text-sm transition-colors duration-300 ${
+                      isDark ? 'text-gray-400' : 'text-gray-600'
+                    }`}>
+                      @{useItem.user.username}
+                    </span>
+
+                    <span className={`text-sm transition-colors duration-300 ${
+                      isDark ? 'text-gray-500' : 'text-gray-500'
+                    }`}>
+                      · {formatTimeAgo(useItem.timestamp)}
+                    </span>
                     {item.status === 'FAILED' && (
                       <>
                         <span className="relative group">
@@ -807,21 +866,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                         Hide
                       </button>
                     </>
-                  )}
-                  </div>
-
-                  {/* Second line: Username and time */}
-                  <div className="flex items-center space-x-2">
-                    <span className={`text-sm transition-colors duration-300 ${
-                      isDark ? 'text-gray-400' : 'text-gray-600'
-                    }`}>
-                      @{useItem.user.username}
-                    </span>
-                    <span className={`text-sm transition-colors duration-300 ${
-                      isDark ? 'text-gray-500' : 'text-gray-500'
-                    }`}>
-                      · {formatTimeAgo(useItem.timestamp)}
-                    </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -860,24 +905,16 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   isDark ? 'text-gray-200' : 'text-gray-800'
                 }`}
               />
-              <div className={`mt-2 text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                <HiOutlineTranslate className="inline-block w-4 h-4 mr-1" />
-                Translated from original •{' '}
-                <button
-                  onClick={() => setTranslatedText(null)}
-                  className="underline hover:no-underline"
-                >
-                  Show original
-                </button>
-              </div>
             </div>
           ) : (
-            <ContentWithHashtags
-              content={useItem.content}
-              className={`mb-4 transition-colors duration-300 pl-2 md:pl-0 ${
-                isDark ? 'text-gray-200' : 'text-gray-800'
-              }`}
-            />
+            <div className="mb-4 pl-2 md:pl-0">
+              <ContentWithHashtags
+                content={useItem.content}
+                className={`transition-colors duration-300 ${
+                  isDark ? 'text-gray-200' : 'text-gray-800'
+                }`}
+              />
+            </div>
           )}
 
           {/* Video Display */}
@@ -963,26 +1000,65 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     return (
                       <div className="relative">
                         {collapseBtn}
-                        <div className={urls.length > 1 ? 'grid grid-cols-2 gap-2 w-full' : 'w-full'}>
-                          {urls.map((url, index) => (
-                            <div key={index} className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 w-full">
-                              <img
-                                src={url}
-                                alt={`Caw image ${index + 1}`}
-                                className="w-full max-h-96 h-auto cursor-pointer hover:opacity-90 transition-opacity"
-                                onClick={(e) => {
-                                  e.preventDefault()
-                                  e.stopPropagation()
-                                  // TODO: Open image in modal
-                                }}
-                                onError={(e) => {
-                                  console.error('Failed to load image from URL:', url)
-                                  e.currentTarget.style.display = 'none'
-                                }}
-                              />
+                        {(() => {
+                          const count = urls.length
+                          if (count <= 0) return null
+
+                          if (count === 1) {
+                            const url = urls[0]
+                            return (
+                              <div className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 w-full">
+                                <img
+                                  src={url}
+                                  alt="Caw image"
+                                  className="block w-full max-h-96 h-auto cursor-pointer hover:opacity-90 transition-opacity"
+                                  onClick={(e) => {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                    // TODO: Open image in modal
+                                  }}
+                                  onError={(e) => {
+                                    console.error('Failed to load image from URL:', url)
+                                    e.currentTarget.style.display = 'none'
+                                  }}
+                                />
+                              </div>
+                            )
+                          }
+
+                          const gridClass =
+                            count === 2
+                                ? 'grid grid-cols-2 gap-2 aspect-video rounded-lg overflow-hidden'
+                                : count === 3
+                                  ? 'grid grid-cols-2 grid-rows-2 gap-2 aspect-video rounded-lg overflow-hidden'
+                                  : 'grid grid-cols-2 grid-rows-2 gap-2 aspect-video rounded-lg overflow-hidden'
+
+                          const cellClass = (i: number) =>
+                            count === 3 && i === 0 ? 'row-span-2 w-full h-full' : 'w-full h-full'
+
+                          return (
+                            <div className={gridClass}>
+                              {urls.slice(0, 4).map((url, index) => (
+                                <div key={index} className={`relative w-full h-full overflow-hidden border border-gray-200 dark:border-gray-700 ${cellClass(index)}`}>
+                                  <img
+                                    src={url}
+                                    alt={`Caw image ${index + 1}`}
+                                    className="block w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
+                                    onClick={(e) => {
+                                      e.preventDefault()
+                                      e.stopPropagation()
+                                      // TODO: Open image in modal
+                                    }}
+                                    onError={(e) => {
+                                      console.error('Failed to load image from URL:', url)
+                                      e.currentTarget.style.display = 'none'
+                                    }}
+                                  />
+                                </div>
+                              ))}
                             </div>
-                          ))}
-                        </div>
+                          )
+                        })()}
                       </div>
                     )
                   } else {
@@ -991,29 +1067,71 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     return (
                       <div className="relative">
                         {collapseBtn}
-                        <div className={images.length > 1 ? 'grid grid-cols-2 gap-2 w-full' : 'w-full'}>
-                          {images.map((imageBase64, index) => (
-                            <div key={index} className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 w-full">
-                              <img
-                                src={`data:image/jpeg;base64,${imageBase64}`}
-                                alt={`Caw image ${index + 1}`}
-                                className="w-full max-h-96 h-auto cursor-pointer hover:opacity-90 transition-opacity"
-                                onClick={(e) => {
-                                  e.preventDefault()
-                                  e.stopPropagation()
-                                  // TODO: Open image in modal
-                                }}
-                                onError={(e) => {
-                                  console.error('Failed to load on-chain image')
-                                  e.currentTarget.style.display = 'none'
-                                }}
-                              />
-                              <div className="absolute top-2 right-2 px-2 py-1 bg-black/70 text-white text-xs rounded-full">
-                                On-chain
+                        {(() => {
+                          const count = images.length
+                          if (count <= 0) return null
+
+                          if (count === 1) {
+                            const imageBase64 = images[0]
+                            return (
+                              <div className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 w-full">
+                                <img
+                                  src={`data:image/jpeg;base64,${imageBase64}`}
+                                  alt="Caw image"
+                                  className="block w-full max-h-96 h-auto cursor-pointer hover:opacity-90 transition-opacity"
+                                  onClick={(e) => {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                    // TODO: Open image in modal
+                                  }}
+                                  onError={(e) => {
+                                    console.error('Failed to load on-chain image')
+                                    e.currentTarget.style.display = 'none'
+                                  }}
+                                />
+                                <div className="absolute top-2 right-2 px-2 py-1 bg-black/70 text-white text-xs rounded-full">
+                                  On-chain
+                                </div>
                               </div>
+                            )
+                          }
+
+                          const gridClass =
+                            count === 2
+                                ? 'grid grid-cols-2 gap-2 aspect-video rounded-lg overflow-hidden'
+                                : count === 3
+                                  ? 'grid grid-cols-2 grid-rows-2 gap-2 aspect-video rounded-lg overflow-hidden'
+                                  : 'grid grid-cols-2 grid-rows-2 gap-2 aspect-video rounded-lg overflow-hidden'
+
+                          const cellClass = (i: number) =>
+                            count === 3 && i === 0 ? 'row-span-2 w-full h-full' : 'w-full h-full'
+
+                          return (
+                            <div className={gridClass}>
+                              {images.slice(0, 4).map((imageBase64, index) => (
+                                <div key={index} className={`relative w-full h-full overflow-hidden border border-gray-200 dark:border-gray-700 ${cellClass(index)}`}>
+                                  <img
+                                    src={`data:image/jpeg;base64,${imageBase64}`}
+                                    alt={`Caw image ${index + 1}`}
+                                    className="block w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
+                                    onClick={(e) => {
+                                      e.preventDefault()
+                                      e.stopPropagation()
+                                      // TODO: Open image in modal
+                                    }}
+                                    onError={(e) => {
+                                      console.error('Failed to load on-chain image')
+                                      e.currentTarget.style.display = 'none'
+                                    }}
+                                  />
+                                  <div className="absolute top-2 right-2 px-2 py-1 bg-black/70 text-white text-xs rounded-full">
+                                    On-chain
+                                  </div>
+                                </div>
+                              ))}
                             </div>
-                          ))}
-                        </div>
+                          )
+                        })()}
                       </div>
                     )
                   }
@@ -1025,7 +1143,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       <img
                         src={useItem.imageUrl}
                         alt="Caw image"
-                        className="w-full max-h-96 h-auto cursor-pointer hover:opacity-90 transition-opacity"
+                        className="block w-full max-h-96 h-auto cursor-pointer hover:opacity-90 transition-opacity"
                         onClick={(e) => {
                           e.preventDefault()
                           e.stopPropagation()

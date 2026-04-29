@@ -143,12 +143,12 @@ const Sidebar: React.FC = () => {
   }
 
   return (
-    <div className={`flex flex-col h-screen sm:h-full sm:justify-between w-full sm:w-[200px] border-r-0.5 sm:border-r transition-all duration-300 ${
+    <div className={`flex flex-col h-screen h-[100dvh] sm:h-full sm:justify-between w-full sm:w-[200px] border-r-0.5 sm:border-r transition-all duration-300 ${
       isDark 
         ? 'bg-black border-white/20' 
         : 'bg-white border-gray-300'
     }`}>
-      <div className="flex flex-col sm:flex-1 sm:min-h-0">
+      <div className="flex flex-col flex-1 min-h-0">
         {/* Logo Section - Hidden on mobile */}
         <div className="hidden sm:block p-4">
           <NavLink
@@ -180,60 +180,60 @@ const Sidebar: React.FC = () => {
         </div>
 
         {/* Navigation */}
-        <nav className="px-2 py-2 pt-20 sm:px-4 sm:py-3 sm:pr-2 sm:pl-2 sm:pt-1 space-y-0.5 sm:flex-1 sm:overflow-y-auto sm:min-h-0 thin-scrollbar">
+        <nav className="px-2 py-2 pt-[calc(72px+env(safe-area-inset-top))] sm:px-4 sm:py-3 sm:pr-2 sm:pl-2 sm:pt-1 space-y-0.5 flex-1 min-h-0 overflow-y-auto overscroll-contain thin-scrollbar">
           <NavLink
           to="/home"
           onClick={guardClick}
           className={({ isActive }) =>
-            `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+            `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
           }>
-            <HiOutlineHome className="w-7 h-7 sm:w-7 sm:h-7" />
-            <span className="font-medium text-lg sm:text-lg">Home</span>
+            <HiOutlineHome className="w-6 h-6 sm:w-7 sm:h-7" />
+            <span className="font-medium text-base sm:text-lg">Home</span>
           </NavLink>
 
-          <NavLink
-            to="/explore"
-            className={({ isActive }) =>
-               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
-            }
-          >
-            <HiOutlineSearch className="w-7 h-7 sm:w-7 sm:h-7" />
-            <span className="font-medium text-lg sm:text-lg">Explore</span>
-          </NavLink>
+           <NavLink
+             to="/explore"
+             className={({ isActive }) =>
+               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+             }
+           >
+            <HiOutlineSearch className="w-6 h-6 sm:w-7 sm:h-7" />
+            <span className="font-medium text-base sm:text-lg">Explore</span>
+           </NavLink>
 
-          <NavLink
-            to="/notifications"
-            onClick={guardClick}
-            className={({ isActive }) =>
-               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
-            }
-          >
-            <div className="relative">
-              <HiOutlineBell className="w-7 h-7 sm:w-7 sm:h-7" />
+           <NavLink
+             to="/notifications"
+             onClick={guardClick}
+             className={({ isActive }) =>
+               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+             }
+           >
+             <div className="relative">
+              <HiOutlineBell className="w-6 h-6 sm:w-7 sm:h-7" />
               {notifUnreadCount > 0 && (
                 <span className={`absolute -top-2 -right-2 min-w-[18px] h-[18px] flex items-center justify-center text-[11px] font-bold rounded-full bg-yellow-500 text-black px-1 border-2 ${isDark ? 'border-black' : 'border-white'}`}>
                   {notifUnreadCount > 99 ? '99+' : notifUnreadCount}
                 </span>
               )}
-            </div>
-            <span className="font-medium text-lg sm:text-lg">Notifications</span>
-          </NavLink>
+             </div>
+            <span className="font-medium text-base sm:text-lg">Notifications</span>
+           </NavLink>
 
-          <NavLink
-            to="/messages"
-            onClick={(e) => {
-              if (isCaptive) { e.preventDefault(); showSignIn(); return }
-              if (location.pathname.startsWith('/messages')) {
-                e.preventDefault()
-                navigate('/messages')
-              }
-            }}
-            className={({ isActive }) =>
-               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive || location.pathname.startsWith('/messages/'))}`
-            }
-          >
-            <div className="relative">
-              <HiOutlineChat className="w-7 h-7 sm:w-7 sm:h-7" />
+           <NavLink
+             to="/messages"
+             onClick={(e) => {
+               if (isCaptive) { e.preventDefault(); showSignIn(); return }
+               if (location.pathname.startsWith('/messages')) {
+                 e.preventDefault()
+                 navigate('/messages')
+               }
+             }}
+             className={({ isActive }) =>
+               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive || location.pathname.startsWith('/messages/'))}`
+             }
+           >
+             <div className="relative">
+              <HiOutlineChat className="w-6 h-6 sm:w-7 sm:h-7" />
               {activeToken && dmEnabled === false && (
                 <span className={`absolute -top-1 -right-1 w-3 h-3 bg-yellow-500 rounded-full border-2 ${isDark ? 'border-black' : 'border-white'}`} />
               )}
@@ -242,81 +242,81 @@ const Sidebar: React.FC = () => {
                   {dmUnreadCount > 99 ? '99+' : dmUnreadCount}
                 </span>
               )}
-            </div>
-            <span className="font-medium text-lg sm:text-lg">Messages</span>
-          </NavLink>
+             </div>
+            <span className="font-medium text-base sm:text-lg">Messages</span>
+           </NavLink>
 
-          <NavLink
-            to="/bookmarks"
-            onClick={guardClick}
-            className={({ isActive }) =>
-               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
-            }
-          >
-            <HiOutlineBookmark className="w-7 h-7 sm:w-7 sm:h-7" />
-            <span className="font-medium text-lg sm:text-lg">Bookmarks</span>
-          </NavLink>
+           <NavLink
+             to="/bookmarks"
+             onClick={guardClick}
+             className={({ isActive }) =>
+               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+             }
+           >
+            <HiOutlineBookmark className="w-6 h-6 sm:w-7 sm:h-7" />
+            <span className="font-medium text-base sm:text-lg">Bookmarks</span>
+           </NavLink>
 
-          <NavLink
-            to="/scheduled"
-            onClick={guardClick}
-            className={({ isActive }) =>
-               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
-            }
-          >
-            <HiOutlineClock className="w-7 h-7 sm:w-7 sm:h-7" />
-            <span className="font-medium text-lg sm:text-lg">Scheduled</span>
-          </NavLink>
+           <NavLink
+             to="/scheduled"
+             onClick={guardClick}
+             className={({ isActive }) =>
+               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+             }
+           >
+            <HiOutlineClock className="w-6 h-6 sm:w-7 sm:h-7" />
+            <span className="font-medium text-base sm:text-lg">Scheduled</span>
+           </NavLink>
 
-          <NavLink
-            to="/staking"
-            onClick={guardClick}
-            className={({ isActive }) =>
-               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
-            }
-          >
-            <HiOutlineCube className="w-7 h-7 sm:w-7 sm:h-7" />
-            <span className="font-medium text-lg sm:text-lg">Staking</span>
-          </NavLink>
+           <NavLink
+             to="/staking"
+             onClick={guardClick}
+             className={({ isActive }) =>
+               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+             }
+           >
+            <HiOutlineCube className="w-6 h-6 sm:w-7 sm:h-7" />
+            <span className="font-medium text-base sm:text-lg">Staking</span>
+           </NavLink>
 
-          <NavLink
-            to="/usernames"
-            className={({ isActive }) =>
-               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
-            }
-          >
-            <div className="relative">
-              <HiOutlineColorSwatch className="w-7 h-7 sm:w-7 sm:h-7" />
+           <NavLink
+             to="/usernames"
+             className={({ isActive }) =>
+               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+             }
+           >
+             <div className="relative">
+              <HiOutlineColorSwatch className="w-6 h-6 sm:w-7 sm:h-7" />
               {offersUnreadCount > 0 && (
                 <span className={`absolute -top-2 -right-2 min-w-[18px] h-[18px] flex items-center justify-center text-[11px] font-bold rounded-full bg-yellow-500 text-black px-1 border-2 ${isDark ? 'border-black' : 'border-white'}`}>
                   {offersUnreadCount > 99 ? '99+' : offersUnreadCount}
                 </span>
               )}
-            </div>
-            <span className="font-medium text-lg sm:text-lg">Usernames</span>
-          </NavLink>
+             </div>
+            <span className="font-medium text-base sm:text-lg">Usernames</span>
+           </NavLink>
 
-          <NavLink
-            to={activeToken?.username ? `/users/${activeToken.username}` : "/welcome"}
-            onClick={guardClick}
-            className={({ isActive }) =>
-               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
-            }
-          >
-            <HiOutlineUser className="w-7 h-7 sm:w-7 sm:h-7" />
-            <span className="font-medium text-lg sm:text-lg">Profile</span>
-          </NavLink>
+           <NavLink
+             to={activeToken?.username ? `/users/${activeToken.username}` : "/welcome"}
+             onClick={guardClick}
+             className={({ isActive }) =>
+               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+             }
+           >
+            <HiOutlineUser className="w-6 h-6 sm:w-7 sm:h-7" />
+            <span className="font-medium text-base sm:text-lg">Profile</span>
+           </NavLink>
 
-          <NavLink
-            to="/settings"
-            onClick={guardClick}
-            className={({ isActive }) =>
-               `relative flex items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
-            }
-          >
-            <HiOutlineCog className="w-7 h-7 sm:w-7 sm:h-7" />
-            <span className="font-medium text-lg sm:text-lg">Settings</span>
-          </NavLink>
+           <NavLink
+             to="/settings"
+             onClick={guardClick}
+             className={({ isActive }) =>
+               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+             }
+           >
+            <HiOutlineCog className="w-6 h-6 sm:w-7 sm:h-7" />
+            <span className="font-medium text-base sm:text-lg">Settings</span>
+           </NavLink>
         </nav>
 
         {!isCaptive && (
@@ -333,7 +333,7 @@ const Sidebar: React.FC = () => {
         )}
       </div>
 
-      <div className="pl-3 pr-0 mt-2 pb-0 sm:pl-4 sm:pr-0 sm:py-3 sm:mt-0 w-full shrink-0">
+      <div className="pl-3 pr-0 mt-2 pb-[env(safe-area-inset-bottom)] sm:pl-4 sm:pr-0 sm:py-3 sm:mt-0 w-full shrink-0">
         <ProfileChooser compact />
         {/* Theme toggle — mobile only (desktop has it elsewhere) */}
         <button
