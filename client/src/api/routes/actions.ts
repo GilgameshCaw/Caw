@@ -800,8 +800,14 @@ router.post('/', async (req, res) => {
     // cleanupOptimisticRows in utils/txQueueFailure.ts removes the pending row.
     if ((data.actionType === 7 || data.actionType === 'other') && plaintext.startsWith('vote:')) {
       try {
+        // Target poll resolved via the EIP-712 canonical pointer fields,
+        // NOT recipients[]. recipients[] is reserved for the contract's
+        // value-distribution invariant (amounts.length must equal
+        // recipients.length or recipients.length+1). Votes don't move
+        // CAW, so recipients stays empty and only the validator tip rides
+        // along in amounts.
         const parsed = parseVoteText(plaintext)
-        const pollOwnerTokenId = Number(data.recipients?.[0])
+        const pollOwnerTokenId = Number(data.receiverId)
         const targetCawonce = Number(data.receiverCawonce)
         if (parsed && pollOwnerTokenId && Number.isFinite(targetCawonce)) {
           // Find the poll's caw + poll row. If the poll doesn't exist yet

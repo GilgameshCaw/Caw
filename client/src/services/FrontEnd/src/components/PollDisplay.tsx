@@ -142,9 +142,18 @@ const PollDisplay: React.FC<Props> = ({ caw }) => {
       await signAndSubmit({
         actionType: 'other',
         senderId: activeToken.tokenId,
+        // The poll's caw is identified by (receiverId, receiverCawonce) —
+        // the on-chain canonical pointers. NOT recipients[] — that's the
+        // value-distribution list and must satisfy
+        //   amounts.length == recipients.length        (no validator tip)
+        // OR
+        //   amounts.length == recipients.length + 1    (last amount = tip)
+        // (CawActions.sol _distributeAmountsMem). Votes don't move CAW
+        // between users, so recipients stays empty and buildTypedData
+        // auto-appends the validator tip as the only amount.
         receiverId: caw.user.tokenId,
         receiverCawonce: caw.cawonce,
-        recipients: [caw.user.tokenId],
+        recipients: [],
         amounts: [],
         text: buildVoteText(optionIndex),
       })

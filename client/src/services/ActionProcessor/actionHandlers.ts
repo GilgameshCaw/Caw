@@ -909,13 +909,17 @@ async function handleTipAction(
  *   vote:N    — cast/change vote to option N (0-based index)
  *   vote:     — unvote (remove existing vote)
  *
- * The target poll is identified by (rawAction.recipients[0], receiverCawonce):
- *   recipients[0] = the poll author's tokenId
+ * The target poll is identified by (receiverId, receiverCawonce):
+ *   receiverId = the poll author's tokenId
  *   receiverCawonce = the cawonce of the caw the poll lives on
  *
- * We use these instead of a numeric cawId because cawId is local-DB-only —
- * different across mirror nodes. (recipients, receiverCawonce) are the
- * canonical on-chain pointers everyone agrees on.
+ * We use the EIP-712 canonical pointers (NOT recipients[]) because:
+ *   1. recipients[] must match the contract's amounts/recipients invariant
+ *      for value distribution — votes don't move CAW between users, so
+ *      recipients[] is empty and only carries the validator tip.
+ *   2. receiverId/receiverCawonce are the same fields replies/likes/recaws
+ *      already use to address a target caw. Mirror nodes agree on these
+ *      regardless of local DB state.
  *
  * Vote semantics: one row per (pollId, voterId). Voting again UPDATEs the
  * existing row's optionIndex; unvoting DELETEs the row. Poll.totalVotes is
@@ -936,10 +940,10 @@ async function handleVoteAction(
     return
   }
 
-  const pollOwnerTokenId = Number(rawAction.recipients?.[0])
+  const pollOwnerTokenId = Number(rawAction.receiverId)
   const targetCawonce = Number(rawAction.receiverCawonce)
   if (!pollOwnerTokenId || !Number.isFinite(targetCawonce)) {
-    console.warn('[handleVoteAction] Missing recipient/cawonce for vote:', { rawAction })
+    console.warn('[handleVoteAction] Missing receiverId/cawonce for vote:', { rawAction })
     return
   }
 
