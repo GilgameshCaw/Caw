@@ -411,13 +411,19 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
 
       {isDropdownOpen && (
         <ul
-          className={`${window.innerWidth < 1350 ? 'fixed' : 'absolute'} mt-2 rounded-md overflow-y-auto z-[9999] transition-all duration-300 max-h-[95vh] ${
+          className={`${compact ? 'absolute left-0 right-0 bottom-full mb-2 w-full max-w-full' : (window.innerWidth < 1350 ? 'fixed mt-2' : 'absolute mt-2')} rounded-md overflow-y-auto z-[9999] transition-all duration-300 max-h-[95vh] ${
+            compact ? '' : 'max-w-[calc(100vw-20px)] w-[min(420px,calc(100vw-20px))]'
+          } ${
             isDark ? 'bg-black border border-white/20' : 'bg-white border border-gray-200'
           }`}
           style={{
-            right: window.innerWidth < 1350 ? 'auto' : '0',
-            left: window.innerWidth < 1350 ? '10px' : 'auto',
-            bottom: window.innerWidth < 1350 ? '15px' : '0',
+            ...(compact
+              ? {}
+              : {
+                  right: window.innerWidth < 1350 ? '10px' : '0',
+                  left: window.innerWidth < 1350 ? '10px' : 'auto',
+                  bottom: window.innerWidth < 1350 ? '15px' : '0',
+                }),
           }}
         >
           {Object.entries(visibleTokensByAddress).map(([ownerAddress, tokenList]) => (
@@ -425,10 +431,10 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
               isDark ? 'border-gray-700' : 'border-gray-200'
             }`}>
               {/* group header */}
-              <div className={`sticky top-0 z-10 px-4 py-2 text-xs font-semibold flex space-between transition-all duration-300 hover-parent ${
+              <div className={`sticky top-0 z-10 px-4 py-2 text-xs font-semibold flex items-center justify-between gap-2 min-w-0 transition-all duration-300 hover-parent ${
                 isDark ? 'bg-gray-900 text-white' : 'bg-gray-100 text-black'
               }`}>
-                <div className="">
+                <div className="flex-1 min-w-0 truncate" title={ownerAddress}>
                   {ownerAddress}
                 </div>
                 {normalizedAddress == ownerAddress ? (

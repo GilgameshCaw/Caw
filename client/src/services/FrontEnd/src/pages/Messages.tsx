@@ -88,6 +88,7 @@ const MessagesPage: React.FC = () => {
   const [showSearchModal, setShowSearchModal] = useState(false)
   const [showFileUpload, setShowFileUpload] = useState(false)
   const [showGifPicker, setShowGifPicker] = useState(false)
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false)
   const [gifPreview, setGifPreview] = useState<{ url: string; preview: string } | null>(null)
   const [isDragOver, setIsDragOver] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
@@ -412,6 +413,7 @@ const MessagesPage: React.FC = () => {
 
     const content = newMessageContent.trim()
     setNewMessageContent('')
+    setShowEmojiPicker(false)
 
     // Stop typing indicator
     if (typingTimeoutRef.current) {
@@ -523,6 +525,22 @@ const MessagesPage: React.FC = () => {
       setIsTyping(false)
       sendTyping(selectedConversationId, false)
     }, 2000)
+  }
+
+  const emojiOnlyTextClass = (text: string): string => {
+    const t = (text ?? '').trim()
+    if (!t) return 'text-sm'
+
+    // Emoji-only messages should render larger (WhatsApp/Twitter style)
+    const emojiOnly = /^(?:\p{Extended_Pictographic}|\p{Emoji_Component}|\u200D|\uFE0F|\s)+$/u.test(t)
+    if (!emojiOnly) return 'text-sm'
+
+    const emojiCount = (t.match(/\p{Extended_Pictographic}/gu) ?? []).length
+    if (emojiCount <= 0) return 'text-sm'
+    if (emojiCount === 1) return 'text-5xl leading-none'
+    if (emojiCount === 2) return 'text-4xl leading-none'
+    if (emojiCount <= 4) return 'text-3xl leading-none'
+    return 'text-xl leading-tight'
   }
 
   // Redirect legacy ?user= param to /messages/:username
@@ -1497,7 +1515,7 @@ const MessagesPage: React.FC = () => {
                                 />
                               )
                             }
-                            return <p className="text-sm whitespace-pre-wrap">{messageContent}</p>
+                            return <p className={`${emojiOnlyTextClass(messageContent)} whitespace-pre-wrap`}>{messageContent}</p>
                           })()}
 
                           {/* Edited indicator */}
@@ -1776,6 +1794,30 @@ const MessagesPage: React.FC = () => {
                 </div>
               )}
 
+              {/* Emoji Picker */}
+              {showEmojiPicker && !gifPreview && !filePreview && (
+                <div className={`border-t p-3 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+                  <div className={`p-4 border rounded-lg ${
+                    isDark ? 'border-white/20 bg-black' : 'border-gray-200 bg-gray-50'
+                  }`}>
+                    <div className="grid grid-cols-6 gap-2 max-h-32 overflow-y-auto">
+                      {['😀', '😂', '🤣', '😊', '😍', '🤔', '😎', '🔥', '💯', '❤️', '👍', '👎'].map((emoji) => (
+                        <button
+                          key={emoji}
+                          onClick={() => {
+                            setNewMessageContent((prev) => prev + emoji)
+                            setShowEmojiPicker(false)
+                          }}
+                          className={`p-1 text-xl rounded transition-colors ${isDark ? 'hover:bg-white/10' : 'hover:bg-gray-200'}`}
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Message Input */}
               <div className="border-t border-white/10 p-2 md:p-4">
               <div className={`flex items-center rounded-full border transition-all duration-300 focus-within:ring-2 focus-within:ring-gray-500/30 ${
@@ -1809,7 +1851,10 @@ const MessagesPage: React.FC = () => {
 
                   {/* GIF picker */}
                   <button
-                    onClick={() => setShowGifPicker(!showGifPicker)}
+                    onClick={() => {
+                      setShowEmojiPicker(false)
+                      setShowGifPicker(!showGifPicker)
+                    }}
                     className={`px-2 py-1 rounded-full text-sm font-medium transition-all duration-200 cursor-pointer ${
                       showGifPicker
                         ? isDark
@@ -1823,11 +1868,19 @@ const MessagesPage: React.FC = () => {
                   </button>
 
                   {/* Emoji icon */}
-                  <button className={`p-1 rounded-full transition-all duration-200 cursor-pointer ${
-                    isDark
-                      ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
-                      : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50'
-                  }`}>
+                  <button
+                    onClick={() => {
+                      setShowGifPicker(false)
+                      setShowEmojiPicker(!showEmojiPicker)
+                    }}
+                    className={`p-1 rounded-full transition-all duration-200 cursor-pointer ${
+                      showEmojiPicker
+                        ? (isDark ? 'text-yellow-400 bg-yellow-400/20' : 'text-yellow-600 bg-yellow-200')
+                        : (isDark
+                          ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
+                          : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
+                    }`}
+                  >
                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
