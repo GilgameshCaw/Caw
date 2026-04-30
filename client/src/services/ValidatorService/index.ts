@@ -738,8 +738,19 @@ export const validatorService: Service = {
             })
           : []
 
-        // Ensure amounts has exactly recipients.length + 1 entries for packed format
-        while (amounts.length < recipients.length + 1) amounts.push('0')
+        // DO NOT pad amounts. The contract accepts both
+        //   amounts.length == recipients.length        (no validator tip)
+        // OR
+        //   amounts.length == recipients.length + 1    (last amount is the tip)
+        // Padding here mutates the payload AFTER the user signed it, which
+        // changes the EIP-712 struct hash on-chain. ecrecover then returns
+        // a random non-zero address, no session matches, and the contract
+        // reverts with the misleading "Session expired or not found" — a
+        // ghost bug that masqueraded as Quick-Sign expiry for any action
+        // submitted with a non-canonical amounts shape (notably the early
+        // poll-vote shape with recipients=[poll-author], amounts=[tip]).
+        // Submit exactly what the user signed; the contract handles both
+        // valid forms.
 
         actions.push({
           ...actionData,
