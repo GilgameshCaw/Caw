@@ -411,6 +411,14 @@ const Notifications: React.FC = () => {
     if (lower.includes('sigs length mismatch') || lower.includes('invalid signature') || lower.includes('signature')) {
       return 'Signature validation failed on-chain.'
     }
+    // The contract's "Session expired or not found" revert is a fallback —
+    // it fires whenever ecrecover returns an address that isn't the owner
+    // and isn't a registered session. The literal message is misleading
+    // (your session might be perfectly fine) so we soften it to a generic
+    // "couldn't verify" rather than implying the user's Quick Sign is bad.
+    if (lower.includes('session expired') || lower.includes('session not found')) {
+      return 'Couldn\'t verify the action signature on-chain. Try again.'
+    }
     if (lower.includes('simulation') || lower.includes('internal error') || lower.includes('rpc')) {
       return 'Something went wrong while processing this action on-chain.'
     }
