@@ -1,6 +1,6 @@
 // src/components/ContentWithHashtags.tsx
 import React, { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import LinkPreview from './LinkPreview'
 import Tooltip from '~/components/Tooltip'
 import ImageLightbox from './ImageLightbox'
@@ -44,7 +44,15 @@ const ShortUrlImage: React.FC<{
   originHost?: string
   onError: (url: string) => void
   imageErrors: Set<string>
-}> = ({ code, originHost, onError, imageErrors }) => {
+  /** Optional wrapper class override (defaults keep legacy layout). */
+  wrapperClassName?: string
+  /** Optional img class override (defaults keep legacy layout). */
+  imgClassName?: string
+  /** Optional skeleton class override (defaults keep legacy layout). */
+  skeletonClassName?: string
+  /** When provided, click is forwarded instead of opening internal lightbox. */
+  onImageClick?: (originalUrl: string, e: React.MouseEvent) => void
+}> = ({ code, originHost, onError, imageErrors, wrapperClassName, imgClassName, skeletonClassName, onImageClick }) => {
   const { url: originalUrl, loading } = useCachedFetch(
     cacheKey(originHost, code),
     shortUrlCache,
@@ -54,7 +62,11 @@ const ShortUrlImage: React.FC<{
 
   const [lightboxOpen, setLightboxOpen] = useState(false)
 
-  if (loading) return <MediaSkeleton />
+  if (loading) {
+    return skeletonClassName
+      ? <div className={skeletonClassName} />
+      : <MediaSkeleton />
+  }
   if (!originalUrl || imageErrors.has(originalUrl)) return null
 
   // feedImageLargeUrl returns undefined for URLs outside /uploads/images/,
@@ -62,27 +74,36 @@ const ShortUrlImage: React.FC<{
   // safe to pass through unconditionally.
   const largeSrc = feedImageLargeUrl(originalUrl)
 
+  const wrapper = wrapperClassName ?? 'my-2 max-w-full'
+  const imgClass = imgClassName ?? 'max-w-full max-h-96 rounded-lg object-contain cursor-zoom-in'
+
   return (
     <>
-      <div className="my-2 max-w-full">
+      <div className={wrapper}>
         <img
           src={originalUrl}
           alt="Embedded content"
-          className="max-w-full max-h-96 rounded-lg object-contain cursor-zoom-in"
+          className={imgClass}
           loading="lazy"
           onError={() => onError(originalUrl)}
           onClick={(e) => {
             e.stopPropagation()
-            setLightboxOpen(true)
+            if (onImageClick) {
+              onImageClick(originalUrl, e)
+            } else {
+              setLightboxOpen(true)
+            }
           }}
         />
       </div>
-      <ImageLightbox
-        src={originalUrl}
-        largeSrc={largeSrc}
-        isOpen={lightboxOpen}
-        onClose={() => setLightboxOpen(false)}
-      />
+      {!onImageClick && (
+        <ImageLightbox
+          src={originalUrl}
+          largeSrc={largeSrc}
+          isOpen={lightboxOpen}
+          onClose={() => setLightboxOpen(false)}
+        />
+      )}
     </>
   )
 }
@@ -155,6 +176,12 @@ const ShortUrlVideo: React.FC<{
 interface Props {
   content: string
   className?: string
+  /** When provided, clicking an image navigates to the post media modal route. */
+  postId?: string
+  /** When false, do not extract/render embedded media (images/videos) from content. */
+  renderMedia?: boolean
+  /** When true, remove media URLs from the text output (prevents raw image links showing). */
+  stripMediaUrls?: boolean
 }
 
 // Regex to match Giphy URLs
@@ -170,8 +197,9 @@ const SHORT_URL_REGEX = /^(?:https?:\/\/[^\/]+)?\/s\/([a-zA-Z0-9]+(?:\.[a-zA-Z0-
 /**
  * Component that renders text content with clickable hashtags and embedded images/GIFs
  */
-const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
+const ContentWithHashtags: React.FC<Props> = ({ content, className = '', postId, renderMedia = true, stripMediaUrls = true }) => {
   const navigate = useNavigate()
+  const location = useLocation()
   const { isDark } = useTheme()
   const linkClass = isDark
     ? 'text-yellow-400 hover:text-yellow-300'
@@ -180,6 +208,13 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
   // One lightbox slot for the whole post — clicking any inline image
   // sets it; the modal closes on Esc / backdrop / swipe down.
   const [lightbox, setLightbox] = useState<{ src: string; largeSrc?: string } | null>(null)
+
+  const openPostMedia = (mediaIndex: number) => {
+    if (!postId) return
+    navigate(`/caws/${postId}?media=${mediaIndex}&source=content`, {
+      state: { backgroundLocation: location }
+    })
+  }
 
   const handleHashtagClick = (hashtag: string, event: React.MouseEvent) => {
     event.preventDefault()
@@ -232,7 +267,7 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
     return /\.(gif|jpg|jpeg|png|webp)$/i.test(code)
   }
 
-  const parseTextWithHashtags = (text: string, keyPrefix: string) => {
+  const parseTextWithHashtags = (text: string, keyPrefix: string, renderMedia: boolean) => {
     // Matches hashtags, cashtags, @mentions, AND short URLs (so we can render
     // short URLs as clickable links pointing to the original URL).
     // - Short URLs: /s/code or https://host/s/code (with optional extension).
@@ -265,8 +300,22 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
       if (shortUrlMatch) {
         const shortHref = shortUrlMatch[1]
         const code = shortUrlMatch[2]
-        // Skip media short URLs — they're handled by parseContent as images/videos
-        if (isMediaShortUrl(code) || isVideoShortUrl(code)) return part
+        // Media short URLs are normally handled by parseContent as images/videos.
+        // But when media rendering is disabled (e.g. inside the media modal post panel),
+        // render them as a regular short link instead.
+        if (isMediaShortUrl(code) || isVideoShortUrl(code)) {
+          if (!renderMedia) {
+            return (
+              <ShortUrlLink
+                key={`${keyPrefix}-${index}`}
+                code={code}
+                shortHref={shortHref}
+                originHost={extractShortUrlHost(shortHref)}
+              />
+            )
+          }
+          return part
+        }
         return (
           <ShortUrlLink key={`${keyPrefix}-${index}`} code={code} shortHref={shortHref} originHost={extractShortUrlHost(shortHref)} />
         )
@@ -329,9 +378,9 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
     })
   }
 
-  const parseContent = (text: string) => {
-    // Extract all media in a single pass to preserve order
-    // Each match includes its position so we can sort by original order
+  const parseContent = (text: string, renderMedia: boolean, stripMediaUrls: boolean) => {
+    // Extract all media in a single pass to preserve order.
+    // Each match includes its position so we can sort by original order.
     const mediaMatches: { type: 'image' | 'shortImage' | 'shortVideo'; data: string; code?: string; originHost?: string; position: number }[] = []
 
     // Pattern for short URLs with extensions (e.g., /s/abc123.png, /s/abc123.mov)
@@ -342,39 +391,45 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
     // Find all matches with their positions
     let match: RegExpExecArray | null
 
-    // Short URLs with media extensions (images and videos)
-    while ((match = shortUrlWithExtPattern.exec(text)) !== null) {
-      const code = match[1]
-      const isVideo = /\.(mp4|webm|mov)$/i.test(code)
-      mediaMatches.push({
-        type: isVideo ? 'shortVideo' : 'shortImage',
-        data: match[0],
-        code: code,
-        originHost: extractShortUrlHost(match[0]),
-        position: match.index
-      })
+    if (renderMedia) {
+      // Short URLs with media extensions (images and videos)
+      while ((match = shortUrlWithExtPattern.exec(text)) !== null) {
+        const code = match[1]
+        const isVideo = /\.(mp4|webm|mov)$/i.test(code)
+        mediaMatches.push({
+          type: isVideo ? 'shortVideo' : 'shortImage',
+          data: match[0],
+          code: code,
+          originHost: extractShortUrlHost(match[0]),
+          position: match.index
+        })
+      }
+
+      // Direct image URLs (excluding short URLs)
+      while ((match = imageUrlPattern.exec(text)) !== null) {
+        // Skip if it's a short URL (already handled)
+        if (match[0].includes('/s/')) continue
+        mediaMatches.push({
+          type: 'image',
+          data: match[0],
+          position: match.index
+        })
+      }
+
+      // Sort by position to maintain original order
+      mediaMatches.sort((a, b) => a.position - b.position)
     }
 
-    // Direct image URLs (excluding short URLs)
-    while ((match = imageUrlPattern.exec(text)) !== null) {
-      // Skip if it's a short URL (already handled)
-      if (match[0].includes('/s/')) continue
-      mediaMatches.push({
-        type: 'image',
-        data: match[0],
-        position: match.index
-      })
-    }
+    // Remove media URLs from the text when requested.
+    // NOTE: This is especially important in the media modal post panel where we
+    // hide inline media — we still don't want to show raw image URLs.
+    let processedText = stripMediaUrls
+      ? text
+          .replace(shortUrlWithExtPattern, '')
+          .replace(imageUrlPattern, (match) => match.includes('/s/') ? match : '')
+      : text
 
-    // Sort by position to maintain original order
-    mediaMatches.sort((a, b) => a.position - b.position)
-
-    // Remove all media from text
-    let processedText = text
-      .replace(shortUrlWithExtPattern, '')
-      .replace(imageUrlPattern, (match) => match.includes('/s/') ? match : '')
-
-    // Clean up extra spaces left by removed refs (but preserve newlines!)
+    // Clean up extra spaces (but preserve newlines!)
     processedText = processedText
       .replace(/[ \t]+/g, ' ')  // Collapse multiple spaces/tabs (not newlines)
       .replace(/^ +/gm, '')     // Remove leading spaces on each line
@@ -432,7 +487,7 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
       // Regular text line with hashtag parsing
       result.push(
         <span key={`text-${lineIndex}`}>
-          {parseTextWithHashtags(line, `line-${lineIndex}`)}
+          {parseTextWithHashtags(line, `line-${lineIndex}`, renderMedia)}
         </span>
       )
 
@@ -463,56 +518,147 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '' }) => {
       }
     }
 
+    const gridClassFor = (count: number) =>
+      count === 2
+        ? 'grid grid-cols-2 gap-1.5 aspect-video rounded-lg overflow-hidden'
+        : count === 3
+          ? 'grid grid-cols-2 grid-rows-2 gap-1.5 aspect-video rounded-lg overflow-hidden'
+          : 'grid grid-cols-2 grid-rows-2 gap-1.5 aspect-video rounded-lg overflow-hidden'
+
+    const cellClassFor = (count: number, i: number) =>
+      count === 3 && i === 0 ? 'row-span-2 w-full h-full' : 'w-full h-full'
+
+    // Image index within the post (in render order). Used for deep-linking
+    // into the post media modal.
+    let mediaImageIndex = 0
+
+    if (!renderMedia) return result
+
     // Render all media in order (sorted by original position in text)
-    mediaMatches.forEach((media, idx) => {
-      if (media.type === 'shortImage' && media.code) {
+    // UX fix: when multiple images are present, render them as a grid
+    // (matching the pre-post MediaUpload layout) instead of stacking.
+    for (let i = 0; i < mediaMatches.length; i++) {
+      const m = mediaMatches[i]
+      const isImageLike = m.type === 'image' || m.type === 'shortImage'
+
+      if (isImageLike) {
+        const start = i
+        while (i < mediaMatches.length && (mediaMatches[i].type === 'image' || mediaMatches[i].type === 'shortImage')) i++
+        const run = mediaMatches.slice(start, i)
+        i--
+
+        // Single image keeps legacy behavior (object-contain)
+        if (run.length === 1) {
+          const only = run[0]
+          const imageIdx = mediaImageIndex
+          mediaImageIndex += 1
+          if (only.type === 'shortImage' && only.code) {
+            result.push(
+              <ShortUrlImage
+                key={`shortimg-${start}`}
+                code={only.code}
+                originHost={only.originHost}
+                onError={handleImageError}
+                imageErrors={imageErrors}
+                onImageClick={postId ? () => openPostMedia(imageIdx) : undefined}
+              />
+            )
+          } else if (only.type === 'image') {
+            const url = only.data
+            result.push(
+              <div key={`img-${start}`} className="my-2 max-w-full">
+                <img
+                  src={url}
+                  alt="Embedded content"
+                  className="max-w-full max-h-96 rounded-lg object-contain cursor-zoom-in"
+                  loading="lazy"
+                  onError={() => handleImageError(url)}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (postId) openPostMedia(imageIdx)
+                    else setLightbox({ src: url, largeSrc: feedImageLargeUrl(url) })
+                  }}
+                />
+              </div>
+            )
+          }
+          continue
+        }
+
+        const baseImageIndex = mediaImageIndex
+        // Even if we only *display* up to 4, keep indices consistent so
+        // +N overlays still deep-link correctly.
+        mediaImageIndex += run.length
+
+        const visible = run.slice(0, 4)
+        const count = visible.length
+
         result.push(
-          <ShortUrlImage
-            key={`shortimg-${idx}`}
-            code={media.code}
-            originHost={media.originHost}
-            onError={handleImageError}
-            imageErrors={imageErrors}
-          />
+          <div key={`imggrid-${start}`} className="my-2 max-w-full">
+            <div className={gridClassFor(count)}>
+              {visible.map((im, idx) => (
+                <div
+                  key={`imgcell-${start}-${idx}`}
+                  className={`relative w-full h-full overflow-hidden ${cellClassFor(count, idx)}`}
+                >
+                  {im.type === 'shortImage' && im.code ? (
+                    <ShortUrlImage
+                      code={im.code}
+                      originHost={im.originHost}
+                      onError={handleImageError}
+                      imageErrors={imageErrors}
+                      wrapperClassName="w-full h-full"
+                      imgClassName="block w-full h-full object-cover"
+                      skeletonClassName="w-full h-full bg-gray-200 dark:bg-gray-700 animate-pulse"
+                      onImageClick={postId ? () => openPostMedia(baseImageIndex + idx) : undefined}
+                    />
+                  ) : (
+                    <img
+                      src={im.data}
+                      alt={`Embedded content ${idx + 1}`}
+                      className="block w-full h-full object-cover cursor-zoom-in"
+                      loading="lazy"
+                      onError={() => handleImageError(im.data)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (postId) openPostMedia(baseImageIndex + idx)
+                        else setLightbox({ src: im.data, largeSrc: feedImageLargeUrl(im.data) })
+                      }}
+                    />
+                  )}
+
+                  {run.length > 4 && idx === 3 && (
+                    <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-white text-xl font-semibold pointer-events-none">
+                      +{run.length - 4}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
         )
-      } else if (media.type === 'shortVideo' && media.code) {
+        continue
+      }
+
+      if (m.type === 'shortVideo' && m.code) {
         result.push(
           <ShortUrlVideo
-            key={`shortvid-${idx}`}
-            code={media.code}
-            originHost={media.originHost}
+            key={`shortvid-${i}`}
+            code={m.code}
+            originHost={m.originHost}
             onError={handleImageError}
             videoErrors={imageErrors}
           />
         )
-      } else if (media.type === 'image') {
-        const url = media.data
-        // External images don't have variants — the inline render IS the
-        // biggest version we have. Lightbox just gives full-viewport space.
-        result.push(
-          <div key={`img-${idx}`} className="my-2 max-w-full">
-            <img
-              src={url}
-              alt="Embedded content"
-              className="max-w-full max-h-96 rounded-lg object-contain cursor-zoom-in"
-              loading="lazy"
-              onError={() => handleImageError(url)}
-              onClick={(e) => {
-                e.stopPropagation()
-                setLightbox({ src: url, largeSrc: feedImageLargeUrl(url) })
-              }}
-            />
-          </div>
-        )
       }
-    })
+    }
 
     return result
   }
 
   return (
     <div className={`break-words ${className}`}>
-      {parseContent(content)}
+      {parseContent(content, renderMedia, stripMediaUrls)}
       {lightbox && (
         <ImageLightbox
           src={lightbox.src}

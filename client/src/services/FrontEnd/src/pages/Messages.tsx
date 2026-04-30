@@ -74,6 +74,20 @@ const MessagesPage: React.FC = () => {
   const [defaultReactions, setDefaultReactions] = useState<string[]>([])
   // Modals invoked from the reaction strip.
   const [emojiPickerForMessage, setEmojiPickerForMessage] = useState<string | null>(null)
+  // Which message currently has its quick-reaction strip open.
+  // On desktop this is toggled by the smiley trigger; on mobile we open
+  // it via long-press on the bubble.
+  const [reactionStripForMessage, setReactionStripForMessage] = useState<string | null>(null)
+
+  // Long-press state for opening reactions on touch devices.
+  const longPressRef = useRef<{ timer: number | null; messageId: string | null; pointerId: number | null; startX: number; startY: number; fired: boolean }>({
+    timer: null,
+    messageId: null,
+    pointerId: null,
+    startX: 0,
+    startY: 0,
+    fired: false,
+  })
   // Toggles the full emoji picker for the *composer* (vs. reactions).
   // Picking from it inserts the emoji into the textarea, mirroring the
   // small inline strip's behavior.
@@ -863,6 +877,18 @@ const MessagesPage: React.FC = () => {
     }
   }
 
+  // Compact clock time for bubble footer (X-style).
+  const formatBubbleTime = (dateStr: string | number | Date | undefined) => {
+    if (!dateStr) return ''
+    try {
+      const date = new Date(dateStr)
+      if (isNaN(date.getTime())) return ''
+      return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+    } catch {
+      return ''
+    }
+  }
+
   // Close chat options menu when clicking outside
   useEffect(() => {
     if (!showChatOptionsMenu) return
@@ -880,7 +906,9 @@ const MessagesPage: React.FC = () => {
   return (
     <MainLayout>
       <div
-        className={`max-w-2xl mx-auto pt-4 pb-0 flex flex-col relative h-full ${isDark ? 'bg-black' : 'bg-white'}`}
+        className={`max-w-2xl mx-auto pt-4 pb-0 flex flex-col relative flex-1 min-h-0 ${
+          currentView === 'chat' ? 'h-[calc(100dvh-var(--app-mobile-header-h))] md:h-screen' : ''
+        } ${isDark ? 'bg-black' : 'bg-white'}`}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -894,7 +922,11 @@ const MessagesPage: React.FC = () => {
           </div>
         )}
         {/* Messages Header */}
-        <div className={`mb-6 flex-shrink-0 mx-3 sm:mx-6 ${currentView === 'chat' ? `fixed md:sticky top-0 left-0 right-0 z-30 p-4 md:p-0 ${isDark ? 'bg-black' : 'bg-white'}` : ''}`}>
+        <div
+          className={`${currentView === 'chat'
+            ? `flex-shrink-0 w-full px-4 py-3 ${isDark ? 'bg-black' : 'bg-white'}`
+            : `mb-6 flex-shrink-0 mx-3 sm:mx-6`}`}
+        >
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-4">
               {currentView === 'chat' && (
@@ -1320,9 +1352,9 @@ const MessagesPage: React.FC = () => {
 
         {/* Chat View */}
         {currentView === 'chat' && selectedConversationId && (
-          <div className="flex flex-col flex-1 md:flex-1 h-screen md:h-auto">
+          <div className="flex flex-col flex-1 min-h-0">
             {/* Encryption Status Banner */}
-            <div className={`flex items-center justify-center py-4 px-6 mx-3 sm:mx-6 ${
+            <div className={`flex-shrink-0 w-full flex items-center justify-center py-4 px-6 ${
               isDark ? 'bg-green-900/20 border-b border-green-800/30' : 'bg-green-50 border-b border-green-200'
             }`}>
               <div className="flex items-center space-x-2">
@@ -1340,8 +1372,8 @@ const MessagesPage: React.FC = () => {
             {/* Chat Messages — fixed height so overflow scrolling works, fade in when ready */}
             <div
               ref={messagesContainerRef}
-              className="overflow-y-auto custom-scrollbar-alt space-y-4 p-4 md:p-4 pt-32 md:pt-4 pb-20 md:pb-4 transition-opacity duration-300"
-              style={{ height: '100%', opacity: chatReady ? 1 : 0 }}
+              className="flex-1 min-h-0 overflow-y-auto overscroll-contain custom-scrollbar-alt p-4 md:p-4 pt-4 pb-20 md:pb-4 transition-opacity duration-300"
+              style={{ opacity: chatReady ? 1 : 0 }}
               onScroll={(e) => {
                 const el = e.currentTarget
                 // Load older messages when scrolled near the top
@@ -1392,7 +1424,7 @@ const MessagesPage: React.FC = () => {
 
                 let lastDateLabel = ''
 
-                return messages.map((message) => {
+                return messages.map((message, msgIdx) => {
                   // Handle different content types
                   let messageContent = '';
                   let attachments: any[] = [];
@@ -1432,11 +1464,18 @@ const MessagesPage: React.FC = () => {
                     ? messages.find(m => m.id === message.replyToMessageId)
                     : undefined
 
+                  const nextMsg = messages[msgIdx + 1]
+                  const compactWithNext = !!nextMsg
+                    && nextMsg.isFromCurrentUser === message.isFromCurrentUser
+                    && new Date(nextMsg.createdAt).toDateString() === msgDate.toDateString()
+                    && (new Date(nextMsg.createdAt).getTime() - msgDate.getTime()) <= 5 * 60 * 1000
+                  const blockSpacing = compactWithNext && message.isFromCurrentUser ? 'mb-2' : 'mb-4'
+
                   return (
                     <div
                       key={message.id}
                       data-message-id={message.id}
-                      className={`${isNew ? (message.isFromCurrentUser ? 'dm-animate-in-right' : 'dm-animate-in-left') : ''} ${
+                      className={`${blockSpacing} ${isNew ? (message.isFromCurrentUser ? 'dm-animate-in-right' : 'dm-animate-in-left') : ''} ${
                         highlightMessageId === message.id ? 'dm-highlight-flash' : ''
                       }`}
                     >
@@ -1521,6 +1560,52 @@ const MessagesPage: React.FC = () => {
                                 ? 'bg-gray-700 text-white'
                                 : 'bg-gray-200 text-black'
                             }`}
+                            onPointerDown={(e) => {
+                              // Mobile UX: reactions open on long-press, not on random taps.
+                              if (e.pointerType !== 'touch') return
+                              // Only one long-press tracker at a time.
+                              if (longPressRef.current.timer) window.clearTimeout(longPressRef.current.timer)
+                              longPressRef.current = {
+                                timer: window.setTimeout(() => {
+                                  longPressRef.current.fired = true
+                                  setReactionStripForMessage(message.id)
+                                }, 420),
+                                messageId: message.id,
+                                pointerId: e.pointerId,
+                                startX: e.clientX,
+                                startY: e.clientY,
+                                fired: false,
+                              }
+                            }}
+                            onPointerMove={(e) => {
+                              if (e.pointerType !== 'touch') return
+                              if (longPressRef.current.pointerId !== e.pointerId) return
+                              const dx = Math.abs(e.clientX - longPressRef.current.startX)
+                              const dy = Math.abs(e.clientY - longPressRef.current.startY)
+                              // If the user is scrolling, bail.
+                              if (dx + dy > 12 && longPressRef.current.timer) {
+                                window.clearTimeout(longPressRef.current.timer)
+                                longPressRef.current.timer = null
+                              }
+                            }}
+                            onPointerUp={(e) => {
+                              if (e.pointerType !== 'touch') return
+                              if (longPressRef.current.pointerId !== e.pointerId) return
+                              if (longPressRef.current.timer) window.clearTimeout(longPressRef.current.timer)
+                              longPressRef.current.timer = null
+                              longPressRef.current.pointerId = null
+                              longPressRef.current.messageId = null
+                              longPressRef.current.fired = false
+                            }}
+                            onPointerCancel={(e) => {
+                              if (e.pointerType !== 'touch') return
+                              if (longPressRef.current.pointerId !== e.pointerId) return
+                              if (longPressRef.current.timer) window.clearTimeout(longPressRef.current.timer)
+                              longPressRef.current.timer = null
+                              longPressRef.current.pointerId = null
+                              longPressRef.current.messageId = null
+                              longPressRef.current.fired = false
+                            }}
                           >
 
                           {/* Inline editing mode */}
@@ -1556,6 +1641,18 @@ const MessagesPage: React.FC = () => {
                           <>
                           {/* Message content — handle text, images, GIFs, encrypted attachments */}
                           {messageContent && (() => {
+                            const bubbleTime = formatBubbleTime(message.createdAt)
+                            const bubbleTimeTextClass = message.isFromCurrentUser
+                              ? 'text-white/70'
+                              : isDark
+                                ? 'text-white/60'
+                                : 'text-black/60'
+                            const bubbleTimePillClass = message.isFromCurrentUser
+                              ? 'bg-black/40 text-white/80'
+                              : isDark
+                                ? 'bg-black/40 text-white/75'
+                                : 'bg-white/80 text-black/70'
+
                             // Check for encrypted attachment JSON
                             try {
                               const parsed = JSON.parse(messageContent)
@@ -1569,23 +1666,41 @@ const MessagesPage: React.FC = () => {
                                 const mt = String(parsed.mimeType || '')
                                 if (mt.startsWith('image/') || mt.startsWith('video/') || parsed.type === 'image') {
                                   return (
-                                    <EncryptedImage
-                                      url={parsed.url}
-                                      sharedSecret={chatSharedSecret}
-                                      mimeType={parsed.mimeType}
-                                      alt={parsed.name}
-                                      className={mt.startsWith('video/')
-                                        ? 'max-w-[320px] max-h-[320px] rounded-lg'
-                                        : 'max-w-[240px] max-h-[240px] rounded-lg object-contain'}
-                                    />
+                                    <div className="relative">
+                                      <EncryptedImage
+                                        url={parsed.url}
+                                        sharedSecret={chatSharedSecret}
+                                        mimeType={parsed.mimeType}
+                                        alt={parsed.name}
+                                        className={mt.startsWith('video/')
+                                          ? 'max-w-[320px] max-h-[320px] rounded-lg'
+                                          : 'max-w-[240px] max-h-[240px] rounded-lg object-contain'}
+                                      />
+                                      {bubbleTime && (
+                                        <span className={`absolute bottom-1 right-1 px-1.5 py-0.5 rounded text-[11px] font-medium whitespace-nowrap ${bubbleTimePillClass}`}>
+                                          <span className="inline-flex items-center gap-1">
+                                            {bubbleTime}
+                                            <HiOutlineLockClosed className="w-3 h-3 text-green-400" />
+                                          </span>
+                                        </span>
+                                      )}
+                                    </div>
                                   )
                                 }
                                 // Generic file
                                 return (
-                                  <div className="flex items-center gap-2 p-2 rounded bg-black/20">
-                                    <HiOutlinePaperClip className="w-4 h-4 flex-shrink-0" />
-                                    <span className="text-xs truncate">{parsed.name}</span>
-                                    <span className="text-xs text-white/30">{(parsed.size / 1024).toFixed(0)}KB</span>
+                                  <div className="grid grid-cols-[1fr_auto] items-end gap-2 min-w-0">
+                                    <div className="flex items-center gap-2 p-2 rounded bg-black/20 min-w-0">
+                                      <HiOutlinePaperClip className="w-4 h-4 flex-shrink-0" />
+                                      <span className="text-xs truncate">{parsed.name}</span>
+                                      <span className="text-xs text-white/30 flex-shrink-0">{(parsed.size / 1024).toFixed(0)}KB</span>
+                                    </div>
+                                    {bubbleTime && (
+                                      <span className={`text-[11px] font-medium whitespace-nowrap inline-flex items-center gap-1 ${bubbleTimeTextClass}`}>
+                                        {bubbleTime}
+                                        <HiOutlineLockClosed className="w-3 h-3 text-green-400" />
+                                      </span>
+                                    )}
                                   </div>
                                 )
                               }
@@ -1597,15 +1712,38 @@ const MessagesPage: React.FC = () => {
                             const trimmed = messageContent.trim()
                             if (imageUrlPattern.test(trimmed) || giphyPattern.test(trimmed)) {
                               return (
-                                <img
-                                  src={trimmed}
-                                  alt="Shared image"
-                                  className="max-w-[240px] max-h-[240px] rounded-lg object-contain"
-                                  loading="lazy"
-                                />
+                                <div className="relative">
+                                  <img
+                                    src={trimmed}
+                                    alt="Shared image"
+                                    className="max-w-[240px] max-h-[240px] rounded-lg object-contain"
+                                    loading="lazy"
+                                  />
+                                  {bubbleTime && (
+                                    <span className={`absolute bottom-1 right-1 px-1.5 py-0.5 rounded text-[11px] font-medium whitespace-nowrap ${bubbleTimePillClass}`}>
+                                      <span className="inline-flex items-center gap-1">
+                                        {bubbleTime}
+                                        <HiOutlineLockClosed className="w-3 h-3 text-green-400" />
+                                      </span>
+                                    </span>
+                                  )}
+                                </div>
                               )
                             }
-                            return <p className={`${emojiOnlyTextClass(messageContent)} whitespace-pre-wrap`}>{messageContent}</p>
+
+                            return (
+                              <div className="grid grid-cols-[1fr_auto] items-end gap-2 min-w-0">
+                                <p className={`${emojiOnlyTextClass(messageContent)} whitespace-pre-wrap break-words min-w-0`}>
+                                  {messageContent}
+                                </p>
+                                {bubbleTime && (
+                                  <span className={`text-[11px] font-medium whitespace-nowrap inline-flex items-center gap-1 ${bubbleTimeTextClass}`}>
+                                    {bubbleTime}
+                                    <HiOutlineLockClosed className="w-3 h-3 text-green-400" />
+                                  </span>
+                                )}
+                              </div>
+                            )
                           })()}
 
                           {/* Edited indicator */}
@@ -1629,6 +1767,7 @@ const MessagesPage: React.FC = () => {
                               ))}
                             </div>
                           )}
+
                           </>
                           )}
                           </div>
@@ -1648,6 +1787,9 @@ const MessagesPage: React.FC = () => {
                               onOpenPicker={() => setEmojiPickerForMessage(message.id)}
                               onOpenCustomize={() => setShowCustomizeReactions(true)}
                               alignRight={message.isFromCurrentUser}
+                              anchor="bubble"
+                              open={reactionStripForMessage === message.id}
+                              onOpenChange={(nextOpen) => setReactionStripForMessage(nextOpen ? message.id : null)}
                             />
                           )}
 
@@ -1699,30 +1841,6 @@ const MessagesPage: React.FC = () => {
                         )}
                         </>
                         )}
-
-                        {/* Message metadata with encryption indicator */}
-                        <div className={`mt-1 px-2 flex items-center space-x-2 ${
-                          message.isFromCurrentUser ? 'flex-row-reverse space-x-reverse' : 'flex-row'
-                        }`}>
-                          <div className="flex items-center space-x-1">
-                            {/* Encryption indicator */}
-                            <Tooltip text="End-to-end encrypted" position={message.isFromCurrentUser ? 'left' : 'right'} forceBlack compact>
-                              <HiOutlineLockClosed className="w-3 h-3 text-green-400" />
-                            </Tooltip>
-
-                          </div>
-
-                          <Tooltip
-                            text={new Date(message.createdAt).toLocaleString()}
-                            position="bottom"
-                            forceBlack
-                            compact
-                          >
-                            <p className="text-xs text-white/50 font-medium">
-                              {formatMessageTime(message.createdAt)}
-                            </p>
-                          </Tooltip>
-                        </div>
 
                         {/* Seen indicator — shown below the last message the peer has read */}
                         {message.id === lastSeenMsgId && (

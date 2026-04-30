@@ -65,12 +65,12 @@ const MediaCell: React.FC<{
     onDragOver={(e) => onReorderDragOver(e, index)}
     onDragLeave={onReorderDragLeave}
     onDrop={(e) => onReorderDrop(e, index)}
-    className={`relative rounded-lg overflow-hidden border-2 transition-all ${
+    className={`relative rounded-lg overflow-hidden transition-all ${
       dragOverIndex === index
-        ? 'border-yellow-500 scale-[1.02]'
+        ? 'ring-2 ring-yellow-500 scale-[1.02]'
         : draggedIndex === index
-          ? 'border-yellow-500/50 opacity-50'
-          : isDark ? 'border-gray-600 bg-gray-800' : 'border-gray-200 bg-gray-50'
+          ? 'ring-2 ring-yellow-500/50 opacity-50'
+          : isDark ? 'bg-gray-800' : 'bg-gray-50'
     } ${draggable ? 'cursor-grab active:cursor-grabbing' : ''} ${className}`}
   >
     <div className="relative w-full h-full bg-black">
@@ -521,12 +521,12 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
                       onDragOver={(e) => handleReorderDragOver(e, index)}
                       onDragLeave={handleReorderDragLeave}
                       onDrop={(e) => handleReorderDrop(e, index)}
-                      className={`relative rounded-lg overflow-hidden border-2 transition-all ${
+                      className={`relative rounded-lg overflow-hidden transition-all ${
                         dragOverIndex === index
-                          ? 'border-yellow-500 scale-105'
+                          ? 'ring-2 ring-yellow-500 scale-105'
                           : draggedIndex === index
-                            ? 'border-yellow-500/50 opacity-50'
-                            : isDark ? 'border-gray-600 bg-gray-800' : 'border-gray-200 bg-gray-50'
+                            ? 'ring-2 ring-yellow-500/50 opacity-50'
+                            : isDark ? 'bg-gray-800' : 'bg-gray-50'
                       } ${selectedMedia.length > 1 ? 'cursor-grab active:cursor-grabbing' : ''}`}
                     >
                       {/* Media Preview */}

@@ -70,7 +70,7 @@ const UserCard: React.FC<UserCardProps> = ({
       className={`relative rounded-xl p-4 transition-all duration-700 ease-in-out ${containerClass} ${
         isDark
           ? 'bg-white/5 hover:bg-white/10'
-          : 'bg-white hover:bg-gray-50 shadow-lg border border-gray-200'
+          : `bg-gray-50 hover:bg-gray-100 border ${layout === 'carousel' ? 'border-gray-200' : 'border-gray-200'} ${layout === 'carousel' ? '' : 'shadow-lg'}`
       }`}
       style={carouselStyle}
     >

@@ -14,6 +14,7 @@ import { useConnectModal } from "@rainbow-me/rainbowkit";
 import type { ActionParams } from '~/api/actions'
 import type { CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
+import { DesktopDatePicker, DesktopTimePicker } from '~/components/forms/DesktopDateTimePicker'
 import { getUserAvatar } from '~/utils/defaultAvatar'
 import { BsWallet } from 'react-icons/bs'
 import MediaUpload from './MediaUpload'
@@ -383,6 +384,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const [showScheduler, setShowScheduler] = useState(false)
   const [scheduledDate, setScheduledDate] = useState('')
   const [scheduledTime, setScheduledTime] = useState('')
+  const [schedulePicker, setSchedulePicker] = useState<null | 'date' | 'time'>(null)
   const [isScheduling, setIsScheduling] = useState(false)
   const [scheduleError, setScheduleError] = useState<string | null>(null)
   const [showMediaUpload, setShowMediaUpload] = useState(false)
@@ -663,11 +665,46 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         // Build the post content
         let finalText = text
 
-        // Handle GIFs (already have URLs from Giphy)
-        const gifs = selectedMedia.filter(m => m.type === 'gif')
-        if (gifs.length > 0) {
-          const gifUrls = gifs.map(gif => `\n${gif.url}`).join('')
-          finalText = finalText + gifUrls
+        // Persist attached media for scheduled posts. We upload images now and
+        // append media URLs into the scheduled text (same as immediate posts).
+        // NOTE: scheduled posts do not support video yet.
+        if (selectedMedia.some(m => m.type === 'video')) {
+          setScheduleError('Scheduled posts do not support video yet.')
+          return
+        }
+
+        const uploadedUrls: Map<number, string> = new Map()
+        const offChainImages = selectedMedia
+          .map((m, i) => ({ media: m, index: i }))
+          .filter(({ media }) => media.type === 'image')
+
+        if (offChainImages.length > 0) {
+          const imageFiles = offChainImages.map(({ media }: any) => media.file as File)
+          const uploadResult = await uploadMedia(imageFiles, 'image', effectiveTokenId)
+          if (!uploadResult.success || !uploadResult.urls) {
+            setScheduleError('Failed to upload images for scheduled post.')
+            return
+          }
+          offChainImages.forEach(({ index }, i) => {
+            uploadedUrls.set(index, uploadResult.urls![i])
+          })
+        }
+
+        const mediaUrls: string[] = []
+        selectedMedia.forEach((media: any, index: number) => {
+          let url: string | undefined
+          if (media.type === 'image') url = uploadedUrls.get(index)
+          if (media.type === 'gif') url = media.shortUrl || media.url
+          if (url) mediaUrls.push(url)
+        })
+
+        const mediaBlock = mediaUrls.length > 0 ? '\n' + mediaUrls.join('\n') : ''
+        if (mediaBlock) {
+          if (isThreadMode && mediaPosition === 'end') {
+            // Media appended after splitting.
+          } else {
+            finalText = finalText + mediaBlock
+          }
         }
 
         // Replace original URLs with short URLs for on-chain submission
@@ -676,6 +713,49 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 
         // Split into thread chunks if needed — mirrors the immediate-post path.
         const chunks = splitTextIntoChunks(finalText, includePageIndicators)
+
+        // If media goes at end of thread, check if it fits in the last chunk or needs its own.
+        if (isThreadMode && mediaPosition === 'end' && mediaBlock) {
+          const lastChunk = chunks[chunks.length - 1]
+          if (byteLen(lastChunk) + byteLen(mediaBlock) <= POST_CHAR_LIMIT) {
+            chunks[chunks.length - 1] = lastChunk + mediaBlock
+          } else {
+            const mediaContent = mediaBlock.replace(/^\n/, '')
+            const totalWithMedia = chunks.length + 1
+            if (includePageIndicators) {
+              const oldDigits = String(chunks.length).length
+              const newDigits = String(totalWithMedia).length
+              if (newDigits > oldDigits) {
+                chunks.length = 0
+                let remaining = finalText
+                let idx = 0
+                while (remaining.length > 0) {
+                  const indicator = `(${idx + 1}/${totalWithMedia}) `
+                  const available = POST_CHAR_LIMIT - indicator.length
+                  if (byteLen(remaining) <= available) {
+                    chunks.push(indicator + remaining)
+                    break
+                  }
+                  const splitAt = findSplitPoint(remaining, available)
+                  chunks.push(indicator + remaining.slice(0, splitAt))
+                  remaining = remaining.slice(splitAt).trimStart()
+                  idx++
+                }
+              } else {
+                for (let i = 0; i < chunks.length; i++) {
+                  const oldIndicator = `(${i + 1}/${chunks.length}) `
+                  const newIndicator = `(${i + 1}/${totalWithMedia}) `
+                  if (chunks[i].startsWith(oldIndicator)) {
+                    chunks[i] = newIndicator + chunks[i].slice(oldIndicator.length)
+                  }
+                }
+              }
+              chunks.push(`(${totalWithMedia}/${totalWithMedia}) ${mediaContent}`)
+            } else {
+              chunks.push(mediaContent)
+            }
+          }
+        }
 
         // Same MAX_THREAD_LENGTH guard as the immediate-post path. Catch this
         // before reserving cawonces so a bounced submit doesn't leave a gap
@@ -885,7 +965,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     if (chunks.length > 1) setSigningProgress({ current: 1, total: chunks.length })
 
     // If media goes at end of thread, check if it fits in the last chunk or needs its own
-    if (isThreadMode && mediaPosition === 'end' && mediaBlock && chunks.length > 1) {
+    if (isThreadMode && mediaPosition === 'end' && mediaBlock) {
       const lastChunk = chunks[chunks.length - 1]
       if (byteLen(lastChunk) + byteLen(mediaBlock) <= POST_CHAR_LIMIT) {
         // Media fits in the last text chunk
@@ -1205,6 +1285,10 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     }
   }
 
+  useEffect(() => {
+    if (!showScheduler) setSchedulePicker(null)
+  }, [showScheduler])
+
   // Calculate total media URL character cost
   const getMediaCharCost = () => {
     let mediaCost = 0
@@ -1268,11 +1352,19 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 
   // Dynamic textarea rows — grow after 4 lines, max 12
   const lineCount = text.split('\n').length
-  const desktopRows = Math.max(3, Math.min(lineCount, 12))
+  // Replies should feel tighter (closer to X/Threads).
+  // For regular posts, keep it roomy when it's text-only, but when media is
+  // attached the big empty textarea looks ridiculous.
+  const hasMedia = selectedMedia.length > 0
+  const desktopRows = replyTo
+    ? Math.max(2, Math.min(lineCount, 10))
+    : hasMedia
+      ? Math.max(1, Math.min(lineCount, 5))
+      : Math.max(3, Math.min(lineCount, 12))
   const isOverLimit = false // Thread mode handles overflow by splitting
 
   return (
-    <div className={`p-4 transition-all duration-300 ${isDark ? 'bg-black' : 'bg-white'}`}>
+      <div className={`${replyTo ? 'p-2' : 'p-4'} transition-all duration-300 ${isDark ? 'bg-black' : 'bg-white'}`}>
       {/* Hidden file input for media selection */}
       <input
         ref={fileInputRef}
@@ -1284,16 +1376,16 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       />
 
       {/* Mobile Layout - Input + Button */}
-      <div className="md:hidden flex flex-col space-y-2">
+      <div className={`md:hidden flex flex-col ${replyTo ? 'space-y-1' : 'space-y-2'}`}>
           {/* Input and Reply Button Row */}
           <div className="flex items-center space-x-3">
             {/* Input */}
             <div className="flex-1 relative">
               <HighlightedTextarea
-                value={text}
-                onChange={handleTextChange}
-                onClick={handleTextClick}
-                onKeyUp={handleTextKeyUp}
+                 value={text}
+                 onChange={handleTextChange}
+                 onClick={handleTextClick}
+                 onKeyUp={handleTextKeyUp}
                 onDragOver={handleTextareaDragOver}
                 onDragLeave={handleTextareaDragLeave}
                 onDrop={handleTextareaDrop}
@@ -1305,9 +1397,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                       placeholder ?? (quote ? "Add a comment" : "What's happening?")
                     )
                 }
-                textareaRef={textareaRef}
-                fontSize="base"
-              />
+                 textareaRef={textareaRef}
+                 fontSize="base"
+                 compact={!!replyTo || hasMedia}
+                 autoResize
+               />
               <MentionAutocomplete
                 text={text}
                 cursorPosition={cursorPosition}
@@ -1355,7 +1449,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           </div>
 
           {/* Mobile Icons Row */}
-          <div className="flex items-center justify-between">
+          <div className={`flex items-center justify-between ${replyTo ? 'pt-0.5' : ''}`}>
             {/* Left side - media icons */}
             <div className="flex items-center space-x-4">
               {/* Media Upload */}
@@ -1563,7 +1657,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 )
             }
             textareaRef={textareaRef}
-            fontSize="xl"
+            fontSize={replyTo ? 'base' : 'xl'}
+            compact={!!replyTo || hasMedia}
+            autoResize
           />
           <MentionAutocomplete
             text={text}
@@ -1640,7 +1736,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         )}
 
         {/* Scheduler */}
-        {showScheduler && (
+        {!replyTo && !quote && showScheduler && (
           <div className={`mt-4 p-4 border rounded-lg ${
             isDark ? 'border-white/20 bg-black' : 'border-gray-200 bg-gray-50'
           }`}>
@@ -1655,31 +1751,30 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 <label className={`block text-sm mb-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                   Date
                 </label>
-                <input
-                  type="date"
+                <DesktopDatePicker
+                  isDark={isDark}
                   value={scheduledDate}
-                  onChange={(e) => { setScheduledDate(e.target.value); setScheduleError(null) }}
-                  min={new Date().toISOString().split('T')[0]}
-                  className={`w-full px-3 py-2 rounded-lg border transition-colors ${
-                    isDark
-                      ? 'bg-gray-700 border-gray-600 text-white focus:border-yellow-400'
-                      : 'bg-white border-gray-300 text-gray-900 focus:border-yellow-500'
-                  } focus:outline-none`}
+                  open={schedulePicker === 'date'}
+                  onOpenChange={(o) => setSchedulePicker(o ? 'date' : null)}
+                  onChange={(v) => {
+                    setScheduledDate(v)
+                    setScheduleError(null)
+                  }}
                 />
               </div>
               <div>
                 <label className={`block text-sm mb-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                   Time
                 </label>
-                <input
-                  type="time"
+                <DesktopTimePicker
+                  isDark={isDark}
                   value={scheduledTime}
-                  onChange={(e) => { setScheduledTime(e.target.value); setScheduleError(null) }}
-                  className={`w-full px-3 py-2 rounded-lg border transition-colors ${
-                    isDark
-                      ? 'bg-gray-700 border-gray-600 text-white focus:border-yellow-400'
-                      : 'bg-white border-gray-300 text-gray-900 focus:border-yellow-500'
-                  } focus:outline-none`}
+                  open={schedulePicker === 'time'}
+                  onOpenChange={(o) => setSchedulePicker(o ? 'time' : null)}
+                  onChange={(v) => {
+                    setScheduledTime(v)
+                    setScheduleError(null)
+                  }}
                 />
               </div>
             </div>
@@ -1698,7 +1793,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         )}
 
         {/* Functionality Icons */}
-        <div className="flex items-center justify-between mt-4">
+        <div className={`flex items-center justify-between ${replyTo ? 'mt-1.5' : 'mt-4'}`}>
           <div className="flex items-center space-x-3">
             {/* Media Upload */}
             <button
@@ -1754,22 +1849,24 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
               </svg>
             </button>
 
-            {/* Schedule Post */}
-            <button
-              onClick={() => setShowScheduler(!showScheduler)}
-              className={`p-2 rounded-full transition-all duration-200 cursor-pointer ${
-              text.trim()
-                ? (isDark
-                    ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
-                    : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
-                : (isDark
-                    ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
-                    : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
-            }`}>
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </button>
+            {/* Schedule Post (not for replies/quotes) */}
+            {!replyTo && !quote && (
+              <button
+                onClick={() => setShowScheduler(!showScheduler)}
+                className={`p-2 rounded-full transition-all duration-200 cursor-pointer ${
+                text.trim()
+                  ? (isDark
+                      ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
+                      : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
+                  : (isDark
+                      ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
+                      : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
+              }`}>
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </button>
+            )}
 
           </div>
 
@@ -1903,11 +2000,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       {showScheduledSuccessModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
           <div
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            className="absolute inset-0 bg-black/60"
             onClick={() => setShowScheduledSuccessModal(false)}
           />
           <div className={`relative z-10 w-full max-w-sm mx-4 p-6 rounded-2xl shadow-xl ${
-            isDark ? 'bg-gray-900 border border-white/10' : 'bg-white border border-gray-200'
+            isDark ? 'bg-black border border-white/10' : 'bg-white border border-gray-200'
           }`}>
             <div className="text-center">
               <div className={`w-16 h-16 mx-auto mb-4 rounded-full flex items-center justify-center ${
@@ -1939,4 +2036,3 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 }
 
 export default PostForm
-

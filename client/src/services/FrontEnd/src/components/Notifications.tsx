@@ -277,29 +277,29 @@ const Notifications: React.FC = () => {
   const getNotificationIcon = (type: Notification['type']) => {
     switch (type) {
       case 'FOLLOW':
-        return <HiUserAdd className="w-5 h-5 text-blue-500" />
+        return <HiUserAdd className="w-6 h-6 text-blue-500" />
       case 'LIKE':
-        return <HiHeart className="w-5 h-5 text-red-500" />
+        return <HiHeart className="w-6 h-6 text-red-500" />
       case 'REPLY':
-        return <HiReply className="w-5 h-5 text-green-500" />
+        return <HiReply className="w-6 h-6 text-green-500" />
       case 'REPOST':
-        return <HiRefresh className="w-5 h-5 text-purple-500" />
+        return <HiRefresh className="w-6 h-6 text-purple-500" />
       case 'QUOTE':
-        return <HiReply className="w-5 h-5 text-indigo-500" />
+        return <HiReply className="w-6 h-6 text-indigo-500" />
       case 'MENTION':
-        return <HiAtSymbol className="w-5 h-5 text-orange-500" />
+        return <HiAtSymbol className="w-6 h-6 text-orange-500" />
       case 'TIP':
-        return <HiCurrencyDollar className="w-5 h-5 text-yellow-500" />
+        return <HiCurrencyDollar className="w-6 h-6 text-yellow-500" />
       case 'OFFER':
-        return <HiTag className="w-5 h-5 text-yellow-500" />
+        return <HiTag className="w-6 h-6 text-yellow-500" />
       case 'OUTBID':
-        return <HiTag className="w-5 h-5 text-orange-500" />
+        return <HiTag className="w-6 h-6 text-orange-500" />
       case 'AUCTION_WON':
-        return <HiTag className="w-5 h-5 text-green-500" />
+        return <HiTag className="w-6 h-6 text-green-500" />
       case 'ACTION_FAILED':
-        return <HiBell className="w-5 h-5 text-red-400" />
+        return <HiBell className="w-6 h-6 text-red-400" />
       default:
-        return <HiBell className="w-5 h-5 text-gray-500" />
+        return <HiBell className="w-6 h-6 text-gray-500" />
     }
   }
 
@@ -417,12 +417,24 @@ const Notifications: React.FC = () => {
   const getNotificationText = (notification: Notification): React.ReactNode => {
     const { type, actor, additionalActors, count = 1 } = notification
 
+    // Style: actor is the visual anchor; action should be readable (less gray).
+    const actionClass = isDark ? 'text-white/85 font-normal' : 'text-gray-800 font-normal'
+    const Actor = (node: React.ReactNode) => <span className="font-bold">{node}</span>
+    const Action = (node: React.ReactNode) => <span className={actionClass}>{node}</span>
+
     const actorLabel = actor.displayName || actor.username
     const actorLink = (
       <span
         onClick={e => {
+          // Actor name sits inside an <a> notification row for most types.
+          // stopPropagation prevents the row's SPA handler, so we MUST also
+          // preventDefault or the browser will follow the row href.
+          e.preventDefault()
           e.stopPropagation()
-          navigate(`/users/${actor.username}`)
+          const uname = actor.username && actor.username !== `#${actor.tokenId}`
+            ? actor.username
+            : (actor.displayName || actor.username)
+          navigate(`/users/${uname}`)
         }}
         className="hover:underline cursor-pointer"
       >
@@ -459,17 +471,17 @@ const Notifications: React.FC = () => {
         )
       }
       case 'FOLLOW':
-        return <>{actorNode} followed you</>
+        return <>{Actor(actorNode)} {Action('followed you')}</>
       case 'LIKE':
-        return <>{actorNode} liked your caw</>
+        return <>{Actor(actorNode)} {Action('liked your caw')}</>
       case 'REPLY':
-        return <>{actorNode} replied to your caw</>
+        return <>{Actor(actorNode)} {Action('replied to your caw')}</>
       case 'REPOST':
-        return <>{actorNode} recawed your caw</>
+        return <>{Actor(actorNode)} {Action('recawed your caw')}</>
       case 'QUOTE':
-        return <>{actorNode} quoted your caw</>
+        return <>{Actor(actorNode)} {Action('quoted your caw')}</>
       case 'MENTION':
-        return <>{actorNode} mentioned you</>
+        return <>{Actor(actorNode)} {Action('mentioned you')}</>
       case 'TIP': {
         const tipAmt = notification.actionPayload?.tipAmount
         let tipLabel = ''
@@ -482,8 +494,8 @@ const Notifications: React.FC = () => {
           tipLabel = ` ${formatted} CAW${usd}`
         }
         return notification.caw
-          ? <>{actorNode} tipped your caw{tipLabel}</>
-          : <>{actorNode} tipped you{tipLabel}</>
+          ? <>{Actor(actorNode)} {Action(<>tipped your caw{tipLabel}</>)}</>
+          : <>{Actor(actorNode)} {Action(<>tipped you{tipLabel}</>)}</>
       }
       case 'OFFER': {
         // Build USD display
@@ -504,7 +516,7 @@ const Notifications: React.FC = () => {
         // Show actor username if they have one, otherwise fall back to address with etherscan link
         const addr = notification.offer?.offerer
         if (actor.username && actor.username !== `#${actor.tokenId}`) {
-          return <>{actorNode} made an offer on your profile{offerUsd}</>
+          return <>{Actor(actorNode)} {Action(<>made an offer on your profile{offerUsd}</>)}</>
         }
         if (addr) {
           const addrDisplay = `${addr.slice(0, 6)}...${addr.slice(-4)}`
@@ -517,24 +529,24 @@ const Notifications: React.FC = () => {
               >
                 {addrDisplay}
               </Link>
-              {` made an offer on your profile${offerUsd}`}
+              {Action(` made an offer on your profile${offerUsd}`)}
             </>
           )
         }
-        return <>{actorNode} made an offer on your profile{offerUsd}</>
+        return <>{Actor(actorNode)} {Action(<>made an offer on your profile{offerUsd}</>)}</>
       }
       case 'OUTBID': {
         const payload = notification.actionPayload
         const username = payload?.username ?? 'a profile'
-        return `You've been outbid on @${username}`
+        return Action(`You've been outbid on @${username}`)
       }
       case 'AUCTION_WON': {
         const payload = notification.actionPayload
         const username = payload?.username ?? 'a profile'
-        return `You won the auction for @${username}! Settle it to claim the username.`
+        return Action(`You won the auction for @${username}! Settle it to claim the username.`)
       }
       default:
-        return actorNode
+        return Actor(actorNode)
     }
   }
 
@@ -810,23 +822,21 @@ const Notifications: React.FC = () => {
           </p>
         </div>
       ) : (
-        <div className="space-y-2">
-          {notifications.map(notification => {
+        <div className="w-full">
+          {notifications.map((notification, idx) => {
             // Render as <a href> when the notification has a real
             // destination so cmd/ctrl/middle-click open it in a new tab
             // the way the browser already does for links. Plain left-
             // click is intercepted for SPA navigation. Non-navigating
             // types (OFFER opens a modal) fall back to a plain div.
             const href = getNotificationHref(notification)
-            const rowClass = `block p-4 rounded-lg transition cursor-pointer no-underline ${
-              !notification.isRead
-                ? isDark
-                  ? 'bg-blue-500/10 hover:bg-blue-500/20'
-                  : 'bg-blue-50 hover:bg-blue-100'
-                : isDark
-                  ? 'bg-white/5 hover:bg-white/10'
-                  : 'bg-gray-50 hover:bg-gray-100'
-            }`
+            // Flat rows (no cards). Only a horizontal divider between rows.
+            const divider = idx < notifications.length - 1
+              ? (isDark ? 'border-b border-white/15' : 'border-b border-gray-200')
+              : ''
+            const rowClass = `block px-4 py-4 transition cursor-pointer no-underline ${
+              isDark ? 'hover:bg-white/5' : 'hover:bg-gray-50'
+            } ${divider}`
             const RowTag: any = href ? 'a' : 'div'
             const rowProps: any = href
               ? {
@@ -849,18 +859,23 @@ const Notifications: React.FC = () => {
                   {getNotificationIcon(notification.type)}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className={`text-sm flex items-center gap-1.5 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  <div className={`min-w-0 text-sm md:text-base leading-snug ${isDark ? 'text-white' : 'text-gray-900'}`}>
                     {notification.actor && notification.type !== 'ACTION_FAILED' && (
                       <Avatar
                         src={getUserAvatar(notification.actor)}
-                        className="w-[18px] h-[18px] rounded-full flex-shrink-0"
+                        className="w-7 h-7 rounded-full flex-shrink-0 inline-block align-middle mr-1.5"
                         size="small"
                       />
                     )}
-                    <span className="font-semibold">
-                      {getNotificationText(notification)}
-                    </span>
-                  </p>
+                    {getNotificationText(notification)}
+                    <Tooltip text={formatFullDateTime(notification.createdAt)} className="inline-block">
+                      <span
+                        className={`ml-2 whitespace-nowrap text-sm ${isDark ? 'text-white/55' : 'text-gray-500'}`}
+                      >
+                        · {formatRelativeTime(notification.createdAt)}
+                      </span>
+                    </Tooltip>
+                  </div>
                   {notification.caw && (
                     <p className={`text-sm mt-1 truncate ${
                       isDark ? 'text-white/60' : 'text-gray-600'
@@ -868,15 +883,6 @@ const Notifications: React.FC = () => {
                       {notification.caw.content}
                     </p>
                   )}
-                  <Tooltip text={formatFullDateTime(notification.createdAt)} className="inline-block">
-                    <p
-                      className={`text-xs mt-1 ${
-                        isDark ? 'text-white/40' : 'text-gray-500'
-                      }`}
-                    >
-                      {formatRelativeTime(notification.createdAt)}
-                    </p>
-                  </Tooltip>
                 </div>
                 {notification.type === 'ACTION_FAILED' && notification.actionPayload && (() => {
                   // Manual retry in progress (user tapped the button on this
@@ -923,10 +929,10 @@ const Notifications: React.FC = () => {
           {hasMore && (
             <button
               onClick={() => fetchNotifications()}
-              className={`w-full py-3 text-center rounded-lg transition ${
+              className={`w-full py-4 text-center transition ${
                 isDark
-                  ? 'bg-white/10 hover:bg-white/20 text-white'
-                  : 'bg-gray-100 hover:bg-gray-200 text-gray-900'
+                  ? 'hover:bg-white/5 text-white/80'
+                  : 'hover:bg-gray-50 text-gray-800'
               }`}
               disabled={loading}
             >

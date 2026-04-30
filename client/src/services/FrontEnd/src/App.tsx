@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes } from "react-router";
+import { BrowserRouter, Route, Routes, useLocation } from "react-router";
 import { useCawonceSync } from '~/hooks/useCawonce'
 import { useSessionKeyWalletGuard } from '~/hooks/useSessionKey'
 import { useTxQueueMonitor } from '~/hooks/useTxQueueMonitor'
@@ -26,7 +26,31 @@ import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import { useActionErrorStore } from '~/store/actionErrorStore'
 import ModalWrapper from '~/components/modals/ModalWrapper'
+import CawMediaModal from '~/components/modals/CawMediaModal'
 import { useEffect } from 'react'
+
+function AppRoutes() {
+  const location = useLocation() as any
+  const state = (location.state as { backgroundLocation?: any } | null) ?? null
+  const backgroundLocation = state?.backgroundLocation
+
+  return (
+    <>
+      <Routes location={backgroundLocation || location}>
+        {routes.map((route) => (
+          <Route key={route.path} path={route.path} element={route.component} />
+        ))}
+      </Routes>
+
+      {/* Modal routes (rendered on top of backgroundLocation) */}
+      {backgroundLocation && (
+        <Routes>
+          <Route path="/caws/:id" element={<CawMediaModal />} />
+        </Routes>
+      )}
+    </>
+  )
+}
 
 function App() {
   useCawonceSync();
@@ -55,11 +79,7 @@ function App() {
 
   return (
     <BrowserRouter>
-      <Routes>
-        {routes.map((route) => (
-          <Route key={route.path} path={route.path} element={route.component} />
-        ))}
-      </Routes>
+      <AppRoutes />
 
       <InsufficientStakeModal
         isOpen={stakeModal.isOpen}

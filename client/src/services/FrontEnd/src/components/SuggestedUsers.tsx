@@ -122,7 +122,8 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
 
   return (
     <div className={`pt-4 mb-3 rounded-xl ${
-      isDark ? 'bg-black' : 'bg-gray-100 border border-gray-200 shadow-inner'
+      // Light theme: keep it flat (no gray panel behind cards).
+      isDark ? 'bg-black' : 'bg-transparent'
     }`}>
       <h2 className={`text-lg font-semibold mb-4 ml-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
         Suggested users to follow

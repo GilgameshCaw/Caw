@@ -34,6 +34,18 @@ interface ReactionStripProps {
   /** Pass true on the bubble's "isFromCurrentUser" branch so we anchor
    *  the strip to the right edge instead of the left. */
   alignRight?: boolean
+
+  /** Controlled open state (optional). */
+  open?: boolean
+  /** Controlled open setter (optional). */
+  onOpenChange?: (open: boolean) => void
+
+  /**
+   * Anchor strategy for the portal strip positioning.
+   * - 'bubble': anchor to the message bubble element (recommended)
+   * - 'trigger': anchor to the smiley trigger element
+   */
+  anchor?: 'bubble' | 'trigger'
 }
 
 /**
@@ -53,9 +65,22 @@ export const MessageReactionStrip: React.FC<ReactionStripProps> = ({
   onOpenPicker,
   onOpenCustomize,
   alignRight,
+  open: controlledOpen,
+  onOpenChange,
+  anchor = 'bubble',
 }) => {
   const { isDark } = useTheme()
-  const [open, setOpen] = useState(false)
+  const [uncontrolledOpen, setUncontrolledOpen] = useState(false)
+  const open = controlledOpen ?? uncontrolledOpen
+  const setOpen = (next: boolean | ((prev: boolean) => boolean)) => {
+    const resolved = typeof next === 'function' ? (next as any)(open) : next
+    if (controlledOpen !== undefined) {
+      onOpenChange?.(resolved)
+      return
+    }
+    setUncontrolledOpen(resolved)
+    onOpenChange?.(resolved)
+  }
   const wrapperRef = useRef<HTMLDivElement>(null)
   const stripRef = useRef<HTMLDivElement>(null)
   const [coords, setCoords] = useState({ top: 0, left: 0 })
@@ -88,7 +113,11 @@ export const MessageReactionStrip: React.FC<ReactionStripProps> = ({
     const trigger = wrapperRef.current
     const strip = stripRef.current
     if (!trigger || !strip) return
-    const tRect = trigger.getBoundingClientRect()
+    const anchorEl = anchor === 'bubble'
+      ? (trigger.previousElementSibling as HTMLElement | null)
+      : trigger
+
+    const tRect = (anchorEl ?? trigger).getBoundingClientRect()
     const sRect = strip.getBoundingClientRect()
     const margin = 8
 
@@ -143,7 +172,9 @@ export const MessageReactionStrip: React.FC<ReactionStripProps> = ({
         type="button"
         onClick={() => setOpen(o => !o)}
         className={`p-1.5 rounded-full transition-opacity cursor-pointer ${
-          open ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+          open
+            ? 'opacity-100 pointer-events-auto'
+            : 'opacity-0 pointer-events-none group-hover:opacity-100 group-hover:pointer-events-auto'
         } ${isDark ? 'hover:bg-white/10 text-white/40 hover:text-white/80' : 'hover:bg-gray-200 text-gray-400 hover:text-gray-700'}`}
         title="Add reaction"
       >
