@@ -74,6 +74,10 @@ const MessagesPage: React.FC = () => {
   const [defaultReactions, setDefaultReactions] = useState<string[]>([])
   // Modals invoked from the reaction strip.
   const [emojiPickerForMessage, setEmojiPickerForMessage] = useState<string | null>(null)
+  // Toggles the full emoji picker for the *composer* (vs. reactions).
+  // Picking from it inserts the emoji into the textarea, mirroring the
+  // small inline strip's behavior.
+  const [composerEmojiPickerOpen, setComposerEmojiPickerOpen] = useState(false)
   const [showCustomizeReactions, setShowCustomizeReactions] = useState(false)
   const [selectedUser, setSelectedUser] = useState<{name: string, handle: string, avatar: string} | null>(null)
   const [modalStep, setModalStep] = useState<'select' | 'compose'>('select')
@@ -1904,8 +1908,8 @@ const MessagesPage: React.FC = () => {
                   <div className={`p-4 border rounded-lg ${
                     isDark ? 'border-white/20 bg-black' : 'border-gray-200 bg-gray-50'
                   }`}>
-                    <div className="grid grid-cols-6 gap-2 max-h-32 overflow-y-auto">
-                      {['😀', '😂', '🤣', '😊', '😍', '🤔', '😎', '🔥', '💯', '❤️', '👍', '👎'].map((emoji) => (
+                    <div className="grid grid-cols-7 gap-2 max-h-32 overflow-y-auto">
+                      {['😀', '😂', '🤣', '😊', '😍', '🤔', '😎', '🔥', '💯', '❤️', '👍', '👎', '🌙'].map((emoji) => (
                         <button
                           key={emoji}
                           onClick={() => {
@@ -1917,6 +1921,19 @@ const MessagesPage: React.FC = () => {
                           {emoji}
                         </button>
                       ))}
+                      {/* "+" opens the full emoji-mart picker — same modal
+                          used for message reactions, keeps both flows on
+                          one component. */}
+                      <button
+                        onClick={() => {
+                          setShowEmojiPicker(false)
+                          setComposerEmojiPickerOpen(true)
+                        }}
+                        title="More emojis"
+                        className={`p-1 text-xl rounded transition-colors flex items-center justify-center ${isDark ? 'hover:bg-white/10 text-white/60' : 'hover:bg-gray-200 text-black/60'}`}
+                      >
+                        <HiOutlinePlus className="w-5 h-5" />
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -2086,6 +2103,17 @@ const MessagesPage: React.FC = () => {
         onClose={() => setEmojiPickerForMessage(null)}
         onPick={(emoji) => {
           if (emojiPickerForMessage) dmToggleReaction(emojiPickerForMessage, emoji)
+        }}
+      />
+
+      {/* Same full picker, but for the composer — picking inserts the
+          emoji into the textarea instead of reacting. */}
+      <EmojiPickerModal
+        open={composerEmojiPickerOpen}
+        onClose={() => setComposerEmojiPickerOpen(false)}
+        onPick={(emoji) => {
+          setNewMessageContent(prev => prev + emoji)
+          setComposerEmojiPickerOpen(false)
         }}
       />
 
