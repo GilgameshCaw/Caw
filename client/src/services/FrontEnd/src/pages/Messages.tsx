@@ -25,7 +25,8 @@ import {
   HiOutlineLockClosed,
   HiOutlineCheckCircle,
   HiOutlinePaperClip,
-  HiOutlinePlus
+  HiOutlinePlus,
+  HiOutlineReply
 } from 'react-icons/hi'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useAuthStore } from '~/store/authStore'
@@ -1646,6 +1647,24 @@ const MessagesPage: React.FC = () => {
                             />
                           )}
 
+                          {/* Reply — sits between the reaction strip and
+                              the dots so the three hover affordances form
+                              a single row. Uses the same opacity-on-hover
+                              pattern as the dots. */}
+                          <button
+                            onClick={() => {
+                              setReplyingToId(message.id)
+                              requestAnimationFrame(() => {
+                                const ta = document.querySelector<HTMLTextAreaElement | HTMLInputElement>('[data-dm-composer]')
+                                ta?.focus()
+                              })
+                            }}
+                            className="p-1.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer hover:bg-white/10 self-center flex-shrink-0"
+                            title="Reply"
+                          >
+                            <HiOutlineReply className="w-5 h-5 text-white/30" />
+                          </button>
+
                           {/* Hover actions — outside the bubble, to the side */}
                           <button
                             onClick={(e) => {
@@ -1725,25 +1744,6 @@ const MessagesPage: React.FC = () => {
                   className="fixed z-50 bg-gray-800 border border-white/20 rounded-lg shadow-xl py-1 min-w-[180px]"
                   style={{ top: contextMenu.y, left: contextMenu.x }}
                 >
-                  {/* Reply — always available; sets composer chip */}
-                  <button
-                    onClick={() => {
-                      setReplyingToId(contextMenu.messageId)
-                      setContextMenu(null)
-                      // Focus the composer so the user can start typing
-                      // immediately. Defer one frame so the chip has
-                      // mounted (and any layout shift settles) before
-                      // focus moves.
-                      requestAnimationFrame(() => {
-                        const ta = document.querySelector<HTMLTextAreaElement | HTMLInputElement>('[data-dm-composer]')
-                        ta?.focus()
-                      })
-                    }}
-                    className="w-full px-4 py-2 text-left text-sm text-white hover:bg-white/10 cursor-pointer"
-                  >
-                    Reply
-                  </button>
-
                   {/* Edit — only own messages within 15 min */}
                   {contextMenu.isOwn && (Date.now() - new Date(contextMenu.createdAt).getTime() < 15 * 60 * 1000) && (
                     <button
