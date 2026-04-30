@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
@@ -10,20 +10,34 @@ interface Props {
   caw: CawItem
 }
 
+interface LocalVote {
+  optionIndex: number | null  // null = unvoted (after a confirmed vote was removed)
+  pending: boolean
+  // The vote count we're displaying for each option, kept in sync with the
+  // server's snapshot but allowed to bump optimistically on click. Indexed
+  // positionally; same length as poll.options.
+  counts: number[]
+  total: number
+}
+
 /**
- * Renders a poll inline inside a FeedItem. Two visual states:
- *   - "vote": clickable rows when the viewer hasn't voted yet
- *   - "results": progress bars + percentages with the user's pick highlighted
+ * Renders a poll inline inside a FeedItem.
  *
- * Voting submits an OTHER action (vote:N), addressed by recipients=[poll
- * author tokenId] and receiverCawonce=poll's cawonce. The local pending
- * vote (written by the API submit path) lights up the bar immediately;
- * the indexer flips pending→false later.
+ * Voting flow (designed to feel instant):
+ *   1. User clicks an option.
+ *   2. Local state immediately bumps that option's count (and decrements
+ *      the previous pick if they're changing) — switching the widget
+ *      from "vote rows" to "results bars" in the same render. Bars
+ *      transition to their new widths via CSS, so the fill animates.
+ *   3. signAndSubmit kicks off the on-chain action; the API submit path
+ *      already wrote the pending Vote row, so a refresh re-renders the
+ *      same state we're showing locally.
+ *   4. When the indexer eventually flips pending → false and the parent
+ *      refetches, the prop's poll.optionVoteCounts arrives and we sync
+ *      back to it (in case other voters joined since the click).
  *
- * Unvote uses the same flow with optionIndex=null (text "vote:"). The
- * "Remove vote" button only appears when the viewer already has a
- * confirmed vote — pending unvotes can't unvote a pending vote (would
- * race with the optimistic write).
+ * Unvote (text "vote:") works the same way in reverse — local state
+ * resets to the no-vote view immediately.
  */
 const PollDisplay: React.FC<Props> = ({ caw }) => {
   const { isDark } = useTheme()
@@ -32,22 +46,67 @@ const PollDisplay: React.FC<Props> = ({ caw }) => {
   const signAndSubmit = useSignAndSubmitAction()
 
   const [submitting, setSubmitting] = useState(false)
-  // Hover state to give a tiny preview of what it'd look like AFTER voting,
-  // even before the user clicks. Subtle but makes the widget feel alive.
   const [hovered, setHovered] = useState<number | null>(null)
 
   const poll = caw.poll
-  const userVote = poll?.userVote
-  const showResults = !!userVote // Twitter-style: voting reveals the breakdown
+
+  // Initialize local state from the server snapshot. Re-syncs whenever the
+  // server snapshot changes (e.g. another user voted, or the indexer
+  // confirmed our pending vote). The localVote.optionIndex `null` value is
+  // distinct from the server-side absence of a vote: when the user just
+  // clicked "Remove vote" we want to show the no-vote rows even though the
+  // server still has a row until the action confirms.
+  const buildInitialLocal = (): LocalVote => ({
+    optionIndex: poll?.userVote?.optionIndex ?? null,
+    pending: poll?.userVote?.pending ?? false,
+    counts: poll?.optionVoteCounts ? poll.optionVoteCounts.slice() : (poll?.options || []).map(() => 0),
+    total: poll?.totalVotes || 0,
+  })
+  const [local, setLocal] = useState<LocalVote>(buildInitialLocal)
+
+  // Track whether the user has interacted locally this session — once they
+  // have, we trust local state over the server snapshot until the next
+  // confirmed sync (avoids the bars resetting if the parent re-renders
+  // before the indexer round-trip completes).
+  const userTouchedRef = useRef(false)
+
+  // Re-sync from server when the snapshot looks "more authoritative" —
+  // server total >= our local total (someone else's votes can only add)
+  // AND either the server confirmed our pending vote or we haven't
+  // touched it locally. Errs on the side of trusting the server when the
+  // pending state matches.
+  useEffect(() => {
+    if (!poll) return
+    const serverConfirmedOurVote = poll.userVote && !poll.userVote.pending
+    const ourLocalIsPending = local.pending
+    if (!userTouchedRef.current || (serverConfirmedOurVote && ourLocalIsPending)) {
+      setLocal(buildInitialLocal())
+    } else if ((poll.totalVotes ?? 0) > local.total) {
+      // Other voters joined — refresh the counts but keep our optimistic pick.
+      setLocal(prev => ({
+        ...prev,
+        counts: poll.optionVoteCounts ? poll.optionVoteCounts.slice() : prev.counts,
+        total: poll.totalVotes ?? prev.total,
+      }))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [poll?.userVote?.optionIndex, poll?.userVote?.pending, poll?.totalVotes, JSON.stringify(poll?.optionVoteCounts)])
+
+  // Mount-once flag so bars get a "fill from 0" entry animation the first
+  // time results render. Without this the bars would snap to width on
+  // first paint with no transition (you can't transition from undefined).
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => { setMounted(true) }, [])
 
   const totals = useMemo(() => {
     if (!poll) return null
-    const counts = poll.optionVoteCounts || []
-    const sum = counts.reduce((a, b) => a + b, 0)
-    return { counts, sum: sum || 0 }
-  }, [poll])
+    const sum = local.total || 0
+    return { counts: local.counts, sum }
+  }, [poll, local])
 
   if (!poll || !totals) return null
+
+  const showResults = local.optionIndex !== null  // viewer has voted (or just voted)
 
   const submitVote = async (optionIndex: number | null) => {
     if (submitting) return
@@ -55,6 +114,29 @@ const PollDisplay: React.FC<Props> = ({ caw }) => {
       openConnectModal?.()
       return
     }
+
+    // Optimistic local update FIRST so the bars start animating before
+    // the wallet pop-up. If the user rejects the sig we revert.
+    const prev = local
+    userTouchedRef.current = true
+    setLocal(curr => {
+      const counts = curr.counts.slice()
+      let total = curr.total
+      // Decrement previous pick (only if it was confirmed locally — a
+      // pending pick wasn't reflected in `total` to begin with).
+      if (curr.optionIndex !== null && !curr.pending) {
+        counts[curr.optionIndex] = Math.max(0, counts[curr.optionIndex] - 1)
+        total = Math.max(0, total - 1)
+      }
+      if (optionIndex === null) {
+        // Unvote: just leave the decrement in place.
+        return { optionIndex: null, pending: true, counts, total }
+      }
+      counts[optionIndex] = (counts[optionIndex] || 0) + 1
+      total = total + 1
+      return { optionIndex, pending: true, counts, total }
+    })
+
     setSubmitting(true)
     try {
       await signAndSubmit({
@@ -67,12 +149,11 @@ const PollDisplay: React.FC<Props> = ({ caw }) => {
         text: buildVoteText(optionIndex),
       })
     } catch (err) {
-      // Optimistic write was rolled back by the API/cleanup if it failed
-      // before reaching the validator. We don't show an inline error here:
-      // the existing ACTION_FAILED notification flow surfaces the failure
-      // with a one-click retry, which is more in keeping with the rest of
-      // the app's error UX.
+      // Roll back the optimistic bump. ACTION_FAILED notification covers
+      // the user-facing retry path elsewhere.
       console.warn('[PollDisplay] vote submit failed:', err)
+      setLocal(prev)
+      userTouchedRef.current = false
     } finally {
       setSubmitting(false)
     }
@@ -82,11 +163,15 @@ const PollDisplay: React.FC<Props> = ({ caw }) => {
     <div className="mt-3 mb-1 space-y-1.5">
       {poll.options.map((opt, i) => {
         const count = totals.counts[i] || 0
-        const pct = totals.sum > 0 ? Math.round((count / totals.sum) * 100) : 0
-        const isUserPick = userVote?.optionIndex === i
+        const rawPct = totals.sum > 0 ? (count / totals.sum) * 100 : 0
+        const pct = Math.round(rawPct)
+        const isUserPick = local.optionIndex === i
         const isHover = hovered === i
 
         if (showResults) {
+          // Width animates from 0 on the very first render with results
+          // visible. After that, transitions handle subsequent changes.
+          const targetWidth = mounted ? `${rawPct}%` : '0%'
           return (
             <button
               key={i}
@@ -94,38 +179,38 @@ const PollDisplay: React.FC<Props> = ({ caw }) => {
               disabled={submitting || isUserPick}
               onMouseEnter={() => setHovered(i)}
               onMouseLeave={() => setHovered(null)}
-              className={`relative w-full text-left px-3 py-2 rounded-lg overflow-hidden transition-colors ${
+              className={`relative w-full text-left px-3 py-2 rounded-lg overflow-hidden ${
                 isUserPick
-                  ? (isDark ? 'cursor-default' : 'cursor-default')
+                  ? 'cursor-default'
                   : (submitting ? 'cursor-wait opacity-60' : 'cursor-pointer hover:opacity-95')
               }`}
-              style={{
-                background: 'transparent',
-              }}
+              style={{ background: 'transparent' }}
             >
-              {/* Filled bar — base color depends on whether it's the user's pick */}
+              {/* Filled bar — width transitions to its target percentage.
+                  The 700ms duration + ease-out feels like a proper "filling"
+                  motion rather than a snap. */}
               <div
-                className={`absolute inset-y-0 left-0 transition-all duration-300 ${
+                className={`absolute inset-y-0 left-0 transition-[width] duration-700 ease-out ${
                   isUserPick
                     ? (isDark ? 'bg-yellow-500/30' : 'bg-yellow-200')
                     : (isDark ? 'bg-white/10' : 'bg-gray-200')
                 }`}
-                style={{ width: `${pct}%` }}
+                style={{ width: targetWidth }}
               />
               {/* Outline */}
-              <div className={`absolute inset-0 rounded-lg pointer-events-none border ${
+              <div className={`absolute inset-0 rounded-lg pointer-events-none border transition-colors ${
                 isUserPick
                   ? (isDark ? 'border-yellow-500/60' : 'border-yellow-500')
                   : (isDark ? 'border-white/10' : 'border-gray-200')
               }`} />
               <div className="relative flex items-center justify-between gap-2">
-                <span className={`flex-1 truncate text-sm ${
+                <span className={`flex-1 truncate text-sm transition-colors ${
                   isUserPick
                     ? (isDark ? 'text-white font-medium' : 'text-gray-900 font-medium')
                     : (isDark ? 'text-white/80' : 'text-gray-800')
                 }`}>
                   {opt}
-                  {isUserPick && userVote?.pending && (
+                  {isUserPick && local.pending && (
                     <span className={`ml-2 text-[10px] uppercase tracking-wide ${
                       isDark ? 'text-yellow-400/70' : 'text-yellow-600/80'
                     }`}>
@@ -133,7 +218,8 @@ const PollDisplay: React.FC<Props> = ({ caw }) => {
                     </span>
                   )}
                 </span>
-                <span className={`text-sm tabular-nums ${
+                {/* Percentage also animates by counting up via key change */}
+                <span className={`text-sm tabular-nums transition-colors ${
                   isDark ? 'text-white/60' : 'text-gray-600'
                 }`}>
                   {pct}%
@@ -143,7 +229,7 @@ const PollDisplay: React.FC<Props> = ({ caw }) => {
           )
         }
 
-        // Vote-not-yet-cast state. Each option is a fresh button.
+        // Pre-vote state. Each option is a fresh button.
         return (
           <button
             key={i}
@@ -167,8 +253,8 @@ const PollDisplay: React.FC<Props> = ({ caw }) => {
       <div className={`flex items-center justify-between text-xs mt-2 ${
         isDark ? 'text-white/40' : 'text-gray-500'
       }`}>
-        <span>{poll.totalVotes} vote{poll.totalVotes === 1 ? '' : 's'}</span>
-        {showResults && !userVote?.pending && (
+        <span>{local.total} vote{local.total === 1 ? '' : 's'}</span>
+        {showResults && !local.pending && (
           <button
             onClick={() => submitVote(null)}
             disabled={submitting}

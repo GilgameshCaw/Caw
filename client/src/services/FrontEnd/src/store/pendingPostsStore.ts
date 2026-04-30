@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { CawItem } from '~/types'
+import { parsePoll } from '~/../../../tools/pollMarker'
 
 interface PendingPost extends Partial<CawItem> {
   tempId: string
@@ -30,6 +31,23 @@ export const usePendingPostsStore = create<PendingPostsStore>((set) => ({
 
   addPendingPost: (post) => {
     const tempId = `pending-${Date.now()}-${Math.random()}`
+
+    // If the content carries a ::poll:...:: marker, synthesize a poll
+    // shape locally so PollDisplay can render the empty 0-vote state
+    // immediately. The real Poll row gets created by either the API
+    // submit path (optimistic) or the indexer; once it confirms and the
+    // pending post is replaced by the indexed CawItem, the server-side
+    // poll shape (with optionVoteCounts + userVote) takes over.
+    const parsedPoll = parsePoll(post.content)
+    const synthesizedPoll = parsedPoll
+      ? {
+          options: parsedPoll.options,
+          totalVotes: 0,
+          optionVoteCounts: parsedPoll.options.map(() => 0),
+          userVote: null,
+        }
+      : undefined
+
     const pendingPost: PendingPost = {
       tempId,
       id: tempId,
@@ -56,6 +74,7 @@ export const usePendingPostsStore = create<PendingPostsStore>((set) => ({
       parent: post.parent,
       isQuote: post.isQuote,
       action: post.action,
+      poll: synthesizedPoll,
     }
 
     set((state) => ({
