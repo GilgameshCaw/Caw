@@ -1,7 +1,7 @@
 // src/api/routes/caws.ts
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
-import { shapeCaw, getCawIncludeConfig, handlePagination } from '../shared/cawUtils'
+import { shapeCaw, getCawIncludeConfig, handlePagination, enrichWithPollVotes } from '../shared/cawUtils'
 import { requireAuth } from '../middleware/auth'
 import { getBlockedUserIds } from '../shared/blockUtils'
 
@@ -246,8 +246,7 @@ router.get('/', async (req, res) => {
     // 4️⃣ handle pagination and shape
     const { items: shapedCaws, nextCursor } = handlePagination(raws, limit, (caw) => caw.id)
     const items = shapedCaws.map(caw => shapeCaw(caw))
-
-
+    await enrichWithPollVotes(items, currentUserId)
 
     return res.json({ items, nextCursor })
   } catch (err: any) {
@@ -296,6 +295,7 @@ router.post('/by-ids', async (req, res) => {
       .map(id => cawMap.get(id))
       .filter(Boolean)
       .map(shapeCaw)
+    await enrichWithPollVotes(orderedCaws, currentUserId)
 
     return res.json({ items: orderedCaws })
   } catch (error) {
@@ -434,9 +434,13 @@ router.get('/:id', async (req, res) => {
 
   // shape into your CawItem shape…
   const shapedCaw = shapeCaw(raw)
+  const shapedComments = rawComments.map(shapeCaw)
+  // Enrich the main caw and its comments together — one batch query covers
+  // every poll referenced on this page, including ones in the comments.
+  await enrichWithPollVotes([shapedCaw, ...shapedComments], currentUserId)
   res.json({
     caw:     shapedCaw,
-    comments: rawComments.map(shapeCaw),
+    comments: shapedComments,
     recaws,
     tips,
     hasMoreComments,

@@ -26,6 +26,9 @@ import { apiFetch } from '~/api/client'
 import { HiCalendar, HiClock } from 'react-icons/hi'
 import MentionAutocomplete from './MentionAutocomplete'
 import GifPicker from './GifPicker'
+import PollComposer from './PollComposer'
+import { HiOutlineChartBar } from 'react-icons/hi'
+import { buildPollMarker } from '~/../../../tools/pollMarker'
 
 /** Extract a short, meaningful search query from post text for GIF search.
  *  Drops articles/prepositions/conjunctions, URLs, and @mentions,
@@ -393,6 +396,13 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const [scheduledSuccessTime, setScheduledSuccessTime] = useState<Date | null>(null)
   const [includePageIndicators, setIncludePageIndicators] = useState(true)
   const [mediaPosition, setMediaPosition] = useState<'start' | 'end'>('start')
+  // Poll compose state. Options are edited as a separate array; the marker
+  // gets spliced into the text on save (and removed when the user clears).
+  // pollPosition mirrors mediaPosition: when threading, where to attach the
+  // (atomic) ::poll:...:: block.
+  const [pollOptions, setPollOptions] = useState<string[]>([])
+  const [pollEnabled, setPollEnabled] = useState(false)
+  const [pollPosition, setPollPosition] = useState<'start' | 'end'>('end')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [signingProgress, setSigningProgress] = useState<{ current: number; total: number } | null>(null)
   const signingTotal = signingProgress?.total ?? 0
@@ -947,6 +957,13 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       }
     }
 
+    // Append the poll marker only when not threading. For threads it gets
+    // attached after the split (atomic — never broken apart).
+    const submitPollMarker = pollEnabled ? buildPollMarker(pollOptions) : null
+    if (submitPollMarker && !isThreadMode) {
+      finalText = (finalText ? finalText + '\n' : '') + submitPollMarker
+    }
+
     // Replace original URLs with short URLs for on-chain submission
     // (skipped entirely when the user turned shortening off).
     if (shortenUrls) finalText = await shortenUrlsInText(getOnChainText(finalText))
@@ -958,6 +975,16 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 
     // Split into thread chunks if text exceeds the limit
     const chunks = splitTextIntoChunks(finalText, includePageIndicators)
+
+    // Attach the poll marker to either the first or last chunk in a thread.
+    // We do this AFTER splitting so the marker never gets broken apart by
+    // the splitter itself. The char counter reserved space for it, so the
+    // host chunk has room.
+    if (submitPollMarker && isThreadMode && chunks.length > 0) {
+      const idx = pollPosition === 'start' ? 0 : chunks.length - 1
+      const sep = chunks[idx].endsWith('\n') ? '' : '\n'
+      chunks[idx] = chunks[idx] + sep + submitPollMarker
+    }
 
     // Show the count-up immediately so the button goes straight from "Post" to
     // "Signing 1/N" instead of showing a transient "Signing..." while budget /
@@ -1276,6 +1303,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     setSelectedMedia([])
     setShowMediaUpload(false)
     setShowMediaOverlay(false)
+    setPollEnabled(false)
+    setPollOptions([])
     onSuccess?.()
     } catch (error: any) {
       // Ignore errors (user may have rejected signature)
@@ -1308,11 +1337,31 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // Use on-chain byte length (with short URLs) for accurate counting.
   const mediaCost = getMediaCharCost() // already in bytes (media refs are ASCII)
   const textBytes = onChainByteLen(text)
-  const effectiveTextLength = textBytes + mediaCost
+
+  // Poll byte cost when active. The marker is atomic — never split across
+  // chunks — so we treat it as either media-like reserve on the first/last
+  // chunk (with a +1 byte newline separator) or a no-op when disabled.
+  // Options are ASCII-friendly so byteLen ≈ length, but we use byteLen to
+  // be precise for emoji-laced labels.
+  const pollMarker = pollEnabled ? buildPollMarker(pollOptions) : null
+  // Poll is "active but not yet valid" when the user has opened the composer
+  // but hasn't filled in at least 2 valid options. Submit gets blocked but
+  // we don't yell at the user — the composer's own inline error is enough.
+  const pollInvalid = pollEnabled && !pollMarker
+  const pollBytes = pollMarker ? byteLen(pollMarker) + 1 : 0  // +1 for newline before
+  const firstChunkPollCost = (pollMarker && pollPosition === 'start') ? pollBytes : 0
+  const lastChunkPollCost = (pollMarker && pollPosition === 'end') ? pollBytes : 0
+
+  const effectiveTextLength = textBytes + mediaCost + pollBytes
   const isThreadMode = effectiveTextLength > POST_CHAR_LIMIT
   const firstChunkMediaCost = (!isThreadMode || mediaPosition === 'start') ? mediaCost : 0
   const lastChunkMediaCost = (isThreadMode && mediaPosition === 'end') ? mediaCost : 0
-  const { chunkCount, chunkBoundaries } = getChunkInfo(text, includePageIndicators, firstChunkMediaCost, lastChunkMediaCost)
+  const { chunkCount, chunkBoundaries } = getChunkInfo(
+    text,
+    includePageIndicators,
+    firstChunkMediaCost + firstChunkPollCost,
+    lastChunkMediaCost + lastChunkPollCost,
+  )
 
   // Figure out which chunk the cursor is in
   // When media gets its own dedicated last chunk, the cursor should never land there —
@@ -1523,7 +1572,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 const wrongWallet = isConnected && !isTokenOwner && !hasActiveSession && activeToken?.tokenId
                 const tooltipText = wrongWallet ? 'Please switch to the correct wallet' : ''
                 const threadTooLong = isThreadMode && chunkCount > MAX_THREAD_LENGTH
-                const isDisabled = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isSubmitting || isScheduling || threadTooLong
+                const isDisabled = (!text && selectedMedia.length === 0 && !pollMarker) || isOverLimit || !canPost || isSubmitting || isScheduling || threadTooLong || pollInvalid
                 const btn = (
                   <button
                     ref={submitBtnRef}
@@ -1735,6 +1784,18 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           </div>
         )}
 
+        {/* Poll composer */}
+        {pollEnabled && (
+          <PollComposer
+            options={pollOptions}
+            onChange={setPollOptions}
+            onClose={() => { setPollEnabled(false); setPollOptions([]) }}
+            position={pollPosition}
+            onChangePosition={setPollPosition}
+            showPositionPicker={isThreadMode}
+          />
+        )}
+
         {/* Scheduler */}
         {!replyTo && !quote && showScheduler && (
           <div className={`mt-4 p-4 border rounded-lg ${
@@ -1868,6 +1929,31 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
               </button>
             )}
 
+            {/* Add poll. Initializes with two empty options when first
+                opened — matching Twitter / X's "two choices required"
+                expectation, so the user immediately sees what they're about
+                to fill in. */}
+            <button
+              onClick={() => {
+                if (pollEnabled) {
+                  setPollEnabled(false)
+                  setPollOptions([])
+                } else {
+                  setPollEnabled(true)
+                  setPollOptions(['', ''])
+                }
+              }}
+              aria-label={pollEnabled ? 'Remove poll' : 'Add poll'}
+              className={`p-2 rounded-full transition-all duration-200 cursor-pointer ${
+                pollEnabled
+                  ? (isDark ? 'text-yellow-400 bg-yellow-400/10' : 'text-yellow-600 bg-yellow-200/50')
+                  : (isDark ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
+                            : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
+              }`}
+            >
+              <HiOutlineChartBar className="w-6 h-6" />
+            </button>
+
           </div>
 
           {/* Character counter, token status and Post Button */}
@@ -1899,7 +1985,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 const wrongWallet2 = isConnected && !isTokenOwner && !hasActiveSession && activeToken?.tokenId
                 const tooltipText2 = wrongWallet2 ? 'Please switch to the correct wallet' : ''
                 const threadTooLong2 = isThreadMode && chunkCount > MAX_THREAD_LENGTH
-                const isDisabled2 = (!text && selectedMedia.length === 0) || isOverLimit || !canPost || isSubmitting || isScheduling || threadTooLong2
+                const isDisabled2 = (!text && selectedMedia.length === 0 && !pollMarker) || isOverLimit || !canPost || isSubmitting || isScheduling || threadTooLong2 || pollInvalid
                 const btn2 = (
                   <button
                     ref={submitBtnRef}

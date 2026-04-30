@@ -362,10 +362,23 @@ const Notifications: React.FC = () => {
         return {
           title: receiverUsername ? `Following @${receiverUsername} failed` : 'Follow failed',
         }
-      case 7: // other — tip, image upload, profile update
+      case 7: // other — tip, vote, image upload, profile update
         if (plaintext.startsWith('tip:')) {
           return {
             title: receiverUsername ? `Tip to @${receiverUsername} failed` : 'Tip failed',
+          }
+        }
+        if (plaintext.startsWith('vote:')) {
+          // vote:N (N missing → unvote). Same target-caw idea as tip — the
+          // poll lives on @receiverUsername's caw.
+          const isUnvote = plaintext === 'vote:'
+          if (isUnvote) {
+            return {
+              title: receiverUsername ? `Unvote on @${receiverUsername}'s poll failed` : 'Unvote failed',
+            }
+          }
+          return {
+            title: receiverUsername ? `Vote on @${receiverUsername}'s poll failed` : 'Vote failed',
           }
         }
         if (plaintext.startsWith('p:') || plaintext.startsWith('profile-update:')) return { title: 'Profile update failed' }

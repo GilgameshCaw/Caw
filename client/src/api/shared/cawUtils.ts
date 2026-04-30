@@ -29,6 +29,23 @@ export interface CawRaw {
   reason?: string | null
 }
 
+export interface ShapedPoll {
+  /** Confirmed-vote total (denormalized on Poll.totalVotes). */
+  totalVotes: number
+  /** Per-option confirmed vote counts, positional. Same length as `options`. */
+  optionVoteCounts: number[]
+  /** The poll's options as posted, positional. */
+  options: string[]
+  /**
+   * The current user's vote on this poll, when known. `optionIndex: null`
+   * indicates "no vote yet" — distinct from "voted, then unvoted" which
+   * deletes the row entirely. `pending` mirrors the same semantics as
+   * Like / Tip: optimistic local writes flag pending until the indexer
+   * confirms. Null when no currentUserId in the request.
+   */
+  userVote: { optionIndex: number; pending: boolean } | null
+}
+
 export interface ShapedCaw {
   id: string
   content: string
@@ -60,6 +77,9 @@ export interface ShapedCaw {
   hasImage?: boolean
   status?: 'SUCCESS' | 'PENDING' | 'FAILED' | 'HIDDEN'
   reason?: string | null
+  /** Present when the caw text contains a ::poll:...:: marker and the Poll
+   * row has been created (either by the API submit or by the indexer). */
+  poll?: ShapedPoll
 }
 
 export function shapeCaw(raw: CawRaw | any): ShapedCaw {
@@ -82,6 +102,20 @@ export function shapeCaw(raw: CawRaw | any): ShapedCaw {
   const hasTipped = Boolean(userTip && !userTip.pending) // Only true if confirmed
   const tipPending = userTip?.pending
 
+
+  // Pre-shape the poll. The id stays as a private `_pollId` field so the
+  // follow-up enrichWithPollVotes() can find the poll without re-querying;
+  // it's stripped before the response is returned to the client.
+  let poll: ShapedPoll | undefined
+  if (raw.poll) {
+    poll = {
+      options: raw.poll.options || [],
+      totalVotes: raw.poll.totalVotes ?? 0,
+      optionVoteCounts: [],   // filled by enrichWithPollVotes
+      userVote: null,         // filled by enrichWithPollVotes
+    }
+    ;(poll as any)._pollId = raw.poll.id
+  }
 
   return {
     id: raw.id.toString(),
@@ -116,6 +150,7 @@ export function shapeCaw(raw: CawRaw | any): ShapedCaw {
     hasImage: raw.hasImage,
     status: raw.status || 'SUCCESS',
     reason: raw.reason,
+    poll,
   }
 }
 
@@ -159,6 +194,11 @@ export function getCawIncludeConfig(options: CawQueryOptions = {}) {
     bookmarks: currentUserId
       ? { where: { userId: currentUserId }, select: { userId: true }, take: 1 }
       : false,
+    // Poll core (options + totalVotes). Per-option vote counts and the
+    // viewer's own vote come from a follow-up enrichWithPollVotes() call —
+    // groupBy + targeted findMany is cheaper than fanning aggregates out
+    // through Prisma's nested includes for every list endpoint.
+    poll: { select: { id: true, options: true, totalVotes: true } },
     ...(includeHashtags && {
       hashtags: {
         include: { hashtag: { select: { name: true } } }
@@ -182,6 +222,7 @@ export function getCawIncludeConfig(options: CawQueryOptions = {}) {
         bookmarks: currentUserId
           ? { where: { userId: currentUserId }, select: { userId: true }, take: 1 }
           : false,
+        poll: { select: { id: true, options: true, totalVotes: true } },
         ...(includeHashtags && {
           hashtags: {
             include: { hashtag: { select: { name: true } } }
@@ -189,5 +230,81 @@ export function getCawIncludeConfig(options: CawQueryOptions = {}) {
         })
       }
     }
+  }
+}
+
+/**
+ * Decorate records (already shaped or raw) with per-option poll vote counts
+ * and the current user's vote — both data points that aren't expressible as
+ * a Prisma include without a custom aggregate. One groupBy + at most one
+ * findMany per page; capped naturally by the page size.
+ *
+ * Operates IN PLACE on the records' existing `poll` field, attaching
+ * `optionVoteCounts` and `userVote`. Callers pass the already-shaped output
+ * of shapeCaw (where `poll` was built from the included relation).
+ */
+export async function enrichWithPollVotes(
+  records: ShapedCaw[],
+  currentUserId?: number,
+): Promise<void> {
+  // Collect every poll referenced — including parent caws (quotes' parents
+  // can themselves carry polls). Skip records with no poll attached.
+  const pollIds = new Set<number>()
+  const collect = (caw: ShapedCaw | null | undefined) => {
+    if (!caw?.poll) return
+    const pid = (caw.poll as any)._pollId
+    if (pid) pollIds.add(pid)
+  }
+  for (const r of records) {
+    collect(r)
+    collect(r.parent)
+    collect(r.originalCaw)
+  }
+  if (pollIds.size === 0) return
+
+  const ids = Array.from(pollIds)
+  // Per-option vote counts — confirmed votes only. groupBy is the cheapest
+  // way to get this without N round trips.
+  const counts = await prisma.vote.groupBy({
+    by: ['pollId', 'optionIndex'],
+    where: { pollId: { in: ids }, pending: false },
+    _count: { _all: true },
+  })
+  const countsByPoll = new Map<number, Map<number, number>>()
+  for (const row of counts) {
+    let inner = countsByPoll.get(row.pollId)
+    if (!inner) { inner = new Map(); countsByPoll.set(row.pollId, inner) }
+    inner.set(row.optionIndex, row._count._all)
+  }
+
+  // Viewer's votes — one row per poll at most (unique constraint).
+  const userVotes = currentUserId
+    ? await prisma.vote.findMany({
+        where: { pollId: { in: ids }, voterId: currentUserId },
+        select: { pollId: true, optionIndex: true, pending: true },
+      })
+    : []
+  const myVoteByPoll = new Map<number, { optionIndex: number; pending: boolean }>()
+  for (const v of userVotes) {
+    myVoteByPoll.set(v.pollId, { optionIndex: v.optionIndex, pending: v.pending })
+  }
+
+  const decorate = (caw: ShapedCaw | null | undefined) => {
+    if (!caw?.poll) return
+    const pid = (caw.poll as any)._pollId
+    if (!pid) return
+    const inner = countsByPoll.get(pid) || new Map()
+    const optionsLen = caw.poll.options.length
+    const optionVoteCounts: number[] = []
+    for (let i = 0; i < optionsLen; i++) optionVoteCounts.push(inner.get(i) || 0)
+    caw.poll.optionVoteCounts = optionVoteCounts
+    caw.poll.userVote = myVoteByPoll.get(pid) || null
+    // Strip the internal id so it doesn't leak into responses.
+    delete (caw.poll as any)._pollId
+  }
+  for (const r of records) {
+    decorate(r)
+    decorate(r.parent)
+    decorate(r.originalCaw)
   }
 }

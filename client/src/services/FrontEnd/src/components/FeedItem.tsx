@@ -39,6 +39,8 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { User, CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
 import ContentWithHashtags from './ContentWithHashtags'
+import PollDisplay from './PollDisplay'
+import { stripPollMarker } from '~/../../../tools/pollMarker'
 import { formatEngagementCount } from '~/utils/numberFormat'
 import { apiFetch } from '~/api/client'
 import ConfirmModal from '~/components/modals/ConfirmModal'
@@ -923,7 +925,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           ) : translatedText ? (
             <div className="mb-4 pl-2 md:pl-0">
               <ContentWithHashtags
-                content={translatedText}
+                content={stripPollMarker(translatedText)}
                 postId={useItem.id}
                 renderMedia={!hideMedia}
                 className={`transition-colors duration-300 ${
@@ -934,13 +936,22 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           ) : (
             <div className="mb-4 pl-2 md:pl-0">
               <ContentWithHashtags
-                content={useItem.content}
+                content={stripPollMarker(useItem.content)}
                 postId={useItem.id}
                 renderMedia={!hideMedia}
                 className={`transition-colors duration-300 ${
                   isDark ? 'text-gray-200' : 'text-gray-800'
                 } ${contentClassName || ''}`}
               />
+            </div>
+          )}
+
+          {/* Poll widget — renders only when the API returned poll data,
+              which only happens when a ::poll:...:: marker survived the
+              indexer round-trip and got promoted into a Poll row. */}
+          {useItem.poll && (
+            <div className="mb-4 pl-2 md:pl-0">
+              <PollDisplay caw={useItem} />
             </div>
           )}
 
@@ -1192,7 +1203,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   </div>
                 ) : item.parent.content && (
                   <div className={`text-sm line-clamp-3 ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
-                    <ContentWithHashtags content={item.parent.content} />
+                    <ContentWithHashtags content={stripPollMarker(item.parent.content)} />
                   </div>
                 )}
               </Wrapper>

@@ -5,6 +5,7 @@ import { processHashtagsForCaw } from '../../tools/hashtags'
 import { NotificationService } from '../NotificationService'
 import { elasticsearchService } from '../ElasticsearchService'
 import { countManager } from '../CountManager'
+import { parsePoll, parseVoteText } from '../../tools/pollMarker'
 import type { PrismaTransactionClient } from './types'
 
 /** Sentinel thrown by findCawId so callers (and the top-level
@@ -149,6 +150,23 @@ export async function handleCawAction(
     await NotificationService.createMentionNotifications(newCaw.id, textContent, authorId, tx)
   } catch (err) {
     console.error(`Failed to create mention notifications for caw ${newCaw.id}:`, err)
+  }
+
+  // Create the Poll row if the caw text contains a ::poll:...:: marker.
+  // Use upsert so the local-API optimistic path (which already created the
+  // poll when the user submitted) doesn't conflict with the indexer's
+  // catch-up — both paths arrive at the same final row.
+  try {
+    const parsedPoll = parsePoll(textContent)
+    if (parsedPoll) {
+      await tx.poll.upsert({
+        where: { cawId: newCaw.id },
+        update: { options: parsedPoll.options }, // benign re-write if already there
+        create: { cawId: newCaw.id, options: parsedPoll.options },
+      })
+    }
+  } catch (err) {
+    console.error(`Failed to create poll for caw ${newCaw.id}:`, err)
   }
 
   // Create notification and confirm Reply record if this references a parent caw
@@ -592,6 +610,12 @@ export async function handleOtherAction(
     return
   }
 
+  // Check if this is a vote action (poll vote or unvote)
+  if (rawAction.text?.startsWith('vote:')) {
+    await handleVoteAction(tx, action, rawAction, authorId)
+    return
+  }
+
   // Check if this is a profile update (both old and new formats)
   if (rawAction.text?.startsWith('profile-update:') || rawAction.text?.startsWith('p:')) {
     console.log('Processing profile update for user:', authorId)
@@ -875,6 +899,151 @@ async function handleTipAction(
     await NotificationService.createTipNotification(recipientId, senderId, cawId || undefined, Number(tipAmount))
   } catch (err) {
     console.error('[handleTipAction] Failed to create tip notification:', err)
+  }
+}
+
+/**
+ * Handle vote actions on polls.
+ *
+ * Text formats:
+ *   vote:N    — cast/change vote to option N (0-based index)
+ *   vote:     — unvote (remove existing vote)
+ *
+ * The target poll is identified by (rawAction.recipients[0], receiverCawonce):
+ *   recipients[0] = the poll author's tokenId
+ *   receiverCawonce = the cawonce of the caw the poll lives on
+ *
+ * We use these instead of a numeric cawId because cawId is local-DB-only —
+ * different across mirror nodes. (recipients, receiverCawonce) are the
+ * canonical on-chain pointers everyone agrees on.
+ *
+ * Vote semantics: one row per (pollId, voterId). Voting again UPDATEs the
+ * existing row's optionIndex; unvoting DELETEs the row. Poll.totalVotes is
+ * incremented/decremented atomically alongside.
+ *
+ * Confirms a pending vote (set pending=false) when the API submit path
+ * already wrote one optimistically — same pattern as Like / Tip.
+ */
+async function handleVoteAction(
+  tx: PrismaTransactionClient,
+  action: any,
+  rawAction: any,
+  voterId: number,
+): Promise<void> {
+  const parsed = parseVoteText(rawAction.text)
+  if (!parsed) {
+    console.warn('[handleVoteAction] Unrecognized vote text:', rawAction.text)
+    return
+  }
+
+  const pollOwnerTokenId = Number(rawAction.recipients?.[0])
+  const targetCawonce = Number(rawAction.receiverCawonce)
+  if (!pollOwnerTokenId || !Number.isFinite(targetCawonce)) {
+    console.warn('[handleVoteAction] Missing recipient/cawonce for vote:', { rawAction })
+    return
+  }
+
+  // Resolve the local userId for the poll's author. findOrCreateUser is
+  // idempotent + cached; safe to call inside a tx (it doesn't open another).
+  const ownerUserId = await findOrCreateUser(pollOwnerTokenId)
+
+  // Resolve the Caw row by its (userId, cawonce) — both pieces come from
+  // the on-chain action data. If the caw isn't indexed yet (we received the
+  // vote before the parent caw's CAW event), we can't index this vote yet
+  // either. The cleanest behavior: skip silently and let the next poll
+  // pick it up when the caw lands. RawEventsGatherer processes events in
+  // chain order so this race is rare but possible across mirror nodes.
+  const targetCaw = await tx.caw.findUnique({
+    where: { userId_cawonce: { userId: ownerUserId, cawonce: targetCawonce } },
+    select: { id: true, poll: { select: { id: true, totalVotes: true } } },
+  })
+  if (!targetCaw) {
+    console.warn(`[handleVoteAction] Target caw not found yet (owner=${ownerUserId} cawonce=${targetCawonce}) — skipping`)
+    return
+  }
+  if (!targetCaw.poll) {
+    console.warn(`[handleVoteAction] Target caw ${targetCaw.id} has no poll — vote ignored`)
+    return
+  }
+
+  // Unvote path
+  if (parsed.optionIndex === null) {
+    const existing = await tx.vote.findUnique({
+      where: { pollId_voterId: { pollId: targetCaw.poll.id, voterId } },
+    })
+    if (!existing) {
+      console.log(`[handleVoteAction] Unvote with no existing vote (poll=${targetCaw.poll.id} voter=${voterId}) — no-op`)
+      return
+    }
+    await tx.vote.delete({ where: { id: existing.id } })
+    if (!existing.pending) {
+      // Only decrement when we're removing a confirmed vote — pending votes
+      // never bumped totalVotes (the count is for confirmed only).
+      await tx.poll.update({
+        where: { id: targetCaw.poll.id },
+        data: { totalVotes: { decrement: 1 } },
+      })
+    }
+    console.log(`[handleVoteAction] Removed vote (poll=${targetCaw.poll.id} voter=${voterId})`)
+    return
+  }
+
+  // Vote / change-vote path. Bounds check against the actual options
+  // count, not POLL_MAX_OPTIONS — a poll might have only 3 options and a
+  // stale frontend that submitted optionIndex=4 should be rejected.
+  const optionsCount = await tx.poll.findUnique({
+    where: { id: targetCaw.poll.id },
+    select: { options: true },
+  })
+  if (!optionsCount || parsed.optionIndex >= optionsCount.options.length) {
+    console.warn(`[handleVoteAction] optionIndex ${parsed.optionIndex} out of range for poll ${targetCaw.poll.id}`)
+    return
+  }
+
+  // Upsert the vote row. There's an existing pending row when the API
+  // submitted optimistically — flip pending → false and update the index.
+  // If no existing row, this is a vote from a remote node and we create
+  // it confirmed in one shot.
+  const existing = await tx.vote.findUnique({
+    where: { pollId_voterId: { pollId: targetCaw.poll.id, voterId } },
+  })
+
+  if (existing) {
+    const wasPending = existing.pending
+    const indexChanged = existing.optionIndex !== parsed.optionIndex
+    await tx.vote.update({
+      where: { id: existing.id },
+      data: {
+        optionIndex: parsed.optionIndex,
+        cawonce: action.cawonce,
+        pending: false,
+      },
+    })
+    // Only bump totalVotes when a pending row gets CONFIRMED (it wasn't
+    // counted before). Changing the option on an already-confirmed vote
+    // is a no-op for totalVotes.
+    if (wasPending) {
+      await tx.poll.update({
+        where: { id: targetCaw.poll.id },
+        data: { totalVotes: { increment: 1 } },
+      })
+    }
+    console.log(`[handleVoteAction] ${wasPending ? 'Confirmed' : indexChanged ? 'Updated' : 'Re-confirmed'} vote (poll=${targetCaw.poll.id} voter=${voterId} option=${parsed.optionIndex})`)
+  } else {
+    await tx.vote.create({
+      data: {
+        pollId: targetCaw.poll.id,
+        voterId,
+        optionIndex: parsed.optionIndex,
+        cawonce: action.cawonce,
+        pending: false,
+      },
+    })
+    await tx.poll.update({
+      where: { id: targetCaw.poll.id },
+      data: { totalVotes: { increment: 1 } },
+    })
+    console.log(`[handleVoteAction] Created vote (poll=${targetCaw.poll.id} voter=${voterId} option=${parsed.optionIndex})`)
   }
 }
 

@@ -151,6 +151,17 @@ async function cleanupOptimisticRows(
         where: { senderId, cawonce, pending: true }
       })
     }
+
+    // VOTE (actionType 7 with vote: prefix): drop the pending Vote row the
+    // optimistic API path wrote. The cawonce on a Vote row is the OTHER
+    // action's cawonce — the same cawonce we have here — so this scopes
+    // exactly to the failed submission and won't touch a confirmed prior
+    // vote by the same user.
+    if (actionType === 7 && typeof actionData?.text === 'string' && actionData.text.startsWith('vote:') && cawonce != null) {
+      await prisma.vote.deleteMany({
+        where: { voterId: senderId, cawonce, pending: true }
+      })
+    }
   } catch (err: any) {
     console.warn(`[markTxQueueFailed] Optimistic cleanup failed for sender ${senderId}:`, err.message)
   }

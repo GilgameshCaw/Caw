@@ -66,4 +66,10 @@ export type CawItem = {
   hasImage?: boolean // Quick check if caw has any image
   videoData?: string // URLs for off-chain videos
   hasVideo?: boolean // Quick check if caw has any video
+  poll?: {
+    options: string[]
+    totalVotes: number
+    optionVoteCounts: number[]
+    userVote: { optionIndex: number; pending: boolean } | null
+  }
 }

@@ -2,7 +2,7 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { getTrendingHashtags, searchHashtags } from '../../tools/hashtags'
-import { shapeCaw, handlePagination } from '../shared/cawUtils'
+import { shapeCaw, handlePagination, enrichWithPollVotes } from '../shared/cawUtils'
 
 const router = Router()
 
@@ -56,12 +56,14 @@ router.get('/:tag/caws', async (req, res) => {
             recaws: currentUserId
               ? { where: { userId: currentUserId, action: 'RECAW' }, select: { id: true } }
               : false,
+            poll: { select: { id: true, options: true, totalVotes: true } },
             hashtags: {
               include: { hashtag: { select: { name: true } } }
             },
             parent: {
               include: {
                 user: { select: { tokenId: true, username: true, displayName: true, image: true, avatarUrl: true, defaultAvatarId: true } },
+                poll: { select: { id: true, options: true, totalVotes: true } },
                 hashtags: {
                   include: { hashtag: { select: { name: true } } }
                 }
@@ -79,6 +81,7 @@ router.get('/:tag/caws', async (req, res) => {
       (caw) => caw.id
     )
     const items = rawCaws.map(caw => shapeCaw(caw))
+    await enrichWithPollVotes(items, currentUserId)
 
     return res.json({
       items,

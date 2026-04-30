@@ -78,6 +78,7 @@ model User {
   blocksGiven           Block[]        @relation("BlocksGiven")
   blocksReceived        Block[]        @relation("BlocksReceived")
   bookmarks             Bookmark[]
+  votes                 Vote[]
 
   @@index([address])
   @@index([cawCount, followerCount])
@@ -113,6 +114,7 @@ model Caw {
   tips          Tip[]
   bookmarks     Bookmark[]
   bookmarkCount Int            @default(0)
+  poll          Poll?
 
   @@unique([userId, cawonce])
   @@index([userId, action, createdAt])
@@ -120,6 +122,60 @@ model Caw {
   @@index([originalCawId])
   @@index([originalCawId, action])
   @@index([status, userId])
+}
+
+// Poll attached to a Caw. Created in the same transaction as the Caw row by
+// either the API submit path (optimistic) or the indexer (catch-up from a
+// remote node), driven by a ::poll:opt1:opt2:...:: marker in the caw text.
+//
+// Options are stored positionally: votes target by optionIndex, never by
+// option-text. Editing a poll isn't supported (matches "no caw edits").
+//
+// Per-option vote counts are derived at query time via Prisma groupBy on
+// Vote (no denormalized counters that could drift). totalVotes IS
+// denormalized — single atomic counter, cheap to keep accurate, and the
+// "12 votes" badge reads it without a count query.
+model Poll {
+  id         Int      @id @default(autoincrement())
+  cawId      Int      @unique
+  options    String[] // PG text[]; positional. ≤ 6 entries enforced at write time.
+  totalVotes Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  caw        Caw      @relation(fields: [cawId], references: [id], onDelete: Cascade)
+  votes      Vote[]
+
+  @@index([cawId])
+}
+
+// One Vote row per (poll, voter). Latest vote wins — when a user changes
+// their mind, we UPDATE the existing row's optionIndex rather than
+// inserting a new row. Unvote is implemented as deleting the row and
+// decrementing Poll.totalVotes.
+//
+// `pending` mirrors the pattern in Like / Reply / Tip: the API writes the
+// row optimistically, the indexer flips pending → false (or for unvote,
+// deletes the row) when the on-chain action confirms. Failed actions get
+// cleaned up by cleanupOptimisticRows in utils/txQueueFailure.ts.
+//
+// `cawonce` carries the OTHER action's cawonce so cleanupOptimisticRows
+// can find the right pending vote row to roll back when its TxQueue entry
+// fails — same pattern Tip uses.
+model Vote {
+  id          Int      @id @default(autoincrement())
+  pollId      Int
+  voterId     Int
+  optionIndex Int
+  cawonce     Int
+  pending     Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  poll        Poll     @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  voter       User     @relation(fields: [voterId], references: [tokenId])
+
+  @@unique([pollId, voterId])
+  @@index([pollId, optionIndex])
+  @@index([voterId])
 }
 
 model Like {

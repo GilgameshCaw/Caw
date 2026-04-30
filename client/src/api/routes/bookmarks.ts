@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { extractSession } from '../middleware/auth'
-import { shapeCaw, getCawIncludeConfig } from '../shared/cawUtils'
+import { shapeCaw, getCawIncludeConfig, enrichWithPollVotes } from '../shared/cawUtils'
 
 const router = Router()
 
@@ -48,12 +48,15 @@ router.get('/', async (req, res) => {
     const hasMore = bookmarks.length > limit
     const items = hasMore ? bookmarks.slice(0, limit) : bookmarks
 
+    const shapedBookmarks = items.map(b => ({
+      ...shapeCaw(b.caw),
+      isBookmarked: true,
+      bookmarkId: b.id,
+    }))
+    await enrichWithPollVotes(shapedBookmarks, userId)
+
     res.json({
-      bookmarks: items.map(b => ({
-        ...shapeCaw(b.caw),
-        isBookmarked: true,
-        bookmarkId: b.id,
-      })),
+      bookmarks: shapedBookmarks,
       hasMore,
       nextCursor: hasMore ? items[items.length - 1].id : undefined,
     })

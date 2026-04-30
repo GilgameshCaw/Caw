@@ -25,6 +25,7 @@ function decompressActionText(textField: unknown): string {
 // findOrCreateUser from the request path. If the sender row is missing, we
 // 202 and let RawEventsGatherer's Mint listener / NftTransferWatcher backfill.
 import { countManager } from '../../services/CountManager'
+import { parsePoll, parseVoteText } from '../../tools/pollMarker'
 import { getSession, addAuthorization, createSession } from '../sessionStore'
 import { cawProfileL2Abi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
@@ -529,6 +530,23 @@ router.post('/', async (req, res) => {
           }
         }
 
+        // Optimistic Poll creation when the caw text carries a ::poll:...::
+        // marker. Same upsert pattern as the indexer in handleCawAction so
+        // both paths converge on one row whichever runs first.
+        try {
+          const parsedPoll = parsePoll(textContent)
+          if (parsedPoll) {
+            await prisma.poll.upsert({
+              where: { cawId: caw.id },
+              update: { options: parsedPoll.options },
+              create: { cawId: caw.id, options: parsedPoll.options },
+            })
+          }
+        } catch (pollErr) {
+          console.error('Failed to create pending poll:', pollErr)
+          // Continue — indexer will create the row when the on-chain CAW lands.
+        }
+
         // Create pending Reply record if this is a reply (not a quote/recaw)
         if (originalCawId && caw && !isQuote && !isRecaw) {
           try {
@@ -772,6 +790,68 @@ router.post('/', async (req, res) => {
       } catch (tipErr) {
         console.error('Failed to create pending tip:', tipErr)
         // Continue even if pending tip creation fails
+      }
+    }
+
+    // Create / update / delete pending Vote if this is a vote action.
+    // Optimistic: the row is written here so the UI can show the vote
+    // immediately on refresh; the indexer's handleVoteAction confirms it
+    // (pending → false) when the on-chain action lands. On txQueue failure,
+    // cleanupOptimisticRows in utils/txQueueFailure.ts removes the pending row.
+    if ((data.actionType === 7 || data.actionType === 'other') && plaintext.startsWith('vote:')) {
+      try {
+        const parsed = parseVoteText(plaintext)
+        const pollOwnerTokenId = Number(data.recipients?.[0])
+        const targetCawonce = Number(data.receiverCawonce)
+        if (parsed && pollOwnerTokenId && Number.isFinite(targetCawonce)) {
+          // Find the poll's caw + poll row. If the poll doesn't exist yet
+          // locally (race with indexer), skip the optimistic write — the
+          // indexer's handleVoteAction will set up state when both rows
+          // are present.
+          const targetCaw = await prisma.caw.findUnique({
+            where: { userId_cawonce: { userId: pollOwnerTokenId, cawonce: targetCawonce } },
+            select: { id: true, poll: { select: { id: true } } },
+          })
+          if (targetCaw?.poll) {
+            // Ensure the voter user exists (mirror the tip path's upsert).
+            await prisma.user.upsert({
+              where: { tokenId: data.senderId },
+              update: {},
+              create: { id: data.senderId, tokenId: data.senderId, username: `user_${data.senderId}` },
+            })
+
+            if (parsed.optionIndex === null) {
+              // Optimistic unvote: drop the existing row immediately so the UI
+              // reflects "removed" on refresh. If the action fails, the user
+              // gets an ACTION_FAILED notification and can retry; the row
+              // stays gone in the meantime, which matches what they wanted.
+              await prisma.vote.deleteMany({
+                where: { pollId: targetCaw.poll.id, voterId: data.senderId },
+              })
+            } else {
+              // Optimistic vote / change-vote. Upsert with pending=true so
+              // the indexer can flip it to false later. If the user already
+              // had a confirmed vote and is changing, we set pending=true
+              // again — failure cleanup will then revert to the prior state
+              // when the indexer never confirms. Acceptable: a stuck pending
+              // change reverts to "no vote shown" rather than the prior
+              // option, which is the safer side of the tradeoff.
+              await prisma.vote.upsert({
+                where: { pollId_voterId: { pollId: targetCaw.poll.id, voterId: data.senderId } },
+                update: { optionIndex: parsed.optionIndex, cawonce: data.cawonce, pending: true },
+                create: {
+                  pollId: targetCaw.poll.id,
+                  voterId: data.senderId,
+                  optionIndex: parsed.optionIndex,
+                  cawonce: data.cawonce,
+                  pending: true,
+                },
+              })
+            }
+          }
+        }
+      } catch (voteErr) {
+        console.error('Failed to write pending vote:', voteErr)
       }
     }
 
