@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
+import "@openzeppelin/contracts/interfaces/IERC1271.sol";
 
 import "./CawProfileL2.sol";
 import { MessagingFee } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
@@ -66,6 +67,16 @@ contract CawActions is Ownable {
   ///      ~2.4KB — pack ~25 checkpoints (800 actions) per LZ message.
   ///      Checkpoint SSTORE cost is ~690 gas/action — negligible on L2.
   uint256 private constant CHECKPOINT_INTERVAL = 32;
+
+  /// @dev Gas stipend for ERC-1271 isValidSignature staticcall on the
+  ///      contract-owner cold path. Bounded so a malicious contract owner
+  ///      cannot drain a relaying validator with an expensive
+  ///      isValidSignature implementation. 50k is generous for a normal
+  ///      "lookup authorized address + nonce" implementation but tight
+  ///      enough to cap pathological ones. Honest implementers should keep
+  ///      isValidSignature well under this budget.
+  uint256 private constant ERC1271_GAS_LIMIT = 50_000;
+  bytes4  private constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
 
   constructor(address _cawProfiles) {
     eip712DomainHash = generateDomainHash();
@@ -674,6 +685,19 @@ contract CawActions is Ownable {
     }
   }
 
+  /// @dev Bounded ERC-1271 verification. Forwards a fixed gas stipend so a
+  ///      malicious contract owner cannot drain a relaying validator with an
+  ///      expensive isValidSignature. Out-of-gas inside the staticcall surfaces
+  ///      as a `false` return, identical to a 1271 reject — the action fails
+  ///      verification but the relaying tx isn't burned.
+  function _checkERC1271(address owner, bytes32 digest, uint8 v, bytes32 r, bytes32 s) internal view returns (bool) {
+    bytes memory sig = abi.encodePacked(r, s, v);
+    (bool ok, bytes memory ret) = owner.staticcall{gas: ERC1271_GAS_LIMIT}(
+      abi.encodeWithSelector(IERC1271.isValidSignature.selector, digest, sig)
+    );
+    return ok && ret.length >= 32 && abi.decode(ret, (bytes4)) == ERC1271_MAGIC_VALUE;
+  }
+
   function _verifySignatureMem(
     uint8 v, bytes32 r, bytes32 s,
     ActionData memory data
@@ -681,15 +705,29 @@ contract CawActions is Ownable {
     bytes32 structHash = _computeStructHash(data);
 
     signer = getSigner(structHash, v, r, s);
-    require(signer != address(0), "Invalid signature");
-
     address owner = cawProfile.ownerOf(data.senderId);
-    if (signer == owner) return (signer, false);
 
-    (uint64 expiry, uint8 scopeBitmap,) = cawProfile.sessions(owner, signer);
-    require(expiry > block.timestamp, "Session expired or not found");
-    require((scopeBitmap & (1 << uint8(data.actionType))) != 0, "Action not in session scope");
-    return (signer, true);
+    if (signer == owner && signer != address(0)) return (signer, false);
+
+    if (signer != address(0)) {
+      (uint64 expiry, uint8 scopeBitmap,) = cawProfile.sessions(owner, signer);
+      if (expiry > block.timestamp) {
+        require((scopeBitmap & (1 << uint8(data.actionType))) != 0, "Action not in session scope");
+        return (signer, true);
+      }
+    }
+
+    // Cold path: contract-owned profile, ERC-1271 fallback. The 1271 contract
+    // validates against the full EIP-712 digest (the same bytes the EOA would
+    // have signed), not the bare structHash. Gas-bounded — see _checkERC1271.
+    if (owner.code.length > 0) {
+      bytes32 digest = keccak256(abi.encodePacked("\x19\x01", eip712DomainHash, structHash));
+      require(_checkERC1271(owner, digest, v, r, s), "Invalid signature");
+      return (owner, false);
+    }
+
+    require(signer != address(0), "Invalid signature");
+    revert("Session expired or not found");
   }
 
   /// @dev Recover the signer of an ActionBatch signature. Performs the same
@@ -723,14 +761,27 @@ contract CawActions is Ownable {
       actionsHash
     ));
     signer = getSigner(structHash, v, r, s);
-    require(signer != address(0), "Batch signature did not recover a valid signer");
-
     address owner = cawProfile.ownerOf(senderId);
-    if (signer == owner) return (signer, false);
 
-    (uint64 expiry,,) = cawProfile.sessions(owner, signer);
-    require(expiry > block.timestamp, "Batch signature did not recover a valid signer");
-    return (signer, true);
+    if (signer == owner && signer != address(0)) return (signer, false);
+
+    if (signer != address(0)) {
+      (uint64 expiry,,) = cawProfile.sessions(owner, signer);
+      if (expiry > block.timestamp) return (signer, true);
+    }
+
+    // Cold path: contract-owned profile, ERC-1271 fallback. Same digest the
+    // EOA would have signed for an ActionBatch. Gas-bounded — see _checkERC1271.
+    if (owner.code.length > 0) {
+      bytes32 digest = keccak256(abi.encodePacked("\x19\x01", eip712DomainHash, structHash));
+      require(
+        _checkERC1271(owner, digest, v, r, s),
+        "Batch signature did not recover a valid signer"
+      );
+      return (owner, false);
+    }
+
+    revert("Batch signature did not recover a valid signer");
   }
 
   // ============================================
