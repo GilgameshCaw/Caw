@@ -460,22 +460,7 @@ right scope before we ship.
 
 ### UX — features not started
 
-- [ ] **Image handling — full pipeline overhaul**
-  - **Status quo**: every uploaded image is stored as-is and served back full-size. Observed on test.caw.social — avatars are 1.9 MB PNGs. A 20-post feed pulls ~40 MB of avatars + post images on cold load. This compounds with the on-disk-forever orphan problem and lack of edge caching to make image-heavy installs both slow and expensive.
-  - **(1) Upload-side processing — compression, resizing, format normalization**
-    - On `POST /api/upload`, run uploads through sharp (or equivalent): re-encode to WebP/AVIF, strip EXIF, cap max dimension (e.g. 2048px for posts, 512px for avatars), enforce sane quality (~80). HEIC → JPEG/WebP conversion handled here too.
-    - Result: a 1.9 MB iPhone PNG becomes a ~150 KB WebP with no visible quality loss.
-    - The route already validates MIME types and sets safe extensions — extend the same place. Falls naturally where `multer.diskStorage` runs.
-  - **(2) Variants — generate sized derivatives at upload time**
-    - For each upload, write multiple sizes alongside the original: `original`, `large` (1024w), `medium` (512w), `thumb` (256w), `avatar` (128w). Use sharp's pipeline; it's fast (~50-100ms per image on a small VPS).
-    - URL convention: `/uploads/images/<hash>.webp`, `/uploads/images/<hash>-thumb.webp`, etc. Or `/uploads/images/<hash>/<size>.webp` if you want to keep them grouped.
-    - Frontend picks variant by context: `<Avatar>` requests avatar size, feed image previews request `medium`, full-screen image modal requests `original`.
-    - Single biggest win for perceived performance.
-  - **(3) Caching layer — push images to a CDN or at minimum let nginx serve them directly with strong cache headers**
-    - Today: nginx proxies `/uploads/` to the Node API which serves via `express.static`. Every cold request goes through Node.
-    - Cheap fix: change the nginx block to `root` directly into `client/public/uploads/` (skip the Node hop entirely). Add `expires 1y; add_header Cache-Control "public, immutable";` since filenames are content-hashes and never change.
-    - Better fix: optional Cloudflare/Bunny/S3 proxy. CLI prompt at install time — "host images locally / push to S3-compatible bucket / front with Cloudflare." Operator picks. Local default stays.
-    - The `caw install` writes nginx config from `cli/src/steps/nginx.js` — extend that template.
+- [ ] **Image handling — full pipeline overhaul** (steps 1, 2, 3-lite shipped — see commits `fdc6902`, `f608c7b`, `e597d9f`, `92d5713`, `4f01a22`, `e41b349`, `89e24a9`, `3648f57`. Remaining: GC + S3 backend + CDN.)
   - **(4) Lifecycle / GC — orphan cleanup**
     - When a post is deleted (`hide:caw:<cawonce>` action), the image file stays on disk forever. Same for profile picture changes — old avatars accumulate.
     - Track image references via a `MediaAsset` table (or just a column on Caw / User pointing at the asset hash). On post hide / avatar replace, mark the asset as unreferenced. A daily DataCleaner sweep deletes assets unreferenced for >7 days (the buffer covers the indexer-lag window for hide actions).
@@ -486,13 +471,7 @@ right scope before we ship.
     - Abstract the upload write path behind a `MediaStorage` interface — `local` (default, current behavior) and `s3` (writes to any S3-compatible bucket — DigitalOcean Spaces, Backblaze B2, AWS S3, MinIO).
     - `caw install` prompts for storage backend choice. Local stays the path of least resistance; S3 is opt-in for operators who want it.
     - URL generation logic stays the same (still public URLs); only the *write* side changes.
-  - **Suggested rollout order** (each step lands independently):
-    1. (1) + (2) — biggest perceived improvement, contained to the upload route. ~1 day.
-    2. (3) lite — switch nginx to serve `/uploads/` directly. 30 minutes. Compounds with (1)+(2).
-    3. (4) GC — solves the disk-fill bomb. Half-day.
-    4. (5) S3 backend — operator-facing, lands after the local pipeline is solid. 1-2 days including CLI integration.
-    5. (3) full — Cloudflare / S3-CDN integration. Ties into (5).
-  - **Side note on HEIC**: once (1) is in and runs through sharp, HEIC support comes for free since sharp handles it via libvips. No separate work needed; just don't reject `image/heic` in `fileFilter`.
+  - **(3) full — CDN integration**: optional Cloudflare/Bunny/S3 proxy. CLI prompt at install time — "host images locally / push to S3-compatible bucket / front with Cloudflare." Operator picks. Local default stays. Ties into (5).
 
 - [ ] **Move blockchain RPC out of API request handlers (architectural)**
   - **Problem**: API request handlers call `findOrCreateUser`, `verifyOwnershipOnChain`, `readOnChainStake`, `syncTokensOwnedByWallet` — each of which falls back to L1/L2 RPC reads when the DB doesn't have what it needs. This couples API latency to Infura uptime. Today's incident: a fresh-mint user's `/api/users/ensure` call blocked for ~30s on an Infura WebSocket handshake then 500'd. Past incidents: validator wedge mode, tx_already_closed Prisma timeouts caused by RPC inside a 5s tx, ActionProcessor hung on receiver-tokenId resolution.
@@ -596,10 +575,6 @@ right scope before we ship.
   - **Implementation sketch**: SSR `<link rel="canonical">` in the prerender path (`spaPrerender.ts`) using whichever rule we settle on. Mirror in OG tags (`og:url`) so social embeds also point canonical. The SPA shell can render a placeholder canonical that the prerender catch-all overwrites for crawlers.
   - **Where**: `/users/:username`, `/caws/:id`, `/hashtags/:tag`, profile pages, the home feed (canonical = root of canonical origin).
   - Decide before we have meaningful crawl traffic — once Google indexes the wrong URLs, undoing it is slow.
-
-- [ ] **Image modal** (`client/src/services/FrontEnd/src/components/FeedItem.tsx:966, 994, 1022`)
-  - Comment: `// TODO: Open image in modal`
-  - Clicking on post images should open a full-size modal.
 
 - [ ] **Real gas price** (`client/src/services/FrontEnd/src/components/GasPriceLine.tsx:12-15`)
   - Currently hardcoded `const ethPrice = 1`.
@@ -705,10 +680,10 @@ right scope before we ship.
 
 ### API & Worker Efficiency
 
-- [ ] **Audit redundant RPC and DB calls across services**
+- [ ] **Audit redundant RPC and DB calls across services** (poller-throttling pass shipped `6cc9eca` — cut Infura credit burn ~70%; remaining: caches, batching, N+1 queries, reorg dedup)
   - Profile: ActionProcessor, RawEventsGatherer, ValidatorService, ChainSyncService, DataCleaner.
   - Look for:
-    - Redundant chain reads, duplicate DB queries, over-polling
+    - Duplicate DB queries
     - Missed batching (multicall, batch `getLogs`)
     - Cache opportunities (Redis) for stable chain data: token metadata, client configs, gas prices
     - Overlapping work between services reading the same contract state
@@ -782,11 +757,10 @@ One-liner install: `curl -fsSL https://raw.githubusercontent.com/.../install.sh 
 
 ### Phase 3 — Management & operations — PARTIALLY DONE
 
-**Already implemented:** `caw status`, `caw logs`, `caw restart`, `caw stop`.
+**Already implemented:** `caw status`, `caw logs`, `caw restart`, `caw stop`, `caw update` (with `--rebuild` flag, `01bd28d`).
 
 **Still missing:**
 
-- [ ] **`caw update`** — pull latest from GitHub, rebuild, restart
 - [ ] **`caw config`** — edit configuration interactively
 - [ ] **`caw domain`** — change domain, regenerate SSL
 - [ ] **`caw api-priority`** — manage API endpoint discovery priority
@@ -830,6 +804,15 @@ One-liner install: `curl -fsSL https://raw.githubusercontent.com/.../install.sh 
 - [x] **English auction `cancelListing` works with active bids** (2026-04-25, `db84bf7`) — refunds highest bidder automatically; seller no longer needs the transfer-NFT-away workaround
 - [x] **`mintSelector` kept as latent capacity** (2026-04-25) — comments now explain it's reserved for a future "mint + authenticate (no deposit)" flow rather than the misleading `// TODO: this one not used`
 - [x] **Stale `multi-layer-test.js` references** cleaned up (2026-04-25, by user)
+- [x] **Image pipeline — upload-side processing, variants, nginx direct-serve** (2026-04 — commits `fdc6902` shared uploadMedia helper + client-side compression, `f608c7b` server `/api/upload/variant` endpoint, `e597d9f` variant presets + URL derivation + Avatar two-stage fallback, `92d5713` thumb/large variants at avatar callsites, `4f01a22` WASM avatar thumb backfill, `e41b349` nginx alias `/uploads/` with 1y immutable cache, `89e24a9` variants always `.webp`, `3648f57` click-to-expand lightbox)
+- [x] **DM reactions — full backend + UI** (2026-04 — commits `b14aea4` MessageReaction + customizable defaults backend, `c1aa04b` hand-rolled migration, `5851a3a` smiley-trigger UI + bigger picker, `5e3f2a1` portal-rendered strip clamped to viewport)
+- [x] **DM video rendering** (2026-04, `df46f1a`) — videos render inline instead of as a paperclip
+- [x] **RPC poller throttling** (2026-04, `6cc9eca`) — cut Infura credit burn ~70% across pollers. Broader RPC audit still open under "API & Worker Efficiency".
+- [x] **RPC secrets via Authorization header** (2026-04, `fc1f69b`)
+- [x] **Cross-node short URL resolution** (2026-04 — commits `87a951a` resolve against origin host, `138776a` wildcard CORS, `89e24a9` nginx `/s/` proxy in CLI template)
+- [x] **`caw update --rebuild` flag + dual yarn-lockfile detection** (2026-04, `01bd28d`)
+- [x] **Image modal / lightbox** (2026-04, `3648f57`) — was `// TODO: Open image in modal` at three callsites in `FeedItem.tsx`
+- [x] **DM emoji button** (2026-04, `5851a3a`) — smiley-trigger reactions + bigger picker
 
 
 
@@ -858,7 +841,6 @@ some notes:
 - roll up notifications better. 
 - are notifications paginated ? I can't seem to scroll infinitely.
 - "If a bid is placed in the last 10 minutes" should be "If a bid is placed in the last 10 minutes of the auction"
--  emoji button in DMs doesn't work
 - emojis show up too small
 - "start a conversation" showing in DMs before any messages exist
 - clicking a conversation loads messages slowly (show loader)
@@ -868,4 +850,8 @@ some notes:
 - i should be able to like DMs that I received.
 - need user avatars in the DM convo pages.
 - caw pages are too chaoitic with lots of replies and tips. we need a way to hide/show other actions. 
-
+- seems like we need more sizes of the favicon to render nicely on phones?
+- we need a button to click on a profile that allows the current use to @mention them.
+- Add polling option to posts
+- Tippping < 200k shows as ($0.00).
+-make previous video automatic  stop on when  browsing  another video play on post
