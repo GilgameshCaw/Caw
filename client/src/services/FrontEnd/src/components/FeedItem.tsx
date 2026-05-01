@@ -35,6 +35,7 @@ import { useModalStore } from '~/store/modalStore'
 import { useOptimisticLikesStore } from '~/store/optimisticLikesStore'
 import { useHiddenCawsStore } from '~/store/hiddenCawsStore'
 import { useBookmarksStore } from '~/store/bookmarksStore'
+import { usePendingPinsStore } from '~/store/pendingPinsStore'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { User, CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
@@ -600,6 +601,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     // Tell the parent feed so it can reorder (and animate) the row
     // before we wait on the network.
     onPinUpdate?.(useItem.id, willBePinned)
+    // Persist the pending pin so a refresh during the indexing window
+    // doesn't snap the post back down. Cleared when the server reflects
+    // the same state (Feed.tsx) or after the TTL.
+    usePendingPinsStore.getState().setPending(
+      effectiveTokenId,
+      willBePinned ? cawId : null,
+    )
 
     if (onChain) {
       try {
@@ -614,6 +622,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         console.error('[Pin] on-chain submit failed:', err)
         setLocalIsPinned(!willBePinned)
         onPinUpdate?.(useItem.id, !willBePinned)
+        usePendingPinsStore.getState().clearPending(effectiveTokenId)
       }
     } else {
       try {
@@ -626,6 +635,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         console.error('[Pin] off-chain submit failed:', err)
         setLocalIsPinned(!willBePinned)
         onPinUpdate?.(useItem.id, !willBePinned)
+        usePendingPinsStore.getState().clearPending(effectiveTokenId)
       }
     }
     // Refetch the profile feed so the pinned post moves to the top.

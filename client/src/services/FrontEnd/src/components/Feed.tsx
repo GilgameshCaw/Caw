@@ -11,6 +11,7 @@ import { useMutePreferences, shouldFilterPost } from '~/hooks/useMutePreferences
 import { setFeedRefreshCallback, setFeedItemUpdateCallback, setFeedRefreshVisibleCallback } from '~/hooks/useTxQueueMonitor'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import { useHiddenCawsStore } from '~/store/hiddenCawsStore'
+import { usePendingPinsStore } from '~/store/pendingPinsStore'
 import SuggestedUsers from './SuggestedUsers'
 import { useHostVerification } from '~/hooks/useHostVerification'
 import { LoadingSpinner } from './Skeleton'
@@ -237,6 +238,75 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
     }
     return result
   }, [items, preferences, blockedUsers, pendingPosts, hiddenCawonces])
+
+  // Subscribe to the pending-pin store. We reconcile against server
+  // truth (clear the entry once items reflect the same pin) and apply
+  // the pending entry to the rendered items so a refresh during the
+  // indexing window still shows the pinned post on top.
+  const pendingPinsByUser = usePendingPinsStore(s => s.pending)
+  const clearPending = usePendingPinsStore(s => s.clearPending)
+
+  // Reconcile: if the items already show the same pin the user has
+  // pending, the indexer caught up and we can drop the override.
+  useEffect(() => {
+    for (const [userIdStr, entry] of Object.entries(pendingPinsByUser)) {
+      const userId = Number(userIdStr)
+      if (Date.now() - entry.setAt > 5 * 60 * 1000) {
+        // TTL expired — store will treat it as absent on read, but
+        // explicitly clearing keeps localStorage tidy.
+        clearPending(userId)
+        continue
+      }
+      // Find the user's currently-pinned caw in the freshly-loaded
+      // items (server truth).
+      const serverPinnedForUser = items.find(it => it.user.tokenId === userId && it.isPinned)
+      const serverPinnedId = serverPinnedForUser ? Number(serverPinnedForUser.id) : null
+      if (entry.cawId === serverPinnedId) {
+        // Server agrees — done.
+        clearPending(userId)
+      }
+    }
+    // We deliberately don't depend on pendingPinsByUser here: the
+    // reconcile only needs to fire when items change. Reading the store
+    // inside the effect picks up the latest value either way.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items])
+
+  // Apply pending pins to the rendered list. For every user with a
+  // pending entry whose caw appears in `filteredItems`, surface that
+  // caw at the top with isPinned: true (and clear isPinned on any
+  // server-pinned caw that disagrees). For pending-unpin (cawId === null),
+  // strip isPinned from the user's posts so the badge disappears
+  // immediately.
+  const filteredWithPendingPins = useMemo(() => {
+    if (Object.keys(pendingPinsByUser).length === 0) return filteredItems
+    let arr = filteredItems
+    for (const [userIdStr, entry] of Object.entries(pendingPinsByUser)) {
+      const userId = Number(userIdStr)
+      // Skip TTL-expired entries (defensive — useEffect above will clean them up).
+      if (Date.now() - entry.setAt > 5 * 60 * 1000) continue
+
+      if (entry.cawId === null) {
+        // Pending unpin — strip isPinned from this user's items.
+        arr = arr.map(it => it.user.tokenId === userId && it.isPinned ? { ...it, isPinned: false, pinnedAt: null } : it)
+        continue
+      }
+
+      // Pending pin — find target, stamp it, hoist to top, strip flag from siblings.
+      const targetIdStr = String(entry.cawId)
+      const target = arr.find(it => it.id === targetIdStr && it.user.tokenId === userId)
+      if (!target) continue // target isn't in the loaded window; nothing to surface
+      const updated = arr.map(it => {
+        if (it.id === targetIdStr) return { ...it, isPinned: true, pinnedAt: it.pinnedAt || new Date().toISOString() }
+        if (it.user.tokenId === userId && it.isPinned) return { ...it, isPinned: false, pinnedAt: null }
+        return it
+      })
+      const newTarget = updated.find(it => it.id === targetIdStr)!
+      const rest = updated.filter(it => it.id !== targetIdStr)
+      arr = [newTarget, ...rest]
+    }
+    return arr
+  }, [filteredItems, pendingPinsByUser])
 
   // Expose refresh method via ref
   useImperativeHandle(ref, () => ({
@@ -770,8 +840,12 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
               )
             })}
 
-            {/* Posts with consistent styling across all pages */}
-            {filteredItems.map((caw, idx) => {
+            {/* Posts with consistent styling across all pages.
+                Iterating filteredWithPendingPins (not filteredItems) so a
+                pending pin from this client survives a refresh: the
+                store-driven memo above hoists the pinned caw to the top
+                even before the indexer reflects it server-side. */}
+            {filteredWithPendingPins.map((caw, idx) => {
               // Skip items hoisted inline under a parent elsewhere in the feed
               if (hoistedIds.has(caw.id)) return null
               // Hide parent preview if the previous item is the parent post itself,
@@ -779,7 +853,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
               // share parent.id with replies but render as standalone posts —
               // treating a quote-then-reply pair as a "reply chain" makes the
               // reply look like a reply to the quote, hiding its real target.
-              const prevItem = idx > 0 ? filteredItems[idx - 1] : null
+              const prevItem = idx > 0 ? filteredWithPendingPins[idx - 1] : null
               const prevIsReply = !!(
                 prevItem?.parent?.id &&
                 !prevItem.isQuote &&
