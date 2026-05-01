@@ -115,6 +115,12 @@ model Caw {
   bookmarks     Bookmark[]
   bookmarkCount Int            @default(0)
   poll          Poll?
+  // Profile pin. Null = not pinned. Timestamp = when it was pinned —
+  // used for ordering if we ever allow multi-pin and to break ties when
+  // a user un-pins/re-pins quickly. Single-pin enforcement lives in the
+  // indexer (and the API fallback): pinning a new post nulls every
+  // other pinned post owned by the same user.
+  pinnedAt      DateTime?
 
   @@unique([userId, cawonce])
   @@index([userId, action, createdAt])
@@ -122,6 +128,9 @@ model Caw {
   @@index([originalCawId])
   @@index([originalCawId, action])
   @@index([status, userId])
+  // Filtered index: tiny because most rows are NULL. Speeds up the
+  // "fetch this user's pinned post" lookup on every profile load.
+  @@index([userId, pinnedAt])
 }
 
 // Poll attached to a Caw. Created in the same transaction as the Caw row by

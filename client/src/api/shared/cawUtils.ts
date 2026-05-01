@@ -64,6 +64,13 @@ export interface ShapedCaw {
   totalTipAmount: number
   isBookmarked?: boolean
   bookmarkCount?: number
+  // Set on the (single) caw the profile owner has pinned. The caws.ts
+  // route prepends the pinned caw to the first page and stamps this
+  // flag — clients use it to render the "📌 Pinned" badge above the
+  // bubble. Also surfaced as `pinnedAt` (raw timestamp) so the owner
+  // can render the toggle state in their menu.
+  isPinned?: boolean
+  pinnedAt?: string | null
   likePending?: boolean
   recawPending?: boolean
   replyPending?: boolean
@@ -140,6 +147,7 @@ export function shapeCaw(raw: CawRaw | any): ShapedCaw {
     replyPending,
     isBookmarked: raw.bookmarks ? raw.bookmarks.length > 0 : undefined,
     bookmarkCount: raw.bookmarkCount ?? 0,
+    pinnedAt: raw.pinnedAt ? raw.pinnedAt.toISOString() : null,
     commentCount: raw.commentCount,
     recawCount: raw.recawCount,
     cawonce: raw.cawonce,

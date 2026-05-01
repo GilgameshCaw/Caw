@@ -58,6 +58,8 @@ export type CawItem = {
   reason?: string | null // Failure reason if status is FAILED
   isBookmarked?: boolean // True when post is bookmarked by current user
   bookmarkCount?: number
+  isPinned?: boolean // True for the single profile-pinned post on its profile feed
+  pinnedAt?: string | null // ISO timestamp when the post was pinned (null = not pinned)
   commentCount: number
   recawCount: number
   cawonce: number

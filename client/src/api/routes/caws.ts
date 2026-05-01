@@ -230,6 +230,32 @@ router.get('/', async (req, res) => {
       }
     }
 
+    // Profile-feed pin: on the first page of a user's own profile feed,
+    // surface their pinned caw at the top. We exclude it from the main
+    // query (so it's not duplicated below) and prepend it after pagination.
+    // Subsequent pages skip this entirely — the pinned post is only ever
+    // shown once, on top.
+    const isProfileFeed = !!targetUserId && filter !== 'liked' && filter !== 'media' && filter !== 'replies'
+    let pinnedCaw: any = null
+    if (isProfileFeed && !cursor) {
+      pinnedCaw = await prisma.caw.findFirst({
+        where: {
+          userId: targetUserId,
+          pinnedAt: { not: null },
+          status: 'SUCCESS',
+        },
+        include: getCawIncludeConfig({ currentUserId }),
+      })
+      if (pinnedCaw) {
+        // Exclude the pinned caw from the main query so it's not shown twice.
+        if (where.AND) {
+          where.AND.push({ id: { not: pinnedCaw.id } })
+        } else {
+          where.AND = [{ id: { not: pinnedCaw.id } }]
+        }
+      }
+    }
+
     // 3️⃣ fetch one extra for cursor‐based pagination
     const raws = await prisma.caw.findMany({
       where,
@@ -246,6 +272,9 @@ router.get('/', async (req, res) => {
     // 4️⃣ handle pagination and shape
     const { items: shapedCaws, nextCursor } = handlePagination(raws, limit, (caw) => caw.id)
     const items = shapedCaws.map(caw => shapeCaw(caw))
+    if (pinnedCaw) {
+      items.unshift({ ...shapeCaw(pinnedCaw), isPinned: true })
+    }
     await enrichWithPollVotes(items, currentUserId)
 
     return res.json({ items, nextCursor })

@@ -616,6 +616,12 @@ export async function handleOtherAction(
     return
   }
 
+  // Check if this is a profile pin/unpin action
+  if (rawAction.text?.startsWith('pi:')) {
+    await handlePinAction(tx, rawAction, authorId)
+    return
+  }
+
   // Check if this is a profile update (both old and new formats)
   if (rawAction.text?.startsWith('profile-update:') || rawAction.text?.startsWith('p:')) {
     console.log('Processing profile update for user:', authorId)
@@ -1123,4 +1129,71 @@ async function handleHideAction(
   } else {
     console.warn('[handleHideAction] Unknown hide format:', text)
   }
+}
+
+/**
+ * Handle profile pin/unpin actions.
+ *
+ * Text formats:
+ *   pi:{cawId}  — pin that caw to the sender's profile (and unpin any
+ *                 prior pinned caw owned by the same sender)
+ *   pi:0        — unpin the sender's currently-pinned caw (no-op if none)
+ *
+ * Single-pin enforcement: pinning a new post nulls every other pinned
+ * post owned by the same user in the same transaction. The protocol
+ * doesn't enforce this on chain; we enforce it on the read side.
+ *
+ * Authorization: the cawId must belong to `senderId`. Anyone can submit
+ * an OTHER action with arbitrary text — silently ignoring foreign-owned
+ * targets prevents User A from pinning User B's post via the indexer.
+ */
+async function handlePinAction(
+  tx: PrismaTransactionClient,
+  rawAction: any,
+  senderId: number
+): Promise<void> {
+  const text: string = rawAction.text || ''
+  const idStr = text.replace('pi:', '').trim()
+  const cawId = parseInt(idStr)
+  if (isNaN(cawId)) {
+    console.warn('[handlePinAction] Invalid cawId:', text)
+    return
+  }
+
+  // Unpin path
+  if (cawId === 0) {
+    await tx.caw.updateMany({
+      where: { userId: senderId, pinnedAt: { not: null } },
+      data: { pinnedAt: null },
+    })
+    console.log(`[handlePinAction] Unpinned all caws for user=${senderId}`)
+    return
+  }
+
+  // Pin path — verify ownership before doing anything
+  const target = await tx.caw.findUnique({
+    where: { id: cawId },
+    select: { userId: true, originalCawId: true, action: true },
+  })
+  if (!target) {
+    console.warn(`[handlePinAction] Caw not found: id=${cawId}`)
+    return
+  }
+  if (target.userId !== senderId) {
+    console.warn(`[handlePinAction] User ${senderId} cannot pin caw ${cawId} owned by ${target.userId}`)
+    return
+  }
+
+  // Clear any existing pin owned by this user, then set the new one.
+  // Two updates rather than one to avoid touching `pinnedAt` on a row
+  // we're about to set anyway (which would be redundant churn).
+  await tx.caw.updateMany({
+    where: { userId: senderId, pinnedAt: { not: null }, id: { not: cawId } },
+    data: { pinnedAt: null },
+  })
+  await tx.caw.update({
+    where: { id: cawId },
+    data: { pinnedAt: new Date() },
+  })
+  console.log(`[handlePinAction] Pinned caw=${cawId} for user=${senderId}`)
 }

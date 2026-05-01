@@ -44,6 +44,7 @@ import { stripPollMarker } from '~/../../../tools/pollMarker'
 import { formatEngagementCount } from '~/utils/numberFormat'
 import { apiFetch } from '~/api/client'
 import ConfirmModal from '~/components/modals/ConfirmModal'
+import ModalWrapper from '~/components/modals/ModalWrapper'
 import MuteWordsModal from './modals/MuteWordsModal'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import Tooltip from '~/components/Tooltip'
@@ -116,6 +117,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const [showRecawMenu, setShowRecawMenu]   = useState(false)
   const [showOptionsMenu, setShowOptionsMenu] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  // Pin/unpin: when QuickSign + scope-7 is active we submit silently;
+  // otherwise this state opens a confirmation modal letting the user
+  // choose between an on-chain pin (free apart from the OTHER-action
+  // cost) and an off-chain-only pin.
+  const [showPinChoice, setShowPinChoice] = useState(false)
+  const [localIsPinned, setLocalIsPinned] = useState(!!item.pinnedAt)
   const [showShareModal, setShowShareModal] = useState(false)
   const [showTipModal, setShowTipModal] = useState(false)
   // NOTE: Media collapse UI removed — posts should show attached media
@@ -129,6 +136,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   }, [item.id, item.isBookmarked])
   const isBookmarked = bookmarksStore.isBookmarked(item.id)
   const [localBookmarkCount, setLocalBookmarkCount] = useState(item.bookmarkCount ?? 0)
+  // Re-sync if the server-shaped pin state changes (e.g. after refetch
+  // from another device / tab).
+  useEffect(() => {
+    setLocalIsPinned(!!item.pinnedAt)
+  }, [item.pinnedAt])
   const [translatedText, setTranslatedText] = useState<string | null>(null)
   const [isTranslating, setIsTranslating] = useState(false)
   const [isRetrying, setIsRetrying] = useState(false)
@@ -556,6 +568,79 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     }
   }
 
+  // Submit the pin/unpin action. `onChain=true` goes through the OTHER
+  // action with text "pi:{cawId}" (or "pi:0" for unpin), mirroring the
+  // profile-update flow exactly. `onChain=false` posts to /api/pins
+  // for the off-chain-only fallback.
+  const submitPinAction = async (target: 'pin' | 'unpin', onChain: boolean) => {
+    const effectiveTokenId = activeTokenId || activeToken?.tokenId
+    if (!effectiveTokenId) return
+    const cawId = parseInt(useItem.id)
+    const willBePinned = target === 'pin'
+
+    // Optimistic local toggle so the UI feels immediate; the indexer or
+    // API call will reconcile on the next refetch.
+    setLocalIsPinned(willBePinned)
+
+    if (onChain) {
+      try {
+        await signAndSubmit({
+          actionType: 'other',
+          senderId: effectiveTokenId,
+          receiverId: 0,
+          receiverCawonce: 0,
+          text: target === 'pin' ? `pi:${cawId}` : 'pi:0',
+        })
+      } catch (err) {
+        console.error('[Pin] on-chain submit failed:', err)
+        setLocalIsPinned(!willBePinned)
+      }
+    } else {
+      try {
+        const url = `/api/pins/${cawId}`
+        await apiFetch(url, {
+          method: target === 'pin' ? 'POST' : 'DELETE',
+          headers: { 'x-user-id': String(effectiveTokenId) },
+        })
+      } catch (err) {
+        console.error('[Pin] off-chain submit failed:', err)
+        setLocalIsPinned(!willBePinned)
+      }
+    }
+    // Refetch the profile feed so the pinned post moves to the top.
+    qc.invalidateQueries({ queryKey: ['feed'] }).catch(() => {})
+  }
+
+  // Click handler for the pin/unpin menu item. Reads QuickSign session
+  // state — if active and scope-7 (OTHER) is set, just submits on chain
+  // silently. Otherwise opens the choice modal.
+  const handlePinClick = async () => {
+    setShowOptionsMenu(false)
+    const target: 'pin' | 'unpin' = localIsPinned ? 'unpin' : 'pin'
+
+    const { useSessionKeyStore } = await import('~/store/sessionKeyStore')
+    const tokenOwner = activeToken?.owner
+    const session = tokenOwner
+      ? useSessionKeyStore.getState().getActiveSessionForAddress(tokenOwner)
+      : useSessionKeyStore.getState().getActiveSession()
+    const otherActionBit = 7
+    const canUseSession = !!session && (session.scopeBitmap & (1 << otherActionBit)) !== 0
+
+    if (canUseSession) {
+      submitPinAction(target, true)
+    } else {
+      // For unpin, skip the modal — there's nothing on chain to undo if
+      // they pinned off-chain, and pin/unpin churn shouldn't always cost
+      // a wallet popup. Default unpin to off-chain only; the user can
+      // re-pin on chain later if they want.
+      if (target === 'unpin') {
+        submitPinAction('unpin', false)
+      } else {
+        setShowPinChoice(true)
+      }
+    }
+  }
+
   const handleOptionsClick = (e?: React.MouseEvent) => {
     if (e) {
       e.preventDefault()
@@ -739,6 +824,18 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         } ${
           item.status === 'FAILED' ? 'opacity-60' : ''
         }`}>
+          {/* "Pinned" badge — only present on the profile-feed prepended
+              post (the API stamps `isPinned: true` on it). Never shown
+              on the regular feed even though `pinnedAt` may be set. */}
+          {item.isPinned && (
+            <div className={`flex items-center gap-1.5 text-xs font-medium mb-2 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16 12V4M16 4l-4 4M16 4l4 4M5 21h14M12 21V12" />
+              </svg>
+              Pinned
+            </div>
+          )}
+
           {/* Replying to header - only for actual replies (not quotes or recaws) */}
           {item.parent && !isRecaw && !isQuote && item.parent.user && !hideParentPreview && (
             item.parent.status === 'HIDDEN' ? (
@@ -1648,12 +1745,31 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 Report post
               </button>
 
-              {/* Delete own post — separate section at bottom, only for post author */}
+              {/* Owner-only actions: pin and delete. Top-level posts only
+                  (no recaws / replies) — Twitter parity, plus pinning a
+                  recaw is awkward semantically. */}
               {useItem.user.tokenId === (activeTokenId || activeToken?.tokenId) && useItem.cawonce != null && (
                 <>
                   <div className={`border-t my-1 ${
                     isDark ? 'border-white/20' : 'border-gray-200'
                   }`}></div>
+                  {useItem.action !== 'RECAW' && !useItem.parent && (
+                    <button
+                      onMouseDown={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        handlePinClick()
+                      }}
+                      className={`w-full px-4 py-3 text-left text-sm transition-colors duration-200 flex items-center gap-3 cursor-pointer ${
+                        isDark ? 'hover:bg-white/10 text-white' : 'hover:bg-gray-100 text-black'
+                      }`}
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16 12V4M16 4l-4 4M16 4l4 4M5 21h14M12 21V12" />
+                      </svg>
+                      {localIsPinned ? 'Unpin from profile' : 'Pin to profile'}
+                    </button>
+                  )}
                   <button
                     onMouseDown={(e) => {
                       e.preventDefault()
@@ -1834,6 +1950,60 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           }
         }}
       />
+
+      {/* Pin choice modal — only shown when QuickSign isn't active for
+          OTHER. Two buttons: "Pin on chain" (mints an OTHER action and
+          pays the OTHER cost, same as profile updates) or "Pin off chain
+          only" (DB-only, no wallet popup). */}
+      <ModalWrapper
+        isOpen={showPinChoice}
+        onClose={() => setShowPinChoice(false)}
+        maxWidth="max-w-sm"
+        zIndex={80}
+        usePortal
+        backdropClass="bg-black/60"
+      >
+        <div className="p-5">
+          <h3 className={`text-lg font-semibold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+            Pin to profile
+          </h3>
+          <p className={`text-sm mb-4 ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
+            Pinning on chain makes your choice public and verifiable by any
+            client or indexer. Off-chain only stores it on this server —
+            faster and free, but only this app shows it.
+          </p>
+          <div className="flex flex-col gap-2">
+            <button
+              onClick={() => {
+                setShowPinChoice(false)
+                submitPinAction('pin', true)
+              }}
+              className="w-full py-2 rounded-lg bg-yellow-500 hover:bg-yellow-600 text-black font-semibold text-sm cursor-pointer"
+            >
+              Pin on chain
+            </button>
+            <button
+              onClick={() => {
+                setShowPinChoice(false)
+                submitPinAction('pin', false)
+              }}
+              className={`w-full py-2 rounded-lg text-sm cursor-pointer ${
+                isDark ? 'bg-white/10 hover:bg-white/15 text-white' : 'bg-gray-100 hover:bg-gray-200 text-black'
+              }`}
+            >
+              Pin off chain only
+            </button>
+            <button
+              onClick={() => setShowPinChoice(false)}
+              className={`w-full py-2 rounded-lg text-sm cursor-pointer ${
+                isDark ? 'text-white/50 hover:text-white/70' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      </ModalWrapper>
     </>
   )
 }

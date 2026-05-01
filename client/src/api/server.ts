@@ -31,6 +31,7 @@ import pricesRouter from './routes/prices'
 import validatorAnalyticsRouter from './routes/validator-analytics'
 import marketplaceRouter from './routes/marketplace'
 import bookmarksRouter from './routes/bookmarks'
+import pinsRouter from './routes/pins'
 import meRouter from './routes/me'
 import adminDbRouter from './routes/admin-db'
 import ogRouter from './routes/og'
@@ -189,6 +190,7 @@ export function createApp() {
   app.use('/api/validator-analytics', validatorAnalyticsRouter)
   app.use('/api/marketplace', marketplaceRouter)
   app.use('/api/bookmarks', bookmarksRouter)
+  app.use('/api/pins', pinsRouter)
   app.use('/api/me', meRouter)
   app.use('/api/admin/db', adminDbRouter)
   app.use('/api/og', ogRouter)
