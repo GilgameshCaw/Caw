@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { useSignAndSubmitAction, buildTypedData, TYPES } from '../api/actions'
+import { useSignAndSubmitAction, buildTypedData, TYPES, setLocalCawonceFloor } from '../api/actions'
 
 /** Hard cap on thread length. Must match the API cap in
  *  `client/src/api/routes/actions.ts` (POST /api/actions/batch). The cap
@@ -785,6 +785,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         const threadCawonces = chunks.map((_, i) => startCawonce + i)
         const setCawonce = useTokenDataStore.getState().setCawonce
         setCawonce(effectiveTokenId, startCawonce + chunks.length)
+        // Push the chain-allocator's local watermark forward too — see the
+        // longer comment in the immediate-post path. Without this, a vote
+        // / like / tip submitted while these chunks are still pending will
+        // re-use a cawonce already taken by this batch.
+        setLocalCawonceFloor(effectiveTokenId, startCawonce + chunks.length)
         const firstPostCawonce = threadCawonces[0]
 
         // Resolve session key once — same logic as immediate-post path.
@@ -1172,6 +1177,15 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     // Immediately bump the store past the entire range so nothing else uses these
     const setCawonce = useTokenDataStore.getState().setCawonce
     setCawonce(effectiveTokenId, startCawonce + chunks.length)
+    // ALSO push the chain-allocator's local watermark forward. PostForm uses
+    // store-based allocation (above), but signAndSubmit on subsequent
+    // standalone actions (votes, likes, tips, etc.) uses the chain-based
+    // allocator (allocateCawonces / getNextCawonce). The two paths share no
+    // state by default — without this nudge, voting on a still-pending poll
+    // re-reads chainNext (unchanged because the poll hasn't confirmed) and
+    // hands out the SAME cawonce the poll already used, causing a 409
+    // collision in TxQueue's partial unique index.
+    setLocalCawonceFloor(effectiveTokenId, startCawonce + chunks.length)
 
     // Post first chunk (with media, parent info, etc.)
     // Quotes use actionType 'recaw' (with text) so the original author receives funds.
