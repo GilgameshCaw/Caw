@@ -4,6 +4,32 @@ Outstanding TODOs, security considerations, and planned features. Each entry has
 
 ---
 
+## DVN config strategy (mainnet — owner-less / permanently locked)
+
+The protocol's mainnet posture is "fully ownerless": after deploy we call `setDelegate(0x0)` and `renounceOwnership()` so no admin can ever rotate DVNs, change LZ libraries, or reconfigure the messaging layer. That means the DVN config we pick at deploy is the one we live with forever.
+
+**Decision: 0 required + 3-of-8 optional.**
+
+Verification rule: a message is valid iff at least 3 of the 8 optional DVNs verify it. Any 5 DVNs can go offline / sunset / get compromised and the bridge still works. Fraud requires 3 DVNs to collude.
+
+Why this shape:
+- ANY required DVNs would be a permanent single point of failure — if even one required DVN is sunsetted and we have no admin, we're bricked. So `requiredDVNs: []` is the only owner-less-safe choice.
+- 3-of-8 sits in the LZ team's recommended range for this pattern. Higher threshold (e.g. 4-of-8) is more secure against collusion but less resilient to multiple simultaneous outages. Lower (e.g. 2-of-8) flips the tradeoff.
+- 8 is large enough to absorb sunsets and to mix client-diverse DVN implementations (LZ Labs, Google Cloud, Nethermind, Polyhedra, Animoca, etc.).
+
+**Wait for client-diverse DVNs before locking** — per LZ team conversation 2026-04-29, new DVNs written on entirely different codebases than the existing ones are coming online in the next few months. Client diversity is what keeps a fixed config robust against a bug in any single DVN implementation. Target deploy timeline is 3-6 weeks, so it's worth checking back with LZ before mainnet to see which new DVNs are live and bake at least 1-2 of them into the optional pool.
+
+LZ's general recommendation against permanently locking the config: any future DVN contract upgrades won't be adoptable. We accept that tradeoff in exchange for trustlessness — but the threshold and pool size give us headroom for individual DVNs to be deprecated by their operators without breaking the bridge.
+
+**Implementation when ready** (`solidity/scripts/lz-dvn-config.js`):
+- `DVNS_BY_CHAIN_MAINNET` — list 8 DVN addresses per chain (sorted ascending, deduped, no overlap with required since required is empty)
+- `buildUlnSetConfigParams` — change `requiredDVNCount: 3 → 0`, `optionalDVNCount: 0 → 8`, `optionalDVNThreshold: 0 → 3`, `requiredDVNs: dvns → []`, `optionalDVNs: [] → dvns`
+- After `configureLzDvns` runs in deploy.js, add a final step that calls `setDelegate(0x0)` then `renounceOwnership()` on `CawProfile`, each `CawProfileL2_*`, each `CawActionsArchive_*`, each `CawChallengeRelay_*` (`CawActions` has no privileged functions reachable so renouncing is cosmetic but fine).
+
+Reference conversation with LZ team (Dane, 2026-04-29): confirmed 0 required + large optional pool with low threshold is the right shape for an owner-less protocol; recommended waiting for client-diverse DVNs.
+
+---
+
 ## Smart Contracts
 
 ### Remove `clientReplications` / `clientReplicationEnabled` from CawClientManager
@@ -693,6 +719,10 @@ right scope before we ship.
 
 ### Infrastructure
 
+- [ ] **CLI: fix `sudo -u caw -E` HOME bug.** `caw update` runs `sudo -u caw -E yarn install` which preserves `HOME=/root`, breaking yarn's RC lookup with EACCES on `/root/.config/yarn`. Switch `-E` to `-H` (sets HOME to target user's home dir) on every privileged drop in `cli/src/steps/update.js` and any other step that runs commands as the install user.
+
+- [ ] **CORS audit: wildcard public-read endpoints, allowlist auth-gated ones.** `/api/shorturl/<code>` is now wildcarded (commit 138776a) but other public-read endpoints aren't. Audit every `/api/*` route and bucket as: (a) public-read (no auth, scrapable data — wildcard CORS), (b) auth-gated (requireAuth, cookies, or any state mutation — origin-allowlist from discovered-instances), or (c) admin-only (no CORS). Likely public-read candidates: `/api/users/by-token`, `/api/users/<username>`, `/api/feed`, `/api/caws/<id>`, `/api/hashtags/*`, `/api/search/*`. Auth-gated: `/api/dm/*`, `/api/auth/*`, `/api/upload/*`, `/api/users/me`, `/api/notifications/*`, `/api/bookmarks`. Never set `Access-Control-Allow-Credentials: true` with a `*` origin. Cross-node mirroring won't fully work (e.g. a feed rendering content from another node) until the public-read set has CORS.
+
 - [ ] **Document all deployed contract addresses**
   - Many addresses marked TBD in docs.
   - Update after each deployment so client config and indexers stay in sync.
@@ -817,6 +847,8 @@ One-liner install: `curl -fsSL https://raw.githubusercontent.com/.../install.sh 
 
 
 ## UX
+
+- **Crowdfunding CAWs.** Same authoring model as inline polls (`::poll:opt1:opt2:::` marker → render UI from post text), but each tip on the post advances a progress bar toward a goal. Author specifies a target amount (and optionally a recipient/deadline) in the marker; the FeedItem renders a progress bar fed by the post's existing tip totals. Open questions: which token (CAW only, or multi-token?), whether goal/recipient lives in the marker or a sidecar field, how to handle overfunding, and whether to show contributor count or anonymized list.
 
 - **Ensure supporting other languages.** Audit text rendering, input handling, and storage end-to-end for non-Latin scripts (CJK, Cyrillic, Arabic, accented Latin, etc.). Hashtag recognition is already Unicode-aware (`tools/hashtagRegex.ts`). Still to verify: post composer length counting (bytes vs codepoints vs grapheme clusters), search/Elasticsearch analyzers, RTL layout for Arabic/Hebrew, font fallback in feed items, mute-word matching across scripts, username display in places that still use system fonts.
 
