@@ -175,7 +175,7 @@ const PollComposer: React.FC<Props> = ({
           return (
             <div
               key={i}
-              className={`flex items-center gap-2 rounded-lg transition-colors ${
+              className={`flex items-center gap-2 rounded-lg transition-colors min-w-0 ${
                 isDragging
                   ? (isDark ? 'ring-2 ring-yellow-400/60 bg-yellow-400/5' : 'ring-2 ring-yellow-500 bg-yellow-50')
                   : ''
@@ -259,7 +259,7 @@ const PollComposer: React.FC<Props> = ({
                 placeholder={`Option ${i + 1}`}
                 maxLength={optionByteCap * 2 /* generous: real check is byteLen */}
                 style={{ height: 50 }}
-                className={`flex-1 px-3 rounded-lg text-base outline-none border ${
+                className={`flex-1 min-w-0 w-full px-3 rounded-lg text-base outline-none border ${
                   overByte
                     ? 'border-red-500'
                     : isDark
@@ -267,14 +267,14 @@ const PollComposer: React.FC<Props> = ({
                       : 'bg-white border-gray-200 focus:border-yellow-500 text-gray-900'
                 }`}
               />
-              <span className={`text-[10px] tabular-nums w-8 text-right ${
+              <span className={`flex-shrink-0 text-[10px] tabular-nums w-8 text-right ${
                 overByte ? 'text-red-500' : isDark ? 'text-white/30' : 'text-gray-400'
               }`}>
                 {remaining}
               </span>
               <button
                 onClick={() => removeOption(i)}
-                className={`p-1 rounded transition-colors ${
+                className={`p-1 rounded transition-colors flex-shrink-0 ${
                   isDark ? 'text-white/30 hover:text-white/60' : 'text-gray-400 hover:text-gray-600'
                 }`}
                 aria-label="Remove option"

@@ -894,28 +894,28 @@ export const Profile: React.FC = () => {
         </div>
       </div>
 
-      <div className={`max-w-2xl mx-auto min-h-screen transition-all duration-300 ${
-        isDark ? 'bg-black text-white' : 'bg-white text-black'
-      }`}>
+        <div className={`max-w-2xl mx-auto min-h-screen overflow-x-hidden transition-all duration-300 ${
+          isDark ? 'bg-black text-white' : 'bg-white text-black'
+        }`}>
 
         {/* Profile Info - Layout de 2 columnas */}
         <div className={`pt-24 pb-6 px-6 transition-all duration-300 ${
           isDark ? 'bg-black text-white' : 'bg-white text-black'
         }`}>
           {/* Layout principal: 2 columnas */}
-          <div className="flex justify-between items-start">
+          <div className="flex justify-between items-start gap-4">
             {/* Columna izquierda: Username, Joined, Stats */}
-            <div className="flex-1">
+            <div className="flex-1 min-w-0">
               {/* Display Name, Username, and Joined */}
-              <div className="mb-4">
+              <div className="mb-4 min-w-0 pl-4 sm:pl-0">
                 <h1 className={`text-2xl font-bold transition-all duration-300 ${
                   isDark ? 'text-white' : 'text-black'
-                }`}>
+                } truncate`}>
                   {profileData?.displayName || profileData?.username || displayUsername}
                 </h1>
                 <p className={`text-base mt-0.5 transition-all duration-300 ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
-                }`}>
+                } truncate`}>
                   @{profileData?.username || displayUsername}
                 </p>
                 {profileData?.address && (
@@ -1007,7 +1007,8 @@ export const Profile: React.FC = () => {
               </div>
 
               {/* Stats - Alineadas horizontalmente */}
-              <div className="flex space-x-8 mb-6">
+              {/* Mobile alignment: keep in sync with the name block (pl-4). */}
+              <div className="flex gap-5 sm:gap-8 mb-6 pl-4 sm:pl-0">
                 <div className="text-center">
                   <div className={`text-lg font-bold transition-all duration-300 ${
                     isDark ? 'text-white' : 'text-black'
@@ -1022,7 +1023,7 @@ export const Profile: React.FC = () => {
                 </div>
                 <button
                   onClick={() => openModal('followingList', { username: profileData?.username || displayUsername })}
-                  className="cursor-pointer hover:opacity-80 transition-opacity"
+                  className="cursor-pointer hover:opacity-80 transition-opacity text-center"
                 >
                   <div className={`text-lg font-bold transition-all duration-300 ${
                     isDark ? 'text-white' : 'text-black'
@@ -1037,7 +1038,7 @@ export const Profile: React.FC = () => {
                 </button>
                 <button
                   onClick={() => openModal('followersList', { username: profileData?.username || displayUsername })}
-                  className="cursor-pointer hover:opacity-80 transition-opacity"
+                  className="cursor-pointer hover:opacity-80 transition-opacity text-center"
                 >
                   <div className={`text-lg font-bold transition-all duration-300 ${
                     isDark ? 'text-white' : 'text-black'
@@ -1111,7 +1112,7 @@ export const Profile: React.FC = () => {
             </div>
 
             {/* Columna derecha: Solo Edit Button */}
-            <div className="ml-6 flex flex-col items-end">
+            <div className="ml-4 flex flex-col items-end flex-shrink-0">
               {/* Edit Button */}
               <div>
                 {isOwnProfile ? (
@@ -1218,7 +1219,7 @@ export const Profile: React.FC = () => {
                         disabled={followPending || followWrongWallet}
                         onMouseEnter={() => setFollowButtonHovered(true)}
                         onMouseLeave={() => setFollowButtonHovered(false)}
-                        className={`px-8 py-2 rounded-full font-semibold border transition-all duration-200 ${
+                        className={`px-6 sm:px-8 py-2 rounded-full font-semibold border transition-all duration-200 ${
                           followWrongWallet ? 'opacity-50 cursor-not-allowed' :
                           followPending ? 'opacity-90 cursor-not-allowed' : 'cursor-pointer'
                         } ${
@@ -1320,7 +1321,7 @@ export const Profile: React.FC = () => {
                               onClick={() => setShowOptionsMenu(false)}
                             />
                             <div className={`absolute right-0 top-full mt-2 w-48 rounded-lg shadow-lg z-50 overflow-hidden ${
-                              isDark ? 'bg-gray-900 border border-white/20' : 'bg-white border border-gray-200'
+                              isDark ? 'bg-black border border-white/20' : 'bg-white border border-gray-200'
                             }`}>
                               <button
                                 onClick={handleToggleMute}

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useLayoutEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useSignAndSubmitAction, buildTypedData, TYPES, setLocalCawonceFloor } from '../api/actions'
 
@@ -384,6 +384,13 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const [isDragOverTextarea, setIsDragOverTextarea] = useState(false)
   const [showGifPicker, setShowGifPicker] = useState(false)
   const [showEmojiPicker, setShowEmojiPicker] = useState(false)
+  type AnchorRect = { left: number; right: number; top: number; bottom: number }
+  const [emojiPopover, setEmojiPopover] = useState<null | {
+    x: number
+    y: number
+    anchor: AnchorRect
+  }>(null)
+  const emojiPopoverRef = useRef<HTMLDivElement>(null)
   const [showScheduler, setShowScheduler] = useState(false)
   const [scheduledDate, setScheduledDate] = useState('')
   const [scheduledTime, setScheduledTime] = useState('')
@@ -416,6 +423,44 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // signing is main-thread heavy, and React reconciliation would starve it.
   const signingCountRef1 = useRef<HTMLSpanElement | null>(null)
   const signingCountRef2 = useRef<HTMLSpanElement | null>(null)
+
+  // Mobile emoji picker should open near the emoji button, not glued to the bottom.
+  // We compute an initial position on click, then measure the panel and clamp
+  // before paint to avoid the "jump" glitch.
+  useLayoutEffect(() => {
+    if (!showEmojiPicker || !emojiPopover) return
+    const el = emojiPopoverRef.current
+    if (!el) return
+
+    const { width: panelW, height: panelH } = el.getBoundingClientRect()
+    const pad = 8
+    const gap = 8
+    const bounds = {
+      left: pad,
+      right: window.innerWidth - pad,
+      top: pad,
+      bottom: window.innerHeight - pad,
+    }
+
+    const a = emojiPopover.anchor
+    const anchorCx = (a.left + a.right) / 2
+    const xRaw = anchorCx - panelW / 2
+
+    const yBelow = a.bottom + gap
+    const yAbove = a.top - panelH - gap
+    const hasRoomBelow = yBelow + panelH <= bounds.bottom
+    const hasRoomAbove = yAbove >= bounds.top
+    const yRaw = hasRoomBelow
+      ? yBelow
+      : (hasRoomAbove ? yAbove : (a.top - panelH / 2))
+
+    const x = Math.min(Math.max(bounds.left, xRaw), bounds.right - panelW)
+    const y = Math.min(Math.max(bounds.top, yRaw), bounds.bottom - panelH)
+
+    if (Math.abs(x - emojiPopover.x) > 0.5 || Math.abs(y - emojiPopover.y) > 0.5) {
+      setEmojiPopover(prev => prev ? { ...prev, x, y } : prev)
+    }
+  }, [showEmojiPicker, emojiPopover])
   useEffect(() => {
     if (!signingTotal) return
     // Pace the full count-up to roughly 2s regardless of thread length; floor
@@ -1566,6 +1611,20 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 
           </div>
 
+          {/* Poll composer (mobile) */}
+          {pollEnabled && (
+            <PollComposer
+              options={pollOptions}
+              onChange={setPollOptions}
+              optionImages={pollOptionImages}
+              onChangeImages={setPollOptionImages}
+              onClose={() => { setPollEnabled(false); setPollOptions([]); setPollOptionImages([]) }}
+              position={pollPosition}
+              onChangePosition={setPollPosition}
+              showPositionPicker={isThreadMode}
+            />
+          )}
+
           {/* Mobile Icons Row */}
           <div className={`flex items-center justify-between ${replyTo ? 'pt-0.5' : ''}`}>
             {/* Left side - media icons */}
@@ -1595,6 +1654,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                   if (gifDisabled) return
                   setShowGifPicker(!showGifPicker)
                   setShowEmojiPicker(false)
+                  setEmojiPopover(null)
                 }}
                 disabled={gifDisabled}
                 className={`px-3 py-1 rounded-full text-base font-medium transition-all duration-200 ${
@@ -1613,9 +1673,24 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 
               {/* Emoji Picker */}
               <button
-                onClick={() => {
-                  setShowEmojiPicker(!showEmojiPicker)
+                onClick={(e) => {
+                  const willOpen = !showEmojiPicker
                   setShowGifPicker(false)
+                  setShowEmojiPicker(willOpen)
+                  if (willOpen) {
+                    const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+                    // First-pass position (centered under the button). We'll
+                    // measure + clamp in layoutEffect.
+                    const anchorCx = (r.left + r.right) / 2
+                    setEmojiPopover({
+                      anchor: { left: r.left, right: r.right, top: r.top, bottom: r.bottom },
+                      // left coordinate guess; refined after measuring.
+                      x: anchorCx - 180,
+                      y: r.bottom + 8,
+                    })
+                  } else {
+                    setEmojiPopover(null)
+                  }
                 }}
                 className={`p-1 rounded-full transition-all duration-200 cursor-pointer ${
                 text.trim()
@@ -1629,6 +1704,31 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
+              </button>
+
+              {/* Poll */}
+              <button
+                onClick={() => {
+                  if (pollEnabled) {
+                    setPollEnabled(false)
+                    setPollOptions([])
+                    setPollOptionImages([])
+                  } else {
+                    setPollEnabled(true)
+                    setPollOptions(['', ''])
+                    setPollOptionImages(['', ''])
+                  }
+                }}
+                aria-label={pollEnabled ? 'Remove poll' : 'Add poll'}
+                className={`p-1 rounded-full transition-all duration-200 cursor-pointer ${
+                  pollEnabled
+                    ? 'text-yellow-500 bg-yellow-400/10'
+                    : (isDark
+                      ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
+                      : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
+                }`}
+              >
+                <HiOutlineChartBar className="w-5 h-5" />
               </button>
             </div>
 
@@ -1756,12 +1856,27 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             {/* Backdrop */}
             <div
               className="fixed inset-0 z-40"
-              onClick={() => setShowEmojiPicker(false)}
+              onClick={() => {
+                setShowEmojiPicker(false)
+                setEmojiPopover(null)
+              }}
             />
-            {/* Floating panel — anchored above the composer so it doesn't push layout */}
+            {/* Floating panel — opens near the emoji button in mobile feed */}
             <div
-              className={`fixed left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] z-50 rounded-xl shadow-2xl max-h-[40vh] overflow-auto ${isDark ? 'border border-white/10 bg-black' : 'border border-gray-200 bg-white'}`}
-              style={{ bottom: 'calc(var(--app-mobile-header-h, 4rem) + env(safe-area-inset-bottom))' }}
+              ref={emojiPopoverRef}
+              className={`fixed z-50 rounded-xl shadow-2xl max-h-[40vh] overflow-auto ${isDark ? 'border border-white/10 bg-black' : 'border border-gray-200 bg-white'}`}
+              style={emojiPopover
+                ? {
+                    left: emojiPopover.x,
+                    top: emojiPopover.y,
+                    width: 'min(360px, calc(100vw - 2rem))',
+                  }
+                : {
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    width: 'calc(100% - 2rem)',
+                    bottom: 'calc(env(safe-area-inset-bottom) + 0.75rem)',
+                  }}
             >
               <div className="p-3">
                 <div className="grid grid-cols-6 gap-2">
@@ -1771,6 +1886,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                       onClick={() => {
                         setText(prev => prev + emoji)
                         setShowEmojiPicker(false)
+                        setEmojiPopover(null)
                       }}
                       className="p-1 text-2xl hover:bg-gray-200 dark:hover:bg-white/10 rounded transition-colors"
                     >
@@ -1983,9 +2099,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     onClick={() => setShowGifPicker(false)}
                   />
 
-                  {/* Popover: opens upward on desktop */}
+                  {/* Popover: in feed composer open downward; in reply composer open upward */}
                   <div
-                    className="absolute z-50 bottom-full mb-2 left-1/2"
+                    className={`absolute z-50 left-1/2 ${replyTo ? 'bottom-full mb-2' : 'top-full mt-2'}`}
                     style={{
                       width: 'min(520px, calc(100vw - 2rem))',
                       transform: 'translateX(calc(-50% + 170px))',
@@ -2034,9 +2150,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     onClick={() => setShowEmojiPicker(false)}
                   />
 
-                  {/* Popover: opens upward on desktop */}
+                  {/* Popover: in feed composer open downward; in reply composer open upward */}
                   <div
-                    className={`absolute z-50 bottom-full mb-2 left-1/2 p-3 border rounded-xl shadow-2xl ${
+                    className={`absolute z-50 left-1/2 p-3 border rounded-xl shadow-2xl ${
+                      replyTo ? 'bottom-full mb-2' : 'top-full mt-2'
+                    } ${
                       isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'
                     }`}
                     style={{ width: 'min(420px, calc(100vw - 2rem))', transform: 'translateX(calc(-50% + 140px))' }}
