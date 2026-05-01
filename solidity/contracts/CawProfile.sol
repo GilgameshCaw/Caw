@@ -56,6 +56,23 @@ contract CawProfile is
   ///         with the L1 NFT in one LZ message: sets username, owner, and the auth flag.
   bytes4 public mintAuthSelector = bytes4(keccak256("mintAuthAndUpdateOwners(uint32,uint32,address,string,uint32[],address[])"));
 
+  /// @notice Selector for the bundled deposit + register-session L2 handler. Used by the
+  ///         mintAndDepositAndQuickSign flow so a fresh user mints+deposits+auths+quicksigns
+  ///         in a single L1 transaction. The L2 receiver hard-wires scopeBitmap = 0xBF —
+  ///         WITHDRAW is permanently non-delegatable.
+  bytes4 public depositRegisterSessionSelector = bytes4(keccak256("depositAndRegisterSessionAndUpdateOwners(uint32,uint32,uint256,address,address,uint64,uint256,uint32[],address[])"));
+
+  /// @notice Selector for the bundled mint+auth + register-session L2 handler. Used by the
+  ///         mintAndAuthAndQuickSign flow (no deposit). Same 0xBF scope hard-wire on L2.
+  bytes4 public mintAuthRegisterSessionSelector = bytes4(keccak256("mintAuthAndRegisterSessionAndUpdateOwners(uint32,uint32,address,string,address,uint64,uint256,uint32[],address[])"));
+
+  /// @dev Per-selector base gas limit (the constant component; per-update overhead is added
+  ///      separately in `gasLimitFor`). Initialized in the constructor. An unset selector
+  ///      returns 0, which causes the L2 receive to OOG and revert downstream — a meaningful
+  ///      revert path. Internal visibility saves the auto-getter bytecode (the Quoter doesn't
+  ///      need to read it directly; it calls lzQuote which calls gasLimitFor).
+  mapping(bytes4 => uint128) internal gasBaseFor;
+
   // Keeping track of clients to which the user has authenticated
   mapping(uint32 => mapping(uint32 => bool)) public authenticated;
 
@@ -81,8 +98,8 @@ contract CawProfile is
   uint256 public transferUpdateLimit = 50;
 
   // lzDestId => value
-  mapping(uint32 => uint256) public pendingTransferStart;
-  mapping(uint32 => uint256) public pendingTransferEnd;
+  mapping(uint32 => uint256) internal pendingTransferStart;
+  mapping(uint32 => uint256) internal pendingTransferEnd;
 
   struct Token {
     uint256 withdrawable;
@@ -109,6 +126,18 @@ contract CawProfile is
     buyAndBurn = CawBuyAndBurn(payable(_buyAndBurn));
     CAW = IERC20(_caw);
     mainnetLzId = mainnetEid;
+
+    // Per-selector base gas budgets. authSelector bumped from 50k → 85k after a
+    // production OOG (Tenderly tx 0x3b8a0232... on Base Sepolia). Bundled session
+    // selectors add ~80k to their non-bundled counterpart for the StoredSession
+    // SSTORE (3 cold fields ~66k) + SessionCreated event (~3k).
+    gasBaseFor[addToBalanceSelector]            = 110_000;
+    gasBaseFor[mintSelector]                    =  75_000;
+    gasBaseFor[updateOwnersSelector]            =  25_000;
+    gasBaseFor[authSelector]                    =  85_000;
+    gasBaseFor[mintAuthSelector]                = 125_000;
+    gasBaseFor[depositRegisterSessionSelector]  = 190_000;
+    gasBaseFor[mintAuthRegisterSessionSelector] = 205_000;
   }
 
   function setL2Peer(uint32 _eid, address _peer)
@@ -180,17 +209,28 @@ contract CawProfile is
   ///         (or a direct call in co-deployment mode) so the token has its username,
   ///         owner, and auth flag on L2 from the start. Posts will revert until the
   ///         user does a separate deposit to fund their cawBalance.
-  /// @dev Only callable by the minter. Mirror of mintAndDeposit but with depositAmount=0
-  ///      and the deposit-fee skipped. Reuses mintFee + authFee.
+  ///
+  /// @dev Optionally bundles a Quick Sign session registration in the same LZ message
+  ///      when `sessionExtra.length > 0`. Pass empty bytes for the original behavior.
+  ///      Encoding: abi.encode(address sessionKey, uint64 expiry, uint256 spendLimit).
+  ///
+  /// @dev SECURITY NOTE — trust chain for the bundled session leg (audit 2026-04-28):
+  ///      Only the Minter (set once via setMinter) can call this. The Minter's bundled
+  ///      wrapper `mintAndAuthAndQuickSign` is **self-mint only**: it always sets
+  ///      `recipient = msg.sender` before calling here, so `owner` is the EOA that paid
+  ///      gas. There is NO `*For` variant of the bundled flow — a third party cannot
+  ///      inject a session into someone else's wallet via this entry point. The L2
+  ///      receiver writes `sessions[owner][sessionKey]` with scopeBitmap hard-wired to
+  ///      0xBF (WITHDRAW permanently non-delegatable). `expiry > block.timestamp` is
+  ///      enforced on the L2 side.
   function mintAndAuth(
     uint32 cawClientId, address owner, string memory username, uint32 newId,
-    uint32 lzDestId, uint256 lzTokenAmount
+    uint32 lzDestId, uint256 lzTokenAmount, bytes calldata sessionExtra
   ) public payable {
     require(minter == _msgSender(), "Not minter");
     usernames.push(username);
     _mint(owner, newId);
 
-    // Mint fee + auth fee (no deposit fee — this is the no-deposit variant)
     uint256 totalFeesPaid = 0;
     {
       (uint256 mintFee, address mintFeeAddr) = clientManager.getMintFeeAndAddress(cawClientId);
@@ -206,35 +246,56 @@ contract CawProfile is
     uint256 lzEthAmount = msg.value - totalFeesPaid;
 
     if (lzDestId == mainnetLzId) {
-      // Co-deployment (bypassLZ) — push username + owner + auth straight to L2 mirror.
       cawProfileL2.mintAndAuth(newId, owner, username, cawClientId);
+      if (sessionExtra.length > 0) {
+        (address sk, uint64 ex, uint256 sl) = abi.decode(sessionExtra, (address, uint64, uint256));
+        cawProfileL2.registerSessionFromL1(owner, sk, ex, sl);
+      }
     } else {
       uint32[] memory tokenIds;
       address[] memory owners;
       (tokenIds, owners) = extractPendingTransferUpdates(lzDestId, owner, newId);
-      bytes memory payload = abi.encodeWithSelector(mintAuthSelector, cawClientId, newId, owner, username, tokenIds, owners);
-      lzSend(cawClientId, lzDestId, mintAuthSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
+      bytes4 sel;
+      bytes memory payload;
+      if (sessionExtra.length == 0) {
+        sel = mintAuthSelector;
+        payload = abi.encodeWithSelector(sel, cawClientId, newId, owner, username, tokenIds, owners);
+      } else {
+        (address sk, uint64 ex, uint256 sl) = abi.decode(sessionExtra, (address, uint64, uint256));
+        sel = mintAuthRegisterSessionSelector;
+        payload = abi.encodeWithSelector(sel, cawClientId, newId, owner, username, sk, ex, sl, tokenIds, owners);
+      }
+      lzSend(cawClientId, lzDestId, sel, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
   }
 
   /// @notice Mint a username and deposit CAW in one transaction.
-  /// @dev Only callable by the minter. Combines mint + deposit to save the user a separate tx.
-  ///      The deposit amount is transferred from the owner (not the minter) via transferFrom.
+  ///
+  /// @dev Optionally bundles a Quick Sign session registration in the same LZ message
+  ///      when `sessionExtra.length > 0`. Pass empty bytes for the original behavior.
+  ///      Encoding: abi.encode(address sessionKey, uint64 expiry, uint256 spendLimit).
+  ///
+  /// @dev SECURITY NOTE — trust chain for the bundled session leg (audit 2026-04-28):
+  ///      Only the Minter (set once via setMinter) can call this. The Minter's bundled
+  ///      wrapper `mintAndDepositAndQuickSign` is **self-mint only**: it always sets
+  ///      `recipient = msg.sender` before calling here, so `owner` is the EOA that paid
+  ///      gas. There is NO `*For` variant of the bundled flow — a third party cannot
+  ///      inject a session into someone else's wallet via this entry point. The L2
+  ///      receiver writes `sessions[owner][sessionKey]` with scopeBitmap hard-wired to
+  ///      0xBF (WITHDRAW permanently non-delegatable). `expiry > block.timestamp` is
+  ///      enforced on the L2 side.
   function mintAndDeposit(
     uint32 cawClientId, address owner, string memory username, uint32 newId,
-    uint256 depositAmount, uint32 lzDestId, uint256 lzTokenAmount
+    uint256 depositAmount, uint32 lzDestId, uint256 lzTokenAmount, bytes calldata sessionExtra
   ) public payable {
     require(minter == _msgSender(), "Not minter");
     usernames.push(username);
     _mint(owner, newId);
 
-    // Transfer deposit CAW from the minter (which already pulled it from the user)
-    // This avoids requiring a second approval from the user
     CAW.transferFrom(_msgSender(), address(this), depositAmount);
     totalCaw += depositAmount;
     chosenChainIds[newId].add(uint256(lzDestId));
 
-    // Calculate fees: mint fee + deposit fee + auth fee (first deposit auto-authenticates)
     uint256 totalFeesPaid = 0;
     {
       (uint256 mintFee, address mintFeeAddr) = clientManager.getMintFeeAndAddress(cawClientId);
@@ -253,12 +314,25 @@ contract CawProfile is
 
     if (lzDestId == mainnetLzId) {
       cawProfileL2.deposit(cawClientId, newId, depositAmount);
+      if (sessionExtra.length > 0) {
+        (address sk, uint64 ex, uint256 sl) = abi.decode(sessionExtra, (address, uint64, uint256));
+        cawProfileL2.registerSessionFromL1(owner, sk, ex, sl);
+      }
     } else {
       uint32[] memory tokenIds;
       address[] memory owners;
       (tokenIds, owners) = extractPendingTransferUpdates(lzDestId, owner, newId);
-      bytes memory payload = abi.encodeWithSelector(addToBalanceSelector, cawClientId, newId, depositAmount, tokenIds, owners);
-      lzSend(cawClientId, lzDestId, addToBalanceSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
+      bytes4 sel;
+      bytes memory payload;
+      if (sessionExtra.length == 0) {
+        sel = addToBalanceSelector;
+        payload = abi.encodeWithSelector(sel, cawClientId, newId, depositAmount, tokenIds, owners);
+      } else {
+        (address sk, uint64 ex, uint256 sl) = abi.decode(sessionExtra, (address, uint64, uint256));
+        sel = depositRegisterSessionSelector;
+        payload = abi.encodeWithSelector(sel, cawClientId, newId, depositAmount, owner, sk, ex, sl, tokenIds, owners);
+      }
+      lzSend(cawClientId, lzDestId, sel, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
   }
 
@@ -727,18 +801,10 @@ contract CawProfile is
   ///      future EVM/L2/LZ change ever undersizes a path. Cap'd at MAX_GAS_OVERRIDE so
   ///      a compromised client owner can't grief their own users with arbitrary fees.
   function gasLimitFor(uint32 cawClientId, bytes4 selector, uint256 n) public view returns (uint128) {
-    uint128 base;
-    if (selector == addToBalanceSelector)      base = uint128(110_000 + 19_000 * n);  // measured n=0: 81k
-    else if (selector == mintSelector)         base = uint128( 75_000 + 19_000 * n);  // measured n=0: 54k
-    else if (selector == updateOwnersSelector) base = uint128( 25_000 + 19_000 * n);  // measured n=0: 18k
-    else if (selector == authSelector)         base = uint128( 85_000 + 19_000 * n);  // bumped from 50k after prod OOG
-    // mintAuthSelector = mint mirror + auth flag in one message. Sum of mint+auth bases
-    // (54k + 36k) plus margin, since the L2 handler does both writes plus the
-    // updateOwners loop.
-    else if (selector == mintAuthSelector)     base = uint128(125_000 + 19_000 * n);
-    else revert("Bad selector");
-
-    return base + clientManager.clientGasOverride(cawClientId, selector);
+    // Unset selectors return 0 here; the LZ send downstream will OOG meaningfully on the
+    // L2 receive call (gas budget far below any handler's needs), so a bad selector still
+    // reverts — just without an explicit require message in this hot path.
+    return gasBaseFor[selector] + uint128(19_000 * n) + clientManager.clientGasOverride(cawClientId, selector);
   }
 
   receive() external payable {}

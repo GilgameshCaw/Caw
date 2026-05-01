@@ -17,6 +17,8 @@ interface ICawProfileForQuoter {
   function addToBalanceSelector() external view returns (bytes4);
   function mintSelector() external view returns (bytes4);
   function mintAuthSelector() external view returns (bytes4);
+  function depositRegisterSessionSelector() external view returns (bytes4);
+  function mintAuthRegisterSessionSelector() external view returns (bytes4);
   function mainnetLzId() external view returns (uint32);
   function updateOwnersSelector() external view returns (bytes4);
   function authSelector() external view returns (bytes4);
@@ -117,6 +119,80 @@ contract CawProfileQuoter {
     );
 
     MessagingFee memory lz = cawProfile.lzQuote(clientId, cawProfile.mintAuthSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
+    quote.nativeFee += lz.nativeFee;
+    quote.lzTokenFee += lz.lzTokenFee;
+    return quote;
+  }
+
+  /// @notice Quote the bundled mint+deposit+auth+quicksign flow.
+  /// @dev When `sessionKey == address(0)`, falls through to mintAndDepositQuote (no session leg).
+  ///      When `lzDestId == mainnetLzId` (bypassLZ), there's no LZ fee — just storage fees.
+  function mintAndDepositAndQuickSignQuote(
+    uint32 clientId, uint256 depositAmount, uint32 lzDestId, bool payInLzToken,
+    address sessionKey
+  ) public view returns (MessagingFee memory quote) {
+    // Storage fees (mint + deposit + auth) — same as mintAndDepositQuote.
+    quote.nativeFee = cawProfile.clientManager().getMintFee(clientId) * 2
+                    + cawProfile.clientManager().getDepositFee(clientId) * 2
+                    + cawProfile.clientManager().getAuthFee(clientId) * 2;
+
+    if (lzDestId == cawProfile.mainnetLzId()) return quote;
+
+    uint32[] memory tokenIds; address[] memory owners;
+    (tokenIds, owners) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, 0);
+
+    bytes4 selector;
+    bytes memory payload;
+    if (sessionKey == address(0)) {
+      selector = cawProfile.addToBalanceSelector();
+      payload = abi.encodeWithSelector(
+        selector, clientId, uint32(0), depositAmount, tokenIds, owners
+      );
+    } else {
+      selector = cawProfile.depositRegisterSessionSelector();
+      payload = abi.encodeWithSelector(
+        selector, clientId, uint32(0), depositAmount, msg.sender,
+        sessionKey, uint64(0), uint256(0), tokenIds, owners
+      );
+    }
+
+    MessagingFee memory lz = cawProfile.lzQuote(clientId, selector, tokenIds.length, payload, lzDestId, payInLzToken);
+    quote.nativeFee += lz.nativeFee;
+    quote.lzTokenFee += lz.lzTokenFee;
+    return quote;
+  }
+
+  /// @notice Quote the bundled mint+auth+quicksign flow (no deposit).
+  /// @dev When `sessionKey == address(0)`, falls through to mintAndAuthQuote (no session leg).
+  ///      When `lzDestId == mainnetLzId` (bypassLZ), there's no LZ fee — just storage fees.
+  function mintAndAuthAndQuickSignQuote(
+    uint32 clientId, uint32 lzDestId, bool payInLzToken,
+    address sessionKey
+  ) public view returns (MessagingFee memory quote) {
+    quote.nativeFee = cawProfile.clientManager().getMintFee(clientId) * 2
+                    + cawProfile.clientManager().getAuthFee(clientId) * 2;
+
+    if (lzDestId == cawProfile.mainnetLzId()) return quote;
+
+    uint32[] memory tokenIds; address[] memory owners;
+    (tokenIds, owners) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, 0);
+
+    bytes4 selector;
+    bytes memory payload;
+    if (sessionKey == address(0)) {
+      selector = cawProfile.mintAuthSelector();
+      payload = abi.encodeWithSelector(
+        selector, clientId, uint32(0), msg.sender, "placeholdr", tokenIds, owners
+      );
+    } else {
+      selector = cawProfile.mintAuthRegisterSessionSelector();
+      payload = abi.encodeWithSelector(
+        selector, clientId, uint32(0), msg.sender, "placeholdr",
+        sessionKey, uint64(0), uint256(0), tokenIds, owners
+      );
+    }
+
+    MessagingFee memory lz = cawProfile.lzQuote(clientId, selector, tokenIds.length, payload, lzDestId, payInLzToken);
     quote.nativeFee += lz.nativeFee;
     quote.lzTokenFee += lz.lzTokenFee;
     return quote;

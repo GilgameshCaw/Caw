@@ -339,6 +339,82 @@ contract CawProfileL2 is
     authenticated[cawClientId][tokenId] = true;
   }
 
+  /// @notice Bundled L2 receiver: deposit + mark authenticated + register a Quick Sign session.
+  ///         Only callable from `_lzReceive`. Used by the L1 mintAndDepositAndQuickSign flow.
+  /// @dev WITHDRAW is permanently non-delegatable: scopeBitmap is hard-wired to 0xBF here, NOT
+  ///      accepted as a parameter. The L1 caller's trust boundary (only-minter on the L1
+  ///      function) covers `owner`, so we don't need an EIP-712 signature on this side.
+  function depositAndRegisterSessionAndUpdateOwners(
+    uint32 cawClientId,
+    uint32 tokenId,
+    uint256 amount,
+    address owner,
+    address sessionKey,
+    uint64 expiry,
+    uint256 spendLimit,
+    uint32[] calldata tokenIds,
+    address[] calldata owners
+  ) public {
+    require(fromLZ, "depositAndRegisterSessionAndUpdateOwners only callable internally");
+    require(sessionKey != address(0), "Zero session key");
+    require(expiry > block.timestamp, "Session already expired");
+
+    totalCaw += amount;
+    addToBalance(tokenId, amount);
+    authenticated[cawClientId][tokenId] = true;
+    emit Authenticated(cawClientId, tokenId);
+
+    uint8 scopeBitmap = 0xBF; // all actions except WITHDRAW (bit 6) — non-delegatable
+    sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit);
+    emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit);
+
+    updateOwners(tokenIds, owners);
+  }
+
+  /// @notice Bundled L2 receiver: mint mirror + mark authenticated + register a Quick Sign
+  ///         session — no deposit. Only callable from `_lzReceive`.
+  function mintAuthAndRegisterSessionAndUpdateOwners(
+    uint32 cawClientId,
+    uint32 tokenId,
+    address owner,
+    string memory username,
+    address sessionKey,
+    uint64 expiry,
+    uint256 spendLimit,
+    uint32[] calldata tokenIds,
+    address[] calldata owners
+  ) public {
+    require(fromLZ, "mintAuthAndRegisterSessionAndUpdateOwners only callable internally");
+    require(sessionKey != address(0), "Zero session key");
+    require(expiry > block.timestamp, "Session already expired");
+
+    emit UsernameMinted(tokenId, owner);
+    emit Authenticated(cawClientId, tokenId);
+    usernames[tokenId] = username;
+    ownerOf[tokenId] = owner;
+    authenticated[cawClientId][tokenId] = true;
+
+    uint8 scopeBitmap = 0xBF; // all actions except WITHDRAW (bit 6) — non-delegatable
+    sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit);
+    emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit);
+
+    updateOwners(tokenIds, owners);
+  }
+
+  /// @notice Co-deployment (bypassLZ) helper for the bundled mint+quicksign flows. Registers a
+  ///         session on behalf of `owner` without an EIP-712 signature, trusting the L1
+  ///         CawProfile contract as the sole caller. WITHDRAW remains non-delegatable.
+  /// @dev Only callable when `bypassLZ` is true and the caller is the L1 CawProfile contract.
+  function registerSessionFromL1(address owner, address sessionKey, uint64 expiry, uint256 spendLimit)
+    external onlyOnMainnet
+  {
+    require(sessionKey != address(0), "Zero session key");
+    require(expiry > block.timestamp, "Session already expired");
+    uint8 scopeBitmap = 0xBF; // all actions except WITHDRAW (bit 6) — non-delegatable
+    sessions[owner][sessionKey] = StoredSession(expiry, scopeBitmap, spendLimit);
+    emit SessionCreated(owner, sessionKey, expiry, scopeBitmap, spendLimit);
+  }
+
   /// @notice Mark a token as authenticated with a client. Only used in mainnet co-deployment mode.
   function auth(uint32 cawClientId, uint32 tokenId) public onlyOnMainnet {
     emit Authenticated(cawClientId, tokenId);
@@ -692,7 +768,8 @@ contract CawProfileL2 is
     // SECURITY NOTE (audited 2026-04-06): The fromLZ + delegatecall pattern is intentional and safe.
     // - The OApp base class already verifies msg.sender == endpoint and the peer before _lzReceive runs.
     // - All authorized functions (depositAndUpdateOwners, authenticateAndUpdateOwners,
-    //   mintAndUpdateOwners, mintAuthAndUpdateOwners, updateOwners) perform only storage writes.
+    //   mintAndUpdateOwners, mintAuthAndUpdateOwners, depositAndRegisterSessionAndUpdateOwners,
+    //   mintAuthAndRegisterSessionAndUpdateOwners, updateOwners) perform only storage writes.
     // - fromLZ cannot get stuck: on success it resets below; on revert the entire tx rolls back.
     // - The endpoint is immutable (set once in constructor, can never change).
     // - These contracts are immutable post-deployment, so no new authorized functions can be added.
@@ -729,6 +806,8 @@ contract CawProfileL2 is
       selector == bytes4(keccak256("authenticateAndUpdateOwners(uint32,uint32,uint32[],address[])")) ||
       selector == bytes4(keccak256("mintAndUpdateOwners(uint32,address,string,uint32[],address[])")) ||
       selector == bytes4(keccak256("mintAuthAndUpdateOwners(uint32,uint32,address,string,uint32[],address[])")) ||
+      selector == bytes4(keccak256("depositAndRegisterSessionAndUpdateOwners(uint32,uint32,uint256,address,address,uint64,uint256,uint32[],address[])")) ||
+      selector == bytes4(keccak256("mintAuthAndRegisterSessionAndUpdateOwners(uint32,uint32,address,string,address,uint64,uint256,uint32[],address[])")) ||
       selector == bytes4(keccak256("updateOwners(uint32[],address[])"));
   }
 

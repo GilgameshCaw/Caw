@@ -21,7 +21,8 @@ interface IMint {
     uint32 newId,
     uint256 depositAmount,
     uint32 lzDestId,
-    uint256 lzTokenAmount
+    uint256 lzTokenAmount,
+    bytes calldata sessionExtra
   ) external payable;
 
   function mintAndAuth(
@@ -30,8 +31,8 @@ interface IMint {
     string memory username,
     uint32 newId,
     uint32 lzDestId,
-    uint256 lzTokenAmount
+    uint256 lzTokenAmount,
+    bytes calldata sessionExtra
   ) external payable;
 
 }
-

@@ -40,9 +40,48 @@ contract CawProfileMinter is Context {
     mintAndDepositFor(clientId, msg.sender, username, depositAmount, lzDestId, lzTokenAmount);
   }
 
+  /// @notice Bundled mint + deposit + auth + Quick Sign session — one tx, one wallet popup.
+  /// @dev SELF-MINT ONLY by design: the recipient is always `msg.sender`, so the EOA that
+  ///      paid gas is the wallet that gets the session attached. No `*For` variant exists —
+  ///      that would let a third party register a session in someone else's wallet, which
+  ///      we don't allow for bundled flows. WITHDRAW is permanently non-delegatable
+  ///      (scopeBitmap hard-wired to 0xBF on L2).
+  function mintAndDepositAndQuickSign(
+    uint32 clientId, string memory username, uint256 depositAmount, uint32 lzDestId, uint256 lzTokenAmount,
+    address sessionKey, uint64 expiry, uint256 spendLimit
+  ) public payable {
+    require(sessionKey != address(0), "Zero session key");
+    uint32 newId = _burnAndAssignId(username, depositAmount);
+    if (depositAmount > 0) {
+      CAW.transferFrom(_msgSender(), address(this), depositAmount);
+      CAW.approve(address(CawProfile), depositAmount);
+    }
+    bytes memory sessionExtra = abi.encode(sessionKey, expiry, spendLimit);
+    CawProfile.mintAndDeposit{value: msg.value}(
+      clientId, msg.sender, username, newId, depositAmount, lzDestId, lzTokenAmount, sessionExtra
+    );
+  }
+
+  /// @notice Bundled mint + auth + Quick Sign session (no deposit). Self-mint only — see
+  ///         the security note on `mintAndDepositAndQuickSign`.
+  function mintAndAuthAndQuickSign(
+    uint32 clientId, string memory username, uint32 lzDestId, uint256 lzTokenAmount,
+    address sessionKey, uint64 expiry, uint256 spendLimit
+  ) public payable {
+    require(sessionKey != address(0), "Zero session key");
+    uint32 newId = _burnAndAssignId(username, 0);
+    bytes memory sessionExtra = abi.encode(sessionKey, expiry, spendLimit);
+    CawProfile.mintAndAuth{value: msg.value}(
+      clientId, msg.sender, username, newId, lzDestId, lzTokenAmount, sessionExtra
+    );
+  }
+
   // ============================================
   // *For VARIANTS — caller pays in CAW, NFT goes to `recipient`
   // ============================================
+  // Note: there is intentionally NO `*For` variant of the bundled Quick Sign flows.
+  // Bundled session registration is self-mint only — see security note on
+  // `mintAndDepositAndQuickSign`.
 
   /// @notice Mint a username on behalf of `recipient`. The burn-cost CAW is pulled from
   ///         `msg.sender`, but the Profile NFT (and ownership of any future deposit) goes
@@ -56,7 +95,7 @@ contract CawProfileMinter is Context {
   /// @notice mintAndAuth on behalf of `recipient`. The burn cost is pulled from msg.sender.
   function mintAndAuthFor(uint32 clientId, address recipient, string memory username, uint32 lzDestId, uint256 lzTokenAmount) public payable {
     uint32 newId = _burnAndAssignId(username, 0);
-    CawProfile.mintAndAuth{value: msg.value}(clientId, recipient, username, newId, lzDestId, lzTokenAmount);
+    CawProfile.mintAndAuth{value: msg.value}(clientId, recipient, username, newId, lzDestId, lzTokenAmount, "");
   }
 
   /// @notice mintAndDeposit on behalf of `recipient`. burn + deposit CAW is pulled from
@@ -70,7 +109,7 @@ contract CawProfileMinter is Context {
       CAW.transferFrom(_msgSender(), address(this), depositAmount);
       CAW.approve(address(CawProfile), depositAmount);
     }
-    CawProfile.mintAndDeposit{value: msg.value}(clientId, recipient, username, newId, depositAmount, lzDestId, lzTokenAmount);
+    CawProfile.mintAndDeposit{value: msg.value}(clientId, recipient, username, newId, depositAmount, lzDestId, lzTokenAmount, "");
   }
 
   /// @dev Shared prologue for every mint path: validate the username, take the burn cost

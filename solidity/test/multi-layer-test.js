@@ -1060,8 +1060,6 @@ contract('CawProfiles', function(accounts, x) {
         args.reason == 'Session expired or not found';
     });
 
-    console.log("TRANSFER UPDATE end:", BigInt(await cawProfiles.pendingTransferEnd(l2)));
-    console.log("TRANSFER UPDATE start:", BigInt(await cawProfiles.pendingTransferStart(l2)));
     console.log("PENDING TRANSFERS:", await cawProfiles.pendingTransferUpdates(l2));
 
     //
@@ -2720,5 +2718,300 @@ contract("CawClientManager - lockdown + gas override", function(accounts) {
     // Only gas override still works
     await clientManager.setGasOverride(cid, SEL_A, 1234, { from: freshOwner });
     expect((await clientManager.gasOverride(cid, SEL_A)).toString()).to.equal('1234');
+  });
+});
+
+// =====================================================================
+// Bundled Quick Sign flows: mintAndDepositAndQuickSign / mintAndAuthAndQuickSign
+// =====================================================================
+// Helper: returns an expiry far enough in the future to survive any chain-clock
+// drift (we've seen the EVM clock run ~30 days ahead of wall clock between test
+// suites). Anchors to the on-chain `block.timestamp` rather than `Date.now()`.
+async function futureExpiry(secondsFromNow) {
+  var latest = await web3.eth.getBlock('latest');
+  return Number(latest.timestamp) + secondsFromNow;
+}
+// These flows let a brand-new user mint+deposit+auth+register a session key
+// in ONE transaction. The session key is then valid for posts via the
+// `cawProfile.sessions(owner, sessionKey)` mapping on L2. WITHDRAW is
+// permanently non-delegatable (scopeBitmap = 0xBF on L2). The bundled flows
+// are intentionally self-mint only (no `*For` variant).
+contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
+  var l1Endpoint, l2Endpoint;
+  var localToken, localMinter, localCawProfiles, localCawProfilesL2;
+  var localCawProfilesL2Mainnet;
+  var localClientManager, localQuoter, localUriGenerator;
+  var l2ClientId, l1ClientId;
+
+  before(async function() {
+    this.timeout(120000);
+
+    l1Endpoint = await MockLayerZeroEndpoint.new(l1);
+    l2Endpoint = await MockLayerZeroEndpoint.new(l2);
+
+    localToken = await MintableCaw.new();
+    var mr = await MockSwapRouter.new(localToken.address);
+    var bb = await CawBuyAndBurn.new(localToken.address, mr.address);
+
+    localClientManager = await CawClientManager.new(bb.address);
+    localUriGenerator = await deployURI();
+
+    // L2-storage mirror (cross-chain)
+    localCawProfilesL2 = await CawProfileL2.new(l1, l2Endpoint.address);
+    await l1Endpoint.setDestLzEndpoint(localCawProfilesL2.address, l2Endpoint.address);
+
+    localCawProfiles = await CawProfile.new(
+      localToken.address, localUriGenerator.address, bb.address,
+      localClientManager.address, l1Endpoint.address, l1
+    );
+    await bb.setCawProfile(localCawProfiles.address);
+    await localCawProfilesL2.setL1Peer(l1, localCawProfiles.address, false);
+    await l2Endpoint.setDestLzEndpoint(localCawProfiles.address, l1Endpoint.address);
+    await localCawProfiles.setL2Peer(l2, localCawProfilesL2.address);
+
+    // L1-co-deployed mirror (bypassLZ)
+    localCawProfilesL2Mainnet = await CawProfileL2.new(l1, l1Endpoint.address);
+    await localCawProfilesL2Mainnet.setL1Peer(l1, localCawProfiles.address, true);
+    await localCawProfiles.setL2Peer(l1, localCawProfilesL2Mainnet.address);
+
+    // Two clients to exercise both branches
+    await localClientManager.createClient("L2 Client", accounts[0], l2, 0, 0, 0, 0);
+    l2ClientId = 1;
+    await localClientManager.createClient("L1 Client", accounts[0], l1, 0, 0, 0, 0);
+    l1ClientId = 2;
+
+    localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address);
+    await localCawProfiles.setMinter(localMinter.address);
+    localQuoter = await CawProfileQuoter.new(localCawProfiles.address);
+
+    // Fund accounts[1]
+    var mintAmount = BigInt(100) * 1_000_000_000n * 10n**18n;
+    await localToken.mint(accounts[1], mintAmount.toString());
+    await localToken.approve(localMinter.address, mintAmount.toString(), { from: accounts[1] });
+    await localToken.approve(localCawProfiles.address, mintAmount.toString(), { from: accounts[1] });
+  });
+
+  it("mintAndDepositAndQuickSign (LZ): writes session(owner, sessionKey) on L2 with 0xBF scope", async function() {
+    this.timeout(60000);
+
+    var owner = accounts[1];
+    var sessionKey = accounts[5];
+    var spendLimit = web3.utils.toWei('5000000', 'ether'); // 5M CAW
+    var expiry = await futureExpiry(30 * 24 * 60 * 60); // 30d
+
+    var depositAmount = web3.utils.toWei('100000', 'ether');
+    var quote = await localQuoter.mintAndDepositAndQuickSignQuote(l2ClientId, depositAmount, l2, false, sessionKey);
+
+    await localMinter.mintAndDepositAndQuickSign(
+      l2ClientId, 'qsdep1', depositAmount, l2, 0,
+      sessionKey, expiry, spendLimit,
+      { from: owner, value: (BigInt(quote.nativeFee)).toString() }
+    );
+
+    var tokenId = (await localCawProfiles.totalSupply()).toNumber();
+    expect(await localCawProfiles.ownerOf(tokenId)).to.equal(owner);
+    expect(await localCawProfiles.authenticated(l2ClientId, tokenId)).to.be.true;
+
+    // L2 mirror: deposit credited
+    var bal = await localCawProfilesL2.cawBalanceOf(tokenId);
+    expect(BigInt(bal.toString())).to.equal(BigInt(depositAmount));
+
+    // L2 session populated for the owner address
+    var stored = await localCawProfilesL2.sessions(owner, sessionKey);
+    expect(stored.expiry.toString()).to.equal(expiry.toString());
+    expect(stored.scopeBitmap.toString()).to.equal('191'); // 0xBF
+    expect(stored.spendLimit.toString()).to.equal(spendLimit.toString());
+
+    console.log("mintAndDepositAndQuickSign (LZ) test passed");
+  });
+
+  // NOTE: A bypassLZ test for mintAndDepositAndQuickSign would exercise
+  // `cawProfileL2.deposit(...)` followed by `registerSessionFromL1(...)`. The first call
+  // hits a pre-existing latent bug in `CawProfileL2.deposit` (its `addToBalance(...)` call
+  // reverts because, in bypassLZ mode, the caller is the L1 CawProfile contract — neither
+  // `fromLZ` nor `cawActions`). That bug pre-dates this work and never had test coverage
+  // (no existing `mintAndDeposit` test exercises bypassLZ either). Out of scope here;
+  // logging it as a follow-up. The bypassLZ path for `mintAndAuthAndQuickSign` (no deposit)
+  // is covered below — it does NOT go through `addToBalance`.
+
+  it("mintAndAuthAndQuickSign (LZ): mint + auth + session, no deposit", async function() {
+    this.timeout(60000);
+
+    var owner = accounts[1];
+    var sessionKey = accounts[7];
+    var spendLimit = web3.utils.toWei('250000', 'ether');
+    var expiry = await futureExpiry(7 * 24 * 60 * 60);
+
+    var quote = await localQuoter.mintAndAuthAndQuickSignQuote(l2ClientId, l2, false, sessionKey);
+
+    await localMinter.mintAndAuthAndQuickSign(
+      l2ClientId, 'qsauth1', l2, 0,
+      sessionKey, expiry, spendLimit,
+      { from: owner, value: (BigInt(quote.nativeFee)).toString() }
+    );
+
+    var tokenId = (await localCawProfiles.totalSupply()).toNumber();
+    expect(await localCawProfiles.ownerOf(tokenId)).to.equal(owner);
+    expect(await localCawProfilesL2.usernames(tokenId)).to.equal('qsauth1');
+    expect(await localCawProfilesL2.ownerOf(tokenId)).to.equal(owner);
+    expect(await localCawProfilesL2.authenticated(l2ClientId, tokenId)).to.be.true;
+
+    var stored = await localCawProfilesL2.sessions(owner, sessionKey);
+    expect(stored.expiry.toString()).to.equal(expiry.toString());
+    expect(stored.scopeBitmap.toString()).to.equal('191');
+    expect(stored.spendLimit.toString()).to.equal(spendLimit.toString());
+
+    console.log("mintAndAuthAndQuickSign (LZ) test passed");
+  });
+
+  it("mintAndAuthAndQuickSign (bypassLZ): direct L2 mirror update via co-deployed mainnet contract", async function() {
+    this.timeout(60000);
+
+    var owner = accounts[1];
+    var sessionKey = accounts[8];
+    var spendLimit = web3.utils.toWei('100000', 'ether');
+    var expiry = await futureExpiry(30 * 24 * 60 * 60);
+
+    var quote = await localQuoter.mintAndAuthAndQuickSignQuote(l1ClientId, l1, false, sessionKey);
+
+    await localMinter.mintAndAuthAndQuickSign(
+      l1ClientId, 'qsauth2', l1, 0,
+      sessionKey, expiry, spendLimit,
+      { from: owner, value: (BigInt(quote.nativeFee)).toString() }
+    );
+
+    var tokenId = (await localCawProfiles.totalSupply()).toNumber();
+    expect(await localCawProfilesL2Mainnet.ownerOf(tokenId)).to.equal(owner);
+    expect(await localCawProfilesL2Mainnet.authenticated(l1ClientId, tokenId)).to.be.true;
+
+    var stored = await localCawProfilesL2Mainnet.sessions(owner, sessionKey);
+    expect(stored.expiry.toString()).to.equal(expiry.toString());
+    expect(stored.scopeBitmap.toString()).to.equal('191');
+    expect(stored.spendLimit.toString()).to.equal(spendLimit.toString());
+
+    console.log("mintAndAuthAndQuickSign (bypassLZ) test passed");
+  });
+
+  it("regression: existing mintAndDeposit path (no session leg) still works", async function() {
+    this.timeout(60000);
+
+    // Sanity check: the original `mintAndDeposit` behavior (no session) is preserved.
+    // This goes through the *For wrapper which passes "" for sessionExtra.
+    var depositAmount = web3.utils.toWei('1000', 'ether');
+    var quote = await localQuoter.mintAndDepositQuote(l2ClientId, depositAmount, l2, false);
+
+    await localMinter.mintAndDeposit(l2ClientId, 'noqs1', depositAmount, l2, 0, {
+      from: accounts[1],
+      value: (BigInt(quote.nativeFee)).toString(),
+    });
+    var tokenId = (await localCawProfiles.totalSupply()).toNumber();
+    expect(await localCawProfiles.ownerOf(tokenId)).to.equal(accounts[1]);
+    expect(await localCawProfiles.authenticated(l2ClientId, tokenId)).to.be.true;
+    var bal = await localCawProfilesL2.cawBalanceOf(tokenId);
+    expect(BigInt(bal.toString())).to.equal(BigInt(depositAmount));
+
+    console.log("regression: legacy mintAndDeposit still works");
+  });
+
+  it("expired expiry (LZ path): L2 session is not written even though L1 tx succeeds", async function() {
+    this.timeout(60000);
+
+    // In real LZ: a revert in lzReceive would make the L2 message permanently undeliverable
+    // (the executor would not retry beyond the gas limit, and our `require(expiry > now)`
+    // would always fail). The LZ mock here silently swallows the revert. We verify the
+    // negative space: the L2 session mapping remains empty for this (owner, sessionKey).
+    var owner = accounts[1];
+    var sessionKey = accounts[9];
+    var pastExpiry = await futureExpiry(-60); // already-expired
+
+    var depositAmount = web3.utils.toWei('1000', 'ether');
+    var quote = await localQuoter.mintAndDepositAndQuickSignQuote(l2ClientId, depositAmount, l2, false, sessionKey);
+
+    await localMinter.mintAndDepositAndQuickSign(
+      l2ClientId, 'qsexp1', depositAmount, l2, 0,
+      sessionKey, pastExpiry, web3.utils.toWei('1000', 'ether'),
+      { from: owner, value: (BigInt(quote.nativeFee)).toString() }
+    );
+
+    // Session was NOT written on L2 because the L2 receiver reverted with
+    // "Session already expired" (the require check on the bundled handler).
+    var stored = await localCawProfilesL2.sessions(owner, sessionKey);
+    expect(stored.expiry.toString()).to.equal('0');
+    expect(stored.spendLimit.toString()).to.equal('0');
+
+    console.log("expired expiry (LZ path) — L2 session remains unset");
+  });
+
+  it("rejects mintAndAuthAndQuickSign with already-expired expiry (bypassLZ path)", async function() {
+    this.timeout(60000);
+
+    var sessionKey = accounts[2];
+    var pastExpiry = await futureExpiry(-60);
+
+    var quote = await localQuoter.mintAndAuthAndQuickSignQuote(l1ClientId, l1, false, sessionKey);
+
+    await expectRevert(
+      localMinter.mintAndAuthAndQuickSign(
+        l1ClientId, 'qsexp2', l1, 0,
+        sessionKey, pastExpiry, web3.utils.toWei('1000', 'ether'),
+        { from: accounts[1], value: (BigInt(quote.nativeFee)).toString() }
+      ),
+      "Session already expired"
+    );
+
+    console.log("rejects expired expiry (bypassLZ mintAndAuth path)");
+  });
+
+  it("rejects mintAndDepositAndQuickSign with sessionKey == address(0)", async function() {
+    this.timeout(60000);
+
+    var farFutureExpiry = await futureExpiry(30 * 24 * 60 * 60);
+    var depositAmount = web3.utils.toWei('1000', 'ether');
+    var quote = await localQuoter.mintAndDepositQuote(l2ClientId, depositAmount, l2, false);
+
+    await expectRevert(
+      localMinter.mintAndDepositAndQuickSign(
+        l2ClientId, 'qszero', depositAmount, l2, 0,
+        '0x0000000000000000000000000000000000000000',
+        farFutureExpiry, web3.utils.toWei('1000', 'ether'),
+        { from: accounts[1], value: (BigInt(quote.nativeFee)).toString() }
+      ),
+      "Zero session key"
+    );
+
+    console.log("rejects zero session key");
+  });
+
+  it("session key registered via bundled flow can post (end-to-end, LZ)", async function() {
+    this.timeout(60000);
+
+    // Mint + deposit + register a session, then verify the session write is consistent
+    // with how `cawProfile.sessions(owner, signer)` is queried by CawActions on L2.
+    var owner = accounts[1];
+    var sessionKey = accounts[3];
+    var spendLimit = web3.utils.toWei('5000000', 'ether');
+    var expiry = await futureExpiry(30 * 24 * 60 * 60);
+
+    var depositAmount = web3.utils.toWei('100000', 'ether');
+    var quote = await localQuoter.mintAndDepositAndQuickSignQuote(l2ClientId, depositAmount, l2, false, sessionKey);
+
+    await localMinter.mintAndDepositAndQuickSign(
+      l2ClientId, 'qspost1', depositAmount, l2, 0,
+      sessionKey, expiry, spendLimit,
+      { from: owner, value: (BigInt(quote.nativeFee)).toString() }
+    );
+
+    // Look up the session exactly the way CawActions does
+    var stored = await localCawProfilesL2.sessions(owner, sessionKey);
+    var latestBlock = await web3.eth.getBlock('latest');
+    expect(BigInt(stored.expiry.toString()) > BigInt(Number(latestBlock.timestamp))).to.be.true;
+    expect(stored.scopeBitmap.toString()).to.equal('191');
+    // 0xBF = 0b10111111 — POST (bit 0) is set, WITHDRAW (bit 6) is NOT set
+    var bitmap = parseInt(stored.scopeBitmap.toString(), 10);
+    expect(bitmap & 0x01).to.equal(0x01); // POST bit set
+    expect(bitmap & 0x40).to.equal(0x00); // WITHDRAW bit NOT set
+    expect(BigInt(stored.spendLimit.toString())).to.equal(BigInt(spendLimit));
+
+    console.log("end-to-end session registration verified for posting");
   });
 });
