@@ -1591,7 +1591,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 
               {/* GIF */}
               <button
-                onClick={() => !gifDisabled && setShowGifPicker(!showGifPicker)}
+                onClick={() => {
+                  if (gifDisabled) return
+                  setShowGifPicker(!showGifPicker)
+                  setShowEmojiPicker(false)
+                }}
                 disabled={gifDisabled}
                 className={`px-3 py-1 rounded-full text-base font-medium transition-all duration-200 ${
                 gifDisabled
@@ -1609,7 +1613,10 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 
               {/* Emoji Picker */}
               <button
-                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                onClick={() => {
+                  setShowEmojiPicker(!showEmojiPicker)
+                  setShowGifPicker(false)
+                }}
                 className={`p-1 rounded-full transition-all duration-200 cursor-pointer ${
                 text.trim()
                   ? (isDark
@@ -1723,35 +1730,57 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 
         {/* Mobile GIF Picker */}
         {showGifPicker && (
-          <div className="mt-4">
-            <GifPicker
-              initialQuery={gifSearchQuery(text)}
-              onSelect={handleGifSelected}
-              onClose={() => setShowGifPicker(false)}
+          <>
+            {/* Backdrop */}
+            <div
+              className="fixed inset-0 z-40"
+              onClick={() => setShowGifPicker(false)}
             />
-          </div>
+            {/* Floating panel — anchored above the composer so it covers the post */}
+            <div
+              className={`fixed left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] z-50 rounded-xl shadow-2xl max-h-[60vh] overflow-auto ${isDark ? 'border border-white/10 bg-black' : 'border border-gray-200 bg-white'}`}
+              style={{ bottom: 'calc(var(--app-mobile-header-h, 4rem) + env(safe-area-inset-bottom))' }}
+            >
+              <GifPicker
+                initialQuery={gifSearchQuery(text)}
+                onSelect={handleGifSelected}
+                onClose={() => setShowGifPicker(false)}
+              />
+            </div>
+          </>
         )}
 
         {/* Mobile Emoji Picker */}
         {showEmojiPicker && (
-          <div className={`mt-4 p-4 border rounded-lg ${
-            isDark ? 'border-white/20 bg-black' : 'border-gray-200 bg-gray-50'
-          }`}>
-            <div className="grid grid-cols-6 gap-2 max-h-32 overflow-y-auto">
-              {['😀', '😂', '🤣', '😊', '😍', '🤔', '😎', '🔥', '💯', '❤️', '👍', '👎'].map(emoji => (
-                <button
-                  key={emoji}
-                  onClick={() => {
-                    setText(prev => prev + emoji)
-                    setShowEmojiPicker(false)
-                  }}
-                  className="p-1 text-xl hover:bg-gray-200 dark:hover:bg-white/10 rounded transition-colors"
-                >
-                  {emoji}
-                </button>
-              ))}
+          <>
+            {/* Backdrop */}
+            <div
+              className="fixed inset-0 z-40"
+              onClick={() => setShowEmojiPicker(false)}
+            />
+            {/* Floating panel — anchored above the composer so it doesn't push layout */}
+            <div
+              className={`fixed left-1/2 -translate-x-1/2 w-[calc(100%-2rem)] z-50 rounded-xl shadow-2xl max-h-[40vh] overflow-auto ${isDark ? 'border border-white/10 bg-black' : 'border border-gray-200 bg-white'}`}
+              style={{ bottom: 'calc(var(--app-mobile-header-h, 4rem) + env(safe-area-inset-bottom))' }}
+            >
+              <div className="p-3">
+                <div className="grid grid-cols-6 gap-2">
+                  {['😀', '😂', '🤣', '😊', '😍', '🤔', '😎', '🔥', '💯', '❤️', '👍', '👎'].map(emoji => (
+                    <button
+                      key={emoji}
+                      onClick={() => {
+                        setText(prev => prev + emoji)
+                        setShowEmojiPicker(false)
+                      }}
+                      className="p-1 text-2xl hover:bg-gray-200 dark:hover:bg-white/10 rounded transition-colors"
+                    >
+                      {emoji}
+                    </button>
+                  ))}
+                </div>
+              </div>
             </div>
-          </div>
+          </>
         )}
       </div>
 
@@ -1820,38 +1849,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           </div>
         )}
 
-        {/* GIF Picker */}
-        {showGifPicker && (
-          <div className="mt-4">
-            <GifPicker
-              initialQuery={gifSearchQuery(text)}
-              onSelect={handleGifSelected}
-              onClose={() => setShowGifPicker(false)}
-            />
-          </div>
-        )}
+        {/* GIF Picker (desktop) is rendered as a popover above the GIF button.
+            Keeping it inline pushes the whole page down, which feels broken on desktop. */}
 
-        {/* Emoji Picker */}
-        {showEmojiPicker && (
-          <div className={`mt-4 p-4 border rounded-lg ${
-            isDark ? 'border-white/20 bg-black' : 'border-gray-200 bg-gray-50'
-          }`}>
-            <div className="grid grid-cols-8 gap-2 max-h-48 overflow-y-auto">
-              {['😀', '😂', '🤣', '😊', '😍', '🤔', '😎', '🔥', '💯', '❤️', '👍', '👎', '👏', '🙏', '💪', '🚀'].map(emoji => (
-                <button
-                  key={emoji}
-                  onClick={() => {
-                    setText(prev => prev + emoji)
-                    setShowEmojiPicker(false)
-                  }}
-                  className="p-2 text-2xl hover:bg-gray-200 dark:hover:bg-white/10 rounded transition-colors"
-                >
-                  {emoji}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+        {/* Emoji Picker (desktop) is rendered as a popover above the emoji button.
+            Keeping it inline pushes the whole page down, which feels broken on desktop. */}
 
         {/* Poll composer */}
         {pollEnabled && (
@@ -1947,39 +1949,116 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             </button>
 
             {/* GIF */}
-            <button
-              onClick={() => !gifDisabled && setShowGifPicker(!showGifPicker)}
-              disabled={gifDisabled}
-              className={`p-2 rounded-full transition-all duration-200 ${
-              gifDisabled
-                ? 'opacity-30 cursor-not-allowed'
-                : `cursor-pointer ${text.trim()
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  if (gifDisabled) return
+                  setShowGifPicker((v) => !v)
+                  setShowEmojiPicker(false)
+                }}
+                disabled={gifDisabled}
+                className={`p-2 rounded-full transition-all duration-200 ${
+                gifDisabled
+                  ? 'opacity-30 cursor-not-allowed'
+                  : `cursor-pointer ${text.trim()
+                    ? (isDark
+                        ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
+                        : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
+                    : (isDark
+                        ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
+                        : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')}`
+              }`}
+                aria-haspopup="dialog"
+                aria-expanded={showGifPicker}
+              >
+                <span className="text-base font-medium">GIF</span>
+              </button>
+
+              {showGifPicker && (
+                <>
+                  {/* Backdrop: click outside closes */}
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setShowGifPicker(false)}
+                  />
+
+                  {/* Popover: opens upward on desktop */}
+                  <div
+                    className="absolute z-50 bottom-full mb-2 left-1/2"
+                    style={{
+                      width: 'min(520px, calc(100vw - 2rem))',
+                      transform: 'translateX(calc(-50% + 170px))',
+                    }}
+                  >
+                    <GifPicker
+                      initialQuery={gifSearchQuery(text)}
+                      onSelect={handleGifSelected}
+                      onClose={() => setShowGifPicker(false)}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Emoji Picker */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowEmojiPicker(!showEmojiPicker)
+                  setShowGifPicker(false)
+                }}
+                className={`p-2 rounded-full transition-all duration-200 cursor-pointer ${
+                text.trim()
                   ? (isDark
                       ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
                       : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
                   : (isDark
                       ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
-                      : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')}`
-            }`}>
-              <span className="text-base font-medium">GIF</span>
-            </button>
+                      : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
+              }`}
+                aria-haspopup="dialog"
+                aria-expanded={showEmojiPicker}
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </button>
 
-            {/* Emoji Picker */}
-            <button
-              onClick={() => setShowEmojiPicker(!showEmojiPicker)}
-              className={`p-2 rounded-full transition-all duration-200 cursor-pointer ${
-              text.trim()
-                ? (isDark
-                    ? 'text-yellow-400 hover:text-yellow-300 hover:bg-yellow-400/10'
-                    : 'text-yellow-600 hover:text-yellow-500 hover:bg-yellow-200/50')
-                : (isDark
-                    ? 'text-yellow-400/70 hover:text-yellow-400 hover:bg-yellow-400/10'
-                    : 'text-yellow-600/70 hover:text-yellow-600 hover:bg-yellow-200/50')
-            }`}>
-              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </button>
+              {showEmojiPicker && (
+                <>
+                  {/* Backdrop: click outside closes */}
+                  <div
+                    className="fixed inset-0 z-40"
+                    onClick={() => setShowEmojiPicker(false)}
+                  />
+
+                  {/* Popover: opens upward on desktop */}
+                  <div
+                    className={`absolute z-50 bottom-full mb-2 left-1/2 p-3 border rounded-xl shadow-2xl ${
+                      isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'
+                    }`}
+                    style={{ width: 'min(420px, calc(100vw - 2rem))', transform: 'translateX(calc(-50% + 140px))' }}
+                  >
+                    <div className="grid grid-cols-8 gap-2 max-h-48 overflow-y-auto">
+                      {['😀', '😂', '🤣', '😊', '😍', '🤔', '😎', '🔥', '💯', '❤️', '👍', '👎', '👏', '🙏', '💪', '🚀'].map(emoji => (
+                        <button
+                          key={emoji}
+                          onClick={() => {
+                            setText(prev => prev + emoji)
+                            setShowEmojiPicker(false)
+                          }}
+                          className="p-2 text-2xl hover:bg-gray-200 dark:hover:bg-white/10 rounded transition-colors"
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
 
             {/* Schedule Post (not for replies/quotes) */}
             {!replyTo && !quote && (

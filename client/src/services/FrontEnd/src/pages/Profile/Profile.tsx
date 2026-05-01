@@ -1403,11 +1403,11 @@ export const Profile: React.FC = () => {
       {/* Edit Profile Modal */}
       {isEditModalOpen && (
         <div
-          className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+          className="fixed inset-0 bg-black/70 flex items-start justify-center z-50 p-4 pt-[calc(var(--app-mobile-header-h)+env(safe-area-inset-top)+0.75rem)] sm:pt-4"
           onClick={() => { setIsEditModalOpen(false); setProfileError(null) }}
         >
           <div
-            className={`w-full max-w-2xl max-h-[90vh] overflow-y-auto thin-scrollbar rounded-2xl transition-all duration-300 ${
+            className={`w-full max-w-2xl max-h-[calc(100dvh-var(--app-mobile-header-h)-env(safe-area-inset-top)-1.5rem)] sm:max-h-[90vh] overflow-y-auto thin-scrollbar rounded-2xl transition-all duration-300 ${
               isDark ? 'bg-black border border-yellow-500/30' : 'bg-white border border-gray-200'
             }`}
             onClick={(e) => e.stopPropagation()}

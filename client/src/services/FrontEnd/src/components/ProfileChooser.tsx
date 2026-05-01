@@ -411,7 +411,10 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
 
       {isDropdownOpen && (
         <ul
-          className={`${compact ? 'absolute left-0 right-0 bottom-full mb-2 w-full max-w-full' : (window.innerWidth < 1350 ? 'fixed mt-2' : 'absolute mt-2')} rounded-md overflow-y-auto z-[9999] transition-all duration-300 max-h-[95vh] ${
+          className={`${compact
+            ? 'absolute left-0 right-0 bottom-full mb-2 w-full max-w-full sm:w-[340px] sm:max-w-[340px] sm:right-auto'
+            : (window.innerWidth < 1350 ? 'fixed mt-2' : 'absolute mt-2')
+          } rounded-md overflow-y-auto z-[9999] transition-all duration-300 max-h-[95vh] ${
             compact ? '' : 'max-w-[calc(100vw-20px)] w-[min(420px,calc(100vw-20px))]'
           } ${
             isDark ? 'bg-black border border-white/20' : 'bg-white border border-gray-200'

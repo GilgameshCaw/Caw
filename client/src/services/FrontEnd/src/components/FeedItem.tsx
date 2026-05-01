@@ -552,10 +552,18 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       return
     }
 
-    // Open modal with onSuccess callback to set pending state.
     // For plain recaws, reply to the original post (useItem), not the recaw wrapper.
     // Quotes act as their own posts, so reply to the quote itself (item).
     const replyTarget = (isRecaw && !isQuote) ? useItem : item
+
+    // Desktop UX: navigate to the post page to reply inline.
+    // Mobile UX stays modal for now.
+    if (typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches) {
+      navigate(`/caws/${replyTarget.id}?reply=1`)
+      return
+    }
+
+    // Mobile: open modal with onSuccess callback to set pending state.
     openModal('comment', replyTarget, () => {
       setReplyPending(true)
       setReplyCountAdj(1)
