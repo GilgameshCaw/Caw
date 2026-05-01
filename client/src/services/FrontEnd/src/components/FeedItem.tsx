@@ -35,7 +35,7 @@ import { useModalStore } from '~/store/modalStore'
 import { useOptimisticLikesStore } from '~/store/optimisticLikesStore'
 import { useHiddenCawsStore } from '~/store/hiddenCawsStore'
 import { useBookmarksStore } from '~/store/bookmarksStore'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { User, CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
 import ContentWithHashtags from './ContentWithHashtags'
@@ -55,7 +55,7 @@ import { chains } from '~/config/chains'
 
 import { formatTimeAgo } from '~/utils/formatTimeAgo'
 
-const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; hideParentPreview?: boolean; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void; onLikeStateChange?: (cawId: string, likePending: boolean) => void; onRecawStateChange?: (cawId: string, recawPending: boolean) => void; onReplyStateChange?: (cawId: string, replyPending: boolean) => void; onTipStateChange?: (cawId: string, tipPending: boolean) => void }> = ({ item, isMainPost = false, isReply = false, hideParentPreview = false, onBookmarkUpdate, onLikeStateChange, onRecawStateChange, onReplyStateChange, onTipStateChange }) => {
+const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; hideParentPreview?: boolean; hideMedia?: boolean; contentClassName?: string; uiDensity?: 'normal' | 'compact'; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void; onLikeStateChange?: (cawId: string, likePending: boolean) => void; onRecawStateChange?: (cawId: string, recawPending: boolean) => void; onReplyStateChange?: (cawId: string, replyPending: boolean) => void; onTipStateChange?: (cawId: string, tipPending: boolean) => void }> = ({ item, isMainPost = false, isReply = false, hideParentPreview = false, hideMedia = false, contentClassName, uiDensity = 'normal', onBookmarkUpdate, onLikeStateChange, onRecawStateChange, onReplyStateChange, onTipStateChange }) => {
   // For plain recaws, pending states and counts should reflect the original post (parent),
   // not the recaw wrapper. useItem is set to item.parent for recaws further below, but
   // we need the right source for initial state here. Quotes act as their own posts.
@@ -99,6 +99,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const { isDark } = useTheme()
   const qc = useQueryClient()
   const navigate = useNavigate()
+  const location = useLocation()
+
+  const openPostMedia = (postId: string, mediaIndex: number) => {
+    navigate(`/caws/${postId}?media=${mediaIndex}&source=imageData`, {
+      state: { backgroundLocation: location }
+    })
+  }
   const [busyLike, setBusyLike]     = useState(false)
   const [busyRecaw, setBusyRecaw]   = useState(false)
   const [pendingLikeAction, setPendingLikeAction] = useState<{ receiverId: number, receiverCawonce: number, actionType: 'like' | 'unlike' } | null>(null) // Track pending like data
@@ -109,7 +116,8 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [showShareModal, setShowShareModal] = useState(false)
   const [showTipModal, setShowTipModal] = useState(false)
-  const [imageCollapsed, setImageCollapsed] = useState(false)
+  // NOTE: Media collapse UI removed — posts should show attached media
+  // consistently without extra toggles in the feed.
   const [textCopied, setTextCopied] = useState(false)
   const bookmarksStore = useBookmarksStore()
   // Sync server-provided bookmark state into store on mount
@@ -916,24 +924,28 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
             <div className="mb-4 pl-2 md:pl-0">
               <ContentWithHashtags
                 content={translatedText}
+                postId={useItem.id}
+                renderMedia={!hideMedia}
                 className={`transition-colors duration-300 ${
                   isDark ? 'text-gray-200' : 'text-gray-800'
-                }`}
+                } ${contentClassName || ''}`}
               />
             </div>
           ) : (
             <div className="mb-4 pl-2 md:pl-0">
               <ContentWithHashtags
                 content={useItem.content}
+                postId={useItem.id}
+                renderMedia={!hideMedia}
                 className={`transition-colors duration-300 ${
                   isDark ? 'text-gray-200' : 'text-gray-800'
-                }`}
+                } ${contentClassName || ''}`}
               />
             </div>
           )}
 
           {/* Video Display */}
-          {useItem.hasVideo && (
+          {!hideMedia && useItem.hasVideo && (
             <div className="mb-4 pl-2 md:pl-0">
               {(() => {
                 // Check if videoData contains URLs
@@ -975,46 +987,16 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           )}
 
           {/* Image Display */}
-          {useItem.hasImage && (
+          {!hideMedia && useItem.hasImage && (
             <div className="mb-4 pl-2 md:pl-0">
-              {imageCollapsed ? (
-                <button
-                  onClick={(e) => {
-                    e.preventDefault()
-                    e.stopPropagation()
-                    setImageCollapsed(false)
-                  }}
-                  className={`flex items-center gap-1 text-xs cursor-pointer ${isDark ? 'text-gray-500 hover:text-gray-400' : 'text-gray-400 hover:text-gray-500'} transition-colors`}
-                >
-                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                  </svg>
-                  Show media
-                </button>
-              ) : (() => {
+              {(() => {
                 // Check if imageData contains URLs or base64 data
-                const collapseBtn = (
-                  <Tooltip text="Hide media"><button
-                    onClick={(e) => {
-                      e.preventDefault()
-                      e.stopPropagation()
-                      setImageCollapsed(true)
-                    }}
-                    className="absolute top-2 left-2 z-10 p-1 rounded-full bg-black/60 hover:bg-black/80 text-white/70 hover:text-white transition-all cursor-pointer"
-                  >
-                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-                    </svg>
-                  </button></Tooltip>
-                )
-
                 if (useItem.imageData) {
                   if (useItem.imageData.startsWith('urls:')) {
                     // Off-chain images stored as URLs
                     const urls = useItem.imageData.replace('urls:', '').split('|||')
                     return (
-                      <div className="relative">
-                        {collapseBtn}
+                      <div>
                         {(() => {
                           const count = urls.length
                           if (count <= 0) return null
@@ -1022,7 +1004,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                           if (count === 1) {
                             const url = urls[0]
                             return (
-                              <div className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 w-full">
+                              <div className="relative rounded-lg overflow-hidden w-full">
                                 <img
                                   src={url}
                                   alt="Caw image"
@@ -1030,7 +1012,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                                   onClick={(e) => {
                                     e.preventDefault()
                                     e.stopPropagation()
-                                    // TODO: Open image in modal
+                                    openPostMedia(useItem.id, 0)
                                   }}
                                   onError={(e) => {
                                     console.error('Failed to load image from URL:', url)
@@ -1043,10 +1025,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
                           const gridClass =
                             count === 2
-                                ? 'grid grid-cols-2 gap-2 aspect-video rounded-lg overflow-hidden'
+                                ? 'grid grid-cols-2 gap-1.5 aspect-video rounded-lg overflow-hidden'
                                 : count === 3
-                                  ? 'grid grid-cols-2 grid-rows-2 gap-2 aspect-video rounded-lg overflow-hidden'
-                                  : 'grid grid-cols-2 grid-rows-2 gap-2 aspect-video rounded-lg overflow-hidden'
+                                  ? 'grid grid-cols-2 grid-rows-2 gap-1.5 aspect-video rounded-lg overflow-hidden'
+                                  : 'grid grid-cols-2 grid-rows-2 gap-1.5 aspect-video rounded-lg overflow-hidden'
 
                           const cellClass = (i: number) =>
                             count === 3 && i === 0 ? 'row-span-2 w-full h-full' : 'w-full h-full'
@@ -1054,7 +1036,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                           return (
                             <div className={gridClass}>
                               {urls.slice(0, 4).map((url, index) => (
-                                <div key={index} className={`relative w-full h-full overflow-hidden border border-gray-200 dark:border-gray-700 ${cellClass(index)}`}>
+                                <div key={index} className={`relative w-full h-full overflow-hidden ${cellClass(index)}`}>
                                   <img
                                     src={url}
                                     alt={`Caw image ${index + 1}`}
@@ -1062,7 +1044,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                                     onClick={(e) => {
                                       e.preventDefault()
                                       e.stopPropagation()
-                                      // TODO: Open image in modal
+                                      openPostMedia(useItem.id, index)
                                     }}
                                     onError={(e) => {
                                       console.error('Failed to load image from URL:', url)
@@ -1080,8 +1062,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     // On-chain images stored as base64
                     const images = useItem.imageData.split('|||')
                     return (
-                      <div className="relative">
-                        {collapseBtn}
+                      <div>
                         {(() => {
                           const count = images.length
                           if (count <= 0) return null
@@ -1089,7 +1070,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                           if (count === 1) {
                             const imageBase64 = images[0]
                             return (
-                              <div className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 w-full">
+                              <div className="relative rounded-lg overflow-hidden w-full">
                                 <img
                                   src={`data:image/jpeg;base64,${imageBase64}`}
                                   alt="Caw image"
@@ -1097,7 +1078,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                                   onClick={(e) => {
                                     e.preventDefault()
                                     e.stopPropagation()
-                                    // TODO: Open image in modal
+                                    openPostMedia(useItem.id, 0)
                                   }}
                                   onError={(e) => {
                                     console.error('Failed to load on-chain image')
@@ -1113,10 +1094,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
                           const gridClass =
                             count === 2
-                                ? 'grid grid-cols-2 gap-2 aspect-video rounded-lg overflow-hidden'
+                                ? 'grid grid-cols-2 gap-1.5 aspect-video rounded-lg overflow-hidden'
                                 : count === 3
-                                  ? 'grid grid-cols-2 grid-rows-2 gap-2 aspect-video rounded-lg overflow-hidden'
-                                  : 'grid grid-cols-2 grid-rows-2 gap-2 aspect-video rounded-lg overflow-hidden'
+                                  ? 'grid grid-cols-2 grid-rows-2 gap-1.5 aspect-video rounded-lg overflow-hidden'
+                                  : 'grid grid-cols-2 grid-rows-2 gap-1.5 aspect-video rounded-lg overflow-hidden'
 
                           const cellClass = (i: number) =>
                             count === 3 && i === 0 ? 'row-span-2 w-full h-full' : 'w-full h-full'
@@ -1124,7 +1105,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                           return (
                             <div className={gridClass}>
                               {images.slice(0, 4).map((imageBase64, index) => (
-                                <div key={index} className={`relative w-full h-full overflow-hidden border border-gray-200 dark:border-gray-700 ${cellClass(index)}`}>
+                                <div key={index} className={`relative w-full h-full overflow-hidden ${cellClass(index)}`}>
                                   <img
                                     src={`data:image/jpeg;base64,${imageBase64}`}
                                     alt={`Caw image ${index + 1}`}
@@ -1132,7 +1113,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                                     onClick={(e) => {
                                       e.preventDefault()
                                       e.stopPropagation()
-                                      // TODO: Open image in modal
+                                      openPostMedia(useItem.id, index)
                                     }}
                                     onError={(e) => {
                                       console.error('Failed to load on-chain image')
@@ -1153,8 +1134,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 } else if (useItem.imageUrl) {
                   // Legacy single image URL
                   return (
-                    <div className="relative w-full rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700">
-                      {collapseBtn}
+                    <div className="w-full rounded-lg overflow-hidden">
                       <img
                         src={useItem.imageUrl}
                         alt="Caw image"
@@ -1162,7 +1142,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                         onClick={(e) => {
                           e.preventDefault()
                           e.stopPropagation()
-                          // TODO: Open image in modal
+                          openPostMedia(useItem.id, 0)
                         }}
                         onError={(e) => {
                           console.error('Failed to load image')
@@ -1221,7 +1201,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
           {/* Post Actions */}
           <div className="flex items-center justify-between" onClick={(e) => e.stopPropagation()}>
-            <div className="flex items-center space-x-6">
+            <div className={`flex items-center ${uiDensity === 'compact' ? 'gap-4' : 'space-x-6'}`}>
               {/* Comments/Replies */}
               <Tooltip text={replyPending ? "Processing on-chain" : "Reply"} disabled={item.status === 'FAILED'}><button
                 className={`flex items-center space-x-2 transition-colors duration-300 ${
@@ -1236,8 +1216,8 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 onClick={handleReply}
                 disabled={item.status === 'FAILED'}
               >
-                <HiOutlineChat className="w-5 h-5" />
-                <span className={`text-sm ${(useItem.hasReplied || replyPending) ? 'text-blue-500' : ''}`}>
+                <HiOutlineChat className={uiDensity === 'compact' ? 'w-4 h-4' : 'w-5 h-5'} />
+                <span className={`${uiDensity === 'compact' ? 'text-xs' : 'text-sm'} ${(useItem.hasReplied || replyPending) ? 'text-blue-500' : ''}`}>
                   {formatEngagementCount(useItem.commentCount + effectiveReplyAdj)}
                 </span>
               </button></Tooltip>
@@ -1273,11 +1253,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       <HiOutlineCheck className="absolute inset-0 w-3 h-3 m-auto text-green-500" />
                     </div>
                   ) : (
-                    <Recaw className={`w-5 h-5 translate-y-1 transition-all duration-300 ${
+                    <Recaw className={`${uiDensity === 'compact' ? 'w-4 h-4 translate-y-[3px]' : 'w-5 h-5 translate-y-1'} transition-all duration-300 ${
                       (useItem.hasRecawed || isRecawByCurrentUser || recawPending) ? 'text-green-500' : ''
                     }`} />
                   )}
-                  <span className={`text-sm translate-y-1 transition-colors duration-300 ${
+                  <span className={`${uiDensity === 'compact' ? 'text-xs translate-y-0.5' : 'text-sm translate-y-1'} transition-colors duration-300 ${
                     (useItem.hasRecawed || isRecawByCurrentUser) ? 'text-green-500' : ''
                   }`}>{formatEngagementCount(useItem.recawCount + effectiveRecawAdj)}</span>
                 </button></Tooltip>
@@ -1375,9 +1355,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     <HiOutlineCheck className="absolute inset-0 w-3 h-3 m-auto text-red-500" />
                   </div>
                 ) : (
-                  <HiOutlineHeart className={`w-5 h-5 ${(useItem.hasLiked || likePending || stateSource.likePending) ? 'fill-current' : ''}`} />
+                  <HiOutlineHeart className={`${uiDensity === 'compact' ? 'w-4 h-4' : 'w-5 h-5'} ${(useItem.hasLiked || likePending || stateSource.likePending) ? 'fill-current' : ''}`} />
                 )}
-                <span className="text-sm">{formatEngagementCount(useItem.likeCount + effectiveLikeAdj)}</span>
+                <span className={uiDensity === 'compact' ? 'text-xs' : 'text-sm'}>{formatEngagementCount(useItem.likeCount + effectiveLikeAdj)}</span>
               </button></Tooltip>
 
               {/* Views */}
@@ -1386,12 +1366,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
               >
-                <HiOutlineEye className="w-5 h-5" />
-                <span className="text-sm">{formatEngagementCount(useItem.viewCount || 0)}</span>
+                <HiOutlineEye className={uiDensity === 'compact' ? 'w-4 h-4' : 'w-5 h-5'} />
+                <span className={uiDensity === 'compact' ? 'text-xs' : 'text-sm'}>{formatEngagementCount(useItem.viewCount || 0)}</span>
               </button></Tooltip>
             </div>
 
-            <div className="flex items-center space-x-4">
+            <div className={`flex items-center ${uiDensity === 'compact' ? 'gap-3' : 'space-x-4'}`}>
               {/* Bookmark */}
               <Tooltip text={isBookmarked ? "Remove bookmark" : "Save"} disabled={item.status === 'FAILED'}><button
                 onClick={handleBookmark}
@@ -1406,13 +1386,13 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     : isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
               >
-                <Bookmark className={`w-5 h-5 -translate-y-[3px] transition-all duration-300 ${
+                <Bookmark className={`${uiDensity === 'compact' ? 'w-4 h-4 -translate-y-[2px]' : 'w-5 h-5 -translate-y-[3px]'} transition-all duration-300 ${
                   isBookmarked
                     ? 'fill-yellow-500 stroke-yellow-500'
                     : isDark ? 'stroke-white stroke-[1.5]' : 'stroke-gray-600'
                 }`} />
                 {localBookmarkCount > 0 && (
-                  <span className="text-xs -translate-y-[3px]">{localBookmarkCount}</span>
+                  <span className={`${uiDensity === 'compact' ? 'text-[11px] -translate-y-[2px]' : 'text-xs -translate-y-[3px]'}`}>{localBookmarkCount}</span>
                 )}
               </button></Tooltip>
 
@@ -1434,9 +1414,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     : isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
               >
-                <HiOutlineCurrencyDollar className="w-5 h-5 mb-[5px]" />
+                <HiOutlineCurrencyDollar className={`${uiDensity === 'compact' ? 'w-4 h-4 mb-[4px]' : 'w-5 h-5 mb-[5px]'}`} />
                 {(useItem.tipCount ?? 0) > 0 && (
-                  <span className="text-xs -translate-y-[3px]">{useItem.tipCount}</span>
+                  <span className={`${uiDensity === 'compact' ? 'text-[11px] -translate-y-[2px]' : 'text-xs -translate-y-[3px]'}`}>{useItem.tipCount}</span>
                 )}
               </button></Tooltip>
 
@@ -1456,7 +1436,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
               >
-                <Share className={`w-5 h-5 transition-all duration-300 ${
+                <Share className={`${uiDensity === 'compact' ? 'w-4 h-4' : 'w-5 h-5'} transition-all duration-300 ${
                   isDark ? 'stroke-white stroke-[1.5]' : 'stroke-gray-600'
                 }`} />
               </button></Tooltip>

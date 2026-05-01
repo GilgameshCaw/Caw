@@ -4,7 +4,7 @@ import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { useAccount } from "wagmi"
 import { useConnectModal } from "@rainbow-me/rainbowkit"
-import { HiOutlineClock, HiOutlineTrash, HiOutlineCheck, HiOutlineXCircle, HiChevronDown, HiChevronRight, HiOutlineInformationCircle } from "react-icons/hi"
+import { HiOutlineClock, HiOutlineTrash, HiOutlineCheck, HiOutlineXCircle, HiChevronDown, HiChevronRight, HiOutlineInformationCircle, HiOutlineEye, HiOutlinePhotograph, HiOutlineX } from "react-icons/hi"
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { apiFetch } from '~/api/client'
@@ -20,6 +20,7 @@ interface ScheduledCaw {
   scheduledAt: string
   status: 'pending' | 'published' | 'failed' | 'cancelled'
   publishedId: number | null
+  imageData?: string | null
   hasImage: boolean
   createdAt: string
   threadId: string | null
@@ -38,6 +39,82 @@ interface ScheduledCaw {
 type Row =
   | { kind: 'single'; item: ScheduledCaw }
   | { kind: 'thread'; threadId: string; items: ScheduledCaw[] }
+
+// Minimal media URL detection (mirrors ContentWithHashtags patterns) so the
+// Scheduled list can stay compact even when content includes media URLs.
+const SHORT_URL_WITH_MEDIA_EXT = /(?:https?:\/\/[^\s]+)?\/s\/[a-zA-Z0-9]+\.(?:gif|jpg|jpeg|png|webp|mp4|webm|mov)\b/gi
+const SHORT_URL_WITH_MEDIA_EXT_TEST = /(?:https?:\/\/[^\s]+)?\/s\/[a-zA-Z0-9]+\.(?:gif|jpg|jpeg|png|webp|mp4|webm|mov)\b/i
+const DIRECT_IMAGE_URL = /https?:\/\/[^\s<>"{}|\\^`\[\]]+\.(?:gif|jpg|jpeg|png|webp)(?:\?[^\s<>"{}|\\^`\[\]]*)?/gi
+const DIRECT_IMAGE_URL_TEST = /https?:\/\/[^\s<>"{}|\\^`\[\]]+\.(?:gif|jpg|jpeg|png|webp)(?:\?[^\s<>"{}|\\^`\[\]]*)?/i
+
+function hasMediaInContent(content: string): boolean {
+  return SHORT_URL_WITH_MEDIA_EXT_TEST.test(content) || DIRECT_IMAGE_URL_TEST.test(content)
+}
+
+function stripMediaFromContent(content: string): string {
+  // Remove media URLs (keep other links as-is).
+  const withoutMedia = content
+    .replace(SHORT_URL_WITH_MEDIA_EXT, '')
+    .replace(DIRECT_IMAGE_URL, (m) => (m.includes('/s/') ? m : ''))
+  return withoutMedia
+    .replace(/[ \t]+/g, ' ')
+    .replace(/^ +/gm, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function ScheduledMedia({ imageData }: { imageData?: string | null }) {
+  if (!imageData) return null
+
+  const renderGrid = (urls: string[], kind: 'url' | 'base64') => {
+    const count = urls.length
+    if (count <= 0) return null
+
+    const gridClass =
+      count === 1
+        ? 'w-full'
+        : count === 2
+          ? 'grid grid-cols-2 gap-1.5 aspect-video rounded-lg overflow-hidden'
+          : 'grid grid-cols-2 grid-rows-2 gap-1.5 aspect-video rounded-lg overflow-hidden'
+
+    const cellClass = (i: number) => (count === 3 && i === 0 ? 'row-span-2 w-full h-full' : 'w-full h-full')
+
+    if (count === 1) {
+      const src = kind === 'base64' ? `data:image/jpeg;base64,${urls[0]}` : urls[0]
+      return (
+        <div className="w-full rounded-lg overflow-hidden">
+          <img src={src} alt="Scheduled media" className="block w-full max-h-96 h-auto object-contain" />
+        </div>
+      )
+    }
+
+    return (
+      <div className={gridClass}>
+        {urls.slice(0, 4).map((u, idx) => {
+          const src = kind === 'base64' ? `data:image/jpeg;base64,${u}` : u
+          return (
+            <div key={idx} className={`relative w-full h-full overflow-hidden ${cellClass(idx)}`}>
+              <img src={src} alt={`Scheduled media ${idx + 1}`} className="block w-full h-full object-cover" />
+              {urls.length > 4 && idx === 3 && (
+                <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-white text-xl font-semibold pointer-events-none">
+                  +{urls.length - 4}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
+  if (imageData.startsWith('urls:')) {
+    const urls = imageData.replace('urls:', '').split('|||').filter(Boolean)
+    return <div className="mb-3">{renderGrid(urls, 'url')}</div>
+  }
+
+  const images = imageData.split('|||').filter(Boolean)
+  return <div className="mb-3">{renderGrid(images, 'base64')}</div>
+}
 
 // Bucket the API response into rows: single posts stay as-is; chunks sharing a
 // threadId collapse into one thread row anchored on chunk 0's scheduled time.
@@ -70,6 +147,7 @@ const ScheduledPage: React.FC = () => {
   const { isDark } = useTheme()
   const [activeTab, setActiveTab] = useState<'pending' | 'published' | 'failed'>('pending')
   const [expandedThreads, setExpandedThreads] = useState<Set<string>>(new Set())
+  const [previewRow, setPreviewRow] = useState<Row | null>(null)
   const toggleThread = (threadId: string) => {
     setExpandedThreads(prev => {
       const next = new Set(prev)
@@ -281,10 +359,19 @@ const ScheduledPage: React.FC = () => {
               }`
               if (row.kind === 'single') {
                 const item = row.item
+                const hasMedia = item.hasImage || !!item.imageData || hasMediaInContent(item.content)
+                const displayText = stripMediaFromContent(item.content)
                 return (
                   <div key={item.id} className={cardClass}>
-                    <div className={`mb-3 ${isDark ? 'text-white' : 'text-black'}`}>
-                      <ContentWithHashtags content={item.content} />
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div className={`min-w-0 flex-1 text-sm leading-snug whitespace-pre-wrap break-words line-clamp-3 ${isDark ? 'text-white' : 'text-black'}`}>
+                        {displayText || <span className={isDark ? 'text-white/50' : 'text-black/50'}>(no text)</span>}
+                      </div>
+                      {hasMedia && (
+                        <div className={`mt-0.5 flex-shrink-0 ${isDark ? 'text-white/50' : 'text-black/40'}`} title="Has media">
+                          <HiOutlinePhotograph className="w-5 h-5" />
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
@@ -293,28 +380,43 @@ const ScheduledPage: React.FC = () => {
                           {getStatusText(item)}
                         </span>
                       </div>
-                      {item.status === 'pending' && (
-                        <button
-                          onClick={() => cancelMutation.mutate(item.id)}
-                          disabled={cancelMutation.isPending}
-                          className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-sm transition-colors ${
-                            isDark ? 'text-red-400 hover:bg-red-500/20' : 'text-red-600 hover:bg-red-50'
-                          } ${cancelMutation.isPending ? 'opacity-50 cursor-not-allowed' : ''}`}
-                        >
-                          <HiOutlineTrash className="w-4 h-4" />
-                          Cancel
-                        </button>
-                      )}
-                      {item.status === 'published' && item.publishedId && (
-                        <Link
-                          to={`/caws/${item.publishedId}`}
-                          className={`text-sm px-3 py-1.5 rounded-full transition-colors ${
-                            isDark ? 'text-yellow-400 hover:bg-yellow-500/20' : 'text-yellow-600 hover:bg-yellow-50'
-                          }`}
-                        >
-                          View Post
-                        </Link>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {(item.status === 'pending' || item.status === 'failed') && (
+                          <button
+                            type="button"
+                            onClick={() => setPreviewRow({ kind: 'single', item })}
+                            className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-sm transition-colors cursor-pointer ${
+                              isDark ? 'text-gray-200 hover:bg-white/10' : 'text-gray-700 hover:bg-gray-100'
+                            }`}
+                          >
+                            <HiOutlineEye className="w-4 h-4" />
+                            View
+                          </button>
+                        )}
+                        {item.status === 'pending' && (
+                          <button
+                            type="button"
+                            onClick={() => cancelMutation.mutate(item.id)}
+                            disabled={cancelMutation.isPending}
+                            className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-sm transition-colors ${
+                              isDark ? 'text-red-400 hover:bg-red-500/20' : 'text-red-600 hover:bg-red-50'
+                            } ${cancelMutation.isPending ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                          >
+                            <HiOutlineTrash className="w-4 h-4" />
+                            Cancel
+                          </button>
+                        )}
+                        {item.status === 'published' && item.publishedId && (
+                          <Link
+                            to={`/caws/${item.publishedId}`}
+                            className={`text-sm px-3 py-1.5 rounded-full transition-colors ${
+                              isDark ? 'text-yellow-400 hover:bg-yellow-500/20' : 'text-yellow-600 hover:bg-yellow-50'
+                            }`}
+                          >
+                            View Post
+                          </Link>
+                        )}
+                      </div>
                     </div>
                   </div>
                 )
@@ -325,6 +427,8 @@ const ScheduledPage: React.FC = () => {
               // (the API cascade-cancels every still-pending chunk by threadId).
               const expanded = expandedThreads.has(row.threadId)
               const head = row.items[0]
+              const threadHasMedia = row.items.some(it => it.hasImage || !!it.imageData || hasMediaInContent(it.content))
+              const headDisplayText = stripMediaFromContent(head.content)
               const total = head.threadTotal ?? row.items.length
               // Status to display for the thread as a whole: any failed → failed,
               // else any pending → pending, else any cancelled → cancelled, else published.
@@ -348,10 +452,21 @@ const ScheduledPage: React.FC = () => {
                   </button>
 
                   <div className={`mb-3 ${isDark ? 'text-white' : 'text-black'}`}>
-                    <ContentWithHashtags content={head.content} />
+                    <div className="flex items-start justify-between gap-3">
+                      <div className={`min-w-0 flex-1 text-sm leading-snug whitespace-pre-wrap break-words line-clamp-3 ${isDark ? 'text-white' : 'text-black'}`}>
+                        {headDisplayText || <span className={isDark ? 'text-white/50' : 'text-black/50'}>(no text)</span>}
+                      </div>
+                      {threadHasMedia && (
+                        <div className={`mt-0.5 flex-shrink-0 ${isDark ? 'text-white/50' : 'text-black/40'}`} title="Has media">
+                          <HiOutlinePhotograph className="w-5 h-5" />
+                        </div>
+                      )}
+                    </div>
                   </div>
 
-                  {expanded && row.items.slice(1).map((chunk, idx) => (
+                  {expanded && row.items.slice(1).map((chunk, idx) => {
+                    const chunkDisplayText = stripMediaFromContent(chunk.content)
+                    return (
                     <div
                       key={chunk.id}
                       className={`mt-3 pt-3 border-t ${isDark ? 'border-white/10 text-white' : 'border-gray-200 text-black'}`}
@@ -359,9 +474,11 @@ const ScheduledPage: React.FC = () => {
                       <div className={`text-[11px] mb-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
                         {idx + 2} / {total}
                       </div>
-                      <ContentWithHashtags content={chunk.content} />
+                      <div className={`text-sm leading-snug whitespace-pre-wrap break-words line-clamp-3 ${isDark ? 'text-white' : 'text-black'}`}>
+                        {chunkDisplayText || <span className={isDark ? 'text-white/50' : 'text-black/50'}>(no text)</span>}
+                      </div>
                     </div>
-                  ))}
+                  )})}
 
                   <div className="flex items-center justify-between mt-3">
                     <div className="flex items-center gap-2">
@@ -370,32 +487,132 @@ const ScheduledPage: React.FC = () => {
                         {getStatusText(headForStatus)}
                       </span>
                     </div>
-                    {aggregateStatus === 'pending' && (
-                      <button
-                        onClick={() => cancelMutation.mutate(head.id)}
-                        disabled={cancelMutation.isPending}
-                        className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-sm transition-colors ${
-                          isDark ? 'text-red-400 hover:bg-red-500/20' : 'text-red-600 hover:bg-red-50'
-                        } ${cancelMutation.isPending ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      >
-                        <HiOutlineTrash className="w-4 h-4" />
-                        Cancel thread
-                      </button>
-                    )}
-                    {aggregateStatus === 'published' && head.publishedId && (
-                      <Link
-                        to={`/caws/${head.publishedId}`}
-                        className={`text-sm px-3 py-1.5 rounded-full transition-colors ${
-                          isDark ? 'text-yellow-400 hover:bg-yellow-500/20' : 'text-yellow-600 hover:bg-yellow-50'
-                        }`}
-                      >
-                        View Thread
-                      </Link>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {(aggregateStatus === 'pending' || aggregateStatus === 'failed') && (
+                        <button
+                          type="button"
+                          onClick={() => setPreviewRow({ kind: 'thread', threadId: row.threadId, items: row.items })}
+                          className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-sm transition-colors cursor-pointer ${
+                            isDark ? 'text-gray-200 hover:bg-white/10' : 'text-gray-700 hover:bg-gray-100'
+                          }`}
+                        >
+                          <HiOutlineEye className="w-4 h-4" />
+                          View
+                        </button>
+                      )}
+                      {aggregateStatus === 'pending' && (
+                        <button
+                          type="button"
+                          onClick={() => cancelMutation.mutate(head.id)}
+                          disabled={cancelMutation.isPending}
+                          className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-sm transition-colors ${
+                            isDark ? 'text-red-400 hover:bg-red-500/20' : 'text-red-600 hover:bg-red-50'
+                          } ${cancelMutation.isPending ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                        >
+                          <HiOutlineTrash className="w-4 h-4" />
+                          Cancel thread
+                        </button>
+                      )}
+                      {aggregateStatus === 'published' && head.publishedId && (
+                        <Link
+                          to={`/caws/${head.publishedId}`}
+                          className={`text-sm px-3 py-1.5 rounded-full transition-colors ${
+                            isDark ? 'text-yellow-400 hover:bg-yellow-500/20' : 'text-yellow-600 hover:bg-yellow-50'
+                          }`}
+                        >
+                          View Thread
+                        </Link>
+                      )}
+                    </div>
                   </div>
                 </div>
               )
             })}
+          </div>
+        )}
+
+        {previewRow && (
+          <div className="fixed inset-0 z-[80]">
+            <div className="absolute inset-0 bg-black/60" />
+
+            {/* Align to the app's 3-column shell (sidebar/main/trending) so the modal
+                doesn't feel off-center on wide desktops. */}
+            <div
+              className="absolute inset-0 flex items-center justify-center"
+              onMouseDown={(e) => {
+                if (e.target === e.currentTarget) setPreviewRow(null)
+              }}
+              onTouchStart={(e) => {
+                if (e.target === e.currentTarget) setPreviewRow(null)
+              }}
+            >
+              <div className="w-full max-w-[1050px] mx-auto px-6 flex">
+                <div className="hidden md:block w-[200px]" />
+                <div className="flex-1 flex justify-center">
+                  <div
+                    className={`relative z-10 w-full max-w-lg rounded-2xl border shadow-xl ${
+                      isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'
+                    }`}
+                  >
+                    <div className={`p-4 border-b ${isDark ? 'border-white/10' : 'border-gray-200'} flex items-center justify-between`}>
+                <div>
+                  <div className={`text-sm font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                    Preview
+                  </div>
+                  <div className={`text-xs mt-0.5 ${isDark ? 'text-gray-400' : 'text-gray-500'}`}>
+                    {previewRow.kind === 'single'
+                      ? getStatusText(previewRow.item)
+                      : `Thread (${previewRow.items[0].threadTotal ?? previewRow.items.length} posts) • ${getStatusText({ ...previewRow.items[0], status: previewRow.items.find(i => i.status === 'failed')?.status ?? previewRow.items.find(i => i.status === 'pending')?.status ?? previewRow.items.find(i => i.status === 'cancelled')?.status ?? 'published' })}`}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPreviewRow(null)}
+                  aria-label="Close preview"
+                  className={`p-2 rounded-full transition-colors cursor-pointer ${
+                    isDark ? 'text-white/70 hover:bg-white/10' : 'text-gray-700 hover:bg-gray-100'
+                  }`}
+                >
+                  <HiOutlineX className="w-5 h-5" />
+                </button>
+                    </div>
+
+                    <div className="p-4 max-h-[70vh] overflow-y-auto">
+                      {previewRow.kind === 'single' ? (
+                        <div className={isDark ? 'text-white' : 'text-black'}>
+                          <ScheduledMedia imageData={previewRow.item.imageData} />
+                          <ContentWithHashtags
+                            content={previewRow.item.content}
+                            renderMedia={!previewRow.item.imageData}
+                          />
+                        </div>
+                      ) : (
+                        <div className="space-y-4">
+                          {previewRow.items.map((chunk, idx) => (
+                            <div key={chunk.id}>
+                              <div className={`text-[11px] mb-1 ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                                {idx + 1} / {previewRow.items[0].threadTotal ?? previewRow.items.length}
+                              </div>
+                              <div className={isDark ? 'text-white' : 'text-black'}>
+                                <ScheduledMedia imageData={chunk.imageData} />
+                                <ContentWithHashtags
+                                  content={chunk.content}
+                                  renderMedia={!chunk.imageData}
+                                />
+                              </div>
+                              {idx !== previewRow.items.length - 1 && (
+                                <div className={`mt-4 border-t ${isDark ? 'border-white/10' : 'border-gray-200'}`} />
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                <div className="hidden lg:block w-[280px]" />
+              </div>
+            </div>
           </div>
         )}
       </div>

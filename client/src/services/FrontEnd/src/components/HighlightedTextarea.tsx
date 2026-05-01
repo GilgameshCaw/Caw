@@ -15,6 +15,10 @@ interface HighlightedTextareaProps {
   className?: string
   textareaRef?: React.RefObject<HTMLTextAreaElement | null>
   fontSize?: 'base' | 'xl'
+  /** Tighter vertical padding for compact composers (e.g. replies). */
+  compact?: boolean
+  /** When true, grows textarea height to fit content (no internal scroll). */
+  autoResize?: boolean
 }
 
 /**
@@ -33,13 +37,20 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
   rows = 3,
   className = '',
   textareaRef: externalRef,
-  fontSize = 'xl'
+  fontSize = 'xl',
+  compact = false,
+  autoResize = false
 }) => {
   const { isDark } = useTheme()
   const internalRef = useRef<HTMLTextAreaElement>(null)
   const textareaRef = externalRef || internalRef
   const highlightRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
+
+  const textSizeClass = fontSize === 'xl' ? 'text-xl' : 'text-base'
+  const lineHeight = fontSize === 'xl' ? '1.75rem' : '1.5rem'
+  const paddingBottom = compact ? '10px' : '26px'
+  const padding = `2px 8px ${paddingBottom} 8px`
 
   // Sync scroll between textarea and highlight div
   const handleScroll = (e: React.UIEvent<HTMLTextAreaElement>) => {
@@ -51,6 +62,20 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
       highlightRef.current.scrollTop = scrollTop
     }
   }, [scrollTop])
+
+  // Auto-grow to fit content (handles soft-wrapped long lines too).
+  useEffect(() => {
+    if (!autoResize) return
+    const el = (textareaRef as React.RefObject<HTMLTextAreaElement | null>)?.current
+    if (!el) return
+
+    // Use scrollHeight for BOTH empty and non-empty so the height is stable.
+    // The placeholder is NOT inside the <textarea>, so we keep a hidden dot
+    // in the mirror layer; here we just want consistent sizing.
+    el.style.height = '0px'
+    const next = el.scrollHeight + 2 // tiny buffer to avoid 1px flicker
+    el.style.height = `${next}px`
+  }, [autoResize, value, textareaRef, compact, lineHeight, fontSize])
 
   // Parse text and apply highlighting for @mentions, #hashtags, $cashtags, and URLs
   const getHighlightedText = (text: string) => {
@@ -80,9 +105,6 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
     })
   }
 
-  const textSizeClass = fontSize === 'xl' ? 'text-xl' : 'text-base'
-  const lineHeight = fontSize === 'xl' ? '1.75rem' : '1.5rem'
-
   return (
     <div className="relative w-full">
       {/* Highlight layer - renders behind textarea */}
@@ -92,7 +114,7 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
           isDark ? 'text-white' : 'text-black'
         }`}
         style={{
-          padding: '2px 8px 26px 8px',
+          padding,
           lineHeight,
           wordBreak: 'break-word',
           overflowWrap: 'break-word',
@@ -110,8 +132,9 @@ const HighlightedTextarea: React.FC<HighlightedTextareaProps> = ({
         className={`w-full resize-none border-none outline-none bg-transparent ${textSizeClass} ${className}`}
         style={{
           boxShadow: 'none',
-          padding: '2px 8px 26px 8px',
+          padding,
           lineHeight,
+          overflow: autoResize ? 'hidden' : undefined,
           color: 'transparent',
           caretColor: isDark ? 'white' : 'black',
           WebkitTextFillColor: 'transparent',

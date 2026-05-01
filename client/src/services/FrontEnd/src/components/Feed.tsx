@@ -157,11 +157,15 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
     const pendingSig = (p: any) => `${p.user?.tokenId}:${(p.content || '').trim()}:${p.parent?.id || ''}`
     const pendingPostSignatures = new Set(pendingPosts.map(pendingSig))
 
+    const isReply = (it: CawItem) => it.parent?.id && !it.isQuote && it.action !== 'RECAW'
+
     const filtered = items.filter(item => {
       // Filter out muted content
       if (shouldFilterPost(item, preferences)) return false
       // Filter out blocked users
       if (blockedUserIds.includes(item.user.tokenId)) return false
+      // Main timeline feeds should not show replies — they belong on the post page.
+      if ((filter === 'For you' || filter === 'Following') && isReply(item)) return false
       // Filter out posts the current user just deleted — the on-chain hide
       // takes 5–60s to land, this keeps them gone immediately.
       if (item.cawonce != null && hiddenCawonces[Number(item.cawonce)]) return false
@@ -191,7 +195,6 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
     // window. In that case skip it for now and re-emit it the moment we
     // place its parent. Replies whose parent isn't in the nearby window are
     // dropped at their natural position (don't promote orphans).
-    const isReply = (it: CawItem) => it.parent?.id && !it.isQuote && it.action !== 'RECAW'
     const PARENT_LOOKAHEAD = 8
     // Map parentId -> queued replies waiting to be emitted under it.
     const pendingByParent = new Map<string, CawItem[]>()
@@ -638,6 +641,8 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
 
         const visiblePending = showPending
           ? pendingPosts
+              // Main feeds: don't render pending replies either.
+              .filter(p => (filter === 'For you' || filter === 'Following') ? !(p.replyToId || p.parent?.id) : true)
               .filter(p => filter === 'profile-replies' ? !!p.replyToId : true)
               .filter(p => {
                 if (!hashtagFilter) return true
@@ -794,4 +799,3 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
 Feed.displayName = 'Feed'
 
 export default Feed
-

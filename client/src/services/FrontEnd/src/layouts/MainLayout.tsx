@@ -46,7 +46,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
         <div className={`w-full max-w-[1050px] ${themeLayoutShell(isDark)}`} />
       </div>
     )}
-    <div className={`min-h-screen w-full flex transition-colors duration-300 relative z-[1] ${
+    <div className={`min-h-screen w-full flex [--app-mobile-header-h:4rem] transition-colors duration-300 relative z-[1] ${
       hideSidebars
         ? (isDark ? 'bg-black' : 'bg-gray-100')
         : `max-w-[1050px] m-auto ${themeLayoutShell(isDark)}`

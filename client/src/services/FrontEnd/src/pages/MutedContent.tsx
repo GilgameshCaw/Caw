@@ -467,7 +467,7 @@ const MutedContentPage: React.FC = () => {
                       }`}>
                         <div className={`text-sm pt-3 ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
                           {post.content ? (
-                            <ContentWithHashtags content={post.content} />
+                            <ContentWithHashtags content={post.content} postId={post.id} />
                           ) : (
                             <span className="italic opacity-50">No content</span>
                           )}
