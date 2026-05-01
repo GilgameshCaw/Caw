@@ -59,26 +59,35 @@ const POLL_REGEX = /::poll:([^\n]+?)::/g
 // Optional per-poll image-hash sidecar. Lives directly after the closing
 // :: of the main marker (no whitespace between), e.g.:
 //   ::poll:a:b:c::pi:text.caw.social:abc12345:def67890::
+//   ::poll:a:b::pi:local.caw.com:p5274:s:abc12345:def67890::    (with port + http)
 //
-// Format: "::pi:" host (one) ":" hash:hash:hash "::"
-//   - host  = the originating instance's domain. Indexers (including
-//             mirrors) reconstruct image URLs as
-//                 https://<host>/uploads/images/<hash>.<ext>
-//             so an image posted on text.caw.social is fetchable from
-//             any other CAW node that re-indexes the on-chain action.
-//   - hash  = 8-char hex filename stem from the upload route. Positional
-//             with options. Empty slot (between two colons) = no image
-//             for that option.
+// Format: "::pi:" host [":p" port] [":s"] (":" hash)+ "::"
+//   - host   = originating instance's hostname (no port, no scheme).
+//              Indexers join host (and the optional port/scheme below)
+//              into  <scheme>://<host>[:<port>]/uploads/images/<hash>.<ext>
+//   - p<N>   = OPTIONAL port segment, prefix `p` + decimal digits.
+//              Omitted on default ports (443 for https, 80 for http).
+//              Lets local dev (e.g. local.caw.com:5274) survive the
+//              round-trip without breaking image URLs.
+//   - s      = OPTIONAL "http (insecure) scheme" flag. Omitted means
+//              https — the prod default. Single-char marker for the
+//              dev/internal-only case so we don't burn 5 bytes
+//              ("https") on the common path.
+//   - hash   = 8-char hex filename stem from the upload route. Positional
+//              with options. Empty slot (between two colons) = no image
+//              for that option.
 //
-// The whole inner section is hostname-character + colon + hex. The regex
-// admits dot, hyphen, alnum (DNS chars) plus colons and hex. Anchored
-// to start-of-string because we only consume it directly after the main
-// marker — not anywhere in the text.
+// Regex admits the union of all valid characters: hostname chars
+// (alnum/dot/hyphen) + `p` + digits for port + bare `s` + 8-hex hashes
+// + colons. Anchored to start-of-string because we only consume it
+// directly after the main marker — not anywhere in the text.
 const POLL_IMAGES_REGEX = /^::pi:([a-zA-Z0-9.\-:]*?)::/
 // DNS-style host validation. Lowercased, no port, no scheme. Reject
 // anything fancy at parse-time so a malformed sidecar degrades to
 // text-only instead of producing junk URLs the indexer would 404 on.
 const POLL_HOST_REGEX = /^[a-z0-9](?:[a-z0-9.\-]{0,253}[a-z0-9])?$/
+const POLL_PORT_REGEX = /^p([1-9][0-9]{0,4})$/
+const POLL_SCHEME_FLAG = 's'
 
 export interface ParsedPoll {
   /** Substring of the input matched by the marker, including outer "::poll:" / "::" AND any trailing ::pi:...:: sidecar. */
@@ -95,9 +104,14 @@ export interface ParsedPoll {
   imageHashes: string[]
   /** Originating-instance host for the image hashes — populated when the
    *  ::pi:host:...:: sidecar is present and `host` is a valid hostname.
-   *  Indexers join this with each hash to reconstruct an image URL like
-   *  `https://<host>/uploads/images/<hash>.webp`. Empty when absent. */
+   *  Empty when absent. */
   imageHost: string
+  /** Optional port from the `:p<N>:` segment. Undefined when absent
+   *  (resolver uses the scheme's default port). */
+  imagePort?: number
+  /** Scheme to use when reconstructing URLs: 'https' (default) or 'http'
+   *  when the `:s:` flag is present. */
+  imageScheme: 'http' | 'https'
 }
 
 /**
@@ -134,6 +148,8 @@ export function parsePoll(text: string): ParsedPoll | null {
   const tail = text.slice(tailStart)
   let imageHashes: string[] = options.map(() => '')
   let imageHost = ''
+  let imagePort: number | undefined
+  let imageScheme: 'http' | 'https' = 'https'
   let endPos = tailStart
   const imgMatch = POLL_IMAGES_REGEX.exec(tail)
   if (imgMatch) {
@@ -141,11 +157,32 @@ export function parsePoll(text: string): ParsedPoll | null {
     const host = (segments[0] || '').trim().toLowerCase()
     if (POLL_HOST_REGEX.test(host)) {
       imageHost = host
-      // Slot 1+ are positional with options. Empty slot ("::pi:host::hash3::"
-      // → ["host", "", "hash3"]) preserves alignment across no-image gaps.
-      const rawHashes = segments.slice(1)
-      imageHashes = options.map((_, i) => {
-        const h = (rawHashes[i] || '').trim()
+      // After the host, optional metadata segments (port, scheme) come
+      // BEFORE the hash list. Walk forward consuming any segment that
+      // matches a known meta prefix; first non-meta segment is the start
+      // of the hash list.
+      let i = 1
+      while (i < segments.length) {
+        const seg = segments[i].trim()
+        const portMatch = POLL_PORT_REGEX.exec(seg)
+        if (portMatch) {
+          const p = parseInt(portMatch[1], 10)
+          if (p > 0 && p <= 65535) imagePort = p
+          i++
+          continue
+        }
+        if (seg === POLL_SCHEME_FLAG) {
+          imageScheme = 'http'
+          i++
+          continue
+        }
+        break
+      }
+      // From `i` onward, segments are positional hashes — same handling
+      // as before. Empty slots preserve "no image for this option."
+      const rawHashes = segments.slice(i)
+      imageHashes = options.map((_, idx) => {
+        const h = (rawHashes[idx] || '').trim()
         return POLL_IMAGE_HASH_REGEX.test(h) ? h : ''
       })
       endPos = tailStart + imgMatch[0].length
@@ -163,6 +200,8 @@ export function parsePoll(text: string): ParsedPoll | null {
     options,
     imageHashes,
     imageHost,
+    imagePort,
+    imageScheme,
   }
 }
 
@@ -175,10 +214,12 @@ export function parsePoll(text: string): ParsedPoll | null {
  * string for "no image". Out-of-shape arrays are tolerated: missing or
  * malformed entries become "no image" rather than rejecting the build.
  *
- * `host` (required when emitting an image sidecar) is the originating
- * instance's hostname — appears ONCE in the marker, regardless of image
- * count, so the bytes amortize. Indexers join `host` + each hash to
- * reconstruct fetchable URLs even on mirror nodes.
+ * `meta` (required when emitting an image sidecar) is the originating
+ * instance's host plus optional non-default port + http scheme. The
+ * host appears ONCE; port (`:p<N>:`) is omitted when it's the default
+ * for the scheme; scheme flag (`:s:`) is omitted when https. Default-
+ * port https therefore costs zero extra marker bytes — only dev /
+ * non-standard deployments pay for the extra segments.
  *
  * Returns null when options are invalid (too few, too many, or contain
  * the colon delimiter / newlines), or when image hashes are provided
@@ -188,7 +229,7 @@ export function parsePoll(text: string): ParsedPoll | null {
 export function buildPollMarker(
   options: string[],
   imageHashes?: string[],
-  host?: string,
+  meta?: { host: string; port?: number; scheme?: 'http' | 'https' },
 ): string | null {
   const trimmed = options.map(o => o.trim()).filter(o => o.length > 0)
   if (trimmed.length < POLL_MIN_OPTIONS || trimmed.length > POLL_MAX_OPTIONS) {
@@ -204,13 +245,22 @@ export function buildPollMarker(
   // mirror, so there's no point burning marker bytes on them.
   const hasAnyHash = imageHashes && imageHashes.some(h => POLL_IMAGE_HASH_REGEX.test((h || '').trim()))
   if (hasAnyHash) {
-    const cleanHost = (host || '').trim().toLowerCase()
+    const cleanHost = (meta?.host || '').trim().toLowerCase()
     if (!POLL_HOST_REGEX.test(cleanHost)) return null
     const padded = trimmed.map((_, i) => {
       const h = (imageHashes![i] || '').trim()
       return POLL_IMAGE_HASH_REGEX.test(h) ? h : ''
     })
-    return `${base}::pi:${cleanHost}:${padded.join(':')}::`
+    // Build the optional port + scheme segments. Default-port https
+    // emits nothing extra; only non-default ports / http get the bytes.
+    const scheme = meta?.scheme === 'http' ? 'http' : 'https'
+    const port = meta?.port
+    const defaultPort = scheme === 'https' ? 443 : 80
+    const metaSegments: string[] = []
+    if (port && port !== defaultPort) metaSegments.push(`p${port}`)
+    if (scheme === 'http') metaSegments.push(POLL_SCHEME_FLAG)
+    const metaPrefix = metaSegments.length > 0 ? `:${metaSegments.join(':')}` : ''
+    return `${base}::pi:${cleanHost}${metaPrefix}:${padded.join(':')}::`
   }
 
   return base
@@ -251,30 +301,45 @@ export function imageUrlToPollHash(url: string): string {
 }
 
 /**
- * Extract the host from an absolute image URL — the same host that
- * goes into the on-chain ::pi:host:hashes:: sidecar so mirror nodes
- * can fetch it. Returns "" for relative paths (no host to extract) or
- * malformed URLs.
+ * Extract host + optional non-default port + scheme from an absolute
+ * image URL — the same fields that go into the on-chain
+ * ::pi:host[:p<port>][:s]:hashes:: sidecar so mirror nodes can fetch it.
  *
- * The frontend doesn't know its API host independently — `VITE_API_HOST`
- * exists but only when the SPA points at an external API, and even then
- * it might include a path or scheme prefix we don't want. The URL the
- * upload route returned IS the source of truth: that's exactly where
- * the file lives, including for frontend-only deployments hitting a
- * sibling API node.
+ * Returns null for relative paths (no host to extract) or malformed
+ * URLs. Default ports are returned as `undefined` so the marker
+ * builder can omit the segment.
  *
- * Example: "https://text.caw.social/uploads/images/abc12345.webp" → "text.caw.social"
- *          "https://api.caw.dev/uploads/images/x.webp"            → "api.caw.dev"
- *          "/uploads/images/x.webp"                                → ""
+ * The URL the upload route returned IS the source of truth: that's
+ * exactly where the file lives, including for frontend-only
+ * deployments that hit an external VITE_API_HOST sibling.
+ *
+ * Examples:
+ *   "https://text.caw.social/uploads/images/x.webp"     → { host: 'text.caw.social' }
+ *   "http://local.caw.com:5274/uploads/images/x.webp"   → { host: 'local.caw.com', port: 5274, scheme: 'http' }
+ *   "/uploads/images/x.webp"                             → null
  */
-export function imageUrlToHost(url: string): string {
-  if (!url || typeof url !== 'string') return ''
-  if (!url.startsWith('http://') && !url.startsWith('https://')) return ''
+export function imageUrlToMeta(url: string): { host: string; port?: number; scheme: 'http' | 'https' } | null {
+  if (!url || typeof url !== 'string') return null
+  if (!url.startsWith('http://') && !url.startsWith('https://')) return null
   try {
-    return new URL(url).hostname.toLowerCase()
+    const u = new URL(url)
+    const scheme: 'http' | 'https' = u.protocol === 'http:' ? 'http' : 'https'
+    const defaultPort = scheme === 'https' ? 443 : 80
+    // u.port is "" when default. Parse to a number; treat default-equal as undefined.
+    const port = u.port ? parseInt(u.port, 10) : undefined
+    return {
+      host: u.hostname.toLowerCase(),
+      port: port && port !== defaultPort ? port : undefined,
+      scheme,
+    }
   } catch {
-    return ''
+    return null
   }
+}
+
+/** Back-compat shim — call sites that only need the bare host. */
+export function imageUrlToHost(url: string): string {
+  return imageUrlToMeta(url)?.host || ''
 }
 
 /**
@@ -288,23 +353,27 @@ export function imageUrlToHost(url: string): string {
 export const POLL_IMAGE_EXTENSIONS = ['webp', 'png', 'jpg', 'jpeg', 'gif'] as const
 
 /**
- * Reconstruct an image URL from an on-chain (host, hash) pair. Returns
- * the WebP URL by default since that's the upload route's canonical
- * output format; callers that need a different extension can override.
+ * Reconstruct an image URL from on-chain marker fields. Returns the
+ * WebP URL by default since that's the upload route's canonical output
+ * format; callers that need a different extension can override.
  *
- * Hard-coded to https — every CAW instance the protocol cares about
- * runs over TLS, and storing the scheme on-chain would burn bytes for
- * no purpose. Local development against http will need a special-case
- * handler if that ever matters.
+ * Scheme defaults to https (the prod case) and port to the scheme's
+ * default. Both are overridable for dev / non-standard deployments
+ * that ride along in the marker via the optional `:p<N>:` and `:s:`
+ * segments.
  */
 export function resolvePollImageUrl(
   host: string,
   hash: string,
   ext: typeof POLL_IMAGE_EXTENSIONS[number] = 'webp',
+  port?: number,
+  scheme: 'http' | 'https' = 'https',
 ): string {
   if (!host || !hash) return ''
   if (!POLL_HOST_REGEX.test(host) || !POLL_IMAGE_HASH_REGEX.test(hash)) return ''
-  return `https://${host}/uploads/images/${hash}.${ext}`
+  const defaultPort = scheme === 'https' ? 443 : 80
+  const portSuffix = port && port !== defaultPort ? `:${port}` : ''
+  return `${scheme}://${host}${portSuffix}/uploads/images/${hash}.${ext}`
 }
 
 /**

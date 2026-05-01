@@ -28,7 +28,7 @@ import MentionAutocomplete from './MentionAutocomplete'
 import GifPicker from './GifPicker'
 import PollComposer from './PollComposer'
 import { HiOutlineChartBar } from 'react-icons/hi'
-import { buildPollMarker, imageUrlToPollHash, imageUrlToHost } from '~/../../../tools/pollMarker'
+import { buildPollMarker, imageUrlToPollHash, imageUrlToMeta } from '~/../../../tools/pollMarker'
 
 /** Extract a short, meaningful search query from post text for GIF search.
  *  Drops articles/prepositions/conjunctions, URLs, and @mentions,
@@ -971,16 +971,18 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     // attached after the split (atomic — never broken apart).
     // Build the marker with the per-option image-hash sidecar when any
     // option carries an uploaded image. Hashes derive from the upload
-    // URL's filename stem; the originating host comes from the URL
-    // itself (same source of truth, works regardless of whether the
-    // SPA is same-origin with the API or hits an external VITE_API_HOST).
-    // First non-empty URL wins — all images in one poll were uploaded
-    // through the same endpoint so they share a host.
+    // URL's filename stem; host + (non-default) port + scheme come from
+    // the URL itself — same source of truth, works whether the SPA is
+    // same-origin or hits an external VITE_API_HOST. First non-empty
+    // URL wins — all images in one poll were uploaded through the same
+    // endpoint so they share a host.
     const submitPollHashes = pollOptionImages.map(u => imageUrlToPollHash(u || ''))
-    const submitPollHost = imageUrlToHost(pollOptionImages.find(u => u) || '')
-    const submitPollMarker = pollEnabled
-      ? buildPollMarker(pollOptions, submitPollHashes, submitPollHost)
-      : null
+    const submitPollMeta = imageUrlToMeta(pollOptionImages.find(u => u) || '')
+    const submitPollMarker = pollEnabled && submitPollMeta
+      ? buildPollMarker(pollOptions, submitPollHashes, submitPollMeta)
+      : pollEnabled
+        ? buildPollMarker(pollOptions) // text-only poll
+        : null
     if (submitPollMarker && !isThreadMode) {
       finalText = (finalText ? finalText + '\n' : '') + submitPollMarker
     }
@@ -1402,17 +1404,15 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // chunk (with a +1 byte newline separator) or a no-op when disabled.
   // Options are ASCII-friendly so byteLen ≈ length, but we use byteLen to
   // be precise for emoji-laced labels.
-  // Include image hashes + host in the counter-time marker so the byte
-  // budget reflects what we'll actually post. The host appears once in
-  // the marker (amortized across all images), but it still costs bytes,
-  // so the counter has to account for it. Host comes from the uploaded
-  // URL — that's where the file actually lives, regardless of whether
-  // the SPA is same-origin with the API or pointing at VITE_API_HOST.
+  // Include image hashes + meta (host/port/scheme) in the counter-time
+  // marker so the byte budget reflects what we'll actually post.
   const counterPollHashes = pollOptionImages.map(u => imageUrlToPollHash(u || ''))
-  const counterPollHost = imageUrlToHost(pollOptionImages.find(u => u) || '')
-  const pollMarker = pollEnabled
-    ? buildPollMarker(pollOptions, counterPollHashes, counterPollHost)
-    : null
+  const counterPollMeta = imageUrlToMeta(pollOptionImages.find(u => u) || '')
+  const pollMarker = pollEnabled && counterPollMeta
+    ? buildPollMarker(pollOptions, counterPollHashes, counterPollMeta)
+    : pollEnabled
+      ? buildPollMarker(pollOptions)
+      : null
   // Poll is "active but not yet valid" when the user has opened the composer
   // but hasn't filled in at least 2 valid options. Submit gets blocked but
   // we don't yell at the user — the composer's own inline error is enough.

@@ -157,28 +157,27 @@ export async function handleCawAction(
   // poll when the user submitted) doesn't conflict with the indexer's
   // catch-up — both paths arrive at the same final row.
   //
-  // optionImages handling:
-  //   - On CREATE (mirror-origin polls — no API submit ran here):
-  //     reconstruct URLs from the on-chain ::pi:host:hash:hash:: sidecar.
-  //     This is the whole point of the host-in-marker design — mirrors
-  //     get fetchable image URLs automatically.
-  //   - On UPDATE (local-origin polls — API submit already wrote URLs):
-  //     leave optionImages untouched. The optimistic write is canonical
-  //     for the local instance because it captured the EXACT URL the
-  //     upload route returned, including scheme and port. Reconstructing
-  //     from (host, hash) loses both — local dev (`local.caw.com:5274`,
-  //     http) would resolve to a broken `https://local.caw.com/...`.
-  //     For production where origin === reconstructed URL, the two are
-  //     equivalent and not overwriting is harmless.
+  // optionImages: ALWAYS reconstruct from the on-chain marker. The marker
+  // now carries host + optional port + optional http flag (see pollMarker.ts
+  // for the ::pi:host[:p<N>][:s]:hash::hash:: format), so resolvePollImageUrl
+  // produces a working URL for both prod (default-port https — most caws)
+  // and dev (local.caw.com:5274 over http). The marker is the source of
+  // truth — same on every mirror — so writing it to optionImages on every
+  // upsert keeps origin and mirror nodes in sync.
   try {
     const parsedPoll = parsePoll(textContent)
     if (parsedPoll) {
       const reconstructedImages = parsedPoll.imageHashes.map(h =>
-        h && parsedPoll.imageHost ? resolvePollImageUrl(parsedPoll.imageHost, h) : ''
+        h && parsedPoll.imageHost
+          ? resolvePollImageUrl(parsedPoll.imageHost, h, 'webp', parsedPoll.imagePort, parsedPoll.imageScheme)
+          : ''
       )
       await tx.poll.upsert({
         where: { cawId: newCaw.id },
-        update: { options: parsedPoll.options },
+        update: {
+          options: parsedPoll.options,
+          optionImages: reconstructedImages,
+        },
         create: {
           cawId: newCaw.id,
           options: parsedPoll.options,
