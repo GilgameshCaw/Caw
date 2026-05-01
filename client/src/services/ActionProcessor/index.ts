@@ -142,65 +142,94 @@ async function handleRawEvent(raw: { id: number, chainId: number, data: any }) {
 
 
 async function handleRawAction(rawId: number, chainId: number, rawAction: RawAction): Promise<void> {
-  try {
-    // One span per processed action — gives a per-action-type latency
-    // breakdown in SigNoz so we can see e.g. "tip actions are taking 800ms,
-    // likes are 50ms" without sifting through Prisma-only spans.
-    await span('actionprocessor.handle', {
-      'action.type': getActionType(Number(rawAction.actionType)),
-      'action.sender': Number(rawAction.senderId),
-      'raw_event.id': rawId,
-    }, async () => {
-      // Resolve users BEFORE opening the interactive transaction. Prisma's
-      // default 5s tx timeout was tripping when a batch of N actions opened
-      // N parallel transactions and each called findOrCreateUser inside —
-      // Postgres row-locks on the same user serialized them past 5s. User
-      // creation is idempotent, so it doesn't need tx semantics anyway.
-      const resolved = await resolveActionUsers(rawAction)
+  await span('actionprocessor.handle', {
+    'action.type': getActionType(Number(rawAction.actionType)),
+    'action.sender': Number(rawAction.senderId),
+    'raw_event.id': rawId,
+  }, async () => {
+    // Resolve users BEFORE opening any transaction. Prisma's default 5s tx
+    // timeout was tripping when a batch of N actions opened N parallel
+    // transactions and each called findOrCreateUser inside — Postgres
+    // row-locks on the same user serialized them past 5s. User creation is
+    // idempotent, so it doesn't need tx semantics anyway.
+    let resolved
+    try {
+      resolved = await resolveActionUsers(rawAction)
+    } catch (err: any) {
+      if (err instanceof StaleTokenError) {
+        console.warn(`[ActionProcessor] Skipping stale action (sender=${rawAction.senderId}): ${err.message}`)
+        return
+      }
+      console.error('[ActionProcessor] Failed to resolve action users:', err)
+      return
+    }
 
-      // 15s tx timeout (default 5s) — safety net for slow Postgres bursts and
-      // pool-saturation waits. resolveActionUsers above eliminates the main
-      // hazard (RPC inside tx); this guards against the next-most-likely
-      // cause: contention on hot rows + pool exhaustion under load.
+    // Tx1: persist the Action row. This MUST land independently of domain
+    // processing — the Action row is the local mirror of an on-chain fact
+    // and is the evidence ValidatorService.resolveCawonceUsed uses to tell
+    // "we already processed this cawonce" from "a different action collided
+    // on this cawonce." If we let domain failures roll back the Action row
+    // (the previous behavior), the next time the same sender tries to use
+    // the same cawonce we can't tell those cases apart and surface a
+    // spurious "Cawonce already used" to the user.
+    let action
+    let shouldProcessDomain
+    try {
+      const result = await prisma.$transaction(async (tx) => {
+        return await createOrFindAction(tx, rawId, chainId, rawAction)
+      }, { timeout: 15_000 })
+      action = result.action
+      shouldProcessDomain = result.shouldProcessDomain
+    } catch (err: any) {
+      // P2002 from createOrFindAction: another worker created this Action
+      // row first. Recover by treating it as "exists, may need domain
+      // processing" — the existence-check path inside createOrFindAction
+      // would have done the same on a fresh call.
+      if (err.message?.includes('Action already exists (race condition)')) {
+        const existing = await prisma.action.findFirst({
+          where: { chainId, senderId: rawAction.senderId, cawonce: rawAction.cawonce },
+        })
+        if (!existing) {
+          console.error('[ActionProcessor] Race-condition recovery failed: Action vanished after P2002')
+          return
+        }
+        action = existing
+        shouldProcessDomain = true
+      } else {
+        console.error('[ActionProcessor] Failed to persist Action row:', err)
+        return
+      }
+    }
+
+    if (!shouldProcessDomain) return
+
+    // Tx2: domain side effects (Like/Follow/Reply/Tip rows, count bumps,
+    // hashtags, notifications). If this throws — most often
+    // CawNotFoundError because the target caw isn't yet indexed locally —
+    // the rollback is contained to domain rows. The Action row from Tx1
+    // stays put, and a future re-run (manual rescan, or anything that
+    // re-feeds this rawId) will re-enter via createOrFindAction's
+    // existing-action path and call processDomainEffects again because
+    // checkDomainObjectExists will return false.
+    try {
       await prisma.$transaction(async (tx) => {
-        const { action, shouldProcessDomain } = await createOrFindAction(tx, rawId, chainId, rawAction)
-        if (!shouldProcessDomain) return
         const validAction = await ensureActionExists(tx, rawId, action)
         await processDomainEffects(tx, validAction, rawAction, resolved)
       }, { timeout: 15_000 })
-    })
-  } catch (err: any) {
-    // If we hit a race condition, retry once to process the action created by another process
-    if (err.message?.includes('Action already exists (race condition)')) {
-      console.log('[ActionProcessor] Race condition detected, retrying to process existing action...')
-      try {
-        const resolved = await resolveActionUsers(rawAction)
-        await prisma.$transaction(async (tx) => {
-          const { action, shouldProcessDomain } = await createOrFindAction(tx, rawId, chainId, rawAction)
-          if (!shouldProcessDomain) return
-          const validAction = await ensureActionExists(tx, rawId, action)
-          await processDomainEffects(tx, validAction, rawAction, resolved)
-        }, { timeout: 15_000 })
-        console.log('[ActionProcessor] Successfully processed action after race condition retry')
-      } catch (retryErr) {
-        console.error('[ActionProcessor] Failed to handle raw action after retry:', retryErr)
+    } catch (err: any) {
+      if (err instanceof CawNotFoundError) {
+        // Like/reply/tip targets a caw we don't have indexed — most often
+        // because the local node started after the original caw, was
+        // running a different clientId at the time, or the target caw
+        // hasn't been processed yet (its own RawEvent is later in the
+        // backlog or also failed domain processing on a prior pass).
+        // Action row is recorded; the side-effect didn't land. Quiet warn.
+        console.warn(`[ActionProcessor] Domain processing skipped for unknown caw (user=${err.userId} cawonce=${err.cawonce}, type=${getActionType(Number(rawAction.actionType))})`)
+        return
       }
-    } else if (err instanceof StaleTokenError) {
-      // Token doesn't exist on current L1 contract — skip silently
-      console.warn(`[ActionProcessor] Skipping stale action (sender=${rawAction.senderId}): ${err.message}`)
-    } else if (err instanceof CawNotFoundError) {
-      // Like/reply/tip targets a caw we don't have indexed — most often
-      // because the local node started after the original caw, was
-      // running a different clientId at the time, or is processing a
-      // backfill from another instance's chain history. Action row is
-      // still recorded above; the side-effect (Like/Reply/Tip row) just
-      // can't attach. Quiet warn, not red.
-      console.warn(`[ActionProcessor] Skipping action targeting unknown caw (user=${err.userId} cawonce=${err.cawonce}, type=${getActionType(Number(rawAction.actionType))})`)
-    } else {
-      console.error('[ActionProcessor] Failed to handle raw action:', err)
+      console.error('[ActionProcessor] Domain processing failed (Action row persisted):', err)
     }
-    // Don't re-throw to avoid crashing the processor
-  }
+  })
 }
 
 // NOTE: Helper functions moved to separate modules:
