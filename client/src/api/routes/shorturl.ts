@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { publicUrl } from '../util/publicUrl'
+import { isSafePublicUrl } from '../util/ssrfGuard'
 
 const router = Router()
 
@@ -55,15 +56,17 @@ function generateShortCode(length: number = 6): string {
   return code
 }
 
-// Block SSRF: reject URLs pointing to private/internal networks
+// SSRF guard moved to ../util/ssrfGuard (`isSafePublicUrl`). The local
+// `isPrivateUrl` left here for any synchronous callers that haven't been
+// migrated yet — but new code should prefer the DNS-resolving version,
+// which catches the "public hostname with A-record pointing at 127.0.0.1"
+// rebinding pattern that this string-only check misses.
 function isPrivateUrl(url: string): boolean {
   try {
     const hostname = new URL(url).hostname.toLowerCase()
-    // Block localhost, private IPs, link-local, and metadata endpoints
     if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') return true
     if (hostname === '0.0.0.0' || hostname === '[::1]') return true
     if (hostname.endsWith('.local') || hostname.endsWith('.internal')) return true
-    // Block private IPv4 ranges
     const parts = hostname.split('.').map(Number)
     if (parts.length === 4 && parts.every(n => !isNaN(n))) {
       if (parts[0] === 10) return true                                         // 10.0.0.0/8
@@ -85,7 +88,11 @@ async function extractMetadata(url: string): Promise<{
   siteName?: string
 }> {
   try {
-    if (isPrivateUrl(url)) return {}
+    // DNS-resolving SSRF check — catches the case where a public-looking
+    // hostname has an A-record pointing at a private IP (the common
+    // rebinding-via-single-A-record pattern). String-based
+    // `isPrivateUrl` misses this entirely.
+    if (!(await isSafePublicUrl(url))) return {}
 
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 5000) // 5s timeout
