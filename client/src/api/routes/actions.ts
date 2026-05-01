@@ -603,15 +603,24 @@ router.post('/', async (req, res) => {
             // image. Host-based checking was over-zealous: when
             // SHORTURL_DOMAIN was unset (default for local dev) every
             // URL got rejected, leaving Poll.optionImages empty.
-            const UPLOAD_PATH_REGEX = /\/uploads\/images\/[a-f0-9]{8}\.[a-zA-Z0-9]+(?:[?#].*)?$/
+            // Allowed extensions match what the upload route emits
+            // (client/src/api/routes/upload.ts MIME_TO_EXT). Restricting to
+            // image formats specifically keeps a stray .mp4 / .ogv from
+            // landing in poll image slots, even though the upload route
+            // would have written one with that name.
+            const UPLOAD_PATH_REGEX = /^\/uploads\/images\/[a-f0-9]{8}\.(?:jpg|png|gif|webp)(?:[?#].*)?$/
             const sanitizedImages: string[] = parsedPoll.options.map((_, i) => {
               const v = Array.isArray(pollOptionImages) ? pollOptionImages[i] : ''
               if (typeof v !== 'string' || !v) return ''
-              if (v.startsWith('/uploads/images/')) return v
               try {
-                // Absolute URL: parse and check the path. URL constructor
-                // throws on garbage strings; that's our "reject" path.
-                const u = new URL(v)
+                // For relative URLs the URL constructor needs a base.
+                // We don't care about the base — we only validate the
+                // pathname — but it has to parse. http://host/ is a
+                // throwaway that lets us decode `..`, `%2e%2e`, etc.
+                // through the URL parser's normal collapsing.
+                const u = v.startsWith('/')
+                  ? new URL(v, 'http://host/')
+                  : new URL(v)
                 if (u.protocol !== 'http:' && u.protocol !== 'https:') return ''
                 if (UPLOAD_PATH_REGEX.test(u.pathname)) return v
               } catch {
