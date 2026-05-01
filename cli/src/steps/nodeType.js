@@ -75,6 +75,17 @@ const NODE_TYPES = [
 export async function selectNodeType() {
   section('What would you like to run?')
 
+  // install.sh asks the same question before bootstrapping system packages
+  // (it skips postgres/redis/elasticsearch for frontend-only, etc.). When
+  // the operator answers there, install.sh re-execs the CLI with
+  // CAW_NODE_TYPE in the environment so we don't double-prompt.
+  const fromEnv = process.env.CAW_NODE_TYPE
+  if (fromEnv && NODE_TYPES.some(t => t.value === fromEnv)) {
+    const selected = NODE_TYPES.find(t => t.value === fromEnv)
+    console.log(dim(`  Using ${brand.bold(selected.short)} (from CAW_NODE_TYPE)`))
+    return fromEnv
+  }
+
   const { nodeType } = await inquirer.prompt([
     {
       type: 'list',

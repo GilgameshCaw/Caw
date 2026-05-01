@@ -359,6 +359,59 @@ export CAW_ES_INDEX_PREFIX
 # CAW_ES_URL — those are forwarded to the Node CLI which writes them into the
 # generated .env. Whatever isn't overridden gets installed/started normally.
 
+# Node-type prompt mirrors the Node CLI's selectNodeType. Asked here so
+# install.sh can skip Postgres/Redis/Elasticsearch for node types that
+# don't need them (frontend-only is the big win — no stateful services
+# at all). The chosen value is exported as CAW_NODE_TYPE so the Node
+# CLI's selectNodeType picks it up and doesn't double-prompt.
+ask_node_type() {
+  local prompt='
+  What kind of CAW node are you running?
+    1) Full Node          — validator + API + frontend (needs DB, Redis, ES)
+    2) Validator Only     — process txs, no frontend (needs DB, Redis)
+    3) Frontend + API     — host UI + API, delegate validation (needs DB, Redis, ES)
+    4) API Only           — headless backend (needs DB, Redis, ES)
+    5) Frontend Only      — static site, no backend services
+
+  Choice [1]: '
+  local answer
+  if [[ -t 0 ]]; then
+    read -r -p "$prompt" answer
+  elif [[ -r /dev/tty ]]; then
+    read -r -p "$prompt" answer < /dev/tty
+  else
+    answer=1
+  fi
+  case "${answer:-1}" in
+    1|f|F|full|'')               echo full ;;
+    2|v|V|validator)             echo validator ;;
+    3|frontend-api|fa)           echo frontend-api ;;
+    4|api-only|api|a|A)          echo api-only ;;
+    5|frontend-only|fo|fe)       echo frontend-only ;;
+    *) err "Invalid choice: $answer"; return 1 ;;
+  esac
+}
+
+if [[ -z "${CAW_NODE_TYPE:-}" ]]; then
+  CAW_NODE_TYPE="$(ask_node_type)"
+fi
+
+case "$CAW_NODE_TYPE" in
+  full|validator|frontend-api|api-only|frontend-only) ;;
+  *) err "CAW_NODE_TYPE must be one of: full, validator, frontend-api, api-only, frontend-only (got '$CAW_NODE_TYPE')"; exit 1 ;;
+esac
+export CAW_NODE_TYPE
+
+log "Node type:         ${CAW_NODE_TYPE}"
+
+# Which node types need the stateful services. Validator nodes need
+# DB/Redis (TxQueue + dedup state) but not Elasticsearch (no search).
+# Frontend-only needs none of them — it's a static site pointed at an
+# external API.
+node_needs_db()    { [[ "$CAW_NODE_TYPE" != "frontend-only" ]]; }
+node_needs_redis() { [[ "$CAW_NODE_TYPE" != "frontend-only" ]]; }
+node_needs_es()    { [[ "$CAW_NODE_TYPE" == "full" || "$CAW_NODE_TYPE" == "frontend-api" || "$CAW_NODE_TYPE" == "api-only" ]]; }
+
 ask_infra_mode() {
   local prompt='
   Where should Postgres, Redis, and Elasticsearch run?
@@ -383,7 +436,12 @@ ask_infra_mode() {
   esac
 }
 
-if [[ -z "${CAW_INFRA_MODE:-}" ]]; then
+# Frontend-only doesn't run any stateful services, so there's no infra
+# mode to choose — skip the prompt and pin to "existing" (it's a no-op
+# for FE-only since none of the URL defaults will be used downstream).
+if [[ "$CAW_NODE_TYPE" == "frontend-only" ]]; then
+  CAW_INFRA_MODE="${CAW_INFRA_MODE:-existing}"
+elif [[ -z "${CAW_INFRA_MODE:-}" ]]; then
   CAW_INFRA_MODE="$(ask_infra_mode)"
 fi
 
@@ -425,13 +483,13 @@ else
   # an external URL and we just need the client tooling.
   NATIVE_INFRA_PKGS=()
   if [[ "$CAW_INFRA_MODE" == "native" ]]; then
-    if [[ -z "${CAW_DB_URL:-}" ]] || [[ "${CAW_DB_URL:-}" =~ @(127\.0\.0\.1|localhost): ]]; then
+    if node_needs_db && { [[ -z "${CAW_DB_URL:-}" ]] || [[ "${CAW_DB_URL:-}" =~ @(127\.0\.0\.1|localhost): ]]; }; then
       NATIVE_INFRA_PKGS+=(postgresql postgresql-contrib)
     fi
-    if [[ -z "${CAW_REDIS_URL:-}" ]] || [[ "${CAW_REDIS_URL:-}" =~ //(127\.0\.0\.1|localhost): ]]; then
+    if node_needs_redis && { [[ -z "${CAW_REDIS_URL:-}" ]] || [[ "${CAW_REDIS_URL:-}" =~ //(127\.0\.0\.1|localhost): ]]; }; then
       NATIVE_INFRA_PKGS+=(redis-server)
     fi
-    # Elasticsearch handled separately (different apt repo).
+    # Elasticsearch handled separately (different apt repo) — see below.
   fi
 
   quiet "Updating apt metadata" apt-get update -qq
@@ -469,9 +527,9 @@ else
     fi
   done
 
-  # Elasticsearch — only install natively if the operator picked native infra
-  # AND didn't override the URL.
-  if [[ "$CAW_INFRA_MODE" == "native" && -z "${CAW_ES_URL:-}" ]]; then
+  # Elasticsearch — only install natively if (a) the node type uses it,
+  # (b) the operator picked native infra, and (c) they didn't override the URL.
+  if node_needs_es && [[ "$CAW_INFRA_MODE" == "native" && -z "${CAW_ES_URL:-}" ]]; then
     if ! dpkg -l elasticsearch >/dev/null 2>&1; then
       quiet "Adding Elastic apt repo" bash -c '
         install -m 0755 -d /usr/share/keyrings &&
