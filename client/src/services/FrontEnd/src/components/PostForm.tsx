@@ -28,7 +28,7 @@ import MentionAutocomplete from './MentionAutocomplete'
 import GifPicker from './GifPicker'
 import PollComposer from './PollComposer'
 import { HiOutlineChartBar } from 'react-icons/hi'
-import { buildPollMarker } from '~/../../../tools/pollMarker'
+import { buildPollMarker, imageUrlToPollHash } from '~/../../../tools/pollMarker'
 
 /** Extract a short, meaningful search query from post text for GIF search.
  *  Drops articles/prepositions/conjunctions, URLs, and @mentions,
@@ -964,7 +964,12 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 
     // Append the poll marker only when not threading. For threads it gets
     // attached after the split (atomic — never broken apart).
-    const submitPollMarker = pollEnabled ? buildPollMarker(pollOptions) : null
+    // Build the marker with the per-option image-hash sidecar when any
+    // option carries an uploaded image. Hashes derive from the upload
+    // URL's filename stem; mirror nodes will re-parse them on the way
+    // back through the indexer.
+    const submitPollHashes = pollOptionImages.map(u => imageUrlToPollHash(u || ''))
+    const submitPollMarker = pollEnabled ? buildPollMarker(pollOptions, submitPollHashes) : null
     if (submitPollMarker && !isThreadMode) {
       finalText = (finalText ? finalText + '\n' : '') + submitPollMarker
     }
@@ -1377,7 +1382,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // chunk (with a +1 byte newline separator) or a no-op when disabled.
   // Options are ASCII-friendly so byteLen ≈ length, but we use byteLen to
   // be precise for emoji-laced labels.
-  const pollMarker = pollEnabled ? buildPollMarker(pollOptions) : null
+  // Include image hashes in the counter-time marker so the byte budget
+  // reflects what we'll actually post. Hashes are 8 chars each plus a
+  // ":pi:hashes::" frame — meaningful when several options have images.
+  const counterPollHashes = pollOptionImages.map(u => imageUrlToPollHash(u || ''))
+  const pollMarker = pollEnabled ? buildPollMarker(pollOptions, counterPollHashes) : null
   // Poll is "active but not yet valid" when the user has opened the composer
   // but hasn't filled in at least 2 valid options. Submit gets blocked but
   // we don't yell at the user — the composer's own inline error is enough.

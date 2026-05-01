@@ -7,6 +7,7 @@ import {
   POLL_MIN_OPTIONS,
   POLL_MAX_OPTIONS,
   POLL_MAX_OPTION_BYTES,
+  POLL_MAX_OPTION_BYTES_WITH_IMAGES,
 } from '~/../../../tools/pollMarker'
 
 // byteLen mirrors the on-chain byte counter — we use it here so the per-
@@ -65,6 +66,10 @@ const PollComposer: React.FC<Props> = ({
   // input where we'd have to track which index is active.
   const fileInputs = useRef<Record<number, HTMLInputElement | null>>({})
   const [uploading, setUploading] = useState<Record<number, boolean>>({})
+  // Tracks which row is currently being dragged over so we can highlight
+  // it. Only one row at a time, so a single index (or null) is enough —
+  // sub-event onDragLeave checks containment to avoid flicker.
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null)
 
   const setOption = (i: number, v: string) => {
     const next = options.slice()
@@ -118,6 +123,12 @@ const PollComposer: React.FC<Props> = ({
       })
   }
 
+  // Per-option byte cap shrinks when any option has an image — the
+  // ::pi:hash:hash:: sidecar eats budget and we still want body text to
+  // fit inside 420. See pollMarker.ts for the worst-case math.
+  const anyImage = optionImages.some(s => s)
+  const optionByteCap = anyImage ? POLL_MAX_OPTION_BYTES_WITH_IMAGES : POLL_MAX_OPTION_BYTES
+
   // Surface the most-actionable validation issue. Multiple errors at once
   // would be noisy; the user sees the first one, fixes it, then the next.
   const errors = options
@@ -126,8 +137,8 @@ const PollComposer: React.FC<Props> = ({
       if (trimmed === '') return null // empty is fine while typing
       if (trimmed.includes(':')) return `Option ${i + 1}: can't contain ":"`
       if (trimmed.includes('\n')) return `Option ${i + 1}: can't contain newlines`
-      if (byteLen(trimmed) > POLL_MAX_OPTION_BYTES) {
-        return `Option ${i + 1}: ${byteLen(trimmed)} / ${POLL_MAX_OPTION_BYTES} bytes`
+      if (byteLen(trimmed) > optionByteCap) {
+        return `Option ${i + 1}: ${byteLen(trimmed)} / ${optionByteCap} bytes${anyImage ? ' (lower because of poll images)' : ''}`
       }
       return null
     })
@@ -156,14 +167,38 @@ const PollComposer: React.FC<Props> = ({
 
       <div className="space-y-2">
         {options.map((opt, i) => {
-          const overByte = byteLen(opt) > POLL_MAX_OPTION_BYTES
-          const remaining = POLL_MAX_OPTION_BYTES - byteLen(opt)
+          const overByte = byteLen(opt) > optionByteCap
+          const remaining = optionByteCap - byteLen(opt)
           const imgUrl = optionImages[i] || ''
           const isUploading = !!uploading[i]
+          const isDragging = dragOverIdx === i
           return (
-            <div key={i} className="flex items-center gap-2">
-              {/* Image picker / preview. Always reserves the same square so
-                  rows don't shift width when an image gets added. */}
+            <div
+              key={i}
+              className={`flex items-center gap-2 rounded-lg transition-colors ${
+                isDragging
+                  ? (isDark ? 'ring-2 ring-yellow-400/60 bg-yellow-400/5' : 'ring-2 ring-yellow-500 bg-yellow-50')
+                  : ''
+              }`}
+              // Whole-row drop zone — gives users a generous target so they
+              // don't have to land on the tiny image picker square. Same
+              // pattern as MediaUpload's main drop area.
+              onDragEnter={e => { e.preventDefault(); setDragOverIdx(i) }}
+              onDragOver={e => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy' }}
+              onDragLeave={e => {
+                // Only clear when actually leaving the row, not when crossing
+                // into a child element (relatedTarget tells us where we went).
+                if (!e.currentTarget.contains(e.relatedTarget as Node)) setDragOverIdx(null)
+              }}
+              onDrop={e => {
+                e.preventDefault()
+                setDragOverIdx(null)
+                const file = e.dataTransfer.files?.[0]
+                if (file && file.type.startsWith('image/')) handlePickFile(i, file)
+              }}
+            >
+              {/* Image picker / preview. 50x50 square so it's a comfortable
+                  drop target and matches the input row height. */}
               <div className="relative shrink-0">
                 <input
                   ref={el => { fileInputs.current[i] = el }}
@@ -178,11 +213,12 @@ const PollComposer: React.FC<Props> = ({
                   }}
                 />
                 {imgUrl ? (
-                  <div className="relative w-9 h-9">
+                  <div className="relative" style={{ width: 50, height: 50 }}>
                     <img
                       src={imgUrl}
                       alt=""
-                      className="w-9 h-9 rounded-lg object-cover border border-yellow-500/40"
+                      className="rounded-lg border border-yellow-500/40"
+                      style={{ width: 50, height: 50, objectFit: 'cover' }}
                     />
                     <button
                       type="button"
@@ -199,7 +235,8 @@ const PollComposer: React.FC<Props> = ({
                     onClick={() => fileInputs.current[i]?.click()}
                     disabled={isUploading}
                     aria-label="Add image to option"
-                    className={`w-9 h-9 rounded-lg border flex items-center justify-center transition-colors ${
+                    style={{ width: 50, height: 50 }}
+                    className={`rounded-lg border flex items-center justify-center transition-colors ${
                       isUploading
                         ? (isDark ? 'border-white/10 text-white/30' : 'border-gray-200 text-gray-400')
                         : (isDark
@@ -208,9 +245,9 @@ const PollComposer: React.FC<Props> = ({
                     }`}
                   >
                     {isUploading ? (
-                      <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                      <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
                     ) : (
-                      <HiOutlinePhotograph className="w-4 h-4" />
+                      <HiOutlinePhotograph className="w-5 h-5" />
                     )}
                   </button>
                 )}
@@ -220,8 +257,9 @@ const PollComposer: React.FC<Props> = ({
                 value={opt}
                 onChange={e => setOption(i, e.target.value)}
                 placeholder={`Option ${i + 1}`}
-                maxLength={POLL_MAX_OPTION_BYTES * 2 /* generous: real check is byteLen */}
-                className={`flex-1 px-3 py-2 rounded-lg text-sm outline-none border ${
+                maxLength={optionByteCap * 2 /* generous: real check is byteLen */}
+                style={{ height: 50 }}
+                className={`flex-1 px-3 rounded-lg text-base outline-none border ${
                   overByte
                     ? 'border-red-500'
                     : isDark
