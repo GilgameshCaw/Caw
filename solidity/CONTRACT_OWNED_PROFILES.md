@@ -94,6 +94,8 @@ function isValidSignature(bytes32 hash, bytes memory)
 
 This is cleaner when actions are produced *atomically* with whatever state change triggers them (e.g. a market resolution that needs to post a "winner: X" caw in the same tx). But each authorization costs an SSTORE, and `isValidSignature` becomes a SLOAD per call — still well under the 50k budget.
 
+A worked example of Pattern B is `solidity/contracts/examples/CawMultisigProfile.sol` — an M-of-N multisig where each owner records an approval against the EIP-712 digest of a pending action, and `isValidSignature` returns the magic value once the threshold is reached. `sig` is unused; the proof of authorization is the storage state. The protocol's own per-senderId cawonce bitmap covers replay safety, so approved digests don't need to be cleared on consume. See `solidity/test/multisig-profile-test.js` for an end-to-end 2-of-3 walkthrough.
+
 ### Pattern C: Delegated authorization with replay protection
 
 For contracts that accept off-chain authorizations from users (e.g. "user X said this market should resolve Y"). Sigs encode `(authorized_action_data, nonce, ecdsa_sig)`; the contract checks the ECDSA matches an authorized voter and the nonce hasn't been used. Probably overkill for most use cases — most extension contracts know exactly what they intend to post.
