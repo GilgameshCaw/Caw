@@ -32,8 +32,11 @@ const PACKED_ABI = [
   // (packedActions, packedSigs) tuple has been pre-staged in zkProofCache.
   // Falls back to processActions transparently if no proof is ready.
   'function processActionsWithZkSigs(uint32 validatorId, bytes packedActions, bytes packedSigs, bytes signers, bytes proof, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable',
-  'event ActionsProcessed(bytes packedActions)',
-  'event ActionsProcessedZk(bytes packedActions, uint256 actionsExecutedBitmap)',
+  // ActionsProcessed is a *commitment* to the calldata (packedActions lives
+  // in the originating tx's input). Consumers who need the bytes call
+  // decodePackedActionsFromTx() to fetch and decode them from tx.data.
+  'event ActionsProcessed(uint32 indexed clientId, uint32 indexed validatorId, uint16 actionCount, bytes32 batchHash)',
+  'event ActionsProcessedZk(uint32 indexed clientId, uint32 indexed validatorId, uint16 actionCount, uint256 actionsExecutedBitmap, bytes32 batchHash)',
   'event ActionRejected(uint32 senderId, uint32 cawonce, string reason)',
 ]
 const packedIface = new Interface(PACKED_ABI)
@@ -1809,9 +1812,12 @@ export const validatorService: Service = {
 
         const receipt = await tx.wait()
 
-        // ZK path emits ActionsProcessedZk(bytes packedActions, uint256 actionsExecutedBitmap);
-        // sig path emits ActionsProcessed(bytes packedActions). Either covers
-        // what the indexer needs (the packedActions blob is the source of truth).
+        // ActionsProcessed / ActionsProcessedZk are now calldata commitments
+        // (event carries batchHash + counts; the packedActions blob lives in
+        // tx.input). We don't need to fetch bytes back from the event because
+        // we already have them in scope as multiData.packedActions, but we
+        // still parse the log to confirm the contract emitted it and to read
+        // the ZK actionsExecutedBitmap when present.
         const evt = receipt?.logs
           ?.map(log => { try { return iface.parseLog(log) } catch { return null } })
           ?.find(x => x?.name === 'ActionsProcessed' || x?.name === 'ActionsProcessedZk')
@@ -1822,8 +1828,9 @@ export const validatorService: Service = {
           throw new Error('ActionsProcessed event missing')
         }
 
-        // Decode packed bytes from ActionsProcessed*(bytes packedActions, …) event
-        const packedHex = evt.args.packedActions as string
+        // Decode packed bytes from the local multiData we just submitted —
+        // the source of truth, identical to what's in tx.input.
+        const packedHex = multiData.packedActions
         const packedBuf = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
         const decoded = unpackActions(packedBuf)
 
@@ -3411,8 +3418,38 @@ console.log("succeededKeys", succeededKeys)
       'function getSubmission(uint256) view returns (address submitter, bytes32 merkleRoot, uint32 clientId, uint256 startCheckpointId, uint256 endCheckpointId, uint256 finalizedAt, uint8 status)',
       'function nextSubmissionId() view returns (uint256)',
       'event SubmissionCreated(uint256 indexed submissionId, address indexed submitter, uint32 indexed clientId, uint256 startCheckpointId, uint256 endCheckpointId, bytes32 merkleRoot)',
-      'event ActionsArchived(uint256 indexed submissionId, uint32 indexed clientId, bytes packedActions, bytes32[] r, bytes32 entryHash)',
+      // ActionsArchived now carries hashes only; the underlying packedActions
+      // and r[] live in the originating tx's calldata. Consumers fetch them
+      // via decodeArchiveSubmissionFromTx() below.
+      'event ActionsArchived(uint256 indexed submissionId, uint32 indexed clientId, uint16 actionCount, bytes32 packedHash, bytes32 rHash, bytes32 entryHash)',
     ]
+
+    /**
+     * Pull packedActions + r[] + entryHash out of a CawActionsArchive tx that
+     * called submitReplication. Replaces the old "read from ActionsArchived
+     * event" path now that the event only carries commitments.
+     */
+    const archiveSubmitIface = new Interface([
+      'function submitReplication(uint32 clientId, uint256 startCheckpointId, uint256 endCheckpointId, bytes packedActions, bytes32[] r, bytes32 merkleRoot, bytes32 entryHash)',
+    ])
+    async function decodeArchiveSubmissionFromTx(
+      provider: { getTransaction: (h: string) => Promise<{ data?: string } | null> },
+      txHash: string
+    ): Promise<{ packedActions: string; r: string[]; entryHash: string } | null> {
+      const tx = await provider.getTransaction(txHash)
+      if (!tx?.data) return null
+      try {
+        const parsed = archiveSubmitIface.parseTransaction({ data: tx.data })
+        if (!parsed || parsed.name !== 'submitReplication') return null
+        return {
+          packedActions: parsed.args.packedActions as string,
+          r: parsed.args.r as string[],
+          entryHash: parsed.args.entryHash as string,
+        }
+      } catch {
+        return null
+      }
+    }
 
     // Lazily initialized L2b provider + contracts (only when optimistic mode is enabled)
     let l2bProvider: JsonRpcProvider | null = null
@@ -3530,24 +3567,20 @@ console.log("succeededKeys", succeededKeys)
 
       while (scannedActions < actionsNeededFromEnd) {
         const fromBlock = Math.max(0, toBlock - CHUNK + 1)
+        // Filter on the indexed clientId topic so we only get this client's
+        // batches back — much cheaper than the old "decode every event's
+        // bytes to count" approach.
         const batch = await eventsContract.queryFilter(
-          eventsContract.filters.ActionsProcessed(),
+          eventsContract.filters.ActionsProcessed(clientId),
           fromBlock,
           toBlock,
         )
         for (const ev of batch) {
           const args: any = (ev as any).args
           if (!args) continue
-          const packedHexEvt = args[0] || args.packedActions || ''
-          if (packedHexEvt && typeof packedHexEvt === 'string' && packedHexEvt.length > 4) {
-            try {
-              const buf = new Uint8Array((packedHexEvt.startsWith('0x') ? packedHexEvt.slice(2) : packedHexEvt).match(/.{2}/g)!.map((b: string) => parseInt(b, 16)))
-              const actionsArr = unpackActions(buf)
-              for (const a of actionsArr) {
-                if (Number(a.clientId) === clientId) scannedActions++
-              }
-            } catch { /* skip malformed events */ }
-          }
+          // The new event carries actionCount directly; no payload decode needed.
+          const cnt = Number(args.actionCount ?? args[2] ?? 0)
+          scannedActions += cnt
         }
         processedEvents = [...batch, ...processedEvents]
         if (fromBlock === 0) break
@@ -4279,10 +4312,14 @@ console.log("succeededKeys", succeededKeys)
               archive.filters.ActionsArchived(submissionId),
               fromBlock, latestBlock,
             )
-            const archivedArgs: any = archivedEvents[0]?.args
-            if (!archivedArgs) throw new Error('ActionsArchived event missing')
-            const submitterPackedHex = archivedArgs[2] as string
-            const submitterR = (archivedArgs[3] as string[]).map(x => String(x))
+            const archivedEv: any = archivedEvents[0]
+            if (!archivedEv) throw new Error('ActionsArchived event missing')
+            // The new event carries hashes only — fetch packedActions + r[] +
+            // entryHash from the originating tx's calldata.
+            const submitted = await decodeArchiveSubmissionFromTx(l2bProvider!, archivedEv.transactionHash)
+            if (!submitted) throw new Error('Could not decode submitReplication tx')
+            const submitterPackedHex = submitted.packedActions
+            const submitterR = submitted.r.map(x => String(x))
 
             const entryHash = startCp === 1
               ? '0x' + '00'.repeat(32)
@@ -4435,17 +4472,22 @@ console.log("succeededKeys", succeededKeys)
               if (!claimed) continue
 
               try {
-                // Fetch submitter's packedActions + r from ActionsArchived
-                // (we already did this above; re-use the captured values).
+                // Fetch the originating submitReplication tx via ActionsArchived
+                // event (chunked scan — free RPCs cap eth_getLogs at 50K blocks),
+                // then decode packedActions + r[] from its calldata. The event
+                // itself only carries hash commitments now.
                 const archivedEvents = await scanArchiveEvents(
                   archive,
                   provider,
                   archive.filters.ActionsArchived(submissionId),
                   fromBlock, latestBlock,
                 )
-                const archivedArgs: any = archivedEvents[0]?.args
-                const submitterPackedHex = archivedArgs[2] as string
-                const submitterR = (archivedArgs[3] as string[]).map((x: string) => String(x))
+                const archivedEv: any = archivedEvents[0]
+                if (!archivedEv) throw new Error('ActionsArchived event missing')
+                const submitted = await decodeArchiveSubmissionFromTx(l2bProvider!, archivedEv.transactionHash)
+                if (!submitted) throw new Error('Could not decode submitReplication tx')
+                const submitterPackedHex = submitted.packedActions
+                const submitterR = submitted.r.map(x => String(x))
 
                 // entryHash: honest L2's clientHashAtCheckpoint at startCp-1.
                 // If submitter lied about entryHash, the contract's

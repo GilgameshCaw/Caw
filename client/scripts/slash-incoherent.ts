@@ -67,8 +67,13 @@ async function main() {
     'function submissions(uint256) view returns (address submitter, bytes32 merkleRoot, uint32 clientId, uint64 startCheckpointId, uint64 endCheckpointId, uint64 finalizedAt, uint8 status, bytes32 dataCommitment)',
     'function stakes(address) view returns (uint256)',
     'function slashIncoherentRoot(uint256,bytes,bytes32[],bytes32)',
-    'event ActionsArchived(uint256 indexed submissionId, uint32 indexed clientId, bytes packedActions, bytes32[] r)',
+    // ActionsArchived now carries hash commitments only; the bytes live in
+    // the originating submitReplication tx's calldata. We fetch them below.
+    'event ActionsArchived(uint256 indexed submissionId, uint32 indexed clientId, uint16 actionCount, bytes32 packedHash, bytes32 rHash, bytes32 entryHash)',
   ]
+  const submitReplicationIface = new ethers.Interface([
+    'function submitReplication(uint32 clientId, uint256 startCheckpointId, uint256 endCheckpointId, bytes packedActions, bytes32[] r, bytes32 merkleRoot, bytes32 entryHash)',
+  ])
   const cawActionsAbi = ['function clientHashAtCheckpoint(uint32,uint256) view returns (bytes32)']
 
   const archive = new ethers.Contract(archiveAddress, archiveAbi, arb)
@@ -90,9 +95,17 @@ async function main() {
     Math.max(0, latest - 200_000), latest,
   )
   if (events.length === 0) throw new Error('ActionsArchived event not found in the last 200k blocks')
-  const args = (events[0] as any).args
-  const packedHex: string = args[2]
-  const rArr: string[] = (args[3] as string[]).map(x => String(x))
+  // Fetch packedActions + r[] from the originating submitReplication tx's
+  // calldata (the event itself only carries commitments now).
+  const submitTxHash = (events[0] as any).transactionHash as string
+  const submitTx = await arb.getTransaction(submitTxHash)
+  if (!submitTx?.data) throw new Error(`Could not fetch tx ${submitTxHash} calldata`)
+  const parsed = submitReplicationIface.parseTransaction({ data: submitTx.data })
+  if (!parsed || parsed.name !== 'submitReplication') {
+    throw new Error(`Tx ${submitTxHash} did not call submitReplication (got ${parsed?.name})`)
+  }
+  const packedHex: string = parsed.args.packedActions as string
+  const rArr: string[] = (parsed.args.r as string[]).map(x => String(x))
   console.log(`  packedActions: ${(packedHex.length - 2) / 2} bytes, r: ${rArr.length} items`)
 
   const startCp = Number(sub.startCheckpointId)

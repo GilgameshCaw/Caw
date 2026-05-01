@@ -40,9 +40,27 @@ export const cawActionsAbi = [
     anonymous: false,
     inputs: [
       {
-        name: 'packedActions',
-        internalType: 'bytes',
-        type: 'bytes',
+        name: 'clientId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      {
+        name: 'validatorId',
+        internalType: 'uint32',
+        type: 'uint32',
+        indexed: true,
+      },
+      {
+        name: 'actionCount',
+        internalType: 'uint16',
+        type: 'uint16',
+        indexed: false,
+      },
+      {
+        name: 'batchHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
         indexed: false,
       },
     ],
@@ -348,15 +366,21 @@ export const cawActionsArchiveAbi = [
         indexed: true,
       },
       {
-        name: 'packedActions',
-        internalType: 'bytes',
-        type: 'bytes',
+        name: 'actionCount',
+        internalType: 'uint16',
+        type: 'uint16',
         indexed: false,
       },
       {
-        name: 'r',
-        internalType: 'bytes32[]',
-        type: 'bytes32[]',
+        name: 'packedHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
+        indexed: false,
+      },
+      {
+        name: 'rHash',
+        internalType: 'bytes32',
+        type: 'bytes32',
         indexed: false,
       },
       {

@@ -1,5 +1,5 @@
 // src/services/RawEventsGatherer/listenForRawEvents.ts
-import { ContractEventPayload, WebSocketProvider, Contract, keccak256, toUtf8Bytes, getBytes, concat } from 'ethers'
+import { ContractEventPayload, WebSocketProvider, Contract, Interface, keccak256, toUtf8Bytes, getBytes, concat } from 'ethers'
 import type { Log } from '@ethersproject/abstract-provider'
 import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
 import { makeFallbackJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrls, getL2WsSecret, waitForRateLimit, redactRpcUrl } from '../../utils/rpcProvider'
@@ -9,6 +9,45 @@ import SmlTxt from 'smltxt'
 import { unpackActions } from '../../utils/packActions'
 import { span } from '../../utils/trace'
 import { recordIndexerProgress } from '../../utils/indexerHealth'
+
+// Calldata-decode interface. ActionsProcessed events now carry only
+// (clientId, validatorId, actionCount, batchHash) — the actual packedActions
+// bytes live in the originating tx's calldata. We fetch tx.input via
+// eth_getTransactionByHash and decode the function args.
+const PROCESS_ACTIONS_IFACE = new Interface([
+  'function processActions(uint32 validatorId, bytes packedActions, bytes sigs, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable',
+  'function safeProcessActions(uint32 validatorId, bytes packedActions, bytes sigs, uint256 withdrawFee, uint256 withdrawLzTokenAmount) payable returns (uint256 successCount, string[] rejections)',
+])
+
+// Cache packedActions per txHash so multiple events from the same tx don't
+// re-fetch (rare with the new event since one tx → one event, but cheap to
+// keep and protects against future safeProcessActions partial-success cases).
+const txDataCache = new Map<string, string>()
+const TX_CACHE_MAX = 200
+
+async function fetchPackedActionsFromTx(
+  provider: { getTransaction: (h: string) => Promise<{ data?: string } | null> },
+  txHash: string,
+): Promise<string | null> {
+  const hit = txDataCache.get(txHash)
+  if (hit !== undefined) return hit
+  const tx = await provider.getTransaction(txHash)
+  if (!tx?.data) return null
+  try {
+    const parsed = PROCESS_ACTIONS_IFACE.parseTransaction({ data: tx.data })
+    if (!parsed) return null
+    if (parsed.name !== 'processActions' && parsed.name !== 'safeProcessActions') return null
+    const packed = parsed.args.packedActions as string
+    if (txDataCache.size >= TX_CACHE_MAX) {
+      const firstKey = txDataCache.keys().next().value as string | undefined
+      if (firstKey) txDataCache.delete(firstKey)
+    }
+    txDataCache.set(txHash, packed)
+    return packed
+  } catch {
+    return null
+  }
+}
 
 // smltxt singleton — events arrive with `bytes text` (compressed) but the
 // rest of the pipeline (ActionProcessor, hashtag/mention indexing, Caw.content
@@ -36,7 +75,9 @@ export type RawEventInput = {
 }
 
 const CONTRACT_ABI = [
-  'event ActionsProcessed(bytes packedActions)'
+  // ActionsProcessed is now a calldata commitment. The packedActions payload
+  // lives in the originating tx; fetchPackedActionsFromTx() pulls it.
+  'event ActionsProcessed(uint32 indexed clientId, uint32 indexed validatorId, uint16 actionCount, bytes32 batchHash)'
 ]
 
 
@@ -124,21 +165,23 @@ export default async function listenForRawEvents(
 
   // Process events from a Log array (used by both historical fetch and polling).
   //
-  // Each on-chain ActionsProcessed event carries N packed actions. We unpack
-  // them, compute the parentHash chain SEQUENTIALLY (each depends on the prior
-  // one), then hand the full batch to the provider. When the provider exposes
-  // storeBatch, a single INSERT replaces what used to be N sequential UPSERTs
-  // per event. Falls back to one-by-one storeEvent if no batch method.
-  async function processEvents(events: Log[], contract: Contract) {
+  // ActionsProcessed events now only carry a hash commitment; the actual
+  // packed bytes live in the originating tx's calldata. We fetch tx.input
+  // via eth_getTransactionByHash, decode the function args, then unpack and
+  // chain parentHash SEQUENTIALLY (each depends on the prior). When the
+  // provider exposes storeBatch, a single INSERT replaces what used to be N
+  // sequential UPSERTs per event. Falls back to one-by-one storeEvent if no
+  // batch method.
+  async function processEvents(events: Log[], _contract: Contract) {
     for (const ev of events) {
-      const rawData = ev.data ?? '0x'
-      const decoded = contract.interface.decodeEventLog(
-        'ActionsProcessed',
-        rawData,
-        ev.topics
-      )
-      // Decode packed bytes from ActionsProcessed(bytes packedActions)
-      const packedHex = decoded.packedActions as string
+      const packedHex = await fetchPackedActionsFromTx(httpProvider, ev.transactionHash)
+      if (!packedHex) {
+        // RPC dropped tx data for this hash, or the tx wasn't a (safe)processActions
+        // call. We can't reconstruct the actions without the bytes; log and skip.
+        // The next reindex against an archive node will recover.
+        console.warn(`[RawEventsGatherer] Could not fetch packedActions calldata for tx ${ev.transactionHash} — skipping event`)
+        continue
+      }
       const packedBuf = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
       const actions = unpackActions(packedBuf)
 
@@ -201,6 +244,13 @@ export default async function listenForRawEvents(
   // defined, then walk forward in 10K-block windows. scanLogsForward halves
   // and retries on any single-window failure (e.g. when a chunk happens to
   // span an unusually log-dense block range).
+  //
+  // NOTE: deliberately NOT filtering on the indexed clientId topic at the
+  // RPC level. Cross-client ingest (master commit f14ef50) is required for
+  // the staking-rewards math to match chain truth — RewardMultiplier inflation
+  // is a global on-chain fact triggered by ANY client's actions. The clientId
+  // gate now lives in domainProcessor for CAW/RECAW only; everything else
+  // processes regardless of submitting client.
   let past: Log[]
   const eventSig = httpContract.interface.getEvent('ActionsProcessed')!.topicHash
   while (true) {
@@ -250,9 +300,19 @@ export default async function listenForRawEvents(
       wsProvider = makeWebSocketProvider(config.rpcUrl, config.chainId, getL2WsSecret())
       wsContract = new Contract(CAW_ACTIONS_ADDRESS, CONTRACT_ABI, wsProvider)
 
-      wsContract.on('ActionsProcessed', async (packedHex: string, ev: ContractEventPayload) => {
+      // Signature: ActionsProcessed(uint32 indexed clientId, uint32 indexed validatorId, uint16 actionCount, bytes32 batchHash)
+      // We don't need the topic args here — we always go to tx calldata for the bytes.
+      wsContract.on('ActionsProcessed', async (
+        _clientId: number, _validatorId: number, _actionCount: number, _batchHash: string,
+        ev: ContractEventPayload,
+      ) => {
         console.log("[RawEventsGatherer] Raw event received via WebSocket", ev)
         try {
+          const packedHex = await fetchPackedActionsFromTx(httpProvider, ev.log.transactionHash)
+          if (!packedHex) {
+            console.warn(`[RawEventsGatherer] WS: could not fetch packedActions calldata for tx ${ev.log.transactionHash} — skipping`)
+            return
+          }
           const packedBuf = new Uint8Array((packedHex.startsWith('0x') ? packedHex.slice(2) : packedHex).match(/.{2}/g)!.map(b => parseInt(b, 16)))
           const wsActions = unpackActions(packedBuf)
 
@@ -428,7 +488,7 @@ export default async function listenForRawEvents(
           console.log(`[RawEventsGatherer] Polling for events ${lastSyncedBlock + 1}..${toBlock}`)
         }
         const events = await httpContract.queryFilter(
-          httpContract.filters.ActionsProcessed(),
+          httpContract.filters.ActionsProcessed(config.clientId),
           lastSyncedBlock + 1,
           toBlock
         ) as unknown as Log[]
