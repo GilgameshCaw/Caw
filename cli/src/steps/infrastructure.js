@@ -6,6 +6,7 @@ import os from 'os'
 import path from 'path'
 import { section, dim, tipBlock, brand, success, warn } from '../utils/ui.js'
 import { createClientFlow, lookupClientStorageChain } from './clientCreator.js'
+import { pickClientAndApi } from './clientAndApiPicker.js'
 
 /**
  * Phase 1 of infra collection: domain + admin password + client selection
@@ -24,7 +25,7 @@ import { createClientFlow, lookupClientStorageChain } from './clientCreator.js'
  */
 export async function collectInfraEarly(nodeType, ctx = {}) {
   if (nodeType === 'frontend-only') {
-    return collectFrontendOnlyConfig()
+    return collectFrontendOnlyConfig(ctx)
   }
 
   const result = {}
@@ -345,7 +346,7 @@ export async function collectInfraConfig(nodeType, ctx = {}) {
   return { ...early, ...late }
 }
 
-async function collectFrontendOnlyConfig() {
+async function collectFrontendOnlyConfig(ctx = {}) {
   section('Frontend Configuration')
 
   tipBlock([
@@ -353,17 +354,26 @@ async function collectFrontendOnlyConfig() {
     'All data comes from an external API hosted by another client.',
   ])
 
-  const { apiUrl } = await inquirer.prompt([
-    {
-      type: 'input',
-      name: 'apiUrl',
-      message: 'External API URL (e.g., https://api.caw.example.com):',
-      validate: (input) => {
-        if (!input.startsWith('http')) return 'Must be an HTTP(S) URL'
-        return true
+  // Try to pull the client + instance list from the on-chain registry
+  // first. Falls through to the free-text prompt below if the picker
+  // returns null (RPC unreachable, no clients yet, no instances for the
+  // chosen client, or operator picks "Other").
+  let apiUrl = await pickClientAndApi({ network: ctx.network })
+
+  if (!apiUrl) {
+    const answer = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'apiUrl',
+        message: 'External API URL (e.g., https://api.caw.example.com):',
+        validate: (input) => {
+          if (!input.startsWith('http')) return 'Must be an HTTP(S) URL'
+          return true
+        }
       }
-    }
-  ])
+    ])
+    apiUrl = answer.apiUrl
+  }
 
   const { domain } = await inquirer.prompt([
     {
