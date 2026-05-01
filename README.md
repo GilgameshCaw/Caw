@@ -1,4 +1,4 @@
-# CAW Protocol 🦅
+# CAW Protocol
 
 > A trustless and decentralized social clearing-house committed to making freedom of speech unstoppable
 
@@ -334,4 +334,4 @@ The endpoint is the standard [OTLP/HTTP](https://opentelemetry.io/docs/specs/ote
 
 ---
 
-**With CAW Protocol, your voice cannot be silenced. 🦅**
+**With CAW Protocol, your voice cannot be silenced.**
