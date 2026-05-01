@@ -299,7 +299,11 @@ async function safeProcessActions(actions, params) {
 
   return {
     tx: t,
-    signedActions: signedActions
+    signedActions: signedActions,
+    // ActionsProcessed is now a calldata commitment — surface the packedActions
+    // bytes that were submitted so test predicates can decode them without
+    // round-tripping through the event payload.
+    packedActions: packedActions,
   };
 }
 
@@ -404,7 +408,11 @@ async function processActions(actions, params) {
 
   return {
     tx: t,
-    signedActions: signedActions
+    signedActions: signedActions,
+    // ActionsProcessed is now a calldata commitment — surface the
+    // packedActions bytes that were submitted (post-filtering) so test
+    // predicates can decode them without the event payload.
+    packedActions: filteredPacked,
   };
 }
 
@@ -729,7 +737,7 @@ contract('CawProfiles', function(accounts, x) {
     console.log("FISRT CAW SENT!", result);
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-      var actions = decodeActions(args.packedActions)
+      var actions = decodeActions(result.packedActions)
 			console.log('actions', actions, result.signedActions[0].data.message);
 			console.log('cawonce', actions[0].cawonce, result.signedActions[0].data.message.cawonce);
 			console.log('sender id', actions[0].senderId, result.signedActions[0].data.message.senderId);
@@ -777,7 +785,7 @@ contract('CawProfiles', function(accounts, x) {
     });
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-      var actions = decodeActions(args.packedActions)
+      var actions = decodeActions(result.packedActions)
       return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
 				actions[0].senderId == result.signedActions[0].data.message.senderId;
     });
@@ -999,7 +1007,7 @@ contract('CawProfiles', function(accounts, x) {
     result = await processActions(actionsToProcess, { validator: accounts[1] });
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-      var actions = decodeActions(args.packedActions)
+      var actions = decodeActions(result.packedActions)
       return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
 				actions[0].senderId == result.signedActions[0].data.message.senderId;
     });
@@ -1070,7 +1078,7 @@ contract('CawProfiles', function(accounts, x) {
     result = await processActions(actionsToProcess, { validator: accounts[1] });
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-      var actions = decodeActions(args.packedActions)
+      var actions = decodeActions(result.packedActions)
       return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
 				actions[0].senderId == result.signedActions[0].data.message.senderId;
     });
@@ -1150,7 +1158,7 @@ contract('CawProfiles', function(accounts, x) {
     });
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-      var actions = decodeActions(args.packedActions)
+      var actions = decodeActions(result.packedActions)
       return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
 				actions[0].senderId == result.signedActions[0].data.message.senderId;
     });
@@ -1196,8 +1204,8 @@ contract('CawProfiles', function(accounts, x) {
     });
 
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-			console.log("Raw ACTION data: ", args.packedActions);
-      var actions = decodeActions(args.packedActions)
+			console.log("ActionsProcessed batchHash: ", args.batchHash, "actionCount:", args.actionCount);
+      var actions = decodeActions(result.packedActions)
       return actions[0].cawonce == result.signedActions[0].data.message.cawonce &&
 				actions[0].senderId == result.signedActions[0].data.message.senderId;
     });
@@ -1213,7 +1221,7 @@ contract('CawProfiles', function(accounts, x) {
       validator: accounts[2]
     });
     truffleAssert.eventEmitted(result.tx, 'ActionsProcessed', (args) => {
-      var decoded = decodeActions(args.packedActions);
+      var decoded = decodeActions(result.packedActions);
 			console.log("Decoded action count:", decoded.length);
       return decoded.length == 64;
 		});

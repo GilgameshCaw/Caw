@@ -37,8 +37,18 @@ contract CawActions is Ownable {
   /// @notice Tracks cumulative spending (whole CAW tokens) per session key (by owner address)
   mapping(address => mapping(address => uint256)) public sessionSpent;
 
-  /// @notice Emitted with the raw packed action bytes so indexers can decode.
-  event ActionsProcessed(bytes packedActions);
+  /// @notice Commitment to a processed batch. The full `packedActions` payload lives
+  ///         in the originating tx's calldata (the same bytes passed to
+  ///         processActions / safeProcessActions); indexers fetch it via
+  ///         eth_getTransactionByHash and validate against `batchHash`.
+  ///         `validatorId` is the submitting validator's profile id; `clientId`
+  ///         is the per-batch single-client id (all actions in a batch share it).
+  event ActionsProcessed(
+    uint32 indexed clientId,
+    uint32 indexed validatorId,
+    uint16 actionCount,
+    bytes32 batchHash
+  );
   event ActionRejected(uint32 senderId, uint32 cawonce, string reason);
 
   CawProfileL2 public immutable cawProfile;
@@ -147,7 +157,12 @@ contract CawActions is Ownable {
 
     require(c.actionsSeen == actionCount, "Sigs don't cover all actions");
 
-    emit ActionsProcessed(packedActions);
+    emit ActionsProcessed(
+      c.firstClientId,
+      validatorId,
+      uint16(actionCount),
+      keccak256(packedActions)
+    );
 
     if (c.withdrawCount > 0) {
       _handleWithdrawals(c.withdrawBitmap, c.withdrawCount, actionCount, packedActions);
@@ -381,11 +396,16 @@ contract CawActions is Ownable {
     require(sc.actionsSeen == actionCount, "Sigs don't cover all actions");
     successCount = sc.successCount;
 
-    // NOTE (audited 2026-04-20): emits the FULL packedActions including rejected
-    // actions, not just the successful ones. Indexers MUST cross-reference
-    // ActionRejected events to filter.
+    // NOTE (audited 2026-04-20): the calldata referenced by `batchHash` is the
+    // FULL packedActions including rejected actions, not just the successful
+    // ones. Indexers MUST cross-reference ActionRejected events to filter.
     if (successCount > 0) {
-      emit ActionsProcessed(packedActions);
+      emit ActionsProcessed(
+        sc.firstClientId,
+        validatorId,
+        uint16(actionCount),
+        keccak256(packedActions)
+      );
     }
 
     // Mirror processActions: _handleWithdrawals always runs when there are
@@ -411,6 +431,7 @@ contract CawActions is Ownable {
     uint256 successCount;
     uint16  withdrawCount;
     uint256 withdrawBitmap;
+    uint32  firstClientId;   // captured from the first action; used for the ActionsProcessed event
   }
 
   /// @dev Process one sig group in the safe path: try the whole group via
@@ -441,6 +462,12 @@ contract CawActions is Ownable {
       senderIds[i] = peek.senderId;
       cawonces[i] = peek.cawonce;
       isWithdraw[i] = peek.actionType == ActionType.WITHDRAW;
+      // Capture clientId once from the very first action of the very first group.
+      // Subsequent groups must match (enforced by _trackClientAndWithdraw inside
+      // processGroupSingle's success path; safe-mode failures don't emit).
+      if (sc.actionsSeen == 0 && i == 0) {
+        sc.firstClientId = peek.clientId;
+      }
       unchecked { ++i; }
     }
 

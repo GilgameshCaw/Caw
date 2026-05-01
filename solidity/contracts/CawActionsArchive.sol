@@ -97,11 +97,17 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
     bytes32 merkleRoot
   );
 
+  /// @notice Commitment to a submission's underlying data. The full packedActions
+  ///         and r[] arrays live in the originating tx's calldata (the same
+  ///         arguments passed to submitReplication); challengers and indexers
+  ///         fetch them via eth_getTransactionByHash and validate against
+  ///         `packedHash` / `rHash`. `entryHash` is small and stays inline.
   event ActionsArchived(
     uint256 indexed submissionId,
     uint32 indexed clientId,
-    bytes packedActions,
-    bytes32[] r,
+    uint16 actionCount,
+    bytes32 packedHash,
+    bytes32 rHash,
     bytes32 entryHash
   );
 
@@ -209,12 +215,12 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
 
     // Commit to the submitted packedActions + r + entryHash so
     // slashIncoherentRoot can verify a later caller is re-supplying the
-    // exact bytes that were submitted.
-    bytes32 dataCommitment = keccak256(abi.encodePacked(
-      keccak256(packedActions),
-      keccak256(abi.encodePacked(r)),
-      entryHash
-    ));
+    // exact bytes that were submitted. The component hashes are reused in
+    // the ActionsArchived event so off-chain consumers can validate
+    // calldata they refetch from this tx.
+    bytes32 packedHash = keccak256(packedActions);
+    bytes32 rHash = keccak256(abi.encodePacked(r));
+    bytes32 dataCommitment = keccak256(abi.encodePacked(packedHash, rHash, entryHash));
 
     submissions[submissionId] = Submission({
       submitter: msg.sender,
@@ -236,11 +242,14 @@ contract CawActionsArchive is Ownable, ReentrancyGuard, OnlyOnce, OApp {
     validatorSubmissions[msg.sender].push(submissionId);
 
     emit SubmissionCreated(submissionId, msg.sender, clientId, startCheckpointId, endCheckpointId, merkleRoot);
-    // Emit entryHash separately so off-chain monitors can compare it against
-    // the source L2's clientHashAtCheckpoint(clientId, startCheckpointId-1)
-    // and trigger slashIncoherentRoot pre-emptively if a submitter committed
-    // a wrong entryHash — without waiting for the full LZ challenge round-trip.
-    emit ActionsArchived(submissionId, clientId, packedActions, r, entryHash);
+    // Emit a *commitment* to the submitter-supplied data. The full
+    // packedActions and r[] live in this tx's calldata; off-chain
+    // monitors fetch them via eth_getTransactionByHash and validate
+    // against packedHash / rHash. entryHash stays inline so monitors
+    // can compare it against the source L2's
+    // clientHashAtCheckpoint(clientId, startCheckpointId-1) without
+    // any extra fetch.
+    emit ActionsArchived(submissionId, clientId, uint16(actionCount), packedHash, rHash, entryHash);
   }
 
   // ============================================
