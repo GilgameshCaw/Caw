@@ -4,10 +4,10 @@ import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { useReadContract, useAccount, useSwitchChain } from 'wagmi'
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import useAllowance from "~/hooks/useAllowance";
-import { maxUint256, parseUnits, erc20Abi, formatEther } from "viem";
+import { maxUint256, parseUnits, erc20Abi, formatEther, parseEther } from "viem";
 import useContractCall, { UseContractCallReturn } from '~/hooks/useContractCall'
 import { useLayoutStore } from '~/store/layoutStore'
-import { CAW_ADDRESS, CAW_NAMES_MINTER_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
+import { CAW_ADDRESS, CAW_NAMES_MINTER_ADDRESS, CAW_NAME_QUOTER_ADDRESS, CAW_PAIR_ADDRESS } from '~/../../../abi/addresses'
 import { cawProfileMinterAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { useActiveToken, useTokenDataStore, usePriceStore } from "~/store/tokenDataStore";
 import { chains, isTestnet } from '~/config/chains'
@@ -22,6 +22,7 @@ import { CLIENT_ID } from '~/api/actions'
 import { useT } from '~/i18n/I18nProvider'
 import { getDefaultSpendLimit, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
+import { usePoolReserves, useMinCawOut, suggestedSlippageBps } from '~/hooks/useZapQuote'
 
 // Quick Sign default scope: all actions except WITHDRAW (bit 6) — matches the
 // 0xBF hard-wired on L2 in the bundled session register flow.
@@ -140,6 +141,15 @@ export const NewProfile: React.FC = () => {
   const [depositEnabled, setDepositEnabled] = useState(true)
   const [depositAmount, setDepositAmount] = useState('')
   const [depositDefaultSet, setDepositDefaultSet] = useState(false)
+
+  // Pay-with-ETH (ZAP) flow: contract swaps ETH→CAW via Uniswap V2 in the
+  // same tx and forwards into the existing mint+deposit pipeline. The
+  // user enters ETH; we read pool reserves and compute slippage-floor minCawOut.
+  const [paymentMode, setPaymentMode] = useState<'caw' | 'eth'>('caw')
+  const [ethAmount, setEthAmount] = useState('')
+  // Slippage slider — default scaled by trade size against the pool.
+  const [slippageBps, setSlippageBps] = useState<number>(200)
+  const [slippageAutoSet, setSlippageAutoSet] = useState(false)
 
   // Quick Sign session — bundle into the same L1 tx as mintAndDeposit. Default
   // ON so brand-new users get one-click posting after onboarding. The actual
@@ -264,6 +274,22 @@ export const NewProfile: React.FC = () => {
     try { return parseUnits(depositAmount, 18) } catch { return 0n }
   }, [depositEnabled, depositAmount])
 
+  // ETH-mode: parse input and quote against live pool reserves. The Quoter
+  // gives us the LZ + storage fees; the swap leg is purely a frontend concern.
+  const ethAmountWei = useMemo(() => {
+    if (paymentMode !== 'eth' || !ethAmount) return 0n
+    try { return parseEther(ethAmount) } catch { return 0n }
+  }, [paymentMode, ethAmount])
+  const reserves = usePoolReserves(CAW_PAIR_ADDRESS as `0x${string}`, chains.l1.chainId)
+  // Auto-suggest a slippage tolerance that scales with trade size, but only
+  // once per page session. After that the slider is the source of truth.
+  useEffect(() => {
+    if (slippageAutoSet || ethAmountWei === 0n || !reserves.loaded) return
+    setSlippageBps(suggestedSlippageBps(ethAmountWei, reserves.wethReserve))
+    setSlippageAutoSet(true)
+  }, [slippageAutoSet, ethAmountWei, reserves.loaded, reserves.wethReserve])
+  const zapQuote = useMinCawOut(ethAmountWei, reserves, slippageBps)
+
 
   // is valid username?
   const isValid = /^[a-z0-9]{1,}$/i.test(username)
@@ -334,14 +360,48 @@ console.log("BALANCE:", balance)
     args: [ CLIENT_ID, depositAmountWei, chains.l2.layerZero, false, useAddress as `0x${string}` ?? '0x0000000000000000000000000000000000000001' ],
     query: { enabled: depositEnabled && depositAmountWei > 0n && quickSignEnabled }
   })
+
+  // ZAP quotes — same on-chain LZ + storage fees as the CAW-paid path; the
+  // swap leg is computed on the frontend from pool reserves. The Quoter
+  // exposes thin wrappers so the frontend has one call per flow.
+  const { data: mintAndDepositZapQuote } = useReadContract({
+    abi: cawProfileQuoterAbi,
+    chainId: chains.l1.chainId,
+    functionName: "mintAndDepositZapQuote",
+    address: CAW_NAME_QUOTER_ADDRESS,
+    args: [ CLIENT_ID, chains.l2.layerZero, false ],
+    query: { enabled: paymentMode === 'eth' && !quickSignEnabled }
+  })
+  const { data: bundledZapQuote } = useReadContract({
+    abi: cawProfileQuoterAbi,
+    chainId: chains.l1.chainId,
+    functionName: "mintAndDepositAndQuickSignZapQuote",
+    address: CAW_NAME_QUOTER_ADDRESS,
+    args: [ CLIENT_ID, useAddress as `0x${string}` ?? '0x0000000000000000000000000000000000000001', chains.l2.layerZero, false ],
+    query: { enabled: paymentMode === 'eth' && quickSignEnabled }
+  })
   console.log('[New] mintAndDepositQuote:', { data: mintAndDepositQuote, error: mintAndDepositQuoteError?.message, loading: mintAndDepositQuoteLoading, enabled: depositEnabled && depositAmountWei > 0n, depositAmountWei: depositAmountWei.toString(), CLIENT_ID, layerZero: chains.l2.layerZero })
-  const quote = !depositEnabled
-    ? mintOnlyQuote
-    : (quickSignEnabled ? bundledQuote : mintAndDepositQuote)
+  const quote = paymentMode === 'eth'
+    ? (quickSignEnabled ? bundledZapQuote : mintAndDepositZapQuote)
+    : (!depositEnabled
+        ? mintOnlyQuote
+        : (quickSignEnabled ? bundledQuote : mintAndDepositQuote))
 
   const lzTokenAmount = 0n;
   const totalCawNeeded = cost + depositAmountWei;
-  const insufficientBalance = !balance || totalCawNeeded > balance;
+  // CAW-mode: needs CAW balance for burn + deposit. ETH-mode: only needs ETH
+  // (the swap output covers both burn and deposit), so we don't gate on CAW
+  // balance there.
+  const insufficientBalance = paymentMode === 'eth'
+    ? false
+    : (!balance || totalCawNeeded > balance);
+
+  // Total ETH msg.value for the ZAP tx: swap-input + LZ/storage fees.
+  const zapTxValue = useMemo(() => {
+    if (paymentMode !== 'eth' || !quote) return 0n
+    const nativeFee = (quote as { nativeFee?: bigint }).nativeFee ?? 0n
+    return ethAmountWei + BigInt(nativeFee)
+  }, [paymentMode, ethAmountWei, quote])
 
   const wrongChain = chainId !== chains.l1.chainId;
 
@@ -366,9 +426,13 @@ console.log("BALANCE:", balance)
   const { allowance: minterAllowance, refetch: refetchMinterAllowance } = useAllowance(CAW_ADDRESS, CAW_NAMES_MINTER_ADDRESS, useAddress);
   const refetchTokenData = useTokenDataStore(s => s.refetchTokenData)
 
-  // Minter needs allowance for burn cost + deposit amount (it pulls both from the user)
+  // Minter needs allowance for burn cost + deposit amount (it pulls both from the user).
+  // In ETH (ZAP) mode the user never spends CAW directly — the swap output IS
+  // the CAW the contract uses — so no approval is needed.
   const minterAllowanceNeeded = cost + (depositEnabled ? depositAmountWei : 0n);
-  const needsMinterApproval = !minterAllowance || minterAllowance == 0n || minterAllowanceNeeded > minterAllowance;
+  const needsMinterApproval = paymentMode === 'eth'
+    ? false
+    : (!minterAllowance || minterAllowance == 0n || minterAllowanceNeeded > minterAllowance);
   const needsApproval = needsMinterApproval;
 
   // Approve minter for burn + deposit (single approval handles both)
@@ -576,16 +640,113 @@ console.log("BALANCE:", balance)
     onError:      err  => console.error(err),
   })
 
+  // ============================================
+  // ZAP hooks (pay-with-ETH variants)
+  // ============================================
+  // mintAndDepositZap — non-bundled ETH path. Same shape as mintAndDeposit
+  // but pays with ETH; the contract swaps to CAW + burns name + deposits
+  // remainder.
+  const { call: mintAndDepositZap, status: mintAndDepositZapStatus, gasCostEth: mintAndDepositZapGas }: UseContractCallReturn = useContractCall({
+    value: zapTxValue,
+    functionName: 'mintAndDepositZap',
+    abi: cawProfileMinterAbi,
+    address: CAW_NAMES_MINTER_ADDRESS,
+    args: [CLIENT_ID, username, ethAmountWei, zapQuote.minCawOut, chains.l2.layerZero, lzTokenAmount],
+    disabled: paymentMode !== 'eth' || quickSignEnabled || !address || !isValid || ethAmountWei === 0n || !zapQuote.loaded,
+    onPending: hash => { console.log('mintAndDepositZap tx pending', hash); setHasResetForm(false) },
+    onSuccess: async (hash) => {
+      console.log('mintAndDepositZap success!', hash)
+      await refetchTokenData?.()
+      const checkForNewToken = async () => {
+        const allTokens = useTokenDataStore.getState().allTokens()
+        const newToken = allTokens.find((t: any) => t.username.toLowerCase() === username.toLowerCase())
+        if (newToken) {
+          setMintedTokenId(newToken.tokenId)
+          setActiveTokenId(newToken.tokenId)
+          setMintSuccess(true)
+        } else {
+          refetchTokenData?.()
+          setTimeout(checkForNewToken, 3000)
+        }
+      }
+      setTimeout(checkForNewToken, 1000)
+    },
+    onError: err => console.error(err),
+  })
+
+  // mintAndDepositAndQuickSignZap — bundled ETH + QuickSign onboarding.
+  const { call: mintAndDepositAndQuickSignZap, status: bundledZapStatus, gasCostEth: bundledZapGas }: UseContractCallReturn = useContractCall({
+    value: zapTxValue,
+    functionName: 'mintAndDepositAndQuickSignZap',
+    abi: cawProfileMinterAbi,
+    address: CAW_NAMES_MINTER_ADDRESS,
+    args: [CLIENT_ID, username, ethAmountWei, zapQuote.minCawOut, qsSessionAddress, BigInt(qsExpiry), qsSpendLimit, chains.l2.layerZero, lzTokenAmount],
+    disabled: paymentMode !== 'eth' || !quickSignEnabled || !address || !isValid || ethAmountWei === 0n || !zapQuote.loaded || qsSessionAddress === '0x0000000000000000000000000000000000000000',
+    onPending: hash => { console.log('mintAndDepositAndQuickSignZap tx pending', hash); setHasResetForm(false) },
+    onSuccess: async (hash) => {
+      console.log('mintAndDepositAndQuickSignZap success!', hash)
+      await refetchTokenData?.()
+      const sess = sessionRef.current
+      const checkForNewToken = async () => {
+        const allTokens = useTokenDataStore.getState().allTokens()
+        const newToken = allTokens.find((t: any) => t.username.toLowerCase() === username.toLowerCase())
+        if (newToken) {
+          setMintedTokenId(newToken.tokenId)
+          setActiveTokenId(newToken.tokenId)
+          setMintSuccess(true)
+          if (sess && useAddress) {
+            const owner = (useAddress as string).toLowerCase()
+            try {
+              setSession({
+                privateKey: sess.privateKey,
+                address: sess.address,
+                ownerAddress: owner,
+                expiry: sess.expiry,
+                scopeBitmap: QUICK_SIGN_DEFAULT_SCOPE,
+                spendLimit: sess.spendLimit.toString(),
+              })
+              setSessionEnabled(true)
+              localStorage.setItem(
+                `caw:pendingQuickSign:${owner}`,
+                JSON.stringify({
+                  sessionKey: sess.address,
+                  expiry: sess.expiry,
+                  spendLimit: sess.spendLimit.toString(),
+                  txHash: hash,
+                  submittedAt: Date.now(),
+                })
+              )
+              window.dispatchEvent(new CustomEvent('caw:pendingQuickSignChanged', { detail: { owner } }))
+            } catch (e) {
+              console.warn('[New] failed to persist QuickSign session:', e)
+            }
+          }
+        } else {
+          refetchTokenData?.()
+          setTimeout(checkForNewToken, 3000)
+        }
+      }
+      setTimeout(checkForNewToken, 1000)
+    },
+    onError: err => console.error(err),
+  })
+
   // Unified status — pick from whichever path is active
-  const mintStatus = depositEnabled
-    ? (quickSignEnabled ? bundledStatus : mintAndDepositStatus)
-    : mintOnlyStatus
-  const gasCostEth = depositEnabled
-    ? (quickSignEnabled ? bundledGas : mintAndDepositGas)
-    : mintOnlyGas
-  const mint = depositEnabled
-    ? (quickSignEnabled ? mintAndDepositAndQuickSign : mintAndDeposit)
-    : mintOnly
+  const mintStatus = paymentMode === 'eth'
+    ? (quickSignEnabled ? bundledZapStatus : mintAndDepositZapStatus)
+    : (depositEnabled
+        ? (quickSignEnabled ? bundledStatus : mintAndDepositStatus)
+        : mintOnlyStatus)
+  const gasCostEth = paymentMode === 'eth'
+    ? (quickSignEnabled ? bundledZapGas : mintAndDepositZapGas)
+    : (depositEnabled
+        ? (quickSignEnabled ? bundledGas : mintAndDepositGas)
+        : mintOnlyGas)
+  const mint = paymentMode === 'eth'
+    ? (quickSignEnabled ? mintAndDepositAndQuickSignZap : mintAndDepositZap)
+    : (depositEnabled
+        ? (quickSignEnabled ? mintAndDepositAndQuickSign : mintAndDeposit)
+        : mintOnly)
 
   const waiting = isApprovePending || Boolean(mintStatus.match(/pending/))
 
@@ -663,14 +824,19 @@ console.log("BALANCE:", balance)
       })
       // Bundled flow needs a session keypair generated first. Generate it,
       // wait for the hook's `args` to settle on the new address, then mint.
-      if (depositEnabled && quickSignEnabled && !pendingSession) {
+      // Triggered by either CAW-mode or ETH-mode bundled flows.
+      const bundledActive = quickSignEnabled && (
+        (paymentMode === 'caw' && depositEnabled) ||
+        (paymentMode === 'eth' && ethAmountWei > 0n)
+      )
+      if (bundledActive && !pendingSession) {
         generatePendingSession()
         setPendingMintAfterSession(true)
         return
       }
       await mint();
     }
-  }, [needsMinterApproval, approveMinter, mint, depositEnabled, quickSignEnabled, pendingSession, generatePendingSession]);
+  }, [needsMinterApproval, approveMinter, mint, depositEnabled, quickSignEnabled, pendingSession, generatePendingSession, paymentMode, ethAmountWei]);
 
   // After session params land in state and the wagmi hook re-renders with the
   // fresh args, fire the actual mint call. Same pattern as
@@ -752,6 +918,11 @@ console.log("BALANCE:", balance)
     submitText = t('new_profile.username_taken')
   else if (insufficientBalance)
     submitText = t('staking.button.insufficient_balance')
+  else if (paymentMode === 'eth') {
+    if (ethAmountWei === 0n) submitText = "Enter ETH amount"
+    else if (zapQuote.loaded && zapQuote.minCawOut < cost) submitText = "Increase ETH or reduce slippage"
+    else submitText = "Create & Deposit (ETH)"
+  }
   else submitText = depositEnabled && depositAmountWei > 0n ? t('new_profile.create_and_deposit') : t('new_profile.create')
 
   // Show loading screen while waiting for mint to complete. The
@@ -953,7 +1124,116 @@ console.log("BALANCE:", balance)
                 </div>
             </div>
 
-            {/* Deposit option */}
+            {/* Payment mode toggle: pay with CAW (default) or pay with ETH (ZAP).
+                In ETH mode the contract swaps via Uniswap V2 in the same tx;
+                slippage is enforced by minCawOut. */}
+            <div className={`mt-4 flex items-center gap-2 rounded-full p-1 ${
+              isDark ? 'bg-white/[0.04] border border-white/10' : 'bg-black/[0.03] border border-gray-200'
+            }`}>
+              <button
+                type="button"
+                onClick={() => setPaymentMode('caw')}
+                className={`flex-1 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer ${
+                  paymentMode === 'caw'
+                    ? (isDark ? 'bg-yellow-500 text-black' : 'bg-yellow-500 text-black')
+                    : (isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-gray-900')
+                }`}
+              >
+                Pay with CAW
+              </button>
+              <button
+                type="button"
+                onClick={() => setPaymentMode('eth')}
+                className={`flex-1 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer ${
+                  paymentMode === 'eth'
+                    ? (isDark ? 'bg-yellow-500 text-black' : 'bg-yellow-500 text-black')
+                    : (isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-gray-900')
+                }`}
+              >
+                Pay with ETH
+              </button>
+            </div>
+            {paymentMode === 'eth' && (
+              <div className="text-right -mt-1">
+                <a
+                  href="https://app.uniswap.org/#/swap?inputCurrency=ETH&outputCurrency=0xf3b9569F82B18aEf890De263B84189bd33EBe452"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-yellow-500/70 hover:text-yellow-500 transition-colors"
+                >
+                  Or use Uniswap directly &rarr;
+                </a>
+              </div>
+            )}
+
+            {/* ETH-mode input + slippage slider */}
+            {paymentMode === 'eth' && (
+              <div className={`border rounded-xl p-4 space-y-3 mt-3 ${
+                isDark ? 'border-white/10 bg-[#0D0D0D]/85' : 'border-gray-200 bg-gray-50'
+              }`}>
+                <div className="text-sm font-medium">
+                  ETH to spend
+                  <span className={`block text-xs mt-0.5 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                    Burns the username cost, deposits the remainder. One tx.
+                  </span>
+                </div>
+                <div className="relative">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={ethAmount}
+                    onChange={e => setEthAmount(e.target.value.replace(/[^0-9.]/g, ''))}
+                    placeholder="0.05"
+                    className={`w-full px-4 py-2.5 rounded-full focus:outline-none text-sm ${
+                      isDark
+                        ? 'bg-black border border-white/20 text-white placeholder-white/30 focus:border-white/30'
+                        : 'bg-white border border-gray-300 text-black placeholder-gray-400 focus:border-gray-400'
+                    }`}
+                  />
+                  <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm">ETH</span>
+                </div>
+                {ethAmountWei > 0n && reserves.loaded && (
+                  <div className={`text-xs space-y-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                    <div>
+                      Expected: <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                        {formatNumberCompact(convertToNumber(zapQuote.expectedCawOut, 18))} CAW
+                      </span>
+                    </div>
+                    <div>
+                      Minimum (after {(slippageBps / 100).toFixed(2)}% slippage):&nbsp;
+                      <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                        {formatNumberCompact(convertToNumber(zapQuote.minCawOut, 18))} CAW
+                      </span>
+                    </div>
+                    {zapQuote.minCawOut < cost && (
+                      <div className="text-red-400">
+                        Below the {formatNumberCompact(convertToNumber(cost, 18))} CAW burn cost — increase ETH or reduce slippage.
+                      </div>
+                    )}
+                  </div>
+                )}
+                <div className="space-y-1">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className={isDark ? 'text-gray-400' : 'text-gray-600'}>Slippage tolerance</span>
+                    <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>{(slippageBps / 100).toFixed(2)}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min={50}
+                    max={1000}
+                    step={50}
+                    value={slippageBps}
+                    onChange={e => { setSlippageBps(parseInt(e.target.value, 10)); setSlippageAutoSet(true) }}
+                    className="w-full"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Deposit option (CAW mode only — in ETH mode the deposit is the
+                swap-output remainder after burning the username cost, so there's
+                no separate "deposit amount" to enter). */}
+            {paymentMode === 'caw' && (
             <div className={`border rounded-xl p-4 space-y-3 mt-6 ${
               isDark ? 'border-white/10 bg-[#0D0D0D]/85' : 'border-gray-200 bg-gray-50'
             }`}>
@@ -1062,12 +1342,13 @@ console.log("BALANCE:", balance)
                 </div>
               )}
             </div>
+            )}
 
-            {/* Quick Sign option — only meaningful alongside a deposit (the
-                bundled flow on-chain uses mintAndDepositAndQuickSign). When
-                disabled OR when there's no deposit, we fall back to plain
-                mintAndDeposit / mint with no session leg. */}
-            {depositEnabled && depositAmountWei > 0n && (
+            {/* Quick Sign option — appears alongside any deposit-bearing flow
+                (CAW-mode mintAndDeposit OR ETH-mode mintAndDepositZap, since
+                both bundled selectors include the session leg). */}
+            {((paymentMode === 'caw' && depositEnabled && depositAmountWei > 0n) ||
+              (paymentMode === 'eth' && ethAmountWei > 0n)) && (
             <div className={`border rounded-xl p-4 space-y-3 mt-3 ${
               isDark ? 'border-white/10 bg-[#0D0D0D]/85' : 'border-gray-200 bg-gray-50'
             }`}>
@@ -1117,7 +1398,10 @@ console.log("BALANCE:", balance)
 
             <SubmitButton
                 onClick={handleSubmit}
-                disabled={!!insufficientBalance || (wrongChain ? false : (usernameTaken || waiting || !quote || !cost || cost == 0n))}
+                disabled={!!insufficientBalance || (wrongChain ? false : (
+                  usernameTaken || waiting || !quote || !cost || cost == 0n ||
+                  (paymentMode === 'eth' && (ethAmountWei === 0n || !zapQuote.loaded || zapQuote.minCawOut < cost))
+                ))}
                 className="btn btn-submit mt-0 transition-all duration-300"
             >
                 {submitText}

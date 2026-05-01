@@ -16,9 +16,10 @@ import useAllowance from "~/hooks/useAllowance";
 import { useAccount, useConnections, useReadContract, useSwitchChain, useChainId } from "wagmi"
 import { useConnectModal } from "@rainbow-me/rainbowkit"
 import { useActiveToken, useTokenDataStore, usePriceStore } from "~/store/tokenDataStore"
-import { cawProfileAbi, cawProfileL2Abi, cawProfileQuoterAbi } from "~/../../../abi/generated"
-import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_L2_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from "~/../../../abi/addresses"
-import { maxUint256, parseUnits, formatUnits, formatEther, erc20Abi } from "viem";
+import { cawProfileAbi, cawProfileL2Abi, cawProfileQuoterAbi, cawProfileMinterAbi } from "~/../../../abi/generated"
+import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_L2_ADDRESS, CAW_NAME_QUOTER_ADDRESS, CAW_NAMES_MINTER_ADDRESS, CAW_PAIR_ADDRESS } from "~/../../../abi/addresses"
+import { maxUint256, parseUnits, parseEther, formatUnits, formatEther, erc20Abi } from "viem";
+import { usePoolReserves, useMinCawOut, suggestedSlippageBps } from '~/hooks/useZapQuote'
 import { chains } from '~/config/chains'
 import { useTheme } from '~/hooks/useTheme'
 import { HiOutlineTrendingUp, HiOutlineTrendingDown, HiOutlineInformationCircle, HiQuestionMarkCircle } from 'react-icons/hi'
@@ -63,6 +64,11 @@ const Staking = () => {
   const [amount, setAmount] = useState<string>("")
   const [depositFee, setDepositFee] = useState<bigint>(0n)
   const [withdrawFee, setWithdrawFee] = useState<bigint>(0n)
+  // Pay-with-ETH (ZAP) — contract swaps ETH→CAW via Uniswap V2 then deposits.
+  const [paymentMode, setPaymentMode] = useState<'caw' | 'eth'>('caw')
+  const [ethAmount, setEthAmount] = useState<string>("")
+  const [slippageBps, setSlippageBps] = useState<number>(200)
+  const [slippageAutoSet, setSlippageAutoSet] = useState(false)
   const [pendingWithdrawals, setPendingWithdrawals] = useState<WithdrawalRequest[]>([])
   const [allWithdrawals, setAllWithdrawals] = useState<WithdrawalRequest[]>([])
   const [loadingWithdrawals, setLoadingWithdrawals] = useState(false)
@@ -136,9 +142,34 @@ const Staking = () => {
     address: CAW_NAME_QUOTER_ADDRESS,
     args: [CLIENT_ID, tokenId ?? 0, parseUnits(amount || "0", 18), chains.l2.layerZero, false],
     query: {
-      enabled: !!tokenId && !!amount && activeTab === 'stake'
+      enabled: !!tokenId && !!amount && activeTab === 'stake' && paymentMode === 'caw'
     }
   })
+
+  // ZAP deposit quote — same on-chain LZ + storage fees as the CAW path.
+  const { data: depositZapQuote } = useReadContract({
+    abi: cawProfileQuoterAbi,
+    chainId: chains.l1.chainId,
+    functionName: "depositZapQuote",
+    address: CAW_NAME_QUOTER_ADDRESS,
+    args: [CLIENT_ID, tokenId ?? 0, chains.l2.layerZero, false],
+    query: {
+      enabled: !!tokenId && activeTab === 'stake' && paymentMode === 'eth'
+    }
+  })
+
+  // ETH input + slippage math
+  const ethAmountWei = useMemo(() => {
+    if (paymentMode !== 'eth' || !ethAmount) return 0n
+    try { return parseEther(ethAmount) } catch { return 0n }
+  }, [paymentMode, ethAmount])
+  const reserves = usePoolReserves(CAW_PAIR_ADDRESS as `0x${string}`, chains.l1.chainId)
+  useEffect(() => {
+    if (slippageAutoSet || ethAmountWei === 0n || !reserves.loaded) return
+    setSlippageBps(suggestedSlippageBps(ethAmountWei, reserves.wethReserve))
+    setSlippageAutoSet(true)
+  }, [slippageAutoSet, ethAmountWei, reserves.loaded, reserves.wethReserve])
+  const zapQuote = useMinCawOut(ethAmountWei, reserves, slippageBps)
 
   // Get withdraw quote from CawProfileQuoter
   const { data: withdrawQuote } = useReadContract({
@@ -152,10 +183,14 @@ const Staking = () => {
     }
   })
 
-  // Update fees when quotes change
+  // Update fees when quotes change. depositFee tracks the *current-mode* native
+  // fee — CAW-mode uses depositQuote, ETH-mode uses depositZapQuote.
   useEffect(() => {
-    if (depositQuote?.nativeFee != null) setDepositFee(BigInt(depositQuote.nativeFee))
-  }, [depositQuote])
+    if (paymentMode === 'caw' && depositQuote?.nativeFee != null) setDepositFee(BigInt(depositQuote.nativeFee))
+  }, [paymentMode, depositQuote])
+  useEffect(() => {
+    if (paymentMode === 'eth' && depositZapQuote?.nativeFee != null) setDepositFee(BigInt(depositZapQuote.nativeFee))
+  }, [paymentMode, depositZapQuote])
 
   useEffect(() => {
     if (withdrawQuote?.nativeFee != null) setWithdrawFee(BigInt(withdrawQuote.nativeFee))
@@ -490,6 +525,34 @@ const Staking = () => {
     },
   })
 
+  // ZAP deposit (pay-with-ETH). msg.value = ethAmount (swap input) + LZ/storage
+  // fees. The contract swaps ETH→CAW via Uniswap V2, then calls depositFor on
+  // CawProfile with the swap output. Slippage is enforced by minCawOut.
+  const depositZap = useContractCall({
+    address: CAW_NAMES_MINTER_ADDRESS,
+    abi: cawProfileMinterAbi,
+    functionName: "depositZap",
+    args: [CLIENT_ID, tokenId || 0, ethAmountWei, zapQuote.minCawOut, chains.l2.layerZero, 0n],
+    disabled: paymentMode !== 'eth' || !tokenId || ethAmountWei === 0n || !zapQuote.loaded || depositFee === 0n || !isTokenOwner,
+    value: ethAmountWei + depositFee,
+    onPending: () => setIsStakePending(true),
+    onSuccess: async (hash) => {
+      console.log('[Staking] depositZap success:', hash)
+      setEthAmount("")
+      const now = Date.now()
+      setRecentStakeTime(now)
+      localStorage.setItem('lastStakeTime', now.toString())
+      setIsStakePending(false)
+      refetchTokenData?.()
+      refetchBalance()
+      if (!hasSeenPrompt && !sessionEnabled) setShowQuickSignModal(true)
+    },
+    onError: (err) => {
+      handleError(err, "depositZap")
+      setIsStakePending(false)
+    },
+  })
+
   // Withdraw CAW from L1
   const withdraw = useContractCall({
     address: CAW_NAMES_ADDRESS,
@@ -520,9 +583,17 @@ const Staking = () => {
   // rejected, or useContractCall bailed on a stale `disabled` ref) doesn't
   // leave the button stuck on "Approving…".
   const handleStake = useCallback(async () => {
-    console.log('[Staking] handleStake called', { isConnected, amount, wrongChainForStake, needsApproval })
+    console.log('[Staking] handleStake called', { isConnected, amount, wrongChainForStake, needsApproval, paymentMode })
     try {
       await ensureWallet({ chainId: chains.l1.chainId }, async () => {
+        if (paymentMode === 'eth') {
+          // No CAW approval needed — the swap output goes Minter → CawProfile
+          // directly. Just fire the ZAP.
+          console.log('[Staking] Calling depositZap (ETH mode)')
+          setIsStakePending(true)
+          try { await depositZap.call() } finally { setIsStakePending(false) }
+          return
+        }
         // Re-fetch allowance now that the wallet is connected and the user's
         // address is known. Pre-connect, useAllowance returns 0n (no owner
         // address), which makes the React-state `needsApproval` true. If the
@@ -549,7 +620,7 @@ const Staking = () => {
       setIsApprovePending(false)
       setIsStakePending(false)
     }
-  }, [isConnected, wrongChainForStake, needsApproval, approve, stake, amount, ensureWallet, refetchAllowance])
+  }, [isConnected, wrongChainForStake, needsApproval, approve, stake, depositZap, amount, ensureWallet, refetchAllowance, paymentMode])
 
   // Handle withdraw button click (for pending withdrawals)
   const handleWithdraw = useCallback(async () => {
@@ -609,7 +680,100 @@ const Staking = () => {
         )
       })()}
 
-      {/* Amount to Stake */}
+      {/* Payment-mode toggle: pay with CAW (default) or pay with ETH (ZAP).
+          ETH-mode swaps via Uniswap V2 in the same tx and forwards CAW to
+          depositFor; slippage is enforced by minCawOut. */}
+      <div className={`flex items-center gap-2 rounded-full p-1 ${
+        isDark ? 'bg-white/[0.04] border border-white/10' : 'bg-black/[0.03] border border-gray-200'
+      }`}>
+        <button
+          type="button"
+          onClick={() => setPaymentMode('caw')}
+          className={`flex-1 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer ${
+            paymentMode === 'caw' ? 'bg-yellow-500 text-black' : (isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-gray-900')
+          }`}
+        >
+          Pay with CAW
+        </button>
+        <button
+          type="button"
+          onClick={() => setPaymentMode('eth')}
+          className={`flex-1 py-2 text-sm font-medium rounded-full transition-colors cursor-pointer ${
+            paymentMode === 'eth' ? 'bg-yellow-500 text-black' : (isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-gray-900')
+          }`}
+        >
+          Pay with ETH
+        </button>
+      </div>
+      {paymentMode === 'eth' && (
+        <div className="text-right -mt-1">
+          <a
+            href="https://app.uniswap.org/#/swap?inputCurrency=ETH&outputCurrency=0xf3b9569F82B18aEf890De263B84189bd33EBe452"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-yellow-500/70 hover:text-yellow-500 transition-colors"
+          >
+            Or use Uniswap directly &rarr;
+          </a>
+        </div>
+      )}
+
+      {/* ETH input + slippage slider (visible only in ETH mode) */}
+      {paymentMode === 'eth' && (
+        <div className={`border rounded-xl p-4 space-y-3 ${
+          isDark ? 'border-white/10 bg-[#0D0D0D]/85' : 'border-gray-200 bg-gray-50'
+        }`}>
+          <div className="text-sm font-medium">ETH to deposit</div>
+          <div className="relative">
+            <input
+              type="text"
+              inputMode="decimal"
+              value={ethAmount}
+              onChange={e => setEthAmount(e.target.value.replace(/[^0-9.]/g, ''))}
+              placeholder="0.05"
+              className={`w-full px-4 py-2.5 rounded-full focus:outline-none text-sm ${
+                isDark
+                  ? 'bg-black border border-white/20 text-white placeholder-white/30 focus:border-white/30'
+                  : 'bg-white border border-gray-300 text-black placeholder-gray-400 focus:border-gray-400'
+              }`}
+            />
+            <span className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500 text-sm">ETH</span>
+          </div>
+          {ethAmountWei > 0n && reserves.loaded && (
+            <div className={`text-xs space-y-1 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+              <div>
+                Expected: <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  {Number(zapQuote.expectedCawOut / 10n**18n).toLocaleString('en-US')} CAW
+                </span>
+              </div>
+              <div>
+                Minimum (after {(slippageBps / 100).toFixed(2)}% slippage):&nbsp;
+                <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  {Number(zapQuote.minCawOut / 10n**18n).toLocaleString('en-US')} CAW
+                </span>
+              </div>
+            </div>
+          )}
+          <div className="space-y-1">
+            <div className="flex justify-between items-center text-xs">
+              <span className={isDark ? 'text-gray-400' : 'text-gray-600'}>Slippage tolerance</span>
+              <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>{(slippageBps / 100).toFixed(2)}%</span>
+            </div>
+            <input
+              type="range"
+              min={50}
+              max={1000}
+              step={50}
+              value={slippageBps}
+              onChange={e => { setSlippageBps(parseInt(e.target.value, 10)); setSlippageAutoSet(true) }}
+              className="w-full"
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Amount to Stake (CAW mode only) */}
+      {paymentMode === 'caw' && (
       <div className="space-y-2">
         <label className={`text-sm font-medium transition-colors duration-300 ${
           isDark ? 'text-gray-300' : 'text-gray-700'
@@ -666,6 +830,7 @@ const Staking = () => {
           </button>
         </div>
       </div>
+      )}
 
       {/* Stake Button */}
       <button
@@ -673,13 +838,19 @@ const Staking = () => {
         className={`w-full py-3 px-4 rounded-full font-semibold transition-all duration-300 ${
           !isConnected
             ? 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
-            : (!tokenId || (!isTokenOwner && !wrongChainForStake) || (!wrongChainForStake && (!amount || depositFee === 0n)))
+            : (!tokenId || (!isTokenOwner && !wrongChainForStake) || (!wrongChainForStake && (
+                paymentMode === 'eth'
+                  ? (ethAmountWei === 0n || depositFee === 0n)
+                  : (!amount || depositFee === 0n))))
             ? (isDark ? 'bg-gray-700 text-gray-400 cursor-not-allowed' : 'bg-gray-300 text-gray-600 cursor-not-allowed')
             : (isStakePending || isApprovePending)
             ? 'bg-yellow-600 text-black cursor-not-allowed'
             : 'bg-yellow-500 hover:bg-yellow-600 text-black cursor-pointer'
         }`}
-        disabled={isConnected && (!tokenId || (!isTokenOwner && !wrongChainForStake) || (!wrongChainForStake && (!amount || depositFee === 0n || isStakePending || isApprovePending)))}
+        disabled={isConnected && (!tokenId || (!isTokenOwner && !wrongChainForStake) || (!wrongChainForStake && (
+          paymentMode === 'eth'
+            ? (ethAmountWei === 0n || depositFee === 0n || isStakePending || isApprovePending)
+            : (!amount || depositFee === 0n || isStakePending || isApprovePending))))}
       >
         {isSwitchingNetwork
           ? t('staking.button.switching')
@@ -689,8 +860,10 @@ const Staking = () => {
           ? t('staking.button.approving')
           : isStakePending
           ? t('staking.button.depositing')
-          : insufficientBalance
+          : (paymentMode === 'caw' && insufficientBalance)
           ? t('staking.button.insufficient_balance')
+          : paymentMode === 'eth'
+          ? "Deposit (ETH)"
           : t('staking.button.deposit')}
       </button>
 

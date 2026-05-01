@@ -4174,8 +4174,16 @@ export const cawProfileMinterAbi = [
     inputs: [
       { name: '_caw', internalType: 'address', type: 'address' },
       { name: '_cawProfiles', internalType: 'address', type: 'address' },
+      { name: '_router', internalType: 'address', type: 'address' },
     ],
     stateMutability: 'nonpayable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'WETH',
+    outputs: [{ name: '', internalType: 'address', type: 'address' }],
+    stateMutability: 'view',
   },
   {
     type: 'function',
@@ -4183,6 +4191,20 @@ export const cawProfileMinterAbi = [
     name: 'costOfName',
     outputs: [{ name: '', internalType: 'uint256', type: 'uint256' }],
     stateMutability: 'pure',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'cawClientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+      { name: 'swapEthAmount', internalType: 'uint256', type: 'uint256' },
+      { name: 'minCawOut', internalType: 'uint256', type: 'uint256' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+      { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'depositZap',
+    outputs: [],
+    stateMutability: 'payable',
   },
   {
     type: 'function',
@@ -4282,6 +4304,23 @@ export const cawProfileMinterAbi = [
     type: 'function',
     inputs: [
       { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'username', internalType: 'string', type: 'string' },
+      { name: 'swapEthAmount', internalType: 'uint256', type: 'uint256' },
+      { name: 'minCawOut', internalType: 'uint256', type: 'uint256' },
+      { name: 'sessionKey', internalType: 'address', type: 'address' },
+      { name: 'expiry', internalType: 'uint64', type: 'uint64' },
+      { name: 'spendLimit', internalType: 'uint256', type: 'uint256' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+      { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'mintAndDepositAndQuickSignZap',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
       { name: 'recipient', internalType: 'address', type: 'address' },
       { name: 'username', internalType: 'string', type: 'string' },
       { name: 'depositAmount', internalType: 'uint256', type: 'uint256' },
@@ -4296,6 +4335,20 @@ export const cawProfileMinterAbi = [
     type: 'function',
     inputs: [
       { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'username', internalType: 'string', type: 'string' },
+      { name: 'swapEthAmount', internalType: 'uint256', type: 'uint256' },
+      { name: 'minCawOut', internalType: 'uint256', type: 'uint256' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+      { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
+    ],
+    name: 'mintAndDepositZap',
+    outputs: [],
+    stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
       { name: 'recipient', internalType: 'address', type: 'address' },
       { name: 'username', internalType: 'string', type: 'string' },
       { name: 'lzTokenAmount', internalType: 'uint256', type: 'uint256' },
@@ -4303,6 +4356,15 @@ export const cawProfileMinterAbi = [
     name: 'mintFor',
     outputs: [],
     stateMutability: 'payable',
+  },
+  {
+    type: 'function',
+    inputs: [],
+    name: 'swapRouter',
+    outputs: [
+      { name: '', internalType: 'contract ISwapRouter', type: 'address' },
+    ],
+    stateMutability: 'view',
   },
 ] as const
 
@@ -4361,6 +4423,28 @@ export const cawProfileQuoterAbi = [
       { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
     ],
     name: 'depositQuote',
+    outputs: [
+      {
+        name: 'quote',
+        internalType: 'struct MessagingFee',
+        type: 'tuple',
+        components: [
+          { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
+          { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'cawClientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'tokenId', internalType: 'uint32', type: 'uint32' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+      { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
+    ],
+    name: 'depositZapQuote',
     outputs: [
       {
         name: 'quote',
@@ -4454,11 +4538,54 @@ export const cawProfileQuoterAbi = [
     type: 'function',
     inputs: [
       { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'sessionKey', internalType: 'address', type: 'address' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+      { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
+    ],
+    name: 'mintAndDepositAndQuickSignZapQuote',
+    outputs: [
+      {
+        name: 'quote',
+        internalType: 'struct MessagingFee',
+        type: 'tuple',
+        components: [
+          { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
+          { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
       { name: 'depositAmount', internalType: 'uint256', type: 'uint256' },
       { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
       { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
     ],
     name: 'mintAndDepositQuote',
+    outputs: [
+      {
+        name: 'quote',
+        internalType: 'struct MessagingFee',
+        type: 'tuple',
+        components: [
+          { name: 'nativeFee', internalType: 'uint256', type: 'uint256' },
+          { name: 'lzTokenFee', internalType: 'uint256', type: 'uint256' },
+        ],
+      },
+    ],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    inputs: [
+      { name: 'clientId', internalType: 'uint32', type: 'uint32' },
+      { name: 'lzDestId', internalType: 'uint32', type: 'uint32' },
+      { name: 'payInLzToken', internalType: 'bool', type: 'bool' },
+    ],
+    name: 'mintAndDepositZapQuote',
     outputs: [
       {
         name: 'quote',

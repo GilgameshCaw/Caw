@@ -10,6 +10,10 @@ export const WETH_ADDRESS = "0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2" as cons
 // Mainnet: USDC 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48, USDT 0xdAC17F958D2ee523a2206206994597C13D831ec7
 export const USDC_ADDRESS = "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" as const;
 export const USDT_ADDRESS = "0xdAC17F958D2ee523a2206206994597C13D831ec7" as const;
+// CAW/WETH Uniswap V2 pair (locked liquidity, Base mainnet). Used by the
+// pay-with-ETH ZAP flows (mintAndDepositZap / depositZap) to read live
+// reserves and compute slippage-adjusted minCawOut on the frontend.
+export const CAW_PAIR_ADDRESS = "0x48D20b3e529fB3DD7D91293f80638dF582AB2Daa" as const;
 
 // Testnet addresses (Sepolia / Base Sepolia / Arbitrum Sepolia)
 export const CAW_ADDRESS = "0x56817dc696448135203C0556f702c6a953260411" as const;

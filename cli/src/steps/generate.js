@@ -190,6 +190,9 @@ export async function writeAddressesForClient(config, clientDir) {
     WETH_ADDRESS: '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',
     USDC_ADDRESS: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
     USDT_ADDRESS: '0xdAC17F958D2ee523a2206206994597C13D831ec7',
+    // CAW/WETH Uniswap V2 pair (Base mainnet, locked liquidity). Used by the
+    // ZAP flows (pay-with-ETH mint+deposit / deposit) for slippage quoting.
+    CAW_PAIR_ADDRESS: '0x48D20b3e529fB3DD7D91293f80638dF582AB2Daa',
   }
 
   const lines = [
