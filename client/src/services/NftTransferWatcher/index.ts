@@ -92,13 +92,19 @@ export const nftTransferWatcherService: Service = {
         console.log(`[NftTransferWatcher] No checkpoint — starting from current head ${lastBlock}`)
       }
 
+      // Set true at the end of a poll if more blocks remain right now (we hit
+      // the per-poll cap). Drives the catch-up scheduling in `finally`.
+      let behindAfterPoll = false
+
       const poll = async () => {
         if (!alive) return
+        behindAfterPoll = false
         try {
           const currentBlock = await provider.getBlockNumber()
           if (currentBlock > lastBlock) {
             const fromBlock = lastBlock + 1
             const toBlock = Math.min(currentBlock, fromBlock + cfg.maxBlocksPerPoll - 1)
+            behindAfterPoll = toBlock < currentBlock
 
             const events = await contract.queryFilter(
               contract.filters.Transfer(),
@@ -185,7 +191,15 @@ export const nftTransferWatcherService: Service = {
         } catch (err: any) {
           console.error('[NftTransferWatcher] Poll error:', err?.message || err)
         } finally {
-          if (alive) pollTimer = setTimeout(poll, cfg.pollIntervalMs)
+          // Drain quickly when behind: if the last poll hit the per-tick cap,
+          // more blocks remain right now — schedule the next pass on a short
+          // delay instead of sleeping the full interval. Why: a multi-day
+          // downtime leaves the checkpoint tens of thousands of blocks behind,
+          // and at 10k blocks per 60s tick we'd take ~5 min to catch up —
+          // long enough for a marketplace buy to stay invisible to the
+          // indexer after the user has refreshed the page.
+          if (!alive) return
+          pollTimer = setTimeout(poll, behindAfterPoll ? 250 : cfg.pollIntervalMs)
         }
       }
 
