@@ -145,14 +145,23 @@ model Caw {
 // denormalized — single atomic counter, cheap to keep accurate, and the
 // "12 votes" badge reads it without a count query.
 model Poll {
-  id         Int      @id @default(autoincrement())
-  cawId      Int      @unique
-  options    String[] // PG text[]; positional. ≤ 6 entries enforced at write time.
-  totalVotes Int      @default(0)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  caw        Caw      @relation(fields: [cawId], references: [id], onDelete: Cascade)
-  votes      Vote[]
+  id           Int      @id @default(autoincrement())
+  cawId        Int      @unique
+  options      String[] // PG text[]; positional. ≤ 6 entries enforced at write time.
+  // Optional per-option image URLs. Positional, parallel to `options` —
+  // empty string in slot i means "no image for option i". Default to an
+  // empty array so older Poll rows (created before images were added)
+  // keep working without backfill. URLs point at the image-upload
+  // endpoint's CDN path; same /uploads/images/... layout that media
+  // attachments use. Off-chain only — the on-chain ::poll:...:: marker
+  // stays text-only, so mirror nodes see the poll but not the images
+  // unless they fetch from the original instance.
+  optionImages String[] @default([])
+  totalVotes   Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  caw          Caw      @relation(fields: [cawId], references: [id], onDelete: Cascade)
+  votes        Vote[]
 
   @@index([cawId])
 }

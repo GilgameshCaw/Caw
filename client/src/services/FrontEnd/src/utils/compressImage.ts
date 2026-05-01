@@ -28,6 +28,11 @@ const PRESETS = {
   report:       { maxSizeMB: 0.5,  maxWidthOrHeight: 1280, quality: 0.75 },
   /** DM attachments — encrypted, so we can't recompress server-side. */
   dm:           { maxSizeMB: 0.75, maxWidthOrHeight: 1024, quality: 0.8 },
+  /** Poll option image — display ~64px square (2× retina). Tighter byte
+   *  cap than `thumb` because polls can have up to 6 of these per post,
+   *  and we want the total payload for one poll's images to stay under
+   *  ~100KB. */
+  pollOption:   { maxSizeMB: 0.025, maxWidthOrHeight: 128, quality: 0.8 },
 } as const
 
 export type CompressionPreset = keyof typeof PRESETS

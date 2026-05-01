@@ -336,6 +336,11 @@ export type ActionParams = {
   amounts?:       BigInt[]
   text?:          string
   retriedTxQueueId?: number
+  /** Per-option image URLs for a poll, positional with the options listed
+   *  inside the ::poll:...:: marker in `text`. Off-chain — sent to the API
+   *  in the request body but NOT included in the signed EIP-712 payload.
+   *  The server persists these next to Poll.options. */
+  pollOptionImages?: string[]
   /** Internal: incremented when re-entering after a cawonce collision so
    *  we cap auto-retries. Don't set this manually. */
   _cawonceRetryCount?: number
@@ -865,6 +870,10 @@ export function useSignAndSubmitAction() {
           data: message, domain, types, signature,
           ...(pendingDepositTxHash ? { pendingDepositTxHash } : {}),
           ...(params.retriedTxQueueId ? { retriedTxQueueId: params.retriedTxQueueId } : {}),
+          // Off-chain poll metadata — image URLs that pair positionally with
+          // the options inside the ::poll:...:: marker. Server-side validated
+          // in /api/actions before persisting to Poll.optionImages.
+          ...(params.pollOptionImages && params.pollOptionImages.length > 0 ? { pollOptionImages: params.pollOptionImages } : {}),
         })
       }))
 

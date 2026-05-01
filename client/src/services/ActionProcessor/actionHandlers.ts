@@ -156,12 +156,18 @@ export async function handleCawAction(
   // Use upsert so the local-API optimistic path (which already created the
   // poll when the user submitted) doesn't conflict with the indexer's
   // catch-up — both paths arrive at the same final row.
+  //
+  // We deliberately DO NOT touch optionImages on update: that field is
+  // off-chain only and was written by the API submit on this instance.
+  // For polls authored on a different mirror node (no API submit ran here,
+  // we only see the on-chain marker), optionImages stays at its default
+  // empty array and the UI gracefully falls back to text-only options.
   try {
     const parsedPoll = parsePoll(textContent)
     if (parsedPoll) {
       await tx.poll.upsert({
         where: { cawId: newCaw.id },
-        update: { options: parsedPoll.options }, // benign re-write if already there
+        update: { options: parsedPoll.options }, // benign re-write if already there; preserves optionImages
         create: { cawId: newCaw.id, options: parsedPoll.options },
       })
     }

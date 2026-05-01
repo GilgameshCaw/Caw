@@ -70,6 +70,10 @@ export type CawItem = {
   hasVideo?: boolean // Quick check if caw has any video
   poll?: {
     options: string[]
+    /** Per-option image URLs, positional. Same length as `options`. Empty
+     * string in slot i = no image for that option. Off-chain only — polls
+     * authored on a different mirror node arrive with all entries empty. */
+    optionImages: string[]
     totalVotes: number
     optionVoteCounts: number[]
     userVote: { optionIndex: number; pending: boolean } | null

@@ -1,6 +1,8 @@
-import React from 'react'
-import { HiOutlineX, HiPlus } from 'react-icons/hi'
+import React, { useRef, useState } from 'react'
+import { HiOutlineX, HiPlus, HiOutlinePhotograph } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
+import { useActiveToken } from '~/store/tokenDataStore'
+import { uploadMedia } from '~/api/upload'
 import {
   POLL_MIN_OPTIONS,
   POLL_MAX_OPTIONS,
@@ -15,6 +17,11 @@ const byteLen = (s: string) => new TextEncoder().encode(s).length
 interface Props {
   options: string[]
   onChange: (options: string[]) => void
+  /** Optional per-option image URLs, positional. Always passed; empty
+   * string in slot i = no image. Parent owns this state so the value
+   * persists across re-renders + travels through to the submit path. */
+  optionImages: string[]
+  onChangeImages: (imgs: string[]) => void
   onClose: () => void
   /** When threading, where in the thread the poll should land. */
   position: 'start' | 'end'
@@ -43,21 +50,39 @@ interface Props {
 const PollComposer: React.FC<Props> = ({
   options,
   onChange,
+  optionImages,
+  onChangeImages,
   onClose,
   position,
   onChangePosition,
   showPositionPicker,
 }) => {
   const { isDark } = useTheme()
+  const activeToken = useActiveToken()
+
+  // One file input per option row, refs by index. Avoids the "click the
+  // tiny + button" → invisible file dialog dance with a single shared
+  // input where we'd have to track which index is active.
+  const fileInputs = useRef<Record<number, HTMLInputElement | null>>({})
+  const [uploading, setUploading] = useState<Record<number, boolean>>({})
 
   const setOption = (i: number, v: string) => {
     const next = options.slice()
     next[i] = v
     onChange(next)
   }
+  const setImage = (i: number, url: string) => {
+    // Maintain positional alignment with options[]: pad with empty strings
+    // up to the option count so a future read can index by option without
+    // bounds-checking a parallel array.
+    const next = options.map((_, idx) => optionImages[idx] || '')
+    next[i] = url
+    onChangeImages(next)
+  }
   const addOption = () => {
     if (options.length >= POLL_MAX_OPTIONS) return
     onChange([...options, ''])
+    onChangeImages([...optionImages, ''])
   }
   const removeOption = (i: number) => {
     if (options.length <= 1) {
@@ -69,6 +94,28 @@ const PollComposer: React.FC<Props> = ({
     const next = options.slice()
     next.splice(i, 1)
     onChange(next)
+    const nextImgs = optionImages.slice()
+    nextImgs.splice(i, 1)
+    onChangeImages(nextImgs)
+  }
+
+  const handlePickFile = (i: number, file: File) => {
+    if (!activeToken?.tokenId) return
+    setUploading(u => ({ ...u, [i]: true }))
+    // uploadMedia compresses with the chosen preset (pollOption = 128px
+    // WebP at 25KB target) and POSTs to /api/upload, which returns a
+    // /uploads/images/... URL. The same-origin URL is what the server's
+    // poll route expects.
+    uploadMedia([file], activeToken.tokenId, 'pollOption')
+      .then(urls => {
+        if (urls[0]) setImage(i, urls[0])
+      })
+      .catch(err => {
+        console.warn('[PollComposer] image upload failed:', err)
+      })
+      .finally(() => {
+        setUploading(u => ({ ...u, [i]: false }))
+      })
   }
 
   // Surface the most-actionable validation issue. Multiple errors at once
@@ -111,8 +158,63 @@ const PollComposer: React.FC<Props> = ({
         {options.map((opt, i) => {
           const overByte = byteLen(opt) > POLL_MAX_OPTION_BYTES
           const remaining = POLL_MAX_OPTION_BYTES - byteLen(opt)
+          const imgUrl = optionImages[i] || ''
+          const isUploading = !!uploading[i]
           return (
             <div key={i} className="flex items-center gap-2">
+              {/* Image picker / preview. Always reserves the same square so
+                  rows don't shift width when an image gets added. */}
+              <div className="relative shrink-0">
+                <input
+                  ref={el => { fileInputs.current[i] = el }}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={e => {
+                    const file = e.target.files?.[0]
+                    if (file) handlePickFile(i, file)
+                    // Reset so picking the same file twice still triggers onChange.
+                    e.target.value = ''
+                  }}
+                />
+                {imgUrl ? (
+                  <div className="relative w-9 h-9">
+                    <img
+                      src={imgUrl}
+                      alt=""
+                      className="w-9 h-9 rounded-lg object-cover border border-yellow-500/40"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setImage(i, '')}
+                      className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-black/80 text-white flex items-center justify-center hover:bg-black"
+                      aria-label="Remove image"
+                    >
+                      <HiOutlineX className="w-3 h-3" />
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => fileInputs.current[i]?.click()}
+                    disabled={isUploading}
+                    aria-label="Add image to option"
+                    className={`w-9 h-9 rounded-lg border flex items-center justify-center transition-colors ${
+                      isUploading
+                        ? (isDark ? 'border-white/10 text-white/30' : 'border-gray-200 text-gray-400')
+                        : (isDark
+                          ? 'border-white/10 text-white/40 hover:text-yellow-400 hover:border-yellow-500/40'
+                          : 'border-gray-300 text-gray-400 hover:text-yellow-600 hover:border-yellow-500')
+                    }`}
+                  >
+                    {isUploading ? (
+                      <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      <HiOutlinePhotograph className="w-4 h-4" />
+                    )}
+                  </button>
+                )}
+              </div>
               <input
                 type="text"
                 value={opt}

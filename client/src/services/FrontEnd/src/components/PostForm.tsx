@@ -401,6 +401,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // pollPosition mirrors mediaPosition: when threading, where to attach the
   // (atomic) ::poll:...:: block.
   const [pollOptions, setPollOptions] = useState<string[]>([])
+  // Per-option image URLs, positional, parallel to pollOptions. Empty
+  // string slot = no image. Persisted off-chain via the API submit body
+  // (NOT inside the signed action data, since URLs are not part of the
+  // on-chain marker).
+  const [pollOptionImages, setPollOptionImages] = useState<string[]>([])
   const [pollEnabled, setPollEnabled] = useState(false)
   const [pollPosition, setPollPosition] = useState<'start' | 'end'>('end')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -1160,6 +1165,12 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     // Post first chunk (with media, parent info, etc.)
     // Quotes use actionType 'recaw' (with text) so the original author receives funds.
     // Replies use actionType 'caw' with a parent reference.
+    // Poll images travel only with the chunk that carries the ::poll:...::
+    // marker. For a single post, that's chunk 0. For a thread, it's the
+    // first or last chunk depending on pollPosition. Other chunks send
+    // nothing.
+    const pollLandsInFirstChunk = !!submitPollMarker && (!isThreadMode || pollPosition === 'start')
+    const pollLandsInLastChunk = !!submitPollMarker && isThreadMode && pollPosition === 'end'
     const firstParams: ActionParams = {
       actionType: quote ? 'recaw' : 'caw',
       senderId: effectiveTokenId,
@@ -1171,7 +1182,8 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       }),
       ...(totalCawCost > 0 && {
         amounts: [totalCawCost]
-      })
+      }),
+      ...(pollLandsInFirstChunk && pollOptionImages.some(s => s) && { pollOptionImages }),
     }
 
     const firstPostCawonce = threadCawonces[0]
@@ -1201,14 +1213,20 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         for (let i = 0; i < params.length; i++) {
           const r = responses[i]
           if (!r || r.error) continue
-          const isFirstChunk = chunkOffset + i === 0
+          const chunkAbsIdx = chunkOffset + i
+          const isFirstChunk = chunkAbsIdx === 0
+          const isLastChunk = chunkAbsIdx === chunks.length - 1
+          const chunkHasPoll =
+            (pollLandsInFirstChunk && isFirstChunk) ||
+            (pollLandsInLastChunk && isLastChunk)
           const tempId = addPendingPost({
-            content: chunks[chunkOffset + i],
+            content: chunks[chunkAbsIdx],
             username: activeToken.username,
             displayName: activeUserData?.displayName,
             tokenId: effectiveTokenId,
             avatarUrl: avatars[effectiveTokenId] || getUserAvatar({ tokenId: effectiveTokenId }),
             cawonce: r.cawonce,
+            ...(chunkHasPoll && pollOptionImages.some(s => s) ? { pollOptionImages } : {}),
             ...(isFirstChunk ? {
               replyToId: replyTo?.id,
               parent: replyTo || quote || undefined,
@@ -1233,14 +1251,24 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 
     // Build reply params for chunks after the first
     const buildReplyParams = (startIdx: number): ActionParams[] =>
-      chunks.slice(startIdx).map((text, i) => ({
-        actionType: 'caw' as const,
-        senderId: effectiveTokenId,
-        text,
-        cawonce: threadCawonces[startIdx + i],
-        receiverId: effectiveTokenId,
-        receiverCawonce: firstPostCawonce,
-      }))
+      chunks.slice(startIdx).map((text, i) => {
+        const chunkIdx = startIdx + i
+        const isLastChunk = chunkIdx === chunks.length - 1
+        return {
+          actionType: 'caw' as const,
+          senderId: effectiveTokenId,
+          text,
+          cawonce: threadCawonces[chunkIdx],
+          receiverId: effectiveTokenId,
+          receiverCawonce: firstPostCawonce,
+          // Attach poll images to whichever reply chunk carries the marker.
+          // Single-chunk threads don't reach this builder; for multi-chunk
+          // threads with poll-position=end, the marker lives in chunks[last].
+          ...(pollLandsInLastChunk && isLastChunk && pollOptionImages.some(s => s)
+            ? { pollOptionImages }
+            : {}),
+        }
+      })
 
     if (await checkCanBatch()) {
       // Fast path: batch all chunks (including first) through .many()
@@ -1261,6 +1289,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           parent: replyTo || quote || undefined,
           cawonce: response.cawonce,
           isQuote: !!quote,
+          // First chunk gets the poll images when the poll lands here
+          // (single-chunk posts always; threads with pollPosition='start').
+          ...(pollLandsInFirstChunk && pollOptionImages.some(s => s) ? { pollOptionImages } : {}),
         })
         if (response.txQueueId) updatePostWithTxQueueId(firstPendingId, response.txQueueId)
         firstPendingPost = {
@@ -1281,6 +1312,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             if (!replyResponse) break
 
             if (activeToken) {
+              const isLastChunk = i === chunks.length - 1
               const tempId = addPendingPost({
                 content: chunks[i],
                 username: activeToken.username,
@@ -1290,6 +1322,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 cawonce: replyResponse.cawonce,
                 replyToId: firstPendingId,
                 parent: firstPendingPost,
+                ...(pollLandsInLastChunk && isLastChunk && pollOptionImages.some(s => s) ? { pollOptionImages } : {}),
               })
               if (replyResponse.txQueueId) updatePostWithTxQueueId(tempId, replyResponse.txQueueId)
             }
@@ -1305,6 +1338,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     setShowMediaOverlay(false)
     setPollEnabled(false)
     setPollOptions([])
+    setPollOptionImages([])
     onSuccess?.()
     } catch (error: any) {
       // Ignore errors (user may have rejected signature)
@@ -1789,7 +1823,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           <PollComposer
             options={pollOptions}
             onChange={setPollOptions}
-            onClose={() => { setPollEnabled(false); setPollOptions([]) }}
+            optionImages={pollOptionImages}
+            onChangeImages={setPollOptionImages}
+            onClose={() => { setPollEnabled(false); setPollOptions([]); setPollOptionImages([]) }}
             position={pollPosition}
             onChangePosition={setPollPosition}
             showPositionPicker={isThreadMode}
@@ -1938,9 +1974,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 if (pollEnabled) {
                   setPollEnabled(false)
                   setPollOptions([])
+                  setPollOptionImages([])
                 } else {
                   setPollEnabled(true)
                   setPollOptions(['', ''])
+                  setPollOptionImages(['', ''])
                 }
               }}
               aria-label={pollEnabled ? 'Remove poll' : 'Add poll'}

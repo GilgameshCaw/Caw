@@ -178,7 +178,7 @@ router.post('/', async (req, res) => {
   const timings: Record<string, number> = {}
   const mark = (label: string) => { timings[label] = Date.now() - reqStart }
   try {
-    const { data, domain, types, signature, pendingDepositTxHash, retriedTxQueueId } = req.body
+    const { data, domain, types, signature, pendingDepositTxHash, retriedTxQueueId, pollOptionImages } = req.body
 
     // Validate pendingDepositTxHash shape if provided. The server does NOT verify
     // the hash synchronously (that would block the request path on an L1 RPC call).
@@ -533,13 +533,36 @@ router.post('/', async (req, res) => {
         // Optimistic Poll creation when the caw text carries a ::poll:...::
         // marker. Same upsert pattern as the indexer in handleCawAction so
         // both paths converge on one row whichever runs first.
+        //
+        // optionImages is OFF-CHAIN: the marker stays text-only on-chain so
+        // mirror nodes that ingest via RawEventsGatherer create the same
+        // marker-derived poll options without needing the URLs. This route
+        // is the only place URLs land — passed in the request body
+        // alongside the signed action data, validated below, then
+        // persisted next to the (positional) options array.
         try {
           const parsedPoll = parsePoll(textContent)
           if (parsedPoll) {
+            // Sanitize optionImages: must be an array of strings, same length
+            // as options, each either empty (no image) or a same-origin
+            // /uploads/images/... URL the operator's instance just minted.
+            // Reject foreign URLs — accepting them would let polls embed
+            // arbitrary remote content with the operator's instance as the
+            // implicit referrer. The image upload route returns same-origin
+            // URLs, so legit clients always pass that shape.
+            const apiHost = (process.env.SHORTURL_DOMAIN || '').replace(/\/$/, '')
+            const sanitizedImages: string[] = parsedPoll.options.map((_, i) => {
+              const v = Array.isArray(pollOptionImages) ? pollOptionImages[i] : ''
+              if (typeof v !== 'string' || !v) return ''
+              // Allow relative paths (/uploads/...) and same-origin absolute URLs.
+              if (v.startsWith('/uploads/images/')) return v
+              if (apiHost && v.startsWith(`${apiHost}/uploads/images/`)) return v
+              return ''
+            })
             await prisma.poll.upsert({
               where: { cawId: caw.id },
-              update: { options: parsedPoll.options },
-              create: { cawId: caw.id, options: parsedPoll.options },
+              update: { options: parsedPoll.options, optionImages: sanitizedImages },
+              create: { cawId: caw.id, options: parsedPoll.options, optionImages: sanitizedImages },
             })
           }
         } catch (pollErr) {

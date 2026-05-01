@@ -15,7 +15,7 @@ interface PendingPost extends Partial<CawItem> {
 
 interface PendingPostsStore {
   pendingPosts: PendingPost[]
-  addPendingPost: (post: { content: string; username: string; tokenId: number; displayName?: string; image?: string; avatarUrl?: string; replyToId?: string; parent?: CawItem; cawonce?: number; isQuote?: boolean; action?: string }) => string
+  addPendingPost: (post: { content: string; username: string; tokenId: number; displayName?: string; image?: string; avatarUrl?: string; replyToId?: string; parent?: CawItem; cawonce?: number; isQuote?: boolean; action?: string; pollOptionImages?: string[] }) => string
   updatePostWithTxQueueId: (tempId: string, txQueueId: number) => void
   /** Update a pending post's id once the real caw ID is known */
   updatePostId: (cawonce: number, userId: number, realId: string) => void
@@ -42,6 +42,13 @@ export const usePendingPostsStore = create<PendingPostsStore>((set) => ({
     const synthesizedPoll = parsedPoll
       ? {
           options: parsedPoll.options,
+          // Mirror the same positional-pad-to-options-length the server
+          // applies in shapeCaw. Caller passes an explicit array when
+          // images were uploaded; we pad/truncate so an out-of-sync
+          // length never lets the UI miss a thumbnail or render a stray.
+          optionImages: parsedPoll.options.map((_, i) =>
+            (post.pollOptionImages?.[i]) || ''
+          ),
           totalVotes: 0,
           optionVoteCounts: parsedPoll.options.map(() => 0),
           userVote: null,

@@ -176,6 +176,10 @@ const PollDisplay: React.FC<Props> = ({ caw }) => {
         const pct = Math.round(rawPct)
         const isUserPick = local.optionIndex === i
         const isHover = hovered === i
+        // Optional per-option thumbnail. The image lives off-chain so polls
+        // mirrored from another node arrive without one — render text-only
+        // in that case (the slot is just an empty string).
+        const imgUrl = poll.optionImages?.[i] || ''
 
         if (showResults) {
           // Width animates from 0 on the very first render with results
@@ -212,7 +216,15 @@ const PollDisplay: React.FC<Props> = ({ caw }) => {
                   ? (isDark ? 'border-yellow-500/60' : 'border-yellow-500')
                   : (isDark ? 'border-white/10' : 'border-gray-200')
               }`} />
-              <div className="relative flex items-center justify-between gap-2">
+              <div className="relative flex items-center gap-2">
+                {imgUrl && (
+                  <img
+                    src={imgUrl}
+                    alt=""
+                    className="w-8 h-8 rounded-md object-cover shrink-0"
+                    loading="lazy"
+                  />
+                )}
                 <span className={`flex-1 truncate text-sm transition-colors ${
                   isUserPick
                     ? (isDark ? 'text-white font-medium' : 'text-gray-900 font-medium')
@@ -246,7 +258,7 @@ const PollDisplay: React.FC<Props> = ({ caw }) => {
             disabled={submitting}
             onMouseEnter={() => setHovered(i)}
             onMouseLeave={() => setHovered(null)}
-            className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-colors ${
+            className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-colors flex items-center gap-2 ${
               submitting
                 ? 'cursor-wait opacity-60'
                 : (isHover
@@ -254,7 +266,15 @@ const PollDisplay: React.FC<Props> = ({ caw }) => {
                   : (isDark ? 'border-white/10 hover:border-yellow-500/50 text-white/80' : 'border-gray-200 hover:border-yellow-500/50 text-gray-800'))
             }`}
           >
-            {opt}
+            {imgUrl && (
+              <img
+                src={imgUrl}
+                alt=""
+                className="w-8 h-8 rounded-md object-cover shrink-0"
+                loading="lazy"
+              />
+            )}
+            <span className="flex-1 truncate">{opt}</span>
           </button>
         )
       })}

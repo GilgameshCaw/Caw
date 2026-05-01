@@ -37,6 +37,14 @@ export interface ShapedPoll {
   /** The poll's options as posted, positional. */
   options: string[]
   /**
+   * Optional per-option image URLs, positional, same length as `options`
+   * when populated. Slots may be empty strings ("no image for this
+   * option"). Off-chain — only populated for polls authored on this
+   * instance (or imported via API); polls picked up purely from on-chain
+   * mirror events default to empty.
+   */
+  optionImages: string[]
+  /**
    * The current user's vote on this poll, when known. `optionIndex: null`
    * indicates "no vote yet" — distinct from "voted, then unvoted" which
    * deletes the row entirely. `pending` mirrors the same semantics as
@@ -115,8 +123,15 @@ export function shapeCaw(raw: CawRaw | any): ShapedCaw {
   // it's stripped before the response is returned to the client.
   let poll: ShapedPoll | undefined
   if (raw.poll) {
+    const opts: string[] = raw.poll.options || []
+    // Pad / truncate optionImages so it's positional with options. Stored
+    // value can drift if a future migration changes shape; clients want a
+    // strict "imgs[i] corresponds to options[i]" guarantee.
+    const rawImgs: string[] = raw.poll.optionImages || []
+    const optionImages = opts.map((_, i) => rawImgs[i] || '')
     poll = {
-      options: raw.poll.options || [],
+      options: opts,
+      optionImages,
       totalVotes: raw.poll.totalVotes ?? 0,
       optionVoteCounts: [],   // filled by enrichWithPollVotes
       userVote: null,         // filled by enrichWithPollVotes
@@ -206,7 +221,7 @@ export function getCawIncludeConfig(options: CawQueryOptions = {}) {
     // viewer's own vote come from a follow-up enrichWithPollVotes() call —
     // groupBy + targeted findMany is cheaper than fanning aggregates out
     // through Prisma's nested includes for every list endpoint.
-    poll: { select: { id: true, options: true, totalVotes: true } },
+    poll: { select: { id: true, options: true, optionImages: true, totalVotes: true } },
     ...(includeHashtags && {
       hashtags: {
         include: { hashtag: { select: { name: true } } }
@@ -230,7 +245,7 @@ export function getCawIncludeConfig(options: CawQueryOptions = {}) {
         bookmarks: currentUserId
           ? { where: { userId: currentUserId }, select: { userId: true }, take: 1 }
           : false,
-        poll: { select: { id: true, options: true, totalVotes: true } },
+        poll: { select: { id: true, options: true, optionImages: true, totalVotes: true } },
         ...(includeHashtags && {
           hashtags: {
             include: { hashtag: { select: { name: true } } }
