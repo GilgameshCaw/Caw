@@ -16,6 +16,11 @@ export interface CawRaw {
   totalTipAmount?: number
   bookmarks?: Array<{ userId: number }>
   bookmarkCount?: number
+  // Set when getCawIncludeConfig pulled the pinnedBy relation. Only
+  // the post's author can pin, so this is 0 or 1 entry where
+  // userId === raw.userId.
+  pinnedBy?: Array<{ userId: number; pending: boolean }>
+  userId?: number
   commentCount: number
   recawCount: number
   likeCount: number
@@ -72,13 +77,15 @@ export interface ShapedCaw {
   totalTipAmount: number
   isBookmarked?: boolean
   bookmarkCount?: number
-  // Set on the (single) caw the profile owner has pinned. The caws.ts
-  // route prepends the pinned caw to the first page and stamps this
-  // flag — clients use it to render the "📌 Pinned" badge above the
-  // bubble. Also surfaced as `pinnedAt` (raw timestamp) so the owner
-  // can render the toggle state in their menu.
+  // Set on caws the profile owner has pinned (up to 3). The caws.ts
+  // profile-feed route prepends the pinned caws to the first page and
+  // stamps this flag — clients render the "📌 Pinned" badge above the
+  // bubble for any item with isPinned=true.
   isPinned?: boolean
-  pinnedAt?: string | null
+  // True while the corresponding PinnedCaw row is pending — i.e. the
+  // pi: tx is in flight or the xpi: tx has flagged the row but the
+  // unpin hasn't confirmed yet. UI uses this for spinner / dim state.
+  pinPending?: boolean
   likePending?: boolean
   recawPending?: boolean
   replyPending?: boolean
@@ -162,7 +169,9 @@ export function shapeCaw(raw: CawRaw | any): ShapedCaw {
     replyPending,
     isBookmarked: raw.bookmarks ? raw.bookmarks.length > 0 : undefined,
     bookmarkCount: raw.bookmarkCount ?? 0,
-    pinnedAt: raw.pinnedAt ? raw.pinnedAt.toISOString() : null,
+    pinPending: (raw.pinnedBy && raw.pinnedBy.length > 0)
+      ? !!raw.pinnedBy.find((p: any) => p.userId === raw.userId)?.pending
+      : undefined,
     commentCount: raw.commentCount,
     recawCount: raw.recawCount,
     cawonce: raw.cawonce,
@@ -217,6 +226,11 @@ export function getCawIncludeConfig(options: CawQueryOptions = {}) {
     bookmarks: currentUserId
       ? { where: { userId: currentUserId }, select: { userId: true }, take: 1 }
       : false,
+    // Pin row(s) for this caw. Only the post's author can pin, so this
+    // is 0 or 1 row. We don't filter by userId here because we don't
+    // have the post's userId at include-time; shapeCaw matches the row
+    // (if any) against raw.userId and surfaces pinPending.
+    pinnedBy: { select: { userId: true, pending: true } },
     // Poll core (options + totalVotes). Per-option vote counts and the
     // viewer's own vote come from a follow-up enrichWithPollVotes() call —
     // groupBy + targeted findMany is cheaper than fanning aggregates out

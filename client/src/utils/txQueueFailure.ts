@@ -162,6 +162,31 @@ async function cleanupOptimisticRows(
         where: { voterId: senderId, cawonce, pending: true }
       })
     }
+
+    // PIN / UNPIN (actionType 7 with pi: / xpi: prefix). Symmetric rollback:
+    //   pi:  optimistic insert wrote a pending row → delete it.
+    //   xpi: optimistic write only flipped pending=true on an EXISTING
+    //        confirmed row → flip it back to pending=false. The original
+    //        pin survives the failed unpin attempt.
+    if (actionType === 7 && typeof actionData?.text === 'string') {
+      const text: string = actionData.text
+      if (text.startsWith('pi:')) {
+        const cawId = parseInt(text.replace('pi:', '').trim())
+        if (!isNaN(cawId) && cawId > 0) {
+          await prisma.pinnedCaw.deleteMany({
+            where: { userId: senderId, cawId, pending: true }
+          })
+        }
+      } else if (text.startsWith('xpi:')) {
+        const cawId = parseInt(text.replace('xpi:', '').trim())
+        if (!isNaN(cawId) && cawId > 0) {
+          await prisma.pinnedCaw.updateMany({
+            where: { userId: senderId, cawId, pending: true },
+            data: { pending: false }
+          })
+        }
+      }
+    }
   } catch (err: any) {
     console.warn(`[markTxQueueFailed] Optimistic cleanup failed for sender ${senderId}:`, err.message)
   }

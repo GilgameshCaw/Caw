@@ -78,6 +78,14 @@ model User {
   blocksGiven           Block[]        @relation("BlocksGiven")
   blocksReceived        Block[]        @relation("BlocksReceived")
   bookmarks             Bookmark[]
+  pinnedCaws            PinnedCaw[]
+  // Cached count of CONFIRMED pinned caws (pending=false). Maintained
+  // by the same write paths that touch PinnedCaw — incremented when a
+  // pending row flips to confirmed, decremented when a confirmed row
+  // is deleted. Read by the FeedItem owner menu to grey out the "Pin"
+  // option at 3/3. The cap is a client affordance, not a server
+  // invariant — the read path filters to top-3 regardless.
+  pinnedCawCount        Int            @default(0)
   votes                 Vote[]
   offerDismissals       MarketplaceOfferDismissal[]
 
@@ -116,12 +124,7 @@ model Caw {
   bookmarks     Bookmark[]
   bookmarkCount Int            @default(0)
   poll          Poll?
-  // Profile pin. Null = not pinned. Timestamp = when it was pinned —
-  // used for ordering if we ever allow multi-pin and to break ties when
-  // a user un-pins/re-pins quickly. Single-pin enforcement lives in the
-  // indexer (and the API fallback): pinning a new post nulls every
-  // other pinned post owned by the same user.
-  pinnedAt      DateTime?
+  pinnedBy      PinnedCaw[]
 
   @@unique([userId, cawonce])
   @@index([userId, action, createdAt])
@@ -129,9 +132,6 @@ model Caw {
   @@index([originalCawId])
   @@index([originalCawId, action])
   @@index([status, userId])
-  // Filtered index: tiny because most rows are NULL. Speeds up the
-  // "fetch this user's pinned post" lookup on every profile load.
-  @@index([userId, pinnedAt])
 }
 
 // Poll attached to a Caw. Created in the same transaction as the Caw row by
@@ -951,6 +951,32 @@ model Bookmark {
   caw       Caw      @relation(fields: [cawId], references: [id], onDelete: Cascade)
 
   @@unique([userId, cawId])
+  @@index([userId, createdAt])
+  @@index([cawId])
+}
+
+// Profile pin. One row per (user, pinned caw). Mirrors the Bookmark
+// shape with one extra field — `pending` flag, same lifecycle as
+// Like.pending: API sets pending=true on optimistic insert, indexer
+// flips to false on confirm, tx-fail rollback deletes the row (for
+// pi:) or flips pending back (for xpi:, where we kept the original).
+//
+// Cap: NOT enforced server-side. The read path (caws.ts profile feed)
+// shows only the 3 most recently pinned. If parallel pin txs race
+// past 3, the older ones simply never render until the user unpins
+// one of the visible 3.
+model PinnedCaw {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  cawId     Int
+  pending   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [tokenId], onDelete: Cascade)
+  caw       Caw      @relation(fields: [cawId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, cawId])
+  // Profile-feed read sorts by createdAt desc to surface the 3 most
+  // recently pinned; this index makes that lookup index-only.
   @@index([userId, createdAt])
   @@index([cawId])
 }

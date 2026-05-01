@@ -637,7 +637,15 @@ export async function handleOtherAction(
     return
   }
 
-  // Check if this is a profile pin/unpin action
+  // Check if this is a profile pin/unpin action.
+  // pi:{cawId}  — pin
+  // xpi:{cawId} — unpin
+  // Order: xpi: first, since startsWith('pi:') doesn't match 'xpi:' but
+  // grouping the two pin handlers together keeps the dispatch readable.
+  if (rawAction.text?.startsWith('xpi:')) {
+    await handleUnpinAction(tx, rawAction, authorId)
+    return
+  }
   if (rawAction.text?.startsWith('pi:')) {
     await handlePinAction(tx, rawAction, authorId)
     return
@@ -1153,19 +1161,19 @@ async function handleHideAction(
 }
 
 /**
- * Handle profile pin/unpin actions.
+ * Handle profile pin actions: confirm a previously-optimistic PinnedCaw
+ * row, or upsert one fresh if the indexer ran before /api/actions did
+ * (mirror nodes pulling chain history from another instance see no
+ * optimistic write).
  *
- * Text formats:
- *   pi:{cawId}  — pin that caw to the sender's profile (and unpin any
- *                 prior pinned caw owned by the same sender)
- *   pi:0        — unpin the sender's currently-pinned caw (no-op if none)
+ * Text format: pi:{cawId} — pin that caw to the sender's profile.
  *
- * Single-pin enforcement: pinning a new post nulls every other pinned
- * post owned by the same user in the same transaction. The protocol
- * doesn't enforce this on chain; we enforce it on the read side.
+ * Cap: NOT enforced here. Up to 3 most-recent pins surface on read —
+ * older confirmed pins are harmless tombstones until the user unpins
+ * one of the visible 3.
  *
  * Authorization: the cawId must belong to `senderId`. Anyone can submit
- * an OTHER action with arbitrary text — silently ignoring foreign-owned
+ * an OTHER action with arbitrary text; silently ignoring foreign-owned
  * targets prevents User A from pinning User B's post via the indexer.
  */
 async function handlePinAction(
@@ -1174,27 +1182,15 @@ async function handlePinAction(
   senderId: number
 ): Promise<void> {
   const text: string = rawAction.text || ''
-  const idStr = text.replace('pi:', '').trim()
-  const cawId = parseInt(idStr)
-  if (isNaN(cawId)) {
+  const cawId = parseInt(text.replace('pi:', '').trim())
+  if (isNaN(cawId) || cawId <= 0) {
     console.warn('[handlePinAction] Invalid cawId:', text)
     return
   }
 
-  // Unpin path
-  if (cawId === 0) {
-    await tx.caw.updateMany({
-      where: { userId: senderId, pinnedAt: { not: null } },
-      data: { pinnedAt: null },
-    })
-    console.log(`[handlePinAction] Unpinned all caws for user=${senderId}`)
-    return
-  }
-
-  // Pin path — verify ownership before doing anything
   const target = await tx.caw.findUnique({
     where: { id: cawId },
-    select: { userId: true, originalCawId: true, action: true },
+    select: { userId: true },
   })
   if (!target) {
     console.warn(`[handlePinAction] Caw not found: id=${cawId}`)
@@ -1205,16 +1201,90 @@ async function handlePinAction(
     return
   }
 
-  // Clear any existing pin owned by this user, then set the new one.
-  // Two updates rather than one to avoid touching `pinnedAt` on a row
-  // we're about to set anyway (which would be redundant churn).
-  await tx.caw.updateMany({
-    where: { userId: senderId, pinnedAt: { not: null }, id: { not: cawId } },
-    data: { pinnedAt: null },
+  // Two cases the indexer needs to handle:
+  //   (a) /api/actions already wrote a pending row → flip pending=false.
+  //   (b) Mirror node sees the on-chain event without an optimistic
+  //       write → upsert the row directly with pending=false.
+  // Both end at the same row state. We track whether pinnedCawCount
+  // should be incremented: only when the row transitions from
+  // (absent | pending) to (present, pending=false).
+  const existing = await tx.pinnedCaw.findUnique({
+    where: { userId_cawId: { userId: senderId, cawId } },
+    select: { id: true, pending: true },
   })
-  await tx.caw.update({
-    where: { id: cawId },
-    data: { pinnedAt: new Date() },
+
+  if (!existing) {
+    await tx.pinnedCaw.create({
+      data: { userId: senderId, cawId, pending: false },
+    })
+    await tx.user.update({
+      where: { tokenId: senderId },
+      data: { pinnedCawCount: { increment: 1 } },
+    })
+    console.log(`[handlePinAction] Created+confirmed pin caw=${cawId} for user=${senderId}`)
+    return
+  }
+
+  if (existing.pending) {
+    await tx.pinnedCaw.update({
+      where: { id: existing.id },
+      data: { pending: false },
+    })
+    await tx.user.update({
+      where: { tokenId: senderId },
+      data: { pinnedCawCount: { increment: 1 } },
+    })
+    console.log(`[handlePinAction] Confirmed pin caw=${cawId} for user=${senderId}`)
+    return
+  }
+
+  // Already confirmed — idempotent no-op (e.g. duplicate event replay).
+  console.log(`[handlePinAction] Pin caw=${cawId} for user=${senderId} already confirmed; skipping`)
+}
+
+/**
+ * Handle profile unpin actions.
+ *
+ * Text format: xpi:{cawId} — unpin that caw from the sender's profile.
+ *
+ * Mirrors handlePinAction's two cases:
+ *   (a) /api/actions already flipped the row's pending=true → delete it.
+ *   (b) Mirror node sees the chain event with no optimistic write → also
+ *       delete (idempotent if no row exists).
+ *
+ * Authorization isn't strictly required here because the row is keyed
+ * by senderId — a foreign sender can only delete their own rows by
+ * (userId, cawId) anyway.
+ */
+async function handleUnpinAction(
+  tx: PrismaTransactionClient,
+  rawAction: any,
+  senderId: number
+): Promise<void> {
+  const text: string = rawAction.text || ''
+  const cawId = parseInt(text.replace('xpi:', '').trim())
+  if (isNaN(cawId) || cawId <= 0) {
+    console.warn('[handleUnpinAction] Invalid cawId:', text)
+    return
+  }
+
+  const existing = await tx.pinnedCaw.findUnique({
+    where: { userId_cawId: { userId: senderId, cawId } },
+    select: { id: true, pending: true },
   })
-  console.log(`[handlePinAction] Pinned caw=${cawId} for user=${senderId}`)
+  if (!existing) {
+    console.log(`[handleUnpinAction] No pin row for user=${senderId} caw=${cawId}; nothing to delete`)
+    return
+  }
+
+  await tx.pinnedCaw.delete({ where: { id: existing.id } })
+  // Only decrement if the row was confirmed: pending rows weren't
+  // counted (count tracks confirmed pins).
+  if (!existing.pending) {
+    await tx.user.update({
+      where: { tokenId: senderId },
+      data: { pinnedCawCount: { decrement: 1 } },
+    })
+  }
+  console.log(`[handleUnpinAction] Unpinned caw=${cawId} for user=${senderId} (was pending=${existing.pending})`)
 }

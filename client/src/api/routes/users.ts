@@ -319,6 +319,7 @@ router.get('/by-token/:tokenId', async (req, res) => {
       followerCount: true,
       likedCount: true,
       likesReceivedCount: true,
+      pinnedCawCount: true,
     } as const
 
     const user = await prisma.user.findUnique({
@@ -787,6 +788,7 @@ router.get('/:username', async (req, res) => {
         followingCount: true,
         likedCount: true,
         likesReceivedCount: true,
+        pinnedCawCount: true,
       }
     })
 

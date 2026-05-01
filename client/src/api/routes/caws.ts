@@ -230,29 +230,36 @@ router.get('/', async (req, res) => {
       }
     }
 
-    // Profile-feed pin: on the first page of a user's own profile feed,
-    // surface their pinned caw at the top. We exclude it from the main
-    // query (so it's not duplicated below) and prepend it after pagination.
-    // Subsequent pages skip this entirely — the pinned post is only ever
-    // shown once, on top.
+    // Profile-feed pin: on the first page of a user's profile feed,
+    // surface their up-to-3 most recently pinned caws at the top.
+    // We exclude their IDs from the main query (so they're not duplicated)
+    // and prepend them after pagination. Subsequent pages skip this
+    // entirely — pinned posts are only ever shown once, at the top.
+    //
+    // Cap of 3 enforced ON READ only. If the user has more than 3 pinned
+    // rows (e.g. parallel pin txs slipped past the client cap), we just
+    // surface the 3 newest. Older confirmed pins are harmless tombstones
+    // until the user unpins one of the visible 3.
     const isProfileFeed = !!targetUserId && filter !== 'liked' && filter !== 'media' && filter !== 'replies'
-    let pinnedCaw: any = null
+    let pinnedCaws: any[] = []
     if (isProfileFeed && !cursor) {
-      pinnedCaw = await prisma.caw.findFirst({
-        where: {
-          userId: targetUserId,
-          pinnedAt: { not: null },
-          status: 'SUCCESS',
+      const pins = await prisma.pinnedCaw.findMany({
+        where: { userId: targetUserId },
+        orderBy: { createdAt: 'desc' },
+        take: 3,
+        include: {
+          caw: { include: getCawIncludeConfig({ currentUserId }) },
         },
-        include: getCawIncludeConfig({ currentUserId }),
       })
-      if (pinnedCaw) {
-        // Exclude the pinned caw from the main query so it's not shown twice.
-        if (where.AND) {
-          where.AND.push({ id: { not: pinnedCaw.id } })
-        } else {
-          where.AND = [{ id: { not: pinnedCaw.id } }]
-        }
+      // Filter to caws still in SUCCESS status (a hidden / failed caw
+      // shouldn't show on the profile even if pinned).
+      pinnedCaws = pins
+        .map(p => p.caw)
+        .filter(c => c && c.status === 'SUCCESS')
+      if (pinnedCaws.length > 0) {
+        const ids = pinnedCaws.map(c => c.id)
+        if (where.AND) where.AND.push({ id: { notIn: ids } })
+        else where.AND = [{ id: { notIn: ids } }]
       }
     }
 
@@ -272,8 +279,13 @@ router.get('/', async (req, res) => {
     // 4️⃣ handle pagination and shape
     const { items: shapedCaws, nextCursor } = handlePagination(raws, limit, (caw) => caw.id)
     const items = shapedCaws.map(caw => shapeCaw(caw))
-    if (pinnedCaw) {
-      items.unshift({ ...shapeCaw(pinnedCaw), isPinned: true })
+    if (pinnedCaws.length > 0) {
+      // Prepend in reverse so the most recently pinned ends up on top.
+      // (pinnedCaws is already DESC by createdAt, so unshift in order
+      // also produces DESC at the top of items — but we explicitly
+      // reverse here so the unshift order doesn't matter.)
+      const shapedPins = pinnedCaws.map(c => ({ ...shapeCaw(c), isPinned: true }))
+      items.unshift(...shapedPins)
     }
     await enrichWithPollVotes(items, currentUserId)
 

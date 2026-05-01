@@ -5,14 +5,15 @@ import { extractSession } from '../middleware/auth'
 const router = Router()
 
 /**
- * Off-chain pin fallback. Mirrors the on-chain `pi:{cawId}` action — same
- * write semantics — for users who chose "Pin off chain only" in the
- * confirmation modal. The on-chain path goes through the indexer's
- * handlePinAction; this route is the equivalent for the off-chain
- * preference. Reads (profile feed) don't care which path set the field.
+ * Off-chain pin fallback. Mirrors the on-chain `pi:{cawId}` / `xpi:{cawId}`
+ * action flow but writes the row directly with `pending: false` since
+ * there's no indexer round-trip to wait on. Same row schema as the
+ * on-chain path so reads don't need to know which path created it.
  *
- * Single-pin enforcement lives here too: pinning a new caw nulls every
- * other pinned caw owned by the same user.
+ * Cap: NOT enforced here. The read path (caws.ts profile feed) only
+ * surfaces the 3 most recently pinned. If the user pins a 4th off-chain
+ * we let it land — older confirmed pins just don't render until the
+ * user unpins one of the visible 3.
  */
 async function getAuthenticatedUserId(req: any): Promise<number | null> {
   await extractSession(req)
@@ -44,16 +45,36 @@ router.post('/:cawId', async (req, res) => {
       return res.status(403).json({ error: 'You can only pin your own posts' })
     }
 
-    await prisma.$transaction([
-      prisma.caw.updateMany({
-        where: { userId, pinnedAt: { not: null }, id: { not: cawId } },
-        data: { pinnedAt: null },
-      }),
-      prisma.caw.update({
-        where: { id: cawId },
-        data: { pinnedAt: new Date() },
-      }),
-    ])
+    // Bump pinnedCawCount only if this is a fresh pin (no row, or the
+    // existing row was pending and we're flipping it to confirmed).
+    const existing = await prisma.pinnedCaw.findUnique({
+      where: { userId_cawId: { userId, cawId } },
+      select: { id: true, pending: true },
+    })
+
+    if (!existing) {
+      await prisma.$transaction([
+        prisma.pinnedCaw.create({
+          data: { userId, cawId, pending: false },
+        }),
+        prisma.user.update({
+          where: { tokenId: userId },
+          data: { pinnedCawCount: { increment: 1 } },
+        }),
+      ])
+    } else if (existing.pending) {
+      await prisma.$transaction([
+        prisma.pinnedCaw.update({
+          where: { id: existing.id },
+          data: { pending: false },
+        }),
+        prisma.user.update({
+          where: { tokenId: userId },
+          data: { pinnedCawCount: { increment: 1 } },
+        }),
+      ])
+    }
+    // else: already confirmed — idempotent no-op.
 
     res.json({ success: true, cawId })
   } catch (err) {
@@ -63,8 +84,8 @@ router.post('/:cawId', async (req, res) => {
 })
 
 /**
- * DELETE /api/pins/:cawId — unpin a specific caw the user owns. Always
- * succeeds (idempotent): no-op if the caw isn't currently pinned.
+ * DELETE /api/pins/:cawId — unpin a specific caw the user owns. Idempotent:
+ * no-op if the caw isn't currently pinned.
  */
 router.delete('/:cawId', async (req, res) => {
   try {
@@ -74,10 +95,27 @@ router.delete('/:cawId', async (req, res) => {
     const cawId = Number(req.params.cawId)
     if (!cawId || isNaN(cawId)) return res.status(400).json({ error: 'Invalid cawId' })
 
-    await prisma.caw.updateMany({
-      where: { id: cawId, userId, pinnedAt: { not: null } },
-      data: { pinnedAt: null },
+    const existing = await prisma.pinnedCaw.findUnique({
+      where: { userId_cawId: { userId, cawId } },
+      select: { id: true, pending: true },
     })
+    if (!existing) {
+      return res.json({ success: true })
+    }
+
+    // Only decrement if we're removing a confirmed pin — pending rows
+    // weren't counted.
+    if (existing.pending) {
+      await prisma.pinnedCaw.delete({ where: { id: existing.id } })
+    } else {
+      await prisma.$transaction([
+        prisma.pinnedCaw.delete({ where: { id: existing.id } }),
+        prisma.user.update({
+          where: { tokenId: userId },
+          data: { pinnedCawCount: { decrement: 1 } },
+        }),
+      ])
+    }
 
     res.json({ success: true })
   } catch (err) {

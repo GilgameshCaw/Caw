@@ -35,7 +35,6 @@ import { useModalStore } from '~/store/modalStore'
 import { useOptimisticLikesStore } from '~/store/optimisticLikesStore'
 import { useHiddenCawsStore } from '~/store/hiddenCawsStore'
 import { useBookmarksStore } from '~/store/bookmarksStore'
-import { usePendingPinsStore } from '~/store/pendingPinsStore'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { User, CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
@@ -51,6 +50,7 @@ import MuteWordsModal from './modals/MuteWordsModal'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import Tooltip from '~/components/Tooltip'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
+import { useUserByToken } from '~/hooks/useUserData'
 import { useSignInModalStore } from '~/store/signInModalStore'
 import MuteConfirmModal, { shouldShowMuteConfirmModal } from './modals/MuteConfirmModal'
 import ReportPostModal, { ReportReason } from './modals/ReportPostModal'
@@ -96,6 +96,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     const tokens = Object.values(s.tokensByAddress).flat()
     return tokens.find(t => t.tokenId === s.activeTokenId) || tokens[0]
   })
+  // Active user's by-token data, used by the pin menu to read
+  // pinnedCawCount for the 3/3 cap UX. React Query coalesces all
+  // FeedItem instances onto a single request per active tokenId.
+  const { data: currentUserData } = useUserByToken(activeTokenId || activeToken?.tokenId)
   const openModal        = useModalStore(s => s.openModal)
   const { isConnected, address } = useAccount()
   const chainId = useChainId()
@@ -124,7 +128,6 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   // choose between an on-chain pin (free apart from the OTHER-action
   // cost) and an off-chain-only pin.
   const [showPinChoice, setShowPinChoice] = useState(false)
-  const [localIsPinned, setLocalIsPinned] = useState(!!item.pinnedAt)
   const [showShareModal, setShowShareModal] = useState(false)
   const [showTipModal, setShowTipModal] = useState(false)
   // NOTE: Media collapse UI removed — posts should show attached media
@@ -138,11 +141,6 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   }, [item.id, item.isBookmarked])
   const isBookmarked = bookmarksStore.isBookmarked(item.id)
   const [localBookmarkCount, setLocalBookmarkCount] = useState(item.bookmarkCount ?? 0)
-  // Re-sync if the server-shaped pin state changes (e.g. after refetch
-  // from another device / tab).
-  useEffect(() => {
-    setLocalIsPinned(!!item.pinnedAt)
-  }, [item.pinnedAt])
   // Brief slide-in + flash whenever this row becomes the pinned one.
   // Driven by `item.isPinned` (set by the parent feed's optimistic
   // reorder) so it fires whether the pin came from this client or a
@@ -586,29 +584,24 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     }
   }
 
-  // Submit the pin/unpin action. `onChain=true` goes through the OTHER
-  // action with text "pi:{cawId}" (or "pi:0" for unpin), mirroring the
-  // profile-update flow exactly. `onChain=false` posts to /api/pins
-  // for the off-chain-only fallback.
+  // Submit the pin/unpin action. The actual lifecycle (pending → confirmed
+  // / failed) is server-tracked via the PinnedCaw row + tx-queue, mirroring
+  // exactly how Like.pending works. We only do an in-memory optimistic
+  // reorder via onPinUpdate so the feed visibly responds before the next
+  // refetch lands.
+  //
+  //   onChain=true  → OTHER action text "pi:{cawId}" / "xpi:{cawId}".
+  //   onChain=false → POST/DELETE /api/pins/:cawId, no chain involvement.
   const submitPinAction = async (target: 'pin' | 'unpin', onChain: boolean) => {
     const effectiveTokenId = activeTokenId || activeToken?.tokenId
     if (!effectiveTokenId) return
     const cawId = parseInt(useItem.id)
     const willBePinned = target === 'pin'
 
-    // Optimistic local toggle so the UI feels immediate; the indexer or
-    // API call will reconcile on the next refetch.
-    setLocalIsPinned(willBePinned)
-    // Tell the parent feed so it can reorder (and animate) the row
-    // before we wait on the network.
+    // Snappy in-memory reorder. The server-side optimistic write makes
+    // the result survive a refresh; this is purely the visual feedback
+    // before any round-trip completes.
     onPinUpdate?.(useItem.id, willBePinned)
-    // Persist the pending pin so a refresh during the indexing window
-    // doesn't snap the post back down. Cleared when the server reflects
-    // the same state (Feed.tsx) or after the TTL.
-    usePendingPinsStore.getState().setPending(
-      effectiveTokenId,
-      willBePinned ? cawId : null,
-    )
 
     if (onChain) {
       try {
@@ -617,30 +610,26 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           senderId: effectiveTokenId,
           receiverId: 0,
           receiverCawonce: 0,
-          text: target === 'pin' ? `pi:${cawId}` : 'pi:0',
+          text: willBePinned ? `pi:${cawId}` : `xpi:${cawId}`,
         })
       } catch (err) {
         console.error('[Pin] on-chain submit failed:', err)
-        setLocalIsPinned(!willBePinned)
+        // Roll back the in-memory reorder. The server-side optimistic
+        // row was never written (signAndSubmit failed before /api/actions
+        // returned), so there's nothing to clean up server-side.
         onPinUpdate?.(useItem.id, !willBePinned)
-        usePendingPinsStore.getState().clearPending(effectiveTokenId)
       }
     } else {
       try {
-        const url = `/api/pins/${cawId}`
-        await apiFetch(url, {
-          method: target === 'pin' ? 'POST' : 'DELETE',
+        await apiFetch(`/api/pins/${cawId}`, {
+          method: willBePinned ? 'POST' : 'DELETE',
           headers: { 'x-user-id': String(effectiveTokenId) },
         })
       } catch (err) {
         console.error('[Pin] off-chain submit failed:', err)
-        setLocalIsPinned(!willBePinned)
         onPinUpdate?.(useItem.id, !willBePinned)
-        usePendingPinsStore.getState().clearPending(effectiveTokenId)
       }
     }
-    // Refetch the profile feed so the pinned post moves to the top.
-    qc.invalidateQueries({ queryKey: ['feed'] }).catch(() => {})
   }
 
   // Click handler for the pin/unpin menu item. Reads QuickSign session
@@ -648,7 +637,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   // silently. Otherwise opens the choice modal.
   const handlePinClick = async () => {
     setShowOptionsMenu(false)
-    const target: 'pin' | 'unpin' = localIsPinned ? 'unpin' : 'pin'
+    const target: 'pin' | 'unpin' = item.isPinned ? 'unpin' : 'pin'
 
     const { useSessionKeyStore } = await import('~/store/sessionKeyStore')
     const tokenOwner = activeToken?.owner
@@ -661,10 +650,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     if (canUseSession) {
       submitPinAction(target, true)
     } else {
-      // For unpin, skip the modal — there's nothing on chain to undo if
-      // they pinned off-chain, and pin/unpin churn shouldn't always cost
-      // a wallet popup. Default unpin to off-chain only; the user can
-      // re-pin on chain later if they want.
+      // Unpin defaults to off-chain to avoid a wallet popup for a cosmetic
+      // toggle. If the original pin was on-chain, the row exists locally
+      // (off-chain delete just deletes the cached row); the on-chain pin
+      // is independent — but since reads come from the DB only, this is
+      // effectively the same outcome from the user's perspective.
       if (target === 'unpin') {
         submitPinAction('unpin', false)
       } else {
@@ -858,7 +848,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
         } ${pinAnimating ? 'feed-pin-flash' : ''}`}>
           {/* "Pinned" badge — only present on the profile-feed prepended
               post (the API stamps `isPinned: true` on it). Never shown
-              on the regular feed even though `pinnedAt` may be set. */}
+              on the regular feed even though a PinnedCaw row may exist. */}
           {item.isPinned && (
             <div className={`flex items-center gap-1.5 text-xs font-medium mb-2 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
               <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
@@ -1808,29 +1798,51 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   <div className={`border-t my-1 ${
                     isDark ? 'border-white/20' : 'border-gray-200'
                   }`}></div>
-                  {useItem.action !== 'RECAW' && !useItem.parent && (
-                    <button
-                      onMouseDown={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        handlePinClick()
-                      }}
-                      className={`w-full px-4 py-3 text-left text-sm transition-colors duration-200 flex items-center gap-3 cursor-pointer ${
-                        isDark ? 'hover:bg-white/10 text-white' : 'hover:bg-gray-100 text-black'
-                      }`}
-                    >
-                      {/* Thumbtack drawn the way Twitter draws theirs:
-                          a domed cap at the top, a wider neck flange, and a
-                          long needle ending in a sharp point. Filled (not
-                          stroked) so it reads as a solid object at small
-                          sizes; tilted ~30° so it doesn't look like a
-                          T-shape. */}
-                      <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                        <path d="M16.65 2.34a1 1 0 0 1 1.41 0l3.6 3.6a1 1 0 0 1 0 1.42l-2.6 2.6a3.5 3.5 0 0 1-4.3.5l-4.55 4.56 1.06 1.06a1 1 0 0 1-1.41 1.42L4.4 11.49a1 1 0 0 1 1.42-1.42l1.06 1.07L11.45 6.6a3.5 3.5 0 0 1 .5-4.31zM3.7 18.88l5.6-5.6 1.42 1.4-5.6 5.61a1 1 0 0 1-1.42-1.41z" />
-                      </svg>
-                      {localIsPinned ? 'Unpin from profile' : 'Pin to profile'}
-                    </button>
-                  )}
+                  {useItem.action !== 'RECAW' && !useItem.parent && (() => {
+                    // Cap UX: greyed out at 3/3 unless this post is one of
+                    // the pinned (in which case the menu shows "Unpin").
+                    // Read pinnedCawCount from the active user's by-token
+                    // payload — server-maintained, so it stays accurate
+                    // across sessions and refreshes.
+                    const PIN_CAP = 3
+                    const myPinCount = (currentUserData as any)?.pinnedCawCount ?? 0
+                    const isThisPinned = !!item.isPinned
+                    const atCap = !isThisPinned && myPinCount >= PIN_CAP
+                    return (
+                      <button
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          if (atCap) return
+                          handlePinClick()
+                        }}
+                        disabled={atCap}
+                        className={`w-full px-4 py-3 text-left text-sm transition-colors duration-200 flex items-center gap-3 ${
+                          atCap
+                            ? `cursor-not-allowed ${isDark ? 'text-white/30' : 'text-gray-400'}`
+                            : `cursor-pointer ${isDark ? 'hover:bg-white/10 text-white' : 'hover:bg-gray-100 text-black'}`
+                        }`}
+                      >
+                        {/* Thumbtack drawn the way Twitter draws theirs:
+                            a domed cap at the top, a wider neck flange, and a
+                            long needle ending in a sharp point. Filled (not
+                            stroked) so it reads as a solid object at small
+                            sizes; tilted ~30° so it doesn't look like a
+                            T-shape. */}
+                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                          <path d="M16.65 2.34a1 1 0 0 1 1.41 0l3.6 3.6a1 1 0 0 1 0 1.42l-2.6 2.6a3.5 3.5 0 0 1-4.3.5l-4.55 4.56 1.06 1.06a1 1 0 0 1-1.41 1.42L4.4 11.49a1 1 0 0 1 1.42-1.42l1.06 1.07L11.45 6.6a3.5 3.5 0 0 1 .5-4.31zM3.7 18.88l5.6-5.6 1.42 1.4-5.6 5.61a1 1 0 0 1-1.42-1.41z" />
+                        </svg>
+                        <span className="flex-1">
+                          {isThisPinned ? 'Unpin from profile' : 'Pin to profile'}
+                        </span>
+                        {!isThisPinned && (
+                          <span className={`text-xs ${atCap ? '' : isDark ? 'text-white/40' : 'text-gray-400'}`}>
+                            {myPinCount}/{PIN_CAP}
+                          </span>
+                        )}
+                      </button>
+                    )
+                  })()}
                   <button
                     onMouseDown={(e) => {
                       e.preventDefault()
