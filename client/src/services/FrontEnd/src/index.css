@@ -578,3 +578,15 @@ input[type="number"] {
   animation: dm-highlight-flash 1.4s ease-out;
   border-radius: 12px;
 }
+
+/* Slide-down + soft yellow wash when a feed row becomes the pinned one.
+   The slide makes the reorder readable (so it doesn't just snap), and
+   the wash signals "this is now your pinned post." */
+@keyframes feed-pin-flash {
+  0%   { transform: translateY(-12px); background-color: rgba(234, 179, 8, 0.18); }
+  60%  { transform: translateY(0);    background-color: rgba(234, 179, 8, 0.10); }
+  100% { transform: translateY(0);    background-color: rgba(234, 179, 8, 0); }
+}
+.feed-pin-flash {
+  animation: feed-pin-flash 0.7s ease-out;
+}

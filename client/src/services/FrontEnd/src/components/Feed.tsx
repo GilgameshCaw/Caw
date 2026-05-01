@@ -556,6 +556,37 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
     setItems(current => current.map(item => item.id === cawId ? { ...item, tipPending } : item))
   }, [])
 
+  // Optimistic pin reorder: when the user pins one of their own posts,
+  // immediately move it to the top of the feed and stamp `isPinned: true`.
+  // Any previously-pinned item gets its flag cleared. Unpin sends the row
+  // back to its chronological slot (we re-sort by timestamp). This runs
+  // before the network round-trip; the indexer or API call reconciles
+  // server-side state on the next refetch.
+  const handlePinUpdate = useCallback((cawId: string, isPinned: boolean) => {
+    setItems(current => {
+      // Update flags first
+      const updated = current.map(item => {
+        if (item.id === cawId) return { ...item, isPinned, pinnedAt: isPinned ? new Date().toISOString() : null }
+        if (isPinned && item.isPinned) return { ...item, isPinned: false, pinnedAt: null }
+        return item
+      })
+      if (!isPinned) {
+        // Unpin: re-sort the (now flag-cleared) target back into its
+        // chronological slot. Everything else stays in original order.
+        return [...updated].sort((a, b) => {
+          if (a.isPinned && !b.isPinned) return -1
+          if (b.isPinned && !a.isPinned) return 1
+          return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+        })
+      }
+      // Pin: extract the target and prepend.
+      const target = updated.find(i => i.id === cawId)
+      if (!target) return updated
+      const rest = updated.filter(i => i.id !== cawId)
+      return [target, ...rest]
+    })
+  }, [])
+
   // Helper to refresh following count after a follow action
   // Don't reload the feed immediately — the follow is still processing on-chain.
   // Just update the following count; the feed will refresh naturally.
@@ -768,6 +799,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
                     onRecawStateChange={handleRecawStateChange}
                     onReplyStateChange={handleReplyStateChange}
                     onTipStateChange={handleTipStateChange}
+                    onPinUpdate={handlePinUpdate}
                   />
                   {inlinePinned.map(reply => (
                     <FeedItem
@@ -778,6 +810,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
                       onRecawStateChange={handleRecawStateChange}
                       onReplyStateChange={handleReplyStateChange}
                       onTipStateChange={handleTipStateChange}
+                      onPinUpdate={handlePinUpdate}
                     />
                   ))}
                   {inlinePending.map(post => (

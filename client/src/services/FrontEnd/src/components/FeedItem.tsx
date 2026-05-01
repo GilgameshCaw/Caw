@@ -58,7 +58,7 @@ import { chains } from '~/config/chains'
 
 import { formatTimeAgo } from '~/utils/formatTimeAgo'
 
-const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; hideParentPreview?: boolean; hideMedia?: boolean; contentClassName?: string; uiDensity?: 'normal' | 'compact'; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void; onLikeStateChange?: (cawId: string, likePending: boolean) => void; onRecawStateChange?: (cawId: string, recawPending: boolean) => void; onReplyStateChange?: (cawId: string, replyPending: boolean) => void; onTipStateChange?: (cawId: string, tipPending: boolean) => void }> = ({ item, isMainPost = false, isReply = false, hideParentPreview = false, hideMedia = false, contentClassName, uiDensity = 'normal', onBookmarkUpdate, onLikeStateChange, onRecawStateChange, onReplyStateChange, onTipStateChange }) => {
+const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolean; hideParentPreview?: boolean; hideMedia?: boolean; contentClassName?: string; uiDensity?: 'normal' | 'compact'; onBookmarkUpdate?: (cawId: number, isBookmarked: boolean) => void; onLikeStateChange?: (cawId: string, likePending: boolean) => void; onRecawStateChange?: (cawId: string, recawPending: boolean) => void; onReplyStateChange?: (cawId: string, replyPending: boolean) => void; onTipStateChange?: (cawId: string, tipPending: boolean) => void; onPinUpdate?: (cawId: string, isPinned: boolean) => void }> = ({ item, isMainPost = false, isReply = false, hideParentPreview = false, hideMedia = false, contentClassName, uiDensity = 'normal', onBookmarkUpdate, onLikeStateChange, onRecawStateChange, onReplyStateChange, onTipStateChange, onPinUpdate }) => {
   // For plain recaws, pending states and counts should reflect the original post (parent),
   // not the recaw wrapper. useItem is set to item.parent for recaws further below, but
   // we need the right source for initial state here. Quotes act as their own posts.
@@ -141,6 +141,22 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   useEffect(() => {
     setLocalIsPinned(!!item.pinnedAt)
   }, [item.pinnedAt])
+  // Brief slide-in + flash whenever this row becomes the pinned one.
+  // Driven by `item.isPinned` (set by the parent feed's optimistic
+  // reorder) so it fires whether the pin came from this client or a
+  // background refetch surfaced one. We track the previous value with a
+  // ref to detect the false→true transition.
+  const wasPinnedRef = useRef(false)
+  const [pinAnimating, setPinAnimating] = useState(false)
+  useEffect(() => {
+    if (item.isPinned && !wasPinnedRef.current) {
+      setPinAnimating(true)
+      const t = setTimeout(() => setPinAnimating(false), 700)
+      wasPinnedRef.current = true
+      return () => clearTimeout(t)
+    }
+    wasPinnedRef.current = !!item.isPinned
+  }, [item.isPinned])
   const [translatedText, setTranslatedText] = useState<string | null>(null)
   const [isTranslating, setIsTranslating] = useState(false)
   const [isRetrying, setIsRetrying] = useState(false)
@@ -581,6 +597,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     // Optimistic local toggle so the UI feels immediate; the indexer or
     // API call will reconcile on the next refetch.
     setLocalIsPinned(willBePinned)
+    // Tell the parent feed so it can reorder (and animate) the row
+    // before we wait on the network.
+    onPinUpdate?.(useItem.id, willBePinned)
 
     if (onChain) {
       try {
@@ -594,6 +613,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       } catch (err) {
         console.error('[Pin] on-chain submit failed:', err)
         setLocalIsPinned(!willBePinned)
+        onPinUpdate?.(useItem.id, !willBePinned)
       }
     } else {
       try {
@@ -605,6 +625,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       } catch (err) {
         console.error('[Pin] off-chain submit failed:', err)
         setLocalIsPinned(!willBePinned)
+        onPinUpdate?.(useItem.id, !willBePinned)
       }
     }
     // Refetch the profile feed so the pinned post moves to the top.
@@ -823,18 +844,14 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           isDark ? 'border-gray-800' : 'border-gray-200'
         } ${
           item.status === 'FAILED' ? 'opacity-60' : ''
-        }`}>
+        } ${pinAnimating ? 'feed-pin-flash' : ''}`}>
           {/* "Pinned" badge — only present on the profile-feed prepended
               post (the API stamps `isPinned: true` on it). Never shown
               on the regular feed even though `pinnedAt` may be set. */}
           {item.isPinned && (
             <div className={`flex items-center gap-1.5 text-xs font-medium mb-2 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-                <circle cx="12" cy="6" r="3" />
-                <path d="M8 9 h8 v2 h-8 z" />
-                <path d="M12 11 v6" />
-                <path d="M9 17 h6" />
-                <path d="M12 17 v4" />
+              <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
+                <path d="M16.65 2.34a1 1 0 0 1 1.41 0l3.6 3.6a1 1 0 0 1 0 1.42l-2.6 2.6a3.5 3.5 0 0 1-4.3.5l-4.55 4.56 1.06 1.06a1 1 0 0 1-1.41 1.42L4.4 11.49a1 1 0 0 1 1.42-1.42l1.06 1.07L11.45 6.6a3.5 3.5 0 0 1 .5-4.31zM3.7 18.88l5.6-5.6 1.42 1.4-5.6 5.61a1 1 0 0 1-1.42-1.41z" />
               </svg>
               Pinned
             </div>
@@ -1768,15 +1785,14 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                         isDark ? 'hover:bg-white/10 text-white' : 'hover:bg-gray-100 text-black'
                       }`}
                     >
-                      {/* Thumbtack: round head, two-tone "saddle" band, then
-                          a triangular spike. Drawn pointing straight down so
-                          it reads "pinned to a board" rather than rotated. */}
-                      <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" viewBox="0 0 24 24">
-                        <circle cx="12" cy="6" r="3" />
-                        <path d="M8 9 h8 v2 h-8 z" />
-                        <path d="M12 11 v6" />
-                        <path d="M9 17 h6" />
-                        <path d="M12 17 v4" />
+                      {/* Thumbtack drawn the way Twitter draws theirs:
+                          a domed cap at the top, a wider neck flange, and a
+                          long needle ending in a sharp point. Filled (not
+                          stroked) so it reads as a solid object at small
+                          sizes; tilted ~30° so it doesn't look like a
+                          T-shape. */}
+                      <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M16.65 2.34a1 1 0 0 1 1.41 0l3.6 3.6a1 1 0 0 1 0 1.42l-2.6 2.6a3.5 3.5 0 0 1-4.3.5l-4.55 4.56 1.06 1.06a1 1 0 0 1-1.41 1.42L4.4 11.49a1 1 0 0 1 1.42-1.42l1.06 1.07L11.45 6.6a3.5 3.5 0 0 1 .5-4.31zM3.7 18.88l5.6-5.6 1.42 1.4-5.6 5.61a1 1 0 0 1-1.42-1.41z" />
                       </svg>
                       {localIsPinned ? 'Unpin from profile' : 'Pin to profile'}
                     </button>
