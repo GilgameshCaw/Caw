@@ -10,6 +10,81 @@ interface Props {
   caw: CawItem
 }
 
+/**
+ * The square that sits left of every option row. Three states:
+ *   - imageUrl present + loads → renders the image
+ *   - imageUrl present + 404s / errors → falls back to the numbered SVG
+ *   - imageUrl absent → numbered SVG from the start
+ *
+ * We keep the slot rendered in all states so option rows align cleanly
+ * even when only some options have images. The numbered SVG also
+ * doubles as a visual cue for keyboard navigation / screen readers
+ * (number === option position).
+ */
+function PollOptionThumb({
+  imageUrl,
+  number,
+  isDark,
+  size = 50,
+}: {
+  imageUrl: string
+  number: number
+  isDark: boolean
+  size?: number
+}) {
+  const [errored, setErrored] = useState(false)
+  // Reset the error flag whenever the URL changes — important when the
+  // indexer flips a mirror-origin poll's URL from empty to populated:
+  // a previously-errored slot should re-attempt with the new URL.
+  useEffect(() => { setErrored(false) }, [imageUrl])
+
+  const showImage = imageUrl && !errored
+  return (
+    <div
+      className="relative shrink-0 rounded-md overflow-hidden"
+      style={{ width: size, height: size }}
+    >
+      {showImage && (
+        <img
+          src={imageUrl}
+          alt=""
+          loading="lazy"
+          onError={() => setErrored(true)}
+          className="w-full h-full object-cover"
+        />
+      )}
+      {!showImage && (
+        // Numbered fallback. Centered numeral on a soft background that
+        // matches the surrounding poll-row style. SVG (not text) so the
+        // numeral never gets selected, copied, or wrap-broken when the
+        // row is narrow.
+        <svg
+          viewBox="0 0 50 50"
+          xmlns="http://www.w3.org/2000/svg"
+          className={`w-full h-full ${
+            isDark ? 'text-white/50' : 'text-gray-500'
+          }`}
+        >
+          <rect
+            x="0" y="0" width="50" height="50" rx="6"
+            className={isDark ? 'fill-white/[0.06]' : 'fill-gray-100'}
+          />
+          <text
+            x="25" y="25"
+            textAnchor="middle"
+            dominantBaseline="central"
+            fontSize="22"
+            fontWeight="600"
+            fill="currentColor"
+          >
+            {number}
+          </text>
+        </svg>
+      )}
+    </div>
+  )
+}
+
 interface LocalVote {
   optionIndex: number | null  // null = unvoted (after a confirmed vote was removed)
   pending: boolean
@@ -192,12 +267,12 @@ const PollDisplay: React.FC<Props> = ({ caw }) => {
               disabled={submitting || isUserPick}
               onMouseEnter={() => setHovered(i)}
               onMouseLeave={() => setHovered(null)}
+              style={{ background: 'transparent', minHeight: 50 }}
               className={`relative w-full text-left px-3 py-2 rounded-lg overflow-hidden ${
                 isUserPick
                   ? 'cursor-default'
                   : (submitting ? 'cursor-wait opacity-60' : 'cursor-pointer hover:opacity-95')
               }`}
-              style={{ background: 'transparent' }}
             >
               {/* Filled bar — width transitions to its target percentage.
                   The 700ms duration + ease-out feels like a proper "filling"
@@ -216,16 +291,9 @@ const PollDisplay: React.FC<Props> = ({ caw }) => {
                   ? (isDark ? 'border-yellow-500/60' : 'border-yellow-500')
                   : (isDark ? 'border-white/10' : 'border-gray-200')
               }`} />
-              <div className="relative flex items-center gap-2">
-                {imgUrl && (
-                  <img
-                    src={imgUrl}
-                    alt=""
-                    className="w-8 h-8 rounded-md object-cover shrink-0"
-                    loading="lazy"
-                  />
-                )}
-                <span className={`flex-1 truncate text-sm transition-colors ${
+              <div className="relative flex items-center gap-3">
+                <PollOptionThumb imageUrl={imgUrl} number={i + 1} isDark={isDark} />
+                <span className={`flex-1 truncate text-base transition-colors ${
                   isUserPick
                     ? (isDark ? 'text-white font-medium' : 'text-gray-900 font-medium')
                     : (isDark ? 'text-white/80' : 'text-gray-800')
@@ -240,7 +308,7 @@ const PollDisplay: React.FC<Props> = ({ caw }) => {
                   )}
                 </span>
                 {/* Percentage also animates by counting up via key change */}
-                <span className={`text-sm tabular-nums transition-colors ${
+                <span className={`text-base tabular-nums transition-colors ${
                   isDark ? 'text-white/60' : 'text-gray-600'
                 }`}>
                   {pct}%
@@ -258,7 +326,8 @@ const PollDisplay: React.FC<Props> = ({ caw }) => {
             disabled={submitting}
             onMouseEnter={() => setHovered(i)}
             onMouseLeave={() => setHovered(null)}
-            className={`w-full text-left px-3 py-2 rounded-lg border text-sm transition-colors flex items-center gap-2 ${
+            style={{ minHeight: 50 }}
+            className={`w-full text-left px-3 py-2 rounded-lg border text-base transition-colors flex items-center gap-3 ${
               submitting
                 ? 'cursor-wait opacity-60'
                 : (isHover
@@ -266,14 +335,7 @@ const PollDisplay: React.FC<Props> = ({ caw }) => {
                   : (isDark ? 'border-white/10 hover:border-yellow-500/50 text-white/80' : 'border-gray-200 hover:border-yellow-500/50 text-gray-800'))
             }`}
           >
-            {imgUrl && (
-              <img
-                src={imgUrl}
-                alt=""
-                className="w-8 h-8 rounded-md object-cover shrink-0"
-                loading="lazy"
-              />
-            )}
+            <PollOptionThumb imageUrl={imgUrl} number={i + 1} isDark={isDark} />
             <span className="flex-1 truncate">{opt}</span>
           </button>
         )

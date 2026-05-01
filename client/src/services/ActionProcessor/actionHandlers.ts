@@ -157,13 +157,19 @@ export async function handleCawAction(
   // poll when the user submitted) doesn't conflict with the indexer's
   // catch-up — both paths arrive at the same final row.
   //
-  // optionImages is reconstructed from the on-chain ::pi:host:hash:hash::
-  // sidecar — host appears once, hashes are positional with options.
-  // resolvePollImageUrl produces a fetchable URL for each non-empty hash.
-  // The local-API optimistic path already wrote these URLs (so the update
-  // case is a benign re-write); for polls authored on a different mirror
-  // node we're computing them here for the first time, which is the whole
-  // point of putting host+hashes on-chain — mirrors get images automatically.
+  // optionImages handling:
+  //   - On CREATE (mirror-origin polls — no API submit ran here):
+  //     reconstruct URLs from the on-chain ::pi:host:hash:hash:: sidecar.
+  //     This is the whole point of the host-in-marker design — mirrors
+  //     get fetchable image URLs automatically.
+  //   - On UPDATE (local-origin polls — API submit already wrote URLs):
+  //     leave optionImages untouched. The optimistic write is canonical
+  //     for the local instance because it captured the EXACT URL the
+  //     upload route returned, including scheme and port. Reconstructing
+  //     from (host, hash) loses both — local dev (`local.caw.com:5274`,
+  //     http) would resolve to a broken `https://local.caw.com/...`.
+  //     For production where origin === reconstructed URL, the two are
+  //     equivalent and not overwriting is harmless.
   try {
     const parsedPoll = parsePoll(textContent)
     if (parsedPoll) {
@@ -172,15 +178,7 @@ export async function handleCawAction(
       )
       await tx.poll.upsert({
         where: { cawId: newCaw.id },
-        update: {
-          options: parsedPoll.options,
-          // Re-write optionImages on update: the on-chain marker is the
-          // canonical source and the local API write produced an
-          // identical URL anyway (same host, same hash from the same
-          // file we just uploaded). For mirror-origin polls this is the
-          // first write and lights up images on this node.
-          optionImages: reconstructedImages,
-        },
+        update: { options: parsedPoll.options },
         create: {
           cawId: newCaw.id,
           options: parsedPoll.options,
