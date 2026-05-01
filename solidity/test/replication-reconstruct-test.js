@@ -247,7 +247,7 @@ async function fullSetup(accounts) {
   await clientManager.createClient("Test Client", accounts[0], l2, 0, 0, 0, 0);
   const clientId = 1;
 
-  const minter = await CawProfileMinter.new(token.address, cawProfile.address);
+  const minter = await CawProfileMinter.new(token.address, cawProfile.address, mockRouter.address);
   await cawProfile.setMinter(minter.address);
   const quoter = await CawProfileQuoter.new(cawProfile.address);
 

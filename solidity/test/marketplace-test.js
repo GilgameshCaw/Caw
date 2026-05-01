@@ -5,6 +5,7 @@ const CawClientManager = artifacts.require("CawClientManager");
 const CawProfileMarketplace = artifacts.require("CawProfileMarketplace");
 const MintableCaw = artifacts.require("MintableCaw");
 const MockLayerZeroEndpoint = artifacts.require("MockLayerZeroEndpoint");
+const MockSwapRouter = artifacts.require("MockSwapRouter");
 const RevertingBidder = artifacts.require("RevertingBidder");
 
 const truffleAssert = require('truffle-assertions');
@@ -42,9 +43,11 @@ contract("CawProfileMarketplace", (accounts) => {
       l1Eid
     );
 
+    const mockRouter = await MockSwapRouter.new(token.address);
     minter = await CawProfileMinter.new(
       token.address,
-      cawProfiles.address
+      cawProfiles.address,
+      mockRouter.address
     );
 
     await cawProfiles.setMinter(minter.address);

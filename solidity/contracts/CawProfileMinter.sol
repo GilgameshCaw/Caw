@@ -5,6 +5,7 @@ pragma solidity ^0.8.0;
 import "@openzeppelin/contracts/utils/Context.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./interfaces/IMint.sol";
+import "./ISwapRouter.sol";
 
 contract CawProfileMinter is Context {
 
@@ -13,9 +14,17 @@ contract CawProfileMinter is Context {
   IMint CawProfile;
   IERC20 CAW;
 
-  constructor(address _caw, address _cawProfiles) {
+  // Uniswap V2 router for ZAP flows: pay-with-ETH → swap → CAW → mint/deposit.
+  // The path is always [WETH, CAW]. Slippage is enforced via user-supplied
+  // `minCawOut`. The frontend reads pool reserves and computes the floor.
+  ISwapRouter public immutable swapRouter;
+  address public immutable WETH;
+
+  constructor(address _caw, address _cawProfiles, address _router) {
     CAW = IERC20(_caw);
     CawProfile = IMint(_cawProfiles);
+    swapRouter = ISwapRouter(_router);
+    WETH = swapRouter.WETH();
   }
 
   // ============================================
@@ -144,6 +153,121 @@ contract CawProfileMinter is Context {
     }
 
     return true;
+  }
+
+  // ============================================
+  // ZAP FLOWS — pay with ETH, contract swaps to CAW via Uniswap V2
+  // ============================================
+  // These let new users onboard or existing users top up paying ETH instead
+  // of CAW. msg.value carries BOTH the swap input AND the LZ + storage fees;
+  // the frontend computes the split and passes `swapEthAmount` explicitly.
+  // `minCawOut` is the user's slippage floor — enforced inside the router
+  // call (revert if the swap returns less, leaving msg.value untouched).
+  //
+  // Self-mint only by design (no `*For` ZAP variants), matching the bundled
+  // QuickSign security stance: the recipient is always msg.sender, so the
+  // swap output and resulting NFT/session land on the caller's account.
+
+  /// @notice Existing-holder top-up: swap ETH → CAW, then deposit the full output.
+  /// @param swapEthAmount Portion of msg.value to spend on the Uniswap swap.
+  ///        Remainder (msg.value - swapEthAmount) is forwarded as LZ + storage fees.
+  /// @param minCawOut Slippage floor enforced by the router.
+  function depositZap(
+    uint32 cawClientId,
+    uint32 tokenId,
+    uint256 swapEthAmount,
+    uint256 minCawOut,
+    uint32 lzDestId,
+    uint256 lzTokenAmount
+  ) public payable {
+    require(swapEthAmount > 0 && swapEthAmount <= msg.value, "Bad swap amount");
+    uint256 cawReceived = _swapEthForCaw(swapEthAmount, minCawOut);
+    CAW.approve(address(CawProfile), cawReceived);
+    CawProfile.depositFor{value: msg.value - swapEthAmount}(
+      cawClientId, tokenId, cawReceived, lzDestId, lzTokenAmount
+    );
+  }
+
+  /// @notice New-user onboarding paying purely with ETH. Username availability
+  ///         is checked BEFORE the swap so a frontrun-mint reverts without
+  ///         spending any ETH on Uniswap.
+  function mintAndDepositZap(
+    uint32 clientId,
+    string memory username,
+    uint256 swapEthAmount,
+    uint256 minCawOut,
+    uint32 lzDestId,
+    uint256 lzTokenAmount
+  ) public payable {
+    require(swapEthAmount > 0 && swapEthAmount <= msg.value, "Bad swap amount");
+    require(idByUsername[username] == 0, "Username has already been taken");
+    require(isValidUsername(username), "Username must only consist of 1-255 lowercase letters and numbers");
+
+    uint256 burnAmount = costOfName(username);
+    uint256 cawReceived = _swapEthForCaw(swapEthAmount, minCawOut);
+    require(cawReceived >= burnAmount, "Swap output < burn cost");
+
+    CAW.transfer(address(0xdEAD000000000000000042069420694206942069), burnAmount);
+    uint256 depositAmount = cawReceived - burnAmount;
+
+    uint32 newId = CawProfile.nextId();
+    idByUsername[username] = newId;
+
+    CAW.approve(address(CawProfile), depositAmount);
+    CawProfile.mintAndDeposit{value: msg.value - swapEthAmount}(
+      clientId, msg.sender, username, newId, depositAmount, lzDestId, lzTokenAmount, ""
+    );
+  }
+
+  /// @notice mintAndDepositZap bundled with QuickSign session registration.
+  ///         Self-mint only — recipient is always msg.sender, matching the
+  ///         security stance on `mintAndDepositAndQuickSign`.
+  function mintAndDepositAndQuickSignZap(
+    uint32 clientId,
+    string memory username,
+    uint256 swapEthAmount,
+    uint256 minCawOut,
+    address sessionKey,
+    uint64 expiry,
+    uint256 spendLimit,
+    uint32 lzDestId,
+    uint256 lzTokenAmount
+  ) public payable {
+    require(sessionKey != address(0), "Zero session key");
+    require(swapEthAmount > 0 && swapEthAmount <= msg.value, "Bad swap amount");
+    require(idByUsername[username] == 0, "Username has already been taken");
+    require(isValidUsername(username), "Username must only consist of 1-255 lowercase letters and numbers");
+
+    uint256 burnAmount = costOfName(username);
+    uint256 cawReceived = _swapEthForCaw(swapEthAmount, minCawOut);
+    require(cawReceived >= burnAmount, "Swap output < burn cost");
+
+    CAW.transfer(address(0xdEAD000000000000000042069420694206942069), burnAmount);
+    uint256 depositAmount = cawReceived - burnAmount;
+
+    uint32 newId = CawProfile.nextId();
+    idByUsername[username] = newId;
+
+    CAW.approve(address(CawProfile), depositAmount);
+    bytes memory sessionExtra = abi.encode(sessionKey, expiry, spendLimit);
+    CawProfile.mintAndDeposit{value: msg.value - swapEthAmount}(
+      clientId, msg.sender, username, newId, depositAmount, lzDestId, lzTokenAmount, sessionExtra
+    );
+  }
+
+  /// @dev Swap exact ETH for CAW via Uniswap V2. Path = [WETH, CAW], deadline
+  ///      = block.timestamp + 600 (10 min — generous for the user, bounded for
+  ///      MEV). The router enforces `minCawOut` and reverts on insufficient
+  ///      output. Output lands in this contract; caller is responsible for
+  ///      forwarding/approving it.
+  function _swapEthForCaw(uint256 ethAmount, uint256 minCawOut) internal returns (uint256) {
+    address[] memory path = new address[](2);
+    path[0] = WETH;
+    path[1] = address(CAW);
+    uint256[] memory amounts = swapRouter.swapExactETHForTokens{value: ethAmount}(
+      minCawOut, path, address(this), block.timestamp + 600
+    );
+    return amounts[amounts.length - 1];
   }
 
   function costOfName(string memory username) public pure returns (uint256) {

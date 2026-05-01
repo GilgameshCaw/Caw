@@ -203,6 +203,51 @@ contract CawProfileQuoter {
     return quote;
   }
 
+  // ============================================
+  // ZAP QUOTES — pay-with-ETH variants of deposit / mintAndDeposit /
+  //              mintAndDepositAndQuickSign
+  // ============================================
+  // The on-chain LZ + storage fees for a ZAP are identical to its CAW-paid
+  // sibling — the swap leg is a frontend concern (read pool reserves,
+  // compute minCawOut). We expose `*ZapQuote` thin wrappers so the
+  // frontend can call ONE quoter function and not worry about which
+  // selector/payload to pass. Critically, the mint zap quotes drop the
+  // `depositAmount` argument because the swap output (and therefore the
+  // deposit) is unknown until the tx settles; we use a placeholder value
+  // for LZ payload sizing only.
+
+  function depositZapQuote(uint32 cawClientId, uint32 tokenId, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+    // Storage fees: deposit + auth (auth only if not yet authenticated).
+    quote.nativeFee = cawProfile.clientManager().getDepositFee(cawClientId) * 2;
+    if (!cawProfile.authenticated(cawClientId, tokenId))
+      quote.nativeFee += cawProfile.clientManager().getAuthFee(cawClientId) * 2;
+
+    // bypassLZ: no LZ leg, just storage fees. Mirrors the mintAndDeposit
+    // short-circuit added in 48e37cb.
+    if (lzDestId == cawProfile.mainnetLzId()) return quote;
+
+    // Cross-chain (true L2 storage): include the LZ messaging cost.
+    uint32[] memory tokenIds; address[] memory owners;
+    (tokenIds, owners) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, tokenId);
+
+    // Use 0 as placeholder for `amount` — it doesn't affect LZ payload size.
+    bytes memory payload = abi.encodeWithSelector(
+      cawProfile.addToBalanceSelector(), cawClientId, tokenId, uint256(0), tokenIds, owners
+    );
+    MessagingFee memory lz = cawProfile.lzQuote(cawClientId, cawProfile.addToBalanceSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
+    quote.nativeFee += lz.nativeFee;
+    quote.lzTokenFee += lz.lzTokenFee;
+    return quote;
+  }
+
+  function mintAndDepositZapQuote(uint32 clientId, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+    return mintAndDepositQuote(clientId, 0, lzDestId, payInLzToken);
+  }
+
+  function mintAndDepositAndQuickSignZapQuote(uint32 clientId, address sessionKey, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
+    return mintAndDepositAndQuickSignQuote(clientId, 0, lzDestId, payInLzToken, sessionKey);
+  }
+
   function withdrawQuote(uint32 clientId, bool payInLzToken) public view returns (MessagingFee memory quote) {
     quote = updateOwnerQuote(payInLzToken);
     quote.nativeFee += cawProfile.clientManager().getWithdrawFee(clientId) * 2;

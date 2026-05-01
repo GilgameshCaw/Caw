@@ -289,10 +289,11 @@ const CONTRACTS = {
   CawProfileMinter: {
     chain: 'L1',
     phase: 2,
-    dependencies: ['CawProfile'],
+    dependencies: ['CawProfile', 'MockSwapRouter'],
     constructorArgs: (state) => [
       state.addresses.MintableCaw,
       state.addresses.CawProfile,
+      state.addresses.MockSwapRouter,
     ],
   },
   CawProfileQuoter: {

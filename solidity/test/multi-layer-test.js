@@ -615,7 +615,7 @@ contract('CawProfiles', function(accounts, x) {
     await cawProfilesL2Mainnet.setL1Peer(l1, cawProfiles.address, true);
     await cawProfiles.setL2Peer(l1, cawProfilesL2Mainnet.address);
 
-    minter = minter || await CawProfileMinter.new(token.address, cawProfiles.address);
+    minter = minter || await CawProfileMinter.new(token.address, cawProfiles.address, mockRouter.address);
     await cawProfiles.setMinter(minter.address);
 
     quoter = quoter || await CawProfileQuoter.new(cawProfiles.address);
@@ -1290,7 +1290,7 @@ contract("CawProfile - Transfer & Replication Gas", function(accounts) {
 
     await localClientManager.createClient("Local Test", accounts[0], l2, 1, 1, 1, 1);
 
-    localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address);
+    localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, mr.address);
     await localCawProfiles.setMinter(localMinter.address);
 
     localQuoter = await CawProfileQuoter.new(localCawProfiles.address);
@@ -1490,7 +1490,7 @@ contract("CawProfileMinter - mintAndDeposit", function(accounts) {
     // Client with fees: mint=1, deposit=1, auth=1, withdraw=1
     await localClientManager.createClient("Test Client", accounts[0], l2, 1, 1, 1, 1);
 
-    localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address);
+    localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, mr.address);
     await localCawProfiles.setMinter(localMinter.address);
     localQuoter = await CawProfileQuoter.new(localCawProfiles.address);
 
@@ -1661,7 +1661,7 @@ contract("CawProfileMinter - mintAndAuth", function(accounts) {
     await localClientManager.createClient("L1 Client", accounts[0], l1, 1, 1, 1, 1);
     l1ClientId = 2;
 
-    localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address);
+    localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, mr.address);
     await localCawProfiles.setMinter(localMinter.address);
     localQuoter = await CawProfileQuoter.new(localCawProfiles.address);
 
@@ -1900,7 +1900,7 @@ contract("CawProfile - depositFor", function(accounts) {
     // Client with fees: mint=1, deposit=1, auth=1, withdraw=1
     await localClientManager.createClient("Test Client", accounts[0], l2, 1, 1, 1, 1);
 
-    localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address);
+    localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, mr.address);
     await localCawProfiles.setMinter(localMinter.address);
 
     localQuoter = await CawProfileQuoter.new(localCawProfiles.address);
@@ -2107,7 +2107,7 @@ contract("CawProfile - locked withdraw fee + fee withdrawal", function(accounts)
     // Create client with the fee mock as feeAddress, so we can test contract recipients receiving fees
     await localClientManager.createClient("LockedFeeClient", feeRecipientMock.address, l2, INITIAL_WITHDRAW_FEE, DEPOSIT_FEE, AUTH_FEE, MINT_FEE);
 
-    localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address);
+    localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, localMockRouter.address);
     await localCawProfiles.setMinter(localMinter.address);
     localQuoter = await CawProfileQuoter.new(localCawProfiles.address);
 
@@ -2455,7 +2455,7 @@ contract("CawProfile - Buy and Burn", function(accounts) {
     // Client with meaningful fees — feeAddress = accounts[0]
     await localClientManager.createClient("BuyBurn Client", accounts[0], l2, WITHDRAW_FEE, DEPOSIT_FEE, AUTH_FEE, MINT_FEE);
 
-    localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address);
+    localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, localMockRouter.address);
     await localCawProfiles.setMinter(localMinter.address);
     localQuoter = await CawProfileQuoter.new(localCawProfiles.address);
 
@@ -2780,7 +2780,7 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
     await localClientManager.createClient("L1 Client", accounts[0], l1, 0, 0, 0, 0);
     l1ClientId = 2;
 
-    localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address);
+    localMinter = await CawProfileMinter.new(localToken.address, localCawProfiles.address, mr.address);
     await localCawProfiles.setMinter(localMinter.address);
     localQuoter = await CawProfileQuoter.new(localCawProfiles.address);
 

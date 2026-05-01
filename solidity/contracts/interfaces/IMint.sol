@@ -35,4 +35,12 @@ interface IMint {
     bytes calldata sessionExtra
   ) external payable;
 
+  function depositFor(
+    uint32 cawClientId,
+    uint32 tokenId,
+    uint256 amount,
+    uint32 lzDestId,
+    uint256 lzTokenAmount
+  ) external payable;
+
 }
