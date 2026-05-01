@@ -578,6 +578,54 @@ async function handleSessionCreated(args: any) {
         lastSyncedAt: new Date(),
       },
     })
+
+    // Clear any TxQueue rows held on `pendingQuickSignTxHash` for this
+    // (owner, sessionKey) pair: the session has now landed on L2 and the
+    // validator can simulate them on the next tick. Mirror of how the
+    // PendingMintDeposit watcher clears `pendingDepositTxHash`. Since
+    // TxQueue has no owner-address column, key off the matched SessionKey
+    // row's tokenId chain (User.address → User.tokenId → TxQueue.senderId).
+    try {
+      const user = await prisma.user.findFirst({
+        where: { address: owner },
+        select: { tokenId: true },
+      })
+      if (user?.tokenId) {
+        const cleared = await prisma.txQueue.updateMany({
+          where: {
+            senderId: user.tokenId,
+            pendingQuickSignTxHash: { not: null },
+          },
+          data: {
+            pendingQuickSignTxHash: null,
+            // If the row is sitting in waiting_for_deposit purely because of the
+            // session leg, promote it back so the validator picks it up.
+            // (Rows held for both deposit + session will keep the deposit hold;
+            // we only null the session-side flag here.)
+          },
+        })
+        if (cleared.count > 0) {
+          console.log(`[ChainSync:L2Events] Cleared pendingQuickSignTxHash on ${cleared.count} TxQueue rows for senderId=${user.tokenId}`)
+        }
+        // If any of those rows are still in waiting_for_deposit but have no
+        // pendingDepositTxHash (i.e. they were held for session only), promote
+        // them back to pending now.
+        const promoted = await prisma.txQueue.updateMany({
+          where: {
+            senderId: user.tokenId,
+            status: 'waiting_for_deposit',
+            pendingDepositTxHash: null,
+            pendingQuickSignTxHash: null,
+          },
+          data: { status: 'pending', reason: null },
+        })
+        if (promoted.count > 0) {
+          console.log(`[ChainSync:L2Events] Promoted ${promoted.count} session-held rows back to pending for senderId=${user.tokenId}`)
+        }
+      }
+    } catch (err: any) {
+      console.error(`[ChainSync:L2Events] Failed to clear pendingQuickSignTxHash for ${owner}:`, err.message)
+    }
   } catch (err: any) {
     console.error(`[ChainSync:L2Events] Failed to upsert SessionKey for ${owner}/${sessionAddress}:`, err.message)
   }

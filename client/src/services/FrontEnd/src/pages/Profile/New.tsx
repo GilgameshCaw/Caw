@@ -2,6 +2,7 @@
 import { SubmitButton } from "~/components/buttons/SubmitButton"
 import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { useReadContract, useAccount, useSwitchChain } from 'wagmi'
+import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import useAllowance from "~/hooks/useAllowance";
 import { maxUint256, parseUnits, erc20Abi, formatEther } from "viem";
 import useContractCall, { UseContractCallReturn } from '~/hooks/useContractCall'
@@ -21,6 +22,12 @@ import { HiInformationCircle } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
 import { CLIENT_ID } from '~/api/actions'
 import { useT } from '~/i18n/I18nProvider'
+import { getDefaultSpendLimit, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
+import { useSessionKeyStore } from '~/store/sessionKeyStore'
+
+// Quick Sign default scope: all actions except WITHDRAW (bit 6) — matches the
+// 0xBF hard-wired on L2 in the bundled session register flow.
+const QUICK_SIGN_DEFAULT_SCOPE = 0xBF
 
 // cost schedule (raw CAW)
 const COST_SCHEDULE: Record<number, bigint> = {
@@ -135,6 +142,31 @@ export const NewProfile: React.FC = () => {
   const [depositEnabled, setDepositEnabled] = useState(true)
   const [depositAmount, setDepositAmount] = useState('')
   const [depositDefaultSet, setDepositDefaultSet] = useState(false)
+
+  // Quick Sign session — bundle into the same L1 tx as mintAndDeposit. Default
+  // ON so brand-new users get one-click posting after onboarding. The actual
+  // session keypair is generated lazily, just before submit, so navigating
+  // away doesn't burn an unused session in localStorage.
+  const [quickSignEnabled, setQuickSignEnabled] = useState(true)
+  const [quickSignExpanded, setQuickSignExpanded] = useState(true)
+  const setSession = useSessionKeyStore(s => s.setSession)
+  const setSessionEnabled = useSessionKeyStore(s => s.setEnabled)
+  // Privately-held session params that are active for this submission.
+  // Generated on submit (see handleSubmit) and held in BOTH a ref (for the
+  // success-callback closure) and state (so the wagmi-hook args update).
+  const sessionRef = useRef<{
+    privateKey: `0x${string}`
+    address: `0x${string}`
+    spendLimit: bigint
+    duration: number
+    expiry: number
+  } | null>(null)
+  const [pendingSession, setPendingSession] = useState<{
+    address: `0x${string}`
+    expiry: number
+    spendLimit: bigint
+  } | null>(null)
+  const [pendingMintAfterSession, setPendingMintAfterSession] = useState(false)
   const useAddress = address || activeToken?.owner;
   const setActiveTokenId = useTokenDataStore(state => state.setActiveTokenId);
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
@@ -273,7 +305,9 @@ export const NewProfile: React.FC = () => {
   })
 console.log("BALANCE:", balance)
 
-  // quote on‐chain LZ fee from CawProfileQuoter — switches between mint and mintAndDeposit
+  // quote on‐chain LZ fee from CawProfileQuoter — switches between mint and mintAndDeposit.
+  // When Quick Sign is ON alongside a deposit, use the bundled quote which
+  // accounts for the larger LZ payload (extra session-key + expiry + spend args).
   const { data: mintOnlyQuote } = useReadContract({
     abi: cawProfileQuoterAbi,
     chainId: chains.l1.chainId,
@@ -288,10 +322,24 @@ console.log("BALANCE:", balance)
     functionName: "mintAndDepositQuote",
     address: CAW_NAME_QUOTER_ADDRESS,
     args: [ CLIENT_ID, depositAmountWei, chains.l2.layerZero, false ],
-    query: { enabled: depositEnabled && depositAmountWei > 0n }
+    query: { enabled: depositEnabled && depositAmountWei > 0n && !quickSignEnabled }
+  })
+  // Quote for the bundled mintAndDepositAndQuickSign flow. The selector picks
+  // the larger LZ gas budget on L2, so we MUST use this when QS is enabled.
+  // The Quoter's signature only needs `sessionKey` to know whether the bundled
+  // selector applies; expiry/spendLimit don't affect LZ payload size.
+  const { data: bundledQuote } = useReadContract({
+    abi: cawProfileQuoterAbi,
+    chainId: chains.l1.chainId,
+    functionName: "mintAndDepositAndQuickSignQuote",
+    address: CAW_NAME_QUOTER_ADDRESS,
+    args: [ CLIENT_ID, depositAmountWei, chains.l2.layerZero, false, useAddress as `0x${string}` ?? '0x0000000000000000000000000000000000000001' ],
+    query: { enabled: depositEnabled && depositAmountWei > 0n && quickSignEnabled }
   })
   console.log('[New] mintAndDepositQuote:', { data: mintAndDepositQuote, error: mintAndDepositQuoteError?.message, loading: mintAndDepositQuoteLoading, enabled: depositEnabled && depositAmountWei > 0n, depositAmountWei: depositAmountWei.toString(), CLIENT_ID, layerZero: chains.l2.layerZero })
-  const quote = depositEnabled ? mintAndDepositQuote : mintOnlyQuote
+  const quote = !depositEnabled
+    ? mintOnlyQuote
+    : (quickSignEnabled ? bundledQuote : mintAndDepositQuote)
 
   const lzTokenAmount = 0n;
   const totalCawNeeded = cost + depositAmountWei;
@@ -387,7 +435,7 @@ console.log("BALANCE:", balance)
     abi:      cawProfileMinterAbi,
     address: CAW_NAMES_MINTER_ADDRESS,
     args:         [CLIENT_ID, username, depositAmountWei, chains.l2.layerZero, lzTokenAmount],
-    disabled:     !depositEnabled || !address || !isValid || needsApproval || depositAmountWei === 0n,
+    disabled:     !depositEnabled || quickSignEnabled || !address || !isValid || needsApproval || depositAmountWei === 0n,
     onPending:    hash => {
       console.log('mintAndDeposit tx pending', hash)
       setHasResetForm(false)
@@ -439,10 +487,107 @@ console.log("BALANCE:", balance)
     onError:      err  => console.error(err),
   })
 
+  // Quick Sign session params used by the bundled hook below. We update these
+  // pieces of state right before calling the bundled mint so the wagmi hook's
+  // `args` reflect the freshly-generated session keypair. Until generated,
+  // the bundled hook is `disabled` so the placeholder zero address never
+  // makes it into a real call.
+  const qsExpiry = pendingSession?.expiry ?? Math.floor(Date.now() / 1000) + DEFAULT_SESSION_DURATION
+  const qsSpendLimit = pendingSession?.spendLimit ?? (quickSignEnabled ? getDefaultSpendLimit() : 0n)
+  const qsSessionAddress = pendingSession?.address ?? '0x0000000000000000000000000000000000000000' as `0x${string}`
+
+  // hook into mintAndDepositAndQuickSign — bundled flow with session leg.
+  const { call: mintAndDepositAndQuickSign, status: bundledStatus, gasCostEth: bundledGas }: UseContractCallReturn = useContractCall({
+    value:        quote?.nativeFee || 0n,
+    functionName: 'mintAndDepositAndQuickSign',
+    abi:      cawProfileMinterAbi,
+    address: CAW_NAMES_MINTER_ADDRESS,
+    args:         [CLIENT_ID, username, depositAmountWei, chains.l2.layerZero, lzTokenAmount, qsSessionAddress, BigInt(qsExpiry), qsSpendLimit],
+    disabled:     !depositEnabled || !quickSignEnabled || !address || !isValid || needsApproval || depositAmountWei === 0n || qsSessionAddress === '0x0000000000000000000000000000000000000000',
+    onPending:    hash => {
+      console.log('mintAndDepositAndQuickSign tx pending', hash)
+      setHasResetForm(false)
+    },
+    onSuccess:    async (hash) => {
+      console.log('bundled mint+deposit+QuickSign succeeded!', hash)
+      await refetchTokenData?.()
+      const sess = sessionRef.current
+      const checkForNewToken = async () => {
+        const allTokens = useTokenDataStore.getState().allTokens()
+        const newToken = allTokens.find((t: any) => t.username.toLowerCase() === username.toLowerCase())
+        if (newToken) {
+          setMintedTokenId(newToken.tokenId)
+          setActiveTokenId(newToken.tokenId)
+          setMintSuccess(true)
+          // Persist deposit hint exactly like the non-QS branch.
+          if (depositAmountWei > 0n) {
+            try {
+              const { readOnChainStakeForHint } = await import('~/api/actions')
+              const onChainBaseline = await readOnChainStakeForHint(newToken.tokenId)
+              localStorage.setItem(
+                `caw:pendingDeposit:${newToken.tokenId}`,
+                JSON.stringify({
+                  amount: depositAmountWei.toString(),
+                  txHash: hash,
+                  at: Date.now(),
+                  stakedAtHintTime: onChainBaseline.toString(),
+                })
+              )
+              window.dispatchEvent(new CustomEvent('caw:pendingDepositChanged', { detail: { tokenId: newToken.tokenId } }))
+            } catch {}
+          }
+          // Persist the session locally + write a 'pending' localStorage hint so
+          // useSessionKey-aware UI can fall back to it while the L2 mirror catches
+          // up. Cleared when ChainSyncService indexes the SessionCreated event
+          // (server-side) and the client refetches; for now keep both — the
+          // session store is the source of truth for client-side action signing.
+          if (sess && useAddress) {
+            const owner = (useAddress as string).toLowerCase()
+            try {
+              setSession({
+                privateKey: sess.privateKey,
+                address: sess.address,
+                ownerAddress: owner,
+                expiry: sess.expiry,
+                scopeBitmap: QUICK_SIGN_DEFAULT_SCOPE,
+                spendLimit: sess.spendLimit.toString(),
+              })
+              setSessionEnabled(true)
+              localStorage.setItem(
+                `caw:pendingQuickSign:${owner}`,
+                JSON.stringify({
+                  sessionKey: sess.address,
+                  expiry: sess.expiry,
+                  spendLimit: sess.spendLimit.toString(),
+                  txHash: hash,
+                  submittedAt: Date.now(),
+                })
+              )
+              window.dispatchEvent(new CustomEvent('caw:pendingQuickSignChanged', { detail: { owner } }))
+            } catch (e) {
+              console.warn('[New] failed to persist QuickSign session:', e)
+            }
+          }
+        } else {
+          refetchTokenData?.()
+          setTimeout(checkForNewToken, 3000)
+        }
+      }
+      setTimeout(checkForNewToken, 1000)
+    },
+    onError:      err  => console.error(err),
+  })
+
   // Unified status — pick from whichever path is active
-  const mintStatus = depositEnabled ? mintAndDepositStatus : mintOnlyStatus
-  const gasCostEth = depositEnabled ? mintAndDepositGas : mintOnlyGas
-  const mint = depositEnabled ? mintAndDeposit : mintOnly
+  const mintStatus = depositEnabled
+    ? (quickSignEnabled ? bundledStatus : mintAndDepositStatus)
+    : mintOnlyStatus
+  const gasCostEth = depositEnabled
+    ? (quickSignEnabled ? bundledGas : mintAndDepositGas)
+    : mintOnlyGas
+  const mint = depositEnabled
+    ? (quickSignEnabled ? mintAndDepositAndQuickSign : mintAndDeposit)
+    : mintOnly
 
   const waiting = isApprovePending || Boolean(mintStatus.match(/pending/))
 
@@ -483,6 +628,26 @@ console.log("BALANCE:", balance)
     minterAllowanceNeeded: minterAllowanceNeeded.toString(),
   })
 
+  // Generate the Quick Sign session keypair lazily, just before the bundled
+  // mint. We don't want to burn an unused session in localStorage if the user
+  // changes their mind on the form. This sets `pendingSession` state which
+  // re-renders, makes the wagmi hook's `args` reflect the session params, and
+  // then a useEffect fires the actual mint call.
+  const generatePendingSession = useCallback(() => {
+    const privateKey = generatePrivateKey()
+    const sessionAccount = privateKeyToAccount(privateKey)
+    const spendLimit = getDefaultSpendLimit()
+    const expiry = Math.floor(Date.now() / 1000) + DEFAULT_SESSION_DURATION
+    sessionRef.current = {
+      privateKey,
+      address: sessionAccount.address as `0x${string}`,
+      spendLimit,
+      duration: DEFAULT_SESSION_DURATION,
+      expiry,
+    }
+    setPendingSession({ address: sessionAccount.address as `0x${string}`, expiry, spendLimit })
+  }, [])
+
   const doApproveOrMint = useCallback(async () => {
     if (needsMinterApproval) {
       console.log('[New] approving minter...')
@@ -491,15 +656,33 @@ console.log("BALANCE:", balance)
     } else {
       console.log('[New] calling mint...', {
         depositEnabled,
+        quickSignEnabled,
         hasQuote: !!quote,
         hasAddress: !!address,
         isValid,
         needsApproval,
         depositAmountWei: depositAmountWei.toString(),
       })
+      // Bundled flow needs a session keypair generated first. Generate it,
+      // wait for the hook's `args` to settle on the new address, then mint.
+      if (depositEnabled && quickSignEnabled && !pendingSession) {
+        generatePendingSession()
+        setPendingMintAfterSession(true)
+        return
+      }
       await mint();
     }
-  }, [needsMinterApproval, approveMinter, mint]);
+  }, [needsMinterApproval, approveMinter, mint, depositEnabled, quickSignEnabled, pendingSession, generatePendingSession]);
+
+  // After session params land in state and the wagmi hook re-renders with the
+  // fresh args, fire the actual mint call. Same pattern as
+  // pendingMintAfterApproval / pendingSubmitAfterSwitch above.
+  useEffect(() => {
+    if (pendingMintAfterSession && pendingSession && !needsApproval) {
+      setPendingMintAfterSession(false)
+      mint()
+    }
+  }, [pendingMintAfterSession, pendingSession, needsApproval, mint])
 
   // After a chain switch completes and wagmi hooks re-render with the correct
   // chain, auto-trigger the approve/mint flow so it's one-click for the user.
@@ -881,6 +1064,58 @@ console.log("BALANCE:", balance)
                 </div>
               )}
             </div>
+
+            {/* Quick Sign option — only meaningful alongside a deposit (the
+                bundled flow on-chain uses mintAndDepositAndQuickSign). When
+                disabled OR when there's no deposit, we fall back to plain
+                mintAndDeposit / mint with no session leg. */}
+            {depositEnabled && depositAmountWei > 0n && (
+            <div className={`border rounded-xl p-4 space-y-3 mt-3 ${
+              isDark ? 'border-white/10 bg-[#0D0D0D]/85' : 'border-gray-200 bg-gray-50'
+            }`}>
+              <label className="flex items-center gap-3 cursor-pointer">
+                <button
+                  type="button"
+                  onClick={() => { setQuickSignEnabled(!quickSignEnabled); setQuickSignExpanded(true) }}
+                  className={`relative w-10 min-w-[40px] h-6 rounded-full transition-colors duration-200 cursor-pointer flex-shrink-0 ${
+                    quickSignEnabled ? 'bg-yellow-500' : 'bg-gray-600'
+                  }`}
+                >
+                  <div className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${
+                    quickSignEnabled ? 'translate-x-4' : 'translate-x-0.5'
+                  }`} />
+                </button>
+                <div className="flex-1">
+                  <button
+                    type="button"
+                    onClick={() => setQuickSignExpanded(v => !v)}
+                    className="text-left w-full"
+                  >
+                    <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>Quick Sign — one-click posting</span>
+                  </button>
+                  <p className="text-yellow-500/80 text-xs mt-0.5">
+                    Skip wallet popups for posts, likes, follows, and tips. Withdrawals always require your wallet.
+                  </p>
+                </div>
+              </label>
+              {quickSignEnabled && quickSignExpanded && (
+                <div className={`text-xs space-y-1 pl-[52px] ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
+                  <div>Spend limit:&nbsp;
+                    <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                      {formatNumberCompact(Number(qsSpendLimit))} CAW
+                    </span>
+                    <span className="text-gray-500 ml-1">(~$10)</span>
+                  </div>
+                  <div>Expires in:&nbsp;
+                    <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                      {Math.round(DEFAULT_SESSION_DURATION / 86400)} days
+                    </span>
+                  </div>
+                  <div className="text-gray-500">You can change these defaults later in Settings.</div>
+                </div>
+              )}
+            </div>
+            )}
 
             <SubmitButton
                 onClick={handleSubmit}

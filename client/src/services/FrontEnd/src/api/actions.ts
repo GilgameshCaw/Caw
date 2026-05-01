@@ -1357,6 +1357,35 @@ export function useSignAndSubmitAction() {
         }
       } catch { /* ignore */ }
 
+      // Mirror of the deposit hint, for the bundled mintAndDepositAndQuickSign
+      // flow: when the action is signed by a session key whose registration
+      // tx hasn't yet propagated to L2, the validator should hold the row
+      // instead of failing it with "Session expired or not found".
+      let pendingQuickSignTxHash: string | undefined
+      try {
+        // Resolve the token owner for the active sender via the token store.
+        let ownerAddress: string | undefined
+        const state = useTokenDataStore.getState()
+        for (const tokens of Object.values(state.tokensByAddress)) {
+          const found = tokens.find(t => t.tokenId === activeTokenId)
+          if (found?.owner) { ownerAddress = found.owner.toLowerCase(); break }
+        }
+        if (ownerAddress) {
+          const hintRaw = localStorage.getItem(`caw:pendingQuickSign:${ownerAddress}`)
+          if (hintRaw) {
+            const hint = JSON.parse(hintRaw)
+            if (hint?.txHash && typeof hint.txHash === 'string' && /^0x[0-9a-fA-F]{64}$/.test(hint.txHash)) {
+              const age = Date.now() - (hint.submittedAt ?? 0)
+              if (age < 30 * 60 * 1000) {
+                pendingQuickSignTxHash = hint.txHash
+              } else {
+                localStorage.removeItem(`caw:pendingQuickSign:${ownerAddress}`)
+              }
+            }
+          }
+        }
+      } catch { /* ignore */ }
+
       // Retry on 202 ("user not yet indexed") — extremely rare here because
       // allocate-cawonce already gated on the sender row existing, but
       // possible if the User row was deleted between the two calls. Same
@@ -1366,6 +1395,7 @@ export function useSignAndSubmitAction() {
         body: JSON.stringify({
           data: message, domain, types, signature,
           ...(pendingDepositTxHash ? { pendingDepositTxHash } : {}),
+          ...(pendingQuickSignTxHash ? { pendingQuickSignTxHash } : {}),
           ...(params.retriedTxQueueId ? { retriedTxQueueId: params.retriedTxQueueId } : {}),
           // Off-chain poll metadata — image URLs that pair positionally with
           // the options inside the ::poll:...:: marker. Server-side validated
@@ -1795,6 +1825,31 @@ export function useSignAndSubmitAction() {
       }
     } catch { /* ignore */ }
 
+    // Same forward for the bundled mintAndDepositAndQuickSign session leg.
+    let pendingQuickSignTxHash: string | undefined
+    try {
+      let ownerAddress: string | undefined
+      const tdState = useTokenDataStore.getState()
+      for (const tokens of Object.values(tdState.tokensByAddress)) {
+        const found = tokens.find(t => t.tokenId === activeTokenId)
+        if (found?.owner) { ownerAddress = found.owner.toLowerCase(); break }
+      }
+      if (ownerAddress) {
+        const hintRaw = localStorage.getItem(`caw:pendingQuickSign:${ownerAddress}`)
+        if (hintRaw) {
+          const hint = JSON.parse(hintRaw)
+          if (hint?.txHash && typeof hint.txHash === 'string' && /^0x[0-9a-fA-F]{64}$/.test(hint.txHash)) {
+            const age = Date.now() - (hint.submittedAt ?? 0)
+            if (age < 30 * 60 * 1000) {
+              pendingQuickSignTxHash = hint.txHash
+            } else {
+              localStorage.removeItem(`caw:pendingQuickSign:${ownerAddress}`)
+            }
+          }
+        }
+      }
+    } catch { /* ignore */ }
+
     let batchResponse: any
     try {
       // Wrap in retryOnIndexing for parity with the single-action path:
@@ -1809,6 +1864,7 @@ export function useSignAndSubmitAction() {
           domain: batchDomain,
           types: batchTypeDef,
           ...(pendingDepositTxHash ? { pendingDepositTxHash } : {}),
+          ...(pendingQuickSignTxHash ? { pendingQuickSignTxHash } : {}),
         }),
       }))
     } catch (err: any) {

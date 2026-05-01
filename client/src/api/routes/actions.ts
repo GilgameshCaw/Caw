@@ -223,7 +223,7 @@ router.post('/', async (req, res) => {
   const timings: Record<string, number> = {}
   const mark = (label: string) => { timings[label] = Date.now() - reqStart }
   try {
-    const { data, domain, types, signature, pendingDepositTxHash, retriedTxQueueId, pollOptionImages } = req.body
+    const { data, domain, types, signature, pendingDepositTxHash, pendingQuickSignTxHash, retriedTxQueueId, pollOptionImages } = req.body
 
     // Validate pendingDepositTxHash shape if provided. The server does NOT verify
     // the hash synchronously (that would block the request path on an L1 RPC call).
@@ -237,6 +237,17 @@ router.post('/', async (req, res) => {
         return res.status(400).json({ error: 'Invalid pendingDepositTxHash format' })
       }
       sanitizedPendingDepositTxHash = pendingDepositTxHash.toLowerCase()
+    }
+
+    // Same shape check for the bundled mintAndDepositAndQuickSign session leg.
+    // Validator pre-sim hold uses this to skip simulation while the L2 mirror
+    // hasn't yet seen the SessionCreated event for this owner+sessionKey.
+    let sanitizedPendingQuickSignTxHash: string | null = null
+    if (pendingQuickSignTxHash !== undefined && pendingQuickSignTxHash !== null) {
+      if (typeof pendingQuickSignTxHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(pendingQuickSignTxHash)) {
+        return res.status(400).json({ error: 'Invalid pendingQuickSignTxHash format' })
+      }
+      sanitizedPendingQuickSignTxHash = pendingQuickSignTxHash.toLowerCase()
     }
 
     // Validate required fields
@@ -1358,6 +1369,7 @@ router.post('/', async (req, res) => {
             payload: { data, domain, types },
             signedTx: signature,
             pendingDepositTxHash: sanitizedPendingDepositTxHash,
+            pendingQuickSignTxHash: sanitizedPendingQuickSignTxHash,
             clientVersion: provenance.clientVersion,
             clientOrigin: provenance.clientOrigin,
             signerKind: isOwner ? 'owner' : 'session',
@@ -1466,7 +1478,7 @@ router.post('/', async (req, res) => {
  */
 router.post('/batch', async (req, res) => {
   try {
-    const { actions, pendingDepositTxHash, batchSig, domain: batchDomain, types: batchTypes, retriedTxQueueIds } = req.body
+    const { actions, pendingDepositTxHash, pendingQuickSignTxHash, batchSig, domain: batchDomain, types: batchTypes, retriedTxQueueIds } = req.body
 
     // Validate retriedTxQueueIds shape if provided. Optional — only present
     // when this batch is a retry of a previously-failed batch (the FE's
@@ -1516,6 +1528,13 @@ router.post('/batch', async (req, res) => {
         return res.status(400).json({ error: 'Invalid pendingDepositTxHash format' })
       }
       sanitizedPendingDepositTxHash = pendingDepositTxHash.toLowerCase()
+    }
+    let sanitizedPendingQuickSignTxHash: string | null = null
+    if (pendingQuickSignTxHash !== undefined && pendingQuickSignTxHash !== null) {
+      if (typeof pendingQuickSignTxHash !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(pendingQuickSignTxHash)) {
+        return res.status(400).json({ error: 'Invalid pendingQuickSignTxHash format' })
+      }
+      sanitizedPendingQuickSignTxHash = pendingQuickSignTxHash.toLowerCase()
     }
 
     // Payload size guard
@@ -1774,6 +1793,7 @@ router.post('/batch', async (req, res) => {
               data: {
                 ...row,
                 pendingDepositTxHash: sanitizedPendingDepositTxHash,
+                pendingQuickSignTxHash: sanitizedPendingQuickSignTxHash,
                 clientVersion: provenance.clientVersion,
                 clientOrigin: provenance.clientOrigin,
               }

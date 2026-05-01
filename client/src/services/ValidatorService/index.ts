@@ -1152,6 +1152,26 @@ export const validatorService: Service = {
         console.log(`[Validator] Pre-sim hold: moved ${heldCount.count} rows to waiting_for_deposit`)
       }
 
+      // Pre-simulation hold for Quick Sign session registration: same shape as
+      // the deposit hold above. The bundled mintAndDeposit+QuickSign flow registers
+      // the session on L2 via the same LZ message that lands the deposit; until
+      // that lands, simulating an action signed by the session key would fail with
+      // "Session expired or not found". Reuse waiting_for_deposit as the holding
+      // status — it already gets re-promoted on the same L2-watch cadence.
+      const sessionHeldCount = await prisma.txQueue.updateMany({
+        where: {
+          status: 'pending',
+          pendingQuickSignTxHash: { not: null }
+        },
+        data: {
+          status: 'waiting_for_deposit',
+          reason: 'Waiting for L1 Quick Sign session to land on L2'
+        }
+      })
+      if (sessionHeldCount.count > 0) {
+        console.log(`[Validator] Pre-sim hold: moved ${sessionHeldCount.count} session-pending rows to waiting_for_deposit`)
+      }
+
       // awaiting_indexer recheck: rows where simulation reported "Cawonce
       // already used" but the local Action row hadn't been written yet.
       // Re-resolve against the Action table (now updated by ActionProcessor)
@@ -2648,7 +2668,14 @@ console.log("succeededKeys", succeededKeys)
                  // pendingDepositTxHash hold handles for deposits, but that
                  // gate doesn't fire here because there's no tx hash on the
                  // queued action. Retry on next poll until L2 catches up.
-                 lowerMsg.includes('not authenticated with this client')
+                 lowerMsg.includes('not authenticated with this client') ||
+                 // Quick Sign session may not have landed on L2 yet — same
+                 // L1→L2 race as deposit/auth. The pre-sim hold for
+                 // pendingQuickSignTxHash handles the common case; this is
+                 // a fallback for actions whose row didn't carry the hash
+                 // (e.g. submitted shortly after, or after we cleared it on
+                 // a transient watcher gap). Retry on next poll.
+                 lowerMsg.includes('session expired or not found')
         })
 
         if (hasTemporaryError) {

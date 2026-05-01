@@ -339,6 +339,13 @@ model TxQueue {
   // and the DataCleaner watcher to promote it when L2 catches up.
   pendingDepositTxHash String?
 
+  // If non-null, the client claims a pending L1 Quick Sign session-registration
+  // tx (typically the same tx as a bundled mintAndDepositAndQuickSign). The
+  // session key may not yet appear in `cawProfile.sessions(owner, sk)` on L2,
+  // so the validator should hold the row until either the session lands or a
+  // retry budget expires — same pattern as pendingDepositTxHash.
+  pendingQuickSignTxHash String?
+
   // Groups txqueue rows that share an ActionBatch signature. Adjacent rows
   // (in createdAt/cawonce order) with the same batchId are sent on-chain
   // as one signature group. signedTx must match across rows in the group —
