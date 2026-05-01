@@ -248,6 +248,14 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
 
   // Reconcile: if the items already show the same pin the user has
   // pending, the indexer caught up and we can drop the override.
+  //
+  // Reconcile off `pinnedAt` (the server-shaped timestamp), NOT `isPinned`.
+  // `isPinned` is a feed-context flag the API stamps when prepending the
+  // pinned caw on a profile feed — but we ALSO stamp it optimistically
+  // on the row we just moved. Keying off `isPinned` would clear the
+  // pending entry as soon as our own optimistic write ran, defeating
+  // the purpose. `pinnedAt` only changes when the server (indexer or
+  // off-chain API) actually wrote it.
   useEffect(() => {
     for (const [userIdStr, entry] of Object.entries(pendingPinsByUser)) {
       const userId = Number(userIdStr)
@@ -257,9 +265,8 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
         clearPending(userId)
         continue
       }
-      // Find the user's currently-pinned caw in the freshly-loaded
-      // items (server truth).
-      const serverPinnedForUser = items.find(it => it.user.tokenId === userId && it.isPinned)
+      // Find the user's currently-pinned caw (by pinnedAt) in items.
+      const serverPinnedForUser = items.find(it => it.user.tokenId === userId && !!it.pinnedAt)
       const serverPinnedId = serverPinnedForUser ? Number(serverPinnedForUser.id) : null
       if (entry.cawId === serverPinnedId) {
         // Server agrees — done.
@@ -491,8 +498,14 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
           for (const caw of toRefresh) {
             apiFetch<{ caw: CawItem }>(`/api/caws/${caw.id}`)
               .then(updated => {
+                // Preserve `isPinned` on merge: that flag is set by the
+                // profile-feed prepend logic (or our own optimistic
+                // path), not by the single-caw endpoint. Spreading
+                // `updated.caw` raw would wipe the badge.
                 setItems(current => current.map(item =>
-                  item.id === caw.id ? { ...updated.caw } : item
+                  item.id === caw.id
+                    ? { ...updated.caw, isPinned: item.isPinned ?? updated.caw.isPinned }
+                    : item
                 ))
               })
               .catch(() => {})
