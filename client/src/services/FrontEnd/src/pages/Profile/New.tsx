@@ -7,14 +7,12 @@ import useAllowance from "~/hooks/useAllowance";
 import { maxUint256, parseUnits, erc20Abi, formatEther } from "viem";
 import useContractCall, { UseContractCallReturn } from '~/hooks/useContractCall'
 import { useLayoutStore } from '~/store/layoutStore'
-import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_MINTER_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
-import { cawProfileAbi, cawProfileMinterAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
+import { CAW_ADDRESS, CAW_NAMES_MINTER_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
+import { cawProfileMinterAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { useActiveToken, useTokenDataStore, usePriceStore } from "~/store/tokenDataStore";
 import { chains, isTestnet } from '~/config/chains'
 import UsernameSvg from '~/components/UsernameSvg'
 import { formatNumber, formatNumberCompact, convertToNumber } from "~/utils";
-import { formatUnits } from "viem";
-import BadgedIcon from '~/assets/images/badged.svg'
 import { useSearchParams } from 'react-router-dom'
 import { useNavigate, Link } from '~/utils/localizedRouter'
 import StakingRewardsInfo from '~/components/StakingRewardsInfo'
@@ -125,7 +123,7 @@ export const NewProfile: React.FC = () => {
   };
   const navigate = useNavigate();
   const activeToken = useActiveToken();
-  const { isConnected, address, chainId }      = useAccount()
+  const { address, chainId }      = useAccount()
   const [searchParams] = useSearchParams()
   const [username, setUsername] = useState(() => {
     // Allow pre-filling via ?username=foo (e.g. from "claim this profile" links)
@@ -295,7 +293,7 @@ export const NewProfile: React.FC = () => {
   const usernameTaken = !checkingUsername && !!existingId;
 
 
-  const { data: balance, isLoading: balanceLoading } = useReadContract({
+  const { data: balance } = useReadContract({
     address:      CAW_ADDRESS,
     abi:          erc20Abi,
     chainId: chains.l1.chainId,
