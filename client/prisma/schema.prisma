@@ -79,6 +79,7 @@ model User {
   blocksReceived        Block[]        @relation("BlocksReceived")
   bookmarks             Bookmark[]
   votes                 Vote[]
+  offerDismissals       MarketplaceOfferDismissal[]
 
   @@index([address])
   @@index([cawCount, followerCount])
@@ -911,6 +912,7 @@ model MarketplaceOffer {
   createdAt       DateTime             @default(now())
   updatedAt       DateTime             @updatedAt
   notifications   Notification[]
+  dismissals      MarketplaceOfferDismissal[]
 
   @@index([tokenId, status])
   @@index([offerer, status])
@@ -922,6 +924,22 @@ enum OfferStatus {
   ACCEPTED
   CANCELLED
   EXPIRED
+}
+
+// Per-recipient "I dismissed this offer from my view" record. Distinct from
+// MarketplaceOffer.status (which is mirrored from chain by MarketplaceIndexer
+// and would get clobbered if we tried to overload it). One row per (offer,
+// dismisser) so each owner of the targeted username can dismiss independently.
+model MarketplaceOfferDismissal {
+  id        Int              @id @default(autoincrement())
+  offerId   Int
+  userId    Int
+  createdAt DateTime         @default(now())
+  offer     MarketplaceOffer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+  user      User             @relation(fields: [userId], references: [tokenId], onDelete: Cascade)
+
+  @@unique([offerId, userId])
+  @@index([userId])
 }
 
 model Bookmark {

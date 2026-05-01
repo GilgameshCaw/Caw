@@ -130,11 +130,23 @@ router.get('/badges', requireAuth({ lookup: async (req) => Number(req.query.user
       })
       const tokenIds = ownedUsers.map(u => u.tokenId)
       if (tokenIds.length > 0) {
-        // Badge counts every ACTIVE offer, regardless of whether the user has
-        // viewed the My Offers tab. The count drops only when the offer is
-        // accepted or cancelled (status transitions out of ACTIVE).
+        // Badge counts every ACTIVE offer, minus ones the recipient has
+        // dismissed via POST /api/marketplace/offers/:id/dismiss. The count
+        // drops when the offer is accepted/cancelled (status changes) OR when
+        // the user explicitly dismisses it. Stay in lockstep with the
+        // /offers/received list so the badge can never show non-zero while
+        // the list is empty.
+        const dismissals = await prisma.marketplaceOfferDismissal.findMany({
+          where: { userId: { in: tokenIds } },
+          select: { offerId: true },
+        })
+        const dismissedOfferIds = dismissals.map(d => d.offerId)
         offers = await prisma.marketplaceOffer.count({
-          where: { tokenId: { in: tokenIds }, status: 'ACTIVE' },
+          where: {
+            tokenId: { in: tokenIds },
+            status: 'ACTIVE',
+            ...(dismissedOfferIds.length > 0 ? { id: { notIn: dismissedOfferIds } } : {}),
+          },
         })
       }
     }

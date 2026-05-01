@@ -332,7 +332,9 @@ router.get('/offers/token/:tokenId', async (req, res) => {
 
 /**
  * GET /api/marketplace/offers/received/:address
- * All active offers targeting tokens owned by a given address.
+ * All active offers targeting tokens owned by a given address. Excludes any
+ * offers that the targeted token's owner has dismissed (per-token dismissal,
+ * stored in MarketplaceOfferDismissal — see POST /offers/:id/dismiss).
  */
 router.get('/offers/received/:address', async (req, res) => {
   try {
@@ -351,14 +353,30 @@ router.get('/offers/received/:address', async (req, res) => {
       return res.json({ offers: [], total: 0 })
     }
 
+    // Pull dismissals once and filter inline. The (offerId, userId) unique
+    // index makes this cheap; no per-row sub-select. We dismiss against
+    // MarketplaceOfferDismissal.userId == the targeted tokenId, mirroring how
+    // the dismiss endpoint records them.
+    const dismissals = await prisma.marketplaceOfferDismissal.findMany({
+      where: { userId: { in: tokenIds } },
+      select: { offerId: true },
+    })
+    const dismissedOfferIds = dismissals.map(d => d.offerId)
+
+    const where = {
+      tokenId: { in: tokenIds },
+      status: 'ACTIVE' as const,
+      ...(dismissedOfferIds.length > 0 ? { id: { notIn: dismissedOfferIds } } : {}),
+    }
+
     const [offers, total] = await Promise.all([
       prisma.marketplaceOffer.findMany({
-        where: { tokenId: { in: tokenIds }, status: 'ACTIVE' },
+        where,
         orderBy: { createdAt: 'desc' },
         take: limit,
         skip: offset,
       }),
-      prisma.marketplaceOffer.count({ where: { tokenId: { in: tokenIds }, status: 'ACTIVE' } }),
+      prisma.marketplaceOffer.count({ where }),
     ])
 
     res.json({ offers, total })
@@ -524,8 +542,12 @@ router.post('/offers/mark-seen', requireAuth({ field: 'userId' }), async (req, r
 
 /**
  * POST /api/marketplace/offers/:id/dismiss
- * Dismiss/deny an offer by hiding its associated notifications.
- * Authenticated: the caller must own the username that the offer targets.
+ * Dismiss/deny an offer for the authenticated recipient. Records a per-recipient
+ * dismissal row (so the My Offers list and badge can exclude it) and hides the
+ * associated OFFER notification. Does NOT touch MarketplaceOffer.status — that
+ * column mirrors on-chain state and is re-asserted by MarketplaceIndexer on
+ * block-rewind windows. The :id path param is the DB row id; we resolve the
+ * target tokenId from it for the auth check.
  */
 router.post('/offers/:id/dismiss', requireAuth({ lookup: async (req) => {
   const offerId = parseInt(req.params.id)
@@ -536,18 +558,25 @@ router.post('/offers/:id/dismiss', requireAuth({ lookup: async (req) => {
 }}), async (req, res) => {
   try {
     const offerId = parseInt(req.params.id)
+    const offer = await prisma.marketplaceOffer.findFirst({ where: { id: offerId } })
+    if (!offer) return res.status(404).json({ error: 'Offer not found' })
 
-    // Hide all OFFER notifications linked to this offer for the authenticated user
+    // Idempotent insert — composite (offerId, userId) is unique. The user
+    // here is the owner of the targeted username (verified by requireAuth's
+    // lookup above against offer.tokenId).
+    await prisma.marketplaceOfferDismissal.upsert({
+      where: { offerId_userId: { offerId: offer.id, userId: offer.tokenId } },
+      update: {},
+      create: { offerId: offer.id, userId: offer.tokenId },
+    })
+
+    // Hide the OFFER notification too so it doesn't keep nagging
     await prisma.notification.updateMany({
-      where: {
-        offerId,
-        type: 'OFFER',
-        hidden: false,
-      },
+      where: { offerId, type: 'OFFER', hidden: false },
       data: { hidden: true },
     })
 
-    console.log(`[marketplace] Offer ${offerId} dismissed (notifications hidden)`)
+    console.log(`[marketplace] Offer ${offerId} dismissed by tokenId=${offer.tokenId}`)
     res.json({ ok: true })
   } catch (err: any) {
     console.error('[marketplace] offer dismiss error:', err)

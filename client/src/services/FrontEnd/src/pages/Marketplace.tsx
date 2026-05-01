@@ -419,12 +419,15 @@ const MyOffersTab: React.FC = () => {
   const refreshCounter = useMarketplaceStore(s => s.refreshCounter)
   const navigate = useNavigate()
 
-  // Use wallet address, or fall back to the address from the token store
-  const tokenStoreAddress = useTokenDataStore(s => {
-    const addrs = Object.keys(s.tokensByAddress)
-    return addrs.length > 0 ? addrs[0] : null
-  })
-  const address = walletAddress || tokenStoreAddress
+  // The address whose received offers we should fetch — must be the owner of
+  // the user's active profile, not "whatever address happens to be first in
+  // tokensByAddress". The store can hold tokens for multiple addresses (e.g.
+  // after a marketplace-buy promotes a new wallet) and Object.keys()[0] is
+  // arbitrary; picking it caused the My Offers list to come up empty even
+  // when the badge endpoint (which resolves address from tokenId server-side)
+  // saw the offer. Use the active token's owner so both queries agree.
+  const activeToken = useActiveToken()
+  const address = activeToken?.address?.toLowerCase() ?? walletAddress?.toLowerCase() ?? null
 
   const [sentOffers, setSentOffers] = useState<MarketplaceOffer[]>([])
   const [receivedOffers, setReceivedOffers] = useState<MarketplaceOffer[]>([])
