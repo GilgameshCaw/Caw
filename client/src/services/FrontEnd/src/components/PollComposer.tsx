@@ -298,7 +298,14 @@ const PollComposer: React.FC<Props> = ({
       )}
 
       {(errors.length > 0 || tooFew) && (
-        <div className={`mt-2 text-xs ${isDark ? 'text-red-400' : 'text-red-600'}`}>
+        // Real validation problems (overlong option, illegal char) stay red;
+        // the "needs more options" hint is informational — render it muted
+        // so it reads as a hint, not an error.
+        <div className={`mt-2 text-xs ${
+          errors.length > 0
+            ? (isDark ? 'text-red-400' : 'text-red-600')
+            : (isDark ? 'text-white/40' : 'text-gray-500')
+        }`}>
           {errors[0] || `Need at least ${POLL_MIN_OPTIONS} options to post`}
         </div>
       )}

@@ -251,6 +251,33 @@ export function imageUrlToPollHash(url: string): string {
 }
 
 /**
+ * Extract the host from an absolute image URL — the same host that
+ * goes into the on-chain ::pi:host:hashes:: sidecar so mirror nodes
+ * can fetch it. Returns "" for relative paths (no host to extract) or
+ * malformed URLs.
+ *
+ * The frontend doesn't know its API host independently — `VITE_API_HOST`
+ * exists but only when the SPA points at an external API, and even then
+ * it might include a path or scheme prefix we don't want. The URL the
+ * upload route returned IS the source of truth: that's exactly where
+ * the file lives, including for frontend-only deployments hitting a
+ * sibling API node.
+ *
+ * Example: "https://text.caw.social/uploads/images/abc12345.webp" → "text.caw.social"
+ *          "https://api.caw.dev/uploads/images/x.webp"            → "api.caw.dev"
+ *          "/uploads/images/x.webp"                                → ""
+ */
+export function imageUrlToHost(url: string): string {
+  if (!url || typeof url !== 'string') return ''
+  if (!url.startsWith('http://') && !url.startsWith('https://')) return ''
+  try {
+    return new URL(url).hostname.toLowerCase()
+  } catch {
+    return ''
+  }
+}
+
+/**
  * Extension probe order for resolving an on-chain (host, hash) pair to a
  * concrete URL. WebP first because that's what the upload route writes
  * for compressed images; png/jpg/gif round out the formats the route
