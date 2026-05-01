@@ -213,7 +213,7 @@ contract CawProfile is
       address[] memory owners;
       (tokenIds, owners) = extractPendingTransferUpdates(lzDestId, owner, newId);
       bytes memory payload = abi.encodeWithSelector(mintAuthSelector, cawClientId, newId, owner, username, tokenIds, owners);
-      lzSend(lzDestId, mintAuthSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
+      lzSend(cawClientId, lzDestId, mintAuthSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
   }
 
@@ -258,7 +258,7 @@ contract CawProfile is
       address[] memory owners;
       (tokenIds, owners) = extractPendingTransferUpdates(lzDestId, owner, newId);
       bytes memory payload = abi.encodeWithSelector(addToBalanceSelector, cawClientId, newId, depositAmount, tokenIds, owners);
-      lzSend(lzDestId, addToBalanceSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
+      lzSend(cawClientId, lzDestId, addToBalanceSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
   }
 
@@ -388,7 +388,7 @@ contract CawProfile is
       address[] memory owners;
       (tokenIds, owners) = extractPendingTransferUpdates(lzDestId, msg.sender, tokenId);
       bytes memory payload = abi.encodeWithSelector(authSelector, cawClientId, tokenId, tokenIds, owners);
-      lzSend(lzDestId, authSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
+      lzSend(cawClientId, lzDestId, authSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
   }
 
@@ -419,7 +419,7 @@ contract CawProfile is
       address[] memory owners;
       (tokenIds, owners) = extractPendingTransferUpdates(lzDestId, owner, tokenId);
       bytes memory payload = abi.encodeWithSelector(addToBalanceSelector, cawClientId, tokenId, amount, tokenIds, owners);
-      lzSend(lzDestId, addToBalanceSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
+      lzSend(cawClientId, lzDestId, addToBalanceSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
     }
 
     emit Deposited(cawClientId, tokenId, amount, lzDestId, msg.sender);
@@ -599,6 +599,13 @@ contract CawProfile is
     return (tokenIds, owners);
   }
 
+  /// @dev updateOwners messages sync the entire pending-transfer queue across all
+  ///      tokens regardless of which client they're authed to, so the gas budget
+  ///      reads `clientGasOverride[0][updateOwnersSelector]` — clientId=0 is
+  ///      reserved for protocol-wide overrides. CawClientManager.setGasOverride
+  ///      can't write clientId=0 (no owner), so this slot stays at 0 forever
+  ///      unless a future amendment adds a controlled path. Acceptable: the
+  ///      updateOwners handler is the lowest-risk one in the system.
   function _updateNewOwners(uint32 lzDestId, uint256 lzEthAmount, uint256 lzTokenAmount) internal {
     uint32[] memory tokenIds;
     address[] memory owners;
@@ -609,7 +616,7 @@ contract CawProfile is
         cawProfileL2.updateOwners(tokenIds, owners);
       else {
         bytes memory payload = abi.encodeWithSelector(updateOwnersSelector, tokenIds, owners);
-        lzSend(lzDestId, updateOwnersSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
+        lzSend(0, lzDestId, updateOwnersSelector, tokenIds.length, payload, lzEthAmount, lzTokenAmount);
       }
     }
   }
@@ -680,8 +687,8 @@ contract CawProfile is
     return _nativeFee;
   }
 
-  function lzSend(uint32 lzDestId, bytes4 selector, uint256 n, bytes memory payload, uint256 lzEthAmount, uint256 lzTokenAmount) internal {
-    bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(selector, n), 0);
+  function lzSend(uint32 cawClientId, uint32 lzDestId, bytes4 selector, uint256 n, bytes memory payload, uint256 lzEthAmount, uint256 lzTokenAmount) internal {
+    bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(cawClientId, selector, n), 0);
 
     // Refund excess LZ fee to tx.origin — the EOA that actually paid.
     // Using msg.sender would break when called through an intermediary contract
@@ -700,30 +707,38 @@ contract CawProfile is
   // Most quote functions moved to CawProfileQuoter contract to reduce contract size
   // lzQuote stays here since it needs access to inherited _quote from OApp
 
-  function lzQuote(bytes4 selector, uint256 n, bytes memory payload, uint32 lzDestId, bool _payInLzToken) public view returns (MessagingFee memory quote) {
-    bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(selector, n), 0);
+  function lzQuote(uint32 cawClientId, bytes4 selector, uint256 n, bytes memory payload, uint32 lzDestId, bool _payInLzToken) public view returns (MessagingFee memory quote) {
+    bytes memory _options = OptionsBuilder.newOptions().addExecutorLzReceiveOption(gasLimitFor(cawClientId, selector, n), 0);
     return _quote(lzDestId, payload, _options, _payInLzToken);
   }
 
   /// @notice Gas limit forwarded to the destination chain for executing this message.
   /// @dev Sized as base + per-entry * n, where n is the array length in the payload.
   ///      Numbers are derived from real measurements (scripts/measure-gas.js) plus a safety
-  ///      margin: base is measured-base × ~1.35, slope is measured-slope × ~1.32. The margin
-  ///      covers cold-slot warmup variance at small n and leaves headroom for future solc
-  ///      or opcode cost changes. Worst-case (n=50) fits within ~1.3× of measured.
-  function gasLimitFor(bytes4 selector, uint256 n) public view returns (uint128) {
-    // Base must cover the measured n=0 worst case, not just the linear-fit intercept:
-    // mint(n=0)=54k, deposit(n=0)=81k, auth(n=0)=36k, updateOwners(n=0)=18k.
-    // See scripts/measure-gas.js output.
-    if (selector == addToBalanceSelector)      return uint128(110_000 + 19_000 * n);  // measured n=0: 81k
-    if (selector == mintSelector)              return uint128( 75_000 + 19_000 * n);  // measured n=0: 54k
-    if (selector == updateOwnersSelector)      return uint128( 25_000 + 19_000 * n);  // measured n=0: 18k
-    if (selector == authSelector)              return uint128( 50_000 + 19_000 * n);  // measured n=0: 36k
+  ///      margin sized to cover cold-slot SSTOREs + the LZ V2 reentrancy-sentry tail.
+  ///
+  ///      `authSelector` baseline was bumped from 50k → 85k after a production OOG
+  ///      (Tenderly tx 0x3b8a0232... on Base Sepolia). The other selectors are left at
+  ///      their original measured baselines because they have not shown undersizing
+  ///      in production.
+  ///
+  ///      `clientGasOverride` from CawClientManager is added on top — see that contract
+  ///      for the per-client ratchet that lets a client owner bump this budget if some
+  ///      future EVM/L2/LZ change ever undersizes a path. Cap'd at MAX_GAS_OVERRIDE so
+  ///      a compromised client owner can't grief their own users with arbitrary fees.
+  function gasLimitFor(uint32 cawClientId, bytes4 selector, uint256 n) public view returns (uint128) {
+    uint128 base;
+    if (selector == addToBalanceSelector)      base = uint128(110_000 + 19_000 * n);  // measured n=0: 81k
+    else if (selector == mintSelector)         base = uint128( 75_000 + 19_000 * n);  // measured n=0: 54k
+    else if (selector == updateOwnersSelector) base = uint128( 25_000 + 19_000 * n);  // measured n=0: 18k
+    else if (selector == authSelector)         base = uint128( 85_000 + 19_000 * n);  // bumped from 50k after prod OOG
     // mintAuthSelector = mint mirror + auth flag in one message. Sum of mint+auth bases
     // (54k + 36k) plus margin, since the L2 handler does both writes plus the
     // updateOwners loop.
-    if (selector == mintAuthSelector)          return uint128(125_000 + 19_000 * n);
-    revert("Bad selector");
+    else if (selector == mintAuthSelector)     base = uint128(125_000 + 19_000 * n);
+    else revert("Bad selector");
+
+    return base + clientManager.clientGasOverride(cawClientId, selector);
   }
 
   receive() external payable {}

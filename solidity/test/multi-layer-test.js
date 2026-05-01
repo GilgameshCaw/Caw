@@ -2594,3 +2594,131 @@ contract("CawProfile - Buy and Burn", function(accounts) {
   });
 });
 
+
+contract("CawClientManager - lockdown + gas override", function(accounts) {
+  // Tests the per-client lockdown flags (lockClientFees / lockClientOwnership)
+  // and the per-client, per-selector gas-override ratchet introduced as the
+  // permanent escape hatch for cross-chain LZ gas miscalibrations. This
+  // surface is the only mutable path on the protocol after a client locks
+  // ownership + fees — by design, since the protocol has no admin.
+
+  var clientManager;
+  var clientId, otherClientId;
+  var owner = accounts[1];
+  var attacker = accounts[2];
+
+  before(async function() {
+    var token = await MintableCaw.new();
+    var mr = await MockSwapRouter.new(token.address);
+    var bb = await CawBuyAndBurn.new(token.address, mr.address);
+    clientManager = await CawClientManager.new(bb.address);
+
+    await clientManager.createClient("Client A", owner, l2, 1, 1, 1, 1, { from: owner });
+    clientId = 1;
+    await clientManager.createClient("Client B", owner, l2, 1, 1, 1, 1, { from: owner });
+    otherClientId = 2;
+  });
+
+  // Sentinel selectors — real ones come from CawProfile but for unit-testing the
+  // CawClientManager surface we just need distinct bytes4 values.
+  var SEL_A = '0x11111111';
+  var SEL_B = '0x22222222';
+
+  it("setGasOverride: only the client owner can set", async function() {
+    await expectRevert(
+      clientManager.setGasOverride(clientId, SEL_A, 1000, { from: attacker }),
+      "Not the owner"
+    );
+    await clientManager.setGasOverride(clientId, SEL_A, 1000, { from: owner });
+    var v = await clientManager.gasOverride(clientId, SEL_A);
+    expect(v.toString()).to.equal('1000');
+  });
+
+  it("setGasOverride: ratchet — must strictly increase", async function() {
+    await expectRevert(
+      clientManager.setGasOverride(clientId, SEL_A, 1000, { from: owner }),
+      "Must increase"
+    );
+    await expectRevert(
+      clientManager.setGasOverride(clientId, SEL_A, 500, { from: owner }),
+      "Must increase"
+    );
+    await clientManager.setGasOverride(clientId, SEL_A, 2000, { from: owner });
+    expect((await clientManager.gasOverride(clientId, SEL_A)).toString()).to.equal('2000');
+  });
+
+  it("setGasOverride: hard cap at MAX_GAS_OVERRIDE", async function() {
+    var cap = await clientManager.MAX_GAS_OVERRIDE();
+    await expectRevert(
+      clientManager.setGasOverride(clientId, SEL_B, BigInt(cap.toString()) + 1n, { from: owner }),
+      "Above cap"
+    );
+    // At exactly the cap is fine
+    await clientManager.setGasOverride(clientId, SEL_B, cap.toString(), { from: owner });
+    expect((await clientManager.gasOverride(clientId, SEL_B)).toString()).to.equal(cap.toString());
+  });
+
+  it("setGasOverride: per-client isolation — client A's override doesn't bleed to B", async function() {
+    var aVal = await clientManager.gasOverride(clientId, SEL_A);
+    var bVal = await clientManager.gasOverride(otherClientId, SEL_A);
+    expect(aVal.toString()).to.equal('2000');
+    expect(bVal.toString()).to.equal('0');
+  });
+
+  it("lockClientFees: blocks fee setters but NOT setGasOverride or changeOwner", async function() {
+    var freshOwner = accounts[3];
+    await clientManager.createClient("Lockable", freshOwner, l2, 1, 1, 1, 1, { from: freshOwner });
+    var cid = 3;
+
+    await clientManager.setMintFee(cid, 99, { from: freshOwner });
+
+    await clientManager.lockClientFees(cid, { from: freshOwner });
+    expect(await clientManager.clientFeesLocked(cid)).to.be.true;
+
+    await expectRevert(clientManager.setMintFee(cid, 100, { from: freshOwner }), "Fees locked");
+    await expectRevert(clientManager.setFees(cid, 1, 1, 1, 1, { from: freshOwner }), "Fees locked");
+    await expectRevert(clientManager.setFeeAddress(cid, accounts[5], { from: freshOwner }), "Fees locked");
+
+    // setGasOverride still works — that's the whole point
+    await clientManager.setGasOverride(cid, SEL_A, 5000, { from: freshOwner });
+    expect((await clientManager.gasOverride(cid, SEL_A)).toString()).to.equal('5000');
+
+    // changeOwner still works (ownership not locked)
+    await clientManager.changeOwner(cid, accounts[4], { from: freshOwner });
+    expect((await clientManager.getClientOwner(cid))).to.equal(accounts[4]);
+  });
+
+  it("lockClientOwnership: blocks changeOwner but NOT setGasOverride or fee setters", async function() {
+    var freshOwner = accounts[5];
+    await clientManager.createClient("OwnLockable", freshOwner, l2, 1, 1, 1, 1, { from: freshOwner });
+    var cid = 4;
+
+    await clientManager.lockClientOwnership(cid, { from: freshOwner });
+    expect(await clientManager.clientOwnershipLocked(cid)).to.be.true;
+
+    await expectRevert(clientManager.changeOwner(cid, accounts[6], { from: freshOwner }), "Ownership locked");
+
+    // Fees still mutable
+    await clientManager.setMintFee(cid, 42, { from: freshOwner });
+
+    // setGasOverride still works
+    await clientManager.setGasOverride(cid, SEL_A, 7777, { from: freshOwner });
+    expect((await clientManager.gasOverride(cid, SEL_A)).toString()).to.equal('7777');
+  });
+
+  it("both locks together: client is fully renounce-equivalent except for gas override", async function() {
+    var freshOwner = accounts[7];
+    await clientManager.createClient("FullLock", freshOwner, l2, 1, 1, 1, 1, { from: freshOwner });
+    var cid = 5;
+
+    await clientManager.lockClientFees(cid, { from: freshOwner });
+    await clientManager.lockClientOwnership(cid, { from: freshOwner });
+
+    await expectRevert(clientManager.setMintFee(cid, 99, { from: freshOwner }), "Fees locked");
+    await expectRevert(clientManager.changeOwner(cid, accounts[8], { from: freshOwner }), "Ownership locked");
+
+    // Only gas override still works
+    await clientManager.setGasOverride(cid, SEL_A, 1234, { from: freshOwner });
+    expect((await clientManager.gasOverride(cid, SEL_A)).toString()).to.equal('1234');
+  });
+});

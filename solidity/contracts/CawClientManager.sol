@@ -33,7 +33,35 @@ contract CawClientManager {
   uint32 public nextClientId = 1;
   mapping(uint32 => CawClient) public clients;
 
+  // Per-client lockdown flags. A client owner can independently freeze fee
+  // changes, ownership changes, or both. This lets a client commit to "trust
+  // minimized" status (renounce-equivalent) while keeping access to the gas
+  // override below — necessary because the protocol has no admin to fix
+  // future cross-chain gas miscalibrations.
+  mapping(uint32 => bool) public clientFeesLocked;
+  mapping(uint32 => bool) public clientOwnershipLocked;
+
+  // Per-client, per-selector additive gas override for cross-chain LZ
+  // messages. CawProfile reads this and adds it on top of the hardcoded
+  // gasLimitFor baseline. Strictly ratcheting (only goes up), hard-capped
+  // at MAX_GAS_OVERRIDE so a compromised client owner can't grief their
+  // users with arbitrarily expensive messages.
+  //
+  // Why per-client (not global): grief surface is bounded to a single
+  // client's users, not the whole protocol. Each client owner has skin in
+  // the game (their own users) so they're the right party to tune this.
+  mapping(uint32 => mapping(bytes4 => uint128)) public clientGasOverride;
+
+  /// @notice Hard cap on additive gas override per client per selector. Sized
+  ///         so the worst-case grief is "cross-chain fees on this client are
+  ///         higher" — bounded in dollar terms to fractions of a cent at
+  ///         typical L2 gas prices.
+  uint128 public constant MAX_GAS_OVERRIDE = 100_000;
+
   event ClientCreated(uint32 indexed clientId, CawClient client);
+  event ClientFeesLocked(uint32 indexed clientId);
+  event ClientOwnershipLocked(uint32 indexed clientId);
+  event ClientGasOverrideSet(uint32 indexed clientId, bytes4 indexed selector, uint128 newAmount);
 
   // ============================================
   // INSTANCE REGISTRY
@@ -57,6 +85,20 @@ contract CawClientManager {
 
   modifier onlyClientOwner(uint32 clientId) {
     require(clients[clientId].ownerAddress == msg.sender, "Not the owner");
+    _;
+  }
+
+  /// @dev Owner check + reverts if the client has locked fee changes.
+  modifier onlyClientOwnerNotFeeLocked(uint32 clientId) {
+    require(clients[clientId].ownerAddress == msg.sender, "Not the owner");
+    require(!clientFeesLocked[clientId], "Fees locked");
+    _;
+  }
+
+  /// @dev Owner check + reverts if the client has locked ownership transfer.
+  modifier onlyClientOwnerNotOwnershipLocked(uint32 clientId) {
+    require(clients[clientId].ownerAddress == msg.sender, "Not the owner");
+    require(!clientOwnershipLocked[clientId], "Ownership locked");
     _;
   }
 
@@ -150,7 +192,7 @@ contract CawClientManager {
    * @param clientId The ID of the client.
    * @param newOwner The address of the new owner.
    */
-  function changeOwner(uint32 clientId, address newOwner) public onlyClientOwner(clientId) {
+  function changeOwner(uint32 clientId, address newOwner) public onlyClientOwnerNotOwnershipLocked(clientId) {
     require(newOwner != address(0), "Zero address");
     clients[clientId].ownerAddress = newOwner;
   }
@@ -160,7 +202,7 @@ contract CawClientManager {
   * @param clientId The ID of the client.
     * @param fee The new withdraw fee.
       */
-  function setWithdrawFee(uint32 clientId, uint256 fee) public onlyClientOwner(clientId) {
+  function setWithdrawFee(uint32 clientId, uint256 fee) public onlyClientOwnerNotFeeLocked(clientId) {
     clients[clientId].withdrawFee = fee;
   }
 
@@ -169,7 +211,7 @@ contract CawClientManager {
    * @param clientId The ID of the client.
    * @param fee The new auth fee.
    */
-  function setAuthFee(uint32 clientId, uint256 fee) public onlyClientOwner(clientId) {
+  function setAuthFee(uint32 clientId, uint256 fee) public onlyClientOwnerNotFeeLocked(clientId) {
     clients[clientId].authFee = fee;
   }
 
@@ -178,11 +220,11 @@ contract CawClientManager {
    * @param clientId The ID of the client.
    * @param fee The new deposit fee.
    */
-  function setDepositFee(uint32 clientId, uint256 fee) public onlyClientOwner(clientId) {
+  function setDepositFee(uint32 clientId, uint256 fee) public onlyClientOwnerNotFeeLocked(clientId) {
     clients[clientId].depositFee = fee;
   }
 
-  function setMintFee(uint32 clientId, uint256 fee) public onlyClientOwner(clientId) {
+  function setMintFee(uint32 clientId, uint256 fee) public onlyClientOwnerNotFeeLocked(clientId) {
     clients[clientId].mintFee = fee;
   }
 
@@ -195,7 +237,7 @@ contract CawClientManager {
    * @param authFee New auth fee
    * @param mintFee New mint fee
    */
-  function setFees(uint32 clientId, uint256 withdrawFee, uint256 depositFee, uint256 authFee, uint256 mintFee) public onlyClientOwner(clientId) {
+  function setFees(uint32 clientId, uint256 withdrawFee, uint256 depositFee, uint256 authFee, uint256 mintFee) public onlyClientOwnerNotFeeLocked(clientId) {
     CawClient storage client = clients[clientId];
     client.withdrawFee = withdrawFee;
     client.depositFee = depositFee;
@@ -203,8 +245,53 @@ contract CawClientManager {
     client.mintFee = mintFee;
   }
 
-  function setFeeAddress(uint32 clientId, address feeAddress) public onlyClientOwner(clientId) {
+  function setFeeAddress(uint32 clientId, address feeAddress) public onlyClientOwnerNotFeeLocked(clientId) {
     clients[clientId].feeAddress = feeAddress;
+  }
+
+  // ============================================
+  // LOCKDOWN
+  // ============================================
+
+  /// @notice Permanently freeze fee changes for this client. Cannot be undone.
+  /// @dev After this, setWithdrawFee/setAuthFee/setDepositFee/setMintFee/
+  ///      setFees/setFeeAddress all revert for this client. The gas override
+  ///      remains tunable so the client can still respond to future LZ
+  ///      gas miscalibrations.
+  function lockClientFees(uint32 clientId) external onlyClientOwner(clientId) {
+    clientFeesLocked[clientId] = true;
+    emit ClientFeesLocked(clientId);
+  }
+
+  /// @notice Permanently freeze ownership transfer for this client. Cannot
+  ///         be undone. After this, changeOwner reverts for this client and
+  ///         the current owner remains the gas-override controller forever.
+  function lockClientOwnership(uint32 clientId) external onlyClientOwner(clientId) {
+    clientOwnershipLocked[clientId] = true;
+    emit ClientOwnershipLocked(clientId);
+  }
+
+  // ============================================
+  // GAS OVERRIDE (ratcheting, capped)
+  // ============================================
+
+  /// @notice Bump the additive cross-chain gas budget for a specific selector
+  ///         on this client. Strictly ratcheting (newAmount > current) and
+  ///         hard-capped at MAX_GAS_OVERRIDE.
+  /// @dev Only the client owner can call. Stays callable even after
+  ///      lockClientFees / lockClientOwnership — that's by design, this is
+  ///      the recovery hatch the protocol relies on.
+  function setGasOverride(uint32 clientId, bytes4 selector, uint128 newAmount)
+    external onlyClientOwner(clientId)
+  {
+    require(newAmount > clientGasOverride[clientId][selector], "Must increase");
+    require(newAmount <= MAX_GAS_OVERRIDE, "Above cap");
+    clientGasOverride[clientId][selector] = newAmount;
+    emit ClientGasOverrideSet(clientId, selector, newAmount);
+  }
+
+  function gasOverride(uint32 clientId, bytes4 selector) external view returns (uint128) {
+    return clientGasOverride[clientId][selector];
   }
 
   function getStorageChainEid(uint32 clientId) public view returns (uint32) {

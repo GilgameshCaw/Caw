@@ -20,7 +20,7 @@ interface ICawProfileForQuoter {
   function mainnetLzId() external view returns (uint32);
   function updateOwnersSelector() external view returns (bytes4);
   function authSelector() external view returns (bytes4);
-  function lzQuote(bytes4 selector, uint256 n, bytes memory payload, uint32 lzDestId, bool _payInLzToken) external view returns (MessagingFee memory quote);
+  function lzQuote(uint32 cawClientId, bytes4 selector, uint256 n, bytes memory payload, uint32 lzDestId, bool _payInLzToken) external view returns (MessagingFee memory quote);
 }
 
 /**
@@ -45,7 +45,7 @@ contract CawProfileQuoter {
       cawProfile.authSelector(), clientId, tokenId, tokenIds, owners
     );
 
-    quote = cawProfile.lzQuote(cawProfile.authSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
+    quote = cawProfile.lzQuote(clientId, cawProfile.authSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
     quote.nativeFee += cawProfile.clientManager().getAuthFee(clientId) * 2;
     return quote;
   }
@@ -58,7 +58,7 @@ contract CawProfileQuoter {
       cawProfile.addToBalanceSelector(), clientId, tokenId, amount, tokenIds, owners
     );
 
-    quote = cawProfile.lzQuote(cawProfile.addToBalanceSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
+    quote = cawProfile.lzQuote(clientId, cawProfile.addToBalanceSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
     quote.nativeFee += cawProfile.clientManager().getDepositFee(clientId) * 2;
 
     if (!cawProfile.authenticated(clientId, tokenId))
@@ -83,7 +83,7 @@ contract CawProfileQuoter {
       cawProfile.addToBalanceSelector(), clientId, uint32(0), depositAmount, tokenIds, owners
     );
 
-    quote = cawProfile.lzQuote(cawProfile.addToBalanceSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
+    quote = cawProfile.lzQuote(clientId, cawProfile.addToBalanceSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
     // Mint fee + deposit fee + auth fee (new user always needs auth)
     quote.nativeFee += cawProfile.clientManager().getMintFee(clientId) * 2;
     quote.nativeFee += cawProfile.clientManager().getDepositFee(clientId) * 2;
@@ -116,7 +116,7 @@ contract CawProfileQuoter {
       owners
     );
 
-    MessagingFee memory lz = cawProfile.lzQuote(cawProfile.mintAuthSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
+    MessagingFee memory lz = cawProfile.lzQuote(clientId, cawProfile.mintAuthSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
     quote.nativeFee += lz.nativeFee;
     quote.lzTokenFee += lz.lzTokenFee;
     return quote;
@@ -150,7 +150,8 @@ contract CawProfileQuoter {
     bytes memory payload = abi.encodeWithSelector(
       cawProfile.updateOwnersSelector(), tokenIds, owners
     );
-    return cawProfile.lzQuote(cawProfile.updateOwnersSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
+    // updateOwners isn't bound to a single clientId — use 0 (no override).
+    return cawProfile.lzQuote(0, cawProfile.updateOwnersSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
   }
 
   /**
@@ -172,7 +173,8 @@ contract CawProfileQuoter {
     bytes memory payload = abi.encodeWithSelector(
       cawProfile.updateOwnersSelector(), tokenIds, owners
     );
-    return cawProfile.lzQuote(cawProfile.updateOwnersSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
+    // updateOwners isn't bound to a single clientId — use 0 (no override).
+    return cawProfile.lzQuote(0, cawProfile.updateOwnersSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
   }
 
 }
