@@ -2825,14 +2825,57 @@ contract("CawProfileMinter - Bundled Quick Sign", function(accounts) {
     console.log("mintAndDepositAndQuickSign (LZ) test passed");
   });
 
-  // NOTE: A bypassLZ test for mintAndDepositAndQuickSign would exercise
-  // `cawProfileL2.deposit(...)` followed by `registerSessionFromL1(...)`. The first call
-  // hits a pre-existing latent bug in `CawProfileL2.deposit` (its `addToBalance(...)` call
-  // reverts because, in bypassLZ mode, the caller is the L1 CawProfile contract — neither
-  // `fromLZ` nor `cawActions`). That bug pre-dates this work and never had test coverage
-  // (no existing `mintAndDeposit` test exercises bypassLZ either). Out of scope here;
-  // logging it as a follow-up. The bypassLZ path for `mintAndAuthAndQuickSign` (no deposit)
-  // is covered below — it does NOT go through `addToBalance`.
+  it("mintAndDeposit (bypassLZ): regression — credits L1-storage L2 mirror balance", async function() {
+    this.timeout(60000);
+
+    // Plain mintAndDeposit against the L1-co-deployed mirror (bypassLZ).
+    // Locks in the addToBalance authorization fix (msg.sender == cawProfile in bypassLZ mode).
+    var owner = accounts[1];
+    var depositAmount = web3.utils.toWei('50000', 'ether');
+    var quote = await localQuoter.mintAndDepositQuote(l1ClientId, depositAmount, l1, false);
+
+    await localMinter.mintAndDeposit(
+      l1ClientId, 'bypassdep1', depositAmount, l1, 0,
+      { from: owner, value: (BigInt(quote.nativeFee)).toString() }
+    );
+
+    var tokenId = (await localCawProfiles.totalSupply()).toNumber();
+    expect(await localCawProfiles.ownerOf(tokenId)).to.equal(owner);
+    expect(await localCawProfilesL2Mainnet.authenticated(l1ClientId, tokenId)).to.be.true;
+
+    var bal = await localCawProfilesL2Mainnet.cawBalanceOf(tokenId);
+    expect(BigInt(bal.toString())).to.equal(BigInt(depositAmount));
+  });
+
+  it("mintAndDepositAndQuickSign (bypassLZ): mint + deposit + session on L1-storage mirror", async function() {
+    this.timeout(60000);
+
+    var owner = accounts[1];
+    var sessionKey = accounts[6];
+    var spendLimit = web3.utils.toWei('1000000', 'ether');
+    var expiry = await futureExpiry(14 * 24 * 60 * 60);
+
+    var depositAmount = web3.utils.toWei('75000', 'ether');
+    var quote = await localQuoter.mintAndDepositAndQuickSignQuote(l1ClientId, depositAmount, l1, false, sessionKey);
+
+    await localMinter.mintAndDepositAndQuickSign(
+      l1ClientId, 'bypassqs1', depositAmount, l1, 0,
+      sessionKey, expiry, spendLimit,
+      { from: owner, value: (BigInt(quote.nativeFee)).toString() }
+    );
+
+    var tokenId = (await localCawProfiles.totalSupply()).toNumber();
+    expect(await localCawProfiles.ownerOf(tokenId)).to.equal(owner);
+    expect(await localCawProfilesL2Mainnet.authenticated(l1ClientId, tokenId)).to.be.true;
+
+    var bal = await localCawProfilesL2Mainnet.cawBalanceOf(tokenId);
+    expect(BigInt(bal.toString())).to.equal(BigInt(depositAmount));
+
+    var stored = await localCawProfilesL2Mainnet.sessions(owner, sessionKey);
+    expect(stored.expiry.toString()).to.equal(expiry.toString());
+    expect(stored.scopeBitmap.toString()).to.equal('191'); // 0xBF
+    expect(stored.spendLimit.toString()).to.equal(spendLimit.toString());
+  });
 
   it("mintAndAuthAndQuickSign (LZ): mint + auth + session, no deposit", async function() {
     this.timeout(60000);

@@ -269,9 +269,16 @@ contract CawProfileL2 is
   }
 
   /// @notice Add CAW (raw 18-decimal amount) to a token's balance.
-  /// @dev Callable by `cawActions` directly OR via LayerZero (`fromLZ` flag).
+  /// @dev Callable by `cawActions` directly, via LayerZero (`fromLZ` flag), OR by the L1
+  ///      `cawProfile` contract in bypassLZ co-deployment mode (the same trust boundary
+  ///      `onlyOnMainnet` enforces — used by `deposit()` for L1-storage clients).
   function addToBalance(uint32 tokenId, uint256 amount) public {
-    require(fromLZ || address(cawActions) == _msgSender(), "caller is not cawActions or LZ");
+    require(
+      fromLZ ||
+      address(cawActions) == _msgSender() ||
+      (bypassLZ && _msgSender() == address(cawProfile)),
+      "caller is not cawActions or LZ"
+    );
 
     setCawBalance(tokenId, cawBalanceOf(tokenId) + amount);
   }

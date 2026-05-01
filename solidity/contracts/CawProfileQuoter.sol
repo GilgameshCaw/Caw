@@ -76,8 +76,15 @@ contract CawProfileQuoter {
   }
 
   function mintAndDepositQuote(uint32 clientId, uint256 depositAmount, uint32 lzDestId, bool payInLzToken) public view returns (MessagingFee memory quote) {
-    // Use the same pattern as depositQuote — include a placeholder owner in the payload
-    // so the LZ quote estimates gas for a realistic payload size
+    // Storage-fee leg: mint + deposit + auth (new user always needs auth).
+    quote.nativeFee = cawProfile.clientManager().getMintFee(clientId) * 2
+                    + cawProfile.clientManager().getDepositFee(clientId) * 2
+                    + cawProfile.clientManager().getAuthFee(clientId) * 2;
+
+    // LZ leg: only needed for true L2-storage clients. In bypassLZ
+    // (lzDestId == mainnetLzId) the L2 mirror is updated via a direct call.
+    if (lzDestId == cawProfile.mainnetLzId()) return quote;
+
     uint32[] memory tokenIds; address[] memory owners;
     (tokenIds, owners) = cawProfile.pendingTransferUpdates(lzDestId, msg.sender, 0);
 
@@ -85,11 +92,9 @@ contract CawProfileQuoter {
       cawProfile.addToBalanceSelector(), clientId, uint32(0), depositAmount, tokenIds, owners
     );
 
-    quote = cawProfile.lzQuote(clientId, cawProfile.addToBalanceSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
-    // Mint fee + deposit fee + auth fee (new user always needs auth)
-    quote.nativeFee += cawProfile.clientManager().getMintFee(clientId) * 2;
-    quote.nativeFee += cawProfile.clientManager().getDepositFee(clientId) * 2;
-    quote.nativeFee += cawProfile.clientManager().getAuthFee(clientId) * 2;
+    MessagingFee memory lz = cawProfile.lzQuote(clientId, cawProfile.addToBalanceSelector(), tokenIds.length, payload, lzDestId, payInLzToken);
+    quote.nativeFee += lz.nativeFee;
+    quote.lzTokenFee += lz.lzTokenFee;
     return quote;
   }
 
