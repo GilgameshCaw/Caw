@@ -166,12 +166,50 @@ export async function findSafeCawonceStart(tokenId: number, start: number, count
  * issued; the next caller picks max(chain, localHigh + 1).
  */
 
-// In-tab high-watermark of cawonces we've recently issued, per tokenId.
-// Bumped synchronously on each allocation; cleared after 30s on the
-// assumption the action either confirmed (chain advanced) or got rejected
-// (caller will re-read chain anyway).
-const localCawonceHigh = new Map<number, { cawonce: number; expiresAt: number }>()
+// High-watermark of cawonces we've recently issued, per tokenId. Bumped
+// synchronously on each allocation; expires after 30s on the assumption
+// the action either confirmed (chain advanced) or got rejected (caller
+// will re-read chain anyway).
+//
+// Persisted to localStorage so it survives a page refresh — without
+// that, refreshing between an action being signed and being confirmed
+// on-chain causes the next allocation to reuse the same cawonce: the
+// chain hasn't seen the pending action yet (so chainNext is stale) and
+// the in-memory map is empty (refresh cleared it). The TxQueue partial
+// unique index then 409s, the catch handler calls setLocalCawonceFloor,
+// and we retry — annoying but recoverable. Persistence avoids the
+// round-trip entirely. Survives close-tab + reopen too.
 const LOCAL_CAWONCE_TTL_MS = 30_000
+const LOCAL_CAWONCE_LS_PREFIX = 'caw:cawonceHigh:'
+
+interface CawonceHighEntry { cawonce: number; expiresAt: number }
+
+const localCawonceHigh = {
+  get(tokenId: number): CawonceHighEntry | undefined {
+    try {
+      const raw = localStorage.getItem(LOCAL_CAWONCE_LS_PREFIX + tokenId)
+      if (!raw) return undefined
+      const parsed = JSON.parse(raw)
+      if (typeof parsed?.cawonce !== 'number' || typeof parsed?.expiresAt !== 'number') return undefined
+      return parsed
+    } catch {
+      // localStorage can be unavailable (private mode, SSR, quota). The
+      // fallback is "no entry" — we still rely on chainNext + the
+      // server-side TxQueue unique index for correctness.
+      return undefined
+    }
+  },
+  set(tokenId: number, entry: CawonceHighEntry) {
+    try {
+      localStorage.setItem(LOCAL_CAWONCE_LS_PREFIX + tokenId, JSON.stringify(entry))
+    } catch {}
+  },
+  delete(tokenId: number) {
+    try {
+      localStorage.removeItem(LOCAL_CAWONCE_LS_PREFIX + tokenId)
+    } catch {}
+  },
+}
 
 // Coalesce concurrent reads of the same tokenId so we don't burn N RPC
 // calls when the user fires N likes in quick succession. The mutex makes
