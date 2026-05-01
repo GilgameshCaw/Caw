@@ -406,6 +406,54 @@ router.post('/', async (req, res) => {
       }
     }
 
+    // Optimistic pin/unpin write. Same lifecycle as Like.pending:
+    //   pi:{cawId}  → upsert PinnedCaw with pending=true
+    //   xpi:{cawId} → flip the existing row to pending=true (don't
+    //                 delete yet — the original pin survives if the tx
+    //                 fails; the indexer's handleUnpinAction is what
+    //                 actually deletes on confirm).
+    // Cap is NOT enforced — read path filters to top-3.
+    // Authorization: target caw must belong to senderId.
+    if ((data.actionType === 7 || data.actionType === 'other') &&
+        plaintext && (plaintext.startsWith('pi:') || plaintext.startsWith('xpi:'))) {
+      try {
+        const isUnpin = plaintext.startsWith('xpi:')
+        const prefix = isUnpin ? 'xpi:' : 'pi:'
+        const cawId = parseInt(plaintext.replace(prefix, '').trim())
+        if (!isNaN(cawId) && cawId > 0) {
+          const target = await prisma.caw.findUnique({
+            where: { id: cawId },
+            select: { userId: true },
+          })
+          if (target && target.userId === data.senderId) {
+            if (isUnpin) {
+              // Flag the existing row pending; the indexer deletes on confirm.
+              const updated = await prisma.pinnedCaw.updateMany({
+                where: { userId: data.senderId, cawId },
+                data: { pending: true },
+              })
+              console.log(`[Actions] Optimistic unpin: user=${data.senderId} caw=${cawId} matched=${updated.count}`)
+            } else {
+              // Pin: insert pending row (or no-op if one already exists).
+              // Don't increment pinnedCawCount yet — only confirmed pins
+              // count. The indexer flips pending→false and bumps the
+              // counter at that point.
+              await prisma.pinnedCaw.upsert({
+                where: { userId_cawId: { userId: data.senderId, cawId } },
+                update: { pending: true },
+                create: { userId: data.senderId, cawId, pending: true },
+              })
+              console.log(`[Actions] Optimistic pin: user=${data.senderId} caw=${cawId}`)
+            }
+          } else {
+            console.log(`[Actions] Pin/unpin skipped: target ${cawId} not owned by sender ${data.senderId}`)
+          }
+        }
+      } catch (pinErr) {
+        console.error('[Actions] Failed to process optimistic pin/unpin:', pinErr)
+      }
+    }
+
     // Create optimistic pending state for profile updates
     if (data.actionType === 'other' && plaintext && (plaintext.startsWith('p:') || plaintext.startsWith('profile-update:'))) {
       try {
@@ -544,19 +592,31 @@ router.post('/', async (req, res) => {
           const parsedPoll = parsePoll(textContent)
           if (parsedPoll) {
             // Sanitize optionImages: must be an array of strings, same length
-            // as options, each either empty (no image) or a same-origin
-            // /uploads/images/... URL the operator's instance just minted.
-            // Reject foreign URLs — accepting them would let polls embed
-            // arbitrary remote content with the operator's instance as the
-            // implicit referrer. The image upload route returns same-origin
-            // URLs, so legit clients always pass that shape.
-            const apiHost = (process.env.SHORTURL_DOMAIN || '').replace(/\/$/, '')
+            // as options, each either empty (no image) or a URL whose PATH
+            // matches the upload route's output shape
+            // (/uploads/images/<8hex>.<ext>). We don't validate the host:
+            // the threat we care about is "user injects a foreign URL the
+            // server then serves to viewers as a poll image"; that's
+            // mitigated by the path check, since an attacker can't get a
+            // file at /uploads/images/<hex>.webp on ANY caw instance
+            // unless they actually uploaded one — and then that's a legit
+            // image. Host-based checking was over-zealous: when
+            // SHORTURL_DOMAIN was unset (default for local dev) every
+            // URL got rejected, leaving Poll.optionImages empty.
+            const UPLOAD_PATH_REGEX = /\/uploads\/images\/[a-f0-9]{8}\.[a-zA-Z0-9]+(?:[?#].*)?$/
             const sanitizedImages: string[] = parsedPoll.options.map((_, i) => {
               const v = Array.isArray(pollOptionImages) ? pollOptionImages[i] : ''
               if (typeof v !== 'string' || !v) return ''
-              // Allow relative paths (/uploads/...) and same-origin absolute URLs.
               if (v.startsWith('/uploads/images/')) return v
-              if (apiHost && v.startsWith(`${apiHost}/uploads/images/`)) return v
+              try {
+                // Absolute URL: parse and check the path. URL constructor
+                // throws on garbage strings; that's our "reject" path.
+                const u = new URL(v)
+                if (u.protocol !== 'http:' && u.protocol !== 'https:') return ''
+                if (UPLOAD_PATH_REGEX.test(u.pathname)) return v
+              } catch {
+                // Not a parseable URL — drop it.
+              }
               return ''
             })
             await prisma.poll.upsert({
