@@ -733,12 +733,30 @@ export async function handleOtherAction(
     }
   }
 
+  // RECAW quotes (recaws with text) legitimately fall through here so we
+  // can create the quote-Caw below. Plain OTHER actions whose text didn't
+  // match any of the prefix handlers above (hide:, tip:, vote:, xpi:, pi:,
+  // profile-update:, p:) are unrecognized and MUST NOT be turned into
+  // Caw posts — that's how a `pi:<bad-cawId>` or any future-prefix action
+  // ends up rendered as a feed post containing the raw protocol string.
+  // Log loudly so we notice new prefixes that need handlers, then bail.
+  if (action.actionType === 'OTHER') {
+    const prefix = (rawAction.text || '').split(':', 1)[0]
+    console.warn(
+      `[ActionProcessor] Unrecognized OTHER action — no Caw created. ` +
+      `senderId=${authorId} cawonce=${action.cawonce} prefix=${JSON.stringify(prefix)} ` +
+      `text=${JSON.stringify((rawAction.text || '').slice(0, 80))}`,
+    )
+    return
+  }
+
   let textContent = rawAction.text
   const imageData = null
 
-  // Determine action type: preserve RECAW for quotes (recaws with text),
-  // otherwise treat content/images as CAW posts.
-  // (profile updates return early above, so we only get here for actual posts)
+  // Determine action type. Only RECAW reaches here as a non-OTHER
+  // actionType (the OTHER guard above handles anything that didn't
+  // match a known prefix). Quotes carry text, plain recaws don't —
+  // both write a Caw row with action='RECAW'.
   const effectiveActionType = action.actionType === 'RECAW' ? 'RECAW'
     : (textContent || imageData) ? 'CAW' : action.actionType
 
