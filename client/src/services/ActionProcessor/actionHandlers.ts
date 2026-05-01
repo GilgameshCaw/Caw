@@ -5,7 +5,7 @@ import { processHashtagsForCaw } from '../../tools/hashtags'
 import { NotificationService } from '../NotificationService'
 import { elasticsearchService } from '../ElasticsearchService'
 import { countManager } from '../CountManager'
-import { parsePoll, parseVoteText } from '../../tools/pollMarker'
+import { parsePoll, parseVoteText, resolvePollImageUrl } from '../../tools/pollMarker'
 import type { PrismaTransactionClient } from './types'
 
 /** Sentinel thrown by findCawId so callers (and the top-level
@@ -157,18 +157,35 @@ export async function handleCawAction(
   // poll when the user submitted) doesn't conflict with the indexer's
   // catch-up — both paths arrive at the same final row.
   //
-  // We deliberately DO NOT touch optionImages on update: that field is
-  // off-chain only and was written by the API submit on this instance.
-  // For polls authored on a different mirror node (no API submit ran here,
-  // we only see the on-chain marker), optionImages stays at its default
-  // empty array and the UI gracefully falls back to text-only options.
+  // optionImages is reconstructed from the on-chain ::pi:host:hash:hash::
+  // sidecar — host appears once, hashes are positional with options.
+  // resolvePollImageUrl produces a fetchable URL for each non-empty hash.
+  // The local-API optimistic path already wrote these URLs (so the update
+  // case is a benign re-write); for polls authored on a different mirror
+  // node we're computing them here for the first time, which is the whole
+  // point of putting host+hashes on-chain — mirrors get images automatically.
   try {
     const parsedPoll = parsePoll(textContent)
     if (parsedPoll) {
+      const reconstructedImages = parsedPoll.imageHashes.map(h =>
+        h && parsedPoll.imageHost ? resolvePollImageUrl(parsedPoll.imageHost, h) : ''
+      )
       await tx.poll.upsert({
         where: { cawId: newCaw.id },
-        update: { options: parsedPoll.options }, // benign re-write if already there; preserves optionImages
-        create: { cawId: newCaw.id, options: parsedPoll.options },
+        update: {
+          options: parsedPoll.options,
+          // Re-write optionImages on update: the on-chain marker is the
+          // canonical source and the local API write produced an
+          // identical URL anyway (same host, same hash from the same
+          // file we just uploaded). For mirror-origin polls this is the
+          // first write and lights up images on this node.
+          optionImages: reconstructedImages,
+        },
+        create: {
+          cawId: newCaw.id,
+          options: parsedPoll.options,
+          optionImages: reconstructedImages,
+        },
       })
     }
   } catch (err) {

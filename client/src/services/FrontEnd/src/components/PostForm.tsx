@@ -966,10 +966,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     // attached after the split (atomic — never broken apart).
     // Build the marker with the per-option image-hash sidecar when any
     // option carries an uploaded image. Hashes derive from the upload
-    // URL's filename stem; mirror nodes will re-parse them on the way
-    // back through the indexer.
+    // URL's filename stem; the originating host appears once in the
+    // sidecar so mirror indexers can reconstruct fetchable URLs without
+    // any new infrastructure.
     const submitPollHashes = pollOptionImages.map(u => imageUrlToPollHash(u || ''))
-    const submitPollMarker = pollEnabled ? buildPollMarker(pollOptions, submitPollHashes) : null
+    const submitPollHost = typeof window !== 'undefined' ? window.location.hostname : ''
+    const submitPollMarker = pollEnabled
+      ? buildPollMarker(pollOptions, submitPollHashes, submitPollHost)
+      : null
     if (submitPollMarker && !isThreadMode) {
       finalText = (finalText ? finalText + '\n' : '') + submitPollMarker
     }
@@ -1382,11 +1386,15 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // chunk (with a +1 byte newline separator) or a no-op when disabled.
   // Options are ASCII-friendly so byteLen ≈ length, but we use byteLen to
   // be precise for emoji-laced labels.
-  // Include image hashes in the counter-time marker so the byte budget
-  // reflects what we'll actually post. Hashes are 8 chars each plus a
-  // ":pi:hashes::" frame — meaningful when several options have images.
+  // Include image hashes + host in the counter-time marker so the byte
+  // budget reflects what we'll actually post. The host appears once in
+  // the marker (amortized across all images), but it still costs bytes,
+  // so the counter has to account for it.
   const counterPollHashes = pollOptionImages.map(u => imageUrlToPollHash(u || ''))
-  const pollMarker = pollEnabled ? buildPollMarker(pollOptions, counterPollHashes) : null
+  const counterPollHost = typeof window !== 'undefined' ? window.location.hostname : ''
+  const pollMarker = pollEnabled
+    ? buildPollMarker(pollOptions, counterPollHashes, counterPollHost)
+    : null
   // Poll is "active but not yet valid" when the user has opened the composer
   // but hasn't filled in at least 2 valid options. Submit gets blocked but
   // we don't yell at the user — the composer's own inline error is enough.
