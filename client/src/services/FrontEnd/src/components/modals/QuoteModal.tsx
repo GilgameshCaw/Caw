@@ -3,10 +3,12 @@ import { getUserAvatar } from "~/utils/defaultAvatar"
 import React from 'react'
 import PostForm from '~/components/PostForm'
 import ContentWithHashtags from '~/components/ContentWithHashtags'
+import PollMiniResults from '~/components/PollMiniResults'
 import Avatar from '~/components/Avatar'
 import type { CawItem } from '~/types'
 import ModalWrapper from './ModalWrapper'
 import ModalHeader from './ModalHeader'
+import { stripPollMarker } from '~/../../../tools/pollMarker'
 
 interface QuoteModalProps {
   isOpen: boolean
@@ -111,9 +113,21 @@ export const QuoteModal: React.FC<QuoteModalProps> = ({ isOpen, caw, onClose, on
           </div>
 
           {/* Content */}
-          <div className="text-white/90 text-sm leading-relaxed">
-            <ContentWithHashtags content={caw.content} />
-          </div>
+          {(() => {
+            const body = stripPollMarker(caw.content || '')
+            return body ? (
+              <div className="text-white/90 text-sm leading-relaxed">
+                <ContentWithHashtags content={body} />
+              </div>
+            ) : null
+          })()}
+
+          {/* Poll snapshot — non-clickable, just shows current results */}
+          {caw.poll && (
+            <div className="mt-3">
+              <PollMiniResults poll={caw.poll} />
+            </div>
+          )}
 
           {/* Images if present */}
           {caw.hasImage && renderImages(caw.imageData)}

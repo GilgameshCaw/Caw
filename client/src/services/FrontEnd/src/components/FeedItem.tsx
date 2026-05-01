@@ -41,6 +41,7 @@ import { User, CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
 import ContentWithHashtags from './ContentWithHashtags'
 import PollDisplay from './PollDisplay'
+import PollMiniResults from './PollMiniResults'
 import { stripPollMarker } from '~/../../../tools/pollMarker'
 import { formatEngagementCount } from '~/utils/numberFormat'
 import { apiFetch } from '~/api/client'
@@ -873,20 +874,31 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               <div className={`block text-xs mb-3 italic ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
                 Replying to a post that has been removed by the poster
               </div>
-            ) : (
-              <Link to={`/caws/${item.parent.id}`} className={`block text-xs transition-all duration-300 mb-3 ${
-                isDark ? 'text-gray-400' : 'text-gray-600'
-              }`}>
-                <span className="truncate md:truncate-none">Replying to <span className="underline">@{item.parent.user.username}</span></span>
-                {item.parent.content && (
-                  <span className={`block mt-1 text-[11px] leading-snug line-clamp-2 ${
-                    isDark ? 'text-white/25' : 'text-gray-400'
-                  }`}>
-                    {item.parent.content}
-                  </span>
-                )}
-              </Link>
-            )
+            ) : (() => {
+              // Strip the poll marker out of the snippet so the user doesn't
+              // see raw `::poll:...::` text. The PollMiniResults block below
+              // shows the same poll's results in a compact form.
+              const parentBody = stripPollMarker(item.parent.content || '')
+              return (
+                <Link to={`/caws/${item.parent.id}`} className={`block text-xs transition-all duration-300 mb-3 ${
+                  isDark ? 'text-gray-400' : 'text-gray-600'
+                }`}>
+                  <span className="truncate md:truncate-none">Replying to <span className="underline">@{item.parent.user.username}</span></span>
+                  {parentBody && (
+                    <span className={`block mt-1 text-[11px] leading-snug line-clamp-2 ${
+                      isDark ? 'text-white/25' : 'text-gray-400'
+                    }`}>
+                      {parentBody}
+                    </span>
+                  )}
+                  {item.parent.poll && (
+                    <span className="block mt-1.5">
+                      <PollMiniResults poll={item.parent.poll} />
+                    </span>
+                  )}
+                </Link>
+              )
+            })()
           )}
 
           {/* Recawed header */}
@@ -1329,11 +1341,23 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   <div className={`text-sm italic ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
                     The content of this post has been removed by the poster
                   </div>
-                ) : item.parent.content && (
-                  <div className={`text-sm line-clamp-3 ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
-                    <ContentWithHashtags content={stripPollMarker(item.parent.content)} />
-                  </div>
-                )}
+                ) : (() => {
+                  const parentBody = stripPollMarker(item.parent!.content || '')
+                  return (
+                    <>
+                      {parentBody && (
+                        <div className={`text-sm line-clamp-3 ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
+                          <ContentWithHashtags content={parentBody} />
+                        </div>
+                      )}
+                      {item.parent!.poll && (
+                        <div className="mt-2">
+                          <PollMiniResults poll={item.parent!.poll} />
+                        </div>
+                      )}
+                    </>
+                  )
+                })()}
               </Wrapper>
             )
           })()}

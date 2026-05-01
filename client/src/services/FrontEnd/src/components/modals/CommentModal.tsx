@@ -4,10 +4,12 @@ import React from 'react'
 import type { CawItem } from '~/types'
 import PostForm from '~/components/PostForm'
 import ContentWithHashtags from '~/components/ContentWithHashtags'
+import PollMiniResults from '~/components/PollMiniResults'
 import Avatar from '~/components/Avatar'
 import { useTheme } from '~/hooks/useTheme'
 import ModalWrapper from './ModalWrapper'
 import ModalHeader from './ModalHeader'
+import { stripPollMarker } from '~/../../../tools/pollMarker'
 
 
 interface CommentModalProps {
@@ -51,9 +53,14 @@ export const CommentModal: React.FC<CommentModalProps> = ({ isOpen, caw, onClose
               </span>
             </div>
             <ContentWithHashtags
-              content={caw.content}
+              content={stripPollMarker(caw.content)}
               className={`mt-1 ${isDark ? 'text-gray-300' : 'text-gray-700'}`}
             />
+            {caw.poll && (
+              <div className="mt-2">
+                <PollMiniResults poll={caw.poll} />
+              </div>
+            )}
             <p className={`mt-2 text-sm ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
               Replying to <span className="text-blue-500">@{caw.user.username}</span>
             </p>
