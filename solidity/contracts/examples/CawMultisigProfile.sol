@@ -68,6 +68,13 @@ contract CawMultisigProfile is IERC721Receiver {
   ///         safeTransferFrom. CawProfile.transferAndSync uses plain
   ///         _transfer (not _safeTransfer), so this hook isn't strictly
   ///         required for that flow — but we accept either path.
+  ///
+  /// @dev    DO NOT put initialization logic here that other code paths
+  ///         depend on. transferAndSync (the typical way a profile is moved
+  ///         to a contract owner) doesn't trigger this callback, so any
+  ///         state set here would be unset on profiles received that way.
+  ///         If you need init logic, expose it as an explicit function
+  ///         the new owner calls after the transfer settles.
   function onERC721Received(address, address, uint256, bytes calldata)
     external pure override returns (bytes4)
   {
