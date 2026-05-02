@@ -21,6 +21,7 @@ import dmRelayRouter from './routes/dm-relay'
 import giphyRouter from './routes/giphy'
 import statsRouter from './routes/stats'
 import shorturlRouter from './routes/shorturl'
+import instancesRouter from './routes/instances'
 import reportsRouter from './routes/reports'
 import tipsRouter from './routes/tips'
 import bugReportsRouter from './routes/bugReports'
@@ -181,6 +182,7 @@ export function createApp() {
   app.use('/api/giphy', giphyRouter)
   app.use('/api/stats', statsRouter)
   app.use('/api/shorturl', shorturlRouter)
+  app.use('/api/instances', instancesRouter)
   app.use('/api/reports', reportsRouter)
   app.use('/api/tips', tipsRouter)
   app.use('/api/bug-reports', bugReportsRouter)

@@ -20,6 +20,10 @@ interface InstanceState {
   isLoading: boolean
   error: string | null
   lastFetchedAt: number | null
+  /** Which discovery tier produced the current instance list. Useful for
+   *  debugging in DevTools — `localStorage` means we haven't refreshed
+   *  yet this session, `api` means at least one peer is reachable. */
+  loadedFrom: 'localStorage' | 'api' | 'chain' | null
   /** The API host that last successfully responded */
   activeApiHost: string | null
   setActiveApiHost: (host: string) => void
@@ -28,126 +32,317 @@ interface InstanceState {
   getApiHosts: () => string[]
 }
 
-// Cache duration: 10 minutes
-const CACHE_DURATION_MS = 10 * 60 * 1000
+// Refresh threshold: if we have an in-memory copy newer than this, skip
+// the network. The localStorage tier ignores this — it always returns
+// what's persisted, even on a brand-new session (instant first render).
+const FRESH_THRESHOLD_MS = 10 * 60 * 1000  // 10 minutes
+
+// localStorage tier: cached peer list survives across sessions. Key is
+// scoped by clientId so a multi-client browser doesn't blend lists.
+const LS_KEY = (clientId: number) => `caw:instances:${clientId}`
+const LS_FRESH_THRESHOLD_MS = 60 * 60 * 1000  // 1h — accept stale data on bootstrap, refresh in background
+
+interface PersistedCache {
+  instances: Instance[]
+  fetchedAt: number
+}
+
+function loadFromLocalStorage(clientId: number): PersistedCache | null {
+  if (typeof localStorage === 'undefined') return null
+  try {
+    const raw = localStorage.getItem(LS_KEY(clientId))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as PersistedCache
+    if (!parsed?.instances || !Array.isArray(parsed.instances)) return null
+    return parsed
+  } catch {
+    return null
+  }
+}
+
+function saveToLocalStorage(clientId: number, instances: Instance[]) {
+  if (typeof localStorage === 'undefined') return
+  try {
+    localStorage.setItem(LS_KEY(clientId), JSON.stringify({
+      instances,
+      fetchedAt: Date.now(),
+    } satisfies PersistedCache))
+  } catch {
+    // quota / private mode — fail silently, in-memory cache still works
+  }
+}
+
+/**
+ * Fetch peer list from a CAW node's /api/instances endpoint. Returns
+ * null on any failure (network, non-200, malformed body) so the caller
+ * can fall through to the next tier without special-casing.
+ */
+async function fetchFromApi(host: string, clientId: number): Promise<Instance[] | null> {
+  if (!host) return null
+  const url = `${host}/api/instances?clientId=${clientId}`
+  try {
+    const ctrl = new AbortController()
+    const t = setTimeout(() => ctrl.abort(), 5000)
+    const res = await fetch(url, { signal: ctrl.signal })
+    clearTimeout(t)
+    if (!res.ok) return null
+    const data = await res.json()
+    if (!Array.isArray(data?.instances)) return null
+    return data.instances.map((i: any) => ({
+      instanceId: Number(i.instanceId),
+      clientId: Number(data.clientId ?? clientId),
+      owner: String(i.owner ?? ''),
+      apiUrl: String(i.apiUrl ?? ''),
+      validatorAddress: String(i.validatorAddress ?? ''),
+      active: i.active !== false,
+    } satisfies Instance))
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Try every host we know about until one's /api/instances responds. We
+ * walk in priority order:
+ *   1. The currently-configured VITE_API_HOST (if set).
+ *   2. Whatever apiUrls were already in the in-memory store (peers we
+ *      discovered in a prior session via localStorage).
+ * Returns the first successful response — caller falls through to chain
+ * scan if we got nothing.
+ */
+async function fetchFromAnyApi(
+  primaryHost: string | null,
+  knownHosts: string[],
+  clientId: number,
+): Promise<Instance[] | null> {
+  const tried = new Set<string>()
+  const candidates: string[] = []
+  if (primaryHost) candidates.push(primaryHost)
+  for (const h of knownHosts) {
+    if (h && !tried.has(h)) candidates.push(h)
+  }
+  for (const host of candidates) {
+    if (tried.has(host)) continue
+    tried.add(host)
+    const result = await fetchFromApi(host, clientId)
+    if (result) return result
+  }
+  return null
+}
+
+/**
+ * Chunked log walker, mirrors the server-side scanLogsForward but
+ * adapted for viem (free RPCs cap eth_getLogs at ~50K blocks).
+ *
+ * Backward walk because we want recent registrations first and stop as
+ * soon as we hit an empty window — registrations cluster around the
+ * contract's deploy block, not spread across history. 10K blocks per
+ * chunk plays nice with publicnode (50K cap) without hammering paid
+ * RPCs.
+ */
+async function chunkedGetLogs(
+  publicClient: any,
+  args: { event: any; eventArgs: any; address: string },
+  opts: { chunkBlocks?: number; maxWindows?: number } = {},
+): Promise<any[]> {
+  const chunkBlocks = BigInt(opts.chunkBlocks ?? 10_000)
+  const maxWindows = opts.maxWindows ?? 30
+  const head: bigint = await publicClient.getBlockNumber()
+  const all: any[] = []
+  let foundAny = false
+  let toBlock = head
+  for (let i = 0; i < maxWindows; i++) {
+    const fromBlock = toBlock > chunkBlocks ? toBlock - chunkBlocks + 1n : 0n
+    let logs: any[]
+    try {
+      logs = await publicClient.getLogs({
+        address: args.address,
+        event: args.event,
+        args: args.eventArgs,
+        fromBlock,
+        toBlock,
+      })
+    } catch {
+      // Halve and try just the upper half rather than spinning on a
+      // problematic chunk.
+      try {
+        const halfStart = fromBlock + (toBlock - fromBlock) / 2n
+        logs = await publicClient.getLogs({
+          address: args.address,
+          event: args.event,
+          args: args.eventArgs,
+          fromBlock: halfStart,
+          toBlock,
+        })
+      } catch {
+        break
+      }
+    }
+    if (logs.length > 0) foundAny = true
+    all.push(...logs)
+    if (foundAny && logs.length === 0) break
+    if (fromBlock === 0n) break
+    toBlock = fromBlock - 1n
+  }
+  return all
+}
+
+async function fetchFromChain(clientId: number): Promise<Instance[] | null> {
+  const publicClient = getPublicClient(wagmiConfig, { chainId: sepolia.id })
+  if (!publicClient) return null
+
+  try {
+    const registeredLogs = await chunkedGetLogs(publicClient, {
+      address: CLIENT_MANAGER_ADDRESS,
+      event: {
+        type: 'event',
+        name: 'InstanceRegistered',
+        inputs: [
+          { name: 'instanceId', type: 'uint32', indexed: true },
+          { name: 'clientId', type: 'uint32', indexed: true },
+          { name: 'owner', type: 'address', indexed: true },
+          { name: 'apiUrl', type: 'string', indexed: false },
+          { name: 'validatorAddress', type: 'address', indexed: false },
+        ],
+      },
+      eventArgs: { clientId },
+    })
+
+    const instanceMap = new Map<number, Instance>()
+    for (const log of registeredLogs) {
+      const a = (log as any).args
+      instanceMap.set(Number(a.instanceId), {
+        instanceId: Number(a.instanceId),
+        clientId: Number(a.clientId),
+        owner: a.owner,
+        apiUrl: a.apiUrl,
+        validatorAddress: a.validatorAddress,
+        active: true,
+      })
+    }
+
+    if (instanceMap.size === 0) return []
+
+    // Apply InstanceUpdated overrides — not clientId-indexed so we pull
+    // all and filter by instanceId membership.
+    const updatedLogs = await chunkedGetLogs(publicClient, {
+      address: CLIENT_MANAGER_ADDRESS,
+      event: {
+        type: 'event',
+        name: 'InstanceUpdated',
+        inputs: [
+          { name: 'instanceId', type: 'uint32', indexed: true },
+          { name: 'apiUrl', type: 'string', indexed: false },
+          { name: 'validatorAddress', type: 'address', indexed: false },
+        ],
+      },
+      eventArgs: {},
+    })
+    for (const log of updatedLogs) {
+      const a = (log as any).args
+      const existing = instanceMap.get(Number(a.instanceId))
+      if (existing) {
+        existing.apiUrl = a.apiUrl
+        existing.validatorAddress = a.validatorAddress
+      }
+    }
+
+    // Refresh the active flag from on-chain state. instanceActive() is a
+    // single SLOAD per instance — even with 100 peers this is <1s.
+    for (const [id, instance] of instanceMap) {
+      try {
+        const isActive = await publicClient.readContract({
+          address: CLIENT_MANAGER_ADDRESS,
+          abi: cawClientManagerAbi,
+          functionName: 'instanceActive',
+          args: [id],
+        })
+        instance.active = isActive as boolean
+      } catch {
+        instance.active = true
+      }
+    }
+
+    return Array.from(instanceMap.values())
+  } catch (err: any) {
+    console.warn('[InstanceStore] chain fetch failed:', err?.message)
+    return null
+  }
+}
 
 export const useInstanceStore = create<InstanceState>((set, get) => ({
   instances: [],
   isLoading: false,
   error: null,
   lastFetchedAt: null,
+  loadedFrom: null,
   activeApiHost: null,
   setActiveApiHost: (host: string) => set({ activeApiHost: host }),
 
   fetchInstances: async (clientId: number) => {
     const state = get()
 
-    // Check cache
+    // In-memory cache: if we refreshed recently for this clientId, skip.
     if (
       state.lastFetchedAt &&
-      Date.now() - state.lastFetchedAt < CACHE_DURATION_MS &&
+      Date.now() - state.lastFetchedAt < FRESH_THRESHOLD_MS &&
       state.instances.length > 0 &&
       state.instances[0]?.clientId === clientId
     ) {
       return
     }
 
-    set({ isLoading: true, error: null })
-
-    try {
-      const publicClient = getPublicClient(wagmiConfig, { chainId: sepolia.id })
-      if (!publicClient) throw new Error('No public client for Sepolia')
-
-      // Fetch all InstanceRegistered events for this clientId
-      const registeredLogs = await publicClient.getLogs({
-        address: CLIENT_MANAGER_ADDRESS,
-        event: {
-          type: 'event',
-          name: 'InstanceRegistered',
-          inputs: [
-            { name: 'instanceId', type: 'uint32', indexed: true },
-            { name: 'clientId', type: 'uint32', indexed: true },
-            { name: 'owner', type: 'address', indexed: true },
-            { name: 'apiUrl', type: 'string', indexed: false },
-            { name: 'validatorAddress', type: 'address', indexed: false },
-          ],
-        },
-        args: { clientId },
-        fromBlock: 0n,
-        toBlock: 'latest',
-      })
-
-      // Build instance map from registration events
-      const instanceMap = new Map<number, Instance>()
-      for (const log of registeredLogs) {
-        const { instanceId, clientId: cId, owner, apiUrl, validatorAddress } = log.args as any
-        instanceMap.set(Number(instanceId), {
-          instanceId: Number(instanceId),
-          clientId: Number(cId),
-          owner,
-          apiUrl,
-          validatorAddress,
-          active: true,
-        })
-      }
-
-      // Apply updates from InstanceUpdated events
-      const updatedLogs = await publicClient.getLogs({
-        address: CLIENT_MANAGER_ADDRESS,
-        event: {
-          type: 'event',
-          name: 'InstanceUpdated',
-          inputs: [
-            { name: 'instanceId', type: 'uint32', indexed: true },
-            { name: 'apiUrl', type: 'string', indexed: false },
-            { name: 'validatorAddress', type: 'address', indexed: false },
-          ],
-        },
-        fromBlock: 0n,
-        toBlock: 'latest',
-      })
-
-      for (const log of updatedLogs) {
-        const { instanceId, apiUrl, validatorAddress } = log.args as any
-        const id = Number(instanceId)
-        const existing = instanceMap.get(id)
-        if (existing) {
-          existing.apiUrl = apiUrl
-          existing.validatorAddress = validatorAddress
-        }
-      }
-
-      // Read the on-chain instanceActive state for each instance
-      // This is authoritative — handles deactivations and reactivations correctly
-      for (const [id, instance] of instanceMap) {
-        try {
-          const isActive = await publicClient.readContract({
-            address: CLIENT_MANAGER_ADDRESS,
-            abi: cawClientManagerAbi,
-            functionName: 'instanceActive',
-            args: [id],
-          })
-          instance.active = isActive as boolean
-        } catch {
-          // If on-chain read fails, assume active (registration event exists)
-          instance.active = true
-        }
-      }
-
-      const instances = Array.from(instanceMap.values())
-
+    // Tier 1: localStorage. Always populates the store immediately if a
+    // cached entry exists, so the FE has a peer list to render with on
+    // boot. We then fall through to a network refresh in the background.
+    const ls = loadFromLocalStorage(clientId)
+    if (ls && ls.instances.length > 0) {
       set({
-        instances,
-        isLoading: false,
-        lastFetchedAt: Date.now(),
-      })
-    } catch (err: any) {
-      console.warn('[InstanceStore] Failed to fetch instances from chain:', err.message)
-      set({
-        error: err.message,
-        isLoading: false,
+        instances: ls.instances,
+        loadedFrom: 'localStorage',
+        lastFetchedAt: Date.now() - LS_FRESH_THRESHOLD_MS, // mark stale so the network refresh below proceeds
       })
     }
+
+    set({ isLoading: true, error: null })
+
+    // Tier 2: /api/instances on any known node. Try the configured
+    // primary first, then any peer apiUrls we already know about. Even
+    // a single round-trip beats a chain scan.
+    const knownHosts = (ls?.instances ?? state.instances).map(i => i.apiUrl).filter(Boolean)
+    const fromApi = await fetchFromAnyApi(API_HOST || null, knownHosts, clientId)
+    if (fromApi) {
+      set({
+        instances: fromApi,
+        loadedFrom: 'api',
+        lastFetchedAt: Date.now(),
+        isLoading: false,
+        error: null,
+      })
+      saveToLocalStorage(clientId, fromApi)
+      return
+    }
+
+    // Tier 3: chain scan via viem. Slow on cold start (chunked walk
+    // back from head) but works without ANY working CAW node — the
+    // scenario for a static-hosted FE on a fresh browser.
+    const fromChain = await fetchFromChain(clientId)
+    if (fromChain) {
+      set({
+        instances: fromChain,
+        loadedFrom: 'chain',
+        lastFetchedAt: Date.now(),
+        isLoading: false,
+        error: null,
+      })
+      saveToLocalStorage(clientId, fromChain)
+      return
+    }
+
+    set({
+      isLoading: false,
+      error: 'All discovery tiers failed (localStorage / API / chain). Using stale cache if available.',
+    })
   },
 
   getActiveInstances: () => {

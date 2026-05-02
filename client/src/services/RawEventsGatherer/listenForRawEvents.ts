@@ -3,6 +3,7 @@ import { ContractEventPayload, WebSocketProvider, Contract, keccak256, toUtf8Byt
 import type { Log } from '@ethersproject/abstract-provider'
 import { CAW_ACTIONS_ADDRESS } from '../../abi/addresses'
 import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl, getL2WsSecret, waitForRateLimit } from '../../utils/rpcProvider'
+import { scanLogsForward } from '../../utils/chunkedLogs'
 import delay from '../../tools/delay'
 import SmlTxt from 'smltxt'
 import { unpackActions } from '../../utils/packActions'
@@ -174,15 +175,42 @@ export default async function listenForRawEvents(
     }
   }
 
-  // Fetch historical events using HTTP provider (more reliable)
+  // Fetch historical events using HTTP provider (more reliable than WSS for
+  // bulk reads). Chunked via scanLogsForward because public RPCs (publicnode,
+  // free-tier Infura) cap eth_getLogs at ~50K blocks per request — scanning
+  // from a months-old startBlock to `latest` in one call fails outright. We
+  // resolve `latest` to a concrete number first so the chunk math is well-
+  // defined, then walk forward in 10K-block windows. scanLogsForward halves
+  // and retries on any single-window failure (e.g. when a chunk happens to
+  // span an unusually log-dense block range).
   let past: Log[]
+  const eventSig = httpContract.interface.getEvent('ActionsProcessed')!.topicHash
   while (true) {
     try {
-      const raw = await httpContract.queryFilter(
-        httpContract.filters.ActionsProcessed(),
-        startBlock
+      const latest = await httpProvider.getBlockNumber()
+      if (startBlock > latest) {
+        past = []
+        break
+      }
+      console.log(`[RawEventsGatherer] Historical sync: blocks ${startBlock} → ${latest} (${latest - startBlock} blocks)`)
+      const rawLogs = await scanLogsForward(
+        httpProvider,
+        CAW_ACTIONS_ADDRESS,
+        [eventSig],
+        startBlock,
+        latest,
+        {
+          chunkBlocks: 10_000,
+          // Don't cap windows here — historical sync MUST find every event,
+          // and operators with multi-month gaps need an unbounded walk.
+          // 10K * 100K = 1B blocks of headroom; nothing realistic hits that.
+          maxWindows: 100_000,
+          onProgress: (from, to, n) => {
+            if (n > 0) console.log(`[RawEventsGatherer] Historical chunk ${from}..${to}: ${n} events`)
+          },
+        },
       )
-      past = raw as unknown as Log[]
+      past = rawLogs as unknown as Log[]
       break
     } catch (err) {
       console.error('[RawEventsGatherer] Error fetching past events, retrying in 5s', err)
