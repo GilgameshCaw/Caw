@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { useSignAndSubmitAction, buildTypedData, TYPES, setLocalCawonceFloor } from '../api/actions'
+import { useSignAndSubmitAction, buildTypedData, TYPES, allocateCawonces } from '../api/actions'
 
 /** Hard cap on thread length. Must match the API cap in
  *  `client/src/api/routes/actions.ts` (POST /api/actions/batch). The cap
@@ -779,17 +779,23 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         // is defense-in-depth for paste / programmatic flows.
         if (chunks.length > MAX_THREAD_LENGTH) return
 
-        // Reserve sequential cawonces for the whole thread up front so async
-        // syncs don't reuse them. (Same approach as the immediate-post path.)
-        const startCawonce = activeToken?.cawonce ?? 0
-        const threadCawonces = chunks.map((_, i) => startCawonce + i)
+        // Reserve sequential cawonces for the whole thread up front. Going
+        // through allocateCawonces means:
+        //   (a) chain.nextCawonce is the floor (cross-mirror correct);
+        //   (b) the per-tokenId Web Lock + promise chain prevents any other
+        //       allocation in this tab or any other tab of the same origin
+        //       from interleaving and breaking contiguity;
+        //   (c) the local watermark (used by all subsequent vote/like/tip
+        //       allocations) is bumped past the entire range automatically.
+        // Replaces the old store-based read (activeToken?.cawonce) which
+        // could be stale across tabs/devices and required a separate
+        // setLocalCawonceFloor nudge to keep the chain allocator in sync.
+        const threadCawonces = await allocateCawonces(effectiveTokenId, chunks.length)
+        const startCawonce = threadCawonces[0]
+        // Keep the UI hint store roughly accurate so any "next post #N"
+        // indicator updates without waiting for the next poll.
         const setCawonce = useTokenDataStore.getState().setCawonce
         setCawonce(effectiveTokenId, startCawonce + chunks.length)
-        // Push the chain-allocator's local watermark forward too — see the
-        // longer comment in the immediate-post path. Without this, a vote
-        // / like / tip submitted while these chunks are still pending will
-        // re-use a cawonce already taken by this batch.
-        setLocalCawonceFloor(effectiveTokenId, startCawonce + chunks.length)
         const firstPostCawonce = threadCawonces[0]
 
         // Resolve session key once — same logic as immediate-post path.
@@ -1142,52 +1148,19 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       void _ignored
     }
 
-    // Get the current cawonce BEFORE submitting (signAndSubmit bumps it internally)
-    const getCawonce = () => {
-      const state = useTokenDataStore.getState()
-      for (const tokens of Object.values(state.tokensByAddress)) {
-        const found = tokens.find(t => t.tokenId === effectiveTokenId)
-        if (found) return found.cawonce ?? 0
-      }
-      return 0
-    }
-
-    // Verify the cawonce range is clear before signing. The local
-    // useTokenDataStore.cawonce can drift from on-chain reality (other tabs,
-    // other devices, missed bumpCawonce events, action processor races) and
-    // signing with a stale cawonce results in a wasted on-chain failure +
-    // auto-retry. Cheap one-shot check that lets us fix the local store
-    // before signing instead of after the fact.
-    try {
-      const { findSafeCawonceStart } = await import('~/api/actions')
-      const currentCawonce = getCawonce()
-      const safeCawonce = await findSafeCawonceStart(effectiveTokenId, currentCawonce, chunks.length)
-      if (safeCawonce !== currentCawonce) {
-        console.log(`[Post] Cawonce conflict detected: local=${currentCawonce}, resetting to safe=${safeCawonce}`)
-        const setCawonce = useTokenDataStore.getState().setCawonce
-        setCawonce(effectiveTokenId, safeCawonce)
-      }
-    } catch (err) {
-      console.warn('[Post] Could not verify cawonce range, proceeding with local value:', err)
-    }
-
-    // Pre-allocate cawonces for the entire thread upfront.
-    // This prevents race conditions where other async processes (cawonce sync,
-    // txqueue monitor retries) overwrite the store cawonce mid-thread.
-    const startCawonce = getCawonce()
-    const threadCawonces = chunks.map((_, i) => startCawonce + i)
-    // Immediately bump the store past the entire range so nothing else uses these
+    // Allocate the whole thread atomically through the chain-based
+    // allocator. allocateCawonces holds a per-tokenId Web Lock for the
+    // full batch, so any concurrent vote/like/tip in this tab or another
+    // tab of the same origin queues behind us instead of grabbing a
+    // cawonce in the middle of our range. Cross-server races (other
+    // mirror submitting concurrently) still possible but caught by the
+    // 409 retry path on submit.
+    const threadCawonces = await allocateCawonces(effectiveTokenId, chunks.length)
+    const startCawonce = threadCawonces[0]
+    // Refresh the UI hint store so any "next post #N" indicator stays
+    // roughly accurate without waiting for the next poll cycle.
     const setCawonce = useTokenDataStore.getState().setCawonce
     setCawonce(effectiveTokenId, startCawonce + chunks.length)
-    // ALSO push the chain-allocator's local watermark forward. PostForm uses
-    // store-based allocation (above), but signAndSubmit on subsequent
-    // standalone actions (votes, likes, tips, etc.) uses the chain-based
-    // allocator (allocateCawonces / getNextCawonce). The two paths share no
-    // state by default — without this nudge, voting on a still-pending poll
-    // re-reads chainNext (unchanged because the poll hasn't confirmed) and
-    // hands out the SAME cawonce the poll already used, causing a 409
-    // collision in TxQueue's partial unique index.
-    setLocalCawonceFloor(effectiveTokenId, startCawonce + chunks.length)
 
     // Post first chunk (with media, parent info, etc.)
     // Quotes use actionType 'recaw' (with text) so the original author receives funds.

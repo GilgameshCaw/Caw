@@ -148,164 +148,325 @@ export async function findSafeCawonceStart(tokenId: number, start: number, count
   return result.nextSafe
 }
 
-/**
- * Read the next safe cawonce for a sender from the chain. cawProfileL2's
- * Token struct exposes `nextCawonce` — a monotonically-increasing counter
- * the contract maintains itself. This is the only authoritative source:
- * the chain has every action that's ever been processed, regardless of
- * which server submitted it. Server-side allocation (the prior approach)
- * had a per-server view that broke as soon as a token was used across
- * two installs.
- *
- * Concurrency note: two near-simultaneous calls (Quick Sign auto-loop,
- * multi-tab) can both read the same `nextCawonce`, sign with it, and
- * race for chain-confirmation order. The TxQueue partial unique index
- * on (senderId, cawonce) catches the dup at insert time and the caller
- * re-reads + retries. The localCawonceHigh map below additionally
- * prevents in-tab races by tracking the highest cawonce we've recently
- * issued; the next caller picks max(chain, localHigh + 1).
- */
-
-// High-watermark of cawonces we've recently issued, per tokenId. Bumped
-// synchronously on each allocation; expires after 30s on the assumption
-// the action either confirmed (chain advanced) or got rejected (caller
-// will re-read chain anyway).
+// =====================================================================
+// Cawonce allocation
+// =====================================================================
 //
-// Persisted to localStorage so it survives a page refresh — without
-// that, refreshing between an action being signed and being confirmed
-// on-chain causes the next allocation to reuse the same cawonce: the
-// chain hasn't seen the pending action yet (so chainNext is stale) and
-// the in-memory map is empty (refresh cleared it). The TxQueue partial
-// unique index then 409s, the catch handler calls setLocalCawonceFloor,
-// and we retry — annoying but recoverable. Persistence avoids the
-// round-trip entirely. Survives close-tab + reopen too.
-const LOCAL_CAWONCE_TTL_MS = 30_000
+// Three coordination layers, in order of authority:
+//
+//   1. chain.nextCawonce     — only authoritative source for confirmed
+//      actions. Cross-mirror, cross-tab, cross-device truth. Read from
+//      cawProfileL2.getTokens([tokenId]).nextCawonce.
+//
+//   2. localCawonceHigh      — in-flight (signed but not yet confirmed)
+//      bookkeeping. Persisted to localStorage AND broadcast over a
+//      BroadcastChannel so all tabs of the same origin see each other's
+//      bumps in near-real-time. Without the broadcast, two tabs racing
+//      to allocate read the same chainNext + same localHigh and pick the
+//      same cawonce — exactly the failure that produced TxQueue 11827.
+//
+//   3. 409 cawonce_collision retry — server-side TxQueue partial unique
+//      index catches anything layers 1+2 miss (cross-mirror, cross-device,
+//      cross-browser-profile). Server returns suggestedCawonce; FE bumps
+//      its watermark and re-signs. This is also the only signal a mirror
+//      with stale-by-RPC chain.nextCawonce can use to align with another
+//      mirror that just submitted.
+//
+// We do NOT have a server-side reservation table. The previous
+// CawonceReservation system (728baf6, ripped out in 3ff804b) only worked
+// for single-server installs — each mirror's reservation table was its
+// own private view. Two users posting via two mirrors would each see
+// "free" cawonce N and collide at the chain level. Chain truth + per-
+// origin BroadcastChannel + 409 retry covers the same use cases without
+// that limitation.
+//
+// What this design does NOT cover (acceptable):
+//
+//   - Cross-browser races (user has Chrome + Safari open). Each browser
+//     has its own localStorage and BroadcastChannel; only layer 3 catches
+//     these. Hits a single 409 → bump → retry, transparent to the user
+//     except for one extra wallet popup if they're manually signing.
+//
+//   - Cross-mirror in-flight races (user posts via test.caw.social, then
+//     posts via someone-elses-mirror.com within the chain RPC propagation
+//     window). Same as above — 409 catches it.
+//
+//   - Tabs without BroadcastChannel support (very old browsers). Falls
+//     back to localStorage polling in getLocalHigh which still gives
+//     correctness, just with a wider race window.
+
+// 5 min: long enough to cover a slow manual wallet sign (Safari mobile
+// MetaMask is the worst offender, often 15-30s), short enough that an
+// abandoned allocation doesn't stale-block subsequent allocations
+// indefinitely. After expiry, the next allocation falls back to
+// chain.nextCawonce alone — which is correct for confirmed actions but
+// will under-count any signed-but-not-submitted action that's still
+// pending. The TxQueue 409 retry catches the resulting collision.
+const LOCAL_CAWONCE_TTL_MS = 5 * 60_000
 const LOCAL_CAWONCE_LS_PREFIX = 'caw:cawonceHigh:'
+const CAWONCE_BC_NAME = 'caw-cawonce-v1'
 
 interface CawonceHighEntry { cawonce: number; expiresAt: number }
 
-const localCawonceHigh = {
-  get(tokenId: number): CawonceHighEntry | undefined {
-    try {
-      const raw = localStorage.getItem(LOCAL_CAWONCE_LS_PREFIX + tokenId)
-      if (!raw) return undefined
-      const parsed = JSON.parse(raw)
-      if (typeof parsed?.cawonce !== 'number' || typeof parsed?.expiresAt !== 'number') return undefined
-      return parsed
-    } catch {
-      // localStorage can be unavailable (private mode, SSR, quota). The
-      // fallback is "no entry" — we still rely on chainNext + the
-      // server-side TxQueue unique index for correctness.
-      return undefined
-    }
-  },
-  set(tokenId: number, entry: CawonceHighEntry) {
-    try {
-      localStorage.setItem(LOCAL_CAWONCE_LS_PREFIX + tokenId, JSON.stringify(entry))
-    } catch {}
-  },
-  delete(tokenId: number) {
-    try {
-      localStorage.removeItem(LOCAL_CAWONCE_LS_PREFIX + tokenId)
-    } catch {}
-  },
-}
+// In-memory cache, keyed by tokenId. Mirrors what's in localStorage but
+// avoids the JSON.parse round-trip on every read. Updated by:
+//   - bumpHigh() (this tab's allocations)
+//   - storage event listener (other tab in same browser)
+//   - BroadcastChannel listener (other tab in same browser, faster)
+const memHigh = new Map<number, CawonceHighEntry>()
 
-// Coalesce concurrent reads of the same tokenId so we don't burn N RPC
-// calls when the user fires N likes in quick succession. The mutex makes
-// the read-bump pair atomic per-tab.
-const inflightCawonceRead = new Map<number, Promise<number>>()
-
-export async function allocateCawonces(tokenId: number, count = 1): Promise<number[]> {
-  const out: number[] = []
-  for (let i = 0; i < count; i++) {
-    out.push(await getNextCawonce(tokenId))
-  }
-  return out
-}
-
-async function getNextCawonce(tokenId: number): Promise<number> {
-  // Mutex: serialize reads for the same tokenId so two parallel signAndSubmit
-  // calls don't both read the same chain value, both bump local, and
-  // race anyway. Sequential await means each caller sees the previous
-  // caller's bump.
-  const existing = inflightCawonceRead.get(tokenId)
-  if (existing) {
-    await existing
-  }
-
-  const promise = (async () => {
-    // 1. Chain truth. cawProfileL2.getTokens returns the user's nextCawonce.
-    let chainNext = 0
-    try {
-      const result = await readContract(wagmiConfig, {
-        address: CAW_NAMES_L2_ADDRESS,
-        abi: cawProfileL2Abi,
-        functionName: 'getTokens',
-        args: [[tokenId]], // uint32[]
-        chainId: baseSepolia.id,
-      }) as any
-      const tok = result?.[0]
-      const raw = tok?.nextCawonce ?? tok?.[4] // by name or by index
-      chainNext = Number(BigInt(raw?.toString() ?? '0'))
-    } catch (err) {
-      // RPC down or token not on L2 yet (post-mint pre-LZ). Fall back to
-      // the local watermark — better than crashing. If localHigh is also
-      // empty we start at 0 and let the TxQueue unique index catch any
-      // collision.
-      console.warn(`[getNextCawonce] chain read failed for tokenId=${tokenId}:`, err)
-    }
-
-    // 2. Local high-watermark. Counts cawonces signed-but-not-yet-confirmed
-    // in this tab. Cleared after TTL.
-    const now = Date.now()
-    const entry = localCawonceHigh.get(tokenId)
-    const localHigh = entry && entry.expiresAt > now ? entry.cawonce : -1
-
-    // 3. Pick the higher of the two. Bump local for the next caller.
-    const allocated = Math.max(chainNext, localHigh + 1)
-    localCawonceHigh.set(tokenId, {
-      cawonce: allocated,
-      expiresAt: now + LOCAL_CAWONCE_TTL_MS,
-    })
-    return allocated
-  })()
-
-  inflightCawonceRead.set(tokenId, promise as any)
+// BroadcastChannel for near-real-time cross-tab coordination. localStorage
+// alone propagates via the 'storage' event but only fires on OTHER tabs
+// asynchronously and can lag noticeably under load. BroadcastChannel
+// delivers same-microtask to all listeners.
+let _bc: BroadcastChannel | null = null
+function getBroadcastChannel(): BroadcastChannel | null {
+  if (_bc) return _bc
+  if (typeof BroadcastChannel === 'undefined') return null
   try {
-    return await promise
-  } finally {
-    if (inflightCawonceRead.get(tokenId) === (promise as any)) {
-      inflightCawonceRead.delete(tokenId)
-    }
+    _bc = new BroadcastChannel(CAWONCE_BC_NAME)
+    _bc.addEventListener('message', (ev: MessageEvent) => {
+      const { tokenId, cawonce, expiresAt } = ev.data || {}
+      if (typeof tokenId !== 'number' || typeof cawonce !== 'number' || typeof expiresAt !== 'number') return
+      const cur = memHigh.get(tokenId)
+      // Monotonic merge: a remote bump only wins if it's higher AND not
+      // expired. Prevents a stale rebroadcast from clobbering a newer
+      // local value (rare but possible if a tab sleeps and wakes).
+      if (expiresAt > Date.now() && (!cur || cawonce > cur.cawonce)) {
+        memHigh.set(tokenId, { cawonce, expiresAt })
+      }
+    })
+    return _bc
+  } catch {
+    return null
   }
+}
+
+// Initialize listeners lazily — calling on module load works in browsers
+// but breaks SSR. Defer to first use of getNextCawonce.
+let _listenersInit = false
+function initListeners() {
+  if (_listenersInit) return
+  _listenersInit = true
+  getBroadcastChannel() // attaches its own listener
+  // Storage event is the cross-tab fallback when BroadcastChannel isn't
+  // available, AND a belt-and-braces backup when both are. The 'storage'
+  // event only fires on tabs OTHER than the writer.
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('storage', (ev: StorageEvent) => {
+      if (!ev.key || !ev.key.startsWith(LOCAL_CAWONCE_LS_PREFIX)) return
+      const tokenId = Number(ev.key.slice(LOCAL_CAWONCE_LS_PREFIX.length))
+      if (!Number.isFinite(tokenId)) return
+      if (!ev.newValue) {
+        memHigh.delete(tokenId)
+        return
+      }
+      try {
+        const parsed = JSON.parse(ev.newValue)
+        if (typeof parsed?.cawonce === 'number' && typeof parsed?.expiresAt === 'number') {
+          const cur = memHigh.get(tokenId)
+          if (parsed.expiresAt > Date.now() && (!cur || parsed.cawonce > cur.cawonce)) {
+            memHigh.set(tokenId, parsed)
+          }
+        }
+      } catch {}
+    })
+  }
+}
+
+function readPersistedHigh(tokenId: number): CawonceHighEntry | undefined {
+  try {
+    const raw = localStorage.getItem(LOCAL_CAWONCE_LS_PREFIX + tokenId)
+    if (!raw) return undefined
+    const parsed = JSON.parse(raw)
+    if (typeof parsed?.cawonce !== 'number' || typeof parsed?.expiresAt !== 'number') return undefined
+    return parsed
+  } catch {
+    return undefined
+  }
+}
+
+function persistHigh(tokenId: number, entry: CawonceHighEntry) {
+  try {
+    localStorage.setItem(LOCAL_CAWONCE_LS_PREFIX + tokenId, JSON.stringify(entry))
+  } catch {}
 }
 
 /**
- * Reset the in-tab cawonce watermark for a tokenId. Called when an action
- * submission fails with a cawonce-collision — the next signAndSubmit will
- * re-read fresh chain state instead of trusting the (now-known-stale)
- * local watermark.
+ * Get the current local high-watermark for a tokenId, considering:
+ *   - in-memory cache (this tab + cross-tab broadcasts)
+ *   - localStorage (cold-start / cross-tab persistence)
+ *
+ * Picks the higher of the two if both exist (safer to over-bump than
+ * under-bump). Returns -1 if neither has a non-expired entry.
+ */
+function getLocalHigh(tokenId: number): number {
+  initListeners()
+  const now = Date.now()
+  const memEntry = memHigh.get(tokenId)
+  const memValid = memEntry && memEntry.expiresAt > now ? memEntry.cawonce : -1
+  const persisted = readPersistedHigh(tokenId)
+  const persistedValid = persisted && persisted.expiresAt > now ? persisted.cawonce : -1
+  // Hydrate the cache from disk on cold start so subsequent calls don't
+  // need to JSON.parse.
+  if (persistedValid > memValid && persisted) {
+    memHigh.set(tokenId, persisted)
+  }
+  return Math.max(memValid, persistedValid)
+}
+
+/**
+ * Bump the local high-watermark for a tokenId. Synchronous: writes to
+ * memory, localStorage, and broadcasts to other tabs in one shot.
+ * Idempotent — bumping to a value <= current is a no-op.
+ */
+function bumpHigh(tokenId: number, cawonce: number) {
+  initListeners()
+  const now = Date.now()
+  const cur = memHigh.get(tokenId)
+  if (cur && cur.expiresAt > now && cur.cawonce >= cawonce) {
+    // Refresh the TTL without changing the value. Keeps a long signing
+    // session from letting the watermark expire mid-flow.
+    cur.expiresAt = now + LOCAL_CAWONCE_TTL_MS
+    persistHigh(tokenId, cur)
+    return
+  }
+  const entry: CawonceHighEntry = { cawonce, expiresAt: now + LOCAL_CAWONCE_TTL_MS }
+  memHigh.set(tokenId, entry)
+  persistHigh(tokenId, entry)
+  const bc = getBroadcastChannel()
+  if (bc) {
+    try { bc.postMessage({ tokenId, cawonce, expiresAt: entry.expiresAt }) } catch {}
+  }
+}
+
+function clearHigh(tokenId: number) {
+  memHigh.delete(tokenId)
+  try { localStorage.removeItem(LOCAL_CAWONCE_LS_PREFIX + tokenId) } catch {}
+  const bc = getBroadcastChannel()
+  // Broadcast a clear by sending a low (-1) cawonce with an expired
+  // timestamp; receivers will ignore it (won't beat their current value)
+  // but will still notice the storage event and clear if needed. Cleanest
+  // is to just rely on the storage event for clears across tabs.
+  void bc
+}
+
+// Per-tokenId promise chain for true serialization of allocations within
+// a tab. The previous "wait for inflight then proceed" pattern only
+// blocked while an RPC was in flight — once it resolved, multiple awaiters
+// raced to do their own read+bump. A linked promise chain forces strict
+// FIFO: each caller awaits the previous caller's promise and only then
+// runs its own read+bump.
+const allocChain = new Map<number, Promise<unknown>>()
+
+/**
+ * Allocate `count` consecutive cawonces for `tokenId`. The returned numbers
+ * are guaranteed contiguous (e.g. [12, 13, 14] for count=3) and the local
+ * watermark + cross-tab broadcasts are bumped past the last one before
+ * returning, so any other allocation racing for the same tokenId will pick
+ * up where this one left off.
+ *
+ * Holds a single Web Lock for the whole batch — without that, releasing
+ * between each getNextCawonce would let another tab insert its own
+ * allocation in the middle, breaking the "contiguous" guarantee that
+ * thread submission depends on.
+ */
+export async function allocateCawonces(tokenId: number, count = 1): Promise<number[]> {
+  return await runUnderLock(tokenId, async () => {
+    const out: number[] = []
+    for (let i = 0; i < count; i++) {
+      out.push(await doAllocate(tokenId))
+    }
+    return out
+  })
+}
+
+/**
+ * Wrap `fn` in:
+ *   1. The per-tokenId promise chain (within-tab serialization).
+ *   2. The Web Locks API (cross-tab serialization within the same origin).
+ *
+ * Both layers are needed:
+ *   - Web Lock alone doesn't serialize within a tab if multiple async
+ *     callers fire within the same microtask before the first acquires
+ *     the lock — they'd all queue up at the lock, but the lock acquires
+ *     in arbitrary order.
+ *   - Promise chain alone covers within-tab but doesn't see other tabs.
+ *
+ * Falls back to chain-only if Web Locks isn't available (very old browser,
+ * SSR). Cross-tab races in that case are caught by the 409 retry.
+ */
+async function runUnderLock<T>(tokenId: number, fn: () => Promise<T>): Promise<T> {
+  const prev = allocChain.get(tokenId) ?? Promise.resolve()
+  const run = async () => {
+    if (typeof navigator !== 'undefined' && (navigator as any).locks?.request) {
+      return await (navigator as any).locks.request(
+        `caw-cawonce-${tokenId}`,
+        async () => fn()
+      )
+    }
+    return await fn()
+  }
+  const next = prev.then(run, run)
+  const chained = next.finally(() => {
+    if (allocChain.get(tokenId) === chained) {
+      allocChain.delete(tokenId)
+    }
+  })
+  allocChain.set(tokenId, chained)
+  return await next
+}
+
+async function doAllocate(tokenId: number): Promise<number> {
+  // 1. Chain truth.
+  let chainNext = 0
+  try {
+    const result = await readContract(wagmiConfig, {
+      address: CAW_NAMES_L2_ADDRESS,
+      abi: cawProfileL2Abi,
+      functionName: 'getTokens',
+      args: [[tokenId]],
+      chainId: baseSepolia.id,
+    }) as any
+    const tok = result?.[0]
+    const raw = tok?.nextCawonce ?? tok?.[4]
+    chainNext = Number(BigInt(raw?.toString() ?? '0'))
+  } catch (err) {
+    console.warn(`[getNextCawonce] chain read failed for tokenId=${tokenId}:`, err)
+  }
+
+  // 2. Local high-watermark (this tab + cross-tab via BC + localStorage).
+  const localHigh = getLocalHigh(tokenId)
+
+  // 3. Pick the higher; bump and broadcast atomically (synchronous in JS).
+  const allocated = Math.max(chainNext, localHigh + 1)
+  bumpHigh(tokenId, allocated)
+  return allocated
+}
+
+/**
+ * Reset the local cawonce watermark for a tokenId. Called when an action
+ * submission fails — the next signAndSubmit will re-read fresh chain state
+ * instead of trusting the (now-known-stale) local watermark. Affects this
+ * tab AND any other tabs of the same origin (storage event propagates).
  */
 export function invalidateLocalCawonce(tokenId: number) {
-  localCawonceHigh.delete(tokenId)
+  clearHigh(tokenId)
 }
 
 /**
  * Push the local watermark to a server-suggested floor. Called on a 409
  * cawonce_collision when the server tells us the highest active cawonce in
- * its TxQueue. The chain alone can't see that — it only knows what's
- * confirmed on-chain. Setting the watermark to suggestedCawonce - 1 means
- * the next getNextCawonce call returns suggestedCawonce (since it picks
- * max(chain, localHigh + 1)).
+ * its TxQueue (chain alone can't see in-flight TxQueue rows). The bump is
+ * broadcast so any other tab racing for the same cawonce learns the floor
+ * without waiting for its own 409.
+ *
+ * `suggestedCawonce` is what the SERVER says is the next free slot. The
+ * watermark is the "highest issued so far" semantic, so store one less —
+ * the next getNextCawonce returns max(chain, localHigh + 1) = suggestedCawonce.
  */
 export function setLocalCawonceFloor(tokenId: number, suggestedCawonce: number) {
-  // suggestedCawonce is what the SERVER says the next free slot is. The
-  // watermark is the "highest issued so far" semantic, so store one less.
-  localCawonceHigh.set(tokenId, {
-    cawonce: suggestedCawonce - 1,
-    expiresAt: Date.now() + LOCAL_CAWONCE_TTL_MS,
-  })
+  bumpHigh(tokenId, suggestedCawonce - 1)
 }
 
 
@@ -1018,11 +1179,13 @@ export function useSignAndSubmitAction() {
         console.warn('[signAndSubmit] Cawonce collision persisted past max retries — surfacing')
       }
 
-      // For non-collision errors, also invalidate the local watermark so
-      // a stale value doesn't poison the next attempt.
-      if (params.cawonce == null && activeTokenId && error?.name !== 'CawonceCollisionError') {
-        invalidateLocalCawonce(activeTokenId)
-      }
+      // Note: we deliberately do NOT invalidate the local watermark on
+      // non-collision errors. If the API call failed (network, 5xx) the
+      // server may or may not have persisted the row — clearing the
+      // watermark would let the next allocation re-pick the same cawonce,
+      // which collides if the row DID land. Better to leak a single
+      // cawonce slot (chain.nextCawonce will see the gap and recover) than
+      // to amplify a transient error into a guaranteed conflict.
 
       const errMsg = (error?.message || error?.shortMessage || '').toLowerCase()
 
