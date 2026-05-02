@@ -34,6 +34,7 @@ import marketplaceRouter from './routes/marketplace'
 import bookmarksRouter from './routes/bookmarks'
 import pinsRouter from './routes/pins'
 import meRouter from './routes/me'
+import verifyRouter from './routes/verify'
 import adminDbRouter from './routes/admin-db'
 import ogRouter from './routes/og'
 import { spaPrerender } from './util/spaPrerender'
@@ -66,7 +67,25 @@ export function createApp() {
     credentials: true
   }
 
-  app.use(cors(corsOpts))
+  // Public-read cross-origin endpoint: short URL metadata is read by
+  // sibling nodes when a post embeds a `/s/CODE` from another instance.
+  // The data is the same the /s/ 302 would redirect to — there's no
+  // auth state to leak, so any origin can read it. Mount a permissive
+  // cors middleware on just this path AND make sure the strict global
+  // cors below doesn't run for it (otherwise the global allow-list
+  // would error on foreign origins and short-circuit the request).
+  // `credentials: false` is critical: combining `*` with credentials
+  // is invalid per spec, so the browser would reject the response.
+  const permissiveShortUrlCors = cors({ origin: '*', credentials: false, methods: ['GET'] })
+  app.use('/api/shorturl/:code', permissiveShortUrlCors)
+
+  // Strict global cors. Skipped for /api/shorturl/:code so the
+  // permissive middleware above is the only one that runs for that
+  // path — see the comment block right above for why.
+  app.use((req, res, next) => {
+    if (/^\/api\/shorturl\/[^/]+\/?$/.test(req.path)) return next()
+    return cors(corsOpts)(req, res, next)
+  })
   app.use(express.json({ limit: '50mb' })) // Increase limit for image uploads
 
   // Serve static uploaded files with security headers
@@ -194,6 +213,7 @@ export function createApp() {
   app.use('/api/bookmarks', bookmarksRouter)
   app.use('/api/pins', pinsRouter)
   app.use('/api/me', meRouter)
+  app.use('/api/verify', verifyRouter)
   app.use('/api/admin/db', adminDbRouter)
   app.use('/api/og', ogRouter)
 
