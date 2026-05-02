@@ -1721,13 +1721,23 @@ console.log("succeededKeys", succeededKeys)
 
         if (hasTemporaryError) {
           console.log("========== [Validator] TEMPORARY ERROR DETECTED ==========")
-          console.log("  Keeping transactions as PENDING for automatic retry")
+          console.log("  Resetting transactions to PENDING for automatic retry")
           console.log("  Affected TxQueue IDs:", validatedEntries.map(e => e.id).join(', '))
           console.log("  Rejection messages:", rejectionMessages)
           console.log("  These will be retried on next poll cycle")
           console.log("==========================================================")
-          // For network errors, just keep them as pending - validator will retry automatically
-          // Don't mark as failed, as the network might recover
+          // EXPLICITLY reset rows to pending. The sweep at the top of
+          // fetchPendingQueue (30s threshold) is the fallback safety net,
+          // but it's timing-fragile when the poll interval ≈ the sweep
+          // threshold: rows can cycle pending↔processing forever as each
+          // poll re-bumps their updatedAt to be exactly at the cutoff
+          // boundary. Observed in production on 2026-05-02 with 7 rows
+          // stuck in lockstep due to a flaky WSS RPC. Direct reset is
+          // race-free.
+          await prisma.txQueue.updateMany({
+            where: { id: { in: validatedEntries.map(e => e.id) }, status: 'processing' },
+            data: { status: 'pending' },
+          })
           return
         } else {
           console.log("========== [Validator] PERMANENT FAILURE DETECTED ==========")

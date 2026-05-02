@@ -119,9 +119,17 @@ function buildHeaders(init?: RequestInit): Record<string, string> {
   const activeTokenId = activeToken?.tokenId
   const sessionToken = useAuthStore.getState().sessionToken
 
+  // Build-time git SHA. Stamped on every request so the API can persist it
+  // alongside TxQueue rows — when something fails (e.g. a stale FE racing
+  // a recent fix), we can tell which build produced the bad action without
+  // guessing.
+  const clientVersion = (typeof __CLIENT_VERSION__ !== 'undefined' && __CLIENT_VERSION__)
+    || 'unknown'
+
   return {
     'Accept':       'application/json',
     'Content-Type': 'application/json',
+    'x-caw-client-version': clientVersion,
     ...(activeTokenId !== undefined ? { 'x-user-id': String(activeTokenId) } : {}),
     ...(sessionToken ? { 'x-session-token': sessionToken } : {}),
     ...(init?.headers as Record<string,string> || {}),

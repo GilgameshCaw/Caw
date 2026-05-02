@@ -970,10 +970,14 @@ export function useSignAndSubmitAction() {
           const allHosts = useInstanceStore.getState().getApiHosts()
           const activeHost = useInstanceStore.getState().activeApiHost || API_HOST || ''
           const otherHosts = allHosts.filter((h: string) => h !== activeHost && h !== '')
+          const clientVersion = (typeof __CLIENT_VERSION__ !== 'undefined' && __CLIENT_VERSION__) || 'unknown'
           for (const host of otherHosts) {
             fetch(`${host}/api/actions`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: {
+                'Content-Type': 'application/json',
+                'x-caw-client-version': clientVersion,
+              },
               body: actionPayload,
             }).catch(() => {}) // Silently ignore failures on redundant broadcasts
           }

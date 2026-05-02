@@ -1,4 +1,5 @@
 import path from "path";
+import { execSync } from "child_process";
 import { defineConfig, Plugin } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react-swc";
@@ -6,6 +7,28 @@ import svgr from "vite-plugin-svgr";
 import commonjs from '@rollup/plugin-commonjs';
 
 import tsconfigPaths from "vite-tsconfig-paths";
+
+// Stamp every build with the current git SHA so we can correlate frontend
+// builds with their server-side TxQueue rows (the API persists this from the
+// X-Caw-Client-Version header). Keeps stale-FE bugs diagnosable: when a row
+// fails, you can see whether it came from a build that pre-dated the fix.
+function buildClientVersion(): string {
+  if (process.env.CAW_CLIENT_VERSION) return process.env.CAW_CLIENT_VERSION;
+  try {
+    const sha = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString().trim();
+    let dirty = '';
+    try {
+      const status = execSync('git status --porcelain', { stdio: ['ignore', 'pipe', 'ignore'] })
+        .toString().trim();
+      if (status) dirty = '+dirty';
+    } catch {}
+    return `${sha}${dirty}`;
+  } catch {
+    return 'unknown';
+  }
+}
+const CLIENT_VERSION = buildClientVersion();
 
 // Plugin to add COEP headers to worker responses (only on localhost for security)
 function coepHeadersPlugin(): Plugin {
@@ -33,6 +56,7 @@ export default defineConfig({
   base: "/",
   define: {
     global: 'globalThis',
+    __CLIENT_VERSION__: JSON.stringify(CLIENT_VERSION),
   },
   optimizeDeps: {
     esbuildOptions: {

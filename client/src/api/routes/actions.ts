@@ -33,6 +33,26 @@ import { packActions, getPackedActionSlices } from '../../utils/packActions'
 
 const router = Router()
 
+/**
+ * Extract diagnostic provenance headers from the incoming request:
+ *   - clientVersion: the FE build SHA (X-Caw-Client-Version, set by buildHeaders
+ *     in api/client.ts and stamped at build time from vite.config.ts).
+ *   - clientOrigin: the browser-set Origin header. Particularly useful as we
+ *     onboard mirrors / FE-only peers that submit on behalf of users from
+ *     different domains.
+ * Both are capped at 100 chars defensively — they're untrusted input.
+ */
+function extractClientProvenance(req: any): { clientVersion: string | null; clientOrigin: string | null } {
+  const clip = (s: unknown): string | null => {
+    if (typeof s !== 'string' || !s) return null
+    return s.slice(0, 100)
+  }
+  return {
+    clientVersion: clip(req.headers?.['x-caw-client-version']),
+    clientOrigin: clip(req.headers?.['origin']),
+  }
+}
+
 // Rate limiting for free actions (unlike, unfollow) to prevent validator griefing.
 // These actions cost 0 CAW so an attacker could spam them to waste validator gas.
 const FREE_ACTION_CODES = [2, 5] // unlike=2, unfollow=5
@@ -1029,13 +1049,16 @@ router.post('/', async (req, res) => {
           console.log(`[Actions] Marked TxQueue ${parsedRetryId} as retried`)
         }
 
+        const provenance = extractClientProvenance(req)
         const created = await tx.txQueue.create({
           data: {
             senderId: data.senderId,
             cawonce: data.cawonce,
             payload: { data, domain, types },
             signedTx: signature,
-            pendingDepositTxHash: sanitizedPendingDepositTxHash
+            pendingDepositTxHash: sanitizedPendingDepositTxHash,
+            clientVersion: provenance.clientVersion,
+            clientOrigin: provenance.clientOrigin,
           }
         })
         return created
@@ -1366,12 +1389,18 @@ router.post('/batch', async (req, res) => {
         // the validator parks them as waiting_for_deposit until LZ lands
         // client authentication on L2.
         // Insert in chunks of 50 to avoid overwhelming the connection pool
+        const provenance = extractClientProvenance(req)
         const txqRows: any[] = []
         for (let chunk = 0; chunk < rowsToInsert.length; chunk += 50) {
           const batch = rowsToInsert.slice(chunk, chunk + 50)
           const created = await Promise.all(
             batch.map(row => tx.txQueue.create({
-              data: { ...row, pendingDepositTxHash: sanitizedPendingDepositTxHash }
+              data: {
+                ...row,
+                pendingDepositTxHash: sanitizedPendingDepositTxHash,
+                clientVersion: provenance.clientVersion,
+                clientOrigin: provenance.clientOrigin,
+              }
             }))
           )
           txqRows.push(...created)

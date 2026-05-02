@@ -64,6 +64,16 @@ model User {
   onChainStakeWei       String?
   onChainStakeUpdatedAt DateTime?
   lastViewedOffersAt    DateTime?         // When the user last viewed the My Offers tab
+  // X account linkage — proves wallet controls the X handle. We pull a
+  // bucketed follower count at link time and on user-initiated refresh; we
+  // never store OAuth tokens. xFollowerBucket is the lower bound of the
+  // range (e.g. 25000 means "25k+"). xUserId is X's stable id (handles can
+  // change), used as the conflict key for first-link-wins.
+  xHandle               String?
+  xUserId               String?           @unique
+  xLinkedAt             DateTime?
+  xFollowerBucket       Int?
+  xFollowersUpdatedAt   DateTime?
   caws                  Caw[]
   followers             Follow[]       @relation("Follower")
   follows               Follow[]       @relation("Following")
@@ -296,6 +306,14 @@ model TxQueue {
   // re-reads chain and re-signs. Replaces the CawonceReservation
   // system that didn't see actions submitted by other servers.
   cawonce              Int?
+
+  // Diagnostic provenance. clientVersion is the build-time git SHA from
+  // the FE that submitted the action (X-Caw-Client-Version header).
+  // clientOrigin is the browser-supplied Origin header — useful as we
+  // expand to mirrors / FE-only peers that submit on behalf of users.
+  // Both nullable so old rows + non-FE submitters (curl, scripts) are fine.
+  clientVersion        String?
+  clientOrigin         String?
 
   @@index([senderId, status])
   @@index([batchId])
