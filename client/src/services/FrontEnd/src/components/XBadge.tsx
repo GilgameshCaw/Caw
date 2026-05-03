@@ -34,8 +34,8 @@ const XBadge: React.FC<XBadgeProps> = ({ xHandle, xFollowerBucket, className = '
 
   const followers = formatFollowerBucket(xFollowerBucket)
   const tooltip = followers
-    ? `Linked to @${xHandle} on X — ${followers} followers`
-    : `Linked to @${xHandle} on X`
+    ? `Verified as @${xHandle} on X (${followers} followers)`
+    : `Verified as @${xHandle} on X`
 
   const iconClass = size === 'md' ? 'w-5 h-5' : 'w-4 h-4'
 
