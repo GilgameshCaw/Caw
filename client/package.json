@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "main": "dist/src/index.js",
   "scripts": {
+    "migrate:filebase": "node -r ./dotenv-preload.js --import tsx src/tools/migrateMediaToFilebase.ts",
     "prisma:push": "prisma db push --accept-data-loss",
     "prisma:reset": "prisma db push --force-reset",
     "prisma:migrate": "prisma migrate dev",
