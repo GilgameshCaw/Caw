@@ -8,12 +8,17 @@ interface EncryptedImageProps {
   mimeType?: string
   alt?: string
   className?: string
+  /** Notifies the parent when the decrypt path fails so the parent can
+   * swap its wrapper layout (the success path is image-shaped with an
+   * absolute-positioned timestamp; the failure path is text-shaped and
+   * needs the timestamp inline so it doesn't overlap the error label). */
+  onError?: () => void
 }
 
 /**
  * Fetches an encrypted blob, decrypts it client-side, and renders as an image.
  */
-const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sharedSecret, mimeType = 'image/webp', alt = 'Encrypted image', className }) => {
+const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sharedSecret, mimeType = 'image/webp', alt = 'Encrypted image', className, onError }) => {
   const [objectUrl, setObjectUrl] = useState<string | null>(null)
   const [error, setError] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -43,7 +48,10 @@ const EncryptedImage: React.FC<EncryptedImageProps> = ({ url, sharedSecret, mime
         setObjectUrl(blobUrl)
       } catch (err) {
         console.error('[EncryptedImage] Decrypt failed:', err)
-        if (!cancelled) setError(true)
+        if (!cancelled) {
+          setError(true)
+          onError?.()
+        }
       } finally {
         if (!cancelled) setLoading(false)
       }

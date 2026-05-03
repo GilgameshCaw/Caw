@@ -80,6 +80,11 @@ const MessagesPage: React.FC = () => {
   // On desktop this is toggled by the smiley trigger; on mobile we open
   // it via long-press on the bubble.
   const [reactionStripForMessage, setReactionStripForMessage] = useState<string | null>(null)
+  // Tracks which encrypted-attachment messages had their decrypt fail.
+  // Lets us swap the bubble shape from "image with absolute time pill" to
+  // "text-message with inline floated time" so the timestamp doesn't
+  // overlap the "Failed to decrypt image" text.
+  const [encryptedAttachmentFailures, setEncryptedAttachmentFailures] = useState<Set<string>>(new Set())
 
   // Long-press state for opening reactions on touch devices.
   const longPressRef = useRef<{ timer: number | null; messageId: string | null; pointerId: number | null; startX: number; startY: number; fired: boolean }>({
@@ -1764,6 +1769,35 @@ const MessagesPage: React.FC = () => {
                                 // means they render correctly going forward.
                                 const mt = String(parsed.mimeType || '')
                                 if (mt.startsWith('image/') || mt.startsWith('video/') || parsed.type === 'image') {
+                                  // When decrypt fails, the EncryptedImage
+                                  // renders a small "Failed to decrypt"
+                                  // pill — shaped like a text message, not
+                                  // an image. The absolute-positioned time
+                                  // overlay (used for the success path)
+                                  // overlaps that text. Track failures via
+                                  // onError and render the failure case
+                                  // with the same inline-floated time
+                                  // pattern that text messages use.
+                                  const decryptFailed = encryptedAttachmentFailures.has(message.id)
+                                  if (decryptFailed) {
+                                    return (
+                                      <div className={`whitespace-pre-wrap break-words min-w-0`}>
+                                        <EncryptedImage
+                                          url={parsed.url}
+                                          sharedSecret={chatSharedSecret}
+                                          mimeType={parsed.mimeType}
+                                          alt={parsed.name}
+                                        />
+                                        {bubbleTime && (
+                                          <span className={`float-right ml-2 mt-1 text-[11px] font-medium whitespace-nowrap inline-flex items-center gap-1 ${bubbleTimeTextClass}`}>
+                                            {bubbleTime}
+                                            <HiOutlineLockClosed className="w-3 h-3 text-green-400" />
+                                          </span>
+                                        )}
+                                        {bubbleTime && <span className="block clear-both" />}
+                                      </div>
+                                    )
+                                  }
                                   return (
                                     <div className="relative">
                                       <EncryptedImage
@@ -1774,6 +1808,12 @@ const MessagesPage: React.FC = () => {
                                         className={mt.startsWith('video/')
                                           ? 'max-w-[320px] max-h-[320px] rounded-lg'
                                           : 'max-w-[240px] max-h-[240px] rounded-lg object-contain'}
+                                        onError={() => setEncryptedAttachmentFailures(prev => {
+                                          if (prev.has(message.id)) return prev
+                                          const next = new Set(prev)
+                                          next.add(message.id)
+                                          return next
+                                        })}
                                       />
                                       {bubbleTime && (
                                         <span className={`absolute bottom-1 right-1 px-1.5 py-0.5 rounded text-[11px] font-medium whitespace-nowrap ${bubbleTimePillClass}`}>
