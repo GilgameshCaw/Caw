@@ -150,15 +150,38 @@ export const useTokenDataStore = create<TokenDataStore>()(
           set({ activeTokenId: numTokenId })
         }
       },
-      setActiveTokenIdForAddress: (addr, tokenId) => set(state => ({
-        activeTokenIdByAddress: {
-          ...state.activeTokenIdByAddress,
-          [addr.toLowerCase() as Address]: tokenId
+      setActiveTokenIdForAddress: (addr, tokenId) => set(state => {
+        const normalized = addr.toLowerCase() as Address
+        // Keep the global activeTokenId in lockstep with the per-address
+        // picker WHEN this address is the currently-connected one (i.e.
+        // matches lastAddress). Without this, components that read
+        // s.activeTokenId directly fall back to tokens[0] from a wallet
+        // the user signed in with previously, and trip the wrong-wallet
+        // pre-flight on like/recaw/etc. setActiveTokenId already does the
+        // mirror in the other direction (line ~140); this closes the loop.
+        const isActiveWallet = state.lastAddress?.toLowerCase() === normalized
+        return {
+          activeTokenIdByAddress: {
+            ...state.activeTokenIdByAddress,
+            [normalized]: tokenId,
+          },
+          ...(isActiveWallet ? { activeTokenId: tokenId } : {}),
         }
-      })),
+      }),
       setLastAddress: (address) => {
-        console.log("SETTING ADDRESS:::::::::::::::", address);
-        set({ lastAddress: address.toLowerCase() })
+        const normalized = address.toLowerCase()
+        // When the wallet changes, also bring the global activeTokenId
+        // forward to that wallet's per-address pick (if any). Same
+        // motivation as the lockstep above: every consumer reading the
+        // global stays correct without each one needing the fallback
+        // chain logic baked in.
+        set(state => {
+          const next = state.activeTokenIdByAddress[normalized as Address]
+          return {
+            lastAddress: normalized,
+            ...(next !== undefined ? { activeTokenId: next } : {}),
+          }
+        })
       },
       removeActiveToken: () => set({ activeTokenId: undefined }),
 
