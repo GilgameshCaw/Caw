@@ -422,8 +422,8 @@ const AccountSettings: React.FC = () => {
   }
 
   // Show every wallet the user has profiles in, grouped. Within each wallet
-  // sort by follower count desc. Active token's wallet is placed last so it
-  // sits closest to the action area at the bottom of the page.
+  // sort by follower count desc. Active token's wallet is placed FIRST so
+  // the user lands on their current context, then sees other wallets below.
   const allTokens = Object.values(tokensByAddress).flat()
   const followerCounts = useFollowerCounts(allTokens.map(t => t.tokenId))
 
@@ -431,10 +431,10 @@ const AccountSettings: React.FC = () => {
   const walletKeys = Object.keys(tokensByAddress)
   const otherWallets = walletKeys.filter(k => k.toLowerCase() !== activeOwnerKey)
   const orderedWalletKeys = [
-    ...otherWallets,
     ...(activeOwnerKey && walletKeys.some(k => k.toLowerCase() === activeOwnerKey)
         ? [walletKeys.find(k => k.toLowerCase() === activeOwnerKey)!]
         : []),
+    ...otherWallets,
   ]
   const tokensByWalletSorted: Array<{ address: string; tokens: typeof allTokens }> = orderedWalletKeys
     .map(addr => ({
