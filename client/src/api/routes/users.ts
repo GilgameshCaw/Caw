@@ -714,7 +714,7 @@ router.patch('/onboarding/:username', async (req, res) => {
  */
 router.patch(
   '/:tokenId/profile',
-  requireAuth({ lookup: async (req) => Number(req.params.tokenId) }),
+  requireAuth({ lookup: async (req) => Number(req.params.tokenId), verifyOwnership: true }),
   async (req, res) => {
     try {
       const tokenId = Number(req.params.tokenId)

@@ -116,7 +116,7 @@ function validateRedirectUri(raw: unknown): string {
  * link-initiation time so the callback handler doesn't need to revisit
  * session state.
  */
-router.post('/x/start-popup', requireAuth({ field: 'tokenId' }), async (req, res) => {
+router.post('/x/start-popup', requireAuth({ field: 'tokenId', verifyOwnership: true }), async (req, res) => {
   try {
     const tokenId = Number(req.body?.tokenId)
     if (!Number.isFinite(tokenId) || tokenId <= 0) {
@@ -125,17 +125,11 @@ router.post('/x/start-popup', requireAuth({ field: 'tokenId' }), async (req, res
 
     const redirectUri = validateRedirectUri(req.body?.redirectUri)
 
-    // Resolve the wallet that owns this token. The X link is wallet-scoped,
-    // not token-scoped — every CAW profile owned by this wallet will
-    // inherit the link.
-    const user = await prisma.user.findUnique({
-      where:  { tokenId },
-      select: { address: true },
-    })
-    if (!user || !user.address) {
-      return res.status(400).json({ error: 'token has no owner address on record' })
-    }
-    const address = user.address.toLowerCase()
+    // verifyOwnership made requireAuth check that the session is still
+    // authorized for this token's CURRENT owner. The middleware also
+    // stashes the lowercased owner address on req — every CAW profile
+    // owned by this wallet will inherit the X link.
+    const address = req.tokenOwnerAddress!
 
     const clientId = envOrThrow('X_OAUTH_CLIENT_ID')
 
@@ -338,20 +332,13 @@ router.get('/x/callback', async (req, res) => {
  * tokenId in the body and the middleware verifies the session actually
  * authorized that exact tokenId.
  */
-router.delete('/x', requireAuth({ field: 'tokenId' }), async (req, res) => {
+router.delete('/x', requireAuth({ field: 'tokenId', verifyOwnership: true }), async (req, res) => {
   try {
     const tokenId = Number(req.body?.tokenId)
     if (!Number.isFinite(tokenId) || tokenId <= 0) {
       return res.status(400).json({ error: 'tokenId is required' })
     }
-    const user = await prisma.user.findUnique({
-      where:  { tokenId },
-      select: { address: true },
-    })
-    if (!user || !user.address) {
-      return res.status(400).json({ error: 'token has no owner address on record' })
-    }
-    const address = user.address.toLowerCase()
+    const address = req.tokenOwnerAddress!
 
     await prisma.walletXLink.deleteMany({ where: { address } })
     await prisma.user.updateMany({
@@ -376,20 +363,13 @@ router.delete('/x', requireAuth({ field: 'tokenId' }), async (req, res) => {
  * tokenId. We resolve the wallet from User.address — same trust story
  * as the start-popup flow.
  */
-router.get('/x/wallet-status', requireAuth({ lookup: async (req) => Number(req.query.tokenId) || undefined }), async (req, res) => {
+router.get('/x/wallet-status', requireAuth({ lookup: async (req) => Number(req.query.tokenId) || undefined, verifyOwnership: true }), async (req, res) => {
   try {
     const tokenId = Number(req.query.tokenId)
     if (!Number.isFinite(tokenId) || tokenId <= 0) {
       return res.status(400).json({ error: 'tokenId is required' })
     }
-    const me = await prisma.user.findUnique({
-      where:  { tokenId },
-      select: { address: true },
-    })
-    if (!me || !me.address) {
-      return res.status(400).json({ error: 'token has no owner address on record' })
-    }
-    const address = me.address.toLowerCase()
+    const address = req.tokenOwnerAddress!
 
     const [link, siblings] = await Promise.all([
       prisma.walletXLink.findUnique({
@@ -422,7 +402,7 @@ router.get('/x/wallet-status', requireAuth({ lookup: async (req) => Number(req.q
  * User.xBadgeVisible. tokenId scoping uses the same per-token auth
  * pattern as the rest of this route.
  */
-router.put('/x/visibility', requireAuth({ field: 'tokenId' }), async (req, res) => {
+router.put('/x/visibility', requireAuth({ field: 'tokenId', verifyOwnership: true }), async (req, res) => {
   try {
     const tokenId = Number(req.body?.tokenId)
     const visible = req.body?.visible

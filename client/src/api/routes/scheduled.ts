@@ -55,7 +55,7 @@ router.get('/', requireAuth({ lookup: (req) => Promise.resolve(Number(req.header
  * processor publishes them in threadIndex order so chunk N's reply target
  * (chunk N-1) exists by the time it's processed.
  */
-router.post('/', requireAuth({ lookup: (req) => Promise.resolve(Number(req.header('x-user-id')) || undefined) }), async (req, res) => {
+router.post('/', requireAuth({ lookup: (req) => Promise.resolve(Number(req.header('x-user-id')) || undefined), verifyOwnership: true }), async (req, res) => {
   try {
     const userId = req.header('x-user-id') ? parseInt(req.header('x-user-id')!) : null
 
@@ -147,7 +147,7 @@ router.post('/', requireAuth({ lookup: (req) => Promise.resolve(Number(req.heade
  * PUT /api/scheduled/:id
  * Update a scheduled caw
  */
-router.put('/:id', requireAuth({ lookup: (req) => Promise.resolve(Number(req.header('x-user-id')) || undefined) }), async (req, res) => {
+router.put('/:id', requireAuth({ lookup: (req) => Promise.resolve(Number(req.header('x-user-id')) || undefined), verifyOwnership: true }), async (req, res) => {
   try {
     const userId = req.header('x-user-id') ? parseInt(req.header('x-user-id')!) : null
     const id = parseInt(req.params.id)
@@ -207,7 +207,7 @@ router.put('/:id', requireAuth({ lookup: (req) => Promise.resolve(Number(req.hea
  * DELETE /api/scheduled/:id
  * Cancel a scheduled caw
  */
-router.delete('/:id', requireAuth({ lookup: (req) => Promise.resolve(Number(req.header('x-user-id')) || undefined) }), async (req, res) => {
+router.delete('/:id', requireAuth({ lookup: (req) => Promise.resolve(Number(req.header('x-user-id')) || undefined), verifyOwnership: true }), async (req, res) => {
   try {
     const userId = req.header('x-user-id') ? parseInt(req.header('x-user-id')!) : null
     const id = parseInt(req.params.id)

@@ -15,12 +15,37 @@ const router = Router()
  * we let it land — older confirmed pins just don't render until the
  * user unpins one of the visible 3.
  */
+/**
+ * Extract + verify the requesting tokenId from the x-user-id header.
+ *
+ * Two layers:
+ *   1. Session must list this tokenId in authorizedTokenIds (the wallet
+ *      personal_signed for it at sign-in).
+ *   2. Defense-in-depth: the token's CURRENT on-record owner must be among
+ *      the session's authorizedAddresses. Closes the stale-session window
+ *      between an L1 transfer and the watcher prune. Same shape as the
+ *      verifyOwnership flag on requireAuth — but pins uses a header
+ *      instead of body/query, so we inline rather than re-route through
+ *      the middleware.
+ *
+ * Returns the verified tokenId or null. Caller must 401.
+ */
 async function getAuthenticatedUserId(req: any): Promise<number | null> {
   await extractSession(req)
   if (!req.sessionData) return null
   const requestedId = Number(req.headers['x-user-id'])
   if (!requestedId || isNaN(requestedId)) return null
   if (!req.sessionData.authorizedTokenIds.includes(requestedId)) return null
+
+  const user = await prisma.user.findUnique({
+    where:  { tokenId: requestedId },
+    select: { address: true },
+  })
+  if (!user || !user.address) return null
+  const ownerAddress = user.address.toLowerCase()
+  const authedAddresses = (req.sessionData.authorizedAddresses || []).map((a: string) => a.toLowerCase())
+  if (!authedAddresses.includes(ownerAddress)) return null
+
   return requestedId
 }
 
