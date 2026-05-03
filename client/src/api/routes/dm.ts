@@ -9,7 +9,7 @@ const router = Router()
 
 // Register DM public key
 router.post('/identity',
-  requireAuth({ field: 'userId' }),
+  requireAuth({ field: 'userId', verifyOwnership: true }),
   async (req: Request, res: Response) => {
     try {
       const { userId, walletAddress, publicKey } = req.body
@@ -89,7 +89,7 @@ router.get('/identity/:userId', async (req: Request, res: Response) => {
 
 // Get or create a DM conversation
 router.post('/conversations',
-  requireAuth({ field: 'userId' }),
+  requireAuth({ field: 'userId', verifyOwnership: true }),
   async (req: Request, res: Response) => {
     try {
       const { userId, peerUserId } = req.body
@@ -169,7 +169,7 @@ router.get('/conversations',
   requireAuth({ lookup: async (req) => {
     const userId = req.query.userId
     return userId ? Number(userId) : undefined
-  }}),
+  }, verifyOwnership: true }),
   async (req: Request, res: Response) => {
     try {
       const userId = Number(req.query.userId)
@@ -315,7 +315,7 @@ router.get('/conversations/:id/messages',
   requireAuth({ lookup: async (req) => {
     const userId = req.query.userId
     return userId ? Number(userId) : undefined
-  }}),
+  }, verifyOwnership: true }),
   async (req: Request, res: Response) => {
     try {
       const conversationId = req.params.id
@@ -338,7 +338,7 @@ router.get('/conversations/:id/messages',
 
 // Mark messages as read
 router.post('/messages/read',
-  requireAuth({ field: 'userId' }),
+  requireAuth({ field: 'userId', verifyOwnership: true }),
   async (req: Request, res: Response) => {
     try {
       const { messageIds, userId } = req.body
@@ -363,7 +363,7 @@ router.patch('/messages/:messageId',
   requireAuth({ lookup: async (req) => {
     const msg = await prisma.message.findUnique({ where: { id: req.params.messageId }, select: { senderId: true } })
     return msg?.senderId
-  }}),
+  }, verifyOwnership: true }),
   async (req: Request, res: Response) => {
     try {
       const { messageId } = req.params
@@ -425,7 +425,7 @@ router.post('/messages/:messageId/hide',
     })
     const isParticipant = msg?.conversation.participants.some(p => p.userId === userId)
     return isParticipant ? userId : undefined
-  }}),
+  }, verifyOwnership: true }),
   async (req: Request, res: Response) => {
     try {
       const { messageId } = req.params
@@ -455,7 +455,7 @@ router.delete('/messages/:messageId',
   requireAuth({ lookup: async (req) => {
     const msg = await prisma.message.findUnique({ where: { id: req.params.messageId }, select: { senderId: true } })
     return msg?.senderId
-  }}),
+  }, verifyOwnership: true }),
   async (req: Request, res: Response) => {
     try {
       const { messageId } = req.params
@@ -504,7 +504,7 @@ router.post('/messages/:messageId/reactions',
     })
     const isParticipant = msg?.conversation.participants.some(p => p.userId === userId)
     return isParticipant ? userId : undefined
-  }}),
+  }, verifyOwnership: true }),
   async (req: Request, res: Response) => {
     try {
       const { messageId } = req.params
@@ -563,7 +563,7 @@ router.get('/settings',
 // what changed, so toggling reactions doesn't require re-sending privacy
 // (and vice versa).
 router.put('/settings',
-  requireAuth({ field: 'userId' }),
+  requireAuth({ field: 'userId', verifyOwnership: true }),
   async (req: any, res: any) => {
     try {
       const { userId, dmPrivacy, defaultDmReactions } = req.body

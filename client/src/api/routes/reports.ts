@@ -9,7 +9,7 @@ const router = Router()
  * POST /api/reports
  * Submit a new report for a post
  */
-router.post('/', requireAuth({ field: 'reporterId' }), async (req, res) => {
+router.post('/', requireAuth({ field: 'reporterId', verifyOwnership: true }), async (req, res) => {
   try {
     const { reporterId, postId, postAuthorId, reason, details } = req.body
 
@@ -144,7 +144,7 @@ router.patch('/:id', requireAdmin, async (req, res) => {
  * POST /api/reports/user
  * Submit a report against a user (e.g. from DMs)
  */
-router.post('/user', requireAuth({ field: 'reporterId' }), async (req, res) => {
+router.post('/user', requireAuth({ field: 'reporterId', verifyOwnership: true }), async (req, res) => {
   try {
     const { reporterId, reportedUserId, reportedUsername, reason, details, imageUrls } = req.body
 

@@ -32,7 +32,7 @@ const upload = multer({
   }
 })
 
-router.post('/', upload.array('media', 10), requireAuth({ field: 'tokenId' }), async (req: any, res: any) => {
+router.post('/', upload.array('media', 10), requireAuth({ field: 'tokenId', verifyOwnership: true }), async (req: any, res: any) => {
   try {
     const { tokenId } = req.body
     const files = req.files as Express.Multer.File[]
@@ -72,7 +72,7 @@ const variantUpload = multer({
   },
 })
 
-router.post('/variant', variantUpload.single('media'), requireAuth({ field: 'tokenId' }), async (req: any, res: any) => {
+router.post('/variant', variantUpload.single('media'), requireAuth({ field: 'tokenId', verifyOwnership: true }), async (req: any, res: any) => {
   try {
     const { baseFilename, width } = req.body
     const file = req.file as Express.Multer.File | undefined
@@ -136,7 +136,7 @@ function recordEncUpload(tokenId: number, fileSize: number) {
 router.post('/encrypted', requireAuth({ lookup: async (req) => {
   const tokenId = req.query.tokenId
   return tokenId ? Number(tokenId) : undefined
-}}), async (req: any, res: any) => {
+}, verifyOwnership: true }), async (req: any, res: any) => {
   try {
     const tokenId = Number(req.query.tokenId)
     const chunks: Buffer[] = []
@@ -160,7 +160,7 @@ router.post('/encrypted', requireAuth({ lookup: async (req) => {
   }
 })
 
-router.post('/image', requireAuth({ field: 'tokenId' }), async (req: any, res: any) => {
+router.post('/image', requireAuth({ field: 'tokenId', verifyOwnership: true }), async (req: any, res: any) => {
   try {
     const { image, tokenId } = req.body
     if (!image || !tokenId) return res.status(400).json({ error: 'Missing image or tokenId' })
@@ -184,7 +184,7 @@ router.post('/image', requireAuth({ field: 'tokenId' }), async (req: any, res: a
   }
 })
 
-router.post('/images', requireAuth({ field: 'tokenId' }), async (req: any, res: any) => {
+router.post('/images', requireAuth({ field: 'tokenId', verifyOwnership: true }), async (req: any, res: any) => {
   try {
     const { images, tokenId } = req.body
     if (!images || !Array.isArray(images) || !tokenId) return res.status(400).json({ error: 'Missing images array or tokenId' })

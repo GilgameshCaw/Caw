@@ -522,7 +522,7 @@ router.post('/offers/:offerId/cancelled', requireAuth({ anySession: true }), asy
  * (which transitions it out of ACTIVE). Endpoint name kept for FE compat.
  * Authenticated: requires session with the given userId.
  */
-router.get('/offers/unseen-count', requireAuth({ lookup: async (req) => Number(req.query.userId) || undefined }), async (req, res) => {
+router.get('/offers/unseen-count', requireAuth({ lookup: async (req) => Number(req.query.userId) || undefined, verifyOwnership: true }), async (req, res) => {
   try {
     const userId = parseInt(req.query.userId as string)
     if (!userId || isNaN(userId)) return res.status(400).json({ error: 'userId required' })
@@ -557,7 +557,7 @@ router.get('/offers/unseen-count', requireAuth({ lookup: async (req) => Number(r
  * Mark offers as seen by updating the user's lastViewedOffersAt.
  * Authenticated: requires session with the given userId.
  */
-router.post('/offers/mark-seen', requireAuth({ field: 'userId' }), async (req, res) => {
+router.post('/offers/mark-seen', requireAuth({ field: 'userId', verifyOwnership: true }), async (req, res) => {
   try {
     const { userId } = req.body
     if (!userId) return res.status(400).json({ error: 'userId required' })
@@ -589,7 +589,7 @@ router.post('/offers/:id/dismiss', requireAuth({ lookup: async (req) => {
   if (!offer) return undefined
   // Return the tokenId of the target username — requireAuth will verify the session owns it
   return offer.tokenId
-}}), async (req, res) => {
+}, verifyOwnership: true }), async (req, res) => {
   try {
     const offerId = parseInt(req.params.id)
     const offer = await prisma.marketplaceOffer.findFirst({ where: { id: offerId } })
@@ -629,7 +629,7 @@ router.post('/offers/:id/dismiss', requireAuth({ lookup: async (req) => {
  * Accepts txHash to look up the offer (since frontend doesn't know the on-chain offerId).
  * Retries internally if the indexer hasn't processed the event yet.
  */
-router.post('/offers/notify', requireAuth({ field: 'senderTokenId' }), async (req, res) => {
+router.post('/offers/notify', requireAuth({ field: 'senderTokenId', verifyOwnership: true }), async (req, res) => {
   try {
     const { senderTokenId, txHash } = req.body
 

@@ -9,7 +9,7 @@ const router = Router()
  * List all users blocked by the given user
  */
 router.get('/',
-  requireAuth({ lookup: async (req) => Number(req.query.userId) }),
+  requireAuth({ lookup: async (req) => Number(req.query.userId), verifyOwnership: true }),
   async (req: any, res: any) => {
     try {
       const userId = Number(req.query.userId)
@@ -52,7 +52,7 @@ router.get('/',
  * Block a user
  */
 router.post('/',
-  requireAuth({ field: 'blockerId' }),
+  requireAuth({ field: 'blockerId', verifyOwnership: true }),
   async (req: any, res: any) => {
     try {
       const { blockerId, blockedId } = req.body
@@ -96,7 +96,7 @@ router.post('/',
  * Unblock a user
  */
 router.delete('/',
-  requireAuth({ field: 'blockerId' }),
+  requireAuth({ field: 'blockerId', verifyOwnership: true }),
   async (req: any, res: any) => {
     try {
       const { blockerId, blockedId } = req.body

@@ -6,9 +6,14 @@ import { shapeCaw, getCawIncludeConfig, enrichWithPollVotes, enrichWithXBadges }
 const router = Router()
 
 /**
- * Extract authenticated userId from session.
- * Uses x-user-id header but validates it's in the session's authorized token list.
- * Returns null if not authenticated.
+ * Extract + verify the requesting tokenId from the x-user-id header.
+ *
+ * Two layers (mirrors pins.ts; this route doesn't go through requireAuth
+ * because the userId comes from a header rather than body/query):
+ *   1. Session must list this tokenId in authorizedTokenIds.
+ *   2. Defense-in-depth: the token's CURRENT on-record owner must be in
+ *      the session's authorizedAddresses. Closes the stale-session
+ *      window between an L1 transfer and the watcher prune.
  */
 async function getAuthenticatedUserId(req: any): Promise<number | null> {
   await extractSession(req)
@@ -17,8 +22,16 @@ async function getAuthenticatedUserId(req: any): Promise<number | null> {
   const requestedId = Number(req.headers['x-user-id'])
   if (!requestedId || isNaN(requestedId)) return null
 
-  // Verify the requested ID is in the session's authorized tokens
   if (!req.sessionData.authorizedTokenIds.includes(requestedId)) return null
+
+  const user = await prisma.user.findUnique({
+    where:  { tokenId: requestedId },
+    select: { address: true },
+  })
+  if (!user || !user.address) return null
+  const ownerAddress = user.address.toLowerCase()
+  const authedAddresses = (req.sessionData.authorizedAddresses || []).map((a: string) => a.toLowerCase())
+  if (!authedAddresses.includes(ownerAddress)) return null
 
   return requestedId
 }

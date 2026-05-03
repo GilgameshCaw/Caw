@@ -11,7 +11,7 @@ const router = Router()
  * GET /api/notifications
  * Get notifications for the authenticated user
  */
-router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) || undefined }), async (req, res) => {
+router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) || undefined, verifyOwnership: true }), async (req, res) => {
   try {
     const { userId, type, limit = 50, offset = 0, unreadOnly = false } = req.query
 
@@ -235,7 +235,7 @@ router.get('/', requireAuth({ lookup: async (req) => Number(req.query.userId) ||
  * GET /api/notifications/unread-count
  * Get unread notification count for a user
  */
-router.get('/unread-count', requireAuth({ lookup: async (req) => Number(req.query.userId) || undefined }), async (req, res) => {
+router.get('/unread-count', requireAuth({ lookup: async (req) => Number(req.query.userId) || undefined, verifyOwnership: true }), async (req, res) => {
   try {
     const { userId } = req.query
 
@@ -265,7 +265,7 @@ router.get('/unread-count', requireAuth({ lookup: async (req) => Number(req.quer
  * POST /api/notifications/read
  * Mark notifications as read
  */
-router.post('/read', requireAuth({ field: 'userId' }), async (req, res) => {
+router.post('/read', requireAuth({ field: 'userId', verifyOwnership: true }), async (req, res) => {
   try {
     const { userId, notificationIds } = req.body
 
@@ -291,7 +291,7 @@ router.post('/read', requireAuth({ field: 'userId' }), async (req, res) => {
  * PATCH /api/notifications/:id/hide
  * Hide a notification (soft delete)
  */
-router.patch('/:id/hide', requireAuth({ field: 'userId' }), async (req, res) => {
+router.patch('/:id/hide', requireAuth({ field: 'userId', verifyOwnership: true }), async (req, res) => {
   try {
     const { id } = req.params
     const { userId } = req.body
@@ -342,7 +342,7 @@ router.patch('/:id/hide', requireAuth({ field: 'userId' }), async (req, res) => 
  *
  * Safe even if no matching notification exists — returns count: 0.
  */
-router.post('/hide-by-original-tx', requireAuth({ field: 'userId' }), async (req, res) => {
+router.post('/hide-by-original-tx', requireAuth({ field: 'userId', verifyOwnership: true }), async (req, res) => {
   try {
     const { userId, txQueueId } = req.body
 

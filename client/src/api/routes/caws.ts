@@ -501,7 +501,8 @@ router.post('/:id/dismiss', requireAuth({
   lookup: async (req) => {
     const caw = await prisma.caw.findUnique({ where: { id: parseInt(req.params.id) } })
     return caw?.userId
-  }
+  },
+  verifyOwnership: true,
 }), async (req, res) => {
   const cawId = parseInt(req.params.id)
   if (isNaN(cawId)) return res.status(400).json({ error: 'Invalid caw ID' })
@@ -540,7 +541,8 @@ router.delete('/:originalCawId/recaw', requireAuth({
     // the x-user-id / session. We'll verify ownership in the handler.
     const userId = Number(req.header('x-user-id'))
     return isNaN(userId) ? undefined : userId
-  }
+  },
+  verifyOwnership: true,
 }), async (req, res) => {
   const originalCawId = parseInt(req.params.originalCawId)
   const userId = Number(req.header('x-user-id'))
