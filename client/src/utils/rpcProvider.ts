@@ -138,10 +138,39 @@ function getProviderUrl(provider: any): string | null {
 }
 
 /**
+ * Wrap a provider's destroy() so we always log who called it. This was
+ * load-bearing in the validator-stuck incident: a stale "provider
+ * destroyed; cancelled request" surfaced 30s after the destroyer ran,
+ * and we couldn't tell from the call-time stack alone where the actual
+ * destroy() came from. The wrapped destroy captures and logs the
+ * stack at the moment of the call.
+ *
+ * Idempotent — checks for our own marker so wrapping the same provider
+ * twice doesn't double-log.
+ */
+function wrapDestroy<T extends { destroy?: () => any }>(provider: T): T {
+  const p = provider as any
+  if (p.__cawDestroyWrapped) return provider
+  if (typeof p.destroy !== 'function') return provider
+  const original = p.destroy.bind(provider)
+  p.destroy = function (...args: any[]) {
+    const url = getProviderUrl(provider) || '(no-url)'
+    const stack = new Error().stack?.split('\n').slice(2, 8).join('\n  ') || '(no stack)'
+    console.warn(`[rpcProvider] destroy() called on ${p.constructor?.name ?? 'Provider'} url=${url}\n  ${stack}`)
+    return original(...args)
+  }
+  p.__cawDestroyWrapped = true
+  return provider
+}
+
+/**
  * Wrap any provider's send() with throttle + rate-limit backoff.
  * This is the single choke point for ALL RPC calls in the process.
  */
-function wrapSend<T extends { send: (...args: any[]) => any }>(provider: T): T {
+function wrapSend<T extends { send: (...args: any[]) => any; destroy?: () => any }>(provider: T): T {
+  // Monkey-patch destroy() first so the stack-trace log fires even on
+  // the very first send-then-destroy race.
+  wrapDestroy(provider)
   const originalSend = provider.send.bind(provider)
   // Stable per-provider key for the block-number cache. URL when available
   // (HTTP), object identity otherwise (WSS). Either way it dedupes calls

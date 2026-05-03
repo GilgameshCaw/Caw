@@ -376,11 +376,41 @@ export const validatorService: Service = {
     // can now drop in an Alchemy/Quicknode URL alongside Infura and the
     // validator routes around either.
     const l2HttpRpcUrls = getL2HttpRpcUrls(l2RpcUrl)
-    const httpProvider = makeFallbackJsonRpcProvider(l2HttpRpcUrls, 84532)
+    // `let` (was `const`) so the no-WS error-recovery path can rebuild
+    // the provider in place — see rebuildHttpProvider below for why.
+    let httpProvider = makeFallbackJsonRpcProvider(l2HttpRpcUrls, 84532)
     if (l2HttpRpcUrls.length > 1) {
       console.log(`[Validator] HTTP RPC (with ${l2HttpRpcUrls.length - 1} fallback(s)): ${l2HttpRpcUrls[0].slice(0, 50)}...`)
     } else {
       console.log(`[Validator] HTTP RPC (for eth_call / gas): ${l2HttpRpcUrls[0]?.slice(0, 50)}...`)
+    }
+
+    /**
+     * Rebuild httpProvider after a "provider destroyed" event without
+     * going through initializeConnection (which has WS-specific cleanup
+     * logic that would re-destroy the new provider). Re-binds the wallet
+     * and cawActions Contract to the fresh provider so all downstream
+     * eth_call / sendTransaction usage picks it up.
+     *
+     * Why this is necessary: when the no-WS path calls initializeConnection
+     * for reconnect, line 401 sets `provider = httpProvider`. If a later
+     * "provider destroyed" error triggers another initializeConnection,
+     * the WS reinit branch destroys oldProvider — which IS httpProvider in
+     * no-WS mode. Once destroyed, every subsequent eth_call through
+     * cawActions throws "provider destroyed; cancelled request" and we're
+     * stuck until pm2 restart. The WS-path destroy is now gated on USE_WS
+     * (so it can't re-destroy httpProvider), and this helper is the
+     * intentional rebuild path for the no-WS error case.
+     */
+    function rebuildHttpProvider(reason: string) {
+      console.warn(`[Validator] Rebuilding httpProvider — reason: ${reason}`)
+      httpProvider = makeFallbackJsonRpcProvider(l2HttpRpcUrls, 84532)
+      if (!USE_WS) {
+        provider = httpProvider as unknown as WebSocketProvider
+        wallet = new Wallet(privateKey!, httpProvider)
+        cawActions = new Contract(CAW_ACTIONS_ADDRESS, cawActionsAbi, wallet)
+        iface = cawActions.interface
+      }
     }
 
     // Note: Uncaught exception handling is done at the process level in programs/start.ts
@@ -967,13 +997,21 @@ export const validatorService: Service = {
           return { successfulActions: [], rejectionMessages, quote: { nativeFee: BigInt(0) } };
         }
 
-        // Handle provider/network errors - reinitialize connection and mark as temporary failure
+        // Handle provider/network errors. In no-WS mode the provider IS
+        // httpProvider; once destroyed, every cawActions.* call funnels
+        // through it and throws — we have to swap the underlying provider,
+        // not just rebind. rebuildHttpProvider does that. WS mode can
+        // continue to use the WS-aware initializeConnection path.
         if (err.message?.includes('provider destroyed') ||
             err.message?.includes('UNSUPPORTED_OPERATION') ||
             err.message?.includes('cancelled request') ||
             err.code === 'UNSUPPORTED_OPERATION') {
-          console.log('[Validator] Provider/network error detected - reinitializing connection')
-          initializeConnection()
+          if (USE_WS) {
+            console.log('[Validator] Provider/network error detected - reinitializing WS connection')
+            initializeConnection()
+          } else {
+            rebuildHttpProvider(`error in simulation: ${err.message ?? err.code}`)
+          }
           const rejectionMessages = multiData.actions.map(() =>
             'Network error - will retry'
           );
@@ -1940,7 +1978,16 @@ console.log("succeededKeys", succeededKeys)
           errMsg.includes('econnreset')
         if (isTransient) {
           console.log('[Validator] Transient error during submission — keeping entries pending for retry:', errMsg.slice(0, 150))
-          await initializeConnection()
+          if (USE_WS) {
+            await initializeConnection()
+          } else if (errMsg.includes('provider destroyed') || errMsg.includes('cancelled request') || submitErr.code === 'UNSUPPORTED_OPERATION') {
+            // Same reasoning as the simulation-error path above:
+            // initializeConnection's WS-cleanup branch destroys the
+            // shared httpProvider in no-WS mode. Use the targeted
+            // rebuilder instead. Other transient errors (429, network
+            // hiccups) just need a retry — no rebuild necessary.
+            rebuildHttpProvider(`error in submission: ${errMsg.slice(0, 80)}`)
+          }
           return
         }
 
