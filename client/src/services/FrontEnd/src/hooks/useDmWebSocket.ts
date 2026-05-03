@@ -2,8 +2,18 @@ import { useEffect, useRef, useCallback } from 'react'
 import { io, Socket } from 'socket.io-client'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAuthStore } from '~/store/authStore'
+import { useInstanceStore } from '~/store/instanceStore'
 
-const SOCKET_URL = import.meta.env.VITE_API_HOST || 'http://localhost:4000'
+// Resolve at connect time so we pick up the registered API host even if the
+// page is served from a separate FE-only node (origin would be the FE host,
+// not the API). getApiHosts() prioritizes VITE_API_HOST when set; otherwise
+// returns the discovered active instances. Falls back to window.origin only
+// if neither is available (cold dev / pre-discovery).
+function resolveSocketUrl(): string {
+  const hosts = useInstanceStore.getState().getApiHosts()
+  if (hosts.length > 0) return hosts[0]
+  return typeof window !== 'undefined' ? window.location.origin : ''
+}
 
 export type DmReactionEvent = {
   messageId: string
@@ -35,7 +45,7 @@ export function useDmWebSocket({ userId, username, enabled = true, onNewMessage,
     const sessionToken = useAuthStore.getState().sessionToken
     if (!sessionToken) return
 
-    socketRef.current = io(SOCKET_URL, {
+    socketRef.current = io(resolveSocketUrl(), {
       path: '/dm-ws/',
       auth: { sessionToken, userId, username },
       transports: ['websocket', 'polling'],
