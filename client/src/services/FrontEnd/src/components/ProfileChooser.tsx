@@ -17,6 +17,7 @@ import { getUserAvatar } from '~/utils/defaultAvatar';
 import Avatar from '~/components/Avatar';
 import { useQuickSignPromptStore } from '~/components/modals/QuickSignModal';
 import { useFollowerCounts } from '~/hooks/useFollowerCounts';
+import { usePinnedProfilesStore } from '~/store/pinnedProfilesStore';
 import { HiOutlinePlus, HiUsers } from 'react-icons/hi'
 
 const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
@@ -329,6 +330,7 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
     for (const t of (list || [])) allTokenIds.push(t.tokenId)
   }
   const followerCounts = useFollowerCounts(allTokenIds)
+  const pinnedAt = usePinnedProfilesStore(s => s.pinnedAt)
 
   const activeOwnerKey = activeToken?.address?.toLowerCase()
   let anyTruncated = false
@@ -347,12 +349,20 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
     ...(activeOwnerKey && allWalletKeys.includes(activeOwnerKey) ? [activeOwnerKey] : []),
   ]
 
-  // Step 2: within each chosen wallet, sort by follower count desc and cap
-  // to MAX_PROFILES_PER_WALLET. If the active token is in this wallet but
-  // outside the cap, swap it into the visible slice.
+  // Step 2: within each chosen wallet, sort by pinned-first (most-recently
+  // pinned wins) then follower count desc, and cap to MAX_PROFILES_PER_WALLET.
+  // If the active token is in this wallet but outside the cap, swap it into
+  // the visible slice.
   for (const addrKey of orderedWalletKeys) {
     const full = (visibleTokensByAddress[addrKey as Address] || []).slice()
-    full.sort((a, b) => (followerCounts[b.tokenId] ?? 0) - (followerCounts[a.tokenId] ?? 0))
+    full.sort((a, b) => {
+      const ap = pinnedAt[a.tokenId]
+      const bp = pinnedAt[b.tokenId]
+      if (ap && bp) return bp.localeCompare(ap)        // both pinned: newer first
+      if (ap) return -1                                 // a pinned, b not
+      if (bp) return 1                                  // b pinned, a not
+      return (followerCounts[b.tokenId] ?? 0) - (followerCounts[a.tokenId] ?? 0)
+    })
     if (full.length > MAX_PROFILES_PER_WALLET) anyTruncated = true
     let slice = full.slice(0, MAX_PROFILES_PER_WALLET)
     if (

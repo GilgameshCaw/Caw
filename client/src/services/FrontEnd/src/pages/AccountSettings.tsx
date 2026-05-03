@@ -15,6 +15,7 @@ import { getUserAvatar } from '~/utils/defaultAvatar'
 import Avatar from '~/components/Avatar'
 import { apiFetch, API_HOST, AuthError } from '~/api/client'
 import { useFollowerCounts } from '~/hooks/useFollowerCounts'
+import { usePinnedProfilesStore } from '~/store/pinnedProfilesStore'
 import { formatAddress } from '~/utils'
 
 // 401s on the X verification flow are expected when the user's session
@@ -422,10 +423,13 @@ const AccountSettings: React.FC = () => {
   }
 
   // Show every wallet the user has profiles in, grouped. Within each wallet
-  // sort by follower count desc. Active token's wallet is placed FIRST so
-  // the user lands on their current context, then sees other wallets below.
+  // sort by pinned-first (most-recent pin wins), then follower count desc.
+  // Active token's wallet is placed FIRST so the user lands on their
+  // current context, then sees other wallets below.
   const allTokens = Object.values(tokensByAddress).flat()
   const followerCounts = useFollowerCounts(allTokens.map(t => t.tokenId))
+  const pinnedAt = usePinnedProfilesStore(s => s.pinnedAt)
+  const togglePin = usePinnedProfilesStore(s => s.togglePin)
 
   const activeOwnerKey = activeToken?.address?.toLowerCase()
   const walletKeys = Object.keys(tokensByAddress)
@@ -441,7 +445,14 @@ const AccountSettings: React.FC = () => {
       address: addr,
       tokens: (tokensByAddress[addr.toLowerCase() as `0x${string}`] || [])
         .slice()
-        .sort((a, b) => (followerCounts[b.tokenId] ?? 0) - (followerCounts[a.tokenId] ?? 0)),
+        .sort((a, b) => {
+          const ap = pinnedAt[a.tokenId]
+          const bp = pinnedAt[b.tokenId]
+          if (ap && bp) return bp.localeCompare(ap)
+          if (ap) return -1
+          if (bp) return 1
+          return (followerCounts[b.tokenId] ?? 0) - (followerCounts[a.tokenId] ?? 0)
+        }),
     }))
     .filter(g => g.tokens.length > 0)
 
@@ -598,20 +609,23 @@ const AccountSettings: React.FC = () => {
                   <div className="space-y-2">
                     {group.tokens.map(token => {
                       const isActive = token.tokenId === activeTokenId
+                      const isPinned = !!pinnedAt[token.tokenId]
                       return (
-                      <button
-                        type="button"
+                      <div
                         key={token.tokenId}
-                        onClick={() => handleSelectProfile(token)}
-                        disabled={isActive}
-                        aria-current={isActive ? 'true' : undefined}
-                        className={`w-full text-left flex items-center justify-between p-4 rounded-lg transition-colors ${
+                        className={`flex items-center justify-between p-4 rounded-lg transition-colors ${
                           isActive
-                            ? isDark ? 'bg-yellow-500/10 border border-yellow-500/30 cursor-default' : 'bg-yellow-50 border border-yellow-200 cursor-default'
-                            : isDark ? 'bg-white/5 hover:bg-white/10 cursor-pointer' : 'bg-gray-50 hover:bg-gray-100 cursor-pointer'
+                            ? isDark ? 'bg-yellow-500/10 border border-yellow-500/30' : 'bg-yellow-50 border border-yellow-200'
+                            : isDark ? 'bg-white/5 hover:bg-white/10' : 'bg-gray-50 hover:bg-gray-100'
                         }`}
                       >
-                        <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => handleSelectProfile(token)}
+                          disabled={isActive}
+                          aria-current={isActive ? 'true' : undefined}
+                          className={`flex items-center gap-3 flex-1 text-left ${isActive ? 'cursor-default' : 'cursor-pointer'}`}
+                        >
                           <Avatar
                             src={getUserAvatar(token)}
                             alt={token.username}
@@ -629,15 +643,35 @@ const AccountSettings: React.FC = () => {
                               )}
                             </p>
                           </div>
+                        </button>
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          {isActive && (
+                            <span className={`text-xs px-2 py-1 rounded-full ${
+                              isDark ? 'bg-yellow-500/20 text-yellow-500' : 'bg-yellow-100 text-yellow-700'
+                            }`}>
+                              Active
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => togglePin(token.tokenId)}
+                            aria-label={isPinned ? 'Unpin profile' : 'Pin profile'}
+                            aria-pressed={isPinned}
+                            title={isPinned ? 'Unpin profile' : 'Pin profile to top of dropdown'}
+                            className={`p-2 rounded-full transition-colors ${
+                              isPinned
+                                ? isDark ? 'text-yellow-400 hover:bg-white/10' : 'text-yellow-600 hover:bg-gray-200'
+                                : isDark ? 'text-white/30 hover:text-white/60 hover:bg-white/10' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-200'
+                            }`}
+                          >
+                            {/* Twitter-style thumbtack: domed cap, neck flange, long
+                                needle. Tilted ~30° so it doesn't read as a T. */}
+                            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                              <path d="M16.65 2.34a1 1 0 0 1 1.41 0l3.6 3.6a1 1 0 0 1 0 1.42l-2.6 2.6a3.5 3.5 0 0 1-4.3.5l-4.55 4.56 1.06 1.06a1 1 0 0 1-1.41 1.42L4.4 11.49a1 1 0 0 1 1.42-1.42l1.06 1.07L11.45 6.6a3.5 3.5 0 0 1 .5-4.31zM3.7 18.88l5.6-5.6 1.42 1.4-5.6 5.61a1 1 0 0 1-1.42-1.41z" />
+                            </svg>
+                          </button>
                         </div>
-                        {isActive && (
-                          <span className={`text-xs px-2 py-1 rounded-full ${
-                            isDark ? 'bg-yellow-500/20 text-yellow-500' : 'bg-yellow-100 text-yellow-700'
-                          }`}>
-                            Active
-                          </span>
-                        )}
-                      </button>
+                      </div>
                       )
                     })}
                   </div>
