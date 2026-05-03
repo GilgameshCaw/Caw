@@ -44,6 +44,7 @@ import { setNetwork as setAddressesNetwork } from '../src/addresses.js'
 import { generateConfig } from '../src/steps/generate.js'
 import { runInstall, startServices } from '../src/steps/install.js'
 import { configureNginx } from '../src/steps/nginx.js'
+import { configureMediaNginx } from '../src/steps/mediaNginx.js'
 import { runUpdate, applyMigrations, buildFrontend, resolveInstallDir } from '../src/steps/update.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -66,6 +67,8 @@ const ENV_TO_CAW = {
   ELASTICSEARCH_NODE: 'CAW_ES_URL',
   ES_INDEX_PREFIX: 'CAW_ES_INDEX_PREFIX',
   GIPHY_API_KEY: 'CAW_GIPHY_API_KEY',
+  X_OAUTH_CLIENT_ID: 'CAW_X_OAUTH_CLIENT_ID',
+  X_OAUTH_CLIENT_SECRET: 'CAW_X_OAUTH_CLIENT_SECRET',
   SENTRY_DSN: 'CAW_SENTRY_DSN',
   OTEL_EXPORTER_OTLP_ENDPOINT: 'CAW_SIGNOZ_ENDPOINT',
   OTEL_SERVICE_NAME: 'CAW_OTEL_SERVICE_NAME',
@@ -323,6 +326,13 @@ program
       // Step 7: nginx + TLS for production deployments with a domain.
       // Runs *after* install so the built dist/ exists for nginx to serve.
       await configureNginx(fullConfig, opts.dir)
+
+      // Step 7b: media reverse-proxy vhost (Filebase). No-op unless the
+      // generated .env has MEDIA_STORAGE_BACKEND=filebase. Wildcard cert
+      // detection here mirrors the main nginx step's logic.
+      try { await configureMediaNginx(opts.dir) } catch (e) {
+        console.log(`  Media nginx setup failed: ${e.message}`)
+      }
 
       // Step 8: Start everything via pm2
       await startServices(nodeType, opts.dir)

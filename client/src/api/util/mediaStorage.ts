@@ -15,6 +15,10 @@ export interface MediaStorage {
 const FILEBASE_ENDPOINT = 'https://s3.filebase.io'
 const FILEBASE_REGION = 'auto'
 
+function hostnameOf(url: string): string {
+  try { return new URL(url).hostname } catch { return '' }
+}
+
 class LocalMediaStorage implements MediaStorage {
   private readonly root = path.join(process.cwd(), 'public', 'uploads')
 
@@ -51,6 +55,7 @@ class FilebaseMediaStorage implements MediaStorage {
   private readonly s3: S3Client
   private readonly bucket: string
   private readonly publicUrlBase: string
+  private readonly prefix: string
 
   constructor(accessKey: string, secret: string, bucket: string) {
     this.s3 = new S3Client({
@@ -65,10 +70,17 @@ class FilebaseMediaStorage implements MediaStorage {
     // (from publicUrl() + /uploads/...) keep working because they still hit
     // the API host's nginx, which still serves them off local disk.
     this.publicUrlBase = process.env.MEDIA_PUBLIC_URL_BASE || publicUrl()
+    // Per-install bucket prefix so multiple CAW deployments can share one
+    // bucket without key collisions and without having to scan keys to
+    // attribute usage. Derived from the install's main hostname, which is
+    // baked into publicUrl(). The nginx reverse-proxy injects this prefix
+    // when forwarding /uploads/* to Filebase, so the public URL doesn't
+    // expose it. Override with FILEBASE_KEY_PREFIX if you really need to.
+    this.prefix = (process.env.FILEBASE_KEY_PREFIX || hostnameOf(publicUrl())).replace(/^\/+|\/+$/g, '')
   }
 
   private keyFor(kind: MediaKind, filename: string): string {
-    return `${kind}/${filename}`
+    return this.prefix ? `${this.prefix}/${kind}/${filename}` : `${kind}/${filename}`
   }
 
   async put(kind: MediaKind, filename: string, body: Buffer, contentType: string): Promise<string> {

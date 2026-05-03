@@ -45,7 +45,11 @@ function parseArgs(): Args {
   return { dryRun }
 }
 
-function buildS3(): { s3: S3Client; bucket: string; oldBase: string; newBase: string } {
+function hostnameOf(url: string): string {
+  try { return new URL(url).hostname } catch { return '' }
+}
+
+function buildS3(): { s3: S3Client; bucket: string; oldBase: string; newBase: string; prefix: string } {
   const accessKey = process.env.FILEBASE_ACCESS_KEY
   const secret = process.env.FILEBASE_SECRET
   const bucket = process.env.FILEBASE_BUCKET
@@ -53,6 +57,7 @@ function buildS3(): { s3: S3Client; bucket: string; oldBase: string; newBase: st
     throw new Error('FILEBASE_ACCESS_KEY, FILEBASE_SECRET, FILEBASE_BUCKET required in env')
   }
   const newBase = process.env.MEDIA_PUBLIC_URL_BASE || `https://${bucket}.s3.filebase.io`
+  const prefix = (process.env.FILEBASE_KEY_PREFIX || hostnameOf(publicUrl())).replace(/^\/+|\/+$/g, '')
   return {
     s3: new S3Client({
       endpoint: FILEBASE_ENDPOINT,
@@ -62,6 +67,7 @@ function buildS3(): { s3: S3Client; bucket: string; oldBase: string; newBase: st
     bucket,
     oldBase: publicUrl(),
     newBase,
+    prefix,
   }
 }
 
@@ -75,7 +81,7 @@ async function existsInBucket(s3: S3Client, bucket: string, key: string): Promis
   }
 }
 
-async function uploadAll(args: Args, s3: S3Client, bucket: string): Promise<{ uploaded: number; skipped: number; failed: number }> {
+async function uploadAll(args: Args, s3: S3Client, bucket: string, prefix: string): Promise<{ uploaded: number; skipped: number; failed: number }> {
   const root = path.join(process.cwd(), 'public', 'uploads')
   let uploaded = 0, skipped = 0, failed = 0
 
@@ -89,7 +95,7 @@ async function uploadAll(args: Args, s3: S3Client, bucket: string): Promise<{ up
       const s = await stat(local).catch(() => null)
       if (!s || !s.isFile()) continue
 
-      const key = `${kind}/${entry}`
+      const key = prefix ? `${prefix}/${kind}/${entry}` : `${kind}/${entry}`
       const ext = path.extname(entry).toLowerCase()
       const contentType = MIME_BY_EXT[ext] || 'application/octet-stream'
 
@@ -183,14 +189,15 @@ async function main() {
   const args = parseArgs()
   console.log(args.dryRun ? '=== DRY RUN ===' : '=== COMMIT MODE ===')
 
-  const { s3, bucket, oldBase, newBase } = buildS3()
+  const { s3, bucket, oldBase, newBase, prefix } = buildS3()
   console.log(`bucket: ${bucket}`)
+  console.log(`prefix: ${prefix || '(none — keys at bucket root)'}`)
   console.log(`oldBase (this install): ${oldBase}`)
   console.log(`newBase: ${newBase}`)
   console.log()
 
   console.log('Phase 1: uploading local files…')
-  const result = await uploadAll(args, s3, bucket)
+  const result = await uploadAll(args, s3, bucket, prefix)
   console.log(`  uploaded=${result.uploaded} skipped=${result.skipped} failed=${result.failed}`)
 
   if (result.failed > 0 && !args.dryRun) {

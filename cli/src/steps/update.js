@@ -9,6 +9,7 @@ import path from 'path'
 import inquirer from 'inquirer'
 import ora from 'ora'
 import { section, success, dim, brand, warn, err } from '../utils/ui.js'
+import { configureMediaNginx } from './mediaNginx.js'
 
 // Subset of SQL keywords that indicate a destructive migration. We refuse
 // to auto-apply migrations whose .sql contains any of these without an
@@ -677,6 +678,17 @@ export async function runUpdate(installDir, opts = {}) {
     await buildFrontend(installDir)
   } else {
     console.log(dim('  Frontend unchanged — skipping build.'))
+  }
+
+  // Pick up media-storage config changes (Filebase reverse-proxy vhost).
+  // Silent no-op when MEDIA_STORAGE_BACKEND isn't 'filebase' or when not
+  // running as root. Idempotent — if the config is already in place this
+  // is effectively free.
+  try {
+    await configureMediaNginx(installDir)
+  } catch (e) {
+    console.log(warn(`  Media nginx setup failed: ${e.message}`))
+    console.log(warn('  Continuing with the rest of the update — fix and re-run later.'))
   }
 
   if (appName && !opts.skipRestart) {
