@@ -39,6 +39,7 @@
     "xo": "^0.58.0"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1041.0",
     "@elastic/elasticsearch": "^8.11.0",
     "@opentelemetry/api": "^1.9.0",
     "@opentelemetry/auto-instrumentations-node": "^0.66.0",
