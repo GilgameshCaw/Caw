@@ -40,12 +40,12 @@ function hostnameOf(url) {
 }
 
 /**
- * Try to find a usable cert for `host`. We look in this order:
- *   1. /etc/ssl/<parent-domain>/{fullchain.pem, privkey.pem} — the wildcard
- *      pattern detected by nginx.js, so wildcard cert installs Just Work.
- *   2. /etc/letsencrypt/live/<host>/{fullchain.pem, privkey.pem} — per-host
- *      cert that the main install may have requested earlier.
- * Returns { certPath, keyPath } or null if neither pans out.
+ * Try to find a usable cert for `host`. Mirrors detectParentWildcard() in
+ * nginx.js so any cert layout that works there works here too:
+ *   1. /etc/ssl/<parent-domain>/ with cert in {fullchain,cert}.pem and key
+ *      in {<parent>.key, privkey.pem, private.key}.
+ *   2. /etc/letsencrypt/live/<host>/{fullchain,privkey}.pem — per-host LE.
+ * Returns { certPath, keyPath, source } or null.
  */
 function findCertFor(host) {
   const labels = host.split('.')
@@ -53,9 +53,12 @@ function findCertFor(host) {
   for (let i = 1; i < labels.length; i++) {
     const parent = labels.slice(i).join('.')
     const dir = `/etc/ssl/${parent}`
-    const certPath = path.join(dir, 'fullchain.pem')
-    const keyPath = path.join(dir, 'privkey.pem')
-    if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+    if (!fs.existsSync(dir)) continue
+    const certPath = ['fullchain.pem', 'cert.pem']
+      .map(n => path.join(dir, n)).find(p => fs.existsSync(p))
+    const keyPath = [`${parent}.key`, 'privkey.pem', 'private.key']
+      .map(n => path.join(dir, n)).find(p => fs.existsSync(p))
+    if (certPath && keyPath) {
       return { certPath, keyPath, source: `wildcard at ${dir}` }
     }
   }
