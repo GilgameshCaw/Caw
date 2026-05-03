@@ -316,21 +316,17 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
   if (normalizedAddress && (!visibleTokensByAddress[normalizedAddress] || visibleTokensByAddress[normalizedAddress].length == 0))
       visibleTokensByAddress[normalizedAddress] = [];
 
-  // Dropdown UX: show only the first 3 profiles, with a "See more" CTA when
-  // there are more. Keep it surgical: no new components, no refactors.
-  const MAX_DROPDOWN_PROFILES = 3
-  const totalDropdownProfiles = Object.values(visibleTokensByAddress).reduce((acc, list) => acc + (list?.length ?? 0), 0)
-  let remainingDropdownSlots = MAX_DROPDOWN_PROFILES
+  // Dropdown UX: cap profiles per wallet so users with many profiles don't
+  // get a wall, BUT keep every wallet visible (otherwise multi-wallet users
+  // can lose entire wallets behind the cap). The "Manage my profiles" CTA
+  // appears whenever any wallet was truncated.
+  const MAX_PROFILES_PER_WALLET = 3
+  let anyTruncated = false
   const limitedTokensByAddress: Record<string, TokenData[]> = {}
   for (const [addrKey, list] of Object.entries(visibleTokensByAddress)) {
-    if (remainingDropdownSlots <= 0) break
-    const slice = (list || []).slice(0, remainingDropdownSlots)
-    if (slice.length > 0 || (list || []).length === 0) {
-      // Preserve empty connected-wallet group header if present (so the user
-      // still sees the address row + mismatch indicator).
-      limitedTokensByAddress[addrKey] = slice
-    }
-    remainingDropdownSlots -= slice.length
+    const full = list || []
+    if (full.length > MAX_PROFILES_PER_WALLET) anyTruncated = true
+    limitedTokensByAddress[addrKey] = full.slice(0, MAX_PROFILES_PER_WALLET)
   }
 
   // --- main render when tokens exist ---
@@ -499,8 +495,8 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
             </li>
           ))}
 
-          {/* Manage profiles (only when we truncated the list) */}
-          {totalDropdownProfiles > MAX_DROPDOWN_PROFILES && (
+          {/* Manage profiles (only when we truncated any wallet's list) */}
+          {anyTruncated && (
             <li className={`border-t ${isDark ? 'border-white/20' : 'border-gray-200'}`}>
               <Link
                 to="/usernames?tab=mine"
