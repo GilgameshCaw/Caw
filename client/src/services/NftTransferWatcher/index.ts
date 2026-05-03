@@ -15,6 +15,7 @@ import { Service } from '../../Service'
 import { prisma } from '../../prismaClient'
 import { CAW_NAMES_ADDRESS } from '../../abi/addresses'
 import { findOrCreateUser, StaleTokenError } from '../UserService'
+import { pruneTokenIdFromAllSessions } from '../../api/sessionStore'
 
 const Config = z.object({
   l1RpcUrl:            z.string().optional(),
@@ -171,6 +172,18 @@ export const nftTransferWatcherService: Service = {
                       where: { tokenId },
                       data: { address: toAddr },
                     })
+                    // Prune stale session authorizations: any session that
+                    // signed in as the previous owner still has this tokenId
+                    // in authorizedTokenIds and would otherwise be allowed
+                    // through token-scoped requireAuth checks. Failures
+                    // here are non-fatal — the per-route owner re-check
+                    // (where present) is the second line of defense.
+                    try {
+                      const n = await pruneTokenIdFromAllSessions(tokenId)
+                      if (n > 0) console.log(`[NftTransferWatcher] Pruned tokenId=${tokenId} from ${n} stale session(s)`)
+                    } catch (err: any) {
+                      console.warn(`[NftTransferWatcher] Session prune failed for tokenId=${tokenId}:`, err?.message)
+                    }
                   }
                 } else if (user.address.toLowerCase() !== toAddr) {
                   console.log(`[NftTransferWatcher] tokenId=${tokenId} transferred: ${user.address} → ${toAddr}`)
@@ -178,6 +191,12 @@ export const nftTransferWatcherService: Service = {
                     where: { tokenId },
                     data: { address: toAddr },
                   })
+                  try {
+                    const n = await pruneTokenIdFromAllSessions(tokenId)
+                    if (n > 0) console.log(`[NftTransferWatcher] Pruned tokenId=${tokenId} from ${n} stale session(s)`)
+                  } catch (err: any) {
+                    console.warn(`[NftTransferWatcher] Session prune failed for tokenId=${tokenId}:`, err?.message)
+                  }
                 }
               } catch (err: any) {
                 console.warn(`[NftTransferWatcher] Failed to apply transfer for tokenId=${tokenId}:`, err?.message)
