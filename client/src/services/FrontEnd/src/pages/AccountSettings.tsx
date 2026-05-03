@@ -13,7 +13,17 @@ import ModalWrapper from '~/components/modals/ModalWrapper'
 import Tooltip from '~/components/Tooltip'
 import { getUserAvatar } from '~/utils/defaultAvatar'
 import Avatar from '~/components/Avatar'
-import { apiFetch, API_HOST } from '~/api/client'
+import { apiFetch, API_HOST, AuthError } from '~/api/client'
+
+// 401s on the X verification flow are expected when the user's session
+// has expired or never authenticated for the active token — apiFetch's
+// AuthError path already shows the verify-wallet modal as needed, so
+// surfacing a red "Failed to start" toast on top of that is just noise.
+function isAuthError(e: unknown): boolean {
+  if (e instanceof AuthError) return true
+  const msg = (e as { message?: string })?.message || ''
+  return /^API 401\b/.test(msg)
+}
 import { formatFollowerBucket } from '~/components/XBadge'
 
 interface XLink {
@@ -72,7 +82,13 @@ const ConnectedAccountsSection: React.FC<{ isDark: boolean; tokenId: number }> =
       const s = await apiFetch<WalletStatus>(`/api/verify/x/wallet-status?tokenId=${tokenId}`)
       setStatus(s)
     } catch (e: any) {
-      setError(e?.message || 'Failed to load')
+      if (isAuthError(e)) {
+        // The verify-wallet modal (driven by apiFetch) handles re-auth.
+        // Don't double up with a red toast here.
+        console.warn('[xverify] wallet-status auth error, ignoring')
+      } else {
+        setError(e?.message || 'Failed to load')
+      }
     } finally {
       if (!opts?.silent) setLoading(false)
     }
@@ -184,7 +200,11 @@ const ConnectedAccountsSection: React.FC<{ isDark: boolean; tokenId: number }> =
       })
       .catch((e) => {
         setBusy(false)
-        setError(e?.message || 'Failed to start')
+        if (isAuthError(e)) {
+          console.warn('[xverify] start-popup auth error, ignoring')
+        } else {
+          setError(e?.message || 'Failed to start')
+        }
       })
   }, [tokenId, refresh])
 
@@ -200,7 +220,11 @@ const ConnectedAccountsSection: React.FC<{ isDark: boolean; tokenId: number }> =
       })
       await refresh()
     } catch (e: any) {
-      setError(e?.message || 'Failed to unlink')
+      if (isAuthError(e)) {
+        console.warn('[xverify] unlink auth error, ignoring')
+      } else {
+        setError(e?.message || 'Failed to unlink')
+      }
     } finally {
       setBusy(false)
     }
@@ -225,8 +249,12 @@ const ConnectedAccountsSection: React.FC<{ isDark: boolean; tokenId: number }> =
         body:    JSON.stringify({ tokenId: targetTokenId, visible: next }),
       })
     } catch (e: any) {
-      setError(e?.message || 'Failed to update visibility')
-      // Roll back optimistic flip
+      if (isAuthError(e)) {
+        console.warn('[xverify] visibility-toggle auth error, ignoring')
+      } else {
+        setError(e?.message || 'Failed to update visibility')
+      }
+      // Roll back optimistic flip regardless — server didn't accept it
       setStatus(prev => prev && {
         ...prev,
         profiles: prev.profiles.map(p => p.tokenId === targetTokenId ? { ...p, xBadgeVisible: !next } : p),
