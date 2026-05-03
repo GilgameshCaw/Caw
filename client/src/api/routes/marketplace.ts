@@ -212,7 +212,7 @@ router.get('/refunds/:address', async (req, res) => {
  * Optimistically mark a listing as sold after a successful buy tx.
  * The indexer will confirm it later with the actual Sale event.
  */
-router.post('/listings/:id/sold', async (req, res) => {
+router.post('/listings/:id/sold', requireAuth({ anySession: true }), async (req, res) => {
   try {
     const id = parseInt(req.params.id)
     const { txHash, buyer } = req.body
@@ -227,6 +227,17 @@ router.post('/listings/:id/sold', async (req, res) => {
     }
     if (!/^0x[0-9a-fA-F]{40}$/.test(buyer)) {
       return res.status(400).json({ error: 'Invalid buyer address format' })
+    }
+
+    // Auth: only the buyer (the wallet that just submitted the buy tx)
+    // can flip status. This bounds the damage if a stale session reaches
+    // here — the worst they can do is mis-flip a listing they themselves
+    // are buying. Address ownership is left to MarketplaceIndexerService
+    // when it sees the L2 Sale event (~60s).
+    const buyerLc = buyer.toLowerCase()
+    const authedAddresses = (req.sessionData?.authorizedAddresses || []).map(a => a.toLowerCase())
+    if (!authedAddresses.includes(buyerLc)) {
+      return res.status(403).json({ error: 'Session is not authorized as the buyer address' })
     }
 
     const listing = await prisma.marketplaceListing.findUnique({ where: { id } })
@@ -244,7 +255,7 @@ router.post('/listings/:id/sold', async (req, res) => {
       update: {},
       create: {
         listingId: listing.id,
-        buyer: buyer.toLowerCase(),
+        buyer: buyerLc,
         seller: listing.seller,
         tokenId: listing.tokenId,
         price: listing.startPrice,
@@ -254,13 +265,12 @@ router.post('/listings/:id/sold', async (req, res) => {
       },
     })
 
-    // Update the user's owner address to the buyer
-    await prisma.user.updateMany({
-      where: { tokenId: listing.tokenId },
-      data: { address: buyer.toLowerCase() },
-    })
-
-    console.log(`[marketplace] Listing ${id} marked as sold, owner updated to ${buyer} (optimistic, tx: ${txHash})`)
+    // NOTE: We deliberately do NOT update User.address here. The caller
+    // is unverified at the chain level — we only know the session is
+    // signed in as the claimed buyer, not that the buy tx actually
+    // landed. NftTransferWatcher (or this instance's MarketplaceIndexer)
+    // updates User.address from the on-chain event within ~60s.
+    console.log(`[marketplace] Listing ${id} marked as sold by ${buyerLc} (status only; ownership update deferred to indexer, tx: ${txHash})`)
     res.json({ ok: true })
   } catch (err: any) {
     console.error('[marketplace] mark sold error:', err)
@@ -417,7 +427,7 @@ router.get('/offers/address/:address', async (req, res) => {
  * POST /api/marketplace/offers/:offerId/accepted
  * Optimistically mark an offer as accepted after a successful accept tx.
  */
-router.post('/offers/:offerId/accepted', async (req, res) => {
+router.post('/offers/:offerId/accepted', requireAuth({ anySession: true }), async (req, res) => {
   try {
     const offerId = parseInt(req.params.offerId)
     const { txHash, buyer } = req.body
@@ -436,18 +446,32 @@ router.post('/offers/:offerId/accepted', async (req, res) => {
     if (!offer) return res.status(404).json({ error: 'Offer not found' })
     if (offer.status !== 'ACTIVE') return res.json({ ok: true })
 
+    // Auth: only the SELLER (the wallet that just submitted the
+    // accept tx) can flip status. Resolve the seller from the token's
+    // current owner; require their address is on the session. Bounds
+    // damage to "the seller can mis-flip their own offer's status";
+    // address update is left to MarketplaceIndexerService.
+    const tokenOwner = await prisma.user.findUnique({
+      where:  { tokenId: offer.tokenId },
+      select: { address: true },
+    })
+    if (!tokenOwner?.address) {
+      return res.status(400).json({ error: 'Token has no owner address on record' })
+    }
+    const sellerLc = tokenOwner.address.toLowerCase()
+    const authedAddresses = (req.sessionData?.authorizedAddresses || []).map(a => a.toLowerCase())
+    if (!authedAddresses.includes(sellerLc)) {
+      return res.status(403).json({ error: 'Session is not authorized as the seller (current token owner)' })
+    }
+
     await prisma.marketplaceOffer.update({
       where: { offerId },
       data: { status: 'ACCEPTED' },
     })
 
-    // Update the user's owner address to the buyer
-    await prisma.user.updateMany({
-      where: { tokenId: offer.tokenId },
-      data: { address: buyer.toLowerCase() },
-    })
-
-    console.log(`[marketplace] Offer ${offerId} marked as accepted, owner updated to ${buyer} (optimistic, tx: ${txHash})`)
+    // NOTE: We deliberately do NOT update User.address here. See
+    // /listings/:id/sold for the rationale — the indexer handles it.
+    console.log(`[marketplace] Offer ${offerId} marked as accepted by seller ${sellerLc} (status only; ownership update deferred to indexer, tx: ${txHash}, claimed buyer: ${buyer})`)
     res.json({ ok: true })
   } catch (err: any) {
     console.error('[marketplace] accept offer error:', err)
@@ -459,7 +483,7 @@ router.post('/offers/:offerId/accepted', async (req, res) => {
  * POST /api/marketplace/offers/:offerId/cancelled
  * Optimistically mark an offer as cancelled after a successful cancel tx.
  */
-router.post('/offers/:offerId/cancelled', async (req, res) => {
+router.post('/offers/:offerId/cancelled', requireAuth({ anySession: true }), async (req, res) => {
   try {
     const offerId = parseInt(req.params.offerId)
     const { txHash } = req.body
@@ -468,12 +492,22 @@ router.post('/offers/:offerId/cancelled', async (req, res) => {
     if (!offer) return res.status(404).json({ error: 'Offer not found' })
     if (offer.status !== 'ACTIVE') return res.json({ ok: true })
 
+    // Auth: only the offerer can cancel their own offer. (The on-chain
+    // contract enforces this — any non-offerer cancel tx will revert.
+    // We mirror the same rule here so an unauth caller can't pre-flip
+    // the status row to CANCELLED.)
+    const offererLc = offer.offerer.toLowerCase()
+    const authedAddresses = (req.sessionData?.authorizedAddresses || []).map(a => a.toLowerCase())
+    if (!authedAddresses.includes(offererLc)) {
+      return res.status(403).json({ error: 'Session is not authorized as the offerer' })
+    }
+
     await prisma.marketplaceOffer.update({
       where: { offerId },
       data: { status: 'CANCELLED' },
     })
 
-    console.log(`[marketplace] Offer ${offerId} marked as cancelled (optimistic, tx: ${txHash})`)
+    console.log(`[marketplace] Offer ${offerId} marked as cancelled by offerer ${offererLc} (optimistic, tx: ${txHash})`)
     res.json({ ok: true })
   } catch (err: any) {
     console.error('[marketplace] cancel offer error:', err)

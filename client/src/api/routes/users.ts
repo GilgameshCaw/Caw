@@ -674,7 +674,21 @@ router.get('/onboarding/:username', async (req, res) => {
  * Update the user's onboarding step (0-5)
  * IMPORTANT: This route must be defined BEFORE /:username to avoid conflicts
  */
-router.patch('/onboarding/:username', async (req, res) => {
+router.patch(
+  '/onboarding/:username',
+  requireAuth({
+    // Resolve username → tokenId so requireAuth can check the session.
+    // verifyOwnership rejects stale-session previous-owner writes.
+    lookup: async (req) => {
+      const u = await prisma.user.findUnique({
+        where:  { username: req.params.username },
+        select: { tokenId: true },
+      })
+      return u?.tokenId
+    },
+    verifyOwnership: true,
+  }),
+  async (req, res) => {
   try {
     const { username } = req.params
     const { step } = req.body
@@ -1244,7 +1258,19 @@ router.get('/search/:query', async (req, res) => {
  * PATCH /api/users/:username
  * Update user fields (lastStakedAt and pendingDepositAmount for LayerZero tracking)
  */
-router.patch('/:username', async (req, res) => {
+router.patch(
+  '/:username',
+  requireAuth({
+    lookup: async (req) => {
+      const u = await prisma.user.findUnique({
+        where:  { username: req.params.username },
+        select: { tokenId: true },
+      })
+      return u?.tokenId
+    },
+    verifyOwnership: true,
+  }),
+  async (req, res) => {
   try {
     const { username } = req.params
     const { lastStakedAt, pendingDepositAmount } = req.body
