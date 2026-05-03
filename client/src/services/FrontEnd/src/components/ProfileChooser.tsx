@@ -16,6 +16,7 @@ import { useUserByUsername, useUserByToken } from '~/hooks/useUserData';
 import { getUserAvatar } from '~/utils/defaultAvatar';
 import Avatar from '~/components/Avatar';
 import { useQuickSignPromptStore } from '~/components/modals/QuickSignModal';
+import { HiOutlinePlus, HiUsers } from 'react-icons/hi'
 
 const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
   const { isConnected, address } = useAccount();
@@ -315,6 +316,23 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
   if (normalizedAddress && (!visibleTokensByAddress[normalizedAddress] || visibleTokensByAddress[normalizedAddress].length == 0))
       visibleTokensByAddress[normalizedAddress] = [];
 
+  // Dropdown UX: show only the first 3 profiles, with a "See more" CTA when
+  // there are more. Keep it surgical: no new components, no refactors.
+  const MAX_DROPDOWN_PROFILES = 3
+  const totalDropdownProfiles = Object.values(visibleTokensByAddress).reduce((acc, list) => acc + (list?.length ?? 0), 0)
+  let remainingDropdownSlots = MAX_DROPDOWN_PROFILES
+  const limitedTokensByAddress: Record<string, TokenData[]> = {}
+  for (const [addrKey, list] of Object.entries(visibleTokensByAddress)) {
+    if (remainingDropdownSlots <= 0) break
+    const slice = (list || []).slice(0, remainingDropdownSlots)
+    if (slice.length > 0 || (list || []).length === 0) {
+      // Preserve empty connected-wallet group header if present (so the user
+      // still sees the address row + mismatch indicator).
+      limitedTokensByAddress[addrKey] = slice
+    }
+    remainingDropdownSlots -= slice.length
+  }
+
   // --- main render when tokens exist ---
   return (
     <div ref={dropdownRef} className="relative flex flex-col text-left left-[0%]">
@@ -411,7 +429,10 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
 
       {isDropdownOpen && (
         <ul
-          className={`${compact ? 'absolute left-0 right-0 bottom-full mb-2 w-full max-w-full' : (window.innerWidth < 1350 ? 'fixed mt-2' : 'absolute mt-2')} rounded-md overflow-y-auto z-[9999] transition-all duration-300 max-h-[95vh] ${
+          className={`${compact
+            ? 'absolute left-0 right-0 bottom-full mb-2 w-full max-w-full sm:w-[340px] sm:max-w-[340px] sm:right-auto'
+            : (window.innerWidth < 1350 ? 'fixed mt-2' : 'absolute mt-2')
+          } rounded-md overflow-y-auto z-[9999] transition-all duration-300 max-h-[95vh] ${
             compact ? '' : 'max-w-[calc(100vw-20px)] w-[min(420px,calc(100vw-20px))]'
           } ${
             isDark ? 'bg-black border border-white/20' : 'bg-white border border-gray-200'
@@ -426,7 +447,7 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
                 }),
           }}
         >
-          {Object.entries(visibleTokensByAddress).map(([ownerAddress, tokenList]) => (
+          {Object.entries(limitedTokensByAddress).map(([ownerAddress, tokenList]) => (
             <li key={ownerAddress} className={`border-b transition-all duration-300 ${
               isDark ? 'border-gray-700' : 'border-gray-200'
             }`}>
@@ -477,14 +498,41 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
               </ul>
             </li>
           ))}
+
+          {/* Manage profiles (only when we truncated the list) */}
+          {totalDropdownProfiles > MAX_DROPDOWN_PROFILES && (
+            <li className={`border-t ${isDark ? 'border-white/20' : 'border-gray-200'}`}>
+              <Link
+                to="/usernames?tab=mine"
+                state={{ scrollTo: 'my-profiles' }}
+                className={`cursor-pointer flex items-center gap-2 px-4 py-2 w-full text-left text-sm font-medium transition-all duration-200 ${
+                  isDark
+                    ? 'hover:bg-gray-800 text-yellow-400 hover:text-yellow-300'
+                    : 'hover:bg-gray-100 text-yellow-700 hover:text-yellow-800'
+                }`}
+              >
+                <HiUsers className="w-4 h-4 flex-shrink-0" />
+                <span>Manage my profiles</span>
+              </Link>
+            </li>
+          )}
+
           {/* Sticky footer: create new profile */}
           <li
-            className={`sticky bottom-0 z-10 text-xs text-center py-2 border-t ${
+            className={`sticky bottom-0 z-10 border-t ${
               isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
             }`}
           >
-            <Link to={`/usernames/new`} className="block">
-              +Create new profile
+            <Link
+              to={`/usernames/new`}
+              className={`cursor-pointer flex items-center gap-2 px-4 py-2 w-full text-left text-sm font-medium transition-all duration-200 ${
+                isDark
+                  ? 'hover:bg-gray-800 text-white'
+                  : 'hover:bg-gray-100 text-black'
+              }`}
+            >
+              <HiOutlinePlus className={`w-4 h-4 flex-shrink-0 ${isDark ? 'text-white/70' : 'text-black/60'}`} />
+              <span>Create new profile</span>
             </Link>
           </li>
         </ul>

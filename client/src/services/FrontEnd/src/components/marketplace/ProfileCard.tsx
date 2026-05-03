@@ -5,7 +5,8 @@ import { themeTextMuted, themeBorder } from '~/utils/theme'
 import { convertToNumber, formatNumberCompact } from '~/utils'
 import { apiFetch } from '~/api/client'
 import UsernameSvg from '~/components/UsernameSvg'
-import { useTokenDataStore } from '~/store/tokenDataStore'
+import { useActiveToken, useTokenDataStore } from '~/store/tokenDataStore'
+import { HiOutlineEye, HiOutlineSwitchHorizontal } from 'react-icons/hi'
 
 type UserStats = { followerCount: number; cawCount: number; likeCount: number }
 
@@ -21,6 +22,13 @@ const ProfileCard: React.FC<Props> = ({ username, stats: externalStats, children
   const { isDark } = useTheme()
   const [stats, setStats] = useState<UserStats | null>(externalStats ?? null)
   const tokensByAddress = useTokenDataStore(s => s.tokensByAddress)
+  const setActiveTokenId = useTokenDataStore(s => s.setActiveTokenId)
+  const activeToken = useActiveToken()
+  const ownedToken = useMemo(
+    () => Object.values(tokensByAddress).flat().find(t => t.username === username),
+    [tokensByAddress, username]
+  )
+  const isActive = !!ownedToken?.tokenId && ownedToken.tokenId === activeToken?.tokenId
   const staked = useMemo(() => {
     const token = Object.values(tokensByAddress).flat().find(t => t.username === username)
     return token ? convertToNumber(token.stakedAmount, 18) : 0
@@ -44,13 +52,48 @@ const ProfileCard: React.FC<Props> = ({ username, stats: externalStats, children
         <div className="w-full max-w-[200px]">
           <UsernameSvg username={username} />
         </div>
-        <Link
-          to={`/users/${username}`}
-          onClick={e => e.stopPropagation()}
-          className={`text-xs mt-2 transition ${isDark ? 'text-gray-500 hover:text-gray-300' : 'text-gray-400 hover:text-gray-600'}`}
-        >
-          visit profile &rarr;
-        </Link>
+        {/* Action pills — centered as a group (mobile looks weird when
+            they hug the card edges). */}
+        <div className="mt-2 w-full flex items-center justify-center gap-2 flex-wrap">
+          {ownedToken && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                if (!ownedToken?.tokenId) return
+                setActiveTokenId(ownedToken.tokenId)
+              }}
+              disabled={isActive}
+              className={`text-xs px-2.5 py-1 rounded-full border border-yellow-500 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                isDark
+                  ? 'bg-white/10 hover:bg-white/20 text-white'
+                  : 'bg-gray-100 hover:bg-gray-200 text-gray-900'
+              }`}
+              aria-label={isActive ? 'Active profile' : 'Switch to this profile'}
+              title={isActive ? 'Active' : 'Switch to this profile'}
+            >
+              <span className="inline-flex items-center gap-1.5">
+                <HiOutlineSwitchHorizontal className="w-4 h-4" />
+                {isActive ? 'Active' : 'Switch'}
+              </span>
+            </button>
+          )}
+
+          <Link
+            to={`/users/${username}`}
+            onClick={e => e.stopPropagation()}
+            className={`text-xs px-2.5 py-1 rounded-full transition cursor-pointer ${
+              isDark
+                ? 'bg-white/5 hover:bg-white/10 text-white/60 hover:text-white/80'
+                : 'bg-gray-100 hover:bg-gray-200 text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            <span className="inline-flex items-center gap-1.5">
+              <HiOutlineEye className="w-4 h-4" />
+              Visit profile
+            </span>
+          </Link>
+        </div>
       </div>
       <div className={`grid grid-cols-2 min-[370px]:max-[520px]:grid-cols-4 gap-3 px-5 py-4 border-t ${themeBorder(isDark)}`}>
         <div className="text-center">

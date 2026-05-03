@@ -1,6 +1,6 @@
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react'
 import { useAccount } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
@@ -115,7 +115,19 @@ const MessagesPage: React.FC = () => {
   const [filePreview, setFilePreview] = useState<{ file: File; previewUrl: string; isImage: boolean } | null>(null)
   const [chatSharedSecret, setChatSharedSecret] = useState<CryptoKey | null>(null)
   const [chatReady, setChatReady] = useState(false)
-  const [contextMenu, setContextMenu] = useState<{ messageId: string; x: number; y: number; isOwn: boolean; createdAt: string } | null>(null)
+  type ContextMenuState = {
+    messageId: string
+    x: number
+    y: number
+    isOwn: boolean
+    createdAt: string
+    // Viewport-space rect of the bubble (numbers only so it's safe in state).
+    bubble: { left: number; right: number; top: number; bottom: number; height: number }
+    // Bounds we clamp within (center column), in viewport-space.
+    bounds: { left: number; right: number; top: number; bottom: number }
+  }
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
+  const contextMenuRef = useRef<HTMLDivElement>(null)
   // ID of the message we're replying to. Cleared on send, on Escape, or
   // when the user X's the chip. Sent as plaintext to the server alongside
   // the encrypted body — the server already knows the conversation graph,
@@ -139,6 +151,7 @@ const MessagesPage: React.FC = () => {
   const [targetUser, setTargetUser] = useState<{ tokenId: number, username: string } | null>(null)
   const [attemptedConversations, setAttemptedConversations] = useState<Set<string>>(new Set())
   const messagesContainerRef = useRef<HTMLDivElement>(null)
+  const composerTextareaRef = useRef<HTMLTextAreaElement>(null)
 
   // Auth state
   const { verify, isVerifying, error: verifyError } = useVerifyWallet()
@@ -476,6 +489,9 @@ const MessagesPage: React.FC = () => {
     const content = newMessageContent.trim()
     setNewMessageContent('')
     setShowEmojiPicker(false)
+    // Reset composer height after clearing content (mobile multiline can
+    // leave the inline style stuck at the previous scrollHeight).
+    if (composerTextareaRef.current) composerTextareaRef.current.style.height = 'auto'
     const replyTo = replyingToId
     setReplyingToId(null)
 
@@ -903,9 +919,41 @@ const MessagesPage: React.FC = () => {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [showChatOptionsMenu])
 
+  // After the context menu mounts, measure its real size and re-clamp.
+  // LayoutEffect => no visible "jump" (the glitch you saw on desktop).
+  // UX RULE: menu must be on the SAME ROW as the bubble, right next to it.
+  useLayoutEffect(() => {
+    if (!contextMenu) return
+    const el = contextMenuRef.current
+    if (!el) return
+
+    const { width: menuW, height: menuH } = el.getBoundingClientRect()
+    const pad = 8
+    const gap = 8
+    const { bubble, bounds } = contextMenu
+
+    // Own bubble is on the right => put menu to the left of bubble.
+    // Other bubble is on the left => put menu to the right of bubble.
+    const xRaw = contextMenu.isOwn
+      ? (bubble.left - gap - menuW)
+      : (bubble.right + gap)
+
+    // Same "row" as the bubble: vertically center with bubble.
+    const yRaw = bubble.top + (bubble.height - menuH) / 2
+
+    const x = Math.min(Math.max(bounds.left + pad, xRaw), bounds.right - pad - menuW)
+    const y = Math.min(Math.max(bounds.top + pad, yRaw), bounds.bottom - pad - menuH)
+
+    // Avoid an infinite loop: only update if it actually changed.
+    if (Math.abs(x - contextMenu.x) > 0.5 || Math.abs(y - contextMenu.y) > 0.5) {
+      setContextMenu(prev => prev ? { ...prev, x, y } : prev)
+    }
+  }, [contextMenu])
+
   return (
     <MainLayout>
       <div
+        data-messages-root
         className={`max-w-2xl mx-auto pt-4 pb-0 flex flex-col relative flex-1 min-h-0 ${
           currentView === 'chat' ? 'h-[calc(100dvh-var(--app-mobile-header-h))] md:h-screen' : ''
         } ${isDark ? 'bg-black' : 'bg-white'}`}
@@ -1553,7 +1601,8 @@ const MessagesPage: React.FC = () => {
                               itself isn't a tooltip trigger and doesn't
                               fight the reaction strip's hover area. */}
                           <div
-                            className={`max-w-md lg:max-w-xl px-6 py-4 rounded-2xl relative ${
+                            data-dm-bubble
+                            className={`max-w-[85%] md:max-w-md lg:max-w-xl px-5 py-3.5 rounded-2xl relative ${
                               message.isFromCurrentUser
                                 ? 'bg-gray-600 text-white'
                                 : isDark
@@ -1732,16 +1781,16 @@ const MessagesPage: React.FC = () => {
                             }
 
                             return (
-                              <div className="grid grid-cols-[1fr_auto] items-end gap-2 min-w-0">
-                                <p className={`${emojiOnlyTextClass(messageContent)} whitespace-pre-wrap break-words min-w-0`}>
-                                  {messageContent}
-                                </p>
+                              <div className={`${emojiOnlyTextClass(messageContent)} whitespace-pre-wrap break-words min-w-0`}>
+                                {messageContent}
                                 {bubbleTime && (
-                                  <span className={`text-[11px] font-medium whitespace-nowrap inline-flex items-center gap-1 ${bubbleTimeTextClass}`}>
+                                  <span className={`float-right ml-2 mt-1 text-[11px] font-medium whitespace-nowrap inline-flex items-center gap-1 ${bubbleTimeTextClass}`}>
                                     {bubbleTime}
                                     <HiOutlineLockClosed className="w-3 h-3 text-green-400" />
                                   </span>
                                 )}
+                                {/* Clear the float so the bubble wraps correctly */}
+                                {bubbleTime && <span className="block clear-both" />}
                               </div>
                             )
                           })()}
@@ -1815,12 +1864,56 @@ const MessagesPage: React.FC = () => {
                           <button
                             onClick={(e) => {
                               const rect = e.currentTarget.getBoundingClientRect()
+                              const bubbleRect = e.currentTarget
+                                .parentElement
+                                ?.querySelector<HTMLElement>('[data-dm-bubble]')
+                                ?.getBoundingClientRect()
+                              const rootRect = messagesContainerRef.current
+                                ?.closest<HTMLElement>('[data-messages-root]')
+                                ?.getBoundingClientRect()
+                              const pad = 8
+                              const bounds = rootRect
+                                ? {
+                                    left: rootRect.left,
+                                    right: rootRect.right,
+                                    top: rootRect.top,
+                                    bottom: rootRect.bottom,
+                                  }
+                                : {
+                                    left: 0,
+                                    right: window.innerWidth,
+                                    top: 0,
+                                    bottom: window.innerHeight,
+                                  }
+
+                              // First-pass placement (no flicker): use a size guess,
+                              // then useLayoutEffect measures real size and snaps BEFORE paint.
+                              const guessW = 240
+                              const guessH = 56
+                              const gap = 8
+                              const b = bubbleRect ?? rect
+                              const bubble = {
+                                left: b.left,
+                                right: b.right,
+                                top: b.top,
+                                bottom: b.bottom,
+                                height: b.height,
+                              }
+                              const xRaw = message.isFromCurrentUser
+                                ? (bubble.left - gap - guessW)
+                                : (bubble.right + gap)
+                              const yRaw = bubble.top + (bubble.height - guessH) / 2
+
+                              const x = Math.min(Math.max(bounds.left + pad, xRaw), bounds.right - pad - guessW)
+                              const y = Math.min(Math.max(bounds.top + pad, yRaw), bounds.bottom - pad - guessH)
                               setContextMenu({
                                 messageId: message.id,
-                                x: message.isFromCurrentUser ? rect.left - 180 : rect.right,
-                                y: rect.top,
+                                x,
+                                y,
                                 isOwn: message.isFromCurrentUser,
                                 createdAt: message.createdAt,
+                                bubble,
+                                bounds,
                               })
                             }}
                             className="p-1.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer hover:bg-white/10 self-center flex-shrink-0"
@@ -1863,7 +1956,8 @@ const MessagesPage: React.FC = () => {
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setContextMenu(null)} />
                 <div
-                  className="fixed z-50 bg-gray-800 border border-white/20 rounded-lg shadow-xl py-1 min-w-[180px]"
+                  ref={contextMenuRef}
+                  className="fixed z-50 bg-gray-800 border border-white/20 rounded-lg shadow-xl py-1 min-w-[180px] max-w-[calc(100vw-1rem)]"
                   style={{ top: contextMenu.y, left: contextMenu.x }}
                 >
                   {/* Edit — only own messages within 15 min */}
@@ -2158,14 +2252,16 @@ const MessagesPage: React.FC = () => {
 
                 {/* Input area - where user can type */}
                 <textarea
+                  ref={composerTextareaRef}
                   data-dm-composer
                   placeholder="Start a new message"
                   value={newMessageContent}
                   onChange={(e) => {
                     handleInputChange(e.target.value)
                     // Auto-resize
-                    e.target.style.height = 'auto'
-                    e.target.style.height = Math.min(e.target.scrollHeight, 128) + 'px'
+                    const el = e.currentTarget
+                    el.style.height = 'auto'
+                    el.style.height = Math.min(el.scrollHeight, 128) + 'px'
                   }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
@@ -2182,7 +2278,7 @@ const MessagesPage: React.FC = () => {
                     }
                   }}
                   rows={1}
-                  className={`flex-1 py-3 pr-12 bg-transparent border-none outline-none resize-none ${
+                  className={`flex-1 min-w-0 py-3 px-3 bg-transparent border-none outline-none resize-none text-left ${
                     isDark
                       ? 'text-white placeholder-gray-500'
                       : 'text-black placeholder-gray-500'

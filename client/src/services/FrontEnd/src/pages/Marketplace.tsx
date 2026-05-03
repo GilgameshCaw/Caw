@@ -10,7 +10,7 @@ import { useMarketplaceStore, MarketplaceListing, MarketplaceOffer } from '~/sto
 import ListingCard from '~/components/marketplace/ListingCard'
 import ListingFilters from '~/components/marketplace/ListingFilters'
 import SaleCard from '~/components/marketplace/SaleCard'
-import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams, useLocation } from 'react-router-dom'
 import { formatAddress } from '~/utils'
 import ProfileCard from '~/components/marketplace/ProfileCard'
 import RefundsBanner from '~/components/marketplace/RefundsBanner'
@@ -41,6 +41,7 @@ const VALID_TABS: Tab[] = ['listings', 'sales', 'mine', 'offers']
 const Marketplace: React.FC = () => {
   const { isDark } = useTheme()
   const [searchParams, setSearchParams] = useSearchParams()
+  const location = useLocation() as any
   const tabParam = searchParams.get('tab') as Tab | null
   const [activeTab, setActiveTab] = useState<Tab>(
     tabParam && VALID_TABS.includes(tabParam) ? tabParam : 'listings'
@@ -62,6 +63,20 @@ const Marketplace: React.FC = () => {
       setSearchParams(searchParams, { replace: true })
     }
   }, [activeTab])
+
+  // If we navigated here from ProfileChooser "Manage my profiles",
+  // scroll the user down to the tabs (otherwise leave scroll untouched).
+  useEffect(() => {
+    const shouldScroll = location?.state?.scrollTo === 'my-profiles'
+    if (!shouldScroll) return
+    if (activeTab !== 'mine') return
+
+    // Wait a frame so layout is ready.
+    requestAnimationFrame(() => {
+      const el = document.getElementById('usernames-tabs')
+      el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }, [activeTab, location?.state])
 
   // The offers badge intentionally does NOT clear on view — it tracks the
   // count of ACTIVE offers received and only drops when each offer is
@@ -131,7 +146,7 @@ const Marketplace: React.FC = () => {
           <RefundsBanner />
 
           {/* Tabs */}
-          <div className={`flex gap-1 mb-6 border-b ${themeBorder(isDark)}`}>
+          <div id="usernames-tabs" className={`flex gap-1 mb-6 border-b ${themeBorder(isDark)}`}>
             <TabButton active={activeTab === 'listings'} onClick={() => setActiveTab('listings')} isDark={isDark}>
               For Sale
             </TabButton>

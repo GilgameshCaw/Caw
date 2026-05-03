@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useSearchParams } from 'react-router-dom'
 import PostForm from "~/components/PostForm";
 import MainLayout from '~/layouts/MainLayout'
 import FeedItem from '~/components/FeedItem'
@@ -38,6 +38,7 @@ type TipIndicator = {
 
 export const CawPage: React.FC = () => {
   const { id } = useParams<{ id: string }>()
+  const [searchParams] = useSearchParams()
   const [caw, setCaw]           = useState<CawItem | null>(null)
   const [comments, setComments] = useState<CawItem[]>([])
   const [recaws, setRecaws]     = useState<RecawIndicator[]>([])
@@ -99,6 +100,23 @@ export const CawPage: React.FC = () => {
   const quotes = useMemo(() => comments.filter(isQuoteItem), [comments])
   const [showSignInModal, setShowSignInModal] = useState(false)
   const [pollingReplies, setPollingReplies] = useState(false)
+
+  // If we arrived from a desktop Reply click, scroll/focus the reply form.
+  useEffect(() => {
+    if (searchParams.get('reply') !== '1') return
+    if (!isAuthenticated) return
+    // Wait for PostForm to render.
+    requestAnimationFrame(() => {
+      const el = document.getElementById('caw-reply-form')
+      if (!el) return
+      el.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      // Focus the first textarea inside the reply form.
+      setTimeout(() => {
+        const ta = el.querySelector('textarea') as HTMLTextAreaElement | null
+        ta?.focus()
+      }, 60)
+    })
+  }, [searchParams, isAuthenticated])
 
   // Function to refresh comments after posting a reply
   const refreshComments = async () => {
@@ -278,7 +296,7 @@ export const CawPage: React.FC = () => {
 
         {/* Reply Form — only for authenticated users */}
         {isAuthenticated && (
-          <div className="border-b border-white/20 mb-2">
+          <div id="caw-reply-form" className="border-b border-white/20 mb-2">
             <PostForm
               replyTo={caw}
               onSuccess={() => {
