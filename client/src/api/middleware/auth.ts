@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express'
 import jwt from 'jsonwebtoken'
 import { randomBytes } from 'crypto'
 import { getSession, SessionData } from '../sessionStore'
+import { prisma } from '../../prismaClient'
 
 // Extend Express Request type
 declare global {
@@ -10,6 +11,10 @@ declare global {
       user?: any
       sessionData?: SessionData | null
       sessionToken?: string | null
+      // Set by requireAuth({ verifyOwnership: true }) — the lowercased
+      // current owner of the requested token. Handlers can use it
+      // directly instead of re-querying.
+      tokenOwnerAddress?: string
     }
   }
 }
@@ -127,12 +132,27 @@ export async function extractSession(req: Request): Promise<void> {
 
 interface RequireAuthFieldOpts {
   field: string
+  /**
+   * Re-verify the token's CURRENT on-chain owner against the session's
+   * authorized addresses before allowing the write. Closes the
+   * stale-session hole where a previous owner's session still claims a
+   * tokenId after a transfer:
+   *   - NftTransferWatcher prunes the tokenId out of session
+   *     authorizedTokenIds within ~60s of the L1 Transfer event.
+   *   - This flag covers the in-between window AND the prune-failed
+   *     case (Redis hiccup, watcher down).
+   * Costs one indexed `prisma.user.findUnique({ where: { tokenId } })`
+   * per request — cheap relative to the write itself.
+   */
+  verifyOwnership?: boolean
   anySession?: never
   lookup?: never
 }
 
 interface RequireAuthLookupOpts {
   lookup: (req: Request) => Promise<number | undefined | null>
+  /** See RequireAuthFieldOpts.verifyOwnership. */
+  verifyOwnership?: boolean
   field?: never
   anySession?: never
 }
@@ -141,6 +161,7 @@ interface RequireAuthAnySessionOpts {
   anySession: true
   field?: never
   lookup?: never
+  verifyOwnership?: never
 }
 
 type RequireAuthOpts = RequireAuthFieldOpts | RequireAuthLookupOpts | RequireAuthAnySessionOpts
@@ -183,6 +204,37 @@ export function requireAuth(opts: RequireAuthOpts) {
         tokenId: requiredTokenId
       })
       return
+    }
+
+    // Defense-in-depth: confirm the token's CURRENT on-chain owner is
+    // among the session's authorized addresses. NftTransferWatcher's
+    // session prune handles the systemic case; this catches the small
+    // window between transfer and prune, plus prune failures.
+    if (opts.verifyOwnership) {
+      const user = await prisma.user.findUnique({
+        where:  { tokenId: requiredTokenId },
+        select: { address: true },
+      })
+      if (!user || !user.address) {
+        res.status(400).json({
+          error: 'MISSING_OWNER',
+          message: 'Token has no owner address on record',
+          tokenId: requiredTokenId,
+        })
+        return
+      }
+      const ownerAddress = user.address.toLowerCase()
+      const authedAddresses = (req.sessionData.authorizedAddresses || []).map(a => a.toLowerCase())
+      if (!authedAddresses.includes(ownerAddress)) {
+        res.status(403).json({
+          error: 'TOKEN_OWNER_CHANGED',
+          message: 'This token is no longer owned by an address authorized on this session. Re-sign in to refresh.',
+          tokenId: requiredTokenId,
+        })
+        return
+      }
+      // Stash so handlers don't have to re-query.
+      ;(req as Request & { tokenOwnerAddress?: string }).tokenOwnerAddress = ownerAddress
     }
 
     next()
