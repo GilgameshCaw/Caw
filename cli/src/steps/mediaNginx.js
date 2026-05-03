@@ -214,18 +214,42 @@ export async function configureMediaNginx(installDir) {
   const sitesAvailable = `/etc/nginx/sites-available/${mediaHost}`
   const sitesEnabled = `/etc/nginx/sites-enabled/${mediaHost}`
 
-  // Idempotency: write only if content differs.
-  const existing = fs.existsSync(sitesAvailable) ? fs.readFileSync(sitesAvailable, 'utf8') : null
-  if (existing === conf) {
-    return { status: 'unchanged', mediaHost }
+  // proxy_cache_path needs the parent directory to exist before nginx -t
+  // will succeed. nginx workers (www-data) need to be able to write under
+  // it. A fresh Ubuntu install has no /var/cache/nginx at all, so create
+  // it here.
+  if (!fs.existsSync('/var/cache/nginx')) {
+    fs.mkdirSync('/var/cache/nginx', { recursive: true })
+    try { execSync('chown www-data:www-data /var/cache/nginx', { stdio: 'pipe' }) }
+    catch { /* if chown fails (e.g. www-data isn't the worker user), nginx
+                will still try to mkdir at start under whatever user is in
+                its config; surface that via nginx -t below */ }
   }
 
   // Refuse to clobber a hand-managed file. The marker comment is our
   // signal that this file came from us.
+  const existing = fs.existsSync(sitesAvailable) ? fs.readFileSync(sitesAvailable, 'utf8') : null
   if (existing && !existing.startsWith(MARKER)) {
     console.log(warn(`  ${sitesAvailable} exists and was not written by caw — leaving it alone.`))
     console.log(dim(`  If you want caw to manage this file, delete it and re-run 'caw update'.`))
     return { status: 'foreign-file', mediaHost }
+  }
+
+  // Idempotency check: skip the heavy work only when ALL of (file content
+  // matches, symlink in place, nginx already loaded a working config).
+  // The "symlink in place" check is what we got wrong before — a file
+  // that matched but no symlink left the vhost inactive forever. The
+  // nginx-test belt-and-braces is cheap and surfaces problems like a
+  // missing /var/cache/nginx that earlier attempts left behind.
+  const symlinkPresent = fs.existsSync(sitesEnabled)
+  if (existing === conf && symlinkPresent) {
+    try {
+      execSync('nginx -t', { stdio: 'pipe' })
+      return { status: 'unchanged', mediaHost }
+    } catch {
+      // Fall through to the rewrite-and-reload path so we recover from
+      // a state where nginx -t fails for unrelated reasons we can fix.
+    }
   }
 
   section('Media reverse-proxy (Filebase)')
