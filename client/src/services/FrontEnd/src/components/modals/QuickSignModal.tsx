@@ -159,7 +159,9 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
         )}
 
         {/* Don't show again checkbox */}
-        <label className="flex items-center justify-center gap-2 mb-5 cursor-pointer text-sm text-white/60">
+        <label className={`flex items-center justify-center gap-2 mb-5 cursor-pointer text-sm ${
+          isDark ? 'text-white/60' : 'text-gray-600'
+        }`}>
           <button
             type="button"
             role="checkbox"
@@ -168,7 +170,9 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
             className={`w-4 h-4 rounded flex-shrink-0 flex items-center justify-center transition-colors duration-150 ${
               dontShowAgain
                 ? 'bg-yellow-500'
-                : 'bg-black border border-white/30'
+                : isDark
+                  ? 'bg-black border border-white/30'
+                  : 'bg-white border border-gray-300'
             }`}
           >
             {dontShowAgain && (

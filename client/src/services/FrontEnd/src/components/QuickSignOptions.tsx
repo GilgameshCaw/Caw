@@ -106,6 +106,14 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
     ? (isDark ? 'text-white/30' : 'text-gray-400')
     : 'text-white/30'
 
+  // Used for the <strong> highlights in the collapsed summary. White
+  // works on the dark surface, but in light-mode the same hue blended
+  // into a near-white background and read as invisible — pin it to
+  // the theme's body color so the bold actually renders as emphasis.
+  const strongClass = themed
+    ? (isDark ? 'text-white' : 'text-black')
+    : 'text-white'
+
   const btnClass = (selected: boolean) => {
     if (selected) return 'bg-yellow-500 text-black border border-yellow-500'
     if (themed && !isDark) return 'bg-gray-100 text-gray-900 hover:bg-gray-200 border border-gray-300'
@@ -174,7 +182,10 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
           style={!themed || isDark ? { backgroundColor: 'rgba(20, 20, 20, 0.85)', borderColor: '#1A1A1A' } : undefined}
         >
           <span className={`text-sm ${mutedClass} p-2`}>
-            Enable for <strong className="text-white">{formatDuration(duration)}</strong> with a security limit of <strong className={spendLimit === 0n ? 'text-red-400' : 'text-white'}>
+            {/* Strong items use the theme-appropriate body color so the
+                "bold" reads as emphasis against the muted summary text.
+                Hardcoding text-white was invisible in light mode. */}
+            Enable for <strong className={strongClass}>{formatDuration(duration)}</strong> with a security limit of <strong className={spendLimit === 0n ? 'text-red-400' : strongClass}>
               {spendLimit === 0n
                 ? 'no limit'
                 : cawPrice > 0
@@ -182,7 +193,7 @@ const QuickSignOptions: React.FC<QuickSignOptionsProps> = ({
                   : `${formatSpendLimit(spendLimit)} CAW`
               }
             </strong> from your deposits.<br className="hidden sm:block" /><br className="hidden sm:block" />
-            Validator tips <strong className={isNoTip ? 'text-yellow-500' : 'text-white'}>{tipCeiling !== undefined ? (isNoTip ? formatTipCaw(tipCeiling) : `~${formatTipCaw(tipCeiling)}`) : '—'}</strong> per action<br />and <strong className="text-white">{walletProtect ? 'wallet unlock required' : 'no need for wallet unlock per-session'}</strong>
+            Validator tips <strong className={isNoTip ? 'text-yellow-500' : strongClass}>{tipCeiling !== undefined ? (isNoTip ? formatTipCaw(tipCeiling) : `~${formatTipCaw(tipCeiling)}`) : '—'}</strong> per action<br />and <strong className={strongClass}>{walletProtect ? 'wallet unlock required' : 'no need for wallet unlock per-session'}</strong>
           </span>
           <HiPencil className={`w-4.5 h-4.5 flex-shrink-0 ${themed ? (isDark ? 'text-white' : 'text-gray-600') : 'text-white'}`} />
         </button>
