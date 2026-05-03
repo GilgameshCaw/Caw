@@ -200,7 +200,7 @@ router.get('/conversations',
 
 // Send an encrypted message
 router.post('/messages',
-  requireAuth({ field: 'senderId' }),
+  requireAuth({ field: 'senderId', verifyOwnership: true }),
   async (req: Request, res: Response) => {
     try {
       const { conversationId, senderId, encryptedPayload, contentType, replyToMessageId } = req.body
