@@ -572,57 +572,8 @@ const AccountSettings: React.FC = () => {
           </div>
         </div>
 
-        {/* Wallet Section */}
-        {isConnected && address && (
-          <section className="mb-8">
-            <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
-              isDark ? 'text-white/40' : 'text-gray-400'
-            }`}>
-              Wallet
-            </h2>
-
-            <InfoRow
-              icon={<HiKey className="w-5 h-5" />}
-              label="Address"
-              value={truncateAddress(address)}
-              copyable
-              copyValue={address}
-              link={`https://etherscan.io/address/${address}`}
-            />
-          </section>
-        )}
-
-        {/* Active Username Section */}
-        {activeToken && (
-          <section className="mb-8">
-            <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
-              isDark ? 'text-white/40' : 'text-gray-400'
-            }`}>
-              Active Username
-            </h2>
-
-            <InfoRow
-              icon={<HiUser className="w-5 h-5" />}
-              label="Username"
-              value={`@${activeToken.username}`}
-            />
-
-            <InfoRow
-              icon={<HiIdentification className="w-5 h-5" />}
-              label="Token ID"
-              value={`#${activeToken.tokenId}`}
-            />
-
-            <InfoRow
-              icon={<HiCurrencyDollar className="w-5 h-5" />}
-              label="Staked CAW"
-              value={formatCAWAmount(activeToken.stakedAmount || '0')}
-            />
-          </section>
-        )}
-
         {/* All Usernames Section — grouped by owning wallet, sorted by follower
-            count desc within each group. Active token's wallet is rendered last. */}
+            count desc within each group. Active token's wallet renders first. */}
         {allTokens.length > 1 && (
           <section className="mb-8">
             <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
@@ -693,6 +644,55 @@ const AccountSettings: React.FC = () => {
                 </div>
               ))}
             </div>
+          </section>
+        )}
+
+        {/* Wallet Section */}
+        {isConnected && address && (
+          <section className="mb-8">
+            <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
+              isDark ? 'text-white/40' : 'text-gray-400'
+            }`}>
+              Wallet
+            </h2>
+
+            <InfoRow
+              icon={<HiKey className="w-5 h-5" />}
+              label="Address"
+              value={truncateAddress(address)}
+              copyable
+              copyValue={address}
+              link={`https://etherscan.io/address/${address}`}
+            />
+          </section>
+        )}
+
+        {/* Active Username Section */}
+        {activeToken && (
+          <section className="mb-8">
+            <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
+              isDark ? 'text-white/40' : 'text-gray-400'
+            }`}>
+              Active Username
+            </h2>
+
+            <InfoRow
+              icon={<HiUser className="w-5 h-5" />}
+              label="Username"
+              value={`@${activeToken.username}`}
+            />
+
+            <InfoRow
+              icon={<HiIdentification className="w-5 h-5" />}
+              label="Token ID"
+              value={`#${activeToken.tokenId}`}
+            />
+
+            <InfoRow
+              icon={<HiCurrencyDollar className="w-5 h-5" />}
+              label="Staked CAW"
+              value={formatCAWAmount(activeToken.stakedAmount || '0')}
+            />
           </section>
         )}
 

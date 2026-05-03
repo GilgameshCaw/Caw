@@ -540,6 +540,7 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
             <li className={`border-t ${isDark ? 'border-white/20' : 'border-gray-200'}`}>
               <Link
                 to="/settings/account"
+                onClick={() => setDropdownOpen(false)}
                 className={`cursor-pointer flex items-center gap-2 px-4 py-2 w-full text-left text-sm font-medium transition-all duration-200 ${
                   isDark
                     ? 'hover:bg-gray-800 text-yellow-400 hover:text-yellow-300'
