@@ -17,6 +17,7 @@ import { apiFetch, API_HOST, AuthError } from '~/api/client'
 import { useFollowerCounts } from '~/hooks/useFollowerCounts'
 import { usePinnedProfilesStore } from '~/store/pinnedProfilesStore'
 import { formatAddress } from '~/utils'
+import { ThumbtackIcon } from '~/components/icons/ThumbtackIcon'
 
 // 401s on the X verification flow are expected when the user's session
 // has expired or never authenticated for the active token — apiFetch's
@@ -600,11 +601,6 @@ const AccountSettings: React.FC = () => {
                     <span className={`text-xs font-mono ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
                       {formatAddress(group.address)}
                     </span>
-                    {group.address.toLowerCase() === activeOwnerKey && (
-                      <span className={`text-xs ${isDark ? 'text-yellow-500/80' : 'text-yellow-600'}`}>
-                        Current wallet
-                      </span>
-                    )}
                   </div>
                   <div className="space-y-2">
                     {group.tokens.map(token => {
@@ -664,14 +660,7 @@ const AccountSettings: React.FC = () => {
                                 : isDark ? 'text-white/30 hover:text-white/60 hover:bg-white/10' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-200'
                             }`}
                           >
-                            {/* Thumbtack from noun-project (CC). Cap with band
-                                at top-right, needle pointing to bottom-left.
-                                viewBox cropped tight to content so the icon
-                                fills the button without empty padding. */}
-                            <svg className="w-5 h-5" fill="currentColor" viewBox="20 20 60 60">
-                              <path d="M77.1,46c-1.5,1.7-3.8,2.1-5.8,1.4c-0.7-0.3-1.6-0.1-2.1,0.4L57.4,59.6c-0.6,0.6-0.7,1.4-0.4,2.1c0.8,2,0.3,4.3-1.4,5.8c-2.1,1.9-5.4,1.6-7.4-0.4L32.8,51.8c-2-2-2.3-5.3-0.4-7.4c1.5-1.7,3.9-2.2,5.8-1.4c0.7,0.3,1.6,0.1,2.1-0.4l11.7-11.7c0.6-0.6,0.7-1.4,0.5-2.1c-0.8-2-0.3-4.3,1.4-5.8c2.1-1.9,5.4-1.6,7.4,0.4l15.3,15.3C78.7,40.6,79,43.9,77.1,46z" />
-                              <path d="M41.8,62.7l-4.5-4.5c-0.3-0.3-0.7-0.5-1.2-0.4c-0.4,0-0.8,0.3-1.1,0.6L21.9,76c-0.5,0.6-0.4,1.4,0.1,2s1.4,0.6,2,0.1L41.6,65c0.3-0.3,0.6-0.7,0.6-1.1C42.2,63.5,42.1,63,41.8,62.7z" />
-                            </svg>
+                            <ThumbtackIcon className="w-5 h-5" />
                           </button>
                         </div>
                       </div>

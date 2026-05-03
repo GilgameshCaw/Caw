@@ -18,6 +18,7 @@ import Avatar from '~/components/Avatar';
 import { useQuickSignPromptStore } from '~/components/modals/QuickSignModal';
 import { useFollowerCounts } from '~/hooks/useFollowerCounts';
 import { usePinnedProfilesStore } from '~/store/pinnedProfilesStore';
+import { ThumbtackIcon } from '~/components/icons/ThumbtackIcon';
 import { HiOutlinePlus, HiUsers } from 'react-icons/hi'
 
 const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
@@ -523,21 +524,28 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
                   <li key={token.tokenId}>
                     <button
                       onClick={() => handleSelectProfile(token)}
-                      className={`cursor-pointer flex items-center px-4 py-2 w-full text-left transition-all duration-200 ${
-                        isDark 
-                          ? 'hover:bg-gray-800 text-white' 
+                      className={`cursor-pointer flex items-center justify-between px-4 py-2 w-full text-left transition-all duration-200 ${
+                        isDark
+                          ? 'hover:bg-gray-800 text-white'
                           : 'hover:bg-gray-100 text-black'
                       }`}
                     >
-                      <div className="rounded-full overflow-hidden w-8 h-8 mr-3 border border-gray-700">
-                        <Avatar src={avatars[token.tokenId] || getUserAvatar({ tokenId: token.tokenId })} alt={token.username} size="small" />
-                      </div>
-                      <div>
-                        <div className="font-bold">{token.username}</div>
-                        <div className="text-xs text-gray-400">
-                          {token.stakedAmount > 0n ? convertToText((token.stakedAmount / 10n**18n) * 10n**18n) : "No"} CAW staked
+                      <div className="flex items-center min-w-0">
+                        <div className="rounded-full overflow-hidden w-8 h-8 mr-3 border border-gray-700 flex-shrink-0">
+                          <Avatar src={avatars[token.tokenId] || getUserAvatar({ tokenId: token.tokenId })} alt={token.username} size="small" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-bold truncate">{token.username}</div>
+                          <div className="text-xs text-gray-400">
+                            {token.stakedAmount > 0n ? convertToText((token.stakedAmount / 10n**18n) * 10n**18n) : "No"} CAW staked
+                          </div>
                         </div>
                       </div>
+                      {pinnedAt[token.tokenId] && (
+                        <ThumbtackIcon
+                          className={`w-3.5 h-3.5 flex-shrink-0 ml-2 ${isDark ? 'text-yellow-400/80' : 'text-yellow-600/80'}`}
+                        />
+                      )}
                     </button>
                   </li>
                 ))}

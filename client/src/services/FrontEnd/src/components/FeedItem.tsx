@@ -1,5 +1,6 @@
 import { getUserAvatar } from "~/utils/defaultAvatar"
 import Avatar from "~/components/Avatar"
+import { ThumbtackIcon } from "~/components/icons/ThumbtackIcon"
 // src/components/FeedItem.tsx - UPDATED FOR CONSISTENCY
 import React, { useState, useRef, useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
@@ -826,9 +827,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               on the regular feed even though a PinnedCaw row may exist. */}
           {item.isPinned && (
             <div className={`flex items-center gap-1.5 text-xs font-medium mb-2 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-              <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24">
-                <path d="M16.65 2.34a1 1 0 0 1 1.41 0l3.6 3.6a1 1 0 0 1 0 1.42l-2.6 2.6a3.5 3.5 0 0 1-4.3.5l-4.55 4.56 1.06 1.06a1 1 0 0 1-1.41 1.42L4.4 11.49a1 1 0 0 1 1.42-1.42l1.06 1.07L11.45 6.6a3.5 3.5 0 0 1 .5-4.31zM3.7 18.88l5.6-5.6 1.42 1.4-5.6 5.61a1 1 0 0 1-1.42-1.41z" />
-              </svg>
+              <ThumbtackIcon className="w-3.5 h-3.5" />
               Pinned
             </div>
           )}
@@ -1800,15 +1799,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                             : `cursor-pointer ${isDark ? 'hover:bg-white/10 text-white' : 'hover:bg-gray-100 text-black'}`
                         }`}
                       >
-                        {/* Thumbtack drawn the way Twitter draws theirs:
-                            a domed cap at the top, a wider neck flange, and a
-                            long needle ending in a sharp point. Filled (not
-                            stroked) so it reads as a solid object at small
-                            sizes; tilted ~30° so it doesn't look like a
-                            T-shape. */}
-                        <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
-                          <path d="M16.65 2.34a1 1 0 0 1 1.41 0l3.6 3.6a1 1 0 0 1 0 1.42l-2.6 2.6a3.5 3.5 0 0 1-4.3.5l-4.55 4.56 1.06 1.06a1 1 0 0 1-1.41 1.42L4.4 11.49a1 1 0 0 1 1.42-1.42l1.06 1.07L11.45 6.6a3.5 3.5 0 0 1 .5-4.31zM3.7 18.88l5.6-5.6 1.42 1.4-5.6 5.61a1 1 0 0 1-1.42-1.41z" />
-                        </svg>
+                        <ThumbtackIcon className="w-5 h-5" />
                         <span className="flex-1">
                           {isThisPinned ? 'Unpin from profile' : 'Pin to profile'}
                         </span>
