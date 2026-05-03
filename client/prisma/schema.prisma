@@ -64,16 +64,14 @@ model User {
   onChainStakeWei       String?
   onChainStakeUpdatedAt DateTime?
   lastViewedOffersAt    DateTime?         // When the user last viewed the My Offers tab
-  // X account linkage — proves wallet controls the X handle. We pull a
-  // bucketed follower count at link time and on user-initiated refresh; we
-  // never store OAuth tokens. xFollowerBucket is the lower bound of the
-  // range (e.g. 25000 means "25k+"). xUserId is X's stable id (handles can
-  // change), used as the conflict key for first-link-wins.
-  xHandle               String?
-  xUserId               String?           @unique
-  xLinkedAt             DateTime?
-  xFollowerBucket       Int?
-  xFollowersUpdatedAt   DateTime?
+  // X badge visibility per profile. The X link itself lives on
+  // WalletXLink (one row per wallet) since proving control of an X
+  // handle is a wallet-level fact — every CAW profile owned by that
+  // wallet inherits the link. This boolean lets the user opt each
+  // profile in or out of showing the badge. Default true so the
+  // profile that initiated the OAuth flow wins by default; UI flips
+  // sibling profiles to false at link time.
+  xBadgeVisible         Boolean        @default(true)
   caws                  Caw[]
   followers             Follow[]       @relation("Follower")
   follows               Follow[]       @relation("Following")
@@ -1035,4 +1033,28 @@ model ClientAuth {
 
   @@unique([clientId, tokenId])
   @@index([tokenId])
+}
+
+/// X (Twitter) account link, scoped to a wallet address. The /api/verify/x
+/// OAuth flow proves the wallet controls the X handle; we capture a bucketed
+/// follower count once at link time (and on user-initiated refresh) and
+/// discard the OAuth tokens.
+///
+/// Wallet-scoped (not per-User) because every CAW profile owned by the
+/// linked wallet inherits the link. xUserId is X's stable id (handles can
+/// change) and is the conflict key for first-link-wins enforcement at the
+/// DB level. Per-profile show/hide is on User.xBadgeVisible.
+///
+/// Address is stored lowercased — read paths and write paths both
+/// normalize so the unique key behaves like a case-insensitive index.
+model WalletXLink {
+  id                  Int      @id @default(autoincrement())
+  address             String   @unique
+  xUserId             String   @unique
+  xHandle             String
+  xFollowerBucket     Int?
+  linkedAt            DateTime @default(now())
+  followersUpdatedAt  DateTime @default(now())
+
+  @@index([xHandle])
 }

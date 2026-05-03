@@ -212,7 +212,18 @@ export async function collectInfraEarly(nodeType, ctx = {}) {
   // an API (other nodes need a URL to talk to) AND we have a domain to
   // announce. The InstanceRegistryService handles the actual registration
   // tx on first boot — we just decide whether to give it a URL.
+  // Collected BEFORE the X OAuth step so that step can show the operator
+  // the exact callback URL (derived from this URL) to paste into the X
+  // app's settings.
   const instanceApiUrl = await collectInstanceRegistration(nodeType, domain)
+
+  // X (Twitter) OAuth credentials — backend-only env vars; power the
+  // /api/verify/x flow that links a CAW profile to an X account and pulls a
+  // bucketed follower count for the verified-account badge. Asked for any
+  // node that runs the API. Callback URL is derived from instanceApiUrl at
+  // request time so the operator can't drift the X-app config out of sync
+  // with where the API actually lives.
+  const xOAuth = await collectXOAuth(nodeType, instanceApiUrl, domain)
 
   // Sentry DSN (optional) — error reporting for both server + browser.
   const sentryDsn = await collectSentryDsn(nodeType)
@@ -230,6 +241,8 @@ export async function collectInfraEarly(nodeType, ctx = {}) {
   result.storageChain = storageChain
   result.walletConnectProjectId = walletConnectProjectId
   result.giphyApiKey = giphyApiKey
+  result.xOAuthClientId = xOAuth.clientId
+  result.xOAuthClientSecret = xOAuth.clientSecret
   result.instanceApiUrl = instanceApiUrl
   result.sentryDsn = sentryDsn
   result.signozEndpoint = signozEndpoint
@@ -517,6 +530,131 @@ async function collectGiphyApiKey(nodeType) {
   ])
 
   return apiKey.trim()
+}
+
+/**
+ * Ask for X (Twitter) OAuth 2.0 credentials. Powers the /api/verify/x flow
+ * that links a CAW profile to an X handle (and pulls a bucketed follower
+ * count once at link time) so accounts can earn a verified-account badge.
+ * Server-side only — neither the client ID nor secret ships to the browser.
+ *
+ * The OAuth callback URL is NOT prompted — it's derived at request time as
+ * `${INSTANCE_API_URL}/api/verify/x/callback`. We only show the operator
+ * what URL to paste into the X dev portal so the X-app config stays in
+ * lockstep with the actual API origin.
+ *
+ * Honors CAW_X_OAUTH_CLIENT_ID / CAW_X_OAUTH_CLIENT_SECRET env overrides
+ * for non-interactive runs. Blank skips — /api/verify/x/start-popup returns
+ * 500 when env is unset, so the Connect X button shows an error to the
+ * user but the rest of the app is unaffected.
+ *
+ * Note: X has TWO credential pairs per app — "Consumer Keys" (OAuth 1.0a)
+ * and "OAuth 2.0 Client ID and Client Secret". We need the OAuth 2.0 pair,
+ * not the consumer keys. The prompt copy is explicit about this because
+ * it's a common footgun.
+ */
+async function collectXOAuth(nodeType, instanceApiUrl, domain) {
+  if (!['full', 'frontend-api', 'api-only'].includes(nodeType)) {
+    return { clientId: '', clientSecret: '' }
+  }
+
+  const fromEnvId     = process.env.CAW_X_OAUTH_CLIENT_ID
+  const fromEnvSecret = process.env.CAW_X_OAUTH_CLIENT_SECRET
+  if (fromEnvId && fromEnvSecret) {
+    return { clientId: fromEnvId, clientSecret: fromEnvSecret }
+  }
+
+  // Build the derived callback URL the operator must paste into the X app.
+  // Prefer the just-collected instanceApiUrl; fall back to https://<domain>
+  // if instance announcement was skipped. If even domain is empty we can't
+  // give them a callback to paste, so we skip the whole step.
+  const apiOrigin = (instanceApiUrl || (domain ? `https://${domain}` : '')).replace(/\/+$/, '')
+  if (!apiOrigin) {
+    console.log(dim('  Skipping X OAuth — no INSTANCE_API_URL or domain to derive callback from.'))
+    return { clientId: '', clientSecret: '' }
+  }
+  const callbackUrl = `${apiOrigin}/api/verify/x/callback`
+  const websiteUrl  = apiOrigin
+
+  section('X (Twitter) OAuth credentials (optional)')
+  tipBlock([
+    `${brand('What is this?')}`,
+    'CAW can link a profile to an X account via OAuth and pull a bucketed',
+    'follower count, so brands and famous accounts get a verified-account',
+    'badge. The credentials stay server-side (no VITE_ prefix; never shipped',
+    'to the browser).',
+    '',
+    `${brand('How to get the credentials (about 5 minutes):')}`,
+    `  ${brand('1.')} Open ${brand('https://developer.x.com/en/portal/dashboard')}`,
+    `  ${brand('2.')} Create a project + app (or pick an existing one)`,
+    `  ${brand('3.')} App settings → ${brand('User authentication settings')} → Set up`,
+    `  ${brand('4.')} App permissions: ${brand('Read')}`,
+    `  ${brand('5.')} Type of App: ${brand('Web App')} (Confidential client)`,
+    `  ${brand('6.')} Callback URI: ${brand(callbackUrl)}`,
+    `  ${brand('7.')} Website URL: ${brand(websiteUrl)}`,
+    `  ${brand('8.')} Save. Then ${brand('Keys and tokens')} tab → "OAuth 2.0 Client ID and Client Secret" → Generate`,
+    '',
+    `${brand('IMPORTANT')}: there are two credential pairs on the page —`,
+    `${brand('"Consumer Keys"')} (OAuth 1.0a) and ${brand('"OAuth 2.0 Client ID and Client Secret"')}.`,
+    `We need the ${brand('OAuth 2.0')} pair, not the Consumer Keys.`,
+    '',
+    `${brand('Note')}: the callback URL is derived from your API origin`,
+    '(INSTANCE_API_URL or domain). If you change either later, update the',
+    'X app\'s Callback URI to match — the new callback is logged on every',
+    '/api/verify/x/start-popup call so you can grep for it.',
+    '',
+    'Leave blank to skip — the Connect X button will show an error until you',
+    'add X_OAUTH_CLIENT_ID / X_OAUTH_CLIENT_SECRET to client/.env later.',
+    'The rest of the app is unaffected.',
+  ])
+
+  const { clientId } = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'clientId',
+      message: 'X OAuth 2.0 Client ID:',
+      default: '',
+      validate: (input) => {
+        const v = input.trim()
+        if (!v) return true
+        // X OAuth 2.0 client IDs look like base64url, 30+ chars. Don't
+        // pin a hard length — they may evolve. Just sanity-check the
+        // charset so a fat-fingered paste fails fast.
+        if (!/^[A-Za-z0-9_-]{20,}$/.test(v)) {
+          return 'Looks too short / has unexpected characters (or leave blank to skip)'
+        }
+        return true
+      },
+    },
+  ])
+
+  const idTrim = clientId.trim()
+  if (!idTrim) {
+    console.log(dim('  Skipping — Connect X will show an error until you fill these in later.'))
+    return { clientId: '', clientSecret: '' }
+  }
+
+  const { clientSecret } = await inquirer.prompt([
+    {
+      type: 'password',
+      name: 'clientSecret',
+      message: 'X OAuth 2.0 Client Secret:',
+      mask: '*',
+      validate: (input) => {
+        const v = input.trim()
+        if (!v) return 'Client secret is required when client ID is set'
+        if (!/^[A-Za-z0-9_-]{30,}$/.test(v)) {
+          return 'Looks too short / has unexpected characters'
+        }
+        return true
+      },
+    },
+  ])
+
+  return {
+    clientId:     idTrim,
+    clientSecret: clientSecret.trim(),
+  }
 }
 
 /**

@@ -49,6 +49,7 @@ import ModalWrapper from '~/components/modals/ModalWrapper'
 import MuteWordsModal from './modals/MuteWordsModal'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import Tooltip from '~/components/Tooltip'
+import XBadge from '~/components/XBadge'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import { useUserByToken } from '~/hooks/useUserData'
 import { useSignInModalStore } from '~/store/signInModalStore'
@@ -977,6 +978,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     >
                       {useItem.user.displayName || useItem.user.username}
                     </Link>
+                    <XBadge xHandle={useItem.user.xHandle} xFollowerBucket={useItem.user.xFollowerBucket} />
 
                     <span className={`text-sm transition-colors duration-300 ${
                       isDark ? 'text-gray-400' : 'text-gray-600'
@@ -1323,6 +1325,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                   <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
                     {item.parent.user.displayName || item.parent.user.username}
                   </span>
+                  <XBadge xHandle={item.parent.user.xHandle} xFollowerBucket={item.parent.user.xFollowerBucket} />
                   <span className={`text-xs ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
                     @{item.parent.user.username}
                   </span>

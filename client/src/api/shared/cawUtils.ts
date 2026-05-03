@@ -6,7 +6,7 @@ export interface CawRaw {
   content: string
   action?: string
   createdAt: Date
-  user: { id: number; tokenId: number; username: string; displayName?: string; image?: string; avatarUrl?: string }
+  user: { id: number; tokenId: number; username: string; displayName?: string; image?: string; avatarUrl?: string; address?: string | null; xBadgeVisible?: boolean; xHandle?: string | null; xFollowerBucket?: number | null }
   _count?: { likes: number; recaws: number }
   likes?: Array<{ userId: number; pending?: boolean }>
   recaws?: Array<{ id: number; status?: 'SUCCESS' | 'PENDING' | 'FAILED'; action?: string; content?: string }>
@@ -65,7 +65,7 @@ export interface ShapedCaw {
   action?: string
   isQuote?: boolean
   timestamp: string
-  user: { id: number; tokenId: number; username: string; displayName?: string; image?: string; avatarUrl?: string }
+  user: { id: number; tokenId: number; username: string; displayName?: string; image?: string; avatarUrl?: string; address?: string | null; xBadgeVisible?: boolean; xHandle?: string | null; xFollowerBucket?: number | null }
   likeCount: number
   viewCount: number
   hasLiked: boolean
@@ -205,11 +205,23 @@ export interface CawQueryOptions {
   includeHashtags?: boolean
 }
 
+// Shared user-select shape for caw author + parent author. The X badge
+// fields (xHandle / xFollowerBucket) live on WalletXLink keyed by wallet
+// address, not on User — they're injected post-shape via
+// enrichWithXBadges() so we don't pay an N+1 join through Prisma.
+// We do select `address` (needed for the join key) and `xBadgeVisible`
+// (per-profile opt-out) so the enrichment can gate badge rendering.
+const cawUserSelect = {
+  id: true, tokenId: true, username: true, displayName: true,
+  image: true, avatarUrl: true, defaultAvatarId: true,
+  address: true, xBadgeVisible: true,
+} as const
+
 export function getCawIncludeConfig(options: CawQueryOptions = {}) {
   const { currentUserId, includeHashtags = false } = options
 
   return {
-    user: { select: { id: true, tokenId: true, username: true, displayName: true, image: true, avatarUrl: true, defaultAvatarId: true } },
+    user: { select: cawUserSelect },
     likes: currentUserId
       ? { where: { userId: currentUserId }, select: { userId: true, pending: true } }
       : false,
@@ -243,7 +255,7 @@ export function getCawIncludeConfig(options: CawQueryOptions = {}) {
     }),
     parent: {
       include: {
-        user: { select: { id: true, tokenId: true, username: true, displayName: true, image: true, avatarUrl: true, defaultAvatarId: true } },
+        user: { select: cawUserSelect },
         likes: currentUserId
           ? { where: { userId: currentUserId }, select: { userId: true, pending: true } }
           : false,
@@ -338,6 +350,56 @@ export async function enrichWithPollVotes(
     caw.poll.userVote = myVoteByPoll.get(pid) || null
     // Strip the internal id so it doesn't leak into responses.
     delete (caw.poll as any)._pollId
+  }
+  for (const r of records) {
+    decorate(r)
+    decorate(r.parent)
+    decorate(r.originalCaw)
+  }
+}
+
+/**
+ * Decorate shaped caws with X badge fields (xHandle + xFollowerBucket)
+ * looked up from WalletXLink by the user's wallet address. Same shape
+ * as enrichWithPollVotes — collect all unique addresses across the page,
+ * one batched findMany, mutate in place.
+ *
+ * Per-profile visibility: a user can opt OUT of showing the X badge on
+ * a given profile via xBadgeVisible=false. We honor that here by leaving
+ * xHandle/xFollowerBucket undefined on the user object even when their
+ * wallet has a link. The "active user looking at their own settings"
+ * surface area is /api/me, not the feed — that endpoint reads the link
+ * directly and surfaces both visible and hidden state.
+ *
+ * The address field on each user is left in place — it's already returned
+ * by /api/users/by-token et al. and isn't sensitive (it's the public NFT
+ * owner address from chain).
+ */
+export async function enrichWithXBadges(records: ShapedCaw[]): Promise<void> {
+  const addresses = new Set<string>()
+  const collect = (caw: ShapedCaw | null | undefined) => {
+    if (!caw?.user?.address || caw.user.xBadgeVisible === false) return
+    addresses.add(caw.user.address.toLowerCase())
+  }
+  for (const r of records) {
+    collect(r)
+    collect(r.parent)
+    collect(r.originalCaw)
+  }
+  if (addresses.size === 0) return
+
+  const links = await prisma.walletXLink.findMany({
+    where:  { address: { in: Array.from(addresses) } },
+    select: { address: true, xHandle: true, xFollowerBucket: true },
+  })
+  const byAddress = new Map(links.map(l => [l.address.toLowerCase(), l]))
+
+  const decorate = (caw: ShapedCaw | null | undefined) => {
+    if (!caw?.user?.address || caw.user.xBadgeVisible === false) return
+    const link = byAddress.get(caw.user.address.toLowerCase())
+    if (!link) return
+    caw.user.xHandle         = link.xHandle
+    caw.user.xFollowerBucket = link.xFollowerBucket ?? null
   }
   for (const r of records) {
     decorate(r)

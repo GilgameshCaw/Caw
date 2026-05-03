@@ -320,6 +320,7 @@ router.get('/by-token/:tokenId', async (req, res) => {
       likedCount: true,
       likesReceivedCount: true,
       pinnedCawCount: true,
+      xBadgeVisible: true,
     } as const
 
     const user = await prisma.user.findUnique({
@@ -372,6 +373,26 @@ router.get('/by-token/:tokenId', async (req, res) => {
       where: { senderId: tokenId, status: 'waiting_for_deposit' }
     })
 
+    // X badge: link is wallet-scoped on WalletXLink; gated per-profile by
+    // user.xBadgeVisible. Surface xHandle/xFollowerBucket only when both
+    // a link exists AND this profile has the badge visible. The active
+    // owner reading their own settings goes through /api/me, which
+    // returns the unfiltered link state for the toggle UI.
+    let xHandle:         string | null = null
+    let xFollowerBucket: number | null = null
+    let xLinkedAt:       Date   | null = null
+    if (user.address) {
+      const link = await prisma.walletXLink.findUnique({
+        where:  { address: user.address.toLowerCase() },
+        select: { xHandle: true, xFollowerBucket: true, linkedAt: true },
+      })
+      if (link && user.xBadgeVisible) {
+        xHandle         = link.xHandle
+        xFollowerBucket = link.xFollowerBucket ?? null
+        xLinkedAt       = link.linkedAt
+      }
+    }
+
     // API field names: `likeCount` = likes received (popularity); `likedCount` = likes given.
     // Both come straight from the cached User columns maintained by CountManager.
     // If those ever drift, the username route below has a recompute-and-self-heal path;
@@ -383,6 +404,9 @@ router.get('/by-token/:tokenId', async (req, res) => {
       likeCount: user.likesReceivedCount,
       likedCount: user.likedCount,
       waitingForDepositCount: waitingCount,
+      xHandle,
+      xFollowerBucket,
+      xLinkedAt,
     })
   } catch (err: any) {
     console.error('GET /api/users/by-token/:tokenId error', err)
@@ -789,6 +813,7 @@ router.get('/:username', async (req, res) => {
         likedCount: true,
         likesReceivedCount: true,
         pinnedCawCount: true,
+        xBadgeVisible: true,
       }
     })
 
@@ -920,6 +945,25 @@ router.get('/:username', async (req, res) => {
       }).catch(() => {}) // fire-and-forget
     }
 
+    // X badge enrichment — same shape as /by-token/:tokenId. Wallet-scoped
+    // link, gated per-profile by xBadgeVisible. Hidden links return null
+    // here; the owner's settings panel reads /api/me which surfaces the
+    // unfiltered link state for the toggle UI.
+    let xHandle:         string | null = null
+    let xFollowerBucket: number | null = null
+    let xLinkedAt:       Date   | null = null
+    if (user.address) {
+      const link = await prisma.walletXLink.findUnique({
+        where:  { address: user.address.toLowerCase() },
+        select: { xHandle: true, xFollowerBucket: true, linkedAt: true },
+      })
+      if (link && user.xBadgeVisible) {
+        xHandle         = link.xHandle
+        xFollowerBucket = link.xFollowerBucket ?? null
+        xLinkedAt       = link.linkedAt
+      }
+    }
+
     const response = {
       ...user,
       cawCount: Math.max(0, user.cawCount - replyCount) + (user.recawCount || 0),
@@ -935,6 +979,9 @@ router.get('/:username', async (req, res) => {
       hasTipped,
       tipPending,
       isBlocked,
+      xHandle,
+      xFollowerBucket,
+      xLinkedAt,
     }
 
     return res.json(response)

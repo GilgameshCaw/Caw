@@ -1,8 +1,8 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
-import { useTokenDataStore } from '~/store/tokenDataStore'
+import { useTokenDataStore, useActiveToken } from '~/store/tokenDataStore'
 import { useAuthStore } from '~/store/authStore'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { clearKeyCache } from '~/services/DmCryptoService'
@@ -13,6 +13,357 @@ import ModalWrapper from '~/components/modals/ModalWrapper'
 import Tooltip from '~/components/Tooltip'
 import { getUserAvatar } from '~/utils/defaultAvatar'
 import Avatar from '~/components/Avatar'
+import { apiFetch, API_HOST } from '~/api/client'
+import { formatFollowerBucket } from '~/components/XBadge'
+
+interface XLink {
+  xHandle: string
+  xFollowerBucket: number | null
+  linkedAt: string
+}
+interface WalletProfile {
+  tokenId: number
+  username: string
+  xBadgeVisible: boolean
+}
+interface WalletStatus {
+  link: XLink | null
+  profiles: WalletProfile[]
+}
+
+/**
+ * Build the OAuth callback URL the FE expects to land on. The redirect
+ * has to come back to our backend (it's the route that exchanges the
+ * code for a token), so we use the same API host apiFetch is currently
+ * using. In dev that's empty (Vite proxy → same-origin), so we fall
+ * through to window.location.origin.
+ *
+ * Important for decentralized mirrors: the X dev app must register
+ * EVERY (FE → API) host pairing the operator supports as a Callback
+ * URI. The backend doesn't enforce a strict allowlist — X does.
+ */
+function getRedirectUri(): string {
+  const base = (API_HOST || window.location.origin).replace(/\/+$/, '')
+  return `${base}/api/verify/x/callback`
+}
+
+/**
+ * "Connected accounts" panel. Currently only X (Twitter) — links a CAW
+ * wallet to an X handle and pulls the bucketed follower count once at
+ * link time. The Connect button opens the OAuth start endpoint in a popup;
+ * the callback page postMessages back when done. We don't store OAuth
+ * tokens, so "Refresh follower count" walks the user through OAuth again.
+ *
+ * Wallet-scoped: every CAW profile owned by the linked wallet inherits
+ * the X identity. Per-profile show/hide is controlled by the toggles
+ * below — the profile that initiated the OAuth flow defaults to ON;
+ * sibling profiles default to OFF until the user opts them in here.
+ */
+const ConnectedAccountsSection: React.FC<{ isDark: boolean; tokenId: number }> = ({ isDark, tokenId }) => {
+  const [status, setStatus] = useState<WalletStatus | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [pendingTokenIds, setPendingTokenIds] = useState<Set<number>>(new Set())
+
+  const refresh = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true)
+    try {
+      const s = await apiFetch<WalletStatus>(`/api/verify/x/wallet-status?tokenId=${tokenId}`)
+      setStatus(s)
+    } catch (e: any) {
+      setError(e?.message || 'Failed to load')
+    } finally {
+      if (!opts?.silent) setLoading(false)
+    }
+  }, [tokenId])
+
+  useEffect(() => { refresh() }, [refresh])
+
+  // Popup → opener channel via localStorage. Modern browsers sever
+  // window.opener and lie about window.closed when a popup navigates
+  // cross-origin (to x.com and back), so postMessage(opener) and
+  // w.closed polling both fail silently. localStorage is shared across
+  // same-origin tabs, and the `storage` event fires in OTHER documents
+  // when a key changes — so when the callback page (same origin as us)
+  // writes the result key, we receive it here.
+  //
+  // We accept the payload, optimistic-update, refresh from the server,
+  // and clear the key so subsequent attempts don't replay the same
+  // value. There's no "popup closed" path to handle separately —
+  // either the result key is written or it isn't (e.g. user closed
+  // popup early); in the latter case `busy` stays true. We add a
+  // bounded fallback timeout so the user isn't stuck forever.
+  const handleResult = useCallback((p: any) => {
+    console.log('[xverify] handleResult', p)
+    setBusy(false)
+    if (p?.ok) {
+      setError(null)
+      if (typeof p.xHandle === 'string') {
+        setStatus(prev => ({
+          link: {
+            xHandle:         p.xHandle,
+            xFollowerBucket: typeof p.bucket === 'number' ? p.bucket : null,
+            linkedAt:        new Date().toISOString(),
+          },
+          profiles: prev?.profiles ?? [],
+        }))
+      }
+      refresh({ silent: true })
+    } else {
+      setError(humanizeError(p?.error))
+    }
+  }, [refresh])
+
+  useEffect(() => {
+    const STORAGE_KEY = 'caw:xverify:result'
+    const consume = (raw: string | null) => {
+      if (!raw) return
+      let env: any
+      try { env = JSON.parse(raw) } catch { return }
+      if (env?.source !== 'caw-xverify' || !env?.payload) return
+      // Clear the key BEFORE acting so we never re-fire on the next
+      // storage event (different tab pattern, same browser session).
+      try { localStorage.removeItem(STORAGE_KEY) } catch {}
+      handleResult(env.payload)
+    }
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== STORAGE_KEY) return
+      console.log('[xverify] storage event', { newValue: e.newValue?.slice(0, 100) })
+      consume(e.newValue)
+    }
+    window.addEventListener('storage', onStorage)
+    // If the callback page wrote the key BEFORE we mounted (race on slow
+    // initial render), pick it up on mount.
+    consume(typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_KEY) : null)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [handleResult])
+
+  const startOAuth = useCallback(() => {
+    // Session token lives in localStorage (not a cookie), so a popup can't
+    // carry it. Two-step: authed POST to /start-popup returns the X auth
+    // URL, then we window.open that URL. The popup hits X, X redirects to
+    // our /callback, which renders a tiny page that postMessages back and
+    // closes itself.
+    //
+    // We send redirectUri so the backend doesn't have to assume what host
+    // the FE is on — important for decentralized mirrors where the FE
+    // and API may not share INSTANCE_API_URL.
+    setBusy(true)
+    setError(null)
+    // Pre-clear any stale result from a previous attempt so the storage
+    // listener can't fire on it when this attempt completes.
+    try { localStorage.removeItem('caw:xverify:result') } catch {}
+    apiFetch<{ url: string }>('/api/verify/x/start-popup', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ tokenId, redirectUri: getRedirectUri() }),
+    })
+      .then((res) => {
+        const w = window.open(res.url, 'caw-xverify', 'width=600,height=700')
+        if (!w) {
+          setBusy(false)
+          setError('Popup was blocked. Allow popups for this site and try again.')
+          return
+        }
+        // No w.closed watchdog — modern browsers lie about w.closed when
+        // the popup is cross-origin, so we'd false-fire constantly. The
+        // localStorage `storage` event is the success path. As a
+        // fallback for the user-cancels-without-completing case, time
+        // the busy state out so the button isn't stuck forever.
+        setTimeout(() => {
+          setBusy(prev => {
+            if (!prev) return prev
+            // Last-ditch refresh in case the link succeeded but the
+            // storage event was missed (e.g. localStorage disabled,
+            // private mode quirks). Cheap and harmless.
+            refresh({ silent: true })
+            return false
+          })
+        }, 60_000)
+      })
+      .catch((e) => {
+        setBusy(false)
+        setError(e?.message || 'Failed to start')
+      })
+  }, [tokenId, refresh])
+
+  const unlink = useCallback(async () => {
+    if (!confirm('Unlink your X account from this wallet? Every profile owned by this wallet will lose its badge.')) return
+    setBusy(true)
+    setError(null)
+    try {
+      await apiFetch('/api/verify/x', {
+        method:  'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ tokenId }),
+      })
+      await refresh()
+    } catch (e: any) {
+      setError(e?.message || 'Failed to unlink')
+    } finally {
+      setBusy(false)
+    }
+  }, [refresh, tokenId])
+
+  // Toggle xBadgeVisible for a sibling profile. Optimistic flip locally;
+  // mark the row pending so the toggle can show progress; reconcile on
+  // server response. The auth on /x/visibility uses requireAuth({field}),
+  // so we send each toggle's tokenId — but we only allow toggling tokens
+  // we already know are owned by this wallet (server-side check is the
+  // actual boundary; this just keeps the UX honest).
+  const toggleVisibility = useCallback(async (targetTokenId: number, next: boolean) => {
+    setPendingTokenIds(prev => new Set(prev).add(targetTokenId))
+    setStatus(prev => prev && {
+      ...prev,
+      profiles: prev.profiles.map(p => p.tokenId === targetTokenId ? { ...p, xBadgeVisible: next } : p),
+    })
+    try {
+      await apiFetch('/api/verify/x/visibility', {
+        method:  'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ tokenId: targetTokenId, visible: next }),
+      })
+    } catch (e: any) {
+      setError(e?.message || 'Failed to update visibility')
+      // Roll back optimistic flip
+      setStatus(prev => prev && {
+        ...prev,
+        profiles: prev.profiles.map(p => p.tokenId === targetTokenId ? { ...p, xBadgeVisible: !next } : p),
+      })
+    } finally {
+      setPendingTokenIds(prev => {
+        const next = new Set(prev)
+        next.delete(targetTokenId)
+        return next
+      })
+    }
+  }, [])
+
+  const link      = status?.link ?? null
+  const profiles  = status?.profiles ?? []
+  const followers = formatFollowerBucket(link?.xFollowerBucket)
+
+  return (
+    <section className="mb-8">
+      <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+        Connected Accounts
+      </h2>
+      <div className={`p-4 rounded-lg ${isDark ? 'bg-white/5 border border-white/10' : 'bg-gray-50 border border-gray-100'}`}>
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold ${isDark ? 'bg-black text-white' : 'bg-black text-white'}`}>
+              X
+            </div>
+            <div className="min-w-0">
+              <p className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>X (Twitter)</p>
+              <p className={`text-sm truncate ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+                {loading
+                  ? 'Loading…'
+                  : link
+                    ? `@${link.xHandle}${followers ? ` · ${followers} followers` : ''}`
+                    : 'Prove this wallet controls an X handle to earn a verified badge.'}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {link ? (
+              <>
+                <button
+                  type="button"
+                  onClick={startOAuth}
+                  disabled={busy}
+                  className={`px-3 py-1.5 text-sm rounded-full transition-colors ${
+                    isDark ? 'bg-white/10 hover:bg-white/15 text-white' : 'bg-white border border-gray-300 hover:bg-gray-100 text-gray-900'
+                  } ${busy ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                >
+                  Refresh
+                </button>
+                <button
+                  type="button"
+                  onClick={unlink}
+                  disabled={busy}
+                  className={`px-3 py-1.5 text-sm rounded-full transition-colors ${
+                    isDark ? 'text-red-400 hover:bg-red-500/10' : 'text-red-600 hover:bg-red-50'
+                  } ${busy ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                >
+                  Unlink
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={startOAuth}
+                disabled={busy || loading}
+                className={`px-4 py-1.5 text-sm font-medium rounded-full transition-colors bg-yellow-500 hover:bg-yellow-400 text-black ${
+                  busy || loading ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                }`}
+              >
+                {busy ? 'Connecting…' : 'Connect X'}
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Per-profile visibility — only meaningful once the wallet has
+            an X link. Hidden until then so the panel stays clean. */}
+        {link && profiles.length > 0 && (
+          <div className={`mt-4 pt-4 border-t ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+            <p className={`text-xs uppercase tracking-wide mb-2 ${isDark ? 'text-white/40' : 'text-gray-500'}`}>
+              Show badge on
+            </p>
+            <ul className="space-y-1">
+              {profiles.map(p => (
+                <li key={p.tokenId} className="flex items-center justify-between gap-3 py-1">
+                  <span className={`text-sm truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                    @{p.username}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => toggleVisibility(p.tokenId, !p.xBadgeVisible)}
+                    disabled={pendingTokenIds.has(p.tokenId)}
+                    aria-pressed={p.xBadgeVisible}
+                    className={`relative w-10 min-w-[40px] h-6 rounded-full transition-colors duration-200 flex-shrink-0 ${
+                      p.xBadgeVisible ? 'bg-yellow-500' : (isDark ? 'bg-white/15' : 'bg-gray-300')
+                    } ${pendingTokenIds.has(p.tokenId) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                  >
+                    {/* Use a <div> not a <span> for the thumb — Tailwind's
+                        w/h work on spans only after position:absolute
+                        promotes them, and some upstream resets on `span`
+                        leak through to break dimensions. The reference
+                        toggle in pages/Profile/New.tsx uses div for the
+                        same reason. */}
+                    <div
+                      className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${
+                        p.xBadgeVisible ? 'translate-x-5' : 'translate-x-0.5'
+                      }`}
+                    />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {error && (
+          <p className="text-sm text-red-500 mt-2">{error}</p>
+        )}
+      </div>
+    </section>
+  )
+}
+
+function humanizeError(code?: string): string {
+  switch (code) {
+    case 'cancelled':                return 'X authorization was cancelled.'
+    case 'invalid_state':            return 'The authorization link expired. Try again.'
+    case 'token_exchange_failed':    return 'Could not exchange the X authorization. Try again.'
+    case 'me_fetch_failed':          return 'X authorization succeeded but we could not read your profile. Try again.'
+    case 'malformed_x_response':     return 'X returned an unexpected response. Try again.'
+    case 'x_account_already_linked': return 'That X account is already linked to a different CAW profile.'
+    default:                         return 'Something went wrong. Please try again.'
+  }
+}
 
 const AccountSettings: React.FC = () => {
   const { isDark } = useTheme()
@@ -21,11 +372,24 @@ const AccountSettings: React.FC = () => {
   const [showClearDataModal, setShowClearDataModal] = useState(false)
   const [showLogoutModal, setShowLogoutModal] = useState(false)
 
-  const activeTokenId = useTokenDataStore(s => s.activeTokenId)
+  // The store has both a (deprecated) global activeTokenId and a
+  // per-address activeTokenIdByAddress; useActiveToken() walks the
+  // fallback chain (global → per-address → first owned) so this page
+  // works regardless of which one is populated.
+  const activeToken = useActiveToken()
+  const activeTokenId = activeToken?.tokenId
   const tokensByAddress = useTokenDataStore(s => s.tokensByAddress)
+  const setActiveTokenId = useTokenDataStore(s => s.setActiveTokenId)
+  const setLastAddress   = useTokenDataStore(s => s.setLastAddress)
 
-  // Get active token data
-  const activeToken = Object.values(tokensByAddress).flat().find(t => t.tokenId === activeTokenId)
+  // Mirror ProfileChooser.handleSelectProfile so the All Usernames rows
+  // act as a profile-switcher. setLastAddress drives useTokenDataUpdate
+  // to re-fetch for this token's owner.
+  const handleSelectProfile = (token: { tokenId: number; address?: string }) => {
+    if (token.tokenId === activeTokenId) return
+    setActiveTokenId(token.tokenId)
+    if (token.address) setLastAddress(token.address.toLowerCase())
+  }
 
   // Get all tokens — if wallet is connected use that address, otherwise show all known tokens
   const allTokens = address
@@ -218,13 +582,19 @@ const AccountSettings: React.FC = () => {
             </h2>
 
             <div className="space-y-2">
-              {allTokens.map(token => (
-                <div
+              {allTokens.map(token => {
+                const isActive = token.tokenId === activeTokenId
+                return (
+                <button
+                  type="button"
                   key={token.tokenId}
-                  className={`flex items-center justify-between p-4 rounded-lg ${
-                    token.tokenId === activeTokenId
-                      ? isDark ? 'bg-yellow-500/10 border border-yellow-500/30' : 'bg-yellow-50 border border-yellow-200'
-                      : isDark ? 'bg-white/5' : 'bg-gray-50'
+                  onClick={() => handleSelectProfile(token)}
+                  disabled={isActive}
+                  aria-current={isActive ? 'true' : undefined}
+                  className={`w-full text-left flex items-center justify-between p-4 rounded-lg transition-colors ${
+                    isActive
+                      ? isDark ? 'bg-yellow-500/10 border border-yellow-500/30 cursor-default' : 'bg-yellow-50 border border-yellow-200 cursor-default'
+                      : isDark ? 'bg-white/5 hover:bg-white/10 cursor-pointer' : 'bg-gray-50 hover:bg-gray-100 cursor-pointer'
                   }`}
                 >
                   <div className="flex items-center gap-3">
@@ -243,17 +613,23 @@ const AccountSettings: React.FC = () => {
                       </p>
                     </div>
                   </div>
-                  {token.tokenId === activeTokenId && (
+                  {isActive && (
                     <span className={`text-xs px-2 py-1 rounded-full ${
                       isDark ? 'bg-yellow-500/20 text-yellow-500' : 'bg-yellow-100 text-yellow-700'
                     }`}>
                       Active
                     </span>
                   )}
-                </div>
-              ))}
+                </button>
+                )
+              })}
             </div>
           </section>
+        )}
+
+        {/* Connected Accounts */}
+        {activeTokenId && (
+          <ConnectedAccountsSection isDark={isDark} tokenId={activeTokenId} />
         )}
 
         {/* Contract Info */}

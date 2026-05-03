@@ -2,7 +2,7 @@
 import { Router } from 'express'
 import { prisma } from '../../prismaClient'
 import { getTrendingHashtags, searchHashtags } from '../../tools/hashtags'
-import { shapeCaw, handlePagination, enrichWithPollVotes } from '../shared/cawUtils'
+import { shapeCaw, handlePagination, enrichWithPollVotes, enrichWithXBadges } from '../shared/cawUtils'
 
 const router = Router()
 
@@ -82,6 +82,7 @@ router.get('/:tag/caws', async (req, res) => {
     )
     const items = rawCaws.map(caw => shapeCaw(caw))
     await enrichWithPollVotes(items, currentUserId)
+    await enrichWithXBadges(items)
 
     return res.json({
       items,

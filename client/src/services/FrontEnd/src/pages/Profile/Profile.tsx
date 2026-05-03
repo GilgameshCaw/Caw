@@ -13,6 +13,7 @@ import { useActiveToken } from '~/store/tokenDataStore'
 import { useModalStore } from '~/store/modalStore'
 import { HiPencil, HiX, HiCamera, HiGlobe, HiLink, HiLocationMarker, HiOutlineMail, HiDotsHorizontal, HiOutlineCurrencyDollar, HiOutlineLockClosed } from 'react-icons/hi'
 import CopyAddressButton from '~/components/CopyAddressButton'
+import XBadge from '~/components/XBadge'
 import { apiFetch, retryOnIndexing } from '~/api/client'
 import { useDmIdentity } from '~/hooks/useDmIdentity'
 import { useDmClient } from '~/hooks/useDm'
@@ -72,6 +73,9 @@ type ProfileData = {
   followPending?: boolean
   hasTipped?: boolean
   tipPending?: boolean
+  xHandle?: string | null
+  xFollowerBucket?: number | null
+  xLinkedAt?: string | null
   createdAt: string
   updatedAt: string
 }
@@ -908,10 +912,11 @@ export const Profile: React.FC = () => {
             <div className="flex-1">
               {/* Display Name, Username, and Joined */}
               <div className="mb-4">
-                <h1 className={`text-2xl font-bold transition-all duration-300 ${
+                <h1 className={`text-2xl font-bold transition-all duration-300 flex items-center gap-1.5 ${
                   isDark ? 'text-white' : 'text-black'
                 }`}>
                   {profileData?.displayName || profileData?.username || displayUsername}
+                  <XBadge xHandle={profileData?.xHandle} xFollowerBucket={profileData?.xFollowerBucket} size="md" />
                 </h1>
                 <p className={`text-base mt-0.5 transition-all duration-300 ${
                   isDark ? 'text-gray-400' : 'text-gray-600'

@@ -85,9 +85,40 @@ async function fetchUser(tokenId: number) {
         cawCount: true,
         followerCount: true,
         followingCount: true,
+        // Per-profile X badge visibility — the FE settings panel needs
+        // both the link state and this toggle to render correctly.
+        xBadgeVisible: true,
       },
     })
-    return user
+    if (!user) return null
+
+    // X link is wallet-scoped (WalletXLink keyed by address). Look it up
+    // alongside the User row so /api/me delivers the full X state in one
+    // shot — including links not currently visible on this profile, so
+    // the settings panel can render the per-profile toggle row for every
+    // sibling profile.
+    let xLink: { xHandle: string; xFollowerBucket: number | null; linkedAt: Date } | null = null
+    if (user.address) {
+      const link = await prisma.walletXLink.findUnique({
+        where:  { address: user.address.toLowerCase() },
+        select: { xHandle: true, xFollowerBucket: true, linkedAt: true },
+      })
+      xLink = link ?? null
+    }
+
+    return {
+      ...user,
+      // Backwards-compat shape for the FE: surface xHandle / xBucket /
+      // xLinkedAt at the top level. They're null when the wallet hasn't
+      // linked an X account, OR when this profile has hidden the badge.
+      xHandle:         user.xBadgeVisible && xLink ? xLink.xHandle : null,
+      xFollowerBucket: user.xBadgeVisible && xLink ? xLink.xFollowerBucket : null,
+      xLinkedAt:       xLink?.linkedAt ?? null,
+      // Always include the underlying link state so the settings panel
+      // can show "your wallet IS linked but this profile has the badge
+      // hidden" cleanly, separate from "your wallet has no link".
+      xLink: xLink ? { xHandle: xLink.xHandle, xFollowerBucket: xLink.xFollowerBucket } : null,
+    }
   } catch (err: any) {
     console.error('[/api/me] fetchUser error:', err.message)
     return null

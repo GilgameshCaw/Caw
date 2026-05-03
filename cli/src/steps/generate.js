@@ -395,6 +395,15 @@ function buildEnvVars(nodeType, config) {
   // unaffected.
   if (config.giphyApiKey) env.GIPHY_API_KEY = config.giphyApiKey
 
+  // X (Twitter) OAuth 2.0 credentials for the /api/verify/x flow that
+  // links a CAW profile to an X handle and pulls a bucketed follower
+  // count for the verified-account badge. Server-side only (no VITE_
+  // prefix). Unset = Connect X button errors at start; rest of the app
+  // is unaffected. The OAuth callback URL is derived at request time
+  // from INSTANCE_API_URL — there's no separate redirect-URL env var.
+  if (config.xOAuthClientId)     env.X_OAUTH_CLIENT_ID     = config.xOAuthClientId
+  if (config.xOAuthClientSecret) env.X_OAUTH_CLIENT_SECRET = config.xOAuthClientSecret
+
   // INSTANCE_API_URL drives the on-chain registerInstance call in
   // InstanceRegistryService — the gossip layer other CAW nodes use to
   // route DMs / mentions to this instance. Empty = skip registration.
