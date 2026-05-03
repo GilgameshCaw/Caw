@@ -90,20 +90,19 @@ export default function useTokenDataUpdate() {
     setLastAddress(address.toLowerCase())
   }
 
-  // Marketplace-buy recovery: when the connected wallet owns tokens that the
-  // viewed address (persisted lastAddress) does not, promote the connected
-  // wallet to lastAddress. Without this, a wallet that just bought a CAW name
-  // on OpenSea/Blur stays mismatched against the previously-active profile and
-  // every action shows "please switch to the connected wallet". Guarded on
-  // connectedTokens.length>0 so deliberately switching to a no-token wallet
-  // does not clobber a deliberate profile pick. Why: NftTransferWatcher updates
-  // the backend asynchronously, but the FE's persisted lastAddress is what
-  // selects the active profile — that needs to follow the new owner too.
+  // Marketplace-buy recovery: when the viewed wallet has zero tokens left
+  // (e.g. the user transferred or sold their last profile) AND the connected
+  // wallet owns some, promote the connected wallet to lastAddress so the user
+  // doesn't get stuck on a profileless view. Importantly we DO NOT do this
+  // just because the connected wallet differs from the viewed one — that's
+  // a normal state when the user is deliberately viewing as a profile owned
+  // by a different wallet. Only the "viewed has nothing to show" case triggers.
   if (
     needsConnectedFetch &&
     connectedAddress &&
     connectedTokens &&
     connectedTokens.length > 0 &&
+    rawTokens && rawTokens.length === 0 &&
     lastAddress?.toLowerCase() !== connectedAddress
   ) {
     setLastAddress(connectedAddress)

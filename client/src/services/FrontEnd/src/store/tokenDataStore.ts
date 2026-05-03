@@ -216,19 +216,16 @@ export const useTokenDataStore = create<TokenDataStore>()(
         }
       }),
       setLastAddress: (address) => {
-        const normalized = address.toLowerCase()
-        // When the wallet changes, also bring the global activeTokenId
-        // forward to that wallet's per-address pick (if any). Same
-        // motivation as the lockstep above: every consumer reading the
-        // global stays correct without each one needing the fallback
-        // chain logic baked in.
-        set(state => {
-          const next = state.activeTokenIdByAddress[normalized as Address]
-          return {
-            lastAddress: normalized,
-            ...(next !== undefined ? { activeTokenId: next } : {}),
-          }
-        })
+        // setLastAddress used to auto-snap the global activeTokenId to the
+        // newly-connected wallet's per-address pick. That was overzealous:
+        // it also fired on RainbowKit/account-watcher events, so changing
+        // which wallet is connected silently changed which profile was
+        // active — even when the user had explicitly picked a profile
+        // owned by a different wallet. The explicit-pick path
+        // (setActiveTokenIdForAddress, setActiveTokenId) still keeps the
+        // global in lockstep, so the original "wrong-wallet preflight"
+        // symptom this used to fix stays fixed.
+        set({ lastAddress: address.toLowerCase() })
       },
       removeActiveToken: () => set({ activeTokenId: undefined }),
 
