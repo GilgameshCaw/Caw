@@ -29,6 +29,7 @@ import Pencil from '~/assets/images/pencil.svg?react';
 import Bookmark from '~/assets/images/bookmark.svg?react';
 import Share from '~/assets/images/share.svg?react';
 import { useTokenDataStore } from '~/store/tokenDataStore'
+import { translateText } from '~/utils/translate'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import { ShareModal } from './ShareModal'
 import { useModalStore } from '~/store/modalStore'
@@ -686,49 +687,14 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     switch (action) {
       case 'translate':
         if (isTranslating || translatedText) {
-          // Reset translation if already translated
+          // Toggle off — second click on Translate clears the translation.
           setTranslatedText(null)
           return
         }
-
         setIsTranslating(true)
         try {
-          const userLang = navigator.language || 'en'
-          const targetLang = userLang.split('-')[0] // Get language code without region
-
-          // Use Google Translate API (free tier)
-          const response = await fetch(
-            `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(useItem.content)}`
-          )
-          const data = await response.json()
-          // Google returns translation in multiple segments: data[0] = [[translatedChunk, originalChunk, ...], ...]
-          const translated = Array.isArray(data?.[0])
-            ? (data[0] as unknown[])
-                .map((seg) => (Array.isArray(seg) ? (seg as unknown[])[0] : ''))
-                .filter((s): s is string => typeof s === 'string')
-                .join('')
-            : undefined
-
-          if (translated && translated !== useItem.content) {
-            setTranslatedText(translated)
-          } else {
-            // If translation is the same, try translating to English
-            const enResponse = await fetch(
-              `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q=${encodeURIComponent(useItem.content)}`
-            )
-            const enData = await enResponse.json()
-            const enTranslated = Array.isArray(enData?.[0])
-              ? (enData[0] as unknown[])
-                  .map((seg) => (Array.isArray(seg) ? (seg as unknown[])[0] : ''))
-                  .filter((s): s is string => typeof s === 'string')
-                  .join('')
-              : undefined
-            if (enTranslated) {
-              setTranslatedText(enTranslated)
-            }
-          }
-        } catch (error) {
-          console.error('Translation failed:', error)
+          const result = await translateText(useItem.content || '')
+          if (result) setTranslatedText(result)
         } finally {
           setIsTranslating(false)
         }

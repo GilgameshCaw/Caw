@@ -46,7 +46,9 @@ import { useDmFileUpload } from '~/hooks/useDmFileUpload'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import { useDmMuteStore } from '~/store/dmMuteStore'
 import MuteConfirmModal from '~/components/modals/MuteConfirmModal'
+import ConfirmModal, { wasAcknowledged } from '~/components/modals/ConfirmModal'
 import ReportUserModal from '~/components/modals/ReportUserModal'
+import { translateText } from '~/utils/translate'
 import { FollowButton } from '~/components/FollowButton'
 import {
   MessageReactionStrip,
@@ -140,6 +142,16 @@ const MessagesPage: React.FC = () => {
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
   const [editingContent, setEditingContent] = useState('')
   const [editHistoryMessageId, setEditHistoryMessageId] = useState<string | null>(null)
+  // Translations rendered inline below the original message bubble. One-shot:
+  // not persisted server-side, lost on refresh. The bubble shows the
+  // ciphertext-derived plaintext as usual; the translation appears below.
+  const [translations, setTranslations] = useState<Record<string, string>>({})
+  // Set of message IDs whose translation is currently in flight, so we can
+  // show a spinner without conflating "translating" with "no translation yet".
+  const [translatingIds, setTranslatingIds] = useState<Set<string>>(new Set())
+  // Message awaiting the user's confirmation in the privacy modal. Holds the
+  // message id + plaintext so the confirm handler doesn't need to re-look-up.
+  const [pendingTranslate, setPendingTranslate] = useState<{ id: string; text: string } | null>(null)
   const [showBlockConfirm, setShowBlockConfirm] = useState(false)
   const [showReportUser, setShowReportUser] = useState(false)
   const { blockUser, getBlockedUserIds } = useBlockedUsersStore()
@@ -918,6 +930,44 @@ const MessagesPage: React.FC = () => {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [showChatOptionsMenu])
+
+  // Translate a DM message inline. The text is already-decrypted plaintext
+  // (the message bubble shows it), so this just hands it to the shared
+  // translateText util and stores the result for inline rendering.
+  // Caller is responsible for showing the privacy modal first if the user
+  // hasn't acknowledged it (see startTranslate).
+  const runTranslate = useCallback(async (messageId: string, text: string) => {
+    if (!text || translations[messageId]) return
+    setTranslatingIds(prev => {
+      const next = new Set(prev); next.add(messageId); return next
+    })
+    try {
+      const result = await translateText(text)
+      if (result) setTranslations(prev => ({ ...prev, [messageId]: result }))
+    } finally {
+      setTranslatingIds(prev => {
+        const next = new Set(prev); next.delete(messageId); return next
+      })
+    }
+  }, [translations])
+
+  // Entry point from the context menu. If the user already opted in to the
+  // E2EE-leak warning, run immediately; otherwise stash the message and
+  // open the confirm modal. Toggling Translate again on a message that's
+  // already translated clears the translation (matches FeedItem behavior).
+  const startTranslate = useCallback((messageId: string, text: string) => {
+    if (translations[messageId]) {
+      setTranslations(prev => {
+        const next = { ...prev }; delete next[messageId]; return next
+      })
+      return
+    }
+    if (wasAcknowledged('dmTranslate')) {
+      runTranslate(messageId, text)
+    } else {
+      setPendingTranslate({ id: messageId, text })
+    }
+  }, [translations, runTranslate])
 
   // After the context menu mounts, measure its real size and re-clamp.
   // LayoutEffect => no visible "jump" (the glitch you saw on desktop).
@@ -1795,6 +1845,23 @@ const MessagesPage: React.FC = () => {
                             )
                           })()}
 
+                          {/* Inline translation. Mounted below the bubble
+                              so the original (encrypted-source-of-truth)
+                              text is always visible above the result.
+                              Cleared by tapping Translate again on the dot
+                              menu (handler in startTranslate). */}
+                          {translatingIds.has(message.id) && (
+                            <div className="text-xs text-white/40 mt-1 italic">Translating…</div>
+                          )}
+                          {translations[message.id] && (
+                            <div className={`mt-1 px-2 py-1.5 rounded-md text-sm whitespace-pre-wrap break-words ${
+                              isDark ? 'bg-white/5 text-white/80' : 'bg-black/5 text-black/80'
+                            }`}>
+                              <div className="text-[10px] uppercase tracking-wide opacity-50 mb-0.5">Translated</div>
+                              {translations[message.id]}
+                            </div>
+                          )}
+
                           {/* Edited indicator */}
                           {message.editHistory && message.editHistory.length > 0 && (
                               <button
@@ -1996,6 +2063,29 @@ const MessagesPage: React.FC = () => {
                     </button>
                   )}
 
+                  {/* Translate — available on any text-bearing message.
+                      Toggles off if already translated. The privacy modal
+                      gates the first run per browser (see startTranslate). */}
+                  {(() => {
+                    const msg = messages.find(m => m.id === contextMenu.messageId)
+                    const hasText = !!msg?.content && msg.contentType !== 'deleted'
+                    if (!hasText) return null
+                    const isTranslated = !!translations[contextMenu.messageId]
+                    const isInFlight = translatingIds.has(contextMenu.messageId)
+                    return (
+                      <button
+                        onClick={() => {
+                          startTranslate(contextMenu.messageId, msg!.content)
+                          setContextMenu(null)
+                        }}
+                        disabled={isInFlight}
+                        className="w-full px-4 py-2 text-left text-sm text-white hover:bg-white/10 cursor-pointer disabled:opacity-50 disabled:cursor-wait"
+                      >
+                        {isInFlight ? 'Translating…' : isTranslated ? 'Hide translation' : 'Translate'}
+                      </button>
+                    )
+                  })()}
+
                   {/* Delete for me — always available */}
                   <button
                     onClick={() => {
@@ -2009,6 +2099,30 @@ const MessagesPage: React.FC = () => {
                 </div>
               </>
             )}
+
+            {/* Privacy confirmation before translating a DM. Shown the first
+                time per browser; checking "Don't show this again" suppresses
+                future prompts (key 'dmTranslate'). */}
+            <ConfirmModal
+              isOpen={!!pendingTranslate}
+              onClose={() => setPendingTranslate(null)}
+              onConfirm={() => {
+                if (pendingTranslate) {
+                  runTranslate(pendingTranslate.id, pendingTranslate.text)
+                  setPendingTranslate(null)
+                }
+              }}
+              title="Translate this message?"
+              message={
+                "Direct messages are end-to-end encrypted. To translate this message, " +
+                "its plaintext will be sent to a third-party translation service " +
+                "(Google Translate). The service may log or retain this content.\n\n" +
+                "This affects only this message — your other DMs stay encrypted."
+              }
+              confirmText="Translate anyway"
+              cancelText="Cancel"
+              rememberKey="dmTranslate"
+            />
 
             {/* GIF Picker — fixed overlay */}
             {showGifPicker && !gifPreview && (
