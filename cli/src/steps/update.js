@@ -476,18 +476,126 @@ function findInitMigrationName(installDir) {
  * didn't change in this update; nginx serves dist/ directly so no
  * service restart is needed for FE-only changes.
  */
-export async function buildFrontend(installDir) {
-  const sp = ora('Building frontend...').start()
+/**
+ * Free memory check + optional-container shutdown for the FE build.
+ *
+ * vite + rollup hold the entire dep graph in memory during the build; on
+ * a constrained VPS (~6 GB total) it can spike to 1-2 GB resident, which
+ * stacks badly with anything else memory-heavy. test.caw.social ran out
+ * of headroom mid-build with signoz + ES + clickhouse all running and
+ * thrashed for minutes. The fix that worked: stop the observability
+ * stack, build, restart.
+ *
+ * This automates that. We check available memory; if below threshold we
+ * stop a configurable list of "optional" containers (default: signoz
+ * family — observability, no user impact when paused), build, then
+ * restart them in a finally block so they come back even if the build
+ * crashes.
+ *
+ * Operator overrides:
+ *   CAW_PREBUILD_STOP_CONTAINERS=name1,name2  (comma-sep; "" disables)
+ *   CAW_PREBUILD_MEM_THRESHOLD_MB=2048         (skip stop above this)
+ *
+ * Silent on systems without docker. Errors stopping containers are
+ * non-fatal — the build proceeds and may still succeed.
+ */
+const DEFAULT_OPTIONAL_CONTAINERS = [
+  'signoz',
+  'signoz-otel-collector',
+  'signoz-clickhouse',
+  'signoz-zookeeper-1',
+]
+
+function availableMemoryMb() {
   try {
-    sp.stop()
-    runAsInstallUser(`yarn build`, {
-      cwd: path.join(installDir, 'client', 'src', 'services', 'FrontEnd'),
-    })
-    console.log(success('  Frontend built — dist/ ready'))
-  } catch (e) {
-    sp.fail('Frontend build failed')
-    throw e
+    const out = execSync(`grep '^MemAvailable:' /proc/meminfo`, { encoding: 'utf8' })
+    const m = out.match(/MemAvailable:\s+(\d+)\s+kB/)
+    if (!m) return null
+    return Math.round(Number(m[1]) / 1024)
+  } catch {
+    return null  // not Linux / no /proc — skip the gate
   }
+}
+
+function dockerAvailable() {
+  try {
+    execSync(`docker --version`, { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+function listRunningOptionalContainers(names) {
+  if (!names.length || !dockerAvailable()) return []
+  try {
+    const out = runCapture(`docker ps --format '{{.Names}}'`, { stdio: 'pipe' })
+    const running = new Set(out.split('\n').map(s => s.trim()).filter(Boolean))
+    return names.filter(n => running.has(n))
+  } catch {
+    return []
+  }
+}
+
+async function withMemoryHeadroom(fn) {
+  const overrideRaw = process.env.CAW_PREBUILD_STOP_CONTAINERS
+  const names = overrideRaw === ''
+    ? []
+    : overrideRaw
+      ? overrideRaw.split(',').map(s => s.trim()).filter(Boolean)
+      : DEFAULT_OPTIONAL_CONTAINERS
+  const thresholdMb = Number(process.env.CAW_PREBUILD_MEM_THRESHOLD_MB) || 2048
+
+  const availMb = availableMemoryMb()
+  const stopped = []
+  if (availMb !== null && availMb < thresholdMb) {
+    const candidates = listRunningOptionalContainers(names)
+    if (candidates.length > 0) {
+      console.log(dim(`  Available memory ${availMb}MB < ${thresholdMb}MB — pausing optional containers for the build:`))
+      for (const name of candidates) console.log(dim(`    • ${name}`))
+      try {
+        execSync(`docker stop ${candidates.join(' ')}`, { stdio: 'ignore' })
+        stopped.push(...candidates)
+      } catch (e) {
+        console.log(warn(`  Failed to stop containers (continuing): ${e.message}`))
+      }
+    }
+  }
+
+  try {
+    return await fn()
+  } finally {
+    if (stopped.length > 0) {
+      // Restart in dependency order: zookeeper → clickhouse → otel → signoz
+      // (the order in DEFAULT_OPTIONAL_CONTAINERS reverses naturally if the
+      // operator follows the default; for custom lists it's their problem
+      // to order correctly).
+      const restartOrder = [...stopped].reverse()
+      try {
+        execSync(`docker start ${restartOrder.join(' ')}`, { stdio: 'ignore' })
+        console.log(dim(`  Restarted ${stopped.length} optional container(s).`))
+      } catch (e) {
+        console.log(warn(`  Failed to restart containers: ${e.message}`))
+        console.log(warn(`  Restart manually: docker start ${restartOrder.join(' ')}`))
+      }
+    }
+  }
+}
+
+export async function buildFrontend(installDir) {
+  await withMemoryHeadroom(async () => {
+    const sp = ora('Building frontend...').start()
+    try {
+      sp.stop()
+      runAsInstallUser(`yarn build`, {
+        cwd: path.join(installDir, 'client', 'src', 'services', 'FrontEnd'),
+      })
+      console.log(success('  Frontend built — dist/ ready'))
+    } catch (e) {
+      sp.fail('Frontend build failed')
+      throw e
+    }
+  })
 }
 
 /**
