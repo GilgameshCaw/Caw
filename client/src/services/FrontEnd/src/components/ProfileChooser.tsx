@@ -334,7 +334,6 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
   const pinnedAt = usePinnedProfilesStore(s => s.pinnedAt)
 
   const activeOwnerKey = activeToken?.address?.toLowerCase()
-  let anyTruncated = false
   const limitedTokensByAddress: Record<string, TokenData[]> = {}
 
   // Step 1: pick which wallets to show (up to MAX_WALLETS), with the active
@@ -344,7 +343,6 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
   const slotsForOthers = activeOwnerKey && allWalletKeys.includes(activeOwnerKey)
     ? MAX_WALLETS - 1
     : MAX_WALLETS
-  if (allWalletKeys.length > MAX_WALLETS) anyTruncated = true
   const orderedWalletKeys = [
     ...otherWalletKeys.slice(0, slotsForOthers),
     ...(activeOwnerKey && allWalletKeys.includes(activeOwnerKey) ? [activeOwnerKey] : []),
@@ -353,7 +351,9 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
   // Step 2: within each chosen wallet, sort by pinned-first (most-recently
   // pinned wins) then follower count desc, and cap to MAX_PROFILES_PER_WALLET.
   // If the active token is in this wallet but outside the cap, swap it into
-  // the visible slice.
+  // the visible slice. Track per-wallet hidden count for the "n more profiles..."
+  // hint shown below each truncated wallet group.
+  const hiddenCountByAddress: Record<string, number> = {}
   for (const addrKey of orderedWalletKeys) {
     const full = (visibleTokensByAddress[addrKey as Address] || []).slice()
     full.sort((a, b) => {
@@ -364,7 +364,6 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
       if (bp) return 1                                  // b pinned, a not
       return (followerCounts[b.tokenId] ?? 0) - (followerCounts[a.tokenId] ?? 0)
     })
-    if (full.length > MAX_PROFILES_PER_WALLET) anyTruncated = true
     let slice = full.slice(0, MAX_PROFILES_PER_WALLET)
     if (
       activeToken?.tokenId &&
@@ -378,6 +377,7 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
       }
     }
     limitedTokensByAddress[addrKey] = slice
+    hiddenCountByAddress[addrKey] = Math.max(0, full.length - slice.length)
   }
 
   // --- main render when tokens exist ---
@@ -549,44 +549,45 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
                     </button>
                   </li>
                 ))}
+                {hiddenCountByAddress[ownerAddress] > 0 && (
+                  <li className={`px-4 py-1.5 text-xs italic ${isDark ? 'text-white/40' : 'text-gray-500'}`}>
+                    {hiddenCountByAddress[ownerAddress]} more {hiddenCountByAddress[ownerAddress] === 1 ? 'profile' : 'profiles'}...
+                  </li>
+                )}
               </ul>
             </li>
           ))}
 
-          {/* Manage profiles (only when we truncated any wallet's list) */}
-          {anyTruncated && (
-            <li className={`border-t ${isDark ? 'border-white/20' : 'border-gray-200'}`}>
-              <Link
-                to="/settings/account"
-                onClick={() => setDropdownOpen(false)}
-                className={`cursor-pointer flex items-center gap-2 px-4 py-2 w-full text-left text-sm font-medium transition-all duration-200 ${
-                  isDark
-                    ? 'hover:bg-gray-800 text-yellow-400 hover:text-yellow-300'
-                    : 'hover:bg-gray-100 text-yellow-700 hover:text-yellow-800'
-                }`}
-              >
-                <HiUsers className="w-4 h-4 flex-shrink-0" />
-                <span>Manage my profiles</span>
-              </Link>
-            </li>
-          )}
-
-          {/* Sticky footer: create new profile */}
+          {/* Sticky footer: Create New (left) + Manage Profiles (right),
+              equal-width 2-column grid. Both always visible. */}
           <li
-            className={`sticky bottom-0 z-10 border-t ${
-              isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
+            className={`sticky bottom-0 z-10 border-t grid grid-cols-2 ${
+              isDark ? 'bg-black border-white/20 divide-x divide-white/10' : 'bg-white border-gray-200 divide-x divide-gray-200'
             }`}
           >
             <Link
-              to={`/usernames/new`}
-              className={`cursor-pointer flex items-center gap-2 px-4 py-2 w-full text-left text-sm font-medium transition-all duration-200 ${
+              to="/usernames/new"
+              onClick={() => setDropdownOpen(false)}
+              className={`cursor-pointer flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium transition-all duration-200 ${
                 isDark
                   ? 'hover:bg-gray-800 text-white'
                   : 'hover:bg-gray-100 text-black'
               }`}
             >
               <HiOutlinePlus className={`w-4 h-4 flex-shrink-0 ${isDark ? 'text-white/70' : 'text-black/60'}`} />
-              <span>Create new profile</span>
+              <span>Create New</span>
+            </Link>
+            <Link
+              to="/settings/account"
+              onClick={() => setDropdownOpen(false)}
+              className={`cursor-pointer flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium transition-all duration-200 ${
+                isDark
+                  ? 'hover:bg-gray-800 text-yellow-400 hover:text-yellow-300'
+                  : 'hover:bg-gray-100 text-yellow-700 hover:text-yellow-800'
+              }`}
+            >
+              <HiUsers className="w-4 h-4 flex-shrink-0" />
+              <span>Manage Profiles</span>
             </Link>
           </li>
         </ul>
