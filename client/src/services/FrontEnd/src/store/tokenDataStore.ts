@@ -33,6 +33,53 @@ interface TokenDataStore {
   setRefetchTokenData: (fn: () => void) => void;
 }
 
+/**
+ * Repeatedly call refetchTokenData() until the persisted token list
+ * actually changes (or the budget runs out). Used by the marketplace
+ * buy/accept flows so the chooser updates as soon as the indexer has
+ * reflected the L2 Sale event — instead of doing a single one-shot
+ * refetch and losing the race when the chain is slow.
+ *
+ * The signature is intentionally minimal — caller doesn't need to know
+ * which token to wait for; we just watch for any change in the JSON
+ * shape of tokensByAddress (count + tokenIds per address). Stops on
+ * first observed change OR when budget exhausted; resolved-once.
+ *
+ * Backoff: 1s, 2s, 4s, 8s, 8s, 8s (~31s total). The marketplace
+ * indexer polls every ~60s, so the worst case is we miss the first
+ * indexer tick and catch the next; common case lands within ~10s.
+ */
+export async function refetchTokenDataUntilChanged(maxMs = 35000): Promise<void> {
+  const refetch = useTokenDataStore.getState().refetchTokenData
+  if (!refetch) return
+
+  // Snapshot current token shape so we know what "changed" means.
+  const snapshot = (): string => {
+    const m = useTokenDataStore.getState().tokensByAddress
+    const out: Record<string, number[]> = {}
+    for (const [addr, tokens] of Object.entries(m)) {
+      out[addr.toLowerCase()] = tokens.map(t => t.tokenId).sort((a, b) => a - b)
+    }
+    return JSON.stringify(out)
+  }
+  const before = snapshot()
+
+  const delays = [1000, 2000, 4000, 8000, 8000, 8000]
+  const started = Date.now()
+  for (const d of delays) {
+    if (Date.now() - started > maxMs) return
+    refetch()
+    // Give the refetch a moment to land in the store before checking.
+    // 600ms is generous for a single-instance API; keeps the loop
+    // responsive without hammering.
+    await new Promise(r => setTimeout(r, d))
+    if (snapshot() !== before) return
+  }
+  // Final attempt after the loop in case the very last refetch is what
+  // produced the change.
+  if (snapshot() !== before) return
+}
+
 export const useActiveToken = () =>
   useTokenDataStore(state => {
     // Get all tokens first

@@ -5,7 +5,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { themeText, themeTextMuted, themeTextSecondary, themeBorder, themeBgSubtle } from '~/utils/theme'
 import { useMarketplaceListings, useMarketplaceSales } from '~/hooks/useMarketplace'
 import { apiFetch } from '~/api/client'
-import { useTokenDataStore, usePriceStore, useActiveToken } from '~/store/tokenDataStore'
+import { useTokenDataStore, usePriceStore, useActiveToken, refetchTokenDataUntilChanged } from '~/store/tokenDataStore'
 import { useMarketplaceStore, MarketplaceListing, MarketplaceOffer } from '~/store/marketplaceStore'
 import ListingCard from '~/components/marketplace/ListingCard'
 import ListingFilters from '~/components/marketplace/ListingFilters'
@@ -555,8 +555,10 @@ const MyOffersTab: React.FC = () => {
         }
       }
 
-      // Trigger a full refresh of token data to sync with chain/server
-      if (store.refetchTokenData) setTimeout(store.refetchTokenData, 2000)
+      // Backoff-poll until the chooser sees the ownership change. The
+      // server endpoint only flips offer status; User.address comes from
+      // the indexer reading the L2 OfferAccepted event.
+      refetchTokenDataUntilChanged()
     }
     setReceivedOffers(prev => prev.filter(o => o.offerId !== acceptingId))
     setAcceptingId(null)

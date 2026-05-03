@@ -10,7 +10,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { themeTextMuted, themeBgSubtle, themeBorder } from '~/utils/theme'
 import { useMarketplaceStore, MarketplaceOffer } from '~/store/marketplaceStore'
-import { usePriceStore, useTokenDataStore } from '~/store/tokenDataStore'
+import { usePriceStore, useTokenDataStore, refetchTokenDataUntilChanged } from '~/store/tokenDataStore'
 import { chains } from '~/config/chains'
 import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
 import { cawProfileMarketplaceAbi, cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
@@ -155,6 +155,10 @@ const ViewOffersModal: React.FC = () => {
         method: 'POST',
         body: JSON.stringify({ txHash: actionHash, buyer: offer.offerer }),
       }).catch(() => {})
+      // Backoff-poll for the chooser to reflect the new ownership.
+      // Server only flips offer status here; User.address is updated
+      // by MarketplaceIndexerService on the next L2 poll.
+      refetchTokenDataUntilChanged()
     } else if (actionType === 'cancel') {
       apiFetch(`/api/marketplace/offers/${offer.offerId}/cancelled`, {
         method: 'POST',

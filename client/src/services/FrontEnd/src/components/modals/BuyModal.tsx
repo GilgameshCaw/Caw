@@ -8,7 +8,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { themeTextSecondary, themeTextMuted, themeBgSubtle, themeBorder } from '~/utils/theme'
 import { useMarketplaceStore } from '~/store/marketplaceStore'
-import { usePriceStore, useTokenDataStore } from '~/store/tokenDataStore'
+import { usePriceStore, refetchTokenDataUntilChanged } from '~/store/tokenDataStore'
 import { chains } from '~/config/chains'
 import { CAW_NAME_MARKETPLACE_ADDRESS } from '~/../../../abi/addresses'
 import { cawProfileMarketplaceAbi } from '~/../../../abi/generated'
@@ -109,9 +109,12 @@ const BuyModal: React.FC = () => {
       body: JSON.stringify({ txHash: buyHash, buyer: address }),
     }).catch(err => console.warn('[BuyModal] Failed to mark as sold:', err))
 
-    // Refresh token data so the new token shows in profile chooser
-    const refetch = useTokenDataStore.getState().refetchTokenData
-    if (refetch) setTimeout(refetch, 2000)
+    // Backoff-poll until the token list actually shows the change. The
+    // server endpoint above only writes status — User.address is set by
+    // MarketplaceIndexerService on the next L2 poll. A one-shot refetch
+    // would lose that race; this keeps trying until the chooser sees
+    // the new ownership (or budget runs out).
+    refetchTokenDataUntilChanged()
   }, [isSuccess])
 
   // Quote LZ fee for L2 sync (pass tokenId + buyer to simulate the pending transfer)
