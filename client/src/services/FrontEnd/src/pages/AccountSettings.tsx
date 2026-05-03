@@ -14,6 +14,8 @@ import Tooltip from '~/components/Tooltip'
 import { getUserAvatar } from '~/utils/defaultAvatar'
 import Avatar from '~/components/Avatar'
 import { apiFetch, API_HOST, AuthError } from '~/api/client'
+import { useFollowerCounts } from '~/hooks/useFollowerCounts'
+import { formatAddress } from '~/utils'
 
 // 401s on the X verification flow are expected when the user's session
 // has expired or never authenticated for the active token — apiFetch's
@@ -419,10 +421,29 @@ const AccountSettings: React.FC = () => {
     if (token.address) setLastAddress(token.address.toLowerCase())
   }
 
-  // Get all tokens — if wallet is connected use that address, otherwise show all known tokens
-  const allTokens = address
-    ? tokensByAddress[address.toLowerCase()] || []
-    : Object.values(tokensByAddress).flat()
+  // Show every wallet the user has profiles in, grouped. Within each wallet
+  // sort by follower count desc. Active token's wallet is placed last so it
+  // sits closest to the action area at the bottom of the page.
+  const allTokens = Object.values(tokensByAddress).flat()
+  const followerCounts = useFollowerCounts(allTokens.map(t => t.tokenId))
+
+  const activeOwnerKey = activeToken?.address?.toLowerCase()
+  const walletKeys = Object.keys(tokensByAddress)
+  const otherWallets = walletKeys.filter(k => k.toLowerCase() !== activeOwnerKey)
+  const orderedWalletKeys = [
+    ...otherWallets,
+    ...(activeOwnerKey && walletKeys.some(k => k.toLowerCase() === activeOwnerKey)
+        ? [walletKeys.find(k => k.toLowerCase() === activeOwnerKey)!]
+        : []),
+  ]
+  const tokensByWalletSorted: Array<{ address: string; tokens: typeof allTokens }> = orderedWalletKeys
+    .map(addr => ({
+      address: addr,
+      tokens: (tokensByAddress[addr.toLowerCase() as `0x${string}`] || [])
+        .slice()
+        .sort((a, b) => (followerCounts[b.tokenId] ?? 0) - (followerCounts[a.tokenId] ?? 0)),
+    }))
+    .filter(g => g.tokens.length > 0)
 
   const handleLogoutCurrentAccount = () => {
     if (!activeTokenId) return
@@ -600,7 +621,8 @@ const AccountSettings: React.FC = () => {
           </section>
         )}
 
-        {/* All Usernames Section */}
+        {/* All Usernames Section — grouped by owning wallet, sorted by follower
+            count desc within each group. Active token's wallet is rendered last. */}
         {allTokens.length > 1 && (
           <section className="mb-8">
             <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
@@ -609,48 +631,67 @@ const AccountSettings: React.FC = () => {
               All Usernames ({allTokens.length})
             </h2>
 
-            <div className="space-y-2">
-              {allTokens.map(token => {
-                const isActive = token.tokenId === activeTokenId
-                return (
-                <button
-                  type="button"
-                  key={token.tokenId}
-                  onClick={() => handleSelectProfile(token)}
-                  disabled={isActive}
-                  aria-current={isActive ? 'true' : undefined}
-                  className={`w-full text-left flex items-center justify-between p-4 rounded-lg transition-colors ${
-                    isActive
-                      ? isDark ? 'bg-yellow-500/10 border border-yellow-500/30 cursor-default' : 'bg-yellow-50 border border-yellow-200 cursor-default'
-                      : isDark ? 'bg-white/5 hover:bg-white/10 cursor-pointer' : 'bg-gray-50 hover:bg-gray-100 cursor-pointer'
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <Avatar
-                      src={getUserAvatar(token)}
-                      alt={token.username}
-                      className="w-10 h-10 rounded-full"
-                      size="small"
-                    />
-                    <div>
-                      <p className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                        @{token.username}
-                      </p>
-                      <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-                        Token #{token.tokenId}
-                      </p>
-                    </div>
-                  </div>
-                  {isActive && (
-                    <span className={`text-xs px-2 py-1 rounded-full ${
-                      isDark ? 'bg-yellow-500/20 text-yellow-500' : 'bg-yellow-100 text-yellow-700'
-                    }`}>
-                      Active
+            <div className="space-y-6">
+              {tokensByWalletSorted.map(group => (
+                <div key={group.address}>
+                  <div className="flex items-center justify-between mb-2 px-1">
+                    <span className={`text-xs font-mono ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+                      {formatAddress(group.address)}
                     </span>
-                  )}
-                </button>
-                )
-              })}
+                    {group.address.toLowerCase() === activeOwnerKey && (
+                      <span className={`text-xs ${isDark ? 'text-yellow-500/80' : 'text-yellow-600'}`}>
+                        Current wallet
+                      </span>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    {group.tokens.map(token => {
+                      const isActive = token.tokenId === activeTokenId
+                      return (
+                      <button
+                        type="button"
+                        key={token.tokenId}
+                        onClick={() => handleSelectProfile(token)}
+                        disabled={isActive}
+                        aria-current={isActive ? 'true' : undefined}
+                        className={`w-full text-left flex items-center justify-between p-4 rounded-lg transition-colors ${
+                          isActive
+                            ? isDark ? 'bg-yellow-500/10 border border-yellow-500/30 cursor-default' : 'bg-yellow-50 border border-yellow-200 cursor-default'
+                            : isDark ? 'bg-white/5 hover:bg-white/10 cursor-pointer' : 'bg-gray-50 hover:bg-gray-100 cursor-pointer'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <Avatar
+                            src={getUserAvatar(token)}
+                            alt={token.username}
+                            className="w-10 h-10 rounded-full"
+                            size="small"
+                          />
+                          <div>
+                            <p className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                              @{token.username}
+                            </p>
+                            <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+                              Token #{token.tokenId}
+                              {followerCounts[token.tokenId] !== undefined && (
+                                <span className="ml-2">· {followerCounts[token.tokenId]} followers</span>
+                              )}
+                            </p>
+                          </div>
+                        </div>
+                        {isActive && (
+                          <span className={`text-xs px-2 py-1 rounded-full ${
+                            isDark ? 'bg-yellow-500/20 text-yellow-500' : 'bg-yellow-100 text-yellow-700'
+                          }`}>
+                            Active
+                          </span>
+                        )}
+                      </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           </section>
         )}

@@ -16,6 +16,7 @@ import { useUserByUsername, useUserByToken } from '~/hooks/useUserData';
 import { getUserAvatar } from '~/utils/defaultAvatar';
 import Avatar from '~/components/Avatar';
 import { useQuickSignPromptStore } from '~/components/modals/QuickSignModal';
+import { useFollowerCounts } from '~/hooks/useFollowerCounts';
 import { HiOutlinePlus, HiUsers } from 'react-icons/hi'
 
 const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
@@ -316,17 +317,56 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
   if (normalizedAddress && (!visibleTokensByAddress[normalizedAddress] || visibleTokensByAddress[normalizedAddress].length == 0))
       visibleTokensByAddress[normalizedAddress] = [];
 
-  // Dropdown UX: cap profiles per wallet so users with many profiles don't
-  // get a wall, BUT keep every wallet visible (otherwise multi-wallet users
-  // can lose entire wallets behind the cap). The "Manage my profiles" CTA
-  // appears whenever any wallet was truncated.
+  // Dropdown UX: cap to 3 wallets and 3 profiles per wallet, sorted by
+  // follower count desc within each wallet. Active token's wallet is ALWAYS
+  // included (placed last so it sits closest to the user's eye), and the
+  // active token itself is always included even if its follower count would
+  // otherwise push it outside the top-3 within its wallet.
   const MAX_PROFILES_PER_WALLET = 3
+  const MAX_WALLETS = 3
+  const allTokenIds: number[] = []
+  for (const list of Object.values(visibleTokensByAddress)) {
+    for (const t of (list || [])) allTokenIds.push(t.tokenId)
+  }
+  const followerCounts = useFollowerCounts(allTokenIds)
+
+  const activeOwnerKey = activeToken?.address?.toLowerCase()
   let anyTruncated = false
   const limitedTokensByAddress: Record<string, TokenData[]> = {}
-  for (const [addrKey, list] of Object.entries(visibleTokensByAddress)) {
-    const full = list || []
+
+  // Step 1: pick which wallets to show (up to MAX_WALLETS), with the active
+  // token's wallet guaranteed and placed last.
+  const allWalletKeys = Object.keys(visibleTokensByAddress)
+  const otherWalletKeys = allWalletKeys.filter(k => k !== activeOwnerKey)
+  const slotsForOthers = activeOwnerKey && allWalletKeys.includes(activeOwnerKey)
+    ? MAX_WALLETS - 1
+    : MAX_WALLETS
+  if (allWalletKeys.length > MAX_WALLETS) anyTruncated = true
+  const orderedWalletKeys = [
+    ...otherWalletKeys.slice(0, slotsForOthers),
+    ...(activeOwnerKey && allWalletKeys.includes(activeOwnerKey) ? [activeOwnerKey] : []),
+  ]
+
+  // Step 2: within each chosen wallet, sort by follower count desc and cap
+  // to MAX_PROFILES_PER_WALLET. If the active token is in this wallet but
+  // outside the cap, swap it into the visible slice.
+  for (const addrKey of orderedWalletKeys) {
+    const full = (visibleTokensByAddress[addrKey as Address] || []).slice()
+    full.sort((a, b) => (followerCounts[b.tokenId] ?? 0) - (followerCounts[a.tokenId] ?? 0))
     if (full.length > MAX_PROFILES_PER_WALLET) anyTruncated = true
-    limitedTokensByAddress[addrKey] = full.slice(0, MAX_PROFILES_PER_WALLET)
+    let slice = full.slice(0, MAX_PROFILES_PER_WALLET)
+    if (
+      activeToken?.tokenId &&
+      addrKey === activeOwnerKey &&
+      !slice.some(t => t.tokenId === activeToken.tokenId)
+    ) {
+      const activeRow = full.find(t => t.tokenId === activeToken.tokenId)
+      if (activeRow) {
+        // Replace the lowest-follower entry in slice with the active token.
+        slice = [...slice.slice(0, MAX_PROFILES_PER_WALLET - 1), activeRow]
+      }
+    }
+    limitedTokensByAddress[addrKey] = slice
   }
 
   // --- main render when tokens exist ---
@@ -499,8 +539,7 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
           {anyTruncated && (
             <li className={`border-t ${isDark ? 'border-white/20' : 'border-gray-200'}`}>
               <Link
-                to="/usernames?tab=mine"
-                state={{ scrollTo: 'my-profiles' }}
+                to="/settings/account"
                 className={`cursor-pointer flex items-center gap-2 px-4 py-2 w-full text-left text-sm font-medium transition-all duration-200 ${
                   isDark
                     ? 'hover:bg-gray-800 text-yellow-400 hover:text-yellow-300'
