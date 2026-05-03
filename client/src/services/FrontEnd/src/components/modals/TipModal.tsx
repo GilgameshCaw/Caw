@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import { themeTextSecondary, themeTextMuted, themeBorder } from '~/utils/theme'
 import { useSignAndSubmitAction, getValidatorTip } from '~/api/actions'
-import { useActiveToken } from '~/store/tokenDataStore'
+import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
 import { useAccount } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import InsufficientStakeModal from './InsufficientStakeModal'
@@ -11,8 +11,23 @@ import ModalHeader from './ModalHeader'
 import Tooltip from '~/components/Tooltip'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 
-const PRESET_AMOUNTS = [5000, 10000, 25000, 50000]
+const PRESET_USD_AMOUNTS = [0.01, 0.10, 1.00, 5.00]
 const MIN_TIP_AMOUNT = 1
+
+const formatUsd = (n: number): string =>
+  n < 1 ? `$${n.toFixed(2)}` : `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
+
+const formatCompactCaw = (n: number): string => {
+  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}b`
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}m`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
+  return n.toFixed(0)
+}
+
+const usdToCaw = (usd: number, cawPrice: number): number => {
+  if (!cawPrice || cawPrice <= 0) return 0
+  return Math.max(1, Math.round(usd / cawPrice))
+}
 
 interface TipModalProps {
   isOpen: boolean
@@ -36,7 +51,9 @@ const TipModal: React.FC<TipModalProps> = ({
   onTipSubmitted
 }) => {
   const { isDark } = useTheme()
-  const [amount, setAmount] = useState(PRESET_AMOUNTS[0].toString())
+  const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
+  const priceReady = cawPrice > 0
+  const [usdInput, setUsdInput] = useState(PRESET_USD_AMOUNTS[0].toString())
   const [tipState, setTipState] = useState<TipState>('idle')
   const [error, setError] = useState<string | null>(null)
 
@@ -54,16 +71,17 @@ const TipModal: React.FC<TipModalProps> = ({
   // Reset to fresh state when modal opens (unless tip is still pending)
   useEffect(() => {
     if (isOpen && tipState !== 'signing') {
-      setAmount(PRESET_AMOUNTS[0].toString())
+      setUsdInput(PRESET_USD_AMOUNTS[0].toString())
       setTipState('idle')
       setError(null)
     }
   }, [isOpen])
 
-  const tipAmount = parseInt(amount) || 0
+  const usdAmount = parseFloat(usdInput) || 0
+  const tipAmount = usdToCaw(usdAmount, cawPrice)
   const validatorTip = getValidatorTip()
   const totalCost = BigInt(tipAmount + Number(validatorTip)) * 10n**18n
-  const isValid = tipAmount >= MIN_TIP_AMOUNT
+  const isValid = priceReady && usdAmount > 0 && tipAmount >= MIN_TIP_AMOUNT
 
   const handleSubmit = async () => {
     if (!isValid) return
@@ -138,7 +156,7 @@ const TipModal: React.FC<TipModalProps> = ({
                 </svg>
               </div>
               <p className={`text-sm ${themeTextSecondary(isDark)}`}>
-                Tip of {tipAmount.toLocaleString()} CAW submitted!
+                Tip of {formatCompactCaw(tipAmount)} CAW submitted!
               </p>
             </div>
           ) : (
@@ -146,22 +164,22 @@ const TipModal: React.FC<TipModalProps> = ({
               {/* Preset amounts */}
               <div>
                 <label className={`text-sm font-medium ${themeTextSecondary(isDark)}`}>
-                  Select amount (CAW)
+                  Select amount (USD)
                 </label>
                 <div className="grid grid-cols-2 gap-2 mt-2">
-                  {PRESET_AMOUNTS.map(preset => (
+                  {PRESET_USD_AMOUNTS.map(preset => (
                     <button
                       key={preset}
-                      onClick={() => { setAmount(preset.toString()); setError(null) }}
+                      onClick={() => { setUsdInput(preset.toString()); setError(null) }}
                       className={`px-3 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer ${
-                        tipAmount === preset
+                        usdAmount === preset
                           ? 'bg-yellow-500 text-black'
                           : isDark
                             ? 'bg-white/10 text-white hover:bg-white/20'
                             : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
                       }`}
                     >
-                      {preset.toLocaleString()}
+                      {formatUsd(preset)}
                     </button>
                   ))}
                 </div>
@@ -170,23 +188,27 @@ const TipModal: React.FC<TipModalProps> = ({
               {/* Custom amount */}
               <div>
                 <label className={`text-sm font-medium ${themeTextSecondary(isDark)}`}>
-                  Amount
+                  Amount (USD)
                 </label>
-                <input
-                  type="number"
-                  min={1}
-                  value={amount}
-                  onChange={e => {
-                    setAmount(e.target.value)
-                    setError(null)
-                  }}
-                  placeholder="Enter amount (CAW)"
-                  className={`w-full mt-1 px-3 py-2 rounded-lg text-sm outline-none transition-colors ${
-                    isDark
-                      ? 'bg-white/10 text-white border border-white/20 focus:border-yellow-500/50 placeholder-gray-500'
-                      : 'bg-gray-100 text-gray-900 border border-gray-200 focus:border-yellow-500 placeholder-gray-400'
-                  }`}
-                />
+                <div className="relative mt-1">
+                  <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-sm ${themeTextMuted(isDark)}`}>$</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={usdInput}
+                    onChange={e => {
+                      setUsdInput(e.target.value)
+                      setError(null)
+                    }}
+                    placeholder="0.00"
+                    className={`w-full pl-7 pr-3 py-2 rounded-lg text-sm outline-none transition-colors ${
+                      isDark
+                        ? 'bg-white/10 text-white border border-white/20 focus:border-yellow-500/50 placeholder-gray-500'
+                        : 'bg-gray-100 text-gray-900 border border-gray-200 focus:border-yellow-500 placeholder-gray-400'
+                    }`}
+                  />
+                </div>
               </div>
 
               {/* Cost summary */}
@@ -223,13 +245,13 @@ const TipModal: React.FC<TipModalProps> = ({
                         : 'bg-yellow-500 text-black hover:bg-yellow-400'
                     }`}
                   >
-                    {wrongWallet ? 'Wrong Wallet' : tipState === 'signing' ? (
+                    {wrongWallet ? 'Wrong Wallet' : !priceReady ? 'Loading price…' : tipState === 'signing' ? (
                       <div className="flex items-center justify-center space-x-2">
                         <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin"></div>
                         <span>Signing...</span>
                       </div>
                     ) : (
-                      `Send ${isValid ? tipAmount.toLocaleString() + ' CAW' : 'Tip'}`
+                      `Send ${isValid ? formatCompactCaw(tipAmount) + ' CAW' : 'Tip'}`
                     )}
                   </button>
                 )
