@@ -130,6 +130,24 @@ ${tlsListen}
     location = / { return 404; }
 
     location /uploads/ {
+        # Wildcard CORS — the served bytes are either public-by-design
+        # (avatars, post images) or end-to-end-encrypted blobs (DMs) where
+        # the URL IS the only secret and the cleartext can't be derived
+        # from the response. JS-side fetch() (used by the DM decrypt path)
+        # needs an Access-Control-Allow-Origin header or the browser
+        # blocks the read. <img> tags don't need this, which is why media
+        # rendered before encrypted DMs broke. Mirrors the same wildcard
+        # pattern that /api/shorturl uses (138776a).
+        if ($request_method = OPTIONS) {
+            add_header Access-Control-Allow-Origin '*' always;
+            add_header Access-Control-Allow-Methods 'GET, HEAD, OPTIONS' always;
+            add_header Access-Control-Allow-Headers 'Range, If-Modified-Since, If-None-Match' always;
+            add_header Access-Control-Max-Age 86400 always;
+            add_header Content-Length 0;
+            add_header Content-Type text/plain;
+            return 204;
+        }
+
         proxy_pass ${upstream};
         proxy_set_header Host ${upstreamHost};
         proxy_ssl_server_name on;
@@ -140,14 +158,22 @@ ${tlsListen}
         # would create a separate cache key).
         proxy_set_header Cookie "";
         proxy_set_header Authorization "";
+        # Strip any inbound Origin too so Filebase's response doesn't echo
+        # an Access-Control-Allow-Origin we can't override; we set our own
+        # below.
+        proxy_hide_header Access-Control-Allow-Origin;
+        proxy_hide_header Access-Control-Allow-Methods;
+        proxy_hide_header Access-Control-Allow-Headers;
 
         proxy_cache filebase_${mediaHost.replace(/[^a-z0-9]/gi, '_')};
         proxy_cache_valid 200 30d;
         proxy_cache_valid 404 5m;
         proxy_cache_use_stale error timeout updating http_500 http_502 http_503 http_504;
         proxy_cache_lock on;
-        add_header X-Cache-Status $upstream_cache_status;
-        add_header Cache-Control "public, max-age=31536000, immutable";
+        add_header X-Cache-Status $upstream_cache_status always;
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        add_header Access-Control-Allow-Origin '*' always;
+        add_header Access-Control-Expose-Headers 'Content-Length, Content-Type, ETag, X-Cache-Status' always;
 
         # Don't pass the X-Forwarded-* headers — Filebase ignores them and
         # they bloat the request.
