@@ -5,11 +5,13 @@ import { useDmUnreadStore } from '~/store/dmUnreadStore'
 import { useDmMuteStore } from '~/store/dmMuteStore'
 import { useNotificationUnreadStore } from '~/store/notificationUnreadStore'
 import { useOffersUnreadStore } from '~/store/offersUnreadStore'
+import { useSalesUnreadStore } from '~/store/salesUnreadStore'
 import { apiFetch } from '~/api/client'
 
 interface BadgesResponse {
   notifications: number
   offers: number
+  sales: number
   dmConversations: { id: string; unreadCount: number }[]
 }
 
@@ -37,6 +39,7 @@ export function useBadgeSync() {
         if (cancelledRef.current) return
         useNotificationUnreadStore.getState().setUnreadCount(data.notifications)
         useOffersUnreadStore.getState().setUnreadCount(data.offers)
+        useSalesUnreadStore.getState().setUnreadCount(data.sales ?? 0)
         const mutedIds = useDmMuteStore.getState().mutedConversations
         const dmTotal = (data.dmConversations || [])
           .filter(c => !mutedIds.includes(c.id))

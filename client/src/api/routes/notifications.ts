@@ -267,7 +267,7 @@ router.get('/unread-count', requireAuth({ lookup: async (req) => Number(req.quer
  */
 router.post('/read', requireAuth({ field: 'userId', verifyOwnership: true }), async (req, res) => {
   try {
-    const { userId, notificationIds } = req.body
+    const { userId, notificationIds, types } = req.body
 
     if (!userId) {
       return res.status(400).json({ error: 'userId is required' })
@@ -275,9 +275,10 @@ router.post('/read', requireAuth({ field: 'userId', verifyOwnership: true }), as
 
     const userTokenId = parseInt(userId)
 
-    // If notificationIds provided, mark specific ones as read
-    // Otherwise mark all as read for the user
-    await NotificationService.markAsRead(userTokenId, notificationIds)
+    // If notificationIds provided → mark those specific ones.
+    // Else if types provided → mark all unread of those types (tab-scoped clear).
+    // Else → mark all as read for the user.
+    await NotificationService.markAsRead(userTokenId, notificationIds, types)
 
     return res.json({ success: true })
 

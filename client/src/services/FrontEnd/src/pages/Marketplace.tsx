@@ -24,6 +24,7 @@ import { cawProfileMarketplaceAbi, cawProfileAbi, cawProfileQuoterAbi } from '~/
 import { chains } from '~/config/chains'
 import UsernameSvg from '~/components/UsernameSvg'
 import { useOffersUnreadStore } from '~/store/offersUnreadStore'
+import { useSalesUnreadStore } from '~/store/salesUnreadStore'
 
 type Tab = 'listings' | 'sales' | 'mine' | 'offers'
 
@@ -48,8 +49,26 @@ const Marketplace: React.FC = () => {
   )
   const activeToken = useActiveToken()
   const offersUnreadCount = useOffersUnreadStore(s => s.unreadCount)
+  const salesUnreadCount = useSalesUnreadStore(s => s.unreadCount)
+  const setSalesUnreadCount = useSalesUnreadStore(s => s.setUnreadCount)
   const [stats, setStats] = useState<{ totalUsers: number; activeListings: number; totalCawBurned: string } | null>(null)
   const navigate = useNavigate()
+
+  // Clear the sales badge whenever the user lands on the sales tab —
+  // covers both the click handler AND deep-link / refresh on ?tab=sales.
+  useEffect(() => {
+    if (activeTab !== 'sales') return
+    if (salesUnreadCount === 0 || !activeToken?.tokenId) return
+    setSalesUnreadCount(0)
+    apiFetch('/api/notifications/read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: activeToken.tokenId,
+        types: ['SALE_SOLD', 'SALE_BOUGHT'],
+      }),
+    }).catch(() => {})
+  }, [activeTab, salesUnreadCount, activeToken?.tokenId])
 
   // Sync tab to URL
   useEffect(() => {
@@ -152,6 +171,11 @@ const Marketplace: React.FC = () => {
             </TabButton>
             <TabButton active={activeTab === 'sales'} onClick={() => setActiveTab('sales')} isDark={isDark}>
               Recent Sales
+              {salesUnreadCount > 0 && (
+                <span className="ml-1.5 min-w-[18px] h-[18px] inline-flex items-center justify-center text-[11px] font-bold rounded-full bg-yellow-500 text-black px-1">
+                  {salesUnreadCount > 99 ? '99+' : salesUnreadCount}
+                </span>
+              )}
             </TabButton>
             <TabButton active={activeTab === 'mine'} onClick={() => setActiveTab('mine')} isDark={isDark}>
               My Profiles

@@ -394,7 +394,7 @@ export class NotificationService {
   /**
    * Mark notifications as read
    */
-  static async markAsRead(userId: number, notificationIds?: number[]) {
+  static async markAsRead(userId: number, notificationIds?: number[], types?: NotificationType[]) {
     if (notificationIds) {
       // Mark specific notifications as read
       await prisma.notification.updateMany({
@@ -402,6 +402,13 @@ export class NotificationService {
           id: { in: notificationIds },
           userId
         },
+        data: { isRead: true }
+      })
+    } else if (types && types.length > 0) {
+      // Mark all unread notifications of the given types (e.g. clearing a
+      // tab-scoped badge like Recent Sales).
+      await prisma.notification.updateMany({
+        where: { userId, isRead: false, type: { in: types } },
         data: { isRead: true }
       })
     } else {
