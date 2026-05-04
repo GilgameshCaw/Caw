@@ -1228,6 +1228,130 @@ export const validatorService: Service = {
       }
     }
 
+    // Recovery for batch tx reverts that aren't transient. Two cases:
+    //   (a) Mirror race: re-simulation flags one or more cawonces as used.
+    //       Mark those failed; reset the rest to pending so the next poll
+    //       retries them in a fresh batch.
+    //   (b) Sim-passes-but-tx-reverts (e.g. underestimated LayerZero fee):
+    //       re-sim still says all-good. Bisect the entry list, re-quoting
+    //       and re-estimating gas per sub-batch, until each reverter is
+    //       isolated to a single-action submission and fails alone.
+    // Returns true if every entry in `entries` got a verdict written into
+    // `verdictByEntryId`. Returns false if it bailed out (transient error
+    // mid-recovery, etc.) so the caller can fall back to mark-all-failed.
+    async function recoverBatchFailure(
+      validatorId: number,
+      entries: any[],
+      originalRevertReason: string,
+      verdictByEntryId: Map<number, { succeeded: true } | { succeeded: false; reason: string } | { pending: true }>,
+      finalizedOut: any[],
+    ): Promise<boolean> {
+      console.log(`[Validator/recovery] Starting recovery for ${entries.length} entries; original revert: ${originalRevertReason.slice(0, 200)}`)
+
+      // Stage 1: re-simulate to catch mirror races. Cheap (one eth_call).
+      const reSimMulti = buildMultiActionData(entries)
+      let reSimResult: { successfulActions: any[]; rejectionMessages: string[]; quote: any }
+      try {
+        reSimResult = await simulateActions(validatorId, reSimMulti)
+      } catch (err: any) {
+        console.error('[Validator/recovery] Re-simulation threw — bailing recovery:', err.message)
+        return false
+      }
+      const reSimRejections = reSimResult.rejectionMessages || []
+      const anyNewRejections = reSimRejections.some((m: string) => m && m.length > 0)
+
+      if (anyNewRejections) {
+        // Mirror race (or stale state). Mark rejected entries failed; reset
+        // the rest to pending so they get a fresh batch on the next poll.
+        let failed = 0, pending = 0
+        entries.forEach((entry, i) => {
+          const reason = reSimRejections[i]
+          if (reason && reason.length > 0) {
+            verdictByEntryId.set(entry.id, { succeeded: false, reason })
+            failed++
+          } else {
+            verdictByEntryId.set(entry.id, { pending: true })
+            pending++
+          }
+        })
+        console.log(`[Validator/recovery] Re-sim flagged ${failed} entries — marked failed, ${pending} reset to pending`)
+        return true
+      }
+
+      // Stage 2: re-sim still says all-good but the real tx reverted.
+      // Bisect to isolate the bad action(s).
+      console.log('[Validator/recovery] Re-sim still passes — bisecting to isolate the reverter(s)')
+      await bisectAndSubmit(validatorId, entries, originalRevertReason, verdictByEntryId, finalizedOut, 0)
+      // Any entry without a verdict at this point means bisection bailed out
+      // before reaching it — caller's fallback will mark them failed.
+      const missing = entries.filter(e => !verdictByEntryId.has(e.id))
+      if (missing.length > 0) {
+        console.warn(`[Validator/recovery] ${missing.length} entries unresolved after bisection`)
+        return false
+      }
+      return true
+    }
+
+    // Recursive bisection. On revert with len > 1: split, recurse on each
+    // half (re-quoting + re-estimating gas per sub-batch). On revert with
+    // len == 1: that single action is the reverter — mark it failed.
+    // Successful submissions append to finalizedOut and write succeeded
+    // verdicts. Bounded by Math.ceil(log2(N)) recursion depth.
+    async function bisectAndSubmit(
+      validatorId: number,
+      entries: any[],
+      lastRevertReason: string,
+      verdictByEntryId: Map<number, { succeeded: true } | { succeeded: false; reason: string } | { pending: true }>,
+      finalizedOut: any[],
+      depth: number,
+    ): Promise<void> {
+      const indent = '  '.repeat(depth)
+      console.log(`[Validator/bisect]${indent} depth=${depth} trying ${entries.length} action(s)`)
+
+      if (entries.length === 0) return
+
+      // Re-build calldata + re-quote for *this* sub-batch (withdraw set may differ)
+      const subMulti = buildMultiActionData(entries)
+      const subQuote = await recalculateQuoteForActions(subMulti)
+      const subGasLimit = await estimateGasLimit(validatorId, subMulti, subQuote)
+
+      try {
+        const { processed } = await submitProcessActions(validatorId, subMulti, subQuote, subGasLimit)
+        // Sub-batch landed. Mark its entries succeeded based on what the
+        // contract actually emitted.
+        for (const entry of entries) {
+          const data = (entry.payload as any).data
+          const landed = processed.some(
+            (p: any) => p.senderId === data.senderId && p.cawonce === data.cawonce
+          )
+          if (landed) {
+            verdictByEntryId.set(entry.id, { succeeded: true })
+          } else {
+            verdictByEntryId.set(entry.id, { succeeded: false, reason: 'Action missing from ActionsProcessed event' })
+          }
+        }
+        finalizedOut.push(...processed)
+        console.log(`[Validator/bisect]${indent} ✓ ${processed.length}/${entries.length} action(s) landed`)
+        return
+      } catch (subErr: any) {
+        const subReason = subErr.message || lastRevertReason
+        if (entries.length === 1) {
+          // Terminal: this single action is the reverter.
+          const entry = entries[0]
+          verdictByEntryId.set(entry.id, { succeeded: false, reason: `Bisected revert: ${subReason}` })
+          console.warn(`[Validator/bisect]${indent} ✗ isolated reverter: TxQueue #${entry.id} (${subReason.slice(0, 120)})`)
+          return
+        }
+        // Split in half and recurse on each.
+        const mid = Math.floor(entries.length / 2)
+        const left = entries.slice(0, mid)
+        const right = entries.slice(mid)
+        console.log(`[Validator/bisect]${indent} ✗ revert at len=${entries.length}, splitting ${left.length} | ${right.length}`)
+        await bisectAndSubmit(validatorId, left, subReason, verdictByEntryId, finalizedOut, depth + 1)
+        await bisectAndSubmit(validatorId, right, subReason, verdictByEntryId, finalizedOut, depth + 1)
+      }
+    }
+
     /**
      * Check if a failed action should wait for a pending deposit instead of failing.
      * Returns 'waiting_for_deposit' if the user has a recent deposit in flight, or 'failed' otherwise.
@@ -1914,6 +2038,19 @@ console.log("succeededKeys", succeededKeys)
 
       let finalized: any[] = [];
       let submissionError: string | null = null;
+      // Per-entry overrides from the bisect / re-sim recovery path. When a
+      // batch tx reverts, we re-simulate to catch mirror races and bisect to
+      // isolate sim-passes-but-tx-reverts actions (e.g. the underestimated
+      // LayerZero withdraw fee). The recovery path resolves entries directly
+      // here so the reconciliation block below can defer to its verdict.
+      //   succeeded:true               -> mark done
+      //   succeeded:false, reason      -> markTxQueueFailed with that reason
+      //   pending:true                 -> reset to pending for next-poll retry
+      type RecoveryVerdict =
+        | { succeeded: true }
+        | { succeeded: false; reason: string }
+        | { pending: true }
+      const recoveryByEntryId = new Map<number, RecoveryVerdict>()
 
       try {
         console.log("[Validator] ========== SUBMITTING TRANSACTION TO BLOCKCHAIN ==========")
@@ -1991,13 +2128,52 @@ console.log("succeededKeys", succeededKeys)
           return
         }
 
-        submissionError = submitErr.message || 'Failed to submit transaction'
-        // finalized remains empty array, all submitted entries will be marked as failed
+        // Non-transient revert. Two cases we can recover from:
+        //   (a) Mirror race — sim was right at the time but another mirror
+        //       landed one of our cawonces between sim and submit. A fresh
+        //       sim now flags the bad action(s); the rest can retry.
+        //   (b) Sim-passes-but-tx-reverts (e.g. underestimated LayerZero
+        //       withdraw fee). Re-sim still says all-good. Bisect to isolate
+        //       the bad action(s) so they only fail themselves.
+        const revertReason = submitErr.message || 'Failed to submit transaction'
+        try {
+          const recoveryHandled = await recoverBatchFailure(
+            validatorId, succeededEntries, revertReason, recoveryByEntryId, finalized
+          )
+          if (recoveryHandled) {
+            // recoverBatchFailure populated recoveryByEntryId for every
+            // submitted entry; reconciliation below honors those verdicts.
+            submissionError = null
+          } else {
+            submissionError = revertReason
+          }
+        } catch (recoveryErr: any) {
+          console.error('[Validator] Batch failure recovery threw — falling back to mark-all-failed:', recoveryErr.message)
+          submissionError = revertReason
+        }
+        // For entries we did NOT resolve in recovery, finalized + submissionError
+        // drive the existing reconciliation: any submitted entry without a
+        // recovery verdict and not in finalized gets marked failed.
       }
 
       // 4) update database - properly track which entries succeeded vs failed
-      // Build array to track success/failure for each original entry
-      const finalStatuses = validatedEntries.map((entry, index) => {
+      // Build array to track success/failure for each original entry. The
+      // recovery path (re-sim + bisect) may have already resolved some
+      // entries directly — those verdicts win over the default reconciliation.
+      type Verdict = { succeeded: boolean; reason: string | null; pending?: true }
+      const finalStatuses: Verdict[] = validatedEntries.map((entry, index) => {
+        // Recovery override (only set for entries that went through the
+        // re-sim / bisect path).
+        const override = recoveryByEntryId.get(entry.id)
+        if (override) {
+          if ('pending' in override) {
+            return { succeeded: false, reason: null, pending: true }
+          }
+          if (override.succeeded) {
+            return { succeeded: true, reason: null }
+          }
+          return { succeeded: false, reason: override.reason }
+        }
         // Check if this entry was in the succeeded set that got submitted
         const wasSubmitted = succeededEntries.includes(entry)
         if (!wasSubmitted) {
@@ -2026,9 +2202,22 @@ console.log("succeededKeys", succeededKeys)
       // reports the success count.
       let txSuccess = 0
       let txFailed = 0
+      let txPending = 0
       await Promise.all(validatedEntries.map(async (entry, index) => {
-        const { succeeded, reason } = finalStatuses[index]
+        const status = finalStatuses[index]
+        const { succeeded, reason } = status
         const data = (entry.payload as any).data
+
+        // Recovery requeue: re-sim flagged a different entry, this one is
+        // innocent — reset to pending so the next poll batches it again.
+        if (status.pending) {
+          await prisma.txQueue.updateMany({
+            where: { id: entry.id, status: 'processing' },
+            data: { status: 'pending', reason: null },
+          })
+          txPending++
+          return
+        }
 
         if (!succeeded) {
           const currentEntry = await prisma.txQueue.findUnique({
@@ -2057,15 +2246,20 @@ console.log("succeededKeys", succeededKeys)
           console.warn(`[Validator] TxQueue #${entry.id} (${getActionType(data.actionType)} from ${data.senderId}) FAILED: ${reason || 'unknown'}`)
         }
       }))
-      if (txFailed > 0) {
-        console.log(`[Validator] TxQueue updated: ${txSuccess} success, ${txFailed} failed`)
+      if (txFailed > 0 || txPending > 0) {
+        console.log(`[Validator] TxQueue updated: ${txSuccess} success, ${txFailed} failed, ${txPending} reset to pending`)
       }
 
       // Update caw status for CAW actions that were processed. Like the
       // TxQueue loop above: log only anomalies (failures), not successes.
       await Promise.all(validatedEntries.map(async (entry, index) => {
-        const { succeeded, reason } = finalStatuses[index]
+        const status = finalStatuses[index]
+        const { succeeded, reason } = status
         const data = (entry.payload as any).data
+
+        // Pending requeues (recovery path): leave Caw row alone — it's still
+        // in flight, will resolve next poll.
+        if (status.pending) return
 
         // Check if this is a CAW action
         if (data.actionType === 0 || data.actionType === 'caw') {
