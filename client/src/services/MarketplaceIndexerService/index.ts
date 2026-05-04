@@ -281,25 +281,48 @@ export const marketplaceIndexerService: Service = {
                   price,
                   paymentToken: getPaymentLabel(paymentToken),
                 }
+                // Idempotency: if the indexer's lastBlock ever regresses
+                // (manual reset, mirror reseed, fresh-DB rebuild), the
+                // same Sale event will re-process. Without a dedupe
+                // guard we'd re-create notifications every time. groupKey
+                // is namespaced per-listing-per-side because seller and
+                // buyer get separate notifications and could be the same
+                // user in the rare case of a wash sale.
+                const sellerGroupKey = `sale_sold_${listing.listingId}`
+                const buyerGroupKey = `sale_bought_${listing.listingId}`
                 if (sellerUser) {
-                  await prisma.notification.create({
-                    data: {
-                      userId: sellerUser.tokenId,
-                      actorId: buyerUser?.tokenId ?? sellerUser.tokenId,
-                      type: 'SALE_SOLD',
-                      actionPayload: payload,
-                    },
+                  const existing = await prisma.notification.findFirst({
+                    where: { type: 'SALE_SOLD', userId: sellerUser.tokenId, groupKey: sellerGroupKey },
+                    select: { id: true },
                   })
+                  if (!existing) {
+                    await prisma.notification.create({
+                      data: {
+                        userId: sellerUser.tokenId,
+                        actorId: buyerUser?.tokenId ?? sellerUser.tokenId,
+                        type: 'SALE_SOLD',
+                        groupKey: sellerGroupKey,
+                        actionPayload: payload,
+                      },
+                    })
+                  }
                 }
                 if (buyerUser) {
-                  await prisma.notification.create({
-                    data: {
-                      userId: buyerUser.tokenId,
-                      actorId: sellerUser?.tokenId ?? buyerUser.tokenId,
-                      type: 'SALE_BOUGHT',
-                      actionPayload: payload,
-                    },
+                  const existing = await prisma.notification.findFirst({
+                    where: { type: 'SALE_BOUGHT', userId: buyerUser.tokenId, groupKey: buyerGroupKey },
+                    select: { id: true },
                   })
+                  if (!existing) {
+                    await prisma.notification.create({
+                      data: {
+                        userId: buyerUser.tokenId,
+                        actorId: sellerUser?.tokenId ?? buyerUser.tokenId,
+                        type: 'SALE_BOUGHT',
+                        groupKey: buyerGroupKey,
+                        actionPayload: payload,
+                      },
+                    })
+                  }
                 }
               } catch (err) {
                 console.warn('[Marketplace] Failed to create sale notifications:', err)
