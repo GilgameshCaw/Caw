@@ -186,9 +186,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     const currentUserId = activeTokenId || activeToken?.tokenId;
     const isCurrentUser = currentUserId && (userId == currentUserId);
 
-    headline = isCurrentUser
+    const recawWho = isCurrentUser
       ? 'Recawed by you'
       : 'Recawed by ' + (item.user.displayName || item.user.username);
+    headline = item.timestamp
+      ? `${recawWho} · ${formatTimeAgo(item.timestamp)}`
+      : recawWho;
     useItem = item.parent;
     isRecaw = true;
     isRecawByCurrentUser = !!isCurrentUser;
