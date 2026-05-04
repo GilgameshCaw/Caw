@@ -3,6 +3,7 @@ import { HiEyeOff, HiVolumeOff, HiUserRemove } from 'react-icons/hi'
 import { Link } from 'react-router-dom'
 import ModalWrapper from './ModalWrapper'
 import ModalHeader from './ModalHeader'
+import { useT } from '~/i18n/I18nProvider'
 
 type ActionType = 'hide-post' | 'mute-thread' | 'mute-account' | 'block-account' | 'mute-words'
 
@@ -14,42 +15,14 @@ interface MuteConfirmModalProps {
   onConfirm: () => void
 }
 
-const ACTION_CONFIG: Record<ActionType, {
-  title: string
-  description: string
-  icon: React.ComponentType<{ className?: string }>
-  buttonText: string
-}> = {
-  'hide-post': {
-    title: 'Post Hidden',
-    description: 'This post has been hidden from your feed. You won\'t see it again unless you unhide it.',
-    icon: HiEyeOff,
-    buttonText: 'Got it'
-  },
-  'mute-thread': {
-    title: 'Thread Muted',
-    description: 'You\'ve muted this thread. You won\'t receive notifications for likes, replies, reposts, or quotes on this post or its replies.',
-    icon: HiVolumeOff,
-    buttonText: 'Got it'
-  },
-  'mute-account': {
-    title: 'Account Muted',
-    description: 'Posts from this account will no longer appear in your feed. They can still see your posts and follow you.',
-    icon: HiVolumeOff,
-    buttonText: 'Got it'
-  },
-  'block-account': {
-    title: 'Account Blocked',
-    description: 'This account can no longer see your posts, follow you, or interact with you. You won\'t see their content either.',
-    icon: HiUserRemove,
-    buttonText: 'Got it'
-  },
-  'mute-words': {
-    title: 'Words Muted',
-    description: 'Posts containing these words will be hidden from your feed.',
-    icon: HiVolumeOff,
-    buttonText: 'Got it'
-  }
+// Icon-only — title/description/button text now resolved through t()
+// inside the component so they reflect the active locale.
+const ACTION_ICON: Record<ActionType, React.ComponentType<{ className?: string }>> = {
+  'hide-post':     HiEyeOff,
+  'mute-thread':   HiVolumeOff,
+  'mute-account':  HiVolumeOff,
+  'block-account': HiUserRemove,
+  'mute-words':    HiVolumeOff,
 }
 
 const STORAGE_KEY = 'hideMuteConfirmModal'
@@ -69,10 +42,16 @@ const MuteConfirmModal: React.FC<MuteConfirmModalProps> = ({
   targetName,
   onConfirm
 }) => {
+  const t = useT()
   const [dontShowAgain, setDontShowAgain] = useState(false)
 
-  const config = ACTION_CONFIG[actionType]
-  const Icon = config.icon
+  // The description has a `this account` substring that gets swapped for
+  // `@username` when targetName is set. The translated description must
+  // also use the same `this account` placeholder so the same .replace()
+  // works across locales — the en.json values keep that token.
+  const titleKey       = `mute_confirm.${actionType.replace('-', '_')}.title`
+  const descriptionKey = `mute_confirm.${actionType.replace('-', '_')}.description`
+  const Icon = ACTION_ICON[actionType]
 
   const handleConfirm = () => {
     if (dontShowAgain) {
@@ -97,7 +76,7 @@ const MuteConfirmModal: React.FC<MuteConfirmModalProps> = ({
       className="shadow-2xl"
     >
       <ModalHeader
-        title={config.title}
+        title={t(titleKey)}
         onClose={onClose}
         icon={<Icon className="w-5 h-5 text-yellow-500" />}
         border={false}
@@ -108,31 +87,31 @@ const MuteConfirmModal: React.FC<MuteConfirmModalProps> = ({
       <div className="px-4 pb-4">
         <p className="text-sm mb-4 text-white/70">
           {targetName
-            ? config.description.replace('this account', `@${targetName}`)
-            : config.description
+            ? t(descriptionKey).replace('this account', `@${targetName}`)
+            : t(descriptionKey)
           }
         </p>
 
         <p className="text-sm mb-4 text-white/50">
-          You can undo this anytime in
+          {t('mute_confirm.undo_hint')}
           <br />
           <Link
             to="/settings/muted"
             className="underline text-yellow-500 hover:text-yellow-400"
             onClick={onClose}
           >
-            Settings → Muted Content
+            {t('mute_confirm.undo_link')}
           </Link>.
         </p>
 
         {actionType !== 'mute-thread' && actionType !== 'block-account' && (
           <p className="text-xs mb-4 text-white/40">
-            Note: This preference is stored in this browser only and will apply to all accounts you access on this device.
+            {t('mute_confirm.note.local_storage')}
           </p>
         )}
         {actionType === 'block-account' && (
           <p className="text-xs mb-4 text-white/40">
-            Note: Blocks are saved to your account and will apply across all devices.
+            {t('mute_confirm.note.account_wide')}
           </p>
         )}
 
@@ -155,7 +134,7 @@ const MuteConfirmModal: React.FC<MuteConfirmModalProps> = ({
               </svg>
             )}
           </button>
-          Don't show this message again
+          {t('mute_confirm.dont_show_message')}
         </label>
 
         {/* Button */}
@@ -163,7 +142,7 @@ const MuteConfirmModal: React.FC<MuteConfirmModalProps> = ({
           onClick={handleConfirm}
           className="w-full py-2.5 px-4 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition-colors cursor-pointer"
         >
-          {config.buttonText}
+          {t('mute_confirm.got_it')}
         </button>
       </div>
     </ModalWrapper>

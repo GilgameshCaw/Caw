@@ -10,6 +10,7 @@ import ModalWrapper from './ModalWrapper'
 import ModalHeader from './ModalHeader'
 import Tooltip from '~/components/Tooltip'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
+import { useT } from '~/i18n/I18nProvider'
 
 const PRESET_USD_AMOUNTS = [0.01, 0.10, 1.00, 5.00]
 const MIN_TIP_AMOUNT = 1
@@ -53,6 +54,7 @@ const TipModal: React.FC<TipModalProps> = ({
   onTipSubmitted
 }) => {
   const { isDark } = useTheme()
+  const t = useT()
   const cawPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
   const priceReady = cawPrice > 0
   const [usdInput, setUsdInput] = useState(PRESET_USD_AMOUNTS[0].toString())
@@ -94,7 +96,7 @@ const TipModal: React.FC<TipModalProps> = ({
     }
 
     if (!activeTokenId) {
-      setError('No active token selected')
+      setError(t('tip.error.no_token'))
       return
     }
 
@@ -135,9 +137,9 @@ const TipModal: React.FC<TipModalProps> = ({
       console.error('Tip failed:', err)
       setTipState('idle')
       if (err.message?.includes('rejected') || err.message?.includes('denied')) {
-        setError('Transaction rejected')
+        setError(t('profile.error.tx_rejected'))
       } else {
-        setError(err.message?.split('\n')[0]?.slice(0, 100) || 'Failed to send tip')
+        setError(err.message?.split('\n')[0]?.slice(0, 100) || t('tip.error.failed'))
       }
     }
   }
@@ -145,7 +147,7 @@ const TipModal: React.FC<TipModalProps> = ({
   return (
     <>
       <ModalWrapper isOpen={isOpen} onClose={onClose} maxWidth="max-w-sm">
-        <ModalHeader title={`Tip @${recipientUsername}`} onClose={onClose} />
+        <ModalHeader title={t('tip.title', { username: recipientUsername })} onClose={onClose} />
 
         {/* Content */}
         <div className="p-4 space-y-4">
@@ -158,7 +160,7 @@ const TipModal: React.FC<TipModalProps> = ({
                 </svg>
               </div>
               <p className={`text-sm ${themeTextSecondary(isDark)}`}>
-                Tip of {formatCompactCaw(tipAmount)} CAW submitted!
+                {t('tip.submitted', { amount: formatCompactCaw(tipAmount) })}
               </p>
             </div>
           ) : (
@@ -166,7 +168,7 @@ const TipModal: React.FC<TipModalProps> = ({
               {/* Preset amounts */}
               <div>
                 <label className={`text-sm font-medium ${themeTextSecondary(isDark)}`}>
-                  Select amount (USD)
+                  {t('tip.select_amount')}
                 </label>
                 <div className="grid grid-cols-2 gap-2 mt-2">
                   {PRESET_USD_AMOUNTS.map(preset => (
@@ -190,7 +192,7 @@ const TipModal: React.FC<TipModalProps> = ({
               {/* Custom amount */}
               <div>
                 <label className={`text-sm font-medium ${themeTextSecondary(isDark)}`}>
-                  Amount (USD)
+                  {t('tip.amount_usd')}
                 </label>
                 <div className="relative mt-1">
                   <span className={`absolute left-3 top-1/2 -translate-y-1/2 text-sm ${themeTextMuted(isDark)}`}>$</span>
@@ -216,15 +218,15 @@ const TipModal: React.FC<TipModalProps> = ({
               {/* Cost summary */}
               <div className={`text-xs space-y-1 ${themeTextMuted(isDark)}`}>
                 <div className="flex justify-between">
-                  <span>Tip amount</span>
+                  <span>{t('tip.row.tip_amount')}</span>
                   <span>{isValid ? tipAmount.toLocaleString() : '—'} CAW</span>
                 </div>
                 <div className="flex justify-between">
-                  <span>Validator fee</span>
+                  <span>{t('tip.row.validator_fee')}</span>
                   <span>{validatorTip.toString()} CAW</span>
                 </div>
                 <div className={`flex justify-between font-medium pt-1 border-t ${themeBorder(isDark)} ${themeTextSecondary(isDark)}`}>
-                  <span>Total</span>
+                  <span>{t('tip.row.total')}</span>
                   <span>{isValid ? (tipAmount + Number(validatorTip)).toLocaleString() : '—'} CAW</span>
                 </div>
               </div>
@@ -247,18 +249,18 @@ const TipModal: React.FC<TipModalProps> = ({
                         : 'bg-yellow-500 text-black hover:bg-yellow-400'
                     }`}
                   >
-                    {wrongWallet ? 'Wrong Wallet' : !priceReady ? 'Loading price…' : tipState === 'signing' ? (
+                    {wrongWallet ? t('post_form.button.wrong_wallet') : !priceReady ? t('tip.button.loading_price') : tipState === 'signing' ? (
                       <div className="flex items-center justify-center space-x-2">
                         <div className="w-4 h-4 border-2 border-black/30 border-t-black rounded-full animate-spin"></div>
-                        <span>Signing...</span>
+                        <span>{t('messages.signin.signing')}</span>
                       </div>
                     ) : (
-                      `Send ${isValid ? formatCompactCaw(tipAmount) + ' CAW' : 'Tip'}`
+                      isValid ? t('tip.button.send_amount', { amount: formatCompactCaw(tipAmount) + ' CAW' }) : t('tip.button.send')
                     )}
                   </button>
                 )
                 return wrongWallet
-                  ? <Tooltip text="Please switch to the correct wallet" className="cursor-not-allowed">{btn}</Tooltip>
+                  ? <Tooltip text={t('post_form.error.wrong_wallet_tooltip')} className="cursor-not-allowed">{btn}</Tooltip>
                   : btn
               })()}
             </>

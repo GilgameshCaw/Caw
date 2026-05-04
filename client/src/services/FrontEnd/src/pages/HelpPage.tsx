@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
+import { useT } from '~/i18n/I18nProvider'
 import { HiArrowLeft, HiChevronDown, HiChevronUp, HiExternalLink, HiCode, HiDocumentText, HiGlobe, HiCurrencyDollar, HiUserGroup, HiChartBar, HiBeaker } from 'react-icons/hi'
 import { useChainId } from 'wagmi'
 import { chains } from '~/config/chains'
@@ -21,6 +22,7 @@ interface HelpPageProps {
 
 const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
   const { isDark } = useTheme()
+  const t = useT()
   const location = useLocation()
   const navigate = useNavigate()
   const [expandedFAQ, setExpandedFAQ] = useState<number | null>(null)
@@ -83,20 +85,20 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
   const officialResources: ResourceItem[] = [
     {
       icon: <HiDocumentText className="w-6 h-6" />,
-      title: 'CAW Manifesto',
-      description: 'The original vision for decentralized social media',
+      title: t('help.resources.official.manifesto.title'),
+      description: t('help.resources.official.manifesto.description'),
       url: '/help/manifesto'
     },
     {
       icon: <HiCode className="w-6 h-6" />,
-      title: 'GitHub',
-      description: 'Source code and development repositories',
+      title: t('help.resources.official.github.title'),
+      description: t('help.resources.official.github.description'),
       url: 'https://github.com/cawdevelopment'
     },
     {
       icon: <HiUserGroup className="w-6 h-6" />,
-      title: 'Telegram Community',
-      description: 'Join the CAW builders community',
+      title: t('help.resources.official.telegram.title'),
+      description: t('help.resources.official.telegram.description'),
       url: 'https://t.me/cawbuilders'
     },
   ]
@@ -104,26 +106,26 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
   const contractResources: ResourceItem[] = [
     {
       icon: <HiCurrencyDollar className="w-6 h-6" />,
-      title: 'CAW Token (Ethereum)',
+      title: t('help.resources.contracts.caw_token.title'),
       description: '0xf3b9569F82B18aEf890De263B84189bd33EBe452',
       url: 'https://etherscan.io/token/0xf3b9569F82B18aEf890De263B84189bd33EBe452'
     },
     {
       icon: <HiChartBar className="w-6 h-6" />,
-      title: 'CoinGecko',
-      description: 'Price charts and market data',
+      title: t('help.resources.contracts.coingecko.title'),
+      description: t('help.resources.contracts.coingecko.description'),
       url: 'https://www.coingecko.com/en/coins/a-hunters-dream'
     },
     {
       icon: <HiChartBar className="w-6 h-6" />,
-      title: 'CoinMarketCap',
-      description: 'Market cap and trading info',
+      title: t('help.resources.contracts.coinmarketcap.title'),
+      description: t('help.resources.contracts.coinmarketcap.description'),
       url: 'https://coinmarketcap.com/currencies/caw/'
     },
     {
       icon: <HiGlobe className="w-6 h-6" />,
-      title: 'Dextools',
-      description: 'Trading charts and analytics',
+      title: t('help.resources.contracts.dextools.title'),
+      description: t('help.resources.contracts.dextools.description'),
       url: 'https://www.dextools.io/app/ether/pair-explorer/0xf3b9569F82B18aEf890De263B84189bd33EBe452'
     },
   ]
@@ -162,48 +164,48 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
 
   const faqItems: FAQItem[] = [
     {
-      question: "What is CAW?",
-      answer: "CAW is a decentralized social protocol built on blockchain smart contracts. It's designed as a trustless social clearing house focused on freedom of speech, where no single person, entity, or group has ultimate control over the system."
+      question: t('help.faq.q1.question'),
+      answer: t('help.faq.q1.answer')
     },
     {
-      question: "How does CAW work under the hood?",
-      answer: "CAW uses EIP-712 signature-based transactions for gasless social interactions. When you post, like, or follow, you sign a message off-chain with your wallet. Validators collect these signatures and batch them into on-chain transactions on L2 networks (like Base) where gas costs are minimal.\n\nAll actions are automatically archived to multiple blockchain networks via LayerZero cross-chain messaging. This means your data is stored on both the L2 network and archive chains like Arbitrum, ensuring permanent accessibility even if one network goes offline.\n\nBecause everything is on-chain and the contracts are immutable (no admin keys), anyone can verify the data, run their own client, or build alternative frontends. This creates a truly trustless system where no single entity controls the protocol."
+      question: t('help.faq.q2.question'),
+      answer: t('help.faq.q2.answer')
     },
     {
-      question: "How do I get a CAW username?",
-      answer: "You burn CAW tokens through a smart contract to mint an NFT that becomes your username. The fewer characters in your username, the higher the cost. This NFT grants access to your account, including your CAW balance and direct messages."
+      question: t('help.faq.q3.question'),
+      answer: t('help.faq.q3.answer')
     },
     {
-      question: "What does 'staking' do?",
-      answer: "Staking CAW allows you to perform actions on the platform like posting, liking, and recawing. When users create posts, the CAW spent is distributed to stakers. The more you stake, the more you can earn from platform activity."
+      question: t('help.faq.q4.question'),
+      answer: t('help.faq.q4.answer')
     },
     {
-      question: "Why is there a 420 character limit?",
-      answer: "The protocol limits posts to 420 characters by design. This keeps messages concise and reduces on-chain storage costs while still allowing meaningful communication. If your message exceeds 420 characters, the frontend will automatically split it into multiple posts (a thread) to preserve your full message."
+      question: t('help.faq.q5.question'),
+      answer: t('help.faq.q5.answer')
     },
     {
-      question: "Can my content be censored?",
-      answer: "The underlying CAW protocol has no content moderation - it's fully decentralized and immutable. However, individual frontends (like this app) may choose to filter content. If blocked from one frontend, you can always access CAW directly or through another frontend."
+      question: t('help.faq.q6.question'),
+      answer: t('help.faq.q6.answer')
     },
     {
-      question: "Are transactions gasless?",
-      answer: "Most interactions (posting, liking, recawing) are designed to be gasless via signature-based contracts. You only need to pay gas for minting your NFT username and depositing/withdrawing CAW."
+      question: t('help.faq.q7.question'),
+      answer: t('help.faq.q7.answer')
     },
     {
-      question: "Who controls CAW?",
-      answer: "No one. The manifesto states that deployers must renounce all contract keys with no multi-sig or upgradeable proxies. CAW is 'by design without design' - it's up to the community to shape its future."
+      question: t('help.faq.q8.question'),
+      answer: t('help.faq.q8.answer')
     },
     {
-      question: "What happens to the CAW I spend on the platform?",
-      answer: "CAW spent on the platform is distributed to participants:\n• Posting: CAW goes to stakers\n• Liking: CAW goes to the original poster\n• ReCawing: Split between the poster and stakers\n• Following: CAW goes to stakers\n\nThis creates an economic ecosystem rewarding content creators and supporters."
+      question: t('help.faq.q9.question'),
+      answer: t('help.faq.q9.answer')
     },
     {
-      question: "How is my data protected from censorship?",
-      answer: "Every action you take on CAW is automatically archived to multiple blockchain networks via LayerZero cross-chain messaging. Even if one network were to censor your content, the data remains permanently accessible on archive chains like Arbitrum."
+      question: t('help.faq.q10.question'),
+      answer: t('help.faq.q10.answer')
     },
     {
-      question: "What happens if the storage chain goes away?",
-      answer: "Your data is automatically archived to multiple blockchain networks via LayerZero cross-chain messaging. Even if one storage chain were to go offline or censor content, the data remains permanently accessible on other archive chains like Arbitrum. As long as at least one archive chain remains accessible, your complete history of actions can be reconstructed from the blockchain events."
+      question: t('help.faq.q11.question'),
+      answer: t('help.faq.q11.answer')
     }
   ]
 
@@ -242,22 +244,22 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
           </Link>
           <div>
             <h1 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-              Help & Resources
+              {t('help.header.title')}
             </h1>
             <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-              Learn about CAW
+              {t('help.header.subtitle')}
             </p>
           </div>
         </div>
 
         {/* Tab Navigation - Desktop */}
         <div className={`hidden md:flex border-b mb-6 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
-          <TabButton tab="faq" label="FAQ" />
-          <TabButton tab="history" label="History" />
-          <TabButton tab="manifesto" label="Manifesto" />
-          <TabButton tab="gettingstarted" label="Getting Started" />
-          <TabButton tab="developers" label="Developers" />
-          <TabButton tab="resources" label="Resources" />
+          <TabButton tab="faq" label={t('help.tab.faq')} />
+          <TabButton tab="history" label={t('help.tab.history')} />
+          <TabButton tab="manifesto" label={t('help.tab.manifesto')} />
+          <TabButton tab="gettingstarted" label={t('help.tab.getting_started')} />
+          <TabButton tab="developers" label={t('help.tab.developers')} />
+          <TabButton tab="resources" label={t('help.tab.resources')} />
         </div>
 
         {/* Tab Navigation - Mobile with dropdowns */}
@@ -272,7 +274,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                   : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
               }`}
             >
-              {activeSection === 'gettingstarted' ? 'Getting Started' : 'FAQ'}
+              {activeSection === 'gettingstarted' ? t('help.tab.getting_started') : t('help.tab.faq')}
               <HiChevronDown className={`w-4 h-4 transition-transform ${mobileDropdown === 'faq' ? 'rotate-180' : ''}`} />
               {(activeSection === 'faq' || activeSection === 'gettingstarted') && (
                 <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
@@ -290,7 +292,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                       : isDark ? 'text-white hover:bg-white/5' : 'text-gray-900 hover:bg-gray-50'
                   }`}
                 >
-                  FAQ
+                  {t('help.tab.faq')}
                 </button>
                 <button
                   onClick={() => { handleTabClick('gettingstarted'); setMobileDropdown(null) }}
@@ -300,7 +302,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                       : isDark ? 'text-white hover:bg-white/5' : 'text-gray-900 hover:bg-gray-50'
                   }`}
                 >
-                  Getting Started
+                  {t('help.tab.getting_started')}
                 </button>
               </div>
             )}
@@ -316,7 +318,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                   : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
               }`}
             >
-              {activeSection === 'manifesto' ? 'Manifesto' : 'History'}
+              {activeSection === 'manifesto' ? t('help.tab.manifesto') : t('help.tab.history')}
               <HiChevronDown className={`w-4 h-4 transition-transform ${mobileDropdown === 'history' ? 'rotate-180' : ''}`} />
               {(activeSection === 'history' || activeSection === 'manifesto') && (
                 <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
@@ -334,7 +336,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                       : isDark ? 'text-white hover:bg-white/5' : 'text-gray-900 hover:bg-gray-50'
                   }`}
                 >
-                  History
+                  {t('help.tab.history')}
                 </button>
                 <button
                   onClick={() => { handleTabClick('manifesto'); setMobileDropdown(null) }}
@@ -344,7 +346,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                       : isDark ? 'text-white hover:bg-white/5' : 'text-gray-900 hover:bg-gray-50'
                   }`}
                 >
-                  Manifesto
+                  {t('help.tab.manifesto')}
                 </button>
               </div>
             )}
@@ -359,7 +361,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                 : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
             }`}
           >
-            Devs
+            {t('help.tab.developers_short')}
             {activeSection === 'developers' && (
               <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
             )}
@@ -374,7 +376,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                 : isDark ? 'text-white/60 hover:text-white' : 'text-gray-500 hover:text-gray-900'
             }`}
           >
-            Resources
+            {t('help.tab.resources')}
             {activeSection === 'resources' && (
               <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-yellow-500" />
             )}
@@ -421,33 +423,28 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
           <div className="space-y-6">
             <div className={`p-6 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50 shadow-xl'}`}>
               <h2 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                The Origins of CAW
+                {t('help.history.heading')}
               </h2>
 
               <div className={`space-y-4 text-sm leading-relaxed ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
                 <p>
-                  CAW (A Hunter's Dream) emerged in 2022 with a verifiable on-chain connection to Ryoshi, the
-                  pseudonymous creator of Shiba Inu. Blockchain records show a direct link between the wallets,
-                  sparking intense speculation and investigation within the crypto community.
+                  {t('help.history.intro')}
                 </p>
 
                 <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  The Scavenger Hunt
+                  {t('help.history.scavenger_hunt.heading')}
                 </h3>
                 <p>
-                  Rather than a traditional launch, CAW was revealed through an elaborate cryptographic scavenger hunt.
-                  Community members decoded clues, solved puzzles, and pieced together fragments scattered across the
-                  blockchain and web. The hunt eventually led to the <Link to="/help/manifesto" className={`underline ${isDark ? 'text-yellow-500 hover:text-yellow-400' : 'text-yellow-700 hover:text-yellow-600'}`}>CAW Manifesto</Link> — a vision for a truly decentralized
-                  social protocol.
+                  {t('help.history.scavenger_hunt.body_before_link')}
+                  <Link to="/help/manifesto" className={`underline ${isDark ? 'text-yellow-500 hover:text-yellow-400' : 'text-yellow-700 hover:text-yellow-600'}`}>{t('help.history.scavenger_hunt.link_text')}</Link>
+                  {t('help.history.scavenger_hunt.body_after_link')}
                 </p>
 
                 <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  Community-Built
+                  {t('help.history.community_built.heading')}
                 </h3>
                 <p>
-                  The Manifesto made clear that CAW was "by design without design" — no official team, no roadmap,
-                  no promises. It was left entirely to the community to interpret the vision and build the protocol.
-                  What you see today is the result of that effort.
+                  {t('help.history.community_built.body')}
                 </p>
               </div>
             </div>
@@ -459,169 +456,170 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
           <div className="space-y-6">
             <div className={`p-6 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50 shadow-xl'}`}>
               <p className={`text-xs mb-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-                Pulled verbatim from the decoded <Link to="/help/history" className={`underline ${isDark ? 'text-yellow-500/60 hover:text-yellow-500' : 'text-yellow-700/60 hover:text-yellow-700'}`}>cryptographic scavenger hunt</Link>
+                {t('help.manifesto.attribution_before_link')}
+                <Link to="/help/history" className={`underline ${isDark ? 'text-yellow-500/60 hover:text-yellow-500' : 'text-yellow-700/60 hover:text-yellow-700'}`}>{t('help.manifesto.attribution_link_text')}</Link>
               </p>
               <h2 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                A Manifesto on a Decentralized Social Clearing House ...(AKA) CAW
+                {t('help.manifesto.heading')}
               </h2>
 
               <div className={`space-y-4 text-sm leading-relaxed ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
                 <p>
-                  The concept of decentralization has been lost to some of us over time, those who forgot why Bitcoin was created, the issues blockchain and cryptocurrency is meant to solve. To be decentralized means there is no single person, entity, nor group which has ultimate control nor benefit over a system/
+                  {t('help.manifesto.p1')}
                 </p>
 
                 <p>
-                  In a decentralized system, there is not one man who via desire or persuasion could cripple the system in any meaningful way This means from both a technical standpoint (i.e, a developer who can stop trading, or disable the protocol through the use of smart contracts) and a financial one (e.g, an entity who has n+1 (infinite) tokens, and could dump them if they so wished, but decides not to.)
+                  {t('help.manifesto.p2')}
                 </p>
 
                 <p>
-                  That is not to say that a proper decentralized system is without whales nor its own cornerstones. There are always those that may have a greater affect upon a network, or 'matter' through entropy or their own hard work.
+                  {t('help.manifesto.p3')}
                 </p>
 
                 <p>
-                  CAW began as nothing, there was no developer, no information, no medium of communication. Simply. a contract.
+                  {t('help.manifesto.p4')}
                 </p>
 
                 <p>
-                  Freedom given to the people to discover CAW's meaning amongst themselves. This has gone well, and so we would like to present our specification for the second phase of CAW. But before we do, some things must be said and taken note of:
+                  {t('help.manifesto.p5')}
                 </p>
 
                 <div className="pl-4 space-y-2">
-                  <p>1. This is a only a specification. It is up to the cawmmunity to write and deploy the protocol.</p>
-                  <p>2. It is strongly recommended that a peer group is formed to develop and review smart contracts. as there is no leader in this process, all types will attempt to claim ownership of the process. there will those everso helpful who claim to be able to 'do it all' but will write the perfect code with the perfect backdoor   Only a cawmmunity reviewed and accepted contract on a public github will be acceptable</p>
-                  <p>3. After deployment, the deployer must renounce any keys they have to the contracts. There will be no multi-sig,  no upgradeable proxyies. It will not matter who deployed because they will be equal with all with no specfic benefit nor advantage. Just get the contract right.</p>
+                  <p>{t('help.manifesto.preamble.item1')}</p>
+                  <p>{t('help.manifesto.preamble.item2')}</p>
+                  <p>{t('help.manifesto.preamble.item3')}</p>
                 </div>
 
                 <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  We propose:
+                  {t('help.manifesto.propose.heading')}
                 </h3>
                 <p>
-                  {"a. A protocol made up of many on-chain smart contracts for sending messages  publically or p2p with a max character limit of 420."}
+                  {t('help.manifesto.propose.a')}
                 </p>
                 <p>
-                  b. A specification for the frontends, of which many will be made, to interact with this protocol.
+                  {t('help.manifesto.propose.b')}
                 </p>
                 <p>
-                  The general function of the protocol and its contracts is as follows:
+                  {t('help.manifesto.propose.general_function')}
                 </p>
 
                 <div className="space-y-3 pl-2">
-                  <p><strong>i.</strong> Burn CAW through a contract to mint an NFT. This burned caw will go to 0x0. The NFT will be your username.</p>
-                  <p className="pl-4">a. The fewer characters in your username, the higher the cost.</p>
-                  <p className="pl-4">b. Every username is unique, and may use a-z and 0-9, without the use of special characters (emojis, etc..,) or capital letters.</p>
+                  <p><strong>i.</strong> {t('help.manifesto.proto.i')}</p>
+                  <p className="pl-4">{t('help.manifesto.proto.i_a')}</p>
+                  <p className="pl-4">{t('help.manifesto.proto.i_b')}</p>
 
-                  <p><strong>ii.</strong> All user activity, social and financial flows through their NFT username. Whoever owns this NFT has access to that account. This includes, but is not limited to, their CAW balance and access to that user's direct messages (DMs).</p>
+                  <p><strong>ii.</strong> {t('help.manifesto.proto.ii')}</p>
 
-                  <p><strong>iii.</strong> Ownership and management of the NFTs will be completely on-chain. For instance, the registration of the username 'cawdev' will be stored directly on-chain, along with all of the data associated.</p>
+                  <p><strong>iii.</strong> {t('help.manifesto.proto.iii')}</p>
 
-                  <p><strong>iv.</strong> Holding the NFT (note holding, not staking), allows the user to deposit or withdraw CAW into a contract wallet. The ownership of the NFT will serve as the key to this wallet. For users using multiple NFTs they may specify which by a unique number associated.</p>
+                  <p><strong>iv.</strong> {t('help.manifesto.proto.iv')}</p>
 
-                  <p><strong>v.</strong> A user may spend CAW in the following way on the protocol.</p>
+                  <p><strong>v.</strong> {t('help.manifesto.proto.v')}</p>
                   <div className="pl-4 space-y-2">
-                    <p><strong>i.</strong> Making a CAW (Akin to tweeting).</p>
-                    <p className="pl-4">a. This cost will be taken in CAW, and then distributed proportionally to all other stakers.</p>
-                    <p><strong>ii.</strong> Liking someone else's CAW.</p>
-                    <p className="pl-4">a. This is closer to tipping. The CAW will be taken and directly sent to the OP (orginal poster's) wallet.</p>
-                    <p><strong>iii.</strong> ReCAWing (akin to a retweet).</p>
-                    <p className="pl-4">a. The cost of which will be taken in CAW and sent to OP's wallet.</p>
+                    <p><strong>i.</strong> {t('help.manifesto.proto.v_i')}</p>
+                    <p className="pl-4">{t('help.manifesto.proto.v_i_a')}</p>
+                    <p><strong>ii.</strong> {t('help.manifesto.proto.v_ii')}</p>
+                    <p className="pl-4">{t('help.manifesto.proto.v_ii_a')}</p>
+                    <p><strong>iii.</strong> {t('help.manifesto.proto.v_iii')}</p>
+                    <p className="pl-4">{t('help.manifesto.proto.v_iii_a')}</p>
                   </div>
 
-                  <p><strong>vi.</strong> For receiving the CAW we envision a mostly gasless contract, in which signatures may push CAW balance between users and the application in a contract. The only thing a user should be spending gas on is:</p>
-                  <p className="pl-4">a. The minting of an NFT.</p>
-                  <p className="pl-4">b. Depositing or withdrawing CAW.</p>
+                  <p><strong>vi.</strong> {t('help.manifesto.proto.vi')}</p>
+                  <p className="pl-4">{t('help.manifesto.proto.vi_a')}</p>
+                  <p className="pl-4">{t('help.manifesto.proto.vi_b')}</p>
 
-                  <p><strong>vii.</strong> DM's should be 'free' and executed via a trustless handshake between two accounts to enable secure peer-to-peer messaging. Group chats would bring on unneeded complexity, and are not recommended at this point.</p>
+                  <p><strong>vii.</strong> {t('help.manifesto.proto.vii')}</p>
 
-                  <p><strong>viii.</strong> All data will be stored permanently. Due to limitations of the Ethereum network, Arweave or similar blockchains may be preferred. The CAW liquidty may migrate at somepoint to the QOMQQL1,  but that will be addressed once the technical merits reveal itself and the move is obvious.</p>
+                  <p><strong>viii.</strong> {t('help.manifesto.proto.viii')}</p>
 
-                  <p>Data storage must be completely trustless, and permanent. The importance of being both censorship resistant and self-policing for the betterment of a protocol cannot be overstated. CAW is meant only to give you the raw tool kit to build your own online society. Because of this, there is a distinct gap between the protocol itself, and the frontends.</p>
+                  <p>{t('help.manifesto.proto.data_storage')}</p>
                 </div>
 
                 <p>
-                  At the base level, CAW's contracts for trustless data storage and communication, anything can be posted. We are not naive, and we understand what may be posted. As a result of this, it is up to the frontends to limit content that might obfuscate the reason for CAW's creation.
+                  {t('help.manifesto.frontends_intro_a')}
                 </p>
                 <p>
-                  That being said, at the level of a protocol no username or message will be blocked or quarantined. Due to the nature of renounced ownership of smart contracts, there will be nobody who can limit such content. (perhaps now you see why renouceing the contract with no multi-sig or upgrades is important.)
+                  {t('help.manifesto.frontends_intro_b')}
                 </p>
 
                 <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  Now onto the frontends.
+                  {t('help.manifesto.frontends.heading')}
                 </h3>
                 <p>
-                  Anybody is free to make or host their own frontend which will show whatever they woud like (or don't). we expect there will be many along with a goal of a mobile app and browser extension that serves as cawing/wallet and instant messager platform that executes the sigs fast and invisible to give a smoother messaging experience (signing a metamask everytime can be tiresome)
+                  {t('help.manifesto.frontends.p1')}
                 </p>
                 <p>
-                  We would recommend that the community makes an alpha frontend, that is more or less 'neutral'. It may filter overt hate/violence, along with hard-illegal activity, remember we need to win the world first. Others may have a better idea of what should be shown, and their perogative should be to create and host their own frontend. The point being, CAW is like Twitter. Except it is bound by no laws, and no central content moderation. However, the frontends may choose to moderate the content however they like, or must to fit whatever legal guidelines they need to fit.
+                  {t('help.manifesto.frontends.p2')}
                 </p>
                 <p>
-                  <strong className={isDark ? 'text-white' : 'text-gray-900'}>So even if one frontend blocks you, you cannot be policed, and are still free to use the protocol itself.</strong>
+                  <strong className={isDark ? 'text-white' : 'text-gray-900'}>{t('help.manifesto.frontends.p3_strong')}</strong>
                 </p>
 
                 <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  Appendix.
+                  {t('help.manifesto.appendix.heading')}
                 </h3>
 
-                <p><strong>a.</strong> It is fairly obvious individuals will begin buying and selling the NFT usernames. It would be wise of a community member to create a trustless and feeless marketplace for such trades, similar to Crypto Punk feeless trades That being said we are pretty aware that as CAW grows to scale,  many will still use FEE marketplaces such as opensea and looks. This means that the deployer of the contract that mints NFTS will have the technical ability to set themselves fee's from opensea.</p>
+                <p><strong>a.</strong> {t('help.manifesto.appendix.a')}</p>
                 <p>
-                  We do not think this is a good thing, and ask the cammunity to self police/renounce in order to make sure that trading fees are not set and sent to a private wallet. If it helps, this will imply liabilty for the content posted if your wallet is recieving trading fees
+                  {t('help.manifesto.appendix.a_followup')}
                 </p>
 
-                <p className="mt-4"><strong>b.</strong> Economically, these are the numbers open for debate and structured so that we understand the practical dollar amount of CAW.</p>
+                <p className="mt-4"><strong>b.</strong> {t('help.manifesto.appendix.b')}</p>
                 <p>
-                  i. 50 mln market cap (near or current MC).<br />
-                  ii. 1 bln market cap (typical memecoin mooning for a bit MC).<br />
-                  iii. 10 bln market cap (SHIB-like).
+                  {t('help.manifesto.appendix.b_mc_i')}<br />
+                  {t('help.manifesto.appendix.b_mc_ii')}<br />
+                  {t('help.manifesto.appendix.b_mc_iii')}
                 </p>
                 <p>
-                  We will need to be aware of the realities of what happens as the burn of CAW scales, as we will not be able to change the cost of the protocol once set in motion.
+                  {t('help.manifesto.appendix.b_caveat')}
                 </p>
-                <p>The necessary cost calculations in CAW are:</p>
+                <p>{t('help.manifesto.appendix.cost_calcs_intro')}</p>
                 <p className="pl-4">
-                  i. Amount of CAW to send CAW (all of which is distributed among stakers).<br />
-                  ii. Amount of CAW to like a CAW. (sent to OP).<br />
-                  iii. Amount of CAW to reCAW a CAW (distributed amount OP and stakers).<br />
-                  iv. Burn amounts for various length'd username NFTs.
+                  {t('help.manifesto.appendix.cost_i')}<br />
+                  {t('help.manifesto.appendix.cost_ii')}<br />
+                  {t('help.manifesto.appendix.cost_iii')}<br />
+                  {t('help.manifesto.appendix.cost_iv')}
                 </p>
                 <p>
-                  We did quite a bit of math to consider the following numbers, but we may have missed something. It was calculated in such a way that liking, reCAWing, and posting, is always affordable at a market cap of 10 billion, while ensuring that the more rare and shorter usernames remain damn expensive.
+                  {t('help.manifesto.appendix.math_explanation')}
                 </p>
-                <p>The following is the recommended cost, along with the estimated amount in US Dollars in brackets at the three target MC's (50 mln, 1 bln, 10 bln).</p>
+                <p>{t('help.manifesto.appendix.recommended_intro')}</p>
                 <ul className={`space-y-1 pl-2 ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
-                  <li>- Single Character username (rare!) BURN 1,000,000,000,000 ($89,985, $1,799,712, $17,997,120)</li>
-                  <li>- 2 Character username - BURN 240,000,000,000 CAW ($21,600, $432,000, $4,320,000)</li>
-                  <li>- 3 Character Username - BURN 60,000,000,000 CAW ($5400, $108,000, $1,080,000)</li>
-                  <li>- 4 Character Username - BURN 6,000,000,000 CAW ($540, $10,800 $108,000)</li>
-                  <li>- 5 Character username - BURN 200,000,000 CAW ($18, $360, $3600)</li>
-                  <li>- 6 Character username - BURN 20,000,000 CAW ($1.80, $36, $360)</li>
-                  <li>- 7 Character username -BURN 10,000,000 CAW (90c, $18, $180)</li>
-                  <li>- 8 Character and up username - BURN 1,000,000 CAW (9c, $1.80, $18)</li>
+                  <li>{t('help.manifesto.appendix.cost.username_1')}</li>
+                  <li>{t('help.manifesto.appendix.cost.username_2')}</li>
+                  <li>{t('help.manifesto.appendix.cost.username_3')}</li>
+                  <li>{t('help.manifesto.appendix.cost.username_4')}</li>
+                  <li>{t('help.manifesto.appendix.cost.username_5')}</li>
+                  <li>{t('help.manifesto.appendix.cost.username_6')}</li>
+                  <li>{t('help.manifesto.appendix.cost.username_7')}</li>
+                  <li>{t('help.manifesto.appendix.cost.username_8')}</li>
                 </ul>
 
                 <ul className={`space-y-1 pl-2 mt-2 ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
-                  <li>- Follow an Account (paid 80/20 to account and stakepool) 30000 (na,0.009,9c)</li>
-                  <li>- Send a CAW (max xxx Characters) (paid 100 to stakepool) 5000 (na, na, 1.5c)</li>
-                  <li>- Like a CAW (paid 80/20 to account and stakepool) 2000 (na,na, $0.007)</li>
-                  <li>- ReCAW (paid 50/50 to account and stakepool) 4000 (na,na,1.2c)</li>
+                  <li>{t('help.manifesto.appendix.cost.follow')}</li>
+                  <li>{t('help.manifesto.appendix.cost.send_caw')}</li>
+                  <li>{t('help.manifesto.appendix.cost.like')}</li>
+                  <li>{t('help.manifesto.appendix.cost.recaw')}</li>
                 </ul>
 
-                <p className="mt-4"><strong>c.</strong> Image hosting, and managemement.</p>
+                <p className="mt-4"><strong>c.</strong> {t('help.manifesto.appendix.c')}</p>
                 <p className="pl-4">
-                  i. The protocol will have no involvement in the hosting of images. This will be up to the frontends to filter,display,host.<br />
-                  ii. It is recommended that frontends render URLs from external sources placed inside posts, or employ their own URL shortener so URLs do not destroy the character limit on CAW.
+                  {t('help.manifesto.appendix.c_i')}<br />
+                  {t('help.manifesto.appendix.c_ii')}
                 </p>
                 <p>
-                  {"For example if my CAW was ... \"Just had some great fried fish on Point Road with @tk420 #yum #foodie #bestfrens https://savoryandsweetfood.com/wp-content/uploads/2013/10/20131020-164849.jpg\""}
+                  {t('help.manifesto.appendix.c_example')}
                 </p>
                 <p>
-                  {"A frontend should shorten the URL to something like 'https://c.aw/cawdev' prior to the users post, and automically render the URL as a snippet."}
+                  {t('help.manifesto.appendix.c_example_explanation')}
                 </p>
 
                 <div className={`mt-6 pt-4 border-t ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
                   <p className={`italic ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
-                    Love, one who still dreams.
+                    {t('help.manifesto.signoff')}
                   </p>
                   <p className="mt-4">
-                    P.S. There are no official socials, nor partner projects or further releases. CAW is by design without design, and it is up the CAWMmunity to shape CAW. Only by giving you the vision and seeing what cames next may we have a truly free and decentralized system.
+                    {t('help.manifesto.ps')}
                   </p>
                 </div>
               </div>
@@ -638,7 +636,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                   : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100'
               }`}
             >
-              View on GitHub
+              {t('help.manifesto.view_on_github')}
               <HiExternalLink className="w-4 h-4" />
             </a>
           </div>
@@ -656,11 +654,10 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                 </div>
                 <div>
                   <h3 className={`font-semibold mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                    Get Your Username
+                    {t('help.getting_started.step1.heading')}
                   </h3>
                   <p className={`text-sm ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
-                    Burn CAW tokens to mint your username NFT. Shorter names cost more CAW.
-                    This NFT is your identity on the platform.
+                    {t('help.getting_started.step1.body')}
                   </p>
                 </div>
               </div>
@@ -675,11 +672,10 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                 </div>
                 <div>
                   <h3 className={`font-semibold mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                    Stake CAW
+                    {t('help.getting_started.step2.heading')}
                   </h3>
                   <p className={`text-sm ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
-                    Deposit and stake CAW to unlock platform features. Staking enables you to post, like, and recaw.
-                    You also earn a share of platform activity.
+                    {t('help.getting_started.step2.body')}
                   </p>
                 </div>
               </div>
@@ -694,11 +690,10 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                 </div>
                 <div>
                   <h3 className={`font-semibold mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                    Create Content
+                    {t('help.getting_started.step3.heading')}
                   </h3>
                   <p className={`text-sm ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
-                    Post messages (up to 420 characters), share images, and engage with others.
-                    Most actions are gasless — signed off-chain and validated on-chain.
+                    {t('help.getting_started.step3.body')}
                   </p>
                 </div>
               </div>
@@ -713,11 +708,10 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                 </div>
                 <div>
                   <h3 className={`font-semibold mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                    Earn Rewards
+                    {t('help.getting_started.step4.heading')}
                   </h3>
                   <p className={`text-sm ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
-                    When others like your posts, you receive CAW. As a staker, you earn from all platform activity.
-                    The ecosystem rewards both creators and supporters.
+                    {t('help.getting_started.step4.body')}
                   </p>
                 </div>
               </div>
@@ -727,13 +721,13 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
               isDark ? 'border-white/10 bg-[#0D0D0D]/85' : 'border-gray-200 bg-gray-50 shadow-xl'
             }`}>
               <h4 className={`font-semibold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                CAW Spent on the Platform
+                {t('help.getting_started.spent.heading')}
               </h4>
               <ul className={`text-sm space-y-2 ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
-                <li><strong>Post:</strong> 5,000 CAW (100% to stakers)</li>
-                <li><strong>Like:</strong> 2,000 CAW (80% to poster, 20% to stakers)</li>
-                <li><strong>ReCaw:</strong> 4,000 CAW (50% to poster, 50% to stakers)</li>
-                <li><strong>Follow:</strong> 30,000 CAW (80% to account, 20% to stakers)</li>
+                <li><strong>{t('help.getting_started.spent.post_label')}</strong> {t('help.getting_started.spent.post_value')}</li>
+                <li><strong>{t('help.getting_started.spent.like_label')}</strong> {t('help.getting_started.spent.like_value')}</li>
+                <li><strong>{t('help.getting_started.spent.recaw_label')}</strong> {t('help.getting_started.spent.recaw_value')}</li>
+                <li><strong>{t('help.getting_started.spent.follow_label')}</strong> {t('help.getting_started.spent.follow_value')}</li>
               </ul>
             </div>
           </div>
@@ -745,48 +739,48 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
             {/* Architecture Overview */}
             <div className={`p-6 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50 shadow-xl'}`}>
               <h2 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                Understanding CAW Architecture
+                {t('help.developers.architecture.heading')}
               </h2>
 
               <div className={`space-y-4 text-sm leading-relaxed ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
                 <p>
-                  CAW is a decentralized social protocol with two key components: <strong>validators</strong> and <strong>frontends</strong>. Both are permissionless and can be run by anyone.
+                  {t('help.developers.architecture.intro_before_validators')}<strong>{t('help.developers.architecture.validators_strong')}</strong>{t('help.developers.architecture.intro_between')}<strong>{t('help.developers.architecture.frontends_strong')}</strong>{t('help.developers.architecture.intro_after')}
                 </p>
 
                 <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  The Role of Validators
+                  {t('help.developers.validators.heading')}
                 </h3>
                 <p>
-                  Validators process gasless transactions for users. When you post, like, or follow, you sign an EIP-712 message off-chain. The validator collects these signatures, batches them together, and submits them as on-chain transactions to L2 networks (like Base) where gas costs are minimal.
+                  {t('help.developers.validators.p1')}
                 </p>
                 <p className="mt-2">
-                  Validators pay the gas fees upfront but are economically incentivized through the platform's token economics. They're essential infrastructure that enables the smooth, gasless user experience.
+                  {t('help.developers.validators.p2')}
                 </p>
 
                 <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  The Role of Frontends
+                  {t('help.developers.frontends_role.heading')}
                 </h3>
                 <p>
-                  Frontends are the user-facing applications (like this one) that read blockchain data, display posts, and submit user actions to validators. Each frontend can implement its own content moderation policies, design choices, and features while still interacting with the same underlying protocol.
+                  {t('help.developers.frontends_role.p1')}
                 </p>
                 <p className="mt-2">
-                  Because everything is on-chain and the contracts are immutable, users blocked on one frontend can always access CAW through another frontend or by interacting directly with the contracts.
+                  {t('help.developers.frontends_role.p2')}
                 </p>
 
                 <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  Client Separation & Isolated Networks
+                  {t('help.developers.separation.heading')}
                 </h3>
                 <p>
-                  The beauty of CAW's architecture is that validators and frontends are completely separate. You can:
+                  {t('help.developers.separation.intro')}
                 </p>
                 <ul className={`list-disc list-inside space-y-2 mt-2 ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
-                  <li><strong>Run just a frontend</strong> — Connect to existing validators for transaction processing</li>
-                  <li><strong>Run just a validator</strong> — Process transactions for any frontend that connects to you</li>
-                  <li><strong>Run both</strong> — Create a fully independent client with your own validator and frontend</li>
-                  <li><strong>Run an isolated network</strong> — Deploy your own validator and frontend for a private or community-specific CAW network, all while still using the same underlying smart contracts</li>
+                  <li><strong>{t('help.developers.separation.frontend_only_label')}</strong> {t('help.developers.separation.frontend_only_body')}</li>
+                  <li><strong>{t('help.developers.separation.validator_only_label')}</strong> {t('help.developers.separation.validator_only_body')}</li>
+                  <li><strong>{t('help.developers.separation.both_label')}</strong> {t('help.developers.separation.both_body')}</li>
+                  <li><strong>{t('help.developers.separation.isolated_label')}</strong> {t('help.developers.separation.isolated_body')}</li>
                 </ul>
                 <p className="mt-2">
-                  This separation ensures censorship resistance and gives communities maximum flexibility in how they interact with the protocol.
+                  {t('help.developers.separation.outro')}
                 </p>
               </div>
             </div>
@@ -794,43 +788,43 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
             {/* Frontend Hosting */}
             <div className={`p-6 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50 shadow-xl'}`}>
               <h2 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                Hosting a Frontend
+                {t('help.developers.host_fe.heading')}
               </h2>
 
               <div className={`space-y-4 text-sm leading-relaxed ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
                 <p>
-                  If you just want to host a frontend (without running a validator), the setup is straightforward. You'll build the static frontend files and deploy them to any static hosting platform.
+                  {t('help.developers.host_fe.intro')}
                 </p>
 
                 <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  Building the Frontend
+                  {t('help.developers.host_fe.building.heading')}
                 </h3>
 
                 <ol className={`list-decimal list-inside space-y-3 ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
                   <li>
-                    <strong>Clone the repository</strong>
+                    <strong>{t('help.developers.host_fe.building.step1_label')}</strong>
                     <div className={`mt-2 p-3 rounded-lg font-mono text-xs ${isDark ? 'bg-black/50' : 'bg-gray-100'}`}>
                       git clone https://github.com/GilgameshCaw/Caw
                     </div>
                   </li>
                   <li>
-                    <strong>Navigate to the frontend directory</strong>
+                    <strong>{t('help.developers.host_fe.building.step2_label')}</strong>
                     <div className={`mt-2 p-3 rounded-lg font-mono text-xs ${isDark ? 'bg-black/50' : 'bg-gray-100'}`}>
                       cd client/src/services/FrontEnd
                     </div>
                   </li>
                   <li>
-                    <strong>Install dependencies</strong>
+                    <strong>{t('help.developers.host_fe.building.step3_label')}</strong>
                     <div className={`mt-2 p-3 rounded-lg font-mono text-xs ${isDark ? 'bg-black/50' : 'bg-gray-100'}`}>
                       yarn install
                     </div>
                   </li>
                   <li>
-                    <strong>Configure your environment</strong>
-                    <p className="mt-1">Create a <code className={`px-1 rounded ${isDark ? 'bg-black/50' : 'bg-gray-200'}`}>.env</code> file with your validator API endpoint and RPC URLs.</p>
+                    <strong>{t('help.developers.host_fe.building.step4_label')}</strong>
+                    <p className="mt-1">{t('help.developers.host_fe.building.step4_body_before_code')}<code className={`px-1 rounded ${isDark ? 'bg-black/50' : 'bg-gray-200'}`}>.env</code>{t('help.developers.host_fe.building.step4_body_after_code')}</p>
                   </li>
                   <li>
-                    <strong>Build for production</strong>
+                    <strong>{t('help.developers.host_fe.building.step5_label')}</strong>
                     <div className={`mt-2 p-3 rounded-lg font-mono text-xs ${isDark ? 'bg-black/50' : 'bg-gray-100'}`}>
                       yarn build
                     </div>
@@ -838,24 +832,24 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                 </ol>
 
                 <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  Deployment Options
+                  {t('help.developers.host_fe.deploy.heading')}
                 </h3>
                 <p>
-                  Once built, you can deploy the <code className={`px-1 rounded ${isDark ? 'bg-black/50' : 'bg-gray-200'}`}>dist/</code> folder to any static hosting platform:
+                  {t('help.developers.host_fe.deploy.intro_before_code')}<code className={`px-1 rounded ${isDark ? 'bg-black/50' : 'bg-gray-200'}`}>dist/</code>{t('help.developers.host_fe.deploy.intro_after_code')}
                 </p>
                 <ul className={`list-disc list-inside space-y-2 mt-2 ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
-                  <li><strong>Vercel</strong> — Import your GitHub repo and it will auto-detect the build settings</li>
-                  <li><strong>Netlify</strong> — Drag and drop the dist folder or connect via Git</li>
-                  <li><strong>Cloudflare Pages</strong> — Fast CDN-based hosting with free tier</li>
-                  <li><strong>GitHub Pages</strong> — Free hosting directly from your repository</li>
-                  <li><strong>IPFS</strong> — Decentralized hosting via Fleek or Pinata</li>
+                  <li><strong>{t('help.developers.host_fe.deploy.vercel_label')}</strong> {t('help.developers.host_fe.deploy.vercel_body')}</li>
+                  <li><strong>{t('help.developers.host_fe.deploy.netlify_label')}</strong> {t('help.developers.host_fe.deploy.netlify_body')}</li>
+                  <li><strong>{t('help.developers.host_fe.deploy.cloudflare_label')}</strong> {t('help.developers.host_fe.deploy.cloudflare_body')}</li>
+                  <li><strong>{t('help.developers.host_fe.deploy.github_label')}</strong> {t('help.developers.host_fe.deploy.github_body')}</li>
+                  <li><strong>{t('help.developers.host_fe.deploy.ipfs_label')}</strong> {t('help.developers.host_fe.deploy.ipfs_body')}</li>
                 </ul>
 
                 <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  Content Moderation
+                  {t('help.developers.host_fe.moderation.heading')}
                 </h3>
                 <p>
-                  Your frontend, your rules. The protocol itself has no content moderation, but you can implement whatever filtering policies make sense for your community. Users blocked on your frontend can still access CAW through other frontends or directly.
+                  {t('help.developers.host_fe.moderation.body')}
                 </p>
               </div>
             </div>
@@ -863,63 +857,63 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
             {/* Validator Hosting */}
             <div className={`p-6 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50 shadow-xl'}`}>
               <h2 className={`text-xl font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                Running a Validator
+                {t('help.developers.run_validator.heading')}
               </h2>
 
               <div className={`space-y-4 text-sm leading-relaxed ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
                 <p>
-                  Running a validator requires a VPS (Virtual Private Server) since the validator needs to be online 24/7 to process user actions. The validator collects signed messages from users and submits batched transactions to the blockchain.
+                  {t('help.developers.run_validator.intro')}
                 </p>
 
                 <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  Prerequisites
+                  {t('help.developers.run_validator.prereq.heading')}
                 </h3>
                 <ul className={`list-disc list-inside space-y-2 ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
-                  <li>A VPS with at least 2GB RAM (DigitalOcean, AWS, Linode, etc.)</li>
-                  <li>Ubuntu 20.04+ or similar Linux distribution</li>
-                  <li>A wallet with ETH for paying gas fees on L2</li>
-                  <li>RPC endpoints for Ethereum L1 and Base L2</li>
+                  <li>{t('help.developers.run_validator.prereq.item1')}</li>
+                  <li>{t('help.developers.run_validator.prereq.item2')}</li>
+                  <li>{t('help.developers.run_validator.prereq.item3')}</li>
+                  <li>{t('help.developers.run_validator.prereq.item4')}</li>
                 </ul>
 
                 <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  Quick Setup
+                  {t('help.developers.run_validator.quick.heading')}
                 </h3>
                 <p>
-                  We provide a one-liner CLI installer that handles the entire setup process:
+                  {t('help.developers.run_validator.quick.intro')}
                 </p>
                 <div className={`mt-2 p-3 rounded-lg font-mono text-xs ${isDark ? 'bg-black/50' : 'bg-gray-100'}`}>
                   curl -sSL https://raw.githubusercontent.com/GilgameshCaw/Caw/master/install.sh | bash
                 </div>
                 <p className="mt-2">
-                  The installer will:
+                  {t('help.developers.run_validator.quick.installer_intro')}
                 </p>
                 <ul className={`list-disc list-inside space-y-1 mt-2 ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
-                  <li>Install Node.js, PostgreSQL, and Redis</li>
-                  <li>Clone the CAW repository</li>
-                  <li>Prompt you for configuration (RPC URLs, validator wallet private key, etc.)</li>
-                  <li>Set up systemd services for automatic restarts</li>
-                  <li>Start the validator and API services</li>
+                  <li>{t('help.developers.run_validator.quick.installer_item1')}</li>
+                  <li>{t('help.developers.run_validator.quick.installer_item2')}</li>
+                  <li>{t('help.developers.run_validator.quick.installer_item3')}</li>
+                  <li>{t('help.developers.run_validator.quick.installer_item4')}</li>
+                  <li>{t('help.developers.run_validator.quick.installer_item5')}</li>
                 </ul>
 
                 <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  Manual Setup
+                  {t('help.developers.run_validator.manual.heading')}
                 </h3>
                 <p>
-                  If you prefer manual setup, follow these steps on your VPS:
+                  {t('help.developers.run_validator.manual.intro')}
                 </p>
                 <ol className={`list-decimal list-inside space-y-2 mt-2 ${isDark ? 'text-white/80' : 'text-gray-700'}`}>
-                  <li>Install Node.js 22+, PostgreSQL, Redis, and Elasticsearch</li>
-                  <li>Clone the repository and install dependencies</li>
-                  <li>Configure your <code className={`px-1 rounded ${isDark ? 'bg-black/50' : 'bg-gray-200'}`}>.env</code> file with RPC endpoints and validator wallet</li>
-                  <li>Run database migrations with <code className={`px-1 rounded ${isDark ? 'bg-black/50' : 'bg-gray-200'}`}>npm run prisma:push</code></li>
-                  <li>Start the services with <code className={`px-1 rounded ${isDark ? 'bg-black/50' : 'bg-gray-200'}`}>npm run dev</code></li>
+                  <li>{t('help.developers.run_validator.manual.item1')}</li>
+                  <li>{t('help.developers.run_validator.manual.item2')}</li>
+                  <li>{t('help.developers.run_validator.manual.item3_before_code')}<code className={`px-1 rounded ${isDark ? 'bg-black/50' : 'bg-gray-200'}`}>.env</code>{t('help.developers.run_validator.manual.item3_after_code')}</li>
+                  <li>{t('help.developers.run_validator.manual.item4_before_code')}<code className={`px-1 rounded ${isDark ? 'bg-black/50' : 'bg-gray-200'}`}>npm run prisma:push</code></li>
+                  <li>{t('help.developers.run_validator.manual.item5_before_code')}<code className={`px-1 rounded ${isDark ? 'bg-black/50' : 'bg-gray-200'}`}>npm run dev</code></li>
                 </ol>
 
                 <h3 className={`text-lg font-semibold mt-6 mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  Economics
+                  {t('help.developers.run_validator.economics.heading')}
                 </h3>
                 <p>
-                  Validators pay gas fees upfront to submit batched transactions. The protocol is designed with economic incentives to make validation profitable, but you should monitor your gas costs and validator earnings.
+                  {t('help.developers.run_validator.economics.body')}
                 </p>
               </div>
             </div>
@@ -935,7 +929,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                   : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100'
               }`}
             >
-              View source on GitHub
+              {t('help.developers.view_source')}
               <HiExternalLink className="w-4 h-4" />
             </a>
           </div>
@@ -950,7 +944,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                 <h2 className={`text-sm font-semibold mb-3 uppercase tracking-wide ${
                   isDark ? 'text-yellow-500/60' : 'text-yellow-600'
                 }`}>
-                  Testnet Tools
+                  {t('help.resources.testnet.heading')}
                 </h2>
                 <div className="space-y-2">
                   <Link
@@ -968,10 +962,10 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
                     </div>
                     <div className="flex-1 min-w-0">
                       <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                        mCAW Faucet
+                        {t('help.resources.testnet.faucet_title')}
                       </h3>
                       <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-                        Mint testnet mCAW tokens for testing
+                        {t('help.resources.testnet.faucet_description')}
                       </p>
                     </div>
                   </Link>
@@ -984,7 +978,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
               <h2 className={`text-sm font-semibold mb-3 uppercase tracking-wide ${
                 isDark ? 'text-white/40' : 'text-gray-400'
               }`}>
-                Official
+                {t('help.resources.official.heading')}
               </h2>
               <div className="space-y-2">
                 {officialResources.map((item, index) => (
@@ -998,7 +992,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
               <h2 className={`text-sm font-semibold mb-3 uppercase tracking-wide ${
                 isDark ? 'text-white/40' : 'text-gray-400'
               }`}>
-                Contracts & Markets
+                {t('help.resources.contracts.heading')}
               </h2>
               <div className="space-y-2">
                 {contractResources.map((item, index) => (
@@ -1012,17 +1006,17 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
               <h2 className={`text-sm font-semibold mb-3 uppercase tracking-wide ${
                 isDark ? 'text-white/40' : 'text-gray-400'
               }`}>
-                Network Information
+                {t('help.resources.network.heading')}
               </h2>
 
               <div className={`p-4 rounded-xl ${isDark ? 'bg-[#0D0D0D]/85' : 'bg-gray-50 shadow-xl'}`}>
                 <div className="space-y-4">
                   <div>
                     <h4 className={`text-sm font-medium mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                      CAW Token
+                      {t('help.resources.network.caw_token.title')}
                     </h4>
                     <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-                      ERC-20 token on Ethereum mainnet
+                      {t('help.resources.network.caw_token.description')}
                     </p>
                     <a
                       href="https://etherscan.io/token/0xf3b9569F82B18aEf890De263B84189bd33EBe452"
@@ -1036,28 +1030,28 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
 
                   <div className={`border-t pt-4 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
                     <h4 className={`text-sm font-medium mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                      Username NFTs
+                      {t('help.resources.network.username_nfts.title')}
                     </h4>
                     <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-                      ERC-721 on Ethereum mainnet
+                      {t('help.resources.network.username_nfts.description')}
                     </p>
                   </div>
 
                   <div className={`border-t pt-4 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
                     <h4 className={`text-sm font-medium mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                      Social Protocol
+                      {t('help.resources.network.social.title')}
                     </h4>
                     <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-                      Gasless actions via signature-based contracts on L2 networks
+                      {t('help.resources.network.social.description')}
                     </p>
                   </div>
 
                   <div className={`border-t pt-4 ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
                     <h4 className={`text-sm font-medium mb-1 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                      Cross-Chain Archiving
+                      {t('help.resources.network.archive.title')}
                     </h4>
                     <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-                      All actions are automatically archived to Arbitrum for censorship resistance. Your posts, likes, and follows are permanently stored across multiple chains.
+                      {t('help.resources.network.archive.description')}
                     </p>
                   </div>
                 </div>
@@ -1069,8 +1063,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
               isDark ? 'bg-[#0D0D0D]/85 text-white/50' : 'bg-gray-50 text-gray-500'
             }`}>
               <p>
-                CAW has no official socials, partner projects, or further releases beyond what was described in the manifesto.
-                Be cautious of scams claiming to be official CAW projects.
+                {t('help.resources.disclaimer')}
               </p>
             </div>
           </div>
@@ -1079,7 +1072,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
         {/* Community Links */}
         <div className={`mt-8 pt-6 border-t ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
           <h3 className={`text-sm font-semibold mb-3 ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
-            COMMUNITY
+            {t('help.community.heading')}
           </h3>
           <div className="grid grid-cols-2 gap-3">
             <a
@@ -1093,7 +1086,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
               <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                 <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clipRule="evenodd" />
               </svg>
-              <span className="text-sm">GitHub</span>
+              <span className="text-sm">{t('help.community.github')}</span>
             </a>
             <a
               href="https://t.me/cawbuilders"
@@ -1106,7 +1099,7 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
               <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                 <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
               </svg>
-              <span className="text-sm">Telegram</span>
+              <span className="text-sm">{t('help.community.telegram')}</span>
             </a>
           </div>
         </div>

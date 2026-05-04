@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { HiX, HiLink, HiMail, HiShare, HiCheck } from 'react-icons/hi'
 import { FaXTwitter, FaFacebook, FaWhatsapp, FaTelegram } from 'react-icons/fa6'
 import { useTheme } from '~/hooks/useTheme'
+import { useT } from '~/i18n/I18nProvider'
 
 interface ShareModalProps {
   isOpen: boolean
@@ -19,6 +20,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
   text = ''
 }) => {
   const { isDark } = useTheme()
+  const t = useT()
   const [copied, setCopied] = useState(false)
   const shareUrl = `${window.location.origin}${url}`
   const shareText = text || title
@@ -110,7 +112,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
             <h2 className={`text-lg font-semibold ${
               isDark ? 'text-white' : 'text-gray-900'
             }`}>
-              Share
+              {t('share.title')}
             </h2>
             <button
               onClick={onClose}
@@ -135,7 +137,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({
                 }`}
               >
                 <HiShare className="w-5 h-5" />
-                <span>Share via...</span>
+                <span>{t('share.via')}</span>
               </button>
             )}
 
@@ -151,12 +153,12 @@ export const ShareModal: React.FC<ShareModalProps> = ({
               {copied ? (
                 <>
                   <HiCheck className="w-5 h-5 text-green-500" />
-                  <span>Copied!</span>
+                  <span>{t('post.copied')}</span>
                 </>
               ) : (
                 <>
                   <HiLink className="w-5 h-5" />
-                  <span>Copy link</span>
+                  <span>{t('share.copy_link')}</span>
                 </>
               )}
             </button>

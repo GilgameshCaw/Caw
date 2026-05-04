@@ -5,6 +5,7 @@ import { useFormSubmit } from '~/hooks/useFormSubmit'
 import { themeText, themeTextMuted, themeTextSecondary } from '~/utils/theme'
 import ModalWrapper from './ModalWrapper'
 import ModalHeader from './ModalHeader'
+import { useT } from '~/i18n/I18nProvider'
 
 export type ReportReason = 'SPAM' | 'HARASSMENT' | 'INAPPROPRIATE' | 'EXPLICIT' | 'ILLEGAL_HARMFUL' | 'MISINFORMATION' | 'OTHER'
 
@@ -24,21 +25,9 @@ interface ReportReasonOption {
   subOptions?: { value: ReportReason; label: string; description: string }[]
 }
 
-const REPORT_REASONS: ReportReasonOption[] = [
-  { value: 'SPAM', label: 'Spam', description: 'Unwanted commercial content or repetitive posts' },
-  { value: 'HARASSMENT', label: 'Harassment', description: 'Targeted abuse, threats, or bullying' },
-  {
-    value: 'INAPPROPRIATE_PARENT',
-    label: 'Inappropriate content',
-    description: 'Graphic, violent, or adult content',
-    subOptions: [
-      { value: 'EXPLICIT', label: 'Explicit', description: 'Nudity, sexual content, or graphic imagery' },
-      { value: 'ILLEGAL_HARMFUL', label: 'Illegal / Harmful', description: 'Content that is illegal, promotes violence, or endangers others' }
-    ]
-  },
-  { value: 'MISINFORMATION', label: 'Misinformation', description: 'False or misleading information' },
-  { value: 'OTHER', label: 'Other', description: 'Another issue not listed above' }
-]
+// Reason set built inside the component so labels/descriptions resolve
+// through t(). The `value` field stays as the canonical enum used by the
+// API; only the rendered text changes per locale.
 
 const ReportPostModal: React.FC<ReportPostModalProps> = ({
   isOpen,
@@ -49,6 +38,22 @@ const ReportPostModal: React.FC<ReportPostModalProps> = ({
   onSubmit
 }) => {
   const { isDark } = useTheme()
+  const t = useT()
+  const REPORT_REASONS: ReportReasonOption[] = [
+    { value: 'SPAM', label: t('report.spam.label'), description: t('report.spam.description') },
+    { value: 'HARASSMENT', label: t('report.harassment.label'), description: t('report.harassment.description') },
+    {
+      value: 'INAPPROPRIATE_PARENT',
+      label: t('report.inappropriate.label'),
+      description: t('report.inappropriate.description'),
+      subOptions: [
+        { value: 'EXPLICIT', label: t('report.explicit.label'), description: t('report.explicit.description') },
+        { value: 'ILLEGAL_HARMFUL', label: t('report.illegal.label'), description: t('report.illegal.description') }
+      ]
+    },
+    { value: 'MISINFORMATION', label: t('report.misinformation.label'), description: t('report.misinformation.description') },
+    { value: 'OTHER', label: t('report.other.label'), description: t('report.other.description') }
+  ]
   const [selectedReason, setSelectedReason] = useState<ReportReason | null>(null)
   const [expandedParent, setExpandedParent] = useState(false)
   const [details, setDetails] = useState('')
@@ -60,7 +65,7 @@ const ReportPostModal: React.FC<ReportPostModalProps> = ({
       try {
         await onSubmit(selectedReason, details)
       } catch {
-        throw new Error('Something went wrong. Please try again.')
+        throw new Error(t('common.something_went_wrong'))
       }
     })
   }
@@ -91,10 +96,10 @@ const ReportPostModal: React.FC<ReportPostModalProps> = ({
               <HiFlag className="w-6 h-6 text-green-500" />
             </div>
             <h3 className={`text-lg font-semibold mb-2 ${themeText(isDark)}`}>
-              Thank you for submitting
+              {t('report.success.title')}
             </h3>
             <p className={`text-sm ${themeTextSecondary(isDark)}`}>
-              This will be reviewed by an admin. The post has been hidden from your feed.
+              {t('report.success.body')}
             </p>
           </div>
           <button
@@ -105,13 +110,13 @@ const ReportPostModal: React.FC<ReportPostModalProps> = ({
                 : 'border border-gray-300 text-gray-600 hover:bg-gray-50'
             }`}
           >
-            Close
+            {t('report.close')}
           </button>
         </>
       ) : (
         <>
           <ModalHeader
-            title="Report Post"
+            title={t('report.title')}
             onClose={handleClose}
             icon={<HiFlag className="w-5 h-5 text-red-500" />}
             iconBg={isDark ? 'bg-red-500/20' : 'bg-red-50'}
@@ -123,8 +128,8 @@ const ReportPostModal: React.FC<ReportPostModalProps> = ({
           {/* Description */}
           <p className={`text-sm mb-4 ${themeTextSecondary(isDark)}`}>
             {postAuthorUsername
-              ? `Why are you reporting this post by @${postAuthorUsername}?`
-              : 'Why are you reporting this post?'}
+              ? t('report.prompt_with_user', { username: postAuthorUsername })
+              : t('report.prompt')}
           </p>
 
           {/* Reason Selection */}
@@ -204,12 +209,12 @@ const ReportPostModal: React.FC<ReportPostModalProps> = ({
           {/* Additional Details */}
           <div className="mb-4">
             <label className={`block text-sm font-medium mb-2 ${themeTextSecondary(isDark)}`}>
-              Additional details (optional)
+              {t('report.details_label')}
             </label>
             <textarea
               value={details}
               onChange={(e) => setDetails(e.target.value)}
-              placeholder="Provide any additional context..."
+              placeholder={t('report.details_placeholder')}
               rows={3}
               className={`w-full px-3 py-2 rounded-lg border resize-none transition-colors ${
                 isDark
@@ -228,8 +233,7 @@ const ReportPostModal: React.FC<ReportPostModalProps> = ({
 
           {/* Info Note */}
           <p className={`text-xs mb-4 ${themeTextMuted(isDark)}`}>
-            Reports are reviewed by our team. False reports may result in action against your account.
-            This post will also be hidden from your feed.
+            {t('report.disclaimer')}
           </p>
 
           {/* Buttons */}
@@ -242,7 +246,7 @@ const ReportPostModal: React.FC<ReportPostModalProps> = ({
                   : 'border border-gray-300 text-gray-600 hover:bg-gray-50'
               }`}
             >
-              Cancel
+              {t('common.cancel')}
             </button>
             <button
               onClick={handleSubmit}
@@ -253,7 +257,7 @@ const ReportPostModal: React.FC<ReportPostModalProps> = ({
                   : 'bg-red-500 text-white hover:bg-red-600'
               }`}
             >
-              {isSubmitting ? 'Submitting...' : 'Submit Report'}
+              {isSubmitting ? t('report.submitting') : t('report.submit')}
             </button>
           </div>
         </>
