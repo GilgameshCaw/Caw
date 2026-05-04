@@ -26,6 +26,7 @@ import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useNavigate } from 'react-router-dom'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
+import AvatarCropperModal from '~/components/modals/AvatarCropperModal'
 import { useFollowButton } from '~/hooks/useFollowButton'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import TipModal from '~/components/modals/TipModal'
@@ -455,8 +456,29 @@ export const Profile: React.FC = () => {
   const [avatarUrl, setAvatarUrl] = useState<string | undefined>(undefined)
   const [coverUrl, setCoverUrl] = useState<string | undefined>(undefined)
   const [isUploading, setIsUploading] = useState(false)
+  const [cropperFile, setCropperFile] = useState<File | null>(null)
 
   // Image handling functions
+  const uploadCroppedAvatar = async (file: File) => {
+    setProfileError(null)
+    setIsUploading(true)
+    try {
+      const { uploadAvatar } = await import('~/api/upload')
+      const imageUrl = await uploadAvatar(file, activeToken?.tokenId || 0)
+      if (!imageUrl) throw new Error('No URL returned from upload')
+      const reader = new FileReader()
+      reader.onload = (e) => setAvatarPreview(e.target?.result as string)
+      reader.readAsDataURL(file)
+      setAvatarUrl(imageUrl)
+      calculateUpdateCost()
+    } catch (err) {
+      console.error('Failed to upload image:', err)
+      setProfileError('Failed to upload image. Please try again.')
+    } finally {
+      setIsUploading(false)
+    }
+  }
+
   const handleImageSelect = async (type: 'avatar' | 'cover', event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
@@ -475,29 +497,21 @@ export const Profile: React.FC = () => {
 
     setProfileError(null)
 
+    // Avatars: open cropper, upload after the user picks the crop window.
+    if (type === 'avatar') {
+      setCropperFile(file)
+      return
+    }
+
     setIsUploading(true)
-
     try {
-      const { uploadAvatar, uploadMedia } = await import('~/api/upload')
-      const imageUrl = type === 'avatar'
-        ? await uploadAvatar(file, activeToken?.tokenId || 0)
-        : (await uploadMedia([file], activeToken?.tokenId || 0, 'cover'))[0]
+      const { uploadMedia } = await import('~/api/upload')
+      const imageUrl = (await uploadMedia([file], activeToken?.tokenId || 0, 'cover'))[0]
       if (!imageUrl) throw new Error('No URL returned from upload')
-
-      // Set both preview and URL
-      if (type === 'avatar') {
-        const reader = new FileReader()
-        reader.onload = (e) => setAvatarPreview(e.target?.result as string)
-        reader.readAsDataURL(file)
-        setAvatarUrl(imageUrl)
-      } else {
-        const reader = new FileReader()
-        reader.onload = (e) => setCoverPreview(e.target?.result as string)
-        reader.readAsDataURL(file)
-        setCoverUrl(imageUrl)
-      }
-
-      // Update cost estimate
+      const reader = new FileReader()
+      reader.onload = (e) => setCoverPreview(e.target?.result as string)
+      reader.readAsDataURL(file)
+      setCoverUrl(imageUrl)
       calculateUpdateCost()
     } catch (err) {
       console.error('Failed to upload image:', err)
@@ -1506,6 +1520,16 @@ export const Profile: React.FC = () => {
         currentAmount={activeToken?.stakedAmount}
         requiredAmount={BigInt(updateCost) * 10n**18n}
         actionType="profile"
+      />
+
+      <AvatarCropperModal
+        isOpen={!!cropperFile}
+        file={cropperFile}
+        onClose={() => setCropperFile(null)}
+        onCrop={(cropped) => {
+          setCropperFile(null)
+          uploadCroppedAvatar(cropped)
+        }}
       />
 
       {/* Block Confirmation Modal */}

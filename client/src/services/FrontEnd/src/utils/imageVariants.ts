@@ -7,10 +7,13 @@
 // variant doesn't exist (e.g. for images uploaded before the variant
 // system shipped, until the backfill runs).
 
-/** 64px thumb variant of an avatar — used in feeds, comments, lists. */
+/** 96px square thumb variant of an avatar — used in feeds, comments,
+ *  lists, profile chooser. Old uploads have a `_64.webp` instead; those
+ *  will 404 here and the renderer falls back to the main URL via
+ *  Avatar's onError path. */
 export function avatarThumbUrl(url: string | null | undefined): string | undefined {
   if (!url) return undefined
-  return appendWidthSuffix(url, 64)
+  return appendWidthSuffix(url, 96)
 }
 
 /** 2048px large variant of a feed image — used in lightbox / click-to-expand. */

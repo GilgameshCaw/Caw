@@ -5,6 +5,7 @@ import { apiFetch } from '~/api/client'
 import { useSignAndSubmitAction } from '~/api/actions'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
+import AvatarCropperModal from '~/components/modals/AvatarCropperModal'
 import { getUserAvatar } from '~/utils/defaultAvatar'
 
 export type ProfileEditFormData = {
@@ -103,6 +104,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
   const [profileError, setProfileError] = useState<string | null>(null)
   const [showCostExplanation, setShowCostExplanation] = useState(false)
   const [showInsufficientStake, setShowInsufficientStake] = useState(false)
+  const [cropperFile, setCropperFile] = useState<File | null>(null)
 
   const triggerFileInput = (type: 'avatar' | 'cover') => {
     setTimeout(() => {
@@ -110,6 +112,25 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
       const input = document.getElementById(inputId) as HTMLInputElement | null
       input?.click()
     }, 10)
+  }
+
+  const uploadCroppedAvatar = async (file: File) => {
+    setProfileError(null)
+    setIsUploading(true)
+    try {
+      const { uploadAvatar } = await import('~/api/upload')
+      const imageUrl = await uploadAvatar(file, activeToken?.tokenId || 0)
+      if (!imageUrl) throw new Error('No URL returned from upload')
+      const reader = new FileReader()
+      reader.onload = (e) => setAvatarPreview(e.target?.result as string)
+      reader.readAsDataURL(file)
+      setAvatarUrl(imageUrl)
+    } catch (err) {
+      console.error('Failed to upload image:', err)
+      setProfileError('Failed to upload image. Please try again.')
+    } finally {
+      setIsUploading(false)
+    }
   }
 
   const processImageFile = async (type: 'avatar' | 'cover', file: File) => {
@@ -122,27 +143,23 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
       return
     }
     setProfileError(null)
+
+    // Avatars: open the cropper modal — user picks the square crop window
+    // before upload. Covers go straight to upload with the 'cover' preset.
+    if (type === 'avatar') {
+      setCropperFile(file)
+      return
+    }
+
     setIsUploading(true)
     try {
-      // Avatars upload as 300px main + 64px thumb variant. Covers go
-      // through uploadMedia with the 'cover' preset (1140px) for retina.
-      const { uploadAvatar, uploadMedia } = await import('~/api/upload')
-      const imageUrl = type === 'avatar'
-        ? await uploadAvatar(file, activeToken?.tokenId || 0)
-        : (await uploadMedia([file], activeToken?.tokenId || 0, 'cover'))[0]
+      const { uploadMedia } = await import('~/api/upload')
+      const imageUrl = (await uploadMedia([file], activeToken?.tokenId || 0, 'cover'))[0]
       if (!imageUrl) throw new Error('No URL returned from upload')
-
-      if (type === 'avatar') {
-        const reader = new FileReader()
-        reader.onload = (e) => setAvatarPreview(e.target?.result as string)
-        reader.readAsDataURL(file)
-        setAvatarUrl(imageUrl)
-      } else {
-        const reader = new FileReader()
-        reader.onload = (e) => setCoverPreview(e.target?.result as string)
-        reader.readAsDataURL(file)
-        setCoverUrl(imageUrl)
-      }
+      const reader = new FileReader()
+      reader.onload = (e) => setCoverPreview(e.target?.result as string)
+      reader.readAsDataURL(file)
+      setCoverUrl(imageUrl)
     } catch (err) {
       console.error('Failed to upload image:', err)
       setProfileError('Failed to upload image. Please try again.')
@@ -720,6 +737,16 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
         currentAmount={activeToken?.stakedAmount}
         requiredAmount={BigInt(updateCost) * 10n ** 18n}
         actionType="profile"
+      />
+
+      <AvatarCropperModal
+        isOpen={!!cropperFile}
+        file={cropperFile}
+        onClose={() => setCropperFile(null)}
+        onCrop={(cropped) => {
+          setCropperFile(null)
+          uploadCroppedAvatar(cropped)
+        }}
       />
     </div>
   )

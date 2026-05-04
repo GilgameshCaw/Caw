@@ -1,5 +1,5 @@
 import { apiFetch, getAuthHeaders } from './client'
-import { compressImage, compressImages, type CompressionPreset } from '~/utils/compressImage'
+import { compressImage, compressImages, cropToSquare, type CompressionPreset } from '~/utils/compressImage'
 
 export interface UploadImageResponse {
   success: boolean
@@ -79,15 +79,18 @@ export async function uploadMedia(
 }
 
 /**
- * Upload an avatar with a 64px thumb variant alongside the 300px main file.
+ * Upload an avatar with a 96px square thumb variant alongside the 300px
+ * square main file. Both are center-cropped to 1:1 before compression so
+ * the stored intrinsic shape matches the always-square render.
  *
  * Returns just the main URL — the thumb URL is derived by callers via
- * `thumbUrl(mainUrl)` (string substitution, see ~/utils/imageVariants).
+ * `avatarThumbUrl(mainUrl)` (string substitution, see ~/utils/imageVariants).
  * If the thumb upload fails the main upload still succeeds; the renderer
  * falls back to the main file when the thumb 404s.
  */
 export async function uploadAvatar(file: File, tokenId: number): Promise<string> {
-  const main = await compressImage(file, 'avatar')
+  const square = await cropToSquare(file)
+  const main = await compressImage(square, 'avatar')
 
   const formData = new FormData()
   formData.append('media', main)
@@ -109,12 +112,12 @@ export async function uploadAvatar(file: File, tokenId: number): Promise<string>
   // predictable in tests, but we swallow errors — a missing thumb just means
   // the renderer falls back to the main file.
   try {
-    const thumb = await compressImage(file, 'thumb')
+    const thumb = await compressImage(square, 'thumb')
     const baseFilename = mainUrl.split('/').pop()!
     const tFd = new FormData()
     tFd.append('media', thumb)
     tFd.append('baseFilename', baseFilename)
-    tFd.append('width', '64')
+    tFd.append('width', '96')
     tFd.append('tokenId', String(tokenId))
     await fetch('/api/upload/variant', { method: 'POST', headers: getAuthHeaders(), body: tFd })
   } catch (err) {
