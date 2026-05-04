@@ -40,6 +40,7 @@ const ScheduledPage = lazy(() => import("./pages/Scheduled"));
 const HashtagPage = lazy(() => import("./pages/HashtagPage"));
 const SearchResultsPage = lazy(() => import("./pages/SearchResultsPage"));
 const FaucetPage = lazy(() => import("./pages/FaucetPage"));
+const CawActivity = lazy(() => import("./pages/CawActivity"));
 const BugReportsAdmin = lazy(() => import("./pages/BugReportsAdmin"));
 const ReportsAdmin = lazy(() => import("./pages/ReportsAdmin"));
 const ValidatorAnalytics = lazy(() => import("./pages/ValidatorAnalytics"));
@@ -78,6 +79,10 @@ export default [
   {
     path: "/staking",
     component: <AuthGate><Staking /></AuthGate>,
+  },
+  {
+    path: "/staking/activity",
+    component: <AuthGate><CawActivity /></AuthGate>,
   },
   {
     path: "/staking/unstake",

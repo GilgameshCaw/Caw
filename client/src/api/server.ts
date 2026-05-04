@@ -30,6 +30,7 @@ import blocksRouter from './routes/blocks'
 import sessionsRouter from './routes/sessions'
 import pricesRouter from './routes/prices'
 import validatorAnalyticsRouter from './routes/validator-analytics'
+import cawActivityRouter from './routes/caw-activity'
 import marketplaceRouter from './routes/marketplace'
 import bookmarksRouter from './routes/bookmarks'
 import pinsRouter from './routes/pins'
@@ -200,6 +201,7 @@ export function createApp() {
   app.use('/api/hashtags', hashtagRouter)
   app.use('/api/upload', uploadRouter)
   app.use('/api/users', usersRouter)
+  app.use('/api/users', cawActivityRouter) // Mounts GET /:tokenId/caw-activity under /api/users
   app.use('/api/txqueue', txQueueRouter)
   app.use('/api/views', viewsRouter)
   app.use('/api/search', searchRouter)

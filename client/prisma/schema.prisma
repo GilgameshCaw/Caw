@@ -1070,3 +1070,72 @@ model WalletXLink {
 
   @@index([xHandle])
 }
+
+/// Per-user CAW balance change ledger written by the StakeLedger
+/// snapshotter. Mirrors CawProfileL2.cawOwnership state transitions
+/// bit-for-bit using TS bigint. One row per touched user per action
+/// (sender + recipient if any), plus rows for L1->L2 deposits and
+/// withdrawals. Communal rewards are computed at query time from
+/// RewardMultiplierSnapshot deltas, not stored as rows here.
+///
+/// All NUMERIC(78,0) values are stored as String to avoid precision
+/// loss across the JSON layer — same pattern as User.onChainStakeWei.
+model CawOwnershipSnapshot {
+  id                  BigInt   @id @default(autoincrement())
+  tokenId             Int
+  blockNumber         BigInt
+  blockTimestamp      DateTime
+  txHash              String
+  logIndex            Int
+  actionIndex         Int?
+  ownership           String
+  multiplier          String
+  balance             String
+  delta               String
+  reason              String   // ACTION_SENDER | ACTION_RECIPIENT | DEPOSIT | WITHDRAW
+  actionType          String?  // CAW | LIKE | RECAW | FOLLOW | TIP | null for deposit/withdraw
+  counterpartyTokenId Int?
+  createdAt           DateTime @default(now())
+
+  @@index([tokenId, blockTimestamp])
+  @@index([blockTimestamp])
+}
+
+/// One row per global rewardMultiplier change. Used to attribute
+/// communal rewards to a user across a window:
+/// communal[user, t0..t1] = SUM over events e in window of
+///   cawOwnership_at(user, e.timestamp) * (multiplierAfter - multiplierBefore) / 1e18
+model RewardMultiplierSnapshot {
+  blockNumber      BigInt
+  txHash           String
+  logIndex         Int
+  actionIndex      Int
+  blockTimestamp   DateTime
+  multiplierBefore String
+  multiplierAfter  String
+  communalAmount   String
+
+  @@id([blockNumber, logIndex, actionIndex])
+  @@index([blockTimestamp])
+}
+
+/// Persisted running state of the StakeLedger snapshotter so a
+/// process restart resumes without replaying from genesis.
+model StakeLedgerState {
+  clientId     Int      @id
+  totalCaw     String
+  multiplier   String
+  lastBlock    BigInt
+  lastLogIndex Int
+  updatedAt    DateTime @default(now())
+}
+
+/// Latest cawOwnership[tokenId] mirroring contract state. Lets the
+/// snapshotter cold-start without a full CawOwnershipSnapshot scan,
+/// and gives the daily reconciler a cheap target to compare against
+/// the on-chain cawOwnership(tokenId) read.
+model CawOwnershipCurrent {
+  tokenId   Int      @id
+  ownership String
+  updatedAt DateTime @default(now())
+}

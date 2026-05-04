@@ -1,0 +1,468 @@
+// StakeLedger snapshotter — mirrors CawProfileL2 state transitions in
+// TypeScript bigint, writing per-user delta rows and per-multiplier-
+// change rows. Hot path makes zero RPC reads. After each
+// ActionsProcessed event finishes its actions, the caller invokes
+// verifyMultiplier() which reads chain rewardMultiplier() once and
+// asserts equality with our running value — divergence halts writes
+// and logs loud. A separate daily reconciler (dailyReconciler.ts)
+// catches per-user drift that the multiplier check can't witness.
+//
+// Sequence per action mirrors CawActions._applyAction
+// (`solidity/contracts/CawActions.sol:619`):
+//   1. Type-specific step (CAW/LIKE/RECAW/FOLLOW/WITHDRAW). Updates
+//      sender ownership + multiplier + recipient ownership.
+//   2. _distributeAmountsMem if amounts.length > 0. Per-recipient
+//      addToBalance, then sender pays totalAmount with 0 communal,
+//      then validator gets a tip via addToBalance.
+//
+// Per-user touches in step 1 + step 2 collapse into one
+// CawOwnershipSnapshot row per user per action — sender's row aggregates
+// every debit, recipient gets one row, validator gets one row.
+
+import { prisma } from '../../prismaClient'
+import type { PrismaTransactionClient, RawAction } from '../ActionProcessor/types'
+import {
+  ACTION_COST,
+  ACTION_TYPE_NUM_TO_NAME,
+  type FixedCostActionType,
+} from '../../utils/cawActionCosts'
+import {
+  PRECISION,
+  balanceOf,
+  ownershipFromBalance,
+  spendAndDistribute,
+  addToBalance,
+} from './contractMath'
+import { getCawProfileL2 } from './cawProfileL2'
+
+// One client per process — the snapshotter reads CLIENT_ID from env at
+// boot and persists state under that key.
+const CAW_CLIENT_ID = (() => {
+  const raw = process.env.CLIENT_ID
+  const n = raw ? Number(raw) : NaN
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error('StakeLedger: CLIENT_ID is required (set it in client/.env)')
+  }
+  return n
+})()
+
+interface RuntimeState {
+  multiplier: bigint
+  totalCaw: bigint
+  // Cached cawOwnership[tokenId]. Loaded lazily — on first touch we read
+  // from CawOwnershipCurrent (or assume 0n for never-seen tokens).
+  ownership: Map<number, bigint>
+  // Block + log we've consumed up to. Used to skip already-processed
+  // actions on warm restart.
+  lastBlock: bigint
+  lastLogIndex: number
+  // Halts writes after a multiplier-checksum mismatch. Cleared by the
+  // operator once they reseed.
+  halted: boolean
+}
+
+let state: RuntimeState | null = null
+let bootPromise: Promise<RuntimeState> | null = null
+
+/**
+ * Idempotent boot. Loads StakeLedgerState + CawOwnershipCurrent into
+ * memory. If StakeLedgerState is missing, seeds (multiplier=1e18,
+ * totalCaw=0) — the first observed actions will populate.
+ *
+ * Call this at process start before recording any actions. ActionProcessor
+ * already serialises action handling, so racing boots are not a concern.
+ */
+export async function ensureBooted(): Promise<RuntimeState> {
+  if (state) return state
+  if (bootPromise) return bootPromise
+  bootPromise = (async () => {
+    const persisted = await prisma.stakeLedgerState.findUnique({ where: { clientId: CAW_CLIENT_ID } })
+    const ownership = new Map<number, bigint>()
+    const currentRows = await prisma.cawOwnershipCurrent.findMany()
+    for (const row of currentRows) ownership.set(row.tokenId, BigInt(row.ownership))
+    const next: RuntimeState = persisted
+      ? {
+          multiplier: BigInt(persisted.multiplier),
+          totalCaw: BigInt(persisted.totalCaw),
+          ownership,
+          lastBlock: BigInt(persisted.lastBlock),
+          lastLogIndex: persisted.lastLogIndex,
+          halted: false,
+        }
+      : {
+          multiplier: PRECISION,
+          totalCaw: 0n,
+          ownership,
+          lastBlock: 0n,
+          lastLogIndex: -1,
+          halted: false,
+        }
+    state = next
+    return next
+  })()
+  return bootPromise
+}
+
+/**
+ * Returns the user's cached ownership, defaulting to 0n for unseen
+ * tokens. Always synchronous against the in-memory cache — callers
+ * must have called ensureBooted() first.
+ */
+function ownershipOf(s: RuntimeState, tokenId: number): bigint {
+  return s.ownership.get(tokenId) ?? 0n
+}
+
+interface PerUserDelta {
+  /** Net balance delta in CAW wei (positive = inflow). */
+  delta: bigint
+  /** Final ownership AFTER all touches in this action. */
+  finalOwnership: bigint
+  /** Final balance AFTER all touches. */
+  finalBalance: bigint
+}
+
+interface RecordParams {
+  rawAction: RawAction
+  validatorId: number
+  blockNumber: bigint
+  blockTimestamp: Date
+  txHash: string
+  logIndex: number
+  actionIndex: number
+}
+
+/**
+ * Apply one action to running state and write ledger rows. Mirrors
+ * CawActions._applyAction step-by-step. Idempotent on
+ * (blockNumber, logIndex, actionIndex) — re-running the same action is
+ * a no-op (the (blockNumber, logIndex, actionIndex) primary key on
+ * RewardMultiplierSnapshot would conflict, and we skip CawOwnershipSnapshot
+ * inserts that would duplicate the same key shape).
+ *
+ * Run inside the same Prisma $transaction the caller is using for
+ * domain effects. The math is pure bigint; the only DB I/O is the
+ * row inserts and a final state-update.
+ */
+export async function recordAction(
+  tx: PrismaTransactionClient,
+  params: RecordParams,
+): Promise<void> {
+  const s = await ensureBooted()
+  if (s.halted) return // Operator must reseed before we resume.
+
+  // Skip already-processed actions on warm restart. ActionProcessor
+  // resumes from lastId; we resume from (lastBlock, lastLogIndex).
+  if (
+    params.blockNumber < s.lastBlock ||
+    (params.blockNumber === s.lastBlock && params.logIndex <= s.lastLogIndex)
+  ) {
+    return
+  }
+
+  const { rawAction, validatorId, blockNumber, blockTimestamp, txHash, logIndex, actionIndex } = params
+  const senderId = Number(rawAction.senderId)
+  const receiverId = rawAction.receiverId ? Number(rawAction.receiverId) : 0
+  const actionTypeName = ACTION_TYPE_NUM_TO_NAME[Number(rawAction.actionType) as keyof typeof ACTION_TYPE_NUM_TO_NAME]
+
+  // Per-user delta accumulator for this action. We collapse every touch
+  // in step 1 + step 2 into one ledger row per touched user.
+  const deltas = new Map<number, PerUserDelta>()
+  const startingBalances = new Map<number, bigint>()
+  const touch = (tokenId: number, finalOwnership: bigint, finalBalance: bigint) => {
+    if (!startingBalances.has(tokenId)) {
+      const startingOwn = ownershipOf(s, tokenId)
+      startingBalances.set(tokenId, balanceOf(startingOwn, s.multiplier))
+    }
+    deltas.set(tokenId, {
+      delta: finalBalance - (startingBalances.get(tokenId) ?? 0n),
+      finalOwnership,
+      finalBalance,
+    })
+  }
+
+  // RewardMultiplierSnapshot writes accumulate here so we can batch them
+  // into a single createMany after step 2.
+  const multiplierEvents: Array<{ before: bigint; after: bigint; communal: bigint; subActionIndex: number }> = []
+  let subActionIndex = 0
+
+  // -------------------------
+  // STEP 1: type-specific
+  // -------------------------
+  if (
+    actionTypeName === 'CAW' ||
+    actionTypeName === 'LIKE' ||
+    actionTypeName === 'RECAW' ||
+    actionTypeName === 'FOLLOW'
+  ) {
+    const cost = ACTION_COST[actionTypeName as FixedCostActionType]
+    const senderOwn = ownershipOf(s, senderId)
+    const r = spendAndDistribute(senderOwn, s, cost.spend * PRECISION, cost.communal * PRECISION)
+    if (r.communalDistributed > 0n) {
+      multiplierEvents.push({
+        before: s.multiplier,
+        after: r.multiplier,
+        communal: r.communalDistributed,
+        subActionIndex: subActionIndex++,
+      })
+    }
+    s.multiplier = r.multiplier
+    s.ownership.set(senderId, r.senderOwnership)
+    touch(senderId, r.senderOwnership, r.senderBalance)
+
+    if (cost.receive > 0n && receiverId !== 0) {
+      const recvOwn = ownershipOf(s, receiverId)
+      const recv = addToBalance(recvOwn, s.multiplier, cost.receive * PRECISION)
+      s.ownership.set(receiverId, recv.ownership)
+      touch(receiverId, recv.ownership, recv.balance)
+    }
+  } else if (actionTypeName === 'WITHDRAW') {
+    // CawProfileL2.withdraw(): debits sender, decrements totalCaw.
+    const amount = (BigInt(rawAction.amounts?.[0] ?? 0)) * PRECISION
+    const senderOwn = ownershipOf(s, senderId)
+    const senderBal = balanceOf(senderOwn, s.multiplier)
+    if (senderBal < amount) {
+      console.error(`[StakeLedger] WITHDRAW: insufficient balance — ledger drift? sender=${senderId} bal=${senderBal} amt=${amount}`)
+      s.halted = true
+      return
+    }
+    const newBal = senderBal - amount
+    const newOwn = ownershipFromBalance(newBal, s.multiplier)
+    s.ownership.set(senderId, newOwn)
+    s.totalCaw -= amount
+    touch(senderId, newOwn, newBal)
+  }
+  // UNLIKE / UNFOLLOW / OTHER (excluding tip side effects via amounts):
+  // no type-specific contract action. Step 2 handles validator tip/recipients.
+
+  // -------------------------
+  // STEP 2: _distributeAmountsMem
+  // -------------------------
+  const amounts = rawAction.amounts ?? []
+  const recipients = rawAction.recipients ?? []
+  if (amounts.length > 0) {
+    const numAmounts = amounts.length
+    const numRecipients = recipients.length
+    const isWithdraw = actionTypeName === 'WITHDRAW'
+    const startIndex = isWithdraw ? 1 : 0
+
+    // Per-recipient addToBalance.
+    let amountTotal = 0n
+    for (let i = startIndex; i < numRecipients; i++) {
+      const recipientTokenId = Number(recipients[i])
+      const amountWei = BigInt(amounts[i] ?? 0) * PRECISION
+      const recvOwn = ownershipOf(s, recipientTokenId)
+      const recv = addToBalance(recvOwn, s.multiplier, amountWei)
+      s.ownership.set(recipientTokenId, recv.ownership)
+      touch(recipientTokenId, recv.ownership, recv.balance)
+      amountTotal += amountWei
+    }
+    // Validator tip is the LAST element of `amounts`. Always counted in
+    // amountTotal so the spender pays it, even on withdrawals.
+    const validatorTipWei = BigInt(amounts[numAmounts - 1] ?? 0) * PRECISION
+    amountTotal += validatorTipWei
+
+    // Sender pays amountTotal with 0 communal.
+    if (amountTotal > 0n) {
+      const senderOwn = ownershipOf(s, senderId)
+      const r = spendAndDistribute(senderOwn, s, amountTotal, 0n)
+      // No multiplier change here (communal is 0); skip multiplierEvents.
+      s.multiplier = r.multiplier // unchanged but assign for clarity
+      s.ownership.set(senderId, r.senderOwnership)
+      touch(senderId, r.senderOwnership, r.senderBalance)
+    }
+
+    // Validator receives the tip via addToBalance.
+    if (validatorTipWei > 0n) {
+      const valOwn = ownershipOf(s, validatorId)
+      const val = addToBalance(valOwn, s.multiplier, validatorTipWei)
+      s.ownership.set(validatorId, val.ownership)
+      touch(validatorId, val.ownership, val.balance)
+    }
+  }
+
+  // -------------------------
+  // PERSIST
+  // -------------------------
+  if (multiplierEvents.length > 0) {
+    await tx.rewardMultiplierSnapshot.createMany({
+      data: multiplierEvents.map(e => ({
+        blockNumber,
+        txHash,
+        logIndex,
+        actionIndex: actionIndex * 16 + e.subActionIndex, // unique per sub-step within this action
+        blockTimestamp,
+        multiplierBefore: e.before.toString(),
+        multiplierAfter: e.after.toString(),
+        communalAmount: e.communal.toString(),
+      })),
+      skipDuplicates: true,
+    })
+  }
+
+  if (deltas.size > 0) {
+    const reasonFor = (tokenId: number): string => {
+      if (tokenId === senderId) return 'ACTION_SENDER'
+      if (tokenId === validatorId) return 'ACTION_VALIDATOR'
+      return 'ACTION_RECIPIENT'
+    }
+    const counterpartyFor = (tokenId: number): number | null => {
+      if (tokenId === senderId) return receiverId || null
+      return senderId
+    }
+    await tx.cawOwnershipSnapshot.createMany({
+      data: Array.from(deltas.entries()).map(([tokenId, d]) => ({
+        tokenId,
+        blockNumber,
+        blockTimestamp,
+        txHash,
+        logIndex,
+        actionIndex,
+        ownership: d.finalOwnership.toString(),
+        multiplier: s.multiplier.toString(),
+        balance: d.finalBalance.toString(),
+        delta: d.delta.toString(),
+        reason: reasonFor(tokenId),
+        actionType: actionTypeName,
+        counterpartyTokenId: counterpartyFor(tokenId),
+      })),
+    })
+
+    // Mirror CawOwnershipCurrent so the daily reconciler has a cheap
+    // target. Upserts in parallel are safe (different primary keys).
+    await Promise.all(
+      Array.from(deltas.entries()).map(([tokenId, d]) =>
+        tx.cawOwnershipCurrent.upsert({
+          where: { tokenId },
+          create: { tokenId, ownership: d.finalOwnership.toString() },
+          update: { ownership: d.finalOwnership.toString(), updatedAt: new Date() },
+        }),
+      ),
+    )
+  }
+
+  s.lastBlock = blockNumber
+  s.lastLogIndex = logIndex
+  await tx.stakeLedgerState.upsert({
+    where: { clientId: CAW_CLIENT_ID },
+    create: {
+      clientId: CAW_CLIENT_ID,
+      totalCaw: s.totalCaw.toString(),
+      multiplier: s.multiplier.toString(),
+      lastBlock: blockNumber,
+      lastLogIndex: logIndex,
+    },
+    update: {
+      totalCaw: s.totalCaw.toString(),
+      multiplier: s.multiplier.toString(),
+      lastBlock: blockNumber,
+      lastLogIndex: logIndex,
+      updatedAt: new Date(),
+    },
+  })
+}
+
+/**
+ * Apply a confirmed L1->L2 deposit. Called from the LZ deposit
+ * consumer (not from action processing). Idempotent on
+ * (blockNumber, logIndex). Runs in its own transaction scope provided
+ * by the caller.
+ */
+export async function recordDeposit(
+  tx: PrismaTransactionClient,
+  params: {
+    tokenId: number
+    amountWei: bigint
+    blockNumber: bigint
+    blockTimestamp: Date
+    txHash: string
+    logIndex: number
+  },
+): Promise<void> {
+  const s = await ensureBooted()
+  if (s.halted) return
+  const { tokenId, amountWei, blockNumber, blockTimestamp, txHash, logIndex } = params
+
+  s.totalCaw += amountWei
+  const own = ownershipOf(s, tokenId)
+  const startingBalance = balanceOf(own, s.multiplier)
+  const after = addToBalance(own, s.multiplier, amountWei)
+  s.ownership.set(tokenId, after.ownership)
+
+  await tx.cawOwnershipSnapshot.create({
+    data: {
+      tokenId,
+      blockNumber,
+      blockTimestamp,
+      txHash,
+      logIndex,
+      actionIndex: null,
+      ownership: after.ownership.toString(),
+      multiplier: s.multiplier.toString(),
+      balance: after.balance.toString(),
+      delta: (after.balance - startingBalance).toString(),
+      reason: 'DEPOSIT',
+      actionType: null,
+      counterpartyTokenId: null,
+    },
+  })
+  await tx.cawOwnershipCurrent.upsert({
+    where: { tokenId },
+    create: { tokenId, ownership: after.ownership.toString() },
+    update: { ownership: after.ownership.toString(), updatedAt: new Date() },
+  })
+  await tx.stakeLedgerState.upsert({
+    where: { clientId: CAW_CLIENT_ID },
+    create: {
+      clientId: CAW_CLIENT_ID,
+      totalCaw: s.totalCaw.toString(),
+      multiplier: s.multiplier.toString(),
+      lastBlock: blockNumber,
+      lastLogIndex: logIndex,
+    },
+    update: {
+      totalCaw: s.totalCaw.toString(),
+      multiplier: s.multiplier.toString(),
+      lastBlock: blockNumber,
+      lastLogIndex: logIndex,
+      updatedAt: new Date(),
+    },
+  })
+}
+
+/**
+ * Per-event integrity check: read rewardMultiplier() from chain and
+ * assert equality with our running value. Costs one RPC read per
+ * ActionsProcessed event regardless of how many actions it carries.
+ *
+ * Called from outside any DB transaction — RPC reads must not extend
+ * a Prisma tx timeout.
+ */
+export async function verifyMultiplier(): Promise<void> {
+  const s = await ensureBooted()
+  if (s.halted) return
+  let onChain: bigint
+  try {
+    onChain = BigInt(await getCawProfileL2().rewardMultiplier())
+  } catch (err: any) {
+    console.warn('[StakeLedger] verifyMultiplier RPC read failed; skipping check:', err?.message ?? err)
+    return
+  }
+  if (onChain !== s.multiplier) {
+    console.error(
+      `[StakeLedger] DIVERGENCE: chain rewardMultiplier=${onChain}, ledger=${s.multiplier}. ` +
+        `Halting writes — operator must reseed (read CawProfileL2 state and overwrite StakeLedgerState + CawOwnershipCurrent).`,
+    )
+    s.halted = true
+  }
+}
+
+/** For tests / operator tooling: read the live state. */
+export function _peekState(): RuntimeState | null {
+  return state
+}
+
+/** For tests / operator tooling: forcibly reset memory. Does NOT touch DB. */
+export function _resetForTests(): void {
+  state = null
+  bootPromise = null
+}

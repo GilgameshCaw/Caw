@@ -1154,6 +1154,18 @@ const Staking = () => {
               </div>
             </div>
           </div>
+          {/* Activity link — opens day-by-day flow page. */}
+          <div className="mt-3 flex justify-end">
+            <button
+              type="button"
+              onClick={() => navigate('/staking/activity')}
+              className={`text-xs font-medium transition-colors cursor-pointer ${
+                isDark ? 'text-yellow-500/80 hover:text-yellow-400' : 'text-yellow-700 hover:text-yellow-800'
+              }`}
+            >
+              View activity →
+            </button>
+          </div>
         </div>
 
         {/* Custom Tabs - Container Style */}

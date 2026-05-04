@@ -132,16 +132,44 @@ export const actionProcessorService: Service = {
  * handleRawEvent
  * @description process one rawEvent into actions and domain rows
  */
-async function handleRawEvent(raw: { id: number, chainId: number, data: any }) {
+async function handleRawEvent(raw: { id: number, chainId: number, data: any, blockNumber: bigint, logIndex: number, transactionHash: string, topics: any, createdAt: Date }) {
   const list = Array.isArray(raw.data) ? raw.data : [raw.data];
+  // ActionsProcessed event signature: (uint32 indexed clientId, uint32
+  // indexed validatorId, uint16 actionCount, bytes32 batchHash). We only
+  // need validatorId for ledger attribution (validator tip recipient).
+  // topics[0] = sig hash, topics[1] = clientId, topics[2] = validatorId.
+  const topics = Array.isArray(raw.topics) ? raw.topics : []
+  let validatorId = 0
+  if (topics[2]) {
+    try { validatorId = Number(BigInt(String(topics[2]))) } catch {}
+  }
+  let actionIndex = 0
   for (const rawAction of list) {
-    if (!filterAction(rawAction)) continue;
-    await handleRawAction(raw.id, raw.chainId, rawAction);
+    if (!filterAction(rawAction)) {
+      actionIndex++
+      continue
+    }
+    await handleRawAction(raw, rawAction, validatorId, actionIndex);
+    actionIndex++
+  }
+
+  // After all actions in this ActionsProcessed event are applied, ask
+  // chain for rewardMultiplier() once and assert equality with our
+  // running state. Outside any DB tx — the RPC must not extend a tx
+  // timeout. Best-effort: a transient RPC failure logs a warn and
+  // skips the check; the daily reconciler is the deeper safety net.
+  try {
+    const { verifyMultiplier } = await import('../StakeLedger')
+    await verifyMultiplier()
+  } catch (err) {
+    console.warn('[ActionProcessor] StakeLedger verifyMultiplier failed:', err)
   }
 }
 
 
-async function handleRawAction(rawId: number, chainId: number, rawAction: RawAction): Promise<void> {
+async function handleRawAction(raw: { id: number, chainId: number, blockNumber: bigint, logIndex: number, transactionHash: string, createdAt: Date }, rawAction: RawAction, validatorId: number, actionIndex: number): Promise<void> {
+  const rawId = raw.id
+  const chainId = raw.chainId
   await span('actionprocessor.handle', {
     'action.type': getActionType(Number(rawAction.actionType)),
     'action.sender': Number(rawAction.senderId),
@@ -228,6 +256,31 @@ async function handleRawAction(rawId: number, chainId: number, rawAction: RawAct
         return
       }
       console.error('[ActionProcessor] Domain processing failed (Action row persisted):', err)
+    }
+
+    // Tx3: StakeLedger snapshot. Independent commit per
+    // feedback_two_tx_split_pattern — a ledger bug must NOT roll back
+    // the domain rows from Tx2. Ledger writes are append-only mirror
+    // facts and tolerate replay; the (blockNumber, logIndex,
+    // actionIndex) primary key dedupes RewardMultiplierSnapshot. On
+    // ledger failure we log and continue — the per-event multiplier
+    // checksum in handleRawEvent will halt the writer if state has
+    // drifted.
+    try {
+      const { recordAction } = await import('../StakeLedger')
+      await prisma.$transaction(async (tx) => {
+        await recordAction(tx, {
+          rawAction,
+          validatorId,
+          blockNumber: raw.blockNumber,
+          blockTimestamp: raw.createdAt,
+          txHash: raw.transactionHash,
+          logIndex: raw.logIndex,
+          actionIndex,
+        })
+      }, { timeout: 15_000 })
+    } catch (err: any) {
+      console.error('[ActionProcessor] StakeLedger snapshot failed (domain rows committed):', err?.message ?? err)
     }
   })
 }
