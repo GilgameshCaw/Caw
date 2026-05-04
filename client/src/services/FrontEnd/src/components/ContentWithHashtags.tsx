@@ -11,8 +11,10 @@ import { TAG_CHAR_CLASS } from '~/../../../tools/hashtagRegex'
 
 // Caches. Keyed by `${host}|${code}` so cross-node short URLs with the
 // same code (e.g. coincidentally identical codes on two mirroring nodes)
-// don't clobber each other's resolved values.
-const shortUrlCache = new Map<string, string | null>()
+// don't clobber each other's resolved values. Exported so other
+// renderers (e.g. the "Replying to" thumbnail in FeedItem) can share
+// the resolved values instead of re-fetching and racing.
+export const shortUrlCache = new Map<string, string | null>()
 
 const cacheKey = (host: string | undefined, code: string) =>
   host ? `${host}|${code}` : code
