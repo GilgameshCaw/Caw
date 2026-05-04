@@ -1281,7 +1281,27 @@ export const validatorService: Service = {
       // Stage 2: re-sim still says all-good but the real tx reverted.
       // Bisect to isolate the bad action(s).
       console.log('[Validator/recovery] Re-sim still passes — bisecting to isolate the reverter(s)')
-      await bisectAndSubmit(validatorId, entries, originalRevertReason, verdictByEntryId, finalizedOut, 0)
+      try {
+        await bisectAndSubmit(validatorId, entries, originalRevertReason, verdictByEntryId, finalizedOut, 0)
+      } catch (bisectErr: any) {
+        if (bisectErr?.name === 'BisectTransientError') {
+          // RPC blip mid-bisect — keep what we already proved (succeeded
+          // sub-batches in finalizedOut already have verdicts) and reset
+          // the rest to pending so the next poll picks them up fresh.
+          // Net effect: zero rows misclassified as "Bisected revert" on
+          // an RPC outage.
+          let resetCount = 0
+          for (const entry of entries) {
+            if (!verdictByEntryId.has(entry.id)) {
+              verdictByEntryId.set(entry.id, { pending: true })
+              resetCount++
+            }
+          }
+          console.warn(`[Validator/recovery] Bisect aborted on transient RPC error — ${resetCount} entries reset to pending: ${bisectErr.cause?.message || bisectErr.message}`)
+          return true // verdicts populated; outer path honors them and skips mark-all-failed
+        }
+        throw bisectErr
+      }
       // Any entry without a verdict at this point means bisection bailed out
       // before reaching it — caller's fallback will mark them failed.
       const missing = entries.filter(e => !verdictByEntryId.has(e.id))
@@ -1292,11 +1312,51 @@ export const validatorService: Service = {
       return true
     }
 
+    // Recognize errors that mean "RPC blip, not a contract revert". We must
+    // never mark TxQueue rows failed for these — keep them pending so the
+    // next poll retries.  Mirrors the gate at the submission catch around
+    // line 2100; any change there should be reflected here.
+    function isTransientRpcError(err: any): boolean {
+      const msg = (err?.message || '').toLowerCase()
+      return (
+        err?.code === 'UNSUPPORTED_OPERATION' ||
+        err?.code === 'BAD_DATA' ||
+        err?.code === 'UNKNOWN_ERROR' ||
+        msg.includes('provider destroyed') ||
+        msg.includes('cancelled request') ||
+        msg.includes('too many requests') ||
+        msg.includes('429') ||
+        msg.includes('rate limit') ||
+        msg.includes('missing response') ||
+        msg.includes('internal error') ||
+        msg.includes('could not coalesce') ||
+        msg.includes('timeout') ||
+        msg.includes('enotfound') ||
+        msg.includes('econnrefused') ||
+        msg.includes('econnreset')
+      )
+    }
+
+    // Sentinel thrown out of bisectAndSubmit when an RPC error (rather than
+    // a real action revert) interrupts the recovery. recoverBatchFailure
+    // catches this, marks every still-undecided entry `pending`, and
+    // returns true so the outer submission path doesn't mark-all-failed.
+    class BisectTransientError extends Error {
+      constructor(public readonly cause: any) {
+        super(`Bisect aborted on transient RPC error: ${cause?.message || cause}`)
+        this.name = 'BisectTransientError'
+      }
+    }
+
     // Recursive bisection. On revert with len > 1: split, recurse on each
     // half (re-quoting + re-estimating gas per sub-batch). On revert with
     // len == 1: that single action is the reverter — mark it failed.
     // Successful submissions append to finalizedOut and write succeeded
     // verdicts. Bounded by Math.ceil(log2(N)) recursion depth.
+    //
+    // Throws BisectTransientError when ANY step (quote, gas estimate, or
+    // submit) fails with an RPC-class error. Without that distinction we'd
+    // mark innocent rows permanently failed during a flaky-RPC window.
     async function bisectAndSubmit(
       validatorId: number,
       entries: any[],
@@ -1310,12 +1370,15 @@ export const validatorService: Service = {
 
       if (entries.length === 0) return
 
-      // Re-build calldata + re-quote for *this* sub-batch (withdraw set may differ)
-      const subMulti = buildMultiActionData(entries)
-      const subQuote = await recalculateQuoteForActions(subMulti)
-      const subGasLimit = await estimateGasLimit(validatorId, subMulti, subQuote)
-
+      // Re-build calldata + re-quote for *this* sub-batch (withdraw set may
+      // differ). Quote/gas estimation are eth_calls and can hit transient
+      // RPC errors — wrap them in the same try so we treat those as
+      // transients rather than as bisect-level reverts.
       try {
+        const subMulti = buildMultiActionData(entries)
+        const subQuote = await recalculateQuoteForActions(subMulti)
+        const subGasLimit = await estimateGasLimit(validatorId, subMulti, subQuote)
+
         const { processed } = await submitProcessActions(validatorId, subMulti, subQuote, subGasLimit)
         // Sub-batch landed. Mark its entries succeeded based on what the
         // contract actually emitted.
@@ -1334,6 +1397,13 @@ export const validatorService: Service = {
         console.log(`[Validator/bisect]${indent} ✓ ${processed.length}/${entries.length} action(s) landed`)
         return
       } catch (subErr: any) {
+        // RPC blip during bisect: bubble out so recoverBatchFailure can
+        // mark everything still-undecided as pending. Re-throwing instead
+        // of returning means siblings further up the recursion don't keep
+        // running (and don't waste gas + risk wedging on the same blip).
+        if (isTransientRpcError(subErr)) {
+          throw new BisectTransientError(subErr)
+        }
         const subReason = subErr.message || lastRevertReason
         if (entries.length === 1) {
           // Terminal: this single action is the reverter.
