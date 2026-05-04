@@ -62,6 +62,13 @@ export async function generateConfig(nodeType, config, installDir) {
     fs.writeFileSync(frontendEnvPath, frontendEnvContent, { mode: 0o640 })
     fs.chmodSync(frontendEnvPath, 0o640)
     console.log(success(`  Created ${dim(frontendEnvPath)} (mode 640)`))
+
+    // Read the file back and confirm VITE_CLIENT_ID landed as a positive
+    // integer. If it didn't, every contract-call hook in the FE will throw
+    // `NaN can't be converted to BigInt` at runtime — a confusing failure
+    // mode that pulls operators (and their AIs) into hours of debugging the
+    // wrong layer. Fail the install instead.
+    verifyFrontendEnv(frontendEnvPath)
   }
 
   // Build docker-compose.yml if needed
@@ -514,6 +521,41 @@ function buildFrontendEnv(nodeType, config) {
   }
 
   return env
+}
+
+/**
+ * Read the freshly written FE .env back from disk and confirm the values
+ * Vite cares most about are actually present and parseable. Disk is the
+ * source of truth here — we deliberately don't trust the in-memory object,
+ * because the failure mode this guard exists to catch is "the file on disk
+ * doesn't match what we think we wrote" (filesystem error, permissions,
+ * an earlier-aborted run leaving a stale file, etc.).
+ *
+ * VITE_CLIENT_ID is the killer: when missing, the FE bundle initializes
+ * `CLIENT_ID = NaN`, which silently propagates into every wagmi
+ * `args: [CLIENT_ID, ...]` call and surfaces as the cryptic runtime
+ * `RangeError: NaN can't be converted to BigInt`. Catch it here so the
+ * operator gets a clear error at install time.
+ */
+function verifyFrontendEnv(frontendEnvPath) {
+  const text = fs.readFileSync(frontendEnvPath, 'utf8')
+  const parsed = {}
+  for (const line of text.split('\n')) {
+    const m = line.match(/^([A-Z0-9_]+)=(.*)$/)
+    if (m) parsed[m[1]] = m[2]
+  }
+
+  const raw = parsed.VITE_CLIENT_ID
+  const n = Number(raw)
+  if (raw === undefined || raw === '' || !Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) {
+    throw new Error(
+      `VITE_CLIENT_ID is missing or invalid in ${frontendEnvPath} (got ${JSON.stringify(raw)}).\n` +
+      `  This will cause the frontend to throw "NaN can't be converted to BigInt" on every contract call.\n` +
+      `  Re-run the install (node cli/bin/caw.js install --dir <install-dir>) and pick a client at the prompt,\n` +
+      `  or set VITE_CLIENT_ID=<positive integer> in that .env by hand and restart vite.`
+    )
+  }
+  console.log(success(`  Verified ${dim('VITE_CLIENT_ID=' + n)}`))
 }
 
 function buildDockerCompose(config) {
