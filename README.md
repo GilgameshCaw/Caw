@@ -2,6 +2,18 @@
 
 > A trustless and decentralized social clearing-house committed to making freedom of speech unstoppable
 
+---
+
+### 👉 HERE'S THE ONE-LINER TO RUN A NODE:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/GilgameshCaw/Caw/master/install.sh)"
+```
+
+Run it on a fresh Debian/Ubuntu host. [Read more about it here →](#-run-a-node-in-one-command)
+
+---
+
 ## 🚀 Overview
 
 CAW Protocol is a decentralized social network built on blockchain technology. All actions are cryptographically signed and verified on-chain, ensuring censorship-resistant content and permissionless participation.
@@ -13,6 +25,18 @@ CAW Protocol is a decentralized social network built on blockchain technology. A
 - 🔗 **Multi-Chain** - Ethereum L1, Base L2, with Arbitrum archive chain
 - ⚡ **Cross-Chain Archiving** - LayerZero-based replication to archive chains
 
+## ⚡ Run a node in one command
+
+On a fresh Debian/Ubuntu host:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/GilgameshCaw/Caw/master/install.sh)"
+```
+
+The installer asks for your domain, picks up sudo, installs every system dep (Node 22, pm2, nginx, Postgres, Redis, Elasticsearch, certbot), then hands you to an interactive CLI that walks through node type, RPC URLs, validator config, and TLS. **You do not need to clone anything or follow the manual steps below first.**
+
+Full options, requirements, and env-var overrides are in [Run a Node](#-run-a-node-1) further down.
+
 ## 📚 Documentation
 
 ### Core
@@ -21,7 +45,8 @@ CAW Protocol is a decentralized social network built on blockchain technology. A
 - **[Data Flow](./docs/DATA_FLOW.md)** - How data moves through the system
 
 ### Technical Guides
-- **[Validator Setup](./docs/VALIDATOR_MESH_NETWORK.md)** - How to run a validator node
+- **[Run a Node](#-run-a-node-in-one-command)** - One-liner installer (start here if you just want a node running)
+- **[Validator Setup](./docs/VALIDATOR_MESH_NETWORK.md)** - Mesh network details (read after the installer is done)
 - **[Smart Contracts](./solidity/README.md)** - Solidity contracts documentation
 - **[Client Replication Guide](./solidity/docs/CLIENT_REPLICATION_GUIDE.md)** - Cross-chain archiving setup via LayerZero
 - **[API & Backend](./client/README.md)** - Backend services and API documentation
@@ -182,9 +207,9 @@ node cli/bin/caw.js install --dir "$PWD"
 
 Pick the `dev` deployment mode in the CLI — vite serves the frontend live at http://localhost:5274 and pm2 watches the API.
 
-## ⚡ Quick Start (legacy)
+## 🧰 Developer scripts (already-installed checkout)
 
-For development against an already-installed checkout:
+> Not a setup path. If you just want to run a node, use the [one-liner installer](#-run-a-node-in-one-command) above. The commands below are for working *inside* a checkout the installer (or `cli/bin/caw.js install`) has already configured.
 
 ### Prerequisites
 - Node.js v22.0.0+
