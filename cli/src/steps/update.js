@@ -27,6 +27,41 @@ const DESTRUCTIVE_PATTERNS = [
   /\balter\s+table\s+\S+\s+drop\s+constraint\b/i,
 ]
 
+// Author-side migration smells: SQL that's syntactically valid but
+// likely to fail or misbehave on real operator boxes. We warn — never
+// block — so the deploy still proceeds; the warning gives the author
+// (and the operator who reports the failure) a fast pointer to the fix.
+//
+// Each entry: { pattern, label, hint } where label is shown in the
+// "Migration warnings" block and hint is the one-liner remediation.
+const RISKY_PATTERNS = [
+  {
+    // ALTER TYPE ... ADD VALUE without IF NOT EXISTS errors on re-run
+    // ("enum label X already exists"). Postgres 9.6+ supports the guard.
+    pattern: /\balter\s+type\s+\S+\s+add\s+value\b(?!\s+if\s+not\s+exists)/i,
+    label: 'enum ADD VALUE without IF NOT EXISTS',
+    hint: 'Add `IF NOT EXISTS` so re-runs against partially-migrated DBs don\'t error.',
+  },
+  {
+    // CREATE TABLE without IF NOT EXISTS — same re-run failure mode.
+    pattern: /\bcreate\s+table\s+(?!if\s+not\s+exists)/i,
+    label: 'CREATE TABLE without IF NOT EXISTS',
+    hint: 'Add `IF NOT EXISTS` for idempotency on partial-apply recovery.',
+  },
+  {
+    // ADD COLUMN without IF NOT EXISTS.
+    pattern: /\badd\s+column\s+(?!if\s+not\s+exists)/i,
+    label: 'ADD COLUMN without IF NOT EXISTS',
+    hint: 'Add `IF NOT EXISTS` so the migration is safe to re-apply.',
+  },
+  {
+    // CREATE INDEX without IF NOT EXISTS (concurrent variant included).
+    pattern: /\bcreate\s+(?:unique\s+)?(?:concurrent\s+)?index\s+(?!if\s+not\s+exists)/i,
+    label: 'CREATE INDEX without IF NOT EXISTS',
+    hint: 'Add `IF NOT EXISTS` so the migration replays cleanly.',
+  },
+]
+
 /**
  * Resolve the install directory. Defaults to the CLI's repo root (the
  * convention since `caw install` writes everything under cli/../..). The
@@ -250,6 +285,7 @@ export async function planMigrations(installDir) {
 
   const pending = allMigrations.filter(m => !applied.has(m))
   const destructive = []
+  const risky = []
   for (const name of pending) {
     const sqlPath = path.join(migrationsDir, name, 'migration.sql')
     if (!fs.existsSync(sqlPath)) continue
@@ -258,9 +294,18 @@ export async function planMigrations(installDir) {
       .filter(rx => rx.test(sql))
       .map(rx => rx.source)
     if (matched.length > 0) destructive.push({ name, patterns: matched })
+
+    // Author-side smells are warn-only; they won't block the deploy
+    // but the operator (and whoever reads the deploy log) sees a
+    // pointer to the missing IF NOT EXISTS guard. Cheaper than a
+    // mid-deploy P3018 with no context.
+    const riskMatches = RISKY_PATTERNS
+      .filter(({ pattern }) => pattern.test(sql))
+      .map(({ label, hint }) => ({ label, hint }))
+    if (riskMatches.length > 0) risky.push({ name, issues: riskMatches })
   }
 
-  return { pending, destructive }
+  return { pending, destructive, risky }
 }
 
 function readDatabaseUrl(installDir) {
@@ -748,6 +793,18 @@ export async function runUpdate(installDir, opts = {}) {
     console.log()
     console.log(brand(`  ${postMigPlan.pending.length} migration${postMigPlan.pending.length === 1 ? '' : 's'} to apply:`))
     for (const name of postMigPlan.pending) console.log(dim(`    ${name}`))
+
+    if (postMigPlan.risky.length > 0) {
+      console.log()
+      console.log(warn('  Migration warnings (will still apply):'))
+      for (const { name, issues } of postMigPlan.risky) {
+        console.log(warn(`    ${name}`))
+        for (const { label, hint } of issues) {
+          console.log(dim(`      • ${label}`))
+          console.log(dim(`        ${hint}`))
+        }
+      }
+    }
 
     if (postMigPlan.destructive.length > 0) {
       console.log()
