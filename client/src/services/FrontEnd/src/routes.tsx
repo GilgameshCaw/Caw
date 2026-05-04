@@ -1,38 +1,54 @@
-import { Profile } from "./pages/Profile/Profile";
-import { NewProfile } from "./pages/Profile/New";
-import { PendingPage } from "./pages/Pending";
-import { CawPage } from "./pages/CawPage";
-import { Staking } from "./pages/Staking";
+import { lazy } from "react";
+import { Navigate } from "react-router-dom";
+
+// Critical-path pages stay eagerly imported. Everything below this block
+// is `React.lazy` so it splits into its own chunk and is fetched only
+// when the route is visited. The router renders these inside a
+// <Suspense> boundary in App.tsx, so navigation shows a one-frame blank
+// fallback while the chunk fetches.
+//
+// Eager: Main (post-auth landing), Pending (early-load fallback), Profile
+// (most-trafficked deep-link from external links), CawPage (every
+// /caws/:id share link), CaptiveSplash (pre-auth landing).
 import { Main } from "./pages/Main";
-import NotificationsPage from "./pages/NotificationsPage";
-import { SettingsPage } from "./pages/Settings";
-import MutedContentPage from "./pages/MutedContent";
-import NotificationSettings from "./pages/NotificationSettings";
-import LanguageSettings from "./pages/LanguageSettings";
-import AccountSettings from "./pages/AccountSettings";
-import SessionKeySettings from "./pages/SessionKeySettings";
-import HelpPage from "./pages/HelpPage";
-import MessagesPage from "./pages/Messages";
-import BookmarksPage from "./pages/Bookmarks";
-import ExplorePage from "./pages/Explore";
-import ScheduledPage from "./pages/Scheduled";
-// import GameFiPage from "./pages/GameFiPage";
-import HashtagPage from "./pages/HashtagPage";
-import SearchResultsPage from "./pages/SearchResultsPage";
-import FaucetPage from "./pages/FaucetPage";
-import BugReportsAdmin from "./pages/BugReportsAdmin";
-import ReportsAdmin from "./pages/ReportsAdmin";
-import ValidatorAnalytics from "./pages/ValidatorAnalytics";
-import ValidatorSettings from "./pages/ValidatorSettings";
-import DatabaseAdmin from "./pages/DatabaseAdmin";
-import Admin from "./pages/Admin";
-import WelcomePage from "./pages/WelcomePage";
-import Marketplace from "./pages/Marketplace";
-import AddressTokens from "./pages/AddressTokens";
+import { PendingPage } from "./pages/Pending";
+import { Profile } from "./pages/Profile/Profile";
+import { CawPage } from "./pages/CawPage";
 import CaptiveSplash from "./pages/CaptiveSplash";
 import AuthGate from "./components/AuthGate";
 import AdminGate from "./components/AdminGate";
-import { Navigate } from "react-router-dom";
+
+// Lazy. Each line below produces a separate chunk named after the
+// imported file's basename, so dist/ stays legible
+// (Marketplace-<hash>.js, Messages-<hash>.js, etc.). The two `.then`
+// adapters below convert named exports to React.lazy's required
+// `{ default }` shape.
+const NewProfile = lazy(() => import("./pages/Profile/New"));
+const Staking = lazy(() => import("./pages/Staking").then(m => ({ default: m.Staking })));
+const NotificationsPage = lazy(() => import("./pages/NotificationsPage"));
+const SettingsPage = lazy(() => import("./pages/Settings").then(m => ({ default: m.SettingsPage })));
+const MutedContentPage = lazy(() => import("./pages/MutedContent"));
+const NotificationSettings = lazy(() => import("./pages/NotificationSettings"));
+const LanguageSettings = lazy(() => import("./pages/LanguageSettings"));
+const AccountSettings = lazy(() => import("./pages/AccountSettings"));
+const SessionKeySettings = lazy(() => import("./pages/SessionKeySettings"));
+const HelpPage = lazy(() => import("./pages/HelpPage"));
+const MessagesPage = lazy(() => import("./pages/Messages"));
+const BookmarksPage = lazy(() => import("./pages/Bookmarks"));
+const ExplorePage = lazy(() => import("./pages/Explore"));
+const ScheduledPage = lazy(() => import("./pages/Scheduled"));
+const HashtagPage = lazy(() => import("./pages/HashtagPage"));
+const SearchResultsPage = lazy(() => import("./pages/SearchResultsPage"));
+const FaucetPage = lazy(() => import("./pages/FaucetPage"));
+const BugReportsAdmin = lazy(() => import("./pages/BugReportsAdmin"));
+const ReportsAdmin = lazy(() => import("./pages/ReportsAdmin"));
+const ValidatorAnalytics = lazy(() => import("./pages/ValidatorAnalytics"));
+const ValidatorSettings = lazy(() => import("./pages/ValidatorSettings"));
+const DatabaseAdmin = lazy(() => import("./pages/DatabaseAdmin"));
+const Admin = lazy(() => import("./pages/Admin"));
+const WelcomePage = lazy(() => import("./pages/WelcomePage"));
+const Marketplace = lazy(() => import("./pages/Marketplace"));
+const AddressTokens = lazy(() => import("./pages/AddressTokens"));
 
 
 

@@ -1,34 +1,46 @@
 import { BrowserRouter, Route, Routes, useLocation } from "react-router";
+import { lazy, Suspense, useEffect } from 'react'
 import { useCawonceSync } from '~/hooks/useCawonce'
 import { useSessionKeyWalletGuard } from '~/hooks/useSessionKey'
 import { useTxQueueMonitor } from '~/hooks/useTxQueueMonitor'
-import { useAccount } from "wagmi"
 import routes from "./routes";
-import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
 import { useInsufficientStakeStore } from '~/store/insufficientStakeStore'
-import VerifyWalletModal from '~/components/modals/VerifyWalletModal'
-import SignInModal from '~/components/modals/SignInModal'
-import TransferNFTModal from '~/components/modals/TransferNFTModal'
-import CreateListingModal from '~/components/modals/CreateListingModal'
-import BuyModal from '~/components/modals/BuyModal'
-import PlaceBidModal from '~/components/modals/PlaceBidModal'
-import MakeOfferModal from '~/components/modals/MakeOfferModal'
-import ViewOffersModal from '~/components/modals/ViewOffersModal'
-import SyncTransferModal from '~/components/modals/SyncTransferModal'
-import OnboardingGuard from '~/components/OnboardingGuard'
-import QuickSignRenewModal from '~/components/modals/QuickSignRenewModal'
-import QuickSignModal from '~/components/modals/QuickSignModal'
-import QuickSignUnlock from '~/components/QuickSignUnlock'
-import ClientAuthModal from '~/components/modals/ClientAuthModal'
 import { useSessionSpendSync } from '~/hooks/useSessionSpendSync'
 import { useBadgeSync } from '~/hooks/useBadgeSync'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import { useActionErrorStore } from '~/store/actionErrorStore'
 import ModalWrapper from '~/components/modals/ModalWrapper'
-import CawMediaModal from '~/components/modals/CawMediaModal'
-import { useEffect } from 'react'
 import { I18nProvider } from '~/i18n/I18nProvider'
+
+// Auth-flow modals stay eagerly imported. They open in response to
+// security-sensitive moments (sign-in challenge, mid-action verification,
+// session expiry) where a Suspense fallback would be both visually jarring
+// and a usability footgun — the user should see the modal land instantly,
+// not a spinner. They're also small.
+import OnboardingGuard from '~/components/OnboardingGuard'
+import VerifyWalletModal from '~/components/modals/VerifyWalletModal'
+import SignInModal from '~/components/modals/SignInModal'
+import QuickSignRenewModal from '~/components/modals/QuickSignRenewModal'
+import QuickSignModal from '~/components/modals/QuickSignModal'
+import QuickSignUnlock from '~/components/QuickSignUnlock'
+import ClientAuthModal from '~/components/modals/ClientAuthModal'
+import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
+
+// Marketplace + transfer modals are opened from discrete user actions
+// (clicks on Buy / Place bid / Make offer / Transfer / etc.). The brief
+// chunk fetch on the first open is fine — they're not in a critical-path
+// auth flow — and lazy-loading them strips the marketplace flow chrome out
+// of the entry bundle entirely. Same applies to the in-feed CawMediaModal
+// (rendered only when navigating to /caws/:id with a backgroundLocation).
+const TransferNFTModal = lazy(() => import('~/components/modals/TransferNFTModal'))
+const CreateListingModal = lazy(() => import('~/components/modals/CreateListingModal'))
+const BuyModal = lazy(() => import('~/components/modals/BuyModal'))
+const PlaceBidModal = lazy(() => import('~/components/modals/PlaceBidModal'))
+const MakeOfferModal = lazy(() => import('~/components/modals/MakeOfferModal'))
+const ViewOffersModal = lazy(() => import('~/components/modals/ViewOffersModal'))
+const SyncTransferModal = lazy(() => import('~/components/modals/SyncTransferModal'))
+const CawMediaModal = lazy(() => import('~/components/modals/CawMediaModal'))
 
 function AppRoutes() {
   const location = useLocation() as any
@@ -81,7 +93,14 @@ function App() {
   return (
     <BrowserRouter>
       <I18nProvider>
-      <AppRoutes />
+      {/* Suspense fallback is intentionally null — every lazy route is
+          a full page, so a one-frame blank during chunk fetch is less
+          jarring than a spinner that flashes for ~50ms on a fast
+          connection. On slow networks the browser's own loading bar
+          tells the user something's happening. */}
+      <Suspense fallback={null}>
+        <AppRoutes />
+      </Suspense>
 
       <InsufficientStakeModal
         isOpen={stakeModal.isOpen}
@@ -98,13 +117,20 @@ function App() {
       <QuickSignModal />
       <QuickSignUnlock />
       <ClientAuthModal />
-      <TransferNFTModal />
-      <CreateListingModal />
-      <BuyModal />
-      <PlaceBidModal />
-      <MakeOfferModal />
-      <ViewOffersModal />
-      <SyncTransferModal />
+      {/* Lazy modals: each renders to null until its zustand isOpen flips,
+          so the chunk fetch doesn't fire on first paint. Suspense fallback
+          is null because the modal itself was hidden a moment ago anyway —
+          the user perceives "click → modal appears after a beat" not a
+          loading state. */}
+      <Suspense fallback={null}>
+        <TransferNFTModal />
+        <CreateListingModal />
+        <BuyModal />
+        <PlaceBidModal />
+        <MakeOfferModal />
+        <ViewOffersModal />
+        <SyncTransferModal />
+      </Suspense>
 
       {/* Global action error modal */}
       <ModalWrapper isOpen={actionError.isOpen} onClose={actionError.close} maxWidth="max-w-sm">
