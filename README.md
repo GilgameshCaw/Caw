@@ -47,6 +47,7 @@ Full options, requirements, and env-var overrides are in [Run a Node](#-run-a-no
 ### Technical Guides
 - **[Run a Node](#-run-a-node-in-one-command)** - One-liner installer (start here if you just want a node running)
 - **[Validator Setup](./docs/VALIDATOR_MESH_NETWORK.md)** - Mesh network details (read after the installer is done)
+- **[Migrations](./docs/MIGRATIONS.md)** - How `caw update` runs migrations + recovering from schema drift
 - **[Smart Contracts](./solidity/README.md)** - Solidity contracts documentation
 - **[Client Replication Guide](./solidity/docs/CLIENT_REPLICATION_GUIDE.md)** - Cross-chain archiving setup via LayerZero
 - **[API & Backend](./client/README.md)** - Backend services and API documentation
