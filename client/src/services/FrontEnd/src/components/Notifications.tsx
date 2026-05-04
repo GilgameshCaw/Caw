@@ -473,8 +473,14 @@ const Notifications: React.FC = () => {
     )
     const grouped = count > 1 && additionalActors && additionalActors.length > 0
     const othersCount = grouped ? count - 1 : 0
+    // Use a sentinel marker so we can splice the React <Link> back in after
+    // running the translation through t() — t() only handles strings.
+    const NAME_TOKEN = ' NAME '
     const actorNode: React.ReactNode = grouped
-      ? <>{actorLink} and {othersCount} other{othersCount > 1 ? 's' : ''}</>
+      ? (() => {
+          const parts = t('notifications.actor_grouped', { count: othersCount, name: NAME_TOKEN }).split(NAME_TOKEN)
+          return <>{parts[0]}{actorLink}{parts[1] ?? ''}</>
+        })()
       : actorLink
 
     switch (type) {
@@ -501,17 +507,17 @@ const Notifications: React.FC = () => {
         )
       }
       case 'FOLLOW':
-        return <>{Actor(actorNode)} {Action(t('notifications.message.followed'))}</>
+        return <>{Actor(actorNode)} {Action(t('notifications.message.followed', { count }))}</>
       case 'LIKE':
-        return <>{Actor(actorNode)} {Action(t('notifications.message.liked'))}</>
+        return <>{Actor(actorNode)} {Action(t('notifications.message.liked', { count }))}</>
       case 'REPLY':
-        return <>{Actor(actorNode)} {Action(t('notifications.message.replied'))}</>
+        return <>{Actor(actorNode)} {Action(t('notifications.message.replied', { count }))}</>
       case 'REPOST':
-        return <>{Actor(actorNode)} {Action(t('notifications.message.recawed'))}</>
+        return <>{Actor(actorNode)} {Action(t('notifications.message.recawed', { count }))}</>
       case 'QUOTE':
-        return <>{Actor(actorNode)} {Action(t('notifications.message.quoted'))}</>
+        return <>{Actor(actorNode)} {Action(t('notifications.message.quoted', { count }))}</>
       case 'MENTION':
-        return <>{Actor(actorNode)} {Action(t('notifications.message.mentioned'))}</>
+        return <>{Actor(actorNode)} {Action(t('notifications.message.mentioned', { count }))}</>
       case 'TIP': {
         const tipAmt = notification.actionPayload?.tipAmount
         let tipLabel = ''

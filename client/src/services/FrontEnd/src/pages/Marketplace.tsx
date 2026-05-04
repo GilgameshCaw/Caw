@@ -161,7 +161,7 @@ const Marketplace: React.FC = () => {
 
         {/* Marketplace section */}
         <div className={`border-t pt-6 ${themeBorder(isDark)}`}>
-          <h2 className={`text-3xl font-bold mb-4 ${themeText(isDark)}`}>Profile Marketplace</h2>
+          <h2 className={`text-3xl font-bold mb-4 ${themeText(isDark)}`}>{t('marketplace.title')}</h2>
 
           {/* Claimable refunds (outbid bids + cancelled/reclaimed auctions) */}
           <RefundsBanner />
@@ -375,7 +375,7 @@ const MyProfilesTab: React.FC = () => {
       {myListings.length > 0 && (
         <div className="mb-8">
           <h3 className={`text-sm font-medium mb-3 ${themeTextMuted(isDark)}`}>
-            Your Active Listings ({myListings.length})
+            {t('marketplace.my_profiles.active_listings', { count: myListings.length })}
           </h3>
           <div className="grid grid-cols-1 min-[520px]:grid-cols-2 gap-4">
             {myListings.map(l => <ListingCard key={l.id} listing={l} showCancel />)}
@@ -389,7 +389,7 @@ const MyProfilesTab: React.FC = () => {
         return (
           <div className="mb-8">
             <h3 className={`text-sm font-medium mb-3 ${themeTextMuted(isDark)}`}>
-              Your Usernames ({unlisted.length})
+              {t('marketplace.my_profiles.your_usernames', { count: unlisted.length })}
             </h3>
             {unlisted.length > 0 ? (
               <div className="grid grid-cols-1 min-[520px]:grid-cols-2 gap-4">
@@ -404,7 +404,7 @@ const MyProfilesTab: React.FC = () => {
                             : 'bg-yellow-50 text-yellow-700 hover:bg-yellow-100'
                         }`}
                       >
-                        List for Sale
+                        {t('create_listing.button.list')}
                       </button>
                     </div>
                   </ProfileCard>
@@ -702,7 +702,7 @@ const MyOffersTab: React.FC = () => {
   if (!address) {
     return (
       <div className={`text-center py-16 ${themeBgSubtle(isDark)} rounded-xl`}>
-        <p className={`text-lg ${themeTextMuted(isDark)}`}>Sign in to see your offers</p>
+        <p className={`text-lg ${themeTextMuted(isDark)}`}>{t('marketplace.my_offers.signin_required')}</p>
       </div>
     )
   }
