@@ -3,8 +3,9 @@
 // after a 7-day grace period.
 //
 // Why a 7-day grace:
-//   - Hide is reversible in some flows (un-hide for moderation), so we
-//     don't want to lose the asset on the first hide event.
+//   - Hide is permanent (recorded on-chain, can't be undone — see the
+//     hide-confirmation copy in FeedItem.tsx), so revertibility isn't
+//     the concern. The grace is for indexer lag and in-flight clients.
 //   - Indexer lag: a hide action might race with someone else loading
 //     the post. Keeping the file briefly avoids 404s in that window.
 //   - Cheap insurance — Filebase storage is metered but not expensive,
@@ -72,19 +73,37 @@ export async function markOrphan(url: string | null | undefined): Promise<void> 
 }
 
 /**
- * Mark every URL that derives from a base — main file + variants. Used
- * when an avatar / cover / feed image is replaced: the main file plus
- * any `_<width>.webp` thumbnails should all expire together. We can't
- * enumerate variants by listing the bucket from here cheaply, so we
- * push the canonical URL and let the sweep find variants by listing the
- * bucket prefix at delete time. (Listing happens once per delete, not
- * per call, so it's fine.)
+ * Mark a base URL plus its known size-suffixed variants for delayed
+ * deletion. Used for avatar replacement (main + 96px thumb) and feed
+ * images (main + 2048px lightbox).
  *
- * For now, just mark the main URL. Variant cleanup is in the sweep
- * function below.
+ * Variant naming MUST mirror appendWidthSuffix() in
+ * services/FrontEnd/src/utils/imageVariants.ts: `<stem>_<width>.webp`.
+ * If that helper changes the convention, this enumeration goes stale
+ * and the variants leak. We enqueue at mark-time (not enumerate at
+ * sweep-time) to avoid a Filebase ListObjects call per sweep, which
+ * costs both bandwidth and request budget.
+ *
+ * Widths covered: 64 (legacy avatar thumb), 96 (current avatar thumb),
+ * 2048 (feed lightbox). Marking a URL that has no variant is harmless —
+ * the sweep tries to delete and continues on 404.
  */
+const VARIANT_WIDTHS = [64, 96, 2048]
+
 export async function markOrphanWithVariants(url: string | null | undefined): Promise<void> {
+  if (!url || typeof url !== 'string') return
   await markOrphan(url)
+  // Skip variant marking for URLs that don't fit the variant convention
+  // — same skip rules as appendWidthSuffix().
+  if (!url.includes('/uploads/images/')) return
+  if (url.includes('/images/avatars/')) return
+  const dot = url.lastIndexOf('.')
+  if (dot < 0) return
+  const stem = url.slice(0, dot)
+  if (/_\d+$/.test(stem)) return // already a variant URL — don't re-derive
+  for (const w of VARIANT_WIDTHS) {
+    await markOrphan(`${stem}_${w}.webp`)
+  }
 }
 
 /**
