@@ -29,11 +29,13 @@ export const LANGUAGES: Language[] = [
   { code: 'ko', name: 'Korean',     native: '한국어'        },
   { code: 'it', name: 'Italian',    native: 'Italiano'   },
   { code: 'tr', name: 'Turkish',    native: 'Türkçe'     },
+  { code: 'fa', name: 'Persian',    native: 'فارسی'       },
   { code: 'pl', name: 'Polish',     native: 'Polski'     },
   { code: 'nl', name: 'Dutch',      native: 'Nederlands' },
   { code: 'vi', name: 'Vietnamese', native: 'Tiếng Việt' },
   { code: 'th', name: 'Thai',       native: 'ไทย'         },
   { code: 'id', name: 'Indonesian', native: 'Bahasa Indonesia' },
+  { code: 'tl', name: 'Filipino',   native: 'Filipino'    },
   { code: 'uk', name: 'Ukrainian',  native: 'Українська'  },
   { code: 'he', name: 'Hebrew',     native: 'עברית'       },
 ]

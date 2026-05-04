@@ -45,11 +45,13 @@ const LOADERS: Record<string, () => Promise<{ default: Record<string, unknown> }
   ko: () => import('./locales/ko.json'),
   it: () => import('./locales/it.json'),
   tr: () => import('./locales/tr.json'),
+  fa: () => import('./locales/fa.json'),
   pl: () => import('./locales/pl.json'),
   nl: () => import('./locales/nl.json'),
   vi: () => import('./locales/vi.json'),
   th: () => import('./locales/th.json'),
   id: () => import('./locales/id.json'),
+  tl: () => import('./locales/tl.json'),
   uk: () => import('./locales/uk.json'),
   he: () => import('./locales/he.json'),
 }
