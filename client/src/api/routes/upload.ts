@@ -18,15 +18,14 @@ function generateFilename(mimetype: string): string {
   return `${uniqueId}${ext}`
 }
 
-// Images come in pre-compressed from the FE (compressImage.ts targets ~1MB
-// for the 'feed' preset, ~750KB for 'dm'). 2MB is a 2x backstop for edge
-// cases — anything bigger than that is a degenerate input the FE failed
-// to shrink.
-const IMAGE_MAX_BYTES = 2 * 1024 * 1024
-// Videos are passed through unchanged. 25MB ≈ 30s-2min of 1080p H.264;
-// long-form video isn't a fit for this product so we cap rather than
-// transcode in-browser.
-const VIDEO_MAX_BYTES = 25 * 1024 * 1024
+// Images: FE compressor targets ~1MB for the 'feed' preset. The cap matches
+// the target so anything hitting it is a real failure (degenerate input)
+// rather than slop headroom.
+const IMAGE_MAX_BYTES = 1 * 1024 * 1024
+// Videos: ~30s of 720p or ~15s of 1080p H.264. The product is short-form
+// social, not long-form video. FE attempts client-side transcoding before
+// rejecting — see videoCompress.ts.
+const VIDEO_MAX_BYTES = 10 * 1024 * 1024
 
 const upload = multer({
   storage: multer.memoryStorage(),

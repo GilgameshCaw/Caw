@@ -13,8 +13,8 @@ export interface UploadImageResponse {
 // update both places. Pre-upload validation here gives the user an
 // immediate friendly error instead of waiting through the upload only to
 // see a 413 from the server.
-export const POST_IMAGE_MAX_BYTES = 2 * 1024 * 1024
-export const POST_VIDEO_MAX_BYTES = 25 * 1024 * 1024
+export const POST_IMAGE_MAX_BYTES = 1 * 1024 * 1024
+export const POST_VIDEO_MAX_BYTES = 10 * 1024 * 1024
 
 function fmtMB(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)}MB`

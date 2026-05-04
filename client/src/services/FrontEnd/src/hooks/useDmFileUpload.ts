@@ -8,14 +8,12 @@ import { compressImage } from '~/utils/compressImage'
 // generous headroom for the AES-GCM overhead and any pre-compression GIFs.
 const MAX_ENCRYPTED_SIZE = 5 * 1024 * 1024
 
-// Pre-flight video cap. Videos aren't compressed client-side, so a
-// huge pick would read+encrypt the whole thing only to fail the
-// MAX_ENCRYPTED_SIZE check at the end. Reject upfront with a friendly
-// message that nudges toward Posts (which carry a higher 25MB cap and
-// are visible to more than one person — a better fit for video).
-// 4MB cleartext leaves room for AES-GCM overhead under the 5MB encrypted
-// blob cap.
-const MAX_DM_VIDEO_BYTES = 4 * 1024 * 1024
+// Pre-flight DM video cap (cleartext). DMs are 1:1 — short clips only.
+// 2MB ≈ ~10s of decent quality. Posts carry a higher cap; the error
+// nudges users toward Posts for longer videos. AES-GCM overhead is a
+// few bytes per chunk so 2MB cleartext fits under the 5MB encrypted
+// server cap with plenty of headroom.
+const MAX_DM_VIDEO_BYTES = 2 * 1024 * 1024
 
 /** Read an image's natural dimensions without decoding it twice. */
 async function readImageDimensions(file: File): Promise<{ width: number; height: number }> {
