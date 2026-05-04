@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { useFollowButton } from '~/hooks/useFollowButton'
 import { useTheme } from '~/hooks/useTheme'
 import Tooltip from '~/components/Tooltip'
+import { useT } from '~/i18n/I18nProvider'
 
 interface FollowButtonProps {
   targetUserId: number
@@ -27,6 +28,7 @@ export const FollowButton: React.FC<FollowButtonProps> = ({
 }) => {
   const [isHovered, setIsHovered] = useState(false)
   const { isDark } = useTheme()
+  const t = useT()
 
   const {
     isFollowing,
@@ -106,7 +108,7 @@ export const FollowButton: React.FC<FollowButtonProps> = ({
 
   if (isPending && !isSigning) {
     return (
-      <Tooltip text="Processing on-chain" className="inline-block">
+      <Tooltip text={t('post.processing')} className="inline-block">
         {button}
       </Tooltip>
     )
@@ -118,7 +120,7 @@ export const FollowButton: React.FC<FollowButtonProps> = ({
 
   if (wrongWallet) {
     return (
-      <Tooltip text="Please switch to the correct wallet" className="inline-block">
+      <Tooltip text={t('post_form.error.wrong_wallet_tooltip')} className="inline-block">
         {button}
       </Tooltip>
     )

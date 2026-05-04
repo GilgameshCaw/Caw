@@ -373,6 +373,17 @@
   "search_results.section.caws": "Caws",
   "search_results.section.hashtags": "Hashtags",
 
+  "follow.follow": "Follow",
+  "follow.following": "Following",
+  "follow.unfollow": "Unfollow",
+  "follow.processing": "Processing...",
+
+  "profile_edit.save": "Save Changes",
+  "profile_edit.saving": "Saving...",
+  "profile_edit.placeholder.display_name": "Enter your display name",
+  "profile_edit.placeholder.bio": "Tell us about yourself",
+  "profile_edit.placeholder.location": "Enter your location",
+
   "profile.tab.posts": "Posts",
   "profile.tab.replies": "Replies",
   "profile.tab.media": "Media",

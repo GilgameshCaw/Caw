@@ -7,6 +7,7 @@ import { useTokenDataStore } from '~/store/tokenDataStore'
 import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
 import AvatarCropperModal from '~/components/modals/AvatarCropperModal'
 import { getUserAvatar } from '~/utils/defaultAvatar'
+import { useT } from '~/i18n/I18nProvider'
 
 export type ProfileEditFormData = {
   displayName?: string | null
@@ -48,7 +49,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
   profileData,
   isDark,
   onSaved,
-  saveLabel = 'Save Changes',
+  saveLabel,
   onSkip,
   skipLabel,
   scrollFieldsMaxHeight,
@@ -56,6 +57,8 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
   hideAvatarCaption,
   skipAsLink,
 }) => {
+  const t = useT()
+  const effectiveSaveLabel = saveLabel ?? t('profile_edit.save')
   const containerSpacing = compactFields ? '' : 'space-y-6'
   const signAndSubmit = useSignAndSubmitAction()
   const setAvatar = useTokenDataStore(s => s.setAvatar)
@@ -529,7 +532,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
           type="text"
           value={formData.displayName}
           onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
-          placeholder="Enter your display name"
+          placeholder={t('profile_edit.placeholder.display_name')}
           maxLength={50}
           className={`w-full px-4 py-3 rounded-full border focus:outline-none focus:ring-2 focus:ring-gray-500/30 ${
             isDark ? 'bg-black border-gray-600 text-white placeholder-gray-400' : 'bg-white border-gray-300 text-black placeholder-gray-500'
@@ -556,7 +559,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
         <textarea
           value={formData.description}
           onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-          placeholder="Tell us about yourself"
+          placeholder={t('profile_edit.placeholder.bio')}
           rows={3}
           className={`block w-full px-4 py-3 rounded-xl border focus:outline-none focus:ring-2 focus:ring-gray-500/30 resize-none ${
             isDark ? 'bg-black border-gray-600 text-white placeholder-gray-400' : 'bg-white border-gray-300 text-black placeholder-gray-500'
@@ -590,7 +593,7 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
             type="text"
             value={formData.location}
             onChange={(e) => setFormData({ ...formData, location: e.target.value })}
-            placeholder="Enter your location"
+            placeholder={t('profile_edit.placeholder.location')}
             className={`w-full pl-10 pr-4 py-3 rounded-full border focus:outline-none focus:ring-2 focus:ring-gray-500/30 ${
               isDark ? 'bg-black border-gray-600 text-white placeholder-gray-400' : 'bg-white border-gray-300 text-black placeholder-gray-500'
             }`}
@@ -638,10 +641,10 @@ const ProfileEditForm: React.FC<ProfileEditFormProps> = ({
                 } text-black`}
               >
                 {isSaving || isSavingOffChain ? (
-                  <span>Saving...</span>
+                  <span>{t('profile_edit.saving')}</span>
                 ) : (
                   <span>
-                    {saveLabel} {saveOnChain && updateCost > 0 && `(${updateCost.toLocaleString()} CAW)`}
+                    {effectiveSaveLabel} {saveOnChain && updateCost > 0 && `(${updateCost.toLocaleString()} CAW)`}
                   </span>
                 )}
               </button>

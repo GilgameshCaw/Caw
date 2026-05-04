@@ -4,6 +4,7 @@ import { useActiveToken, useTokenDataStore } from '~/store/tokenDataStore'
 import { useAccount } from 'wagmi'
 import { apiFetch } from '~/api/client'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
+import { useT } from '~/i18n/I18nProvider'
 
 export interface UseFollowButtonParams {
   targetUserId: number
@@ -34,6 +35,7 @@ export function useFollowButton({
   initialIsPending = false,
   onFollowStateChange
 }: UseFollowButtonParams): UseFollowButtonReturn {
+  const t = useT()
   const signAndSubmit = useSignAndSubmitAction()
   const activeToken = useActiveToken()
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
@@ -380,8 +382,8 @@ export function useFollowButton({
   // `isFollowing` is normalized in the hook so it always reflects the
   // *anticipated* state (during pending) or the confirmed state (otherwise).
   // That lets this stay simple.
-  const buttonText = isSigning ? 'Processing...' : isFollowing ? 'Following' : 'Follow'
-  const hoverText = isFollowing ? 'Unfollow' : 'Follow'
+  const buttonText = isSigning ? t('follow.processing') : isFollowing ? t('follow.following') : t('follow.follow')
+  const hoverText = isFollowing ? t('follow.unfollow') : t('follow.follow')
 
   return {
     isFollowing,
