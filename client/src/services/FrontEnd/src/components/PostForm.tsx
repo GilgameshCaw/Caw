@@ -1397,17 +1397,12 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     if (!showScheduler) setSchedulePicker(null)
   }, [showScheduler])
 
-  // Calculate total media URL character cost
-  const getMediaCharCost = () => {
-    let mediaCost = 0
-    const images = selectedMedia.filter(m => m.type === 'image')
-    const videos = selectedMedia.filter(m => m.type === 'video')
-    const gifs = selectedMedia.filter(m => m.type === 'gif')
-    mediaCost += images.length * 80
-    mediaCost += videos.length * 90
-    mediaCost += gifs.length * 100
-    return mediaCost
-  }
+  // Reservation per attached media item, in bytes. Each ends up in the post text
+  // as `\n` + a short URL of the form `https://caw.social/s/XXXXXX.<ext>`. The
+  // longest extension we emit is `.webp` (5 incl. dot) → 32 + 1 newline = 33.
+  // 34 leaves a 1-byte cushion without stranding usable post space.
+  const MEDIA_BYTES_PER_ITEM = 34
+  const getMediaCharCost = () => selectedMedia.length * MEDIA_BYTES_PER_ITEM
 
   const imageCount = selectedMedia.filter(m => m.type === 'image' || m.type === 'gif').length
   const gifDisabled = imageCount >= 4
@@ -1496,7 +1491,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     ? Math.max(2, Math.min(lineCount, 10))
     : hasMedia
       ? Math.max(1, Math.min(lineCount, 5))
-      : Math.max(3, Math.min(lineCount, 12))
+      : Math.max(4, Math.min(lineCount, 12))
   const isOverLimit = false // Thread mode handles overflow by splitting
 
   return (
@@ -1907,7 +1902,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           {isDragOverTextarea && (
             <div className="top-[-3px] absolute inset-0 flex items-center justify-center bg-yellow-500/10 border-2 border-dashed border-yellow-500 rounded-lg pointer-events-none">
               <div className="text-center">
-                <svg className="mx-auto h-12 w-12 text-yellow-500 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="mx-auto h-12 w-12 text-yellow-500 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
                 <p className="text-lg font-medium text-yellow-600 dark:text-yellow-400">Drop photos or video here</p>
