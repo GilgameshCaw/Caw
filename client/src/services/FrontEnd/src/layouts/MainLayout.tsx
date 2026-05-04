@@ -69,6 +69,11 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
             <img
               src={cawLogo}
               alt="CAW Logo"
+              width={40}
+              height={40}
+              decoding="sync"
+              loading="eager"
+              fetchPriority="high"
               className="caw-logo-mark w-10 h-10 object-contain"
             />
           </Link>
@@ -151,7 +156,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
         }`}>
           <div className="max-w-3xl mx-auto flex items-center justify-between px-5 py-3">
             <Link to="/welcome" className="caw-logo-lockup flex items-center gap-2.5">
-              <img src={cawLogo} alt="CAW" className="caw-logo-mark w-12 h-12 object-contain" />
+              <img src={cawLogo} alt="CAW" width={48} height={48} decoding="sync" loading="eager" fetchPriority="high" className="caw-logo-mark w-12 h-12 object-contain" />
               <span
                 className="text-4xl"
                 style={{

@@ -52,6 +52,8 @@ const Avatar: React.FC<AvatarProps> = ({ src, alt = '', className = 'w-full h-fu
     <img
       src={currentSrc}
       alt={alt}
+      decoding="sync"
+      loading="eager"
       className={`${className} object-cover`}
       onError={() => {
         // Thumb missing? Try the main URL once before giving up.

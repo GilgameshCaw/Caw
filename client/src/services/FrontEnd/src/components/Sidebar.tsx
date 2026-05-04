@@ -158,6 +158,11 @@ const Sidebar: React.FC = () => {
               <img
                 src={cawLogo}
                 alt="CAW Logo"
+                width={36}
+                height={36}
+                decoding="sync"
+                loading="eager"
+                fetchPriority="high"
                 className={`caw-logo-mark w-9 h-9 object-contain ${isDark ? '' : 'drop-shadow-[1px_1px_1px_rgba(0,0,0,0.8)]'}`}
               />
             <span
