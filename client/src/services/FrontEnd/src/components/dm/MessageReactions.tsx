@@ -1,7 +1,5 @@
-import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import React, { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import Picker from '@emoji-mart/react'
-import data from '@emoji-mart/data'
 import { HiOutlineEmojiHappy, HiOutlinePencil } from 'react-icons/hi'
 import { apiFetch } from '~/api/client'
 import { useTheme } from '~/hooks/useTheme'
@@ -303,6 +301,29 @@ interface EmojiPickerModalProps {
   onPick: (emoji: string) => void
 }
 
+// Lazy boundary for emoji-mart. The combined picker + data set is ~400KB
+// minified — too heavy to ship in the entry bundle, especially since the
+// picker is only opened from one spot in the DM flow. Both modules are
+// fetched together on first picker open and cached for the rest of the
+// session. Wrapped at the lowest level (the Picker render itself) so the
+// outer modal chrome still renders synchronously and can show a backdrop
+// while the chunk loads.
+const LazyEmojiPicker = lazy(async () => {
+  const [{ default: Picker }, { default: data }] = await Promise.all([
+    import('@emoji-mart/react'),
+    import('@emoji-mart/data'),
+  ])
+  return {
+    default: (props: { isDark: boolean; onPick: (emoji: string) => void; onClose: () => void }) => (
+      <Picker
+        data={data}
+        theme={props.isDark ? 'dark' : 'light'}
+        onEmojiSelect={(e: any) => { props.onPick(e.native); props.onClose() }}
+      />
+    ),
+  }
+})
+
 /**
  * Full emoji picker. Closed by clicking the backdrop or pressing Escape.
  */
@@ -322,11 +343,9 @@ export const EmojiPickerModal: React.FC<EmojiPickerModalProps> = ({ open, onClos
       onMouseDown={onClose}
     >
       <div onMouseDown={e => e.stopPropagation()}>
-        <Picker
-          data={data}
-          theme={isDark ? 'dark' : 'light'}
-          onEmojiSelect={(e: any) => { onPick(e.native); onClose() }}
-        />
+        <Suspense fallback={<div className="w-80 h-96 rounded-lg bg-black/60 animate-pulse" />}>
+          <LazyEmojiPicker isDark={isDark} onPick={onPick} onClose={onClose} />
+        </Suspense>
       </div>
     </div>
   )
