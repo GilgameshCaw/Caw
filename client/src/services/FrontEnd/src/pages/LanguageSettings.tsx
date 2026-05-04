@@ -8,9 +8,11 @@ import { LANGUAGES } from '~/constants/languages'
 import { apiFetch } from '~/api/client'
 import { useUserByToken } from '~/hooks/useUserData'
 import { useActiveToken } from '~/store/tokenDataStore'
+import { useT } from '~/i18n/I18nProvider'
 
 const LanguageSettings: React.FC = () => {
   const { isDark } = useTheme()
+  const t = useT()
   const activeToken = useActiveToken()
   const tokenId = activeToken?.tokenId
   const { data: user, refetch } = useUserByToken(tokenId)
@@ -82,10 +84,10 @@ const LanguageSettings: React.FC = () => {
           </Link>
           <div>
             <h1 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-              Language
+              {t('language_settings.title')}
             </h1>
             <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-              Choose your language and how foreign-language posts behave
+              {t('language_settings.subtitle')}
             </p>
           </div>
         </div>
@@ -94,7 +96,7 @@ const LanguageSettings: React.FC = () => {
           <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
             isDark ? 'text-white/40' : 'text-gray-400'
           }`}>
-            Display language
+            {t('language_settings.section.display')}
           </h2>
 
           <div className={`py-4 border-b ${isDark ? 'border-white/10' : 'border-gray-100'}`}>
@@ -104,10 +106,10 @@ const LanguageSettings: React.FC = () => {
               </div>
               <div className="flex-1">
                 <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  Your language
+                  {t('language_settings.your_language.title')}
                 </h3>
                 <p className={`text-sm mb-3 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-                  Posts in other languages can be translated automatically below.
+                  {t('language_settings.your_language.description')}
                 </p>
                 <select
                   value={preferredLanguage}
@@ -118,7 +120,7 @@ const LanguageSettings: React.FC = () => {
                       : 'bg-white border-gray-300 text-gray-900 hover:border-gray-500'
                   }`}
                 >
-                  <option value="">Use browser language</option>
+                  <option value="">{t('language_settings.browser_default')}</option>
                   {LANGUAGES.map(l => (
                     <option key={l.code} value={l.code}>
                       {l.name}{l.name !== l.native ? ` (${l.native})` : ''}
@@ -134,7 +136,7 @@ const LanguageSettings: React.FC = () => {
           <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
             isDark ? 'text-white/40' : 'text-gray-400'
           }`}>
-            Translation
+            {t('language_settings.section.translation')}
           </h2>
 
           <div className={`flex items-center justify-between py-4 border-b ${
@@ -146,11 +148,10 @@ const LanguageSettings: React.FC = () => {
               </div>
               <div className="flex-1">
                 <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  Auto-translate posts
+                  {t('language_settings.auto_translate.title')}
                 </h3>
                 <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-                  When on, posts in another language are translated for you automatically.
-                  When off, you'll see a "Translate" button on those posts instead.
+                  {t('language_settings.auto_translate.description')}
                 </p>
               </div>
             </div>
@@ -161,8 +162,7 @@ const LanguageSettings: React.FC = () => {
         <div className={`mt-6 px-4 py-3 rounded-lg text-xs ${
           isDark ? 'bg-white/5 text-white/50' : 'bg-gray-50 text-gray-500'
         }`}>
-          Translations are powered by Google Translate. Translating a post sends its
-          text to Google's servers; we don't keep a copy.
+          {t('language_settings.privacy_notice')}
         </div>
       </div>
     </MainLayout>

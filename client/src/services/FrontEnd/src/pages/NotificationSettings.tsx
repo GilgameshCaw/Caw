@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { HiArrowLeft, HiBell, HiHeart, HiChat, HiUserAdd, HiAtSymbol, HiVolumeOff } from 'react-icons/hi'
+import { useT } from '~/i18n/I18nProvider'
 
 interface NotificationPreferences {
   likes: boolean
@@ -28,6 +29,7 @@ const defaultPreferences: NotificationPreferences = {
 
 const NotificationSettings: React.FC = () => {
   const { isDark } = useTheme()
+  const t = useT()
   const [preferences, setPreferences] = useState<NotificationPreferences>(defaultPreferences)
 
   // Load preferences from localStorage
@@ -112,10 +114,10 @@ const NotificationSettings: React.FC = () => {
           </Link>
           <div>
             <h1 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-              Notifications
+              {t('notifications_settings.title')}
             </h1>
             <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-              Choose what you get notified about
+              {t('notifications_settings.subtitle')}
             </p>
           </div>
         </div>
@@ -124,7 +126,7 @@ const NotificationSettings: React.FC = () => {
         <div className={`mb-6 px-4 py-3 rounded-lg text-sm ${
           isDark ? 'bg-white/5 text-white/60' : 'bg-gray-50 text-gray-600'
         }`}>
-          These preferences are stored in this browser only. In-app notifications will respect these settings.
+          {t('notifications_settings.local_storage_notice')}
         </div>
 
         {/* Activity Section */}
@@ -132,37 +134,37 @@ const NotificationSettings: React.FC = () => {
           <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
             isDark ? 'text-white/40' : 'text-gray-400'
           }`}>
-            Activity
+            {t('notifications_settings.section.activity')}
           </h2>
 
           <SettingRow
             icon={<HiHeart className="w-5 h-5" />}
-            title="Likes"
-            description="When someone likes your post"
+            title={t('notifications_settings.likes.title')}
+            description={t('notifications_settings.likes.description')}
             checked={preferences.likes}
             onChange={(v) => updatePreference('likes', v)}
           />
 
           <SettingRow
             icon={<HiChat className="w-5 h-5" />}
-            title="Replies"
-            description="When someone replies to your post"
+            title={t('notifications_settings.replies.title')}
+            description={t('notifications_settings.replies.description')}
             checked={preferences.replies}
             onChange={(v) => updatePreference('replies', v)}
           />
 
           <SettingRow
             icon={<HiBell className="w-5 h-5" />}
-            title="Reposts"
-            description="When someone recaws your post"
+            title={t('notifications_settings.reposts.title')}
+            description={t('notifications_settings.reposts.description')}
             checked={preferences.reposts}
             onChange={(v) => updatePreference('reposts', v)}
           />
 
           <SettingRow
             icon={<HiChat className="w-5 h-5" />}
-            title="Quotes"
-            description="When someone quotes your post"
+            title={t('notifications_settings.quotes.title')}
+            description={t('notifications_settings.quotes.description')}
             checked={preferences.quotes}
             onChange={(v) => updatePreference('quotes', v)}
           />
@@ -173,21 +175,21 @@ const NotificationSettings: React.FC = () => {
           <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
             isDark ? 'text-white/40' : 'text-gray-400'
           }`}>
-            People
+            {t('notifications_settings.section.people')}
           </h2>
 
           <SettingRow
             icon={<HiUserAdd className="w-5 h-5" />}
-            title="New followers"
-            description="When someone follows you"
+            title={t('notifications_settings.follows.title')}
+            description={t('notifications_settings.follows.description')}
             checked={preferences.follows}
             onChange={(v) => updatePreference('follows', v)}
           />
 
           <SettingRow
             icon={<HiAtSymbol className="w-5 h-5" />}
-            title="Mentions"
-            description="When someone mentions you in a post"
+            title={t('notifications_settings.mentions.title')}
+            description={t('notifications_settings.mentions.description')}
             checked={preferences.mentions}
             onChange={(v) => updatePreference('mentions', v)}
           />
@@ -198,13 +200,13 @@ const NotificationSettings: React.FC = () => {
           <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
             isDark ? 'text-white/40' : 'text-gray-400'
           }`}>
-            Display
+            {t('notifications_settings.section.display')}
           </h2>
 
           <SettingRow
             icon={<HiVolumeOff className="w-5 h-5" />}
-            title="Group similar notifications"
-            description="Combine multiple likes/reposts into one notification"
+            title={t('notifications_settings.group_similar.title')}
+            description={t('notifications_settings.group_similar.description')}
             checked={preferences.groupSimilar}
             onChange={(v) => updatePreference('groupSimilar', v)}
           />
@@ -219,10 +221,10 @@ const NotificationSettings: React.FC = () => {
         >
           <div>
             <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
-              Muted Content
+              {t('settings.muted.title')}
             </h3>
             <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-              Manage muted words, accounts, and threads
+              {t('settings.muted.description')}
             </p>
           </div>
           <svg

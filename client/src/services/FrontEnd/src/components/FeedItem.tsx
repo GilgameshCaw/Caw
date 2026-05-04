@@ -33,6 +33,7 @@ import { useTokenDataStore } from '~/store/tokenDataStore'
 import { translateTextDetailed } from '~/utils/translate'
 import { useViewerLanguage } from '~/hooks/useViewerLanguage'
 import { languageName } from '~/constants/languages'
+import { useT } from '~/i18n/I18nProvider'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import { ShareModal } from './ShareModal'
 import { useModalStore } from '~/store/modalStore'
@@ -227,6 +228,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   // detected sourceLanguage.
   const [knownSourceLanguage, setKnownSourceLanguage] = useState<string | null>(null)
   const viewerLang = useViewerLanguage()
+  const t = useT()
   const [isRetrying, setIsRetrying] = useState(false)
   const [showMuteWordsModal, setShowMuteWordsModal] = useState(false)
   const [showMuteConfirmModal, setShowMuteConfirmModal] = useState(false)
@@ -1151,8 +1153,8 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       <div className="mb-1 flex items-center justify-between gap-2 min-w-0">
                         <span className={`min-w-0 truncate text-xs ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>
                           {knownSourceLanguage && knownSourceLanguage !== 'auto'
-                            ? `Translated from ${languageName(knownSourceLanguage)}`
-                            : 'Translated from original'}
+                            ? t('post.translated_from', { language: languageName(knownSourceLanguage) })
+                            : t('post.translated_from_original')}
                         </span>
                         <button
                           type="button"
@@ -1164,7 +1166,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                           className="inline-flex shrink-0 items-center gap-1 text-xs text-yellow-500/80 hover:text-yellow-500 transition-colors cursor-pointer"
                         >
                           <HiOutlineTranslate className="w-3.5 h-3.5" />
-                          Show original
+                          {t('post.show_original')}
                         </button>
                       </div>
                     ) : (
@@ -1178,7 +1180,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                         className="mb-1 inline-flex items-center gap-1 text-xs text-yellow-500/80 hover:text-yellow-500 transition-colors cursor-pointer"
                       >
                         <HiOutlineTranslate className="w-3.5 h-3.5" />
-                        Translate
+                        {t('post.translate')}
                       </button>
                     )
                   )}
@@ -1266,7 +1268,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
             <div className={`mb-4 pl-2 md:pl-0 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
               <div className="flex items-center space-x-2">
                 <div className="w-4 h-4 border-2 border-gray-400 border-t-blue-500 rounded-full animate-spin"></div>
-                <span className="text-sm">Translating...</span>
+                <span className="text-sm">{t('post.translating')}</span>
               </div>
             </div>
           ) : translatedText ? (
@@ -1890,7 +1892,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 }`}
               >
                 <HiOutlineTranslate className="w-5 h-5" />
-                Translate
+                {t('post.translate')}
               </button>
 
               <button

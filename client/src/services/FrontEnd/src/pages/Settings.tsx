@@ -3,10 +3,12 @@ import { useTheme } from '~/hooks/useTheme'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { HiUser, HiBell, HiVolumeOff, HiLightningBolt, HiTranslate } from 'react-icons/hi'
+import { useT } from '~/i18n/I18nProvider'
 
 // Settings page component with clean, modern design
 export const SettingsPage: React.FC = () => {
   const { isDark } = useTheme()
+  const t = useT()
   const [searchQuery, setSearchQuery] = useState('')
   const navigate = useNavigate()
 
@@ -14,40 +16,40 @@ export const SettingsPage: React.FC = () => {
   const settingsItems = [
     {
       id: 'account',
-      title: 'Account',
-      description: 'View wallet and username info',
+      title: t('settings.account.title'),
+      description: t('settings.account.description'),
       icon: <HiUser className="w-5 h-5" />,
       hasArrow: true,
       onClick: () => navigate('/settings/account')
     },
     {
       id: 'notifications',
-      title: 'Notifications',
-      description: 'Configure notification preferences',
+      title: t('settings.notifications.title'),
+      description: t('settings.notifications.description'),
       icon: <HiBell className="w-5 h-5" />,
       hasArrow: true,
       onClick: () => navigate('/settings/notifications')
     },
     {
       id: 'language',
-      title: 'Language',
-      description: 'Choose your language and translation behavior',
+      title: t('settings.language.title'),
+      description: t('settings.language.description'),
       icon: <HiTranslate className="w-5 h-5" />,
       hasArrow: true,
       onClick: () => navigate('/settings/language')
     },
     {
       id: 'quick-sign',
-      title: 'Quick Sign',
-      description: 'Sign once, then post without wallet popups',
+      title: t('settings.quick_sign.title'),
+      description: t('settings.quick_sign.description'),
       icon: <HiLightningBolt className="w-5 h-5" />,
       hasArrow: true,
       onClick: () => navigate('/settings/session-keys')
     },
     {
       id: 'muted-content',
-      title: 'Muted Content',
-      description: 'Manage muted words, accounts, and threads',
+      title: t('settings.muted.title'),
+      description: t('settings.muted.description'),
       icon: <HiVolumeOff className="w-5 h-5" />,
       hasArrow: true,
       onClick: () => navigate('/settings/muted')
@@ -68,7 +70,7 @@ export const SettingsPage: React.FC = () => {
           <h1 className={`text-2xl font-bold mb-2 transition-colors duration-300 ${
             isDark ? 'text-white' : 'text-black'
           }`}>
-            Settings
+            {t('settings.title')}
           </h1>
         </div>
 
@@ -98,7 +100,7 @@ export const SettingsPage: React.FC = () => {
             </div>
             <input
               type="text"
-              placeholder="Search Settings"
+              placeholder={t('settings.search_placeholder')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className={`w-full pl-10 pr-4 py-3 rounded-2xl border-0 bg-transparent transition-colors duration-300 focus:outline-none focus:ring-0 focus:bg-transparent ${
@@ -172,7 +174,7 @@ export const SettingsPage: React.FC = () => {
           <div className={`text-center py-8 transition-colors duration-300 ${
             isDark ? 'text-gray-400' : 'text-gray-600'
           }`}>
-            <p>No settings found matching "{searchQuery}"</p>
+            <p>{t('settings.no_results', { query: searchQuery })}</p>
           </div>
         )}
       </div>

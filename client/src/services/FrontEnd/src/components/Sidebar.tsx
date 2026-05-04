@@ -33,6 +33,7 @@ import { useInstanceStore } from '~/store/instanceStore'
 import { API_HOST } from '~/api/client'
 import { useSignInModalStore } from '~/store/signInModalStore'
 import { useModalStore } from '~/store'
+import { useT } from '~/i18n/I18nProvider'
 
 const links = ['Home','Explore','Notifications','Messages','Profile'] as const
 
@@ -100,6 +101,7 @@ function CawPriceTicker() {
 }
 
 const Sidebar: React.FC = () => {
+  const t = useT()
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const activeToken = useActiveToken()
   const { isDark, toggle } = useTheme()
@@ -193,7 +195,7 @@ const Sidebar: React.FC = () => {
             `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
           }>
             <HiOutlineHome className="w-6 h-6 sm:w-7 sm:h-7" />
-            <span className="font-medium text-base sm:text-lg">Home</span>
+            <span className="font-medium text-base sm:text-lg">{t('nav.home')}</span>
           </NavLink>
 
            <NavLink
@@ -203,7 +205,7 @@ const Sidebar: React.FC = () => {
              }
            >
             <HiOutlineSearch className="w-6 h-6 sm:w-7 sm:h-7" />
-            <span className="font-medium text-base sm:text-lg">Explore</span>
+            <span className="font-medium text-base sm:text-lg">{t('nav.explore')}</span>
            </NavLink>
 
            <NavLink
@@ -221,7 +223,7 @@ const Sidebar: React.FC = () => {
                 </span>
               )}
              </div>
-            <span className="font-medium text-base sm:text-lg">Notifications</span>
+            <span className="font-medium text-base sm:text-lg">{t('nav.notifications')}</span>
            </NavLink>
 
            <NavLink
@@ -248,7 +250,7 @@ const Sidebar: React.FC = () => {
                 </span>
               )}
              </div>
-            <span className="font-medium text-base sm:text-lg">Messages</span>
+            <span className="font-medium text-base sm:text-lg">{t('nav.messages')}</span>
            </NavLink>
 
            <NavLink
@@ -259,7 +261,7 @@ const Sidebar: React.FC = () => {
              }
            >
             <HiOutlineBookmark className="w-6 h-6 sm:w-7 sm:h-7" />
-            <span className="font-medium text-base sm:text-lg">Bookmarks</span>
+            <span className="font-medium text-base sm:text-lg">{t('nav.bookmarks')}</span>
            </NavLink>
 
            <NavLink
@@ -270,7 +272,7 @@ const Sidebar: React.FC = () => {
              }
            >
             <HiOutlineClock className="w-6 h-6 sm:w-7 sm:h-7" />
-            <span className="font-medium text-base sm:text-lg">Scheduled</span>
+            <span className="font-medium text-base sm:text-lg">{t('nav.scheduled')}</span>
            </NavLink>
 
            <NavLink
@@ -281,7 +283,7 @@ const Sidebar: React.FC = () => {
              }
            >
             <HiOutlineCube className="w-6 h-6 sm:w-7 sm:h-7" />
-            <span className="font-medium text-base sm:text-lg">Staking</span>
+            <span className="font-medium text-base sm:text-lg">{t('nav.staking')}</span>
            </NavLink>
 
            <NavLink
@@ -298,7 +300,7 @@ const Sidebar: React.FC = () => {
                 </span>
               )}
              </div>
-            <span className="font-medium text-base sm:text-lg">Usernames</span>
+            <span className="font-medium text-base sm:text-lg">{t('nav.usernames')}</span>
            </NavLink>
 
            <NavLink
@@ -309,7 +311,7 @@ const Sidebar: React.FC = () => {
              }
            >
             <HiOutlineUser className="w-6 h-6 sm:w-7 sm:h-7" />
-            <span className="font-medium text-base sm:text-lg">Profile</span>
+            <span className="font-medium text-base sm:text-lg">{t('nav.profile')}</span>
            </NavLink>
 
            <NavLink
@@ -320,7 +322,7 @@ const Sidebar: React.FC = () => {
              }
            >
             <HiOutlineCog className="w-6 h-6 sm:w-7 sm:h-7" />
-            <span className="font-medium text-base sm:text-lg">Settings</span>
+            <span className="font-medium text-base sm:text-lg">{t('nav.settings')}</span>
            </NavLink>
         </nav>
 
@@ -332,7 +334,7 @@ const Sidebar: React.FC = () => {
               className="w-full inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full bg-yellow-500 px-3 py-3 text-sm font-semibold text-black transition-colors duration-200 hover:bg-yellow-400 cursor-pointer"
             >
               <HiOutlinePencilAlt className="w-5 h-5" />
-              Write Something
+              {t('nav.write_something')}
             </button>
           </div>
         )}
@@ -344,13 +346,13 @@ const Sidebar: React.FC = () => {
         <button
           type="button"
           onClick={toggle}
-          aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+          aria-label={isDark ? t('theme.switch_to_light') : t('theme.switch_to_dark')}
           className={`sm:hidden -ml-1 mt-8 mb-4 mr-3 flex items-center gap-2.5 pl-2 pr-3 py-2 rounded-2xl transition-colors duration-200 ${
             isDark ? 'text-gray-300 hover:text-white hover:bg-white/10' : 'text-gray-600 hover:text-black hover:bg-gray-200/50'
           }`}
         >
           {isDark ? <HiOutlineSun className="w-6 h-6" /> : <HiOutlineMoon className="w-6 h-6" />}
-          <span className="font-medium text-base">{isDark ? 'Light mode' : 'Dark mode'}</span>
+          <span className="font-medium text-base">{isDark ? t('theme.light_mode') : t('theme.dark_mode')}</span>
         </button>
       </div>
     </div>

@@ -28,6 +28,7 @@ import { useActionErrorStore } from '~/store/actionErrorStore'
 import ModalWrapper from '~/components/modals/ModalWrapper'
 import CawMediaModal from '~/components/modals/CawMediaModal'
 import { useEffect } from 'react'
+import { I18nProvider } from '~/i18n/I18nProvider'
 
 function AppRoutes() {
   const location = useLocation() as any
@@ -79,6 +80,7 @@ function App() {
 
   return (
     <BrowserRouter>
+      <I18nProvider>
       <AppRoutes />
 
       <InsufficientStakeModal
@@ -128,6 +130,7 @@ function App() {
           </button>
         </div>
       </ModalWrapper>
+      </I18nProvider>
     </BrowserRouter>
   );
 }
