@@ -1,5 +1,5 @@
 import React from 'react'
-import { HiCheckCircle } from 'react-icons/hi'
+import { HiBadgeCheck } from 'react-icons/hi'
 import Tooltip from '~/components/Tooltip'
 
 interface XBadgeProps {
@@ -45,7 +45,7 @@ const XBadge: React.FC<XBadgeProps> = ({ xHandle, xFollowerBucket, className = '
         className={`inline-flex items-center text-yellow-500 ${className}`}
         aria-label={tooltip}
       >
-        <HiCheckCircle className={iconClass} />
+        <HiBadgeCheck className={iconClass} />
       </span>
     </Tooltip>
   )

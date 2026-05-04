@@ -1,5 +1,5 @@
 // src/services/FrontEnd/src/components/Feed.tsx
-import React, { useEffect, useState, useCallback, forwardRef, useImperativeHandle, useMemo, useRef } from 'react'
+import React, { useEffect, useLayoutEffect, useState, useCallback, forwardRef, useImperativeHandle, useMemo, useRef } from 'react'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import FeedItem from './FeedItem'
 import { apiFetch } from '../api/client'
@@ -41,6 +41,14 @@ interface FeedCache {
 }
 const feedCache = new Map<string, FeedCache>()
 const CACHE_TTL = 60_000 // 1 minute — background refresh if stale
+
+// Per-feed scroll anchors, persisted across mount/unmount so navigating
+// into a post and back returns the user to where they were in the feed.
+// Anchors to the topmost visible item by id (with its viewport offset),
+// not to a raw scrollY — that survives async image loads, layout shifts,
+// and feed mutations. Keyed by the same cacheKey as feedCache.
+type ScrollAnchor = { cawId: string; offset: number }
+const feedScrollAnchors = new Map<string, ScrollAnchor>()
 
 // Session-scoped pins: replies the current user authored this session, keyed
 // by parent id → confirmed reply ids. Used to keep an author's reply visually
@@ -105,6 +113,63 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   // Ref to track current items without causing effect re-runs
   const itemsRef = useRef<CawItem[]>(items)
   useEffect(() => { itemsRef.current = items }, [items])
+
+  // Restore/save scroll position by anchoring to the topmost visible feed
+  // item (Twitter/X-style). On unmount or tab switch we record the id of
+  // the post currently at the top of the viewport plus its offset; on
+  // remount we find that element and align it to the same offset. Robust
+  // to image loads and layout shifts because we anchor to a real DOM node.
+  // Track the topmost visible feed item on every scroll so the anchor in
+  // feedScrollAnchors is always up to date. Doing this on scroll (instead
+  // of in a cleanup) avoids React 18 StrictMode's mount→cleanup→mount cycle
+  // overwriting the saved value with whatever was at scrollY=0.
+  useEffect(() => {
+    let rafId: number | null = null
+    const captureAnchor = () => {
+      rafId = null
+      const els = document.querySelectorAll<HTMLElement>('[data-caw-id]')
+      for (const el of els) {
+        const rect = el.getBoundingClientRect()
+        if (rect.bottom > 0) {
+          const cawId = el.getAttribute('data-caw-id')
+          if (cawId) feedScrollAnchors.set(cacheKey, { cawId, offset: rect.top })
+          return
+        }
+      }
+    }
+    const onScroll = () => { if (rafId == null) rafId = requestAnimationFrame(captureAnchor) }
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      window.removeEventListener('scroll', onScroll)
+      if (rafId != null) cancelAnimationFrame(rafId)
+    }
+  }, [cacheKey])
+
+  // Restore on mount by anchoring to the saved feed item. Retries via rAF
+  // until the layout stabilizes (image loads etc. can shift heights for a
+  // few frames after items render).
+  useLayoutEffect(() => {
+    const anchor = feedScrollAnchors.get(cacheKey)
+    if (!anchor) return
+    let cancelled = false
+    let attempts = 0
+    const tryRestore = () => {
+      if (cancelled) return
+      const el = document.querySelector<HTMLElement>(`[data-caw-id="${anchor.cawId}"]`)
+      if (el) {
+        const rect = el.getBoundingClientRect()
+        const delta = rect.top - anchor.offset
+        if (Math.abs(delta) > 1) {
+          window.scrollBy(0, delta)
+          if (++attempts < 30) requestAnimationFrame(tryRestore)
+        }
+        return
+      }
+      if (++attempts < 30) requestAnimationFrame(tryRestore)
+    }
+    requestAnimationFrame(tryRestore)
+    return () => { cancelled = true }
+  }, [cacheKey])
 
 
   // Match pending posts to real caw IDs and clean up confirmed ones

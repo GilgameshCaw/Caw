@@ -120,10 +120,29 @@ export default function CawMediaModal() {
   const mediaItems = useMemo<MediaItem[]>(() => {
     if (!caw) return []
     const out: MediaItem[] = []
+    // Dedupe by logical file identity (filename/code), not full URL.
+    // Some posts can surface the same image via different URL forms
+    // (e.g. attached URL vs short-url resolution). If the user only has
+    // one image, we should not render multi-image nav chrome.
     const seen = new Set<string>()
 
+    const fileKeyFromUrl = (src: string): string | null => {
+      if (!src) return null
+      try {
+        const u = new URL(src, window.location.origin)
+        const path = u.pathname || ''
+        const name = path.split('/').filter(Boolean).pop()
+        return name ? `file:${name}` : null
+      } catch {
+        // Fallback for non-URL-ish strings.
+        const noQuery = src.split('?')[0]
+        const name = noQuery.split('/').filter(Boolean).pop()
+        return name ? `file:${name}` : null
+      }
+    }
+
     const pushUrl = (src: string) => {
-      const key = `url:${src}`
+      const key = fileKeyFromUrl(src) || `url:${src}`
       if (!src || seen.has(key)) return
       seen.add(key)
       out.push({ kind: 'url', src })
@@ -161,7 +180,7 @@ export default function CawMediaModal() {
 
       mediaMatches.forEach(m => {
         if (m.type === 'shortImage' && m.code) {
-          const key = `short:${m.originHost ?? ''}:${m.code}`
+          const key = `file:${m.code}`
           if (seen.has(key)) return
           seen.add(key)
           out.push({ kind: 'shortImage', code: m.code, originHost: m.originHost })

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { useParams, Link, useSearchParams } from 'react-router-dom'
+import { useParams, Link, useSearchParams, useNavigate } from 'react-router-dom'
 import PostForm from "~/components/PostForm";
 import MainLayout from '~/layouts/MainLayout'
 import FeedItem from '~/components/FeedItem'
@@ -8,7 +8,7 @@ import { apiFetch } from '~/api/client'
 import type { CawItem } from '~/types'
 import { useTheme } from '~/hooks/useTheme'
 import { useTokenDataStore, useActiveToken } from '~/store/tokenDataStore'
-import { HiArrowLeft, HiOutlineCurrencyDollar } from 'react-icons/hi'
+import { HiArrowLeft, HiChevronRight, HiOutlineCurrencyDollar } from 'react-icons/hi'
 import SignInModal from '~/components/modals/SignInModal'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import { getUserAvatar } from '~/utils/defaultAvatar'
@@ -36,13 +36,26 @@ type TipIndicator = {
   user: IndicatorUser
 }
 
+type LikeIndicator = {
+  id: string
+  timestamp: string
+  user: IndicatorUser
+}
+
 export const CawPage: React.FC = () => {
   const { id } = useParams<{ id: string }>()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const navigate = useNavigate()
   const [caw, setCaw]           = useState<CawItem | null>(null)
   const [comments, setComments] = useState<CawItem[]>([])
   const [recaws, setRecaws]     = useState<RecawIndicator[]>([])
   const [tips, setTips]         = useState<TipIndicator[]>([])
+  const [likes, setLikes]       = useState<LikeIndicator[]>([])
+  const [likesLoaded, setLikesLoaded] = useState(false)
+  const [likesLoading, setLikesLoading] = useState(false)
+  const [likesError, setLikesError] = useState<string | null>(null)
+  const [likesAttempted, setLikesAttempted] = useState(false)
+  const [activeInteractionsTab, setActiveInteractionsTab] = useState<'likes' | 'comments' | 'reposts' | 'quotes' | 'tips'>('likes')
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState<string | null>(null)
   const [initialLoadDone, setInitialLoadDone] = useState(false)
@@ -80,7 +93,7 @@ export const CawPage: React.FC = () => {
     c.isQuote === true || (c.action === 'RECAW' && !!c.content && c.content !== '')
 
   const feedItems = useMemo(() => {
-    const replyItems = comments
+    return comments
       .filter(comm => {
         if (isQuoteItem(comm)) return false
         if (comm.status !== 'PENDING') return true
@@ -88,18 +101,72 @@ export const CawPage: React.FC = () => {
         return !pendingReplies.some(p => `${p.user?.tokenId}:${p.content?.trim()}` === sig)
       })
       .map(comm => ({ kind: 'reply' as const, timestamp: comm.timestamp, comm }))
-    const recawItems = recaws.map(r => ({ kind: 'recaw' as const, timestamp: r.timestamp, recaw: r }))
-    const tipItems = tips.map(t => ({ kind: 'tip' as const, timestamp: t.timestamp, tip: t }))
-    return [...replyItems, ...recawItems, ...tipItems].sort(
-      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    )
-  }, [comments, recaws, tips, pendingReplies])
+      .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+  }, [comments, pendingReplies])
 
   // Quotes — kept in their original order from the API so they don't
   // shuffle under any of the merge logic above.
   const quotes = useMemo(() => comments.filter(isQuoteItem), [comments])
+
+  const commentIndicators = useMemo(() => {
+    return comments
+      .filter(c => !isQuoteItem(c))
+      .map(c => ({ id: c.id, timestamp: c.timestamp, user: c.user }))
+  }, [comments])
+
+  const quoteIndicators = useMemo(() => {
+    return quotes.map(q => ({ id: q.id, timestamp: q.timestamp, user: q.user }))
+  }, [quotes])
+
   const [showSignInModal, setShowSignInModal] = useState(false)
   const [pollingReplies, setPollingReplies] = useState(false)
+
+  const view = (searchParams.get('view') || '').toLowerCase()
+  const wantsInteractions = view === 'interactions'
+
+  // Load likes list on-demand (author-only)
+  useEffect(() => {
+    if (!id) return
+    if (!wantsInteractions) return
+    if (likesAttempted || likesLoaded || likesLoading) return
+    if (!isAuthenticated) return
+    if (!caw) return
+
+    const viewerTokenId = activeTokenId ?? activeToken?.tokenId
+    const isOwnPost = viewerTokenId !== undefined && caw.user.tokenId === viewerTokenId
+    if (!isOwnPost) return
+
+    setLikesAttempted(true)
+    setLikesLoading(true)
+    setLikesError(null)
+    apiFetch<{ likes: LikeIndicator[] }>(`/api/caws/${id}/likes`)
+      .then(data => {
+        setLikes(data.likes || [])
+        setLikesLoaded(true)
+      })
+      .catch(err => {
+        console.error('Error loading likes list:', err)
+        // If the API route isn't deployed/restarted yet, the server may return
+        // an HTML shell ("<!doctype ...") which blows up JSON parsing.
+        const msg = (err instanceof SyntaxError)
+          ? 'Likes endpoint unavailable (API restart/deploy required)'
+          : 'Could not load likes'
+        setLikesError(msg)
+        // Prevent an infinite retry loop.
+        setLikesLoaded(false)
+      })
+      .finally(() => setLikesLoading(false))
+  }, [wantsInteractions, id, likesAttempted, likesLoaded, likesLoading, isAuthenticated, activeTokenId, activeToken?.tokenId, caw])
+
+  // Reset likes state when leaving interactions or switching posts
+  useEffect(() => {
+    // Reset on view toggle or post change so a new attempt can happen.
+    setLikesAttempted(false)
+    setLikesLoaded(false)
+    setLikesLoading(false)
+    setLikesError(null)
+    setLikes([])
+  }, [wantsInteractions, id])
 
   // If we arrived from a desktop Reply click, scroll/focus the reply form.
   useEffect(() => {
@@ -259,160 +326,361 @@ export const CawPage: React.FC = () => {
   if (error) return errorView(error)
   if (!caw) return errorView('Could not load post')
 
+  const viewerTokenId = activeTokenId ?? activeToken?.tokenId
+  const isOwnPost = viewerTokenId !== undefined && caw.user.tokenId === viewerTokenId
+  const canShowInteractions = isAuthenticated && isOwnPost
+  const showingInteractions = wantsInteractions && canShowInteractions
+
   return (
     <MainLayout>
       <div className="max-w-2xl mx-auto px-6 py-4">
         {/* Header with back button and title */}
         <div className="flex items-center space-x-4 mb-6 pb-4 border-b border-white/20">
-          <Link 
-            to="/home" 
-            className={`p-2 rounded-full transition-all duration-200 cursor-pointer hover:bg-white/10 ${
-              isDark ? 'text-white' : 'text-black'
-            }`}
-          >
-            <HiArrowLeft className="w-6 h-6" />
-          </Link>
+          {showingInteractions ? (
+            <button
+              onClick={() => {
+                if (window.history.state && window.history.state.idx > 0) {
+                  navigate(-1)
+                } else {
+                  const next = new URLSearchParams(searchParams)
+                  next.delete('view')
+                  setSearchParams(next, { replace: true })
+                }
+              }}
+              className={`p-2 rounded-full transition-all duration-200 cursor-pointer hover:bg-white/10 ${
+                isDark ? 'text-white' : 'text-black'
+              }`}
+            >
+              <HiArrowLeft className="w-6 h-6" />
+            </button>
+          ) : (
+            <button
+              onClick={() => {
+                if (window.history.state && window.history.state.idx > 0) {
+                  navigate(-1)
+                } else {
+                  navigate('/home')
+                }
+              }}
+              className={`p-2 rounded-full transition-all duration-200 cursor-pointer hover:bg-white/10 ${
+                isDark ? 'text-white' : 'text-black'
+              }`}
+            >
+              <HiArrowLeft className="w-6 h-6" />
+            </button>
+          )}
           <h1 className={`text-xl font-bold transition-colors duration-300 ${
             isDark ? 'text-white' : 'text-black'
           }`}>
-            Feed
+            {showingInteractions ? 'Interactions' : 'Feed'}
           </h1>
         </div>
 
-        {/* Main Post - Expanded View */}
-        <div className="mb-6 relative">
-          <div className="relative z-10">
-            <FeedItem
-              item={caw}
-              isMainPost={true}
-              onReplyStateChange={(cawId, replyPending) => {
-                if (caw && caw.id === cawId) {
-                  setCaw({ ...caw, replyPending })
-                }
-              }}
-            />
-          </div>
-        </div>
-
-        {/* Reply Form — only for authenticated users */}
-        {isAuthenticated && (
-          <div id="caw-reply-form" className="border-b border-white/20 mb-2">
-            <PostForm
-              replyTo={caw}
-              onSuccess={() => {
-                setCaw(prev => prev ? { ...prev, replyPending: true } : prev)
-                refreshComments()
-              }}
-            />
-          </div>
-        )}
-
-        {/* Comments Section */}
-        {isAuthenticated ? (
-          <div className="space-y-0 relative">
-            {/* Quotes render at the top — they're their own posts, not part
-                of the chronological reply thread below. */}
-            {quotes.map((quote) => (
-              <div key={`quote-${quote.id}`} className="relative">
-                <FeedItem item={quote} hideParentPreview={true} />
+        {/* Main content area: Post view OR Interactions view */}
+        {showingInteractions ? (
+          <div>
+            <div className={`rounded-2xl border overflow-hidden ${isDark ? 'border-white/10 bg-black' : 'border-gray-200 bg-white'}`}>
+              {/* Tabs */}
+              <div className={`grid grid-cols-5 border-b ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+                {([
+                  { key: 'likes', label: `Likes (${likesLoaded ? likes.length : (caw.likeCount ?? 0)})` },
+                  { key: 'comments', label: `Comments${commentIndicators.length ? ` (${commentIndicators.length})` : ''}` },
+                  { key: 'reposts', label: `Recaws${recaws.length ? ` (${recaws.length})` : ''}` },
+                  { key: 'quotes', label: `Quotes${quoteIndicators.length ? ` (${quoteIndicators.length})` : ''}` },
+                  { key: 'tips', label: `Tips${tips.length ? ` (${tips.length})` : ''}` },
+                ] as const).map(t => (
+                  <button
+                    key={t.key}
+                    onClick={() => setActiveInteractionsTab(t.key)}
+                    className={`w-full py-3 px-2 text-xs sm:text-sm font-semibold transition-colors cursor-pointer text-center min-w-0 ${
+                      activeInteractionsTab === t.key
+                        ? (isDark ? 'text-white border-b-2 border-yellow-500' : 'text-black border-b-2 border-yellow-500')
+                        : (isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-black')
+                    }`}
+                  >
+                    <span className="block truncate" title={t.label}>{t.label}</span>
+                  </button>
+                ))}
               </div>
-            ))}
-            {pendingReplies.map((post) => (
-              <div key={post.tempId} className="relative">
-                <FeedItem item={post as CawItem} isReply={true} hideParentPreview={true} />
+
+              {/* Content */}
+              <div className="p-4">
+                {activeInteractionsTab === 'likes' && (
+                  <div>
+                    {likesError && (
+                      <div className={`text-sm ${isDark ? 'text-red-400' : 'text-red-600'}`}>{likesError}</div>
+                    )}
+                    {!likesError && likesLoading && (
+                      <div className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>Loading…</div>
+                    )}
+                    {!likesError && !likesLoading && likes.length === 0 && (
+                      <div className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>No likes yet</div>
+                    )}
+                    {!likesError && !likesLoading && likes.length > 0 && (
+                      <div className="space-y-3">
+                        {likes.map(l => (
+                          <Link
+                            key={`like-${l.id}`}
+                            to={`/users/${l.user.username}`}
+                            className="flex items-center gap-3 hover:underline"
+                          >
+                            <div className="w-9 h-9 rounded-full overflow-hidden flex-shrink-0 border border-gray-700">
+                              <Avatar src={getUserAvatar(l.user)} alt={`${l.user.username} avatar`} className="w-full h-full rounded-full" size="small" />
+                            </div>
+                            <div className="min-w-0">
+                              <div className={`text-sm font-semibold truncate ${isDark ? 'text-white' : 'text-black'}`}>
+                                {l.user.displayName || l.user.username}
+                              </div>
+                              <div className="text-xs truncate text-gray-500">@{l.user.username}</div>
+                            </div>
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {activeInteractionsTab === 'comments' && (
+                  <div>
+                    {commentIndicators.length === 0 ? (
+                      <div className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>No comments yet</div>
+                    ) : (
+                      <div className="space-y-3">
+                        {[...commentIndicators].reverse().map(c => (
+                          <Link
+                            key={`comment-${c.id}`}
+                            to={`/users/${c.user.username}`}
+                            className="flex items-center gap-3 hover:underline"
+                          >
+                            <div className="w-9 h-9 rounded-full overflow-hidden flex-shrink-0 border border-gray-700">
+                              <Avatar src={getUserAvatar(c.user)} alt={`${c.user.username} avatar`} className="w-full h-full rounded-full" size="small" />
+                            </div>
+                            <div className="min-w-0">
+                              <div className={`text-sm font-semibold truncate ${isDark ? 'text-white' : 'text-black'}`}>
+                                {c.user.displayName || c.user.username}
+                              </div>
+                              <div className="text-xs truncate text-gray-500">@{c.user.username}</div>
+                            </div>
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {activeInteractionsTab === 'reposts' && (
+                  <div>
+                    {recaws.length === 0 ? (
+                      <div className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>No reposts yet</div>
+                    ) : (
+                      <div className="space-y-3">
+                        {[...recaws].reverse().map(r => (
+                          <Link
+                            key={`repost-${r.id}`}
+                            to={`/users/${r.user.username}`}
+                            className="flex items-center gap-3 hover:underline"
+                          >
+                            <div className="w-9 h-9 rounded-full overflow-hidden flex-shrink-0 border border-gray-700">
+                              <Avatar src={getUserAvatar(r.user)} alt={`${r.user.username} avatar`} className="w-full h-full rounded-full" size="small" />
+                            </div>
+                            <div className="min-w-0">
+                              <div className={`text-sm font-semibold truncate ${isDark ? 'text-white' : 'text-black'}`}>
+                                {r.user.displayName || r.user.username}
+                              </div>
+                              <div className="text-xs truncate text-gray-500">@{r.user.username}</div>
+                            </div>
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {activeInteractionsTab === 'quotes' && (
+                  <div>
+                    {quoteIndicators.length === 0 ? (
+                      <div className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>No quotes yet</div>
+                    ) : (
+                      <div className="space-y-3">
+                        {[...quoteIndicators].reverse().map(q => (
+                          <Link
+                            key={`quote-${q.id}`}
+                            to={`/users/${q.user.username}`}
+                            className="flex items-center gap-3 hover:underline"
+                          >
+                            <div className="w-9 h-9 rounded-full overflow-hidden flex-shrink-0 border border-gray-700">
+                              <Avatar src={getUserAvatar(q.user)} alt={`${q.user.username} avatar`} className="w-full h-full rounded-full" size="small" />
+                            </div>
+                            <div className="min-w-0">
+                              <div className={`text-sm font-semibold truncate ${isDark ? 'text-white' : 'text-black'}`}>
+                                {q.user.displayName || q.user.username}
+                              </div>
+                              <div className="text-xs truncate text-gray-500">@{q.user.username}</div>
+                            </div>
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {activeInteractionsTab === 'tips' && (
+                  <div>
+                    {tips.length === 0 ? (
+                      <div className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>No tips yet</div>
+                    ) : (
+                      <div className="space-y-3">
+                        {[...tips].reverse().map(t => (
+                          <Link
+                            key={`tip-${t.id}`}
+                            to={`/users/${t.user.username}`}
+                            className="flex items-center gap-3 hover:underline"
+                          >
+                            <div className="w-9 h-9 rounded-full overflow-hidden flex-shrink-0 border border-gray-700">
+                              <Avatar src={getUserAvatar(t.user)} alt={`${t.user.username} avatar`} className="w-full h-full rounded-full" size="small" />
+                            </div>
+                            <div className="min-w-0 flex-1">
+                              <div className={`text-sm font-semibold truncate ${isDark ? 'text-white' : 'text-black'}`}>
+                                {t.user.displayName || t.user.username}
+                              </div>
+                              <div className="text-xs truncate text-gray-500">
+                                @{t.user.username} · tipped {t.amount.toLocaleString()} CAW
+                              </div>
+                            </div>
+                          </Link>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
-            ))}
-            {feedItems.map((entry) => {
-              if (entry.kind === 'reply') {
-                return (
-                  <div key={`reply-${entry.comm.id}`} className="relative">
-                    <FeedItem
-                      item={entry.comm}
-                      isReply={true}
-                      hideParentPreview={true}
-                      onLikeStateChange={(cawId, likePending) => {
-                        setComments(current =>
-                          current.map(item =>
-                            item.id === cawId ? { ...item, likePending } : item
-                          )
-                        )
-                      }}
-                    />
-                  </div>
-                )
-              }
-              const indicatorUser = entry.kind === 'recaw' ? entry.recaw.user : entry.tip.user
-              const indicatorKey  = entry.kind === 'recaw' ? `recaw-${entry.recaw.id}` : `tip-${entry.tip.id}`
-              return (
-                <Link
-                  key={indicatorKey}
-                  to={`/users/${indicatorUser.username}`}
-                  className={`flex items-center gap-2 py-2 pr-1 pl-[15px] text-sm hover:underline ${
-                    isDark ? 'text-gray-400' : 'text-gray-600'
-                  }`}
-                >
-                  {entry.kind === 'recaw'
-                    ? <Recaw className="w-4 h-4 opacity-60 flex-shrink-0 translate-y-1" />
-                    : <HiOutlineCurrencyDollar className="w-4 h-4 opacity-60 flex-shrink-0" />
-                  }
-                  <div className="w-6 h-6 rounded-full overflow-hidden flex-shrink-0">
-                    <Avatar
-                      src={getUserAvatar(indicatorUser)}
-                      alt={`${indicatorUser.username} avatar`}
-                      className="w-full h-full rounded-full"
-                      size="small"
-                    />
-                  </div>
-                  <span className="truncate">
-                    <span className={`font-medium ${isDark ? 'text-white' : 'text-black'}`}>
-                      {indicatorUser.displayName || indicatorUser.username}
-                    </span>
-                    {entry.kind === 'recaw'
-                      ? ' recawed this'
-                      : ` tipped ${entry.tip.amount.toLocaleString()} CAW`
-                    }
-                  </span>
-                </Link>
-              )
-            })}
-            {hasMoreComments && (
-              <button
-                onClick={loadMoreComments}
-                disabled={loadingMore}
-                className={`w-full py-3 text-sm font-medium transition-colors ${
-                  isDark ? 'text-yellow-400 hover:text-yellow-300' : 'text-yellow-600 hover:text-yellow-500'
-                } disabled:opacity-50`}
-              >
-                {loadingMore ? 'Loading...' : 'Load more replies'}
-              </button>
-            )}
+            </div>
           </div>
         ) : (
-          /* Gated replies — show count and sign-in prompt */
-          (caw.commentCount ?? 0) > 0 ? (
-            <button
-              onClick={() => setShowSignInModal(true)}
-              className={`w-full py-6 text-center rounded-lg border transition-colors cursor-pointer ${
-                isDark
-                  ? 'border-white/10 hover:border-yellow-500/40 hover:bg-yellow-500/5'
-                  : 'border-gray-200 hover:border-yellow-500/40 hover:bg-yellow-50'
-              }`}
-            >
-              <svg className="w-6 h-6 mx-auto mb-2 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-              </svg>
-              <span className={`text-sm font-medium ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
-                {caw.commentCount} {caw.commentCount === 1 ? 'reply' : 'replies'}
-              </span>
-              <span className={`block text-xs mt-1 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-                Sign in to view and reply
-              </span>
-            </button>
-          ) : (
-            <div className={`py-6 text-center text-sm ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
-              Sign in to be the first to reply
+          <>
+            {/* Main Post - Expanded View */}
+            <div className="mb-6 relative">
+              <div className="relative z-10">
+                <FeedItem
+                  item={caw}
+                  isMainPost={true}
+                  onReplyStateChange={(cawId, replyPending) => {
+                    if (caw && caw.id === cawId) {
+                      setCaw({ ...caw, replyPending })
+                    }
+                  }}
+                />
+              </div>
             </div>
-          )
+
+            {/* Author-only interactions entrypoint (desktop only) */}
+            {canShowInteractions && (
+              <div className="-mt-4 mb-6">
+                <div className="flex items-center justify-end">
+                  <button
+                    onClick={() => {
+                      const next = new URLSearchParams(searchParams)
+                      next.set('view', 'interactions')
+                      setSearchParams(next)
+                    }}
+                    className={`inline-flex items-center gap-1 text-sm font-medium transition-colors cursor-pointer ${
+                      isDark ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-black'
+                    }`}
+                  >
+                    View interactions
+                    <HiChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Reply Form — only for authenticated users */}
+            {isAuthenticated && (
+              <div id="caw-reply-form" className="border-b border-white/20 mb-2">
+                <PostForm
+                  replyTo={caw}
+                  onSuccess={() => {
+                    setCaw(prev => prev ? { ...prev, replyPending: true } : prev)
+                    refreshComments()
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Comments Section */}
+            {isAuthenticated ? (
+              <div className="space-y-0 relative">
+                {/* Quotes render at the top — they're their own posts, not part
+                    of the chronological reply thread below. */}
+                {quotes.map((quote) => (
+                  <div key={`quote-${quote.id}`} className="relative">
+                    <FeedItem item={quote} hideParentPreview={true} />
+                  </div>
+                ))}
+                {pendingReplies.map((post) => (
+                  <div key={post.tempId} className="relative">
+                    <FeedItem item={post as CawItem} isReply={true} hideParentPreview={true} />
+                  </div>
+                ))}
+                {feedItems.map((entry) => {
+                  return (
+                    <div key={`reply-${entry.comm.id}`} className="relative">
+                      <FeedItem
+                        item={entry.comm}
+                        isReply={true}
+                        hideParentPreview={true}
+                        onLikeStateChange={(cawId, likePending) => {
+                          setComments(current =>
+                            current.map(item =>
+                              item.id === cawId ? { ...item, likePending } : item
+                            )
+                          )
+                        }}
+                      />
+                    </div>
+                  )
+                })}
+                {hasMoreComments && (
+                  <button
+                    onClick={loadMoreComments}
+                    disabled={loadingMore}
+                    className={`w-full py-3 text-sm font-medium transition-colors ${
+                      isDark ? 'text-yellow-400 hover:text-yellow-300' : 'text-yellow-600 hover:text-yellow-500'
+                    } disabled:opacity-50`}
+                  >
+                    {loadingMore ? 'Loading...' : 'Load more replies'}
+                  </button>
+                )}
+              </div>
+            ) : (
+              /* Gated replies — show count and sign-in prompt */
+              (caw.commentCount ?? 0) > 0 ? (
+                <button
+                  onClick={() => setShowSignInModal(true)}
+                  className={`w-full py-6 text-center rounded-lg border transition-colors cursor-pointer ${
+                    isDark
+                      ? 'border-white/10 hover:border-yellow-500/40 hover:bg-yellow-500/5'
+                      : 'border-gray-200 hover:border-yellow-500/40 hover:bg-yellow-50'
+                  }`}
+                >
+                  <svg className="w-6 h-6 mx-auto mb-2 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                  </svg>
+                  <span className={`text-sm font-medium ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
+                    {caw.commentCount} {caw.commentCount === 1 ? 'reply' : 'replies'}
+                  </span>
+                  <span className={`block text-xs mt-1 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+                    Sign in to view and reply
+                  </span>
+                </button>
+              ) : (
+                <div className={`py-6 text-center text-sm ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
+                  Sign in to be the first to reply
+                </div>
+              )
+            )}
+
+          </>
         )}
 
         <SignInModal

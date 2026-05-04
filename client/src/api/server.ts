@@ -320,4 +320,3 @@ export function stopApi(server: http.Server) {
   }
   return new Promise<void>(res => server.close(() => res()))
 }
-

@@ -954,7 +954,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
   return (
     <>
-      <div onClick={handleCardClick} className="block">
+      <div onClick={handleCardClick} className="block" data-caw-id={item.id}>
         <div className={`p-4 transition-all duration-300 feed-item-hover cursor-pointer border-b ${
           isDark ? 'border-gray-800' : 'border-gray-200'
         } ${
@@ -1106,8 +1106,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
           {/* Recawed header */}
           {headline && (
-            <div className="text-xs font-medium mb-3 transition-all duration-300 text-yellow-500">
-              {headline}
+            <div className="text-xs font-medium mb-3 transition-all duration-300 text-yellow-500 inline-flex items-center gap-1.5">
+              <Recaw className="w-3.5 h-3.5" />
+              <span>{headline}</span>
             </div>
           )}
 
