@@ -173,7 +173,8 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       if (isHomeFeed && isReply(item)) return false
       // Filter out posts the current user just deleted — the on-chain hide
       // takes 5–60s to land, this keeps them gone immediately.
-      if (item.cawonce != null && hiddenCawonces[Number(item.cawonce)]) return false
+      if (item.cawonce != null && item.user?.tokenId != null &&
+          hiddenCawonces[`${item.user.tokenId}:${Number(item.cawonce)}`]) return false
       // Filter out DB PENDING posts that match local pending posts (same user + content + parent)
       if (item.status === 'PENDING') {
         if (pendingPostSignatures.has(pendingSig(item))) return false

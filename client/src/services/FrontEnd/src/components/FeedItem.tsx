@@ -201,8 +201,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   // Subscribed to the store so unhide events re-render. Checked before the
   // main render returns so the component renders nothing.
   const isHiddenForViewer = useHiddenCawsStore(s =>
-    (useItem.cawonce != null && !!s.hiddenCawonces[Number(useItem.cawonce)]) ||
-    (item.cawonce != null && !!s.hiddenCawonces[Number(item.cawonce)])
+    (useItem.cawonce != null && useItem.user?.tokenId != null &&
+      !!s.hiddenCawonces[`${useItem.user.tokenId}:${Number(useItem.cawonce)}`]) ||
+    (item.cawonce != null && item.user?.tokenId != null &&
+      !!s.hiddenCawonces[`${item.user.tokenId}:${Number(item.cawonce)}`])
   )
 
   // Compute effective count adjustments: if the server count has moved past
@@ -1980,7 +1982,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           // index; without this, the post stays visible to them in that
           // window. Indexer-side hide eventually filters server responses
           // too, so the optimistic entry becomes redundant.
-          useHiddenCawsStore.getState().hideCaw(Number(useItem.cawonce))
+          useHiddenCawsStore.getState().hideCaw(Number(effectiveTokenId), Number(useItem.cawonce))
           try {
             await signAndSubmit({
               actionType: 'other',
