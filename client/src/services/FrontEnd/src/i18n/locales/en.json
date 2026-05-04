@@ -10,6 +10,7 @@
   "common.load_more": "Load more",
   "common.sign_in": "Sign In",
   "common.something_went_wrong": "Something went wrong. Please try again.",
+  "common.continue": "Continue",
 
   "nav.home": "Home",
   "nav.explore": "Explore",
@@ -417,6 +418,14 @@
   "bug_report.submit": "Submit",
   "bug_report.drop_here": "Drop here",
   "bug_report.reporting_as": "Reporting as @{{username}} (staked: {{staked}} CAW)",
+
+  "profile_chooser.create_profile": "Create a profile",
+  "profile_chooser.create_new": "Create New",
+  "profile_chooser.manage_profiles": "Manage Profiles",
+
+  "signin_modal.title": "Sign in to continue",
+  "signin_modal.default_message": "Connect your wallet and create a username to get started.",
+  "signin_modal.create_profile": "Create Your Profile",
 
   "profile.tab.posts": "Posts",
   "profile.tab.replies": "Replies",

@@ -20,8 +20,10 @@ import { useFollowerCounts } from '~/hooks/useFollowerCounts';
 import { usePinnedProfilesStore } from '~/store/pinnedProfilesStore';
 import { ThumbtackIcon } from '~/components/icons/ThumbtackIcon';
 import { HiOutlinePlus, HiUsers } from 'react-icons/hi'
+import { useT } from '~/i18n/I18nProvider';
 
 const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) => {
+  const t = useT()
   const { isConnected, address } = useAccount();
   const { openConnectModal } = useConnectModal();
   const hasActiveSession = useHasActiveSession();
@@ -229,7 +231,7 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
       return (
         <div className="mb-2 flex justify-center">
           <button onClick={() => openConnectModal?.()} type="button" className="btn btn-connect cursor-pointer">
-            Sign In
+            {t('common.sign_in')}
           </button>
         </div>
       );
@@ -244,7 +246,7 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
             : 'bg-gray-200 text-black border border-gray-300 hover:bg-gray-300 hover:border-gray-400'
         }`}>
           <span className="text-lg">+</span>
-          Create a profile
+          {t('profile_chooser.create_profile')}
         </a>
       </div>
     );
@@ -575,7 +577,7 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
               }`}
             >
               <HiOutlinePlus className={`w-4 h-4 flex-shrink-0 ${isDark ? 'text-white/70' : 'text-black/60'}`} />
-              <span>Create New</span>
+              <span>{t('profile_chooser.create_new')}</span>
             </Link>
             <Link
               to="/settings/account"
@@ -587,7 +589,7 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
               }`}
             >
               <HiUsers className="w-4 h-4 flex-shrink-0" />
-              <span>Manage Profiles</span>
+              <span>{t('profile_chooser.manage_profiles')}</span>
             </Link>
           </li>
         </ul>

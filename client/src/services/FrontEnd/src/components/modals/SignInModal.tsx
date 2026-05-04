@@ -4,6 +4,7 @@ import { useActiveToken } from '~/store/tokenDataStore'
 import { useSignInModalStore } from '~/store/signInModalStore'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import ModalWrapper from './ModalWrapper'
+import { useT } from '~/i18n/I18nProvider'
 
 interface SignInModalProps {
   isOpen?: boolean
@@ -16,6 +17,7 @@ interface SignInModalProps {
  * Can be used standalone (with isOpen/onClose props) or via the global useSignInModalStore.
  */
 export default function SignInModal({ isOpen: propIsOpen, onClose: propOnClose, message: propMessage }: SignInModalProps) {
+  const t = useT()
   const { isConnected } = useAccount()
   const ensureWallet = useEnsureWallet()
   const activeToken = useActiveToken()
@@ -36,10 +38,10 @@ export default function SignInModal({ isOpen: propIsOpen, onClose: propOnClose, 
             </svg>
           </div>
           <h3 className="text-lg font-bold text-white mb-2">
-            Sign in to continue
+            {t('signin_modal.title')}
           </h3>
           <p className="text-sm text-white/60">
-            {message || 'Connect your wallet and create a username to get started.'}
+            {message || t('signin_modal.default_message')}
           </p>
         </div>
 
@@ -51,7 +53,7 @@ export default function SignInModal({ isOpen: propIsOpen, onClose: propOnClose, 
             }}
             className="w-full py-3 bg-yellow-500 text-black font-semibold rounded-full hover:bg-yellow-400 transition-colors cursor-pointer"
           >
-            Sign In
+            {t('common.sign_in')}
           </button>
         ) : !activeToken?.username ? (
           <Link
@@ -59,14 +61,14 @@ export default function SignInModal({ isOpen: propIsOpen, onClose: propOnClose, 
             onClick={onClose}
             className="block w-full py-3 bg-yellow-500 text-black font-semibold rounded-full hover:bg-yellow-400 transition-colors text-center"
           >
-            Create Your Profile
+            {t('signin_modal.create_profile')}
           </Link>
         ) : (
           <button
             onClick={onClose}
             className="w-full py-3 bg-yellow-500 text-black font-semibold rounded-full hover:bg-yellow-400 transition-colors cursor-pointer"
           >
-            Continue
+            {t('common.continue')}
           </button>
         )}
 
@@ -74,7 +76,7 @@ export default function SignInModal({ isOpen: propIsOpen, onClose: propOnClose, 
           onClick={onClose}
           className="w-full py-2.5 text-sm text-white/50 hover:text-white/80 transition-colors cursor-pointer"
         >
-          Cancel
+          {t('common.cancel')}
         </button>
       </div>
     </ModalWrapper>
