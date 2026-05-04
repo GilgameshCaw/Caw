@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { HiSearch, HiX } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
 import { apiFetch } from '~/api/client'
+import { useT } from '~/i18n/I18nProvider'
 
 interface Gif {
   id: string
@@ -30,6 +31,7 @@ function debounce<T extends (...args: any[]) => any>(func: T, wait: number): T {
 }
 
 const GifPicker: React.FC<GifPickerProps> = ({ initialQuery = '', onSelect, onClose }) => {
+  const t = useT()
   const { isDark } = useTheme()
   const [query, setQuery] = useState(initialQuery)
   const [gifs, setGifs] = useState<Gif[]>([])
@@ -58,7 +60,7 @@ const GifPicker: React.FC<GifPickerProps> = ({ initialQuery = '', onSelect, onCl
       setGifs(data.gifs)
     } catch (err) {
       console.error('Failed to fetch GIFs:', err)
-      setError('Failed to load GIFs')
+      setError(t('gif.error.load_failed'))
       setGifs([])
     } finally {
       setLoading(false)
@@ -98,7 +100,7 @@ const GifPicker: React.FC<GifPickerProps> = ({ initialQuery = '', onSelect, onCl
       <div className={`p-3 border-b ${isDark ? 'border-white/20' : 'border-gray-200'}`}>
         <div className="flex items-center justify-between mb-2">
           <span className={`text-sm font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-            Choose a GIF
+            {t('gif.title')}
           </span>
           <button
             onClick={onClose}
@@ -120,7 +122,7 @@ const GifPicker: React.FC<GifPickerProps> = ({ initialQuery = '', onSelect, onCl
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search GIFs..."
+            placeholder={t('gif.search_placeholder')}
             className={`w-full pl-9 pr-3 py-2 rounded-lg text-sm transition-colors ${
               isDark
                 ? 'bg-white/5 text-white placeholder-white/40 border-white/20 focus:border-yellow-500'
@@ -159,7 +161,7 @@ const GifPicker: React.FC<GifPickerProps> = ({ initialQuery = '', onSelect, onCl
           </div>
         ) : gifs.length === 0 ? (
           <div className={`text-center py-8 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-            No GIFs found
+            {t('gif.empty')}
           </div>
         ) : (
           <div className="grid grid-cols-3 gap-2">

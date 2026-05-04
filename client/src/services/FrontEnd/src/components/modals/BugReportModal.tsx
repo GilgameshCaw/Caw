@@ -8,6 +8,7 @@ import { uploadMedia } from '~/api/upload'
 import { useFormSubmit } from '~/hooks/useFormSubmit'
 import { HiOutlineX } from 'react-icons/hi'
 import { themeBgSubtle, themeInput } from '~/utils/theme'
+import { useT } from '~/i18n/I18nProvider'
 
 interface BugReportModalProps {
   isOpen: boolean
@@ -17,6 +18,7 @@ interface BugReportModalProps {
 type FeedbackType = 'bug' | 'feature'
 
 const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
+  const t = useT()
   const { isDark } = useTheme()
   const activeToken = useActiveToken()
   const [feedbackType, setFeedbackType] = useState<FeedbackType>('bug')
@@ -71,7 +73,7 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
 
   const handleSubmit = () => {
     if (!description.trim()) {
-      setError(feedbackType === 'bug' ? 'Please describe the bug' : 'Please describe the feature')
+      setError(feedbackType === 'bug' ? t('bug_report.error.describe_bug') : t('bug_report.error.describe_feature'))
       return
     }
 
@@ -118,11 +120,11 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
               <svg className="mx-auto h-8 w-8 text-yellow-500 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
               </svg>
-              <p className="text-sm font-medium text-yellow-600 dark:text-yellow-400">Drop here</p>
+              <p className="text-sm font-medium text-yellow-600 dark:text-yellow-400">{t('bug_report.drop_here')}</p>
             </div>
           </div>
         )}
-        <ModalHeader title="Feedback" onClose={handleClose} border={false} className="mb-4 px-0" />
+        <ModalHeader title={t('bug_report.title')} onClose={handleClose} border={false} className="mb-4 px-0" />
 
         {/* Type toggle */}
         {!submitted && (
@@ -135,7 +137,7 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
                   : isDark ? 'bg-white/5 text-white/40 hover:bg-white/10' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
               }`}
             >
-              Bug Report
+              {t('bug_report.tab.bug')}
             </button>
             <button
               onClick={() => setFeedbackType('feature')}
@@ -145,22 +147,22 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
                   : isDark ? 'bg-white/5 text-white/40 hover:bg-white/10' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
               }`}
             >
-              Feature Request
+              {t('bug_report.tab.feature')}
             </button>
           </div>
         )}
 
         {submitted ? (
           <div className="text-center py-8">
-            <div className="text-4xl mb-3">Thanks!</div>
+            <div className="text-4xl mb-3">{t('bug_report.thanks')}</div>
             <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
-              {feedbackType === 'bug' ? "Your bug report has been submitted. We'll look into it." : "Your feature request has been submitted. Thanks for the idea!"}
+              {feedbackType === 'bug' ? t('bug_report.success.bug') : t('bug_report.success.feature')}
             </p>
             <button
               onClick={handleClose}
               className="mt-4 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 transition-colors cursor-pointer"
             >
-              Close
+              {t('report.close')}
             </button>
           </div>
         ) : (
@@ -168,7 +170,7 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
             {/* User info */}
             {activeToken && (
               <div className={`text-xs mb-3 px-3 py-2 rounded-lg ${themeBgSubtle(isDark)} text-white/40`}>
-                Reporting as @{activeToken.username} (staked: {activeToken.stakedAmount ? Number(BigInt(activeToken.stakedAmount) / BigInt(10 ** 18)).toLocaleString() : '0'} CAW)
+                {t('bug_report.reporting_as', { username: activeToken.username, staked: activeToken.stakedAmount ? Number(BigInt(activeToken.stakedAmount) / BigInt(10 ** 18)).toLocaleString() : '0' })}
               </div>
             )}
 
@@ -176,7 +178,7 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
             <textarea
               value={description}
               onChange={e => setDescription(e.target.value)}
-              placeholder={feedbackType === 'bug' ? "Describe the bug... What happened? What did you expect?" : "Describe the feature you'd like to see..."}
+              placeholder={feedbackType === 'bug' ? t('bug_report.placeholder.bug') : t('bug_report.placeholder.feature')}
               rows={4}
               className={`w-full px-3 py-2 rounded-lg border text-sm resize-none focus:outline-none focus:ring-2 focus:ring-blue-500/50 ${themeInput(isDark)}`}
             />
@@ -218,7 +220,7 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
                         : 'text-gray-500 hover:bg-gray-100'
                     }`}
                   >
-                    + Attach screenshot
+                    {t('bug_report.attach_screenshot')}
                   </button>
                 )}
               </div>
@@ -232,7 +234,7 @@ const BugReportModal: React.FC<BugReportModalProps> = ({ isOpen, onClose }) => {
                     : 'bg-blue-500 text-white hover:bg-blue-600'
                 }`}
               >
-                {isSubmitting ? 'Submitting...' : 'Submit'}
+                {isSubmitting ? t('report.submitting') : t('bug_report.submit')}
               </button>
             </div>
 

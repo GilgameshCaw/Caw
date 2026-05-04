@@ -7,6 +7,7 @@ import BugReportModal from "~/components/modals/BugReportModal";
 import BugIcon from "~/components/icons/BugIcon";
 import { useTheme } from "~/hooks/useTheme";
 import Tooltip from "~/components/Tooltip";
+import { useT } from "~/i18n/I18nProvider";
 import { useState, lazy, Suspense } from "react";
 import { HiOutlineMenu, HiOutlineX, HiOutlinePencilAlt } from "react-icons/hi";
 import { Link, useLocation } from "react-router-dom";
@@ -25,6 +26,7 @@ interface MainLayoutProps {
 }
 
 const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProps) => {
+  const t = useT()
   const { isDark } = useTheme()
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [showBugReport, setShowBugReport] = useState(false)
@@ -218,7 +220,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
 
       {/* Floating feedback button */}
       <div className={`fixed z-[51] left-[5px] bottom-[5px]`}>
-      <Tooltip text="Feedback" position="top">
+      <Tooltip text={t('bug_report.title')} position="top">
         <button
           onClick={() => setShowBugReport(true)}
           className={`w-9 h-9 rounded-full flex items-center justify-center shadow-lg transition-all cursor-pointer opacity-60 hover:opacity-100 ${

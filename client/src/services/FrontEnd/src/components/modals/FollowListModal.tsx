@@ -11,6 +11,7 @@ import { useActiveToken } from '~/store/tokenDataStore'
 import { FollowButton } from '~/components/FollowButton'
 import ModalWrapper from './ModalWrapper'
 import ModalHeader from './ModalHeader'
+import { useT } from '~/i18n/I18nProvider'
 
 type UserItem = {
   id: number
@@ -29,6 +30,7 @@ type Props = {
 }
 
 const FollowListModal: React.FC<Props> = ({ type }) => {
+  const t = useT()
   const { modal, modalData, closeModal } = useModalStore()
   const { isDark } = useTheme()
   const navigate = useNavigate()
@@ -73,7 +75,7 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
         setFollowingStates(states)
       } catch (err) {
         console.error('Failed to fetch users:', err)
-        setError('Failed to load users')
+        setError(t('follow_list.error'))
       } finally {
         setLoading(false)
       }
@@ -125,7 +127,7 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
       className="max-h-[80vh] overflow-hidden"
     >
       <ModalHeader
-        title={type === 'following' ? 'Following' : 'Followers'}
+        title={type === 'following' ? t('profile.stats.following') : t('profile.stats.followers')}
         onClose={closeModal}
       />
 
@@ -141,7 +143,7 @@ const FollowListModal: React.FC<Props> = ({ type }) => {
           </div>
         ) : users.length === 0 ? (
           <div className="p-8 text-center text-gray-500">
-            No {type === 'following' ? 'following' : 'followers'} yet
+            {type === 'following' ? t('follow_list.empty.following') : t('follow_list.empty.followers')}
           </div>
         ) : (
           <div className={`divide-y ${themeDivide(isDark)}`}>

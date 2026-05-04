@@ -3,6 +3,7 @@ import { HiX, HiCheck } from 'react-icons/hi'
 import { extractMuteableWords } from '~/hooks/useMutePreferences'
 import ModalWrapper from './ModalWrapper'
 import ModalHeader from './ModalHeader'
+import { useT } from '~/i18n/I18nProvider'
 
 interface MuteWordsModalProps {
   isOpen: boolean
@@ -19,6 +20,7 @@ const MuteWordsModal: React.FC<MuteWordsModalProps> = ({
   postContent,
   existingMutedWords = []
 }) => {
+  const t = useT()
   const [customWord, setCustomWord] = useState('')
 
   const [selectedWords, setSelectedWords] = useState<Set<string>>(new Set())
@@ -83,7 +85,7 @@ const MuteWordsModal: React.FC<MuteWordsModalProps> = ({
       className="shadow-2xl"
     >
       <ModalHeader
-        title="Mute Words & Tags"
+        title={t('mute_words.title')}
         onClose={onClose}
         borderClass="border-b border-yellow-500/20"
         forceDark
@@ -95,7 +97,7 @@ const MuteWordsModal: React.FC<MuteWordsModalProps> = ({
         {tags.length > 0 && (
           <div className="mb-4">
             <h4 className="text-sm font-medium mb-2 text-white/70">
-              Hashtags & Cashtags
+              {t('mute_words.section.tags')}
             </h4>
             <div className="flex flex-wrap gap-2">
               {tags.map(tag => (
@@ -120,7 +122,7 @@ const MuteWordsModal: React.FC<MuteWordsModalProps> = ({
         {words.length > 0 && (
           <div className="mb-4">
             <h4 className="text-sm font-medium mb-2 text-white/70">
-              Words
+              {t('mute_words.section.words')}
             </h4>
             <div className="flex flex-wrap gap-2">
               {words.slice(0, 20).map(word => (
@@ -144,14 +146,14 @@ const MuteWordsModal: React.FC<MuteWordsModalProps> = ({
         {/* No words extracted */}
         {tags.length === 0 && words.length === 0 && (
           <p className="text-sm mb-4 text-white/50">
-            No unique words or tags found in this post.
+            {t('mute_words.empty')}
           </p>
         )}
 
         {/* Custom Word Input */}
         <div className="mt-4">
           <h4 className="text-sm font-medium mb-2 text-white/70">
-            Add Custom Word
+            {t('mute_words.section.custom')}
           </h4>
           <div className="flex gap-2">
             <input
@@ -159,7 +161,7 @@ const MuteWordsModal: React.FC<MuteWordsModalProps> = ({
               value={customWord}
               onChange={(e) => setCustomWord(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleAddCustom()}
-              placeholder="Enter a word to mute..."
+              placeholder={t('mute_words.placeholder')}
               className="flex-1 px-3 py-2 rounded-lg border text-sm bg-white/5 border-white/20 text-white placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:border-yellow-500"
             />
             <button
@@ -171,7 +173,7 @@ const MuteWordsModal: React.FC<MuteWordsModalProps> = ({
                   : 'bg-white/10 text-white/30 cursor-not-allowed'
               }`}
             >
-              Add
+              {t('mute_words.add')}
             </button>
           </div>
         </div>
@@ -180,7 +182,7 @@ const MuteWordsModal: React.FC<MuteWordsModalProps> = ({
         {selectedWords.size > 0 && (
           <div className="mt-4 pt-4 border-t border-yellow-500/20">
             <h4 className="text-sm font-medium mb-2 text-white/70">
-              Selected ({selectedWords.size})
+              {t('mute_words.selected', { count: selectedWords.size })}
             </h4>
             <div className="flex flex-wrap gap-2">
               {Array.from(selectedWords).map(word => (
@@ -208,7 +210,7 @@ const MuteWordsModal: React.FC<MuteWordsModalProps> = ({
           onClick={onClose}
           className="px-4 py-2 rounded-lg text-sm font-medium transition-colors text-white/70 hover:bg-white/10"
         >
-          Cancel
+          {t('common.cancel')}
         </button>
         <button
           onClick={handleMute}
@@ -219,7 +221,7 @@ const MuteWordsModal: React.FC<MuteWordsModalProps> = ({
               : 'bg-white/10 text-white/30 cursor-not-allowed'
           }`}
         >
-          Mute {selectedWords.size > 0 ? `(${selectedWords.size})` : ''}
+          {t('mute_words.mute_button')} {selectedWords.size > 0 ? `(${selectedWords.size})` : ''}
         </button>
       </div>
     </ModalWrapper>
