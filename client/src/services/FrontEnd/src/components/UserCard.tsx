@@ -5,6 +5,7 @@ import { useTheme } from '~/hooks/useTheme'
 import { FollowButton } from './FollowButton'
 import Avatar from '~/components/Avatar'
 import { getUserAvatar } from '~/utils/defaultAvatar'
+import { useT } from '~/i18n/I18nProvider'
 
 export interface UserCardUser {
   tokenId: number
@@ -50,6 +51,7 @@ const UserCard: React.FC<UserCardProps> = ({
   isLast = false,
 }) => {
   const { isDark } = useTheme()
+  const t = useT()
 
   const carouselStyle: React.CSSProperties = layout === 'carousel'
     ? {
@@ -101,9 +103,9 @@ const UserCard: React.FC<UserCardProps> = ({
         <div className={`flex justify-center gap-3 mt-2 text-xs ${
           isDark ? 'text-white/40' : 'text-gray-400'
         }`}>
-          <span>{formatCount(user.followerCount)} followers</span>
+          <span>{t('user_card.followers_count', { count: user.followerCount, value: formatCount(user.followerCount) })}</span>
           <span>·</span>
-          <span>{formatCount(user.likeCount)} likes</span>
+          <span>{t('user_card.likes_count', { count: user.likeCount, value: formatCount(user.likeCount) })}</span>
         </div>
       </Link>
 

@@ -26,10 +26,10 @@ const Trending: React.FC = () => {
 
       {/* Footer buttons - outside container */}
       <div className="px-8 mt-4 mb-2">
-        <div className="flex justify-between text-sm">
+        <div className="flex flex-wrap justify-center items-center gap-x-1.5 gap-y-1 text-sm">
           <Link
             to="/help/faq"
-            className={`transition-colors duration-200 hover:underline cursor-pointer ${
+            className={`whitespace-nowrap transition-colors duration-200 hover:underline cursor-pointer ${
               isDark ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-black'
             }`}
           >
@@ -40,7 +40,7 @@ const Trending: React.FC = () => {
           }`}>-</span>
           <Link
             to="/help/resources"
-            className={`transition-colors duration-200 hover:underline cursor-pointer ${
+            className={`whitespace-nowrap transition-colors duration-200 hover:underline cursor-pointer ${
               isDark ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-black'
             }`}
           >
@@ -49,6 +49,7 @@ const Trending: React.FC = () => {
           <span className={`${
             isDark ? 'text-gray-600' : 'text-gray-400'
           }`}>-</span>
+          <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
           <Link
             to="/help/manifesto"
             className={`transition-colors duration-200 hover:underline cursor-pointer ${
@@ -76,6 +77,7 @@ const Trending: React.FC = () => {
               </svg>
             )}
           </button>
+          </span>
         </div>
       </div>
     </>

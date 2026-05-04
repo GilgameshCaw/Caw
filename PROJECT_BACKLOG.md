@@ -818,13 +818,18 @@ One-liner install: `curl -fsSL https://raw.githubusercontent.com/.../install.sh 
 
 ---
 
+## Architecture (parked / revisit later)
+
+- [ ] **CAW-sequenced rollup ("CawChain") — parked, not committed.** Reopen only if (a) the node network grows past ~50 active independent operators with stable economics, *and* (b) no existing L2 has shipped credible decentralized sequencing by then. Engineering scope: 9-12 months on the cleanest path (Taiko/Surge stack with custom registry hook), $150-250K audit, ongoing 24/7 ops. Bootstrap problem (rotation among 5 nodes is not more decentralized than Base) means this only makes sense once the node base actually exists. See `docs/CHAIN_CHOICE_DECISION.md` for full reasoning. **Do not promote this to roadmap or marketing.**
+- [ ] **L2 venue re-evaluation** — when Taiko Phase 2 ships permissionless any-L1-validator-can-propose with measurable proposer diversity (top-1 share <30% over a month), or when another L2 ships credible decentralized sequencing, add it to the validator-choice menu via `docs/MULTI_CHAIN_STORAGE.md`. No L1 redeploy required. See `docs/CHAIN_CHOICE_DECISION.md` "When to revisit."
+
 ## Documentation
 
 - [ ] **API documentation** — document all REST endpoints. Currently no `API.md`.
 - [ ] **Deployment guide** — step-by-step deployment instructions. Currently no `DEPLOYMENT.md`.
 - [x] **Client replication guide** — `solidity/docs/CLIENT_REPLICATION_GUIDE.md`
 - [x] **Services documentation** — `client/src/services/SERVICES.md`
-- [x] **Architecture docs** — `docs/ARCHITECTURE.md`, `docs/DATA_FLOW.md`, `docs/REPLICATION_AND_SLASHING.md`, `docs/VALIDATOR_MESH_NETWORK.md`, `docs/SESSION_KEYS.md`, `docs/MARKETPLACE.md`, `docs/DIRECT_MESSAGING.md`, etc. — extensive
+- [x] **Architecture docs** — `docs/ARCHITECTURE.md`, `docs/DATA_FLOW.md`, `docs/REPLICATION_AND_SLASHING.md`, `docs/VALIDATOR_MESH_NETWORK.md`, `docs/SESSION_KEYS.md`, `docs/MARKETPLACE.md`, `docs/DIRECT_MESSAGING.md`, `docs/CHAIN_CHOICE_DECISION.md`, etc. — extensive
 
 ---
 
@@ -869,7 +874,9 @@ One-liner install: `curl -fsSL https://raw.githubusercontent.com/.../install.sh 
 
 - **Crowdfunding CAWs.** Same authoring model as inline polls (`::poll:opt1:opt2:::` marker → render UI from post text), but each tip on the post advances a progress bar toward a goal. Author specifies a target amount (and optionally a recipient/deadline) in the marker; the FeedItem renders a progress bar fed by the post's existing tip totals. Open questions: which token (CAW only, or multi-token?), whether goal/recipient lives in the marker or a sidecar field, how to handle overfunding, and whether to show contributor count or anonymized list.
 
-- **Ensure supporting other languages.** Audit text rendering, input handling, and storage end-to-end for non-Latin scripts (CJK, Cyrillic, Arabic, accented Latin, etc.). Hashtag recognition is already Unicode-aware (`tools/hashtagRegex.ts`). Still to verify: post composer length counting (bytes vs codepoints vs grapheme clusters), search/Elasticsearch analyzers, RTL layout for Arabic/Hebrew, font fallback in feed items, mute-word matching across scripts, username display in places that still use system fonts.
+- **Non-Latin script audit (beyond UI strings).** UI strings are translated into 19 locales, but text *rendering* and *input handling* still need an end-to-end audit for non-Latin scripts (CJK, Cyrillic, Arabic, Hebrew, Devanagari, Thai, accented Latin). Hashtag recognition is already Unicode-aware (`tools/hashtagRegex.ts`). Still to verify: post composer length counting (bytes vs codepoints vs grapheme clusters — currently CAW spec says 420 chars but enforcement may be byte-based and break for emoji/CJK), search/Elasticsearch analyzers per-language, RTL layout for Arabic/Hebrew (UI was translated but not flipped), font fallback in feed items (some glyphs may render via system fallback that doesn't match the brand), mute-word matching across scripts, username display in places that still use system fonts.
+
+- **Multilingual SEO / discoverability.** UI is now translated into 19 locales but the translations are runtime-only — Google's crawler always sees the English shell. A user searching in Spanish/Hindi/etc. won't find CAW pages because: (1) SPA renders English first, locale catalog loads after user picks one; (2) no `<html lang>` swap; (3) no `hreflang` tags; (4) no per-locale URLs; (5) `<title>` and `<meta description>` aren't going through `t()` either. To fix: bolt onto the existing OG-card prerender pipeline (nginx UA → API catch-all → satori for bots) — add per-locale variants that emit translated `<title>`, `<meta description>`, `<html lang>`, and `hreflang` alternates. URL strategy options: `/es/...` path prefix (cleanest, requires routing changes), `?lang=es` query param (cheaper, weaker signal to Google), or `Accept-Language`-driven (no shareable URL per-language, worst SEO). Recommendation: path prefix for the /caws/, /users/, /hashtags/ public surface; leave authenticated app routes locale-detected client-side as today.
 
 
 
