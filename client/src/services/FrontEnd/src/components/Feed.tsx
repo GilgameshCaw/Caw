@@ -158,6 +158,11 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
     const pendingPostSignatures = new Set(pendingPosts.map(pendingSig))
 
     const isReply = (it: CawItem) => it.parent?.id && !it.isQuote && it.action !== 'RECAW'
+    const isHomeFeed = filter === 'For you' || filter === 'Following'
+    // On the home feeds, collapse multiple recaws of the same post (and the
+    // original beneath them) down to a single visible row. Quotes carry
+    // their own content, so they stay as standalone items.
+    const seenUnderlying = new Set<string>()
 
     const filtered = items.filter(item => {
       // Filter out muted content
@@ -165,13 +170,18 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       // Filter out blocked users
       if (blockedUserIds.includes(item.user.tokenId)) return false
       // Main timeline feeds should not show replies — they belong on the post page.
-      if ((filter === 'For you' || filter === 'Following') && isReply(item)) return false
+      if (isHomeFeed && isReply(item)) return false
       // Filter out posts the current user just deleted — the on-chain hide
       // takes 5–60s to land, this keeps them gone immediately.
       if (item.cawonce != null && hiddenCawonces[Number(item.cawonce)]) return false
       // Filter out DB PENDING posts that match local pending posts (same user + content + parent)
       if (item.status === 'PENDING') {
         if (pendingPostSignatures.has(pendingSig(item))) return false
+      }
+      if (isHomeFeed && !item.isQuote) {
+        const underlyingId = item.action === 'RECAW' ? (item.parent?.id ?? item.id) : item.id
+        if (seenUnderlying.has(underlyingId)) return false
+        seenUnderlying.add(underlyingId)
       }
       return true
     })
