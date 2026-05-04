@@ -627,6 +627,8 @@ enum NotificationType {
   OFFER
   OUTBID
   AUCTION_WON
+  SALE_SOLD
+  SALE_BOUGHT
   ACTION_FAILED
 }
 

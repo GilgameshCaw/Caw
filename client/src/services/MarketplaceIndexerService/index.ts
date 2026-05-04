@@ -93,6 +93,27 @@ export const marketplaceIndexerService: Service = {
         console.log(`[MarketplaceIndexer] First run, scanning from block ${lastBlock} (current: ${currentBlock})`)
       }
 
+      // One-shot backfill: repair listings whose username was indexed before
+      // the User row existed (stored as `#<tokenId>` with usernameLength=0).
+      // Without this, max-length filters return them incorrectly.
+      try {
+        const stale = await prisma.marketplaceListing.findMany({
+          where: { username: { startsWith: '#' } },
+          select: { listingId: true, tokenId: true },
+        })
+        for (const row of stale) {
+          const u = await prisma.user.findUnique({ where: { tokenId: row.tokenId } })
+          if (!u?.username) continue
+          await prisma.marketplaceListing.update({
+            where: { listingId: row.listingId },
+            data: { username: u.username, usernameLength: u.username.length },
+          })
+        }
+        if (stale.length) console.log(`[MarketplaceIndexer] Backfill: repaired ${stale.length} stale username rows`)
+      } catch (err) {
+        console.error('[MarketplaceIndexer] Username backfill failed:', err)
+      }
+
       // Pre-resolve all event topic hashes once. Used to OR-filter a single
       // getLogs call across every marketplace event we care about — replaces
       // ten separate queryFilter calls that each hit eth_getLogs independently.
@@ -177,6 +198,7 @@ export const marketplaceIndexerService: Service = {
             // Look up username from our DB
             const user = await prisma.user.findUnique({ where: { tokenId } })
             const username = user?.username || `#${tokenId}`
+            const usernameLength = username.startsWith('#') ? 0 : username.length
 
             await prisma.marketplaceListing.upsert({
               where: { listingId },
@@ -184,6 +206,8 @@ export const marketplaceIndexerService: Service = {
                 status: 'ACTIVE',
                 highestBid: onChain.highestBid.toString(),
                 highestBidder: onChain.highestBidder === ethers.ZeroAddress ? null : onChain.highestBidder.toLowerCase(),
+                username,
+                usernameLength,
               },
               create: {
                 listingId,
@@ -197,7 +221,7 @@ export const marketplaceIndexerService: Service = {
                 startTime: new Date(Number(onChain.startTime) * 1000),
                 endTime: onChain.endTime > 0n ? new Date(Number(onChain.endTime) * 1000) : null,
                 username,
-                usernameLength: username.startsWith('#') ? 0 : username.length,
+                usernameLength,
                 txHash: ev.transactionHash,
               },
             })
@@ -220,7 +244,7 @@ export const marketplaceIndexerService: Service = {
                 data: { status: 'SOLD' },
               })
 
-              await prisma.marketplaceSale.upsert({
+              const sale = await prisma.marketplaceSale.upsert({
                 where: { listingId: listing.id },
                 update: {},
                 create: {
@@ -234,6 +258,52 @@ export const marketplaceIndexerService: Service = {
                   txHash: ev.transactionHash,
                 },
               })
+
+              // Notify seller and buyer. Lookup is best-effort: if either
+              // party doesn't have a User row on this mirror, we just skip
+              // their notification. The sale row itself is already written.
+              try {
+                const [sellerUser, buyerUser] = await Promise.all([
+                  prisma.user.findFirst({
+                    where: { address: { equals: listing.seller, mode: 'insensitive' } },
+                    select: { tokenId: true },
+                  }),
+                  prisma.user.findFirst({
+                    where: { address: { equals: buyerAddr, mode: 'insensitive' } },
+                    select: { tokenId: true },
+                  }),
+                ])
+                const payload = {
+                  listingId: listing.listingId,
+                  saleId: sale.id,
+                  username: listing.username,
+                  tokenId: listing.tokenId,
+                  price,
+                  paymentToken: getPaymentLabel(paymentToken),
+                }
+                if (sellerUser) {
+                  await prisma.notification.create({
+                    data: {
+                      userId: sellerUser.tokenId,
+                      actorId: buyerUser?.tokenId ?? sellerUser.tokenId,
+                      type: 'SALE_SOLD',
+                      actionPayload: payload,
+                    },
+                  })
+                }
+                if (buyerUser) {
+                  await prisma.notification.create({
+                    data: {
+                      userId: buyerUser.tokenId,
+                      actorId: sellerUser?.tokenId ?? buyerUser.tokenId,
+                      type: 'SALE_BOUGHT',
+                      actionPayload: payload,
+                    },
+                  })
+                }
+              } catch (err) {
+                console.warn('[Marketplace] Failed to create sale notifications:', err)
+              }
             }
           }
 

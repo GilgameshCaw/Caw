@@ -37,7 +37,7 @@ interface Actor {
 
 interface Notification {
   id: number
-  type: 'FOLLOW' | 'LIKE' | 'REPLY' | 'REPOST' | 'QUOTE' | 'MENTION' | 'TIP' | 'OFFER' | 'OUTBID' | 'AUCTION_WON' | 'ACTION_FAILED'
+  type: 'FOLLOW' | 'LIKE' | 'REPLY' | 'REPOST' | 'QUOTE' | 'MENTION' | 'TIP' | 'OFFER' | 'OUTBID' | 'AUCTION_WON' | 'SALE_SOLD' | 'SALE_BOUGHT' | 'ACTION_FAILED'
   actor: Actor
   additionalActors?: Actor[]
   caw?: {
@@ -84,6 +84,9 @@ interface Notification {
     previousBidAmount?: string
     winningBid?: string
     paymentToken?: string
+    // Marketplace sale notifications (SALE_SOLD / SALE_BOUGHT)
+    saleId?: number
+    price?: string
   } | null
   isRead: boolean
   createdAt: string
@@ -296,6 +299,10 @@ const Notifications: React.FC = () => {
         return <HiTag className="w-6 h-6 text-orange-500" />
       case 'AUCTION_WON':
         return <HiTag className="w-6 h-6 text-green-500" />
+      case 'SALE_SOLD':
+        return <HiCurrencyDollar className="w-6 h-6 text-green-500" />
+      case 'SALE_BOUGHT':
+        return <HiTag className="w-6 h-6 text-blue-500" />
       case 'ACTION_FAILED':
         return <HiBell className="w-6 h-6 text-red-400" />
       default:
@@ -566,6 +573,30 @@ const Notifications: React.FC = () => {
         const username = payload?.username ?? 'a profile'
         return Action(`You won the auction for @${username}! Settle it to claim the username.`)
       }
+      case 'SALE_SOLD':
+      case 'SALE_BOUGHT': {
+        const payload = notification.actionPayload
+        const username = payload?.username ?? 'a profile'
+        const token = payload?.paymentToken
+        const raw = payload?.price
+        let priceLabel = ''
+        if (raw && token) {
+          const decimals = (token === 'USDC' || token === 'USDT') ? 6 : 18
+          const num = parseFloat(decimals === 18 ? formatEther(BigInt(raw)) : formatUnits(BigInt(raw), decimals))
+          let rate = 0
+          if (token === 'USDC' || token === 'USDT') rate = 1
+          else if (token === 'ETH' || token === 'WETH') rate = ethPrice
+          else if (token === 'CAW') rate = cawPrice
+          const usd = rate > 0 ? ` (~$${(num * rate).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})` : ''
+          const formatted = token === 'CAW'
+            ? num.toLocaleString(undefined, { maximumFractionDigits: 0 })
+            : num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })
+          priceLabel = ` for ${formatted} ${token}${usd}`
+        }
+        return notification.type === 'SALE_SOLD'
+          ? Action(`You sold @${username}${priceLabel}`)
+          : Action(`You bought @${username}${priceLabel}`)
+      }
       default:
         return Actor(actorNode)
     }
@@ -650,6 +681,10 @@ const Notifications: React.FC = () => {
     if (notification.type === 'FOLLOW') return `/users/${notification.actor.username}`
     if (notification.type === 'OFFER') return null // modal-only
     if (notification.type === 'OUTBID' || notification.type === 'AUCTION_WON') return '/usernames'
+    if (notification.type === 'SALE_SOLD' || notification.type === 'SALE_BOUGHT') {
+      const u = notification.actionPayload?.username
+      return u ? `/users/${u}` : '/usernames'
+    }
     if (notification.type === 'TIP' && !notification.caw) return `/users/${notification.actor.username}`
     if (notification.type === 'ACTION_FAILED') {
       const payload = notification.actionPayload
