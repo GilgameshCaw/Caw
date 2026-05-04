@@ -6,6 +6,10 @@ import { markTxQueueFailed, createActionFailedNotification } from '../../utils/t
 import { sweep as sweepOrphanedMedia, pendingCount as orphanedMediaPendingCount } from '../../api/util/orphanedMedia'
 import { cawProfileL2Abi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
+import { checkDomainObjectExists } from '../ActionProcessor/domainObjectChecks'
+import { processDomainEffects, resolveActionUsers } from '../ActionProcessor/domainProcessor'
+import { CawNotFoundError } from '../ActionProcessor/actionHandlers'
+import type { RawAction } from '../ActionProcessor/types'
 
 // Lazy-initialized L2 read provider for the pending-mint-deposit watcher.
 // Reused across ticks so we don't churn sockets.
@@ -788,6 +792,78 @@ async function cleanupPendingFollows() {
 }
 
 /**
+ * Reconcile Action rows whose domain side-effects never landed.
+ *
+ * Failure mode this fixes (reported by Zin): pm2 restarts (or any
+ * crash) between Tx1 (Action row) and Tx2 (Caw / Like / Follow / Tip
+ * row) leave an Action persisted with no matching domain row. The
+ * normal retry path in createOrFindAction covers this — when the
+ * RawEvent gets reprocessed, the existing Action is found and Tx2 is
+ * rerun via shouldProcessDomain=true. But that retry only fires if
+ * the RawEvent actually gets reprocessed; once ActionProcessor has
+ * advanced past it, the orphan stays orphaned forever.
+ *
+ * Bounds: scan only the last hour of Actions, capped at 100 per tick.
+ * Old orphans need the manual rescan-orphan-raw-events.ts script —
+ * we explicitly don't want to scan the whole table on every tick.
+ */
+const ORPHAN_ACTION_LOOKBACK_MS = 60 * 60 * 1000  // 1 hour
+const ORPHAN_ACTION_DEBOUNCE_MS = 2 * 60 * 1000   // wait 2m so we don't race with normal processing
+const ORPHAN_ACTION_MAX_PER_TICK = 100
+
+async function cleanupOrphanActions() {
+  logger.log('Reconciling Action rows missing their domain side-effects...')
+  try {
+    const now = Date.now()
+    const candidates = await prisma.action.findMany({
+      where: {
+        createdAt: {
+          gt: new Date(now - ORPHAN_ACTION_LOOKBACK_MS),
+          lt: new Date(now - ORPHAN_ACTION_DEBOUNCE_MS),
+        },
+      },
+      orderBy: { createdAt: 'asc' },
+      take: ORPHAN_ACTION_MAX_PER_TICK,
+    })
+
+    let recovered = 0
+    for (const action of candidates) {
+      const rawAction = action.data as unknown as RawAction
+      try {
+        // Cheap domain-object check — uses the same predicate the live
+        // path uses (domainObjectChecks.ts). True means done, skip.
+        const exists = await checkDomainObjectExists(prisma, action as any, rawAction, action.actionType)
+        if (exists) continue
+
+        // Side-effects never landed. Pre-resolve users (same hazard
+        // mitigation as the live path: keeps L1 RPC reads out of the
+        // 5s tx budget) and re-run domain processing.
+        const resolved = await resolveActionUsers(rawAction)
+        await prisma.$transaction(
+          (tx) => processDomainEffects(tx, action, rawAction, resolved),
+          { timeout: 15_000 },
+        )
+        recovered++
+        logger.log(` Recovered orphan ${action.actionType} action id=${action.id} sender=${action.senderId} cawonce=${action.cawonce}`)
+      } catch (err: any) {
+        if (err instanceof CawNotFoundError) {
+          // Same quiet skip the live path uses — target caw isn't
+          // indexed locally (different mirror, different clientId, etc).
+          continue
+        }
+        logger.error(` Orphan reconciliation failed for action id=${action.id}:`, err)
+      }
+    }
+
+    if (recovered > 0) {
+      logger.log(`Orphan reconciliation: recovered ${recovered}/${candidates.length} action(s)`)
+    }
+  } catch (err) {
+    logger.error('Fatal error during orphan-action reconciliation:', err)
+  }
+}
+
+/**
  * Promote waiting_for_deposit TxQueue rows back to 'pending' once the sender's
  * L1 mint/deposit has actually landed on L2.
  *
@@ -956,6 +1032,10 @@ async function runDataCleanup() {
 
   // Clean up pending follows
   await cleanupPendingFollows()
+
+  // Recover Action rows whose domain side-effects never landed (e.g. pm2
+  // crash between Tx1 and Tx2). Bounded to last hour, max 100 per tick.
+  await cleanupOrphanActions()
 
   // Clean up failed txqueue records and update associated caws
   await cleanupFailedTxQueue()
