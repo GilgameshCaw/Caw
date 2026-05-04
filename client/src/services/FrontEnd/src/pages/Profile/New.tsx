@@ -19,6 +19,7 @@ import StakingRewardsInfo from '~/components/StakingRewardsInfo'
 import { HiInformationCircle } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
 import { CLIENT_ID } from '~/api/actions'
+import { useT } from '~/i18n/I18nProvider'
 
 // cost schedule (raw CAW)
 const COST_SCHEDULE: Record<number, bigint> = {
@@ -41,6 +42,7 @@ const DEFAULT_COST = 1_000_000n  // 8+ chars
  * scroll, or 4s timeout.
  */
 const DepositInfoPopover: React.FC = () => {
+  const t = useT()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -65,7 +67,7 @@ const DepositInfoPopover: React.FC = () => {
     <div ref={ref} className="relative">
       <button
         type="button"
-        aria-label="Show deposit info"
+        aria-label={t('new_profile.show_deposit_info')}
         onClick={(e) => {
           // Don't let the click bubble up to the wrapping <label>, which
           // would toggle the deposit-on/off switch.
@@ -98,6 +100,7 @@ const DepositInfoPopover: React.FC = () => {
 
 export const NewProfile: React.FC = () => {
   const { isDark } = useTheme()
+  const t = useT()
   const { switchChain } = useSwitchChain();
   const [isSwitchingChain, setIsSwitchingChain] = useState(false);
   const handleSwitchChain = async (): Promise<boolean> => {
@@ -512,7 +515,7 @@ console.log("BALANCE:", balance)
           <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
           <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
         </svg>
-        <span>Switching...</span>
+        <span>{t('staking.button.switching')}</span>
       </div>
     )
   } else if (waiting) {
@@ -523,7 +526,7 @@ console.log("BALANCE:", balance)
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
           </svg>
-          <span>Creating...</span>
+          <span>{t('new_profile.creating')}</span>
         </div>
       )
     } else if (isApprovePending) {
@@ -533,17 +536,17 @@ console.log("BALANCE:", balance)
             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
           </svg>
-          <span>Approving...</span>
+          <span>{t('staking.button.approving')}</span>
         </div>
       )
     } else {
-      submitText = "Processing..."
+      submitText = t('new_profile.processing')
     }
   } else if (usernameTaken)
-    submitText = "username taken"
+    submitText = t('new_profile.username_taken')
   else if (insufficientBalance)
-    submitText = "Insufficient Balance"
-  else submitText = depositEnabled && depositAmountWei > 0n ? "Create & Deposit" : "Create"
+    submitText = t('staking.button.insufficient_balance')
+  else submitText = depositEnabled && depositAmountWei > 0n ? t('new_profile.create_and_deposit') : t('new_profile.create')
 
   // Show loading screen while waiting for mint to complete
   if (!hasResetForm && (mintStatus === 'pending' || (mintStatus === 'success' && !mintSuccess))) {
@@ -555,9 +558,9 @@ console.log("BALANCE:", balance)
           }`}>
             <div className="text-center space-y-6">
               <h1 className={`text-4xl font-bold ${isDark ? 'text-white' : 'text-black'}`}>
-                {mintStatus === 'pending' ? 'Creating your new profile...' : 'Confirming on the blockchain...'}
+                {mintStatus === 'pending' ? t('new_profile.creating_title') : t('new_profile.confirming_title')}
               </h1>
-              <p className="text-gray-400 text-sm">Your username will be created as a tradeable and transferable NFT, and will live forever on the Ethereum Blockchain</p>
+              <p className="text-gray-400 text-sm">{t('new_profile.creating_hint')}</p>
 
               {/* Show the username SVG with loader overlay */}
               <div className="flex justify-center items-center my-8">
@@ -674,7 +677,7 @@ console.log("BALANCE:", balance)
                         ? 'bg-black border border-white/20 text-white placeholder-white/50 focus:border-white/30 focus:bg-black'
                         : 'bg-gray-100 border border-gray-300 text-black placeholder-gray-400 focus:border-gray-400 focus:bg-white'
                     }`}
-                    placeholder="Enter your username"
+                    placeholder={t('new_profile.placeholder.username')}
                 />
                 <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
                     <div 
@@ -695,21 +698,21 @@ console.log("BALANCE:", balance)
                             <div className={`absolute top-1/2 -translate-y-1/2 right-full mr-3 w-72 border rounded-lg p-5 z-50 ${
                               isDark ? 'bg-black border-white/20' : 'bg-white border-gray-200'
                             }`}>
-                                <div className={`text-sm font-medium text-center mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>Username Pricing</div>
+                                <div className={`text-sm font-medium text-center mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>{t('new_profile.pricing_title')}</div>
                                 <div className="space-y-2">
                                     {[
-                                      { label: '1 Character', cost: '1T' },
-                                      { label: '2 Characters', cost: '240B' },
-                                      { label: '3 Characters', cost: '60B' },
-                                      { label: '4 Characters', cost: '6B' },
-                                      { label: '5 Characters', cost: '200M' },
-                                      { label: '6 Characters', cost: '20M' },
-                                      { label: '7 Characters', cost: '10M' },
-                                      { label: '8+ Characters', cost: '1M' },
+                                      { label: t('new_profile.chars.1'), cost: '1T' },
+                                      { label: t('new_profile.chars.2'), cost: '240B' },
+                                      { label: t('new_profile.chars.3'), cost: '60B' },
+                                      { label: t('new_profile.chars.4'), cost: '6B' },
+                                      { label: t('new_profile.chars.5'), cost: '200M' },
+                                      { label: t('new_profile.chars.6'), cost: '20M' },
+                                      { label: t('new_profile.chars.7'), cost: '10M' },
+                                      { label: t('new_profile.chars.8plus'), cost: '1M' },
                                     ].map(({ label, cost }) => (
                                       <div key={label} className="flex justify-between text-xs items-center">
                                         <span className={isDark ? 'text-gray-300' : 'text-gray-600'}>{label}</span>
-                                        <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>BURN {cost} CAW</span>
+                                        <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>{t('new_profile.burn_cost', { cost })}</span>
                                       </div>
                                     ))}
                                 </div>
@@ -722,23 +725,23 @@ console.log("BALANCE:", balance)
             <div className="flex justify-between items-center text-sm gap-2">
                 {usernameTaken && username && typewriterStopped ? (
                   <div className="text-red-400 text-left">
-                    Already{' '}
+                    {t('new_profile.already')}{' '}
                     <a
                       href={`/users/${username}`}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="underline"
                     >
-                      taken
+                      {t('new_profile.taken')}
                     </a>.
                   </div>
                 ) : useAddress ? (
                   <div className="text-gray-400">
-                    Balance: <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>{formatNumberCompact(convertToNumber(balance))} CAW</span>
+                    {t('new_profile.balance_label')} <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>{formatNumberCompact(convertToNumber(balance))} CAW</span>
                   </div>
                 ) : <div />}
                 <div className="text-gray-400">
-                    Cost: <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>{formatNumberCompact(convertToNumber(cost, 18))} CAW</span>
+                    {t('new_profile.cost_label')} <span className={`font-mono ${isDark ? 'text-white' : 'text-gray-900'}`}>{formatNumberCompact(convertToNumber(cost, 18))} CAW</span>
                     {costInDollars != null && <span className="text-gray-500 ml-1">(~${costInDollars < 0.01 ? '<0.01' : costInDollars.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })})</span>}
                 </div>
             </div>
@@ -761,13 +764,13 @@ console.log("BALANCE:", balance)
                 </button>
                 <div>
                   <div className="flex items-center gap-1.5">
-                    <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{username ? `Deposit CAW as @${username}` : 'Deposit CAW'}</span>
+                    <span className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>{username ? t('new_profile.deposit_as', { username }) : t('staking.button.deposit')}</span>
                     <DepositInfoPopover />
                   </div>
                   <ul className="text-yellow-500/80 text-xs mt-0.5 list-disc list-outside pl-4 space-y-0.5">
-                    <li>Required to post, like, and follow</li>
-                    <li>You earn tokens from every action on the protocol based on your deposit</li>
-                    <li>The more you deposit, the more you earn</li>
+                    <li>{t('new_profile.deposit.bullet1')}</li>
+                    <li>{t('new_profile.deposit.bullet2')}</li>
+                    <li>{t('new_profile.deposit.bullet3')}</li>
                   </ul>
                 </div>
               </label>
@@ -780,7 +783,7 @@ console.log("BALANCE:", balance)
                       inputMode="numeric"
                       value={depositAmount ? depositAmount.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''}
                       onChange={e => { setDepositAmount(e.target.value.replace(/[^0-9]/g, '')); setDepositDefaultSet(true) }}
-                      placeholder="Amount to deposit"
+                      placeholder={t('new_profile.placeholder.deposit_amount')}
                       className={`w-full px-4 py-2.5 rounded-full focus:outline-none text-sm ${
                         isDark
                           ? 'bg-black border border-white/20 text-white placeholder-white/30 focus:border-white/30'

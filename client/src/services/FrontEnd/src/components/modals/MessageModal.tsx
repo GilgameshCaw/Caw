@@ -7,6 +7,7 @@ import { useAccount } from "wagmi"
 import ModalWrapper from './ModalWrapper'
 import { getUserAvatar } from '~/utils/defaultAvatar'
 import Avatar from '~/components/Avatar'
+import { useT } from '~/i18n/I18nProvider'
 
 interface MessageModalProps {
   isOpen: boolean
@@ -19,6 +20,7 @@ interface MessageModalProps {
 }
 
 export const MessageModal: React.FC<MessageModalProps> = ({ isOpen, recipient, onClose }) => {
+  const t = useT()
   const [message, setMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const { isConnected } = useAccount()
@@ -61,7 +63,7 @@ export const MessageModal: React.FC<MessageModalProps> = ({ isOpen, recipient, o
       backdropClass="bg-black/50"
       className="p-6"
     >
-      <ModalHeader title="Send message" onClose={onClose} border={false} size="lg" forceDark className="mb-6 px-0" />
+      <ModalHeader title={t('message_modal.title')} onClose={onClose} border={false} size="lg" forceDark className="mb-6 px-0" />
 
       {/* Recipient Info */}
       <div className="flex items-center space-x-3 mb-6">
@@ -80,7 +82,7 @@ export const MessageModal: React.FC<MessageModalProps> = ({ isOpen, recipient, o
       {/* Message Input */}
       <div className="space-y-3">
         <label className="text-white text-sm font-medium">
-          Message:
+          {t('message_modal.label')}
         </label>
         <textarea
           value={message}
@@ -88,7 +90,7 @@ export const MessageModal: React.FC<MessageModalProps> = ({ isOpen, recipient, o
           onKeyPress={handleKeyPress}
           className="w-full resize-none rounded-lg border transition-all duration-300 focus:outline-none py-3 px-4 text-white placeholder-white/50 focus:border-white/30 focus:bg-black bg-black border-white/20"
           rows={4}
-          placeholder="What's happening?"
+          placeholder={t('post_form.placeholder')}
           disabled={isLoading}
         />
       </div>
@@ -100,7 +102,7 @@ export const MessageModal: React.FC<MessageModalProps> = ({ isOpen, recipient, o
           disabled={isLoading || !isConnected}
           className="w-full py-2 px-6 rounded-full font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-all duration-200"
         >
-          {isLoading ? 'Sending...' : 'Send'}
+          {isLoading ? t('message_modal.sending') : t('message_modal.send')}
         </button>
       </div>
     </ModalWrapper>

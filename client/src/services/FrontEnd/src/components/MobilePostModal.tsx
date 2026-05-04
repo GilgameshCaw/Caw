@@ -7,6 +7,7 @@ import { HiOutlineX, HiOutlinePlus } from "react-icons/hi";
 import { BsWallet } from 'react-icons/bs';
 import { useTheme } from '~/hooks/useTheme'
 import type { ActionParams } from '~/api/actions'
+import { useT } from '~/i18n/I18nProvider'
 
 interface MobilePostModalProps {
   isOpen: boolean;
@@ -15,6 +16,7 @@ interface MobilePostModalProps {
 }
 
 const MobilePostModal: React.FC<MobilePostModalProps> = ({ isOpen, onClose, onSuccess }) => {
+  const t = useT()
   const [text, setText] = useState('')
   const { isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
@@ -88,7 +90,7 @@ const MobilePostModal: React.FC<MobilePostModalProps> = ({ isOpen, onClose, onSu
                 ? 'bg-transparent text-white placeholder-gray-500' 
                 : 'bg-transparent text-black placeholder-gray-600'
             }`}
-            placeholder="What's happening?"
+            placeholder={t('post_form.placeholder')}
             value={text}
             onChange={e => setText(e.target.value)}
             onKeyPress={handleKeyPress}

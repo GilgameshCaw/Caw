@@ -8,6 +8,7 @@ import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { CAW_ADDRESS } from '~/../../../abi/addresses'
 import { parseUnits, formatUnits } from 'viem'
+import { useT } from '~/i18n/I18nProvider'
 import { chains } from '~/config/chains'
 
 // MintableCaw ABI - just the mint function
@@ -39,6 +40,7 @@ const MINT_AMOUNTS = [
 ]
 
 const FaucetPage: React.FC = () => {
+  const t = useT()
   const { isDark } = useTheme()
   const { address, isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
@@ -134,10 +136,10 @@ const FaucetPage: React.FC = () => {
           </Link>
           <div>
             <h1 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-              Testnet Faucet
+              {t('faucet.title')}
             </h1>
             <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-              Mint mCAW tokens for testing
+              {t('faucet.subtitle')}
             </p>
           </div>
         </div>
@@ -147,8 +149,7 @@ const FaucetPage: React.FC = () => {
           isDark ? 'bg-yellow-500/10 border border-yellow-500/20' : 'bg-yellow-50 border border-yellow-200'
         }`}>
           <p className={`text-sm ${isDark ? 'text-yellow-200' : 'text-yellow-800'}`}>
-            This faucet mints <strong>mCAW (Mintable CAW)</strong> tokens on Sepolia testnet.
-            These tokens have no real value and are only for testing the CAW protocol.
+            {t('faucet.info_before')}<strong>{t('faucet.info_strong')}</strong>{t('faucet.info_after')}
           </p>
         </div>
 
@@ -158,7 +159,7 @@ const FaucetPage: React.FC = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
-                  Your mCAW Balance
+                  {t('faucet.balance_label')}
                 </p>
                 <p className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
                   {formatBalance(balance)} mCAW
@@ -179,13 +180,13 @@ const FaucetPage: React.FC = () => {
         {/* Mint Form */}
         <div className={`p-6 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
           <h2 className={`text-lg font-semibold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-            Mint mCAW
+            {t('faucet.mint_form_title')}
           </h2>
 
           {/* Amount Selection */}
           <div className="mb-6">
             <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-              Select Amount
+              {t('faucet.select_amount')}
             </label>
             <div className="grid grid-cols-2 gap-2">
               {MINT_AMOUNTS.map((amt) => (
@@ -212,7 +213,7 @@ const FaucetPage: React.FC = () => {
             {/* Custom Amount */}
             <div className="mt-4">
               <label className={`block text-sm font-medium mb-2 ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-                Or enter custom amount
+                {t('faucet.custom_amount')}
               </label>
               <div className="flex gap-2">
                 <input
@@ -225,7 +226,7 @@ const FaucetPage: React.FC = () => {
                     if (val) setUseCustom(true)
                   }}
                   onFocus={() => customAmount && setUseCustom(true)}
-                  placeholder="e.g. 1000000"
+                  placeholder={t('faucet.amount_placeholder')}
                   className={`flex-1 p-3 rounded-lg text-sm transition-colors outline-none ${
                     useCustom && customAmount
                       ? 'ring-2 ring-yellow-500'
@@ -241,7 +242,7 @@ const FaucetPage: React.FC = () => {
                 </span>
               </div>
               <p className={`text-xs mt-1 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-                Supports decimals (e.g. 0.5, 1.25)
+                {t('faucet.decimals_hint')}
               </p>
             </div>
           </div>
@@ -252,7 +253,7 @@ const FaucetPage: React.FC = () => {
             disabled={isConnected && (isPending || isConfirming || !isValidAmount(getMintAmount()))}
             className="w-full py-3 px-4 bg-yellow-500 text-black font-semibold rounded-xl hover:bg-yellow-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
-            {isPending ? 'Confirm in Wallet...' : isConfirming ? 'Minting...' : `Mint ${getDisplayAmount()} mCAW`}
+            {isPending ? t('marketplace.button.confirm_in_wallet') : isConfirming ? t('faucet.minting') : t('faucet.mint_button', { amount: getDisplayAmount() })}
           </button>
 
           {/* Status Messages */}
@@ -260,7 +261,7 @@ const FaucetPage: React.FC = () => {
             <div className={`mt-4 p-3 rounded-lg ${isDark ? 'bg-red-500/10 text-red-400' : 'bg-red-50 text-red-600'}`}>
               <p className="text-sm">
                 {writeError.message.includes('User rejected')
-                  ? 'Transaction rejected'
+                  ? t('profile.error.tx_rejected')
                   : writeError.message.split('\n')[0].replace(/^Error:\s*/, '').slice(0, 100)}
               </p>
             </div>
@@ -268,7 +269,7 @@ const FaucetPage: React.FC = () => {
 
           {isSuccess && (
             <div className={`mt-4 p-3 rounded-lg ${isDark ? 'bg-green-500/10 text-green-400' : 'bg-green-50 text-green-600'}`}>
-              <p className="text-sm">Successfully minted {getDisplayAmount()} mCAW!</p>
+              <p className="text-sm">{t('faucet.success', { amount: getDisplayAmount() })}</p>
             </div>
           )}
         </div>
@@ -276,13 +277,13 @@ const FaucetPage: React.FC = () => {
         {/* Contract Info */}
         <div className={`mt-6 p-4 rounded-xl ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
           <h3 className={`text-sm font-medium mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-            Contract Address
+            {t('faucet.contract_address')}
           </h3>
           <code className={`text-xs break-all ${isDark ? 'text-yellow-500' : 'text-yellow-700'}`}>
             {CAW_ADDRESS}
           </code>
           <p className={`text-xs mt-2 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-            Network: Sepolia Testnet
+            {t('faucet.network')}
           </p>
         </div>
       </div>

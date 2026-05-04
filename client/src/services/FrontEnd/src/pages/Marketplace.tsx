@@ -169,10 +169,10 @@ const Marketplace: React.FC = () => {
           {/* Tabs */}
           <div id="usernames-tabs" className={`flex gap-1 mb-6 border-b ${themeBorder(isDark)}`}>
             <TabButton active={activeTab === 'listings'} onClick={() => setActiveTab('listings')} isDark={isDark}>
-              For Sale
+              {t('marketplace.tab.for_sale')}
             </TabButton>
             <TabButton active={activeTab === 'sales'} onClick={() => setActiveTab('sales')} isDark={isDark}>
-              Recent Sales
+              {t('marketplace.tab.recent_sales')}
               {salesUnreadCount > 0 && (
                 <span className="ml-1.5 min-w-[18px] h-[18px] inline-flex items-center justify-center text-[11px] font-bold rounded-full bg-yellow-500 text-black px-1">
                   {salesUnreadCount > 99 ? '99+' : salesUnreadCount}
@@ -180,10 +180,10 @@ const Marketplace: React.FC = () => {
               )}
             </TabButton>
             <TabButton active={activeTab === 'mine'} onClick={() => setActiveTab('mine')} isDark={isDark}>
-              My Profiles
+              {t('marketplace.tab.my_profiles')}
             </TabButton>
             <TabButton active={activeTab === 'offers'} onClick={() => setActiveTab('offers')} isDark={isDark}>
-              My Offers
+              {t('marketplace.tab.my_offers')}
               {offersUnreadCount > 0 && (
                 <span className="ml-1.5 min-w-[18px] h-[18px] inline-flex items-center justify-center text-[11px] font-bold rounded-full bg-yellow-500 text-black px-1">
                   {offersUnreadCount > 99 ? '99+' : offersUnreadCount}
@@ -236,6 +236,7 @@ const TabButton: React.FC<{ active: boolean; onClick: () => void; isDark: boolea
 
 const ListingsTab: React.FC = () => {
   const { isDark } = useTheme()
+  const t = useT()
   const { listings, total, loading, loadMore, hasMore } = useMarketplaceListings()
 
   return (
@@ -243,7 +244,7 @@ const ListingsTab: React.FC = () => {
       <ListingFilters />
 
       <p className={`text-sm mt-4 mb-4 ${themeTextMuted(isDark)}`}>
-        {total} listing{total !== 1 ? 's' : ''}
+        {t('marketplace.listings_count', { count: total })}
       </p>
 
       {listings.length > 0 ? (
@@ -258,12 +259,12 @@ const ListingsTab: React.FC = () => {
           <h3 className={`text-lg font-semibold mb-2 transition-colors duration-300 ${
             isDark ? 'text-white' : 'text-black'
           }`}>
-            No listings found
+            {t('marketplace.listings_empty.title')}
           </h3>
           <p className={`transition-colors duration-300 ${
             isDark ? 'text-gray-400' : 'text-gray-600'
           }`}>
-            Try adjusting your filters
+            {t('marketplace.listings_empty.hint')}
           </p>
         </div>
       ) : null}
@@ -282,7 +283,7 @@ const ListingsTab: React.FC = () => {
               isDark ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-900'
             }`}
           >
-            Load More
+            {t('common.load_more')}
           </button>
         </div>
       )}
@@ -292,12 +293,13 @@ const ListingsTab: React.FC = () => {
 
 const SalesTab: React.FC = () => {
   const { isDark } = useTheme()
+  const t = useT()
   const { sales, total, loading } = useMarketplaceSales()
 
   return (
     <>
       <p className={`text-sm mb-4 ${themeTextMuted(isDark)}`}>
-        {total} sale{total !== 1 ? 's' : ''}
+        {t('marketplace.sales_count', { count: total })}
       </p>
 
       {sales.length > 0 ? (
@@ -312,12 +314,12 @@ const SalesTab: React.FC = () => {
           <h3 className={`text-lg font-semibold mb-2 transition-colors duration-300 ${
             isDark ? 'text-white' : 'text-black'
           }`}>
-            No completed sales yet
+            {t('marketplace.sales_empty.title')}
           </h3>
           <p className={`transition-colors duration-300 ${
             isDark ? 'text-gray-400' : 'text-gray-600'
           }`}>
-            Completed marketplace sales will appear here.
+            {t('marketplace.sales_empty.hint')}
           </p>
         </div>
       ) : null}
@@ -333,6 +335,7 @@ const SalesTab: React.FC = () => {
 
 const MyProfilesTab: React.FC = () => {
   const { isDark } = useTheme()
+  const t = useT()
   const openCreateListing = useMarketplaceStore(s => s.openCreateListing)
   const tokensByAddress = useTokenDataStore(s => s.tokensByAddress)
 
@@ -409,9 +412,9 @@ const MyProfilesTab: React.FC = () => {
               </div>
             ) : allTokens.length === 0 ? (
               <div className={`text-center py-12 ${themeBgSubtle(isDark)} rounded-xl`}>
-                <p className={`text-lg ${themeTextMuted(isDark)}`}>No usernames found</p>
+                <p className={`text-lg ${themeTextMuted(isDark)}`}>{t('marketplace.empty.title')}</p>
                 <p className={`text-sm mt-1 ${themeTextMuted(isDark)}`}>
-                  Mint a username to get started
+                  {t('marketplace.empty.hint')}
                 </p>
               </div>
             ) : null}
@@ -440,7 +443,7 @@ function fmtPrice(raw: string, token: string): string {
 
 function formatTimeLeft(expiry: string): string {
   const diff = new Date(expiry).getTime() - Date.now()
-  if (diff <= 0) return 'Expired'
+  if (diff <= 0) return 'Expired' /* not localized — internal date helper, replaced where displayed */
   const days = Math.floor(diff / 86400000)
   const hours = Math.floor((diff % 86400000) / 3600000)
   if (days > 0) return `${days}d ${hours}h left`
@@ -451,6 +454,7 @@ function formatTimeLeft(expiry: string): string {
 
 const MyOffersTab: React.FC = () => {
   const { isDark } = useTheme()
+  const t = useT()
   const { address: walletAddress, isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
   const chainId = useChainId()
@@ -526,7 +530,7 @@ const MyOffersTab: React.FC = () => {
       })
     } catch (err: any) {
       console.error('[Accept offer] LZ fee quote failed:', err)
-      setAcceptFailureMessage('Something went wrong getting the LZ fee quote. Please try again.')
+      setAcceptFailureMessage(t('marketplace.error.lz_fee_quote'))
       // Report to backend for admin visibility
       apiFetch('/api/marketplace/offers/report-failure', {
         method: 'POST',
@@ -543,8 +547,8 @@ const MyOffersTab: React.FC = () => {
   useEffect(() => {
     if (!acceptError) return
     const msg = acceptError.message?.includes('User rejected')
-      ? 'Transaction rejected'
-      : 'Something went wrong accepting the offer. Please try again.'
+      ? t('profile.error.tx_rejected')
+      : t('marketplace.error.accept_offer')
     setAcceptFailureMessage(msg)
     setAcceptingId(null)
     setPendingAcceptAfterApprove(null)
@@ -709,8 +713,8 @@ const MyOffersTab: React.FC = () => {
       {cancelError && (
         <div className="mb-4 p-3 rounded-lg bg-red-500/10 text-red-500 text-sm text-center">
           {cancelError.message?.includes('User rejected')
-            ? 'Transaction rejected'
-            : 'Transaction failed. Please try again.'}
+            ? t('profile.error.tx_rejected')
+            : t('marketplace.error.tx_failed')}
         </div>
       )}
 
@@ -770,8 +774,8 @@ const MyOffersTab: React.FC = () => {
                           : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
                       }`}
                     >
-                      {isThisOffer && isCancelPending ? 'Confirm in wallet...'
-                        : isThisOffer && isCancelConfirming ? 'Withdrawing...'
+                      {isThisOffer && isCancelPending ? t('marketplace.button.confirm_in_wallet')
+                        : isThisOffer && isCancelConfirming ? t('staking.button.withdrawing')
                         : 'Cancel & Withdraw'}
                     </button>
                   </div>
@@ -863,9 +867,9 @@ const MyOffersTab: React.FC = () => {
                             disabled={isActing || isSwitchingChain || isApproving}
                             className="flex-1 px-4 py-2 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50"
                           >
-                            {isThisAccepting && isApproving ? 'Approving...'
-                              : isThisAccepting && (isAcceptPending || isAcceptConfirming) ? 'Accepting...'
-                              : 'Accept'}
+                            {isThisAccepting && isApproving ? t('staking.button.approving')
+                              : isThisAccepting && (isAcceptPending || isAcceptConfirming) ? t('marketplace.button.accepting')
+                              : t('marketplace.button.accept')}
                           </button>
                           <button
                             onClick={() => handleDenyReceived(offer)}

@@ -2,9 +2,11 @@ import React from 'react'
 import { Link } from 'react-router-dom'
 import TrendingHashtags from './TrendingHashtags'
 import { useTheme } from '~/hooks/useTheme'
+import { useT } from '~/i18n/I18nProvider'
 
 const Trending: React.FC = () => {
   const { isDark, toggle } = useTheme()
+  const t = useT()
 
   return (
     <>
@@ -31,7 +33,7 @@ const Trending: React.FC = () => {
               isDark ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-black'
             }`}
           >
-            FAQ
+            {t('help.tab.faq')}
           </Link>
           <span className={`${
             isDark ? 'text-gray-600' : 'text-gray-400'
@@ -42,7 +44,7 @@ const Trending: React.FC = () => {
               isDark ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-black'
             }`}
           >
-            Resources
+            {t('help.tab.resources')}
           </Link>
           <span className={`${
             isDark ? 'text-gray-600' : 'text-gray-400'
@@ -53,7 +55,7 @@ const Trending: React.FC = () => {
               isDark ? 'text-gray-400 hover:text-white' : 'text-gray-500 hover:text-black'
             }`}
           >
-            Manifesto
+            {t('help.tab.manifesto')}
           </Link>
           <span className={`${isDark ? 'text-gray-600' : 'text-gray-400'}`}>-</span>
           <button
@@ -61,7 +63,7 @@ const Trending: React.FC = () => {
             className={`transition-colors duration-200 cursor-pointer ${
               isDark ? 'text-gray-400 hover:text-yellow-400' : 'text-gray-500 hover:text-yellow-500'
             }`}
-            title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={isDark ? t('theme.switch_to_light') : t('theme.switch_to_dark')}
           >
             {isDark ? (
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
