@@ -17,10 +17,12 @@ const MIN_TIP_AMOUNT = 1
 const formatUsd = (n: number): string =>
   n < 1 ? `$${n.toFixed(2)}` : `$${n.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
 
+const trimZero = (s: string): string => s.replace(/\.0+$/, '')
+
 const formatCompactCaw = (n: number): string => {
-  if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(1)}b`
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}m`
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
+  if (n >= 1_000_000_000) return `${trimZero((n / 1_000_000_000).toFixed(1))}b`
+  if (n >= 1_000_000) return `${trimZero((n / 1_000_000).toFixed(1))}m`
+  if (n >= 1_000) return `${trimZero((n / 1_000).toFixed(1))}k`
   return n.toFixed(0)
 }
 
