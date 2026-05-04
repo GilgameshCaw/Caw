@@ -18,6 +18,7 @@ import { formatNumberCompact } from '~/utils'
 import { CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
 import { cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { wagmiConfig } from '~/config/Web3Provider'
+import { useT } from '~/i18n/I18nProvider'
 
 const DECIMALS: Record<string, number> = { USDC: 6, USDT: 6 }
 
@@ -38,6 +39,7 @@ type UserStats = { followerCount: number; cawCount: number; likeCount: number }
 
 const BuyModal: React.FC = () => {
   const { isDark } = useTheme()
+  const t = useT()
   const isOpen = useMarketplaceStore(s => s.buyModal.isOpen)
   const listing = useMarketplaceStore(s => s.buyModal.listing)
   const close = useMarketplaceStore(s => s.closeBuyModal)
@@ -284,10 +286,10 @@ const BuyModal: React.FC = () => {
             </div>
 
             <h2 className={`text-xl font-bold text-center ${isDark ? 'text-white' : 'text-gray-900'}`}>
-              {listing.listingType === 'DUTCH_AUCTION' ? 'Dutch Auction' : 'Fixed Price'}
+              {listing.listingType === 'DUTCH_AUCTION' ? t('create_listing.type.dutch.label') : t('create_listing.type.fixed.label')}
             </h2>
             <p className={`text-sm text-center mb-3 ${themeTextMuted(isDark)}`}>
-              {listing.listingType === 'DUTCH_AUCTION' ? 'Price decreases over time, and the first bidder wins.' : 'Buy now at the listed price.'}
+              {listing.listingType === 'DUTCH_AUCTION' ? t('create_listing.type.dutch.desc') : t('buy_modal.fixed_desc')}
             </p>
 
             {/* Username SVG */}
@@ -303,19 +305,19 @@ const BuyModal: React.FC = () => {
                 <div className={`text-base font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
                   {stats ? formatNumberCompact(stats.followerCount) : '—'}
                 </div>
-                <div className={`text-xs ${themeTextMuted(isDark)}`}>Followers</div>
+                <div className={`text-xs ${themeTextMuted(isDark)}`}>{t('profile.stats.followers')}</div>
               </div>
               <div className="text-center">
                 <div className={`text-base font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
                   {stats ? formatNumberCompact(stats.cawCount) : '—'}
                 </div>
-                <div className={`text-xs ${themeTextMuted(isDark)}`}>Posts</div>
+                <div className={`text-xs ${themeTextMuted(isDark)}`}>{t('profile.stats.posts')}</div>
               </div>
               <div className="text-center">
                 <div className={`text-base font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
                   {stats ? formatNumberCompact(stats.likeCount) : '—'}
                 </div>
-                <div className={`text-xs ${themeTextMuted(isDark)}`}>Likes</div>
+                <div className={`text-xs ${themeTextMuted(isDark)}`}>{t('profile.tab.likes')}</div>
               </div>
               <div className="text-center">
                 <div className={`text-base font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
@@ -328,7 +330,7 @@ const BuyModal: React.FC = () => {
             {/* Price + Balance */}
             <div className={`p-4 rounded-xl ${themeBgSubtle(isDark)} space-y-2 text-sm mb-4`}>
               <div className="flex justify-between">
-                <span className={themeTextMuted(isDark)}>Price</span>
+                <span className={themeTextMuted(isDark)}>{t('create_listing.price')}</span>
                 <div className="text-right">
                   <span className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
                     {priceDisplay} {listing.paymentToken}
@@ -339,12 +341,12 @@ const BuyModal: React.FC = () => {
                 </div>
               </div>
               <div className="flex justify-between">
-                <span className={themeTextMuted(isDark)}>Marketplace Fee</span>
+                <span className={themeTextMuted(isDark)}>{t('buy_modal.marketplace_fee')}</span>
                 <span className={isDark ? 'text-green-400' : 'text-green-600'}>0%</span>
               </div>
               {lzFee > 0n && (
                 <div className="flex justify-between">
-                  <span className={themeTextMuted(isDark)}>Cross chain fee</span>
+                  <span className={themeTextMuted(isDark)}>{t('buy_modal.cross_chain_fee')}</span>
                   <span className={themeTextSecondary(isDark)}>
                     ~{parseFloat(formatEther(lzFee)).toFixed(5)} ETH
                   </span>
@@ -352,7 +354,7 @@ const BuyModal: React.FC = () => {
               )}
               {isConnected && (
                 <div className={`flex justify-between pt-2 border-t ${isDark ? 'border-white/5' : 'border-gray-100'}`}>
-                  <span className={themeTextMuted(isDark)}>Your Balance</span>
+                  <span className={themeTextMuted(isDark)}>{t('buy_modal.your_balance')}</span>
                   <div className="text-right">
                     <span className={`${insufficientBalance ? (isDark ? 'text-red-400' : 'text-red-500') : (isDark ? 'text-white' : 'text-gray-900')}`}>
                       {fmtPrice(userBalance.toString(), listing.paymentToken)} {listing.paymentToken}
@@ -367,21 +369,21 @@ const BuyModal: React.FC = () => {
 
             {insufficientBalance && (
               <div className={`text-xs mb-4 p-3 rounded-lg text-center ${isDark ? 'bg-red-500/10 text-red-400' : 'bg-red-50 text-red-500'}`}>
-                Insufficient balance to complete this purchase.
+                {t('buy_modal.insufficient_balance')}
               </div>
             )}
 
             {/* Staked CAW warning */}
             {listing.stakedCaw && listing.stakedCaw !== '0' && (
               <div className={`text-xs mb-4 p-3 rounded-lg ${isDark ? 'bg-yellow-500/10 text-yellow-400' : 'bg-yellow-50 text-yellow-700'}`}>
-                This username has {fmtPrice(listing.stakedCaw, 'CAW')} CAW staked. Staked CAW transfers with the NFT, but the seller could withdraw it before the transaction completes.
+                {t('buy_modal.staked_warning', { amount: fmtPrice(listing.stakedCaw, 'CAW') })}
               </div>
             )}
 
             {/* Buy more link for ERC20 */}
             {!isEth && (
               <p className={`text-xs text-center mb-4 ${themeTextMuted(isDark)}`}>
-                Need more {listing.paymentToken}?{' '}
+                {t('buy_modal.need_more', { token: listing.paymentToken })}{' '}
                 <a
                   href={`https://app.uniswap.org/swap?outputCurrency=${listing.paymentAddress}&chain=sepolia`}
                   target="_blank"
@@ -389,7 +391,7 @@ const BuyModal: React.FC = () => {
                   className={isDark ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-500'}
                   onClick={e => e.stopPropagation()}
                 >
-                  Buy on Uniswap &rarr;
+                  {t('buy_modal.buy_on_uniswap')}
                 </a>
               </p>
             )}
@@ -398,8 +400,8 @@ const BuyModal: React.FC = () => {
             {(approveError || writeError) && (
               <div className="mb-4 p-3 rounded-lg bg-red-500/10 text-red-500 text-sm text-center">
                 {(approveError || writeError)?.message?.includes('User rejected')
-                  ? 'Transaction rejected'
-                  : 'Transaction failed. Please try again.'}
+                  ? t('profile.error.tx_rejected')
+                  : t('marketplace.error.tx_failed')}
               </div>
             )}
 
@@ -410,10 +412,10 @@ const BuyModal: React.FC = () => {
                 disabled={isApproving || isApproveConfirming || isSwitchingChain}
                 className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {needsChainSwitch ? (isSwitchingChain ? 'Switching...' : 'Switch Network')
-                  : isApproving ? 'Confirm in wallet...'
-                  : isApproveConfirming ? 'Approving...'
-                  : `Approve ${listing.paymentToken}`}
+                {needsChainSwitch ? (isSwitchingChain ? t('staking.button.switching') : t('marketplace.button.switch_network'))
+                  : isApproving ? t('marketplace.button.confirm_in_wallet')
+                  : isApproveConfirming ? t('staking.button.approving')
+                  : t('buy_modal.button.approve_token', { token: listing.paymentToken })}
               </button>
             )}
 
@@ -423,7 +425,7 @@ const BuyModal: React.FC = () => {
                 disabled
                 className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black opacity-50 cursor-not-allowed"
               >
-                Ended
+                {t('buy_modal.button.ended')}
               </button>
             )}
 
@@ -434,11 +436,11 @@ const BuyModal: React.FC = () => {
                 disabled={isExpired || isSubmitting || isConfirming || isSwitchingChain || insufficientBalance}
                 className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-yellow-500"
               >
-                {isExpired ? 'Ended'
-                  : needsChainSwitch ? (isSwitchingChain ? 'Switching...' : 'Switch Network')
-                  : isSubmitting ? 'Confirm in wallet...'
-                  : isConfirming ? 'Confirming...'
-                  : `Buy for ${priceDisplay} ${listing.paymentToken}`}
+                {isExpired ? t('buy_modal.button.ended')
+                  : needsChainSwitch ? (isSwitchingChain ? t('staking.button.switching') : t('marketplace.button.switch_network'))
+                  : isSubmitting ? t('marketplace.button.confirm_in_wallet')
+                  : isConfirming ? t('marketplace.button.confirming')
+                  : t('buy_modal.button.buy_for', { price: priceDisplay, token: listing.paymentToken })}
               </button>
             )}
           </>

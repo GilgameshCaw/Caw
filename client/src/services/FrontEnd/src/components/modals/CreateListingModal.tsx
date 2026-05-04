@@ -14,14 +14,12 @@ import { chains } from '~/config/chains'
 import { CAW_NAMES_ADDRESS, CAW_NAME_MARKETPLACE_ADDRESS, WETH_ADDRESS, CAW_ADDRESS, USDC_ADDRESS, USDT_ADDRESS } from '~/../../../abi/addresses'
 import { cawProfileAbi } from '~/../../../abi/generated'
 import { cawProfileMarketplaceAbi } from '~/../../../abi/generated'
+import { useT } from '~/i18n/I18nProvider'
 
 type ListingStep = 'type' | 'params' | 'approve' | 'confirm'
 
-const LISTING_TYPES = [
-  { value: 0, label: 'Fixed Price', desc: 'Set a price, buyer pays it.' },
-  { value: 1, label: 'Dutch Auction', desc: 'Price decreases over time, and the first bidder wins.' },
-  { value: 2, label: 'English Auction', desc: 'Bidders compete. Highest bid wins at deadline.' },
-]
+// LISTING_TYPES: built inside the component so labels/descs go through t().
+// Defined separately as numeric values aren't user-facing.
 
 const PAYMENT_OPTIONS = [
   { value: '0x0000000000000000000000000000000000000000', label: 'ETH', decimals: 18 },
@@ -50,6 +48,12 @@ function getMintCostCaw(nameLength: number): number {
 
 const CreateListingModal: React.FC = () => {
   const { isDark } = useTheme()
+  const t = useT()
+  const LISTING_TYPES = [
+    { value: 0, label: t('create_listing.type.fixed.label'), desc: t('create_listing.type.fixed.desc') },
+    { value: 1, label: t('create_listing.type.dutch.label'), desc: t('create_listing.type.dutch.desc') },
+    { value: 2, label: t('create_listing.type.english.label'), desc: t('create_listing.type.english.desc') },
+  ]
   const isOpen = useMarketplaceStore(s => s.createListingModal.isOpen)
   const tokenId = useMarketplaceStore(s => s.createListingModal.tokenId)
   const username = useMarketplaceStore(s => s.createListingModal.username)
@@ -355,7 +359,7 @@ const CreateListingModal: React.FC = () => {
               <div className="flex items-end justify-between mb-2">
                 <div className="flex items-end gap-2">
                   <label className={`text-sm font-medium ${themeTextSecondary(isDark)}`}>
-                    {listingType === 0 ? 'Price' : listingType === 1 ? 'Start Price' : 'Minimum Bid'}
+                    {listingType === 0 ? t('create_listing.price') : listingType === 1 ? t('create_listing.start_price') : t('create_listing.minimum_bid')}
                   </label>
                   {mintCostUsd && (
                     <div className="relative">
@@ -513,7 +517,7 @@ const CreateListingModal: React.FC = () => {
                 max="720"
                 value={durationHours}
                 onChange={e => setDurationHours(e.target.value)}
-                placeholder="Custom hours"
+                placeholder={t('create_listing.custom_hours')}
                 className={inputClass}
               />
             </div>
@@ -532,8 +536,8 @@ const CreateListingModal: React.FC = () => {
             {(approveError || writeError) && (
               <div className="p-3 rounded-lg bg-red-500/10 text-red-500 text-sm text-center">
                 {(approveError || writeError)?.message?.includes('User rejected')
-                  ? 'Transaction rejected'
-                  : 'Transaction failed. Please try again.'}
+                  ? t('profile.error.tx_rejected')
+                  : t('marketplace.error.tx_failed')}
               </div>
             )}
 
@@ -550,11 +554,11 @@ const CreateListingModal: React.FC = () => {
                   disabled={(isConnected && !isOwner) || isApproving || isApproveConfirming || isSwitchingChain}
                   className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-yellow-500"
                 >
-                  {!isOwner ? 'Wrong Wallet'
-                    : needsChainSwitch ? (isSwitchingChain ? 'Switching...' : 'Switch Network')
-                    : isApproving ? 'Confirm in wallet...'
-                    : isApproveConfirming ? 'Approving...'
-                    : 'Approve Sale'}
+                  {!isOwner ? t('post_form.button.wrong_wallet')
+                    : needsChainSwitch ? (isSwitchingChain ? t('staking.button.switching') : t('marketplace.button.switch_network'))
+                    : isApproving ? t('marketplace.button.confirm_in_wallet')
+                    : isApproveConfirming ? t('staking.button.approving')
+                    : t('create_listing.button.approve')}
                 </button>
               </div>
             )}
@@ -566,11 +570,11 @@ const CreateListingModal: React.FC = () => {
                   disabled={(isConnected && !isOwner) || isSuccess || isSubmitting || isConfirming || isSwitchingChain || !startPrice || parseFloat(startPrice) <= 0 || (listingType === 1 && (!endPrice || parseFloat(endPrice) >= parseFloat(startPrice)))}
                   className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {!isOwner ? 'Wrong Wallet'
-                    : needsChainSwitch ? (isSwitchingChain ? 'Switching...' : 'Switch Network')
-                    : isSubmitting ? 'Confirm in wallet...'
-                    : isConfirming ? 'Confirming...'
-                    : 'List for Sale'}
+                  {!isOwner ? t('post_form.button.wrong_wallet')
+                    : needsChainSwitch ? (isSwitchingChain ? t('staking.button.switching') : t('marketplace.button.switch_network'))
+                    : isSubmitting ? t('marketplace.button.confirm_in_wallet')
+                    : isConfirming ? t('marketplace.button.confirming')
+                    : t('create_listing.button.list')}
                 </button>
               </div>
             )}
