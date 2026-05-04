@@ -67,7 +67,47 @@ export default defineConfig({
     target: 'esnext',
     commonjsOptions: {
       transformMixedEsModules: true
-    }
+    },
+    rollupOptions: {
+      output: {
+        // Stable, named vendor chunks. These libraries change rarely
+        // relative to our app code, so pinning them into their own
+        // chunks means a normal app-code deploy doesn't bust the
+        // browser cache for ~600KB of unchanged vendor JS. Without
+        // manualChunks, Rollup may shuffle library bytes between
+        // anonymous index-* chunks on every build, invalidating the
+        // cached copy even when nothing in those libs actually changed.
+        //
+        // Each function-style entry is matched against the resolved
+        // module path. Order matters: more specific matches first.
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined
+          // Ethers/wagmi/viem stack — biggest single vendor block. Splitting
+          // it from rainbowkit (UI) lets the connection-time chunk load
+          // independently from the auth-time UI chunk.
+          if (id.includes('/wagmi/') || id.includes('/viem/') || id.includes('/@wagmi/')) {
+            return 'vendor-wagmi'
+          }
+          if (id.includes('/@rainbow-me/')) {
+            return 'vendor-rainbowkit'
+          }
+          if (id.includes('/@tanstack/')) {
+            return 'vendor-tanstack'
+          }
+          // React + scheduler + react-dom — pin together because they
+          // version in lockstep and a mismatched copy crashes the app.
+          if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/')) {
+            return 'vendor-react'
+          }
+          if (id.includes('/zod/')) {
+            return 'vendor-zod'
+          }
+          // Everything else in node_modules falls through to Rollup's
+          // automatic chunking, which keeps related deps together.
+          return undefined
+        },
+      },
+    },
   },
   worker: {
     format: 'es'
