@@ -9,6 +9,7 @@ import {
   POLL_MAX_OPTION_BYTES,
   POLL_MAX_OPTION_BYTES_WITH_IMAGES,
 } from '~/../../../tools/pollMarker'
+import { useT } from '~/i18n/I18nProvider'
 
 // byteLen mirrors the on-chain byte counter — we use it here so the per-
 // option budget the composer enforces matches what the post char counter
@@ -59,6 +60,7 @@ const PollComposer: React.FC<Props> = ({
   showPositionPicker,
 }) => {
   const { isDark } = useTheme()
+  const t = useT()
   const activeToken = useActiveToken()
 
   // One file input per option row, refs by index. Avoids the "click the
@@ -135,10 +137,10 @@ const PollComposer: React.FC<Props> = ({
     .map((o, i) => {
       const trimmed = o.trim()
       if (trimmed === '') return null // empty is fine while typing
-      if (trimmed.includes(':')) return `Option ${i + 1}: can't contain ":"`
-      if (trimmed.includes('\n')) return `Option ${i + 1}: can't contain newlines`
+      if (trimmed.includes(':')) return t('poll.error.no_colon', { n: i + 1 })
+      if (trimmed.includes('\n')) return t('poll.error.no_newline', { n: i + 1 })
       if (byteLen(trimmed) > optionByteCap) {
-        return `Option ${i + 1}: ${byteLen(trimmed)} / ${optionByteCap} bytes${anyImage ? ' (lower because of poll images)' : ''}`
+        return t('poll.error.too_long', { n: i + 1, used: byteLen(trimmed), cap: optionByteCap, suffix: anyImage ? t('poll.error.too_long_with_images') : '' })
       }
       return null
     })
@@ -152,14 +154,14 @@ const PollComposer: React.FC<Props> = ({
     }`}>
       <div className="flex items-center justify-between mb-2">
         <div className={`text-xs font-medium ${isDark ? 'text-white/70' : 'text-gray-700'}`}>
-          Poll
+          {t('poll.label')}
         </div>
         <button
           onClick={onClose}
           className={`p-1 rounded-full transition-colors ${
             isDark ? 'text-white/40 hover:text-white/70 hover:bg-white/10' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-200'
           }`}
-          aria-label="Remove poll"
+          aria-label={t('poll.remove')}
         >
           <HiOutlineX className="w-4 h-4" />
         </button>
@@ -224,7 +226,7 @@ const PollComposer: React.FC<Props> = ({
                       type="button"
                       onClick={() => setImage(i, '')}
                       className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-black/80 text-white flex items-center justify-center hover:bg-black"
-                      aria-label="Remove image"
+                      aria-label={t('poll.remove_image')}
                     >
                       <HiOutlineX className="w-3 h-3" />
                     </button>
@@ -234,7 +236,7 @@ const PollComposer: React.FC<Props> = ({
                     type="button"
                     onClick={() => fileInputs.current[i]?.click()}
                     disabled={isUploading}
-                    aria-label="Add image to option"
+                    aria-label={t('poll.add_image')}
                     style={{ width: 50, height: 50 }}
                     className={`rounded-lg border flex items-center justify-center transition-colors ${
                       isUploading
@@ -256,7 +258,7 @@ const PollComposer: React.FC<Props> = ({
                 type="text"
                 value={opt}
                 onChange={e => setOption(i, e.target.value)}
-                placeholder={`Option ${i + 1}`}
+                placeholder={t('poll.option_placeholder', { n: i + 1 })}
                 maxLength={optionByteCap * 2 /* generous: real check is byteLen */}
                 style={{ height: 50 }}
                 className={`flex-1 min-w-0 w-full px-3 rounded-lg text-base outline-none border ${
@@ -277,7 +279,7 @@ const PollComposer: React.FC<Props> = ({
                 className={`p-1 rounded transition-colors flex-shrink-0 ${
                   isDark ? 'text-white/30 hover:text-white/60' : 'text-gray-400 hover:text-gray-600'
                 }`}
-                aria-label="Remove option"
+                aria-label={t('poll.remove_option')}
               >
                 <HiOutlineX className="w-4 h-4" />
               </button>
@@ -293,7 +295,7 @@ const PollComposer: React.FC<Props> = ({
             isDark ? 'text-yellow-400 hover:bg-yellow-500/10' : 'text-yellow-600 hover:bg-yellow-50'
           }`}
         >
-          <HiPlus className="w-3.5 h-3.5" /> add option
+          <HiPlus className="w-3.5 h-3.5" /> {t('poll.add_option')}
         </button>
       )}
 
@@ -306,7 +308,7 @@ const PollComposer: React.FC<Props> = ({
             ? (isDark ? 'text-red-400' : 'text-red-600')
             : (isDark ? 'text-white/40' : 'text-gray-500')
         }`}>
-          {errors[0] || `Need at least ${POLL_MIN_OPTIONS} options to post`}
+          {errors[0] || t('poll.need_more', { min: POLL_MIN_OPTIONS })}
         </div>
       )}
 
@@ -314,7 +316,7 @@ const PollComposer: React.FC<Props> = ({
         <div className={`mt-3 pt-3 border-t flex items-center gap-3 text-xs ${
           isDark ? 'border-white/10 text-white/60' : 'border-gray-200 text-gray-600'
         }`}>
-          <span>Place in:</span>
+          <span>{t('poll.place_in')}</span>
           <label className="flex items-center gap-1 cursor-pointer">
             <input
               type="radio"
@@ -322,7 +324,7 @@ const PollComposer: React.FC<Props> = ({
               onChange={() => onChangePosition('start')}
               className="accent-yellow-500"
             />
-            first post
+            {t('poll.first_post')}
           </label>
           <label className="flex items-center gap-1 cursor-pointer">
             <input
@@ -331,7 +333,7 @@ const PollComposer: React.FC<Props> = ({
               onChange={() => onChangePosition('end')}
               className="accent-yellow-500"
             />
-            last post
+            {t('poll.last_post')}
           </label>
         </div>
       )}

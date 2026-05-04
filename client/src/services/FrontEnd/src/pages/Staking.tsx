@@ -31,6 +31,7 @@ import StakingRewardsInfo from '~/components/StakingRewardsInfo'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { CLIENT_ID } from '~/api/actions'
+import { useT } from '~/i18n/I18nProvider'
 
 type StakingTab = 'stake' | 'unstake' | 'info'
 
@@ -46,6 +47,7 @@ interface WithdrawalRequest {
 }
 
 const Staking = () => {
+  const t = useT()
   const { isDark } = useTheme()
   const ensureWallet = useEnsureWallet()
   const navigate = useNavigate()
@@ -681,16 +683,16 @@ const Staking = () => {
         disabled={isConnected && (!tokenId || (!isTokenOwner && !wrongChainForStake) || (!wrongChainForStake && (!amount || depositFee === 0n || isStakePending || isApprovePending)))}
       >
         {isSwitchingNetwork
-          ? 'Switching...'
+          ? t('staking.button.switching')
           : !isTokenOwner && activeToken && isConnected && !wrongChainForStake
-          ? 'Wrong Address'
+          ? t('staking.button.wrong_address')
           : isApprovePending
-          ? 'Approving...'
+          ? t('staking.button.approving')
           : isStakePending
-          ? 'Depositing...'
+          ? t('staking.button.depositing')
           : insufficientBalance
-          ? "Insufficient Balance"
-          : "Deposit CAW"}
+          ? t('staking.button.insufficient_balance')
+          : t('staking.button.deposit')}
       </button>
 
       {stake.gasCostEth != null && (() => {
@@ -768,12 +770,12 @@ const Staking = () => {
               disabled={isConnected && ((!isTokenOwner && activeToken && !wrongChainForUnstake) || withdraw.status === 'pending' || isWithdrawPending)}
             >
               {isSwitchingNetwork
-                ? 'Switching...'
+                ? t('staking.button.switching')
                 : !isTokenOwner && activeToken && isConnected && !wrongChainForUnstake
-                ? 'Wrong Address'
+                ? t('staking.button.wrong_address')
                 : (withdraw.status === 'pending' || isWithdrawPending)
-                ? 'Withdrawing...'
-                : 'Complete Withdrawal'}
+                ? t('staking.button.withdrawing')
+                : t('staking.button.complete_withdrawal')}
             </button>
             {withdraw.gasCostEth != null && (() => {
               const totalEth = withdraw.gasCostEth + Number(formatEther(withdrawFee))
@@ -913,14 +915,14 @@ const Staking = () => {
         disabled={isConnected && !isMainnet && ((!isTokenOwner) || (!amount || parseFloat(amount) <= 0 || parseFloat(amount) > mockData.maxWithdrawAmount))}
       >
         {isSwitchingNetwork
-          ? 'Switching...'
+          ? t('staking.button.switching')
           : !isTokenOwner && activeToken && isConnected && !isMainnet
-          ? 'Wrong Address'
+          ? t('staking.button.wrong_address')
           : !amount || parseFloat(amount) <= 0
-          ? "Enter Amount"
+          ? t('staking.button.enter_amount')
           : parseFloat(amount || "0") > mockData.maxWithdrawAmount
-          ? "Insufficient Staked"
-          : "Unstake"}
+          ? t('staking.button.insufficient_staked')
+          : t('staking.button.unstake')}
       </button>
     </div>
   )
@@ -1031,13 +1033,13 @@ const Staking = () => {
           <h1 className={`text-2xl font-bold transition-colors duration-300 ${
             isDark ? 'text-white' : 'text-black'
           }`}>
-            CAW Staking
+            {t('staking.title')}
           </h1>
           <div className={`flex items-center gap-2 mt-2 mb-6 text-sm ${
             isDark ? 'text-gray-400' : 'text-gray-500'
           }`}>
             <HiOutlineInformationCircle className="w-4 h-4 flex-shrink-0" />
-            <span>Stake CAW to earn rewards on every action — power your username and the network.</span>
+            <span>{t('staking.subtitle')}</span>
           </div>
           <StakingRewardsInfo isDark={isDark} />
         </div>
@@ -1169,7 +1171,7 @@ const Staking = () => {
                     }`}
                   >
                     <HiOutlineTrendingUp className="w-5 h-5" />
-                    <span>Deposit</span>
+                    <span>{t('staking.tab.deposit')}</span>
                   </button>
 
                   <button
@@ -1181,7 +1183,7 @@ const Staking = () => {
                     }`}
                   >
                     <HiOutlineTrendingDown className="w-5 h-5" />
-                    <span>Withdraw</span>
+                    <span>{t('staking.tab.withdraw')}</span>
                   </button>
 
                   <button
@@ -1193,7 +1195,7 @@ const Staking = () => {
                     }`}
                   >
                     <HiOutlineInformationCircle className="w-5 h-5" />
-                    <span>Info</span>
+                    <span>{t('staking.tab.info')}</span>
                   </button>
             </div>
           </div>

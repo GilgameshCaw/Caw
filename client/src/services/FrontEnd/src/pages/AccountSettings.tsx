@@ -18,6 +18,7 @@ import { useFollowerCounts } from '~/hooks/useFollowerCounts'
 import { usePinnedProfilesStore } from '~/store/pinnedProfilesStore'
 import { formatAddress } from '~/utils'
 import { ThumbtackIcon } from '~/components/icons/ThumbtackIcon'
+import { useT } from '~/i18n/I18nProvider'
 
 // 401s on the X verification flow are expected when the user's session
 // has expired or never authenticated for the active token — apiFetch's
@@ -398,6 +399,7 @@ function humanizeError(code?: string): string {
 }
 
 const AccountSettings: React.FC = () => {
+  const t = useT()
   const { isDark } = useTheme()
   const { address, isConnected } = useAccount()
   const [copiedField, setCopiedField] = useState<string | null>(null)
@@ -576,10 +578,10 @@ const AccountSettings: React.FC = () => {
           </Link>
           <div>
             <h1 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-              Account
+              {t('account.title')}
             </h1>
             <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-              View your account details
+              {t('account.subtitle')}
             </p>
           </div>
         </div>
@@ -591,7 +593,7 @@ const AccountSettings: React.FC = () => {
             <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
               isDark ? 'text-white/40' : 'text-gray-400'
             }`}>
-              All Usernames ({allTokens.length})
+              {t('account.section.all_usernames')} ({allTokens.length})
             </h2>
 
             <div className="space-y-6">
@@ -645,7 +647,7 @@ const AccountSettings: React.FC = () => {
                             <span className={`text-xs px-2 py-1 rounded-full ${
                               isDark ? 'bg-yellow-500/20 text-yellow-500' : 'bg-yellow-100 text-yellow-700'
                             }`}>
-                              Active
+                              {t('account.active')}
                             </span>
                           )}
                           <button
@@ -679,12 +681,12 @@ const AccountSettings: React.FC = () => {
             <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
               isDark ? 'text-white/40' : 'text-gray-400'
             }`}>
-              Wallet
+              {t('account.section.wallet')}
             </h2>
 
             <InfoRow
               icon={<HiKey className="w-5 h-5" />}
-              label="Address"
+              label={t('account.label.address')}
               value={truncateAddress(address)}
               copyable
               copyValue={address}
@@ -699,24 +701,24 @@ const AccountSettings: React.FC = () => {
             <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
               isDark ? 'text-white/40' : 'text-gray-400'
             }`}>
-              Active Username
+              {t('account.section.active_username')}
             </h2>
 
             <InfoRow
               icon={<HiUser className="w-5 h-5" />}
-              label="Username"
+              label={t('account.label.username')}
               value={`@${activeToken.username}`}
             />
 
             <InfoRow
               icon={<HiIdentification className="w-5 h-5" />}
-              label="Token ID"
+              label={t('account.label.token_id')}
               value={`#${activeToken.tokenId}`}
             />
 
             <InfoRow
               icon={<HiCurrencyDollar className="w-5 h-5" />}
-              label="Staked CAW"
+              label={t('account.label.staked')}
               value={formatCAWAmount(activeToken.stakedAmount || '0')}
             />
           </section>
@@ -732,7 +734,7 @@ const AccountSettings: React.FC = () => {
           <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
             isDark ? 'text-white/40' : 'text-gray-400'
           }`}>
-            Contract Info
+            {t('account.section.contract')}
           </h2>
 
           <div className={`p-4 rounded-lg ${isDark ? 'bg-white/5' : 'bg-gray-50'}`}>
@@ -753,7 +755,7 @@ const AccountSettings: React.FC = () => {
               </a>
             </div>
             <p className={`text-xs ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-              CAW is deployed on Ethereum mainnet. Username NFTs are on L2 networks.
+              {t('account.contract.note')}
             </p>
           </div>
         </section>
@@ -768,10 +770,10 @@ const AccountSettings: React.FC = () => {
           >
             <div>
               <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                View Profile
+                {t('account.view_profile.title')}
               </h3>
               <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-                See your public profile page
+                {t('account.view_profile.description')}
               </p>
             </div>
             <svg
@@ -790,7 +792,7 @@ const AccountSettings: React.FC = () => {
           <h2 className={`text-sm font-semibold mb-2 uppercase tracking-wide ${
             isDark ? 'text-white/40' : 'text-gray-400'
           }`}>
-            Browser Data
+            {t('account.section.browser_data')}
           </h2>
 
           {/* Log out current account */}
@@ -803,10 +805,10 @@ const AccountSettings: React.FC = () => {
             >
               <div className="text-left">
                 <h3 className={`font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  Log Out @{activeToken.username}
+                  {t('account.logout.title', { username: activeToken.username })}
                 </h3>
                 <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-                  Clear session data for this account only
+                  {t('account.logout.description')}
                 </p>
               </div>
               <svg className={`w-5 h-5 ${isDark ? 'text-white/40' : 'text-gray-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -824,10 +826,10 @@ const AccountSettings: React.FC = () => {
           >
             <div className="text-left">
               <h3 className={`font-medium ${isDark ? 'text-red-400' : 'text-red-600'}`}>
-                Clear All Browser Data
+                {t('account.clear_data.title')}
               </h3>
               <p className={`text-sm ${isDark ? 'text-red-400/60' : 'text-red-500/70'}`}>
-                Remove all locally stored data and reset the app
+                {t('account.clear_data.description')}
               </p>
             </div>
             <HiExclamation className={`w-5 h-5 ${isDark ? 'text-red-400' : 'text-red-500'}`} />
@@ -889,7 +891,7 @@ const AccountSettings: React.FC = () => {
                     : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
                 }`}
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleClearAllData}
@@ -950,7 +952,7 @@ const AccountSettings: React.FC = () => {
                     : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
                 }`}
               >
-                Cancel
+                {t('common.cancel')}
               </button>
               <button
                 onClick={handleLogoutCurrentAccount}

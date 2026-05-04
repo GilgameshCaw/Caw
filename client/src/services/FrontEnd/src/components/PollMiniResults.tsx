@@ -1,6 +1,7 @@
 import React from 'react'
 import { useTheme } from '~/hooks/useTheme'
 import type { CawItem } from '~/types'
+import { useT } from '~/i18n/I18nProvider'
 
 interface Props {
   poll: NonNullable<CawItem['poll']>
@@ -26,6 +27,7 @@ interface Props {
  * The full PollDisplay still renders on the post the poll lives on.
  */
 const PollMiniResults: React.FC<Props> = ({ poll, width = 200, rowHeight = 20 }) => {
+  const t = useT()
   const { isDark } = useTheme()
   const counts = poll.optionVoteCounts || []
   const sum = counts.reduce((a, b) => a + b, 0)
@@ -90,7 +92,7 @@ const PollMiniResults: React.FC<Props> = ({ poll, width = 200, rowHeight = 20 })
       <div className={`text-[10px] leading-none ${
         isDark ? 'text-white/30' : 'text-gray-400'
       }`}>
-        {poll.totalVotes} vote{poll.totalVotes === 1 ? '' : 's'}
+        {t('poll.vote_count', { count: poll.totalVotes })}
       </div>
     </div>
   )

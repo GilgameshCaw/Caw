@@ -5,6 +5,7 @@ import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useSignAndSubmitAction } from '~/api/actions'
 import { buildVoteText } from '~/../../../tools/pollMarker'
 import type { CawItem } from '~/types'
+import { useT } from '~/i18n/I18nProvider'
 
 interface Props {
   caw: CawItem
@@ -116,6 +117,7 @@ interface LocalVote {
  */
 const PollDisplay: React.FC<Props> = ({ caw }) => {
   const { isDark } = useTheme()
+  const t = useT()
   const activeToken = useActiveToken()
   const { openConnectModal } = useConnectModal()
   const signAndSubmit = useSignAndSubmitAction()
@@ -303,7 +305,7 @@ const PollDisplay: React.FC<Props> = ({ caw }) => {
                     <span className={`ml-2 text-[10px] uppercase tracking-wide ${
                       isDark ? 'text-yellow-400/70' : 'text-yellow-600/80'
                     }`}>
-                      pending
+                      {t('poll.pending')}
                     </span>
                   )}
                 </span>
@@ -344,14 +346,14 @@ const PollDisplay: React.FC<Props> = ({ caw }) => {
       <div className={`flex items-center justify-between text-xs mt-2 ${
         isDark ? 'text-white/40' : 'text-gray-500'
       }`}>
-        <span>{local.total} vote{local.total === 1 ? '' : 's'}</span>
+        <span>{t('poll.vote_count', { count: local.total })}</span>
         {showResults && !local.pending && (
           <button
             onClick={() => submitVote(null)}
             disabled={submitting}
             className={`hover:underline ${submitting ? 'opacity-60 cursor-wait' : 'cursor-pointer'}`}
           >
-            Remove vote
+            {t('poll.remove_vote')}
           </button>
         )}
       </div>
