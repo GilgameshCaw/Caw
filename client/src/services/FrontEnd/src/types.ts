@@ -68,6 +68,10 @@ export type CawItem = {
   hasImage?: boolean // Quick check if caw has any image
   videoData?: string // URLs for off-chain videos
   hasVideo?: boolean // Quick check if caw has any video
+  // BCP-47 primary subtag (e.g. "en", "es"). Null = not yet detected; the
+  // FE shows the manual Translate button until any viewer translates the
+  // caw once and POSTs the gtx-detected source back to the server.
+  sourceLanguage?: string | null
   poll?: {
     options: string[]
     /** Per-option image URLs, positional. Same length as `options`. Empty

@@ -658,5 +658,47 @@ router.get('/verify/:userId/:cawonce', async (req, res) => {
   }
 })
 
+/**
+ * POST /api/caws/:id/source-language
+ *
+ * Lazy crowd-sourced source-language detection. The first viewer who
+ * successfully translates a post POSTs the gtx-detected source code
+ * here so subsequent viewers can be auto-translated (or have the inline
+ * Translate affordance gated correctly).
+ *
+ * Write-once: if Caw.sourceLanguage is already set we no-op. The
+ * updateMany with WHERE sourceLanguage:null both performs the
+ * first-writer-wins check and serves as cheap rate-limiting (no row
+ * change on subsequent calls).
+ *
+ * Unauthenticated by design — gtx is the source of truth, this endpoint
+ * just caches its answer.
+ */
+router.post('/:id/source-language', async (req, res) => {
+  try {
+    const id = Number(req.params.id)
+    if (!id || Number.isNaN(id)) {
+      return res.status(400).json({ error: 'Invalid caw id' })
+    }
+
+    const lang = String(req.body?.language ?? '').trim().toLowerCase()
+    // BCP-47 primary subtag is 2-3 lowercase letters. Reject anything
+    // else outright so a misbehaving client can't pollute the column.
+    if (!/^[a-z]{2,3}$/.test(lang)) {
+      return res.status(400).json({ error: 'Invalid language code' })
+    }
+
+    const updated = await prisma.caw.updateMany({
+      where: { id, sourceLanguage: null },
+      data: { sourceLanguage: lang },
+    })
+
+    return res.json({ persisted: updated.count > 0 })
+  } catch (error) {
+    console.error('POST /api/caws/:id/source-language error:', error)
+    return res.status(500).json({ error: 'Failed to record source language' })
+  }
+})
+
 export default router
 

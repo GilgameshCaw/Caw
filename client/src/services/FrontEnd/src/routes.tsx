@@ -8,6 +8,7 @@ import NotificationsPage from "./pages/NotificationsPage";
 import { SettingsPage } from "./pages/Settings";
 import MutedContentPage from "./pages/MutedContent";
 import NotificationSettings from "./pages/NotificationSettings";
+import LanguageSettings from "./pages/LanguageSettings";
 import AccountSettings from "./pages/AccountSettings";
 import SessionKeySettings from "./pages/SessionKeySettings";
 import HelpPage from "./pages/HelpPage";
@@ -121,6 +122,10 @@ export default [
   {
     path: "/settings/notifications",
     component: <AuthGate><NotificationSettings /></AuthGate>,
+  },
+  {
+    path: "/settings/language",
+    component: <AuthGate><LanguageSettings /></AuthGate>,
   },
   {
     path: "/settings/account",

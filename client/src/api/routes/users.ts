@@ -122,6 +122,18 @@ router.get('/badges', requireAuth({ lookup: async (req) => Number(req.query.user
     }
     const notifications = await prisma.notification.count({ where: notifWhere })
 
+    // Marketplace sales (tab-scoped subset of notifications, cleared on tab view)
+    const salesWhere: any = {
+      userId,
+      isRead: false,
+      hidden: false,
+      type: { in: ['SALE_SOLD', 'SALE_BOUGHT'] },
+    }
+    if (blockedIds.length > 0) {
+      salesWhere.actorId = { notIn: blockedIds }
+    }
+    const sales = await prisma.notification.count({ where: salesWhere })
+
     // Marketplace offers (need to look up all tokens owned by the user's address)
     let offers = 0
     if (user?.address) {
@@ -155,6 +167,7 @@ router.get('/badges', requireAuth({ lookup: async (req) => Number(req.query.user
     res.json({
       notifications,
       offers,
+      sales,
       dmConversations: dmConversations.map((c: { id: string; participants: { unreadCount: number }[] }) => ({
         id: c.id,
         unreadCount: c.participants[0]?.unreadCount || 0,
@@ -322,6 +335,8 @@ router.get('/by-token/:tokenId', async (req, res) => {
       likesReceivedCount: true,
       pinnedCawCount: true,
       xBadgeVisible: true,
+      preferredLanguage: true,
+      autoTranslate: true,
     } as const
 
     const user = await prisma.user.findUnique({
@@ -718,6 +733,67 @@ router.patch(
     return res.status(500).json({ error: 'Internal server error' })
   }
 })
+
+/**
+ * PATCH /api/users/:tokenId/language
+ *
+ * Owner-only update of the language preferences read by FeedItem to gate
+ * the inline Translate affordance and (when autoTranslate=true) auto-run
+ * translateText on posts whose detected source differs.
+ *
+ * Both fields are optional in the body — clients may toggle just the
+ * language, just the auto flag, or both.
+ *
+ * IMPORTANT: must be defined BEFORE /:username to avoid conflicts.
+ */
+router.patch(
+  '/:tokenId/language',
+  requireAuth({ lookup: async (req) => Number(req.params.tokenId), verifyOwnership: true }),
+  async (req, res) => {
+    try {
+      const tokenId = Number(req.params.tokenId)
+      if (!tokenId || isNaN(tokenId)) {
+        return res.status(400).json({ error: 'Invalid tokenId' })
+      }
+
+      const { preferredLanguage, autoTranslate } = req.body ?? {}
+      const data: Record<string, unknown> = {}
+
+      if (preferredLanguage !== undefined) {
+        // null clears (revert to "follow browser locale"); otherwise must
+        // be a BCP-47 primary subtag (2-3 lowercase letters).
+        if (preferredLanguage === null) {
+          data.preferredLanguage = null
+        } else if (typeof preferredLanguage === 'string' &&
+                   /^[a-z]{2,3}$/.test(preferredLanguage.trim().toLowerCase())) {
+          data.preferredLanguage = preferredLanguage.trim().toLowerCase()
+        } else {
+          return res.status(400).json({ error: 'Invalid preferredLanguage' })
+        }
+      }
+      if (autoTranslate !== undefined) {
+        if (typeof autoTranslate !== 'boolean') {
+          return res.status(400).json({ error: 'autoTranslate must be a boolean' })
+        }
+        data.autoTranslate = autoTranslate
+      }
+
+      if (Object.keys(data).length === 0) {
+        return res.status(400).json({ error: 'No fields provided' })
+      }
+
+      const updated = await prisma.user.update({
+        where:  { tokenId },
+        data,
+        select: { preferredLanguage: true, autoTranslate: true },
+      })
+      return res.json(updated)
+    } catch (err: any) {
+      console.error('PATCH /api/users/:tokenId/language error', err)
+      return res.status(500).json({ error: 'Internal server error' })
+    }
+  },
+)
 
 /**
  * PATCH /api/users/:tokenId/profile

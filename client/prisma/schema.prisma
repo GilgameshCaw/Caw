@@ -26,36 +26,36 @@ model RawEvent {
 }
 
 model User {
-  id                    Int            @id // Set to tokenId when creating user
-  address               String         @default("")
-  createdAt             DateTime       @default(now())
-  updatedAt             DateTime       @updatedAt
-  cawCount              Int            @default(0)
-  recawCount            Int            @default(0)  // recaws + quotes by this user
-  followerCount         Int            @default(0)
-  followingCount        Int            @default(0)
+  id                    Int                         @id // Set to tokenId when creating user
+  address               String                      @default("")
+  createdAt             DateTime                    @default(now())
+  updatedAt             DateTime                    @updatedAt
+  cawCount              Int                         @default(0)
+  recawCount            Int                         @default(0) // recaws + quotes by this user
+  followerCount         Int                         @default(0)
+  followingCount        Int                         @default(0)
   image                 String?
   // Cached like counters. Both maintained by CountManager on like/unlike/failure.
   // - likedCount         = likes this user has GIVEN (was the field formerly named `likeCount`).
   // - likesReceivedCount = total likes this user's caws have RECEIVED.
   // Both are read-and-self-heal: routes recompute from the Like table when displaying
   // and fire-and-forget an UPDATE if the cache drifts.
-  likedCount            Int            @default(0)
-  likesReceivedCount    Int            @default(0)
-  tokenId               Int            @unique // Kept for backwards compatibility, always equals id
-  username              String         @unique
+  likedCount            Int                         @default(0)
+  likesReceivedCount    Int                         @default(0)
+  tokenId               Int                         @unique // Kept for backwards compatibility, always equals id
+  username              String                      @unique
   avatarUrl             String?
-  defaultAvatarId       Int            @default(0) // 1-100; which default avatar to show when avatarUrl is null
+  defaultAvatarId       Int                         @default(0) // 1-100; which default avatar to show when avatarUrl is null
   bio                   String?
   coverPhotoUrl         String?
   displayName           String?
   location              String?
-  profileUpdatePending  Boolean        @default(false)
-  profileSource         String         @default("onchain") // "onchain" or "offchain"
+  profileUpdatePending  Boolean                     @default(false)
+  profileSource         String                      @default("onchain") // "onchain" or "offchain"
   website               String?
-  onboardingStep        Int            @default(0)
+  onboardingStep        Int                         @default(0)
   lastStakedAt          DateTime?
-  pendingDepositAmount  String?           // wei amount as string, pending L1→L2 bridge
+  pendingDepositAmount  String? // wei amount as string, pending L1→L2 bridge
   // Cached L2 on-chain CAW staked balance, refreshed by DataCleaner. Tier 2
   // of the "RPC out of API request handlers" refactor — see PROJECT_BACKLOG.md.
   // /api/users/by-token reads this directly instead of calling cawBalanceOf
@@ -63,7 +63,7 @@ model User {
   // around without precision loss.
   onChainStakeWei       String?
   onChainStakeUpdatedAt DateTime?
-  lastViewedOffersAt    DateTime?         // When the user last viewed the My Offers tab
+  lastViewedOffersAt    DateTime? // When the user last viewed the My Offers tab
   // X badge visibility per profile. The X link itself lives on
   // WalletXLink (one row per wallet) since proving control of an X
   // handle is a wallet-level fact — every CAW profile owned by that
@@ -71,20 +71,26 @@ model User {
   // profile in or out of showing the badge. Default true so the
   // profile that initiated the OAuth flow wins by default; UI flips
   // sibling profiles to false at link time.
-  xBadgeVisible         Boolean        @default(true)
+  xBadgeVisible         Boolean                     @default(true)
+  // BCP-47 primary subtag (e.g. "en", "es"). Null = follow browser locale.
+  // Used by FeedItem to decide whether to surface the inline Translate
+  // affordance and (when autoTranslate=true) to auto-translate posts whose
+  // detected source language differs.
+  preferredLanguage     String?
+  autoTranslate         Boolean                     @default(false)
   caws                  Caw[]
-  followers             Follow[]       @relation("Follower")
-  follows               Follow[]       @relation("Following")
+  followers             Follow[]                    @relation("Follower")
+  follows               Follow[]                    @relation("Following")
   likes                 Like[]
   replies               Reply[]
-  notificationsSent     Notification[] @relation("NotificationActor")
-  notificationsReceived Notification[] @relation("NotificationRecipient")
+  notificationsSent     Notification[]              @relation("NotificationActor")
+  notificationsReceived Notification[]              @relation("NotificationRecipient")
   scheduledCaws         ScheduledCaw[]
   dmIdentity            DmIdentity?
-  tipsSent              Tip[]          @relation("TipsSent")
-  tipsReceived          Tip[]          @relation("TipsReceived")
-  blocksGiven           Block[]        @relation("BlocksGiven")
-  blocksReceived        Block[]        @relation("BlocksReceived")
+  tipsSent              Tip[]                       @relation("TipsSent")
+  tipsReceived          Tip[]                       @relation("TipsReceived")
+  blocksGiven           Block[]                     @relation("BlocksGiven")
+  blocksReceived        Block[]                     @relation("BlocksReceived")
   bookmarks             Bookmark[]
   pinnedCaws            PinnedCaw[]
   // Cached count of CONFIRMED pinned caws (pending=false). Maintained
@@ -93,7 +99,7 @@ model User {
   // is deleted. Read by the FeedItem owner menu to grey out the "Pin"
   // option at 3/3. The cap is a client affordance, not a server
   // invariant — the read path filters to top-3 regardless.
-  pinnedCawCount        Int            @default(0)
+  pinnedCawCount        Int                         @default(0)
   votes                 Vote[]
   offerDismissals       MarketplaceOfferDismissal[]
 
@@ -102,37 +108,41 @@ model User {
 }
 
 model Caw {
-  id            Int            @id @default(autoincrement())
-  userId        Int
-  content       String
-  action        ActionType
-  createdAt     DateTime       @default(now())
-  originalCawId Int?
-  cawonce       Int
-  commentCount  Int            @default(0)
-  recawCount    Int            @default(0)
-  likeCount     Int            @default(0)
-  updatedAt     DateTime       @updatedAt
-  hasImage      Boolean        @default(false)
-  hasVideo      Boolean        @default(false)
-  imageData     String?
-  status        CawStatus      @default(SUCCESS)
-  reason        String?
-  videoData     String?
-  viewCount     Int            @default(0)
-  parent        Caw?           @relation("CawToRecaws", fields: [originalCawId], references: [id])
-  recaws        Caw[]          @relation("CawToRecaws")
-  user          User           @relation(fields: [userId], references: [tokenId])
-  hashtags      CawHashtag[]
-  likes         Like[]
-  repliesOnThis Reply[]        @relation("RepliesOnCaw")
-  isReplyTo     Reply[]        @relation("ReplyCaw")
-  notifications Notification[]
-  tips          Tip[]
-  bookmarks     Bookmark[]
-  bookmarkCount Int            @default(0)
-  poll          Poll?
-  pinnedBy      PinnedCaw[]
+  id             Int            @id @default(autoincrement())
+  userId         Int
+  content        String
+  action         ActionType
+  createdAt      DateTime       @default(now())
+  originalCawId  Int?
+  cawonce        Int
+  commentCount   Int            @default(0)
+  recawCount     Int            @default(0)
+  likeCount      Int            @default(0)
+  updatedAt      DateTime       @updatedAt
+  hasImage       Boolean        @default(false)
+  hasVideo       Boolean        @default(false)
+  // Detected source language (BCP-47 primary subtag) populated lazily on
+  // the first successful translate. Null = not yet detected; UI always
+  // surfaces a manual Translate button in that case.
+  sourceLanguage String?
+  imageData      String?
+  status         CawStatus      @default(SUCCESS)
+  reason         String?
+  videoData      String?
+  viewCount      Int            @default(0)
+  parent         Caw?           @relation("CawToRecaws", fields: [originalCawId], references: [id])
+  recaws         Caw[]          @relation("CawToRecaws")
+  user           User           @relation(fields: [userId], references: [tokenId])
+  hashtags       CawHashtag[]
+  likes          Like[]
+  repliesOnThis  Reply[]        @relation("RepliesOnCaw")
+  isReplyTo      Reply[]        @relation("ReplyCaw")
+  notifications  Notification[]
+  tips           Tip[]
+  bookmarks      Bookmark[]
+  bookmarkCount  Int            @default(0)
+  poll           Poll?
+  pinnedBy       PinnedCaw[]
 
   @@unique([userId, cawonce])
   @@index([userId, action, createdAt])
@@ -223,16 +233,16 @@ model Like {
 
 model Reply {
   id         Int      @id @default(autoincrement())
-  userId     Int      // replier's tokenId
-  cawId      Int      // the post being replied to
-  replyCawId Int      // the caw that IS the reply (links to Caw.id)
+  userId     Int // replier's tokenId
+  cawId      Int // the post being replied to
+  replyCawId Int // the caw that IS the reply (links to Caw.id)
   pending    Boolean  @default(false)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  caw        Caw      @relation("RepliesOnCaw", fields: [cawId], references: [id])
-  replyCaw   Caw      @relation("ReplyCaw", fields: [replyCawId], references: [id])
-  user       User     @relation(fields: [userId], references: [tokenId])
+  caw      Caw  @relation("RepliesOnCaw", fields: [cawId], references: [id])
+  replyCaw Caw  @relation("ReplyCaw", fields: [replyCawId], references: [id])
+  user     User @relation(fields: [userId], references: [tokenId])
 
   @@unique([userId, cawId, replyCawId])
   @@index([cawId])
@@ -294,7 +304,7 @@ model TxQueue {
   // (in createdAt/cawonce order) with the same batchId are sent on-chain
   // as one signature group. signedTx must match across rows in the group —
   // it's the batch sig that covers all of them.
-  batchId              Int?
+  batchId Int?
 
   // Denormalized cawonce from payload.data.cawonce. Backs the partial
   // unique index TxQueue_senderId_cawonce_active_unique (defined in
@@ -303,15 +313,15 @@ model TxQueue {
   // time — duplicate gets a P2002, the API responds 409, the frontend
   // re-reads chain and re-signs. Replaces the CawonceReservation
   // system that didn't see actions submitted by other servers.
-  cawonce              Int?
+  cawonce Int?
 
   // Diagnostic provenance. clientVersion is the build-time git SHA from
   // the FE that submitted the action (X-Caw-Client-Version header).
   // clientOrigin is the browser-supplied Origin header — useful as we
   // expand to mirrors / FE-only peers that submit on behalf of users.
   // Both nullable so old rows + non-FE submitters (curl, scripts) are fine.
-  clientVersion        String?
-  clientOrigin         String?
+  clientVersion String?
+  clientOrigin  String?
 
   @@index([senderId, status])
   @@index([batchId])
@@ -379,9 +389,9 @@ model ScheduledCaw {
   updatedAt    DateTime @updatedAt
   signedAction Json?
   cawonce      Int?
-  threadId     String?  // shared id across all chunks of one scheduled thread; null = single post
-  threadIndex  Int?     // 0-based position of this chunk within its thread
-  threadTotal  Int?     // total chunks in the thread
+  threadId     String? // shared id across all chunks of one scheduled thread; null = single post
+  threadIndex  Int? // 0-based position of this chunk within its thread
+  threadTotal  Int? // total chunks in the thread
   user         User     @relation(fields: [userId], references: [tokenId], onDelete: Cascade)
 
   @@index([userId])
@@ -393,25 +403,25 @@ model ScheduledCaw {
 }
 
 model Notification {
-  id            Int              @id @default(autoincrement())
+  id            Int               @id @default(autoincrement())
   userId        Int
   actorId       Int
   type          NotificationType
   cawId         Int?
-  offerId       Int?             // Links to MarketplaceOffer for OFFER notifications
+  offerId       Int? // Links to MarketplaceOffer for OFFER notifications
   groupKey      String?
-  isRead        Boolean          @default(false)
-  hidden        Boolean          @default(false)
+  isRead        Boolean           @default(false)
+  hidden        Boolean           @default(false)
   // For ACTION_FAILED: the original failed action payload, sufficient to
   // reconstruct and retry the action. For other notification types, null.
   // Shape: { actionType, receiverId?, receiverCawonce?, text?, recipients?, amounts?, originalTxQueueId, reason }
   actionPayload Json?
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
-  actor         User             @relation("NotificationActor", fields: [actorId], references: [tokenId], onDelete: Cascade)
-  caw           Caw?             @relation(fields: [cawId], references: [id], onDelete: Cascade)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  actor         User              @relation("NotificationActor", fields: [actorId], references: [tokenId], onDelete: Cascade)
+  caw           Caw?              @relation(fields: [cawId], references: [id], onDelete: Cascade)
   offer         MarketplaceOffer? @relation(fields: [offerId], references: [id], onDelete: Cascade)
-  user          User             @relation("NotificationRecipient", fields: [userId], references: [tokenId], onDelete: Cascade)
+  user          User              @relation("NotificationRecipient", fields: [userId], references: [tokenId], onDelete: Cascade)
 
   @@index([userId, isRead, createdAt])
   @@index([userId, hidden, createdAt])
@@ -422,21 +432,21 @@ model Notification {
 }
 
 model DmIdentity {
-  id                   Int                       @id @default(autoincrement())
-  userId               Int                       @unique
-  walletAddress        String
-  publicKey            String                    // hex-encoded secp256k1 public key
-  dmPrivacy            DmPrivacy                 @default(EVERYONE)
+  id                 Int                       @id @default(autoincrement())
+  userId             Int                       @unique
+  walletAddress      String
+  publicKey          String // hex-encoded secp256k1 public key
+  dmPrivacy          DmPrivacy                 @default(EVERYONE)
   // Per-user customization for the 5-emoji quick-reaction strip on DMs.
   // Empty array = use server defaults; otherwise expected to hold exactly
   // five emojis. We don't enforce length at the column level — UI clamps.
-  defaultDmReactions   String[]                  @default([])
-  createdAt            DateTime                  @default(now())
-  updatedAt            DateTime                  @updatedAt
-  conversations        ConversationParticipant[]
-  sentMessages         Message[]                 @relation("MessageSender")
-  reactions            MessageReaction[]
-  user                 User                      @relation(fields: [userId], references: [tokenId])
+  defaultDmReactions String[]                  @default([])
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+  conversations      ConversationParticipant[]
+  sentMessages       Message[]                 @relation("MessageSender")
+  reactions          MessageReaction[]
+  user               User                      @relation(fields: [userId], references: [tokenId])
 
   @@index([walletAddress])
 }
@@ -472,24 +482,24 @@ model ConversationParticipant {
 }
 
 model Message {
-  id               String             @id @default(uuid())
+  id               String            @id @default(uuid())
   conversationId   String
   senderId         Int
-  encryptedPayload String?            // null when deleted for everyone (tombstone)
-  contentType      String             @default("text") // "text", "deleted"
-  editHistory      String?            // encrypted JSON array of previous versions
-  status           MessageStatus      @default(SENT)
-  shadowBlocked    Boolean            @default(false) // hidden from recipient, visible to sender
+  encryptedPayload String? // null when deleted for everyone (tombstone)
+  contentType      String            @default("text") // "text", "deleted"
+  editHistory      String? // encrypted JSON array of previous versions
+  status           MessageStatus     @default(SENT)
+  shadowBlocked    Boolean           @default(false) // hidden from recipient, visible to sender
   // Self-reference for replies. SetNull (not Cascade) so deleting a parent
   // doesn't delete every reply — replies just lose their thread anchor and
   // the UI falls back to "Original message unavailable".
   replyToMessageId String?
-  replyTo          Message?           @relation("MessageReplies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
-  replies          Message[]          @relation("MessageReplies")
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
-  conversation     Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender           DmIdentity         @relation("MessageSender", fields: [senderId], references: [userId])
+  replyTo          Message?          @relation("MessageReplies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
+  replies          Message[]         @relation("MessageReplies")
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  conversation     Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender           DmIdentity        @relation("MessageSender", fields: [senderId], references: [userId])
   receipts         MessageReceipt[]
   deletions        MessageDeletion[]
   reactions        MessageReaction[]
@@ -508,7 +518,7 @@ model MessageReaction {
   id        Int        @id @default(autoincrement())
   messageId String
   userId    Int
-  emoji     String     // Unicode emoji string (e.g. "❤️", "🌙")
+  emoji     String // Unicode emoji string (e.g. "❤️", "🌙")
   createdAt DateTime   @default(now())
   message   Message    @relation(fields: [messageId], references: [id], onDelete: Cascade)
   user      DmIdentity @relation(fields: [userId], references: [userId])
@@ -644,23 +654,23 @@ enum ConversationType {
 }
 
 enum DmPrivacy {
-  EVERYONE    // Anyone with DMs enabled can message me
-  FOLLOWERS   // My followers + people I follow can message me
-  FOLLOWING   // Only people I follow can message me
+  EVERYONE // Anyone with DMs enabled can message me
+  FOLLOWERS // My followers + people I follow can message me
+  FOLLOWING // Only people I follow can message me
 }
 
 model Client {
-  id                  Int      @id // clientId from chain
-  ownerAddress        String
-  feeAddress          String
-  mintFee             String   @default("0") // Store as string for BigInt
-  depositFee          String   @default("0")
-  withdrawFee         String   @default("0")
-  authFee             String   @default("0")
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
-  lastSyncedAt        DateTime?
-  lastSyncedBlock     BigInt?
+  id              Int       @id // clientId from chain
+  ownerAddress    String
+  feeAddress      String
+  mintFee         String    @default("0") // Store as string for BigInt
+  depositFee      String    @default("0")
+  withdrawFee     String    @default("0")
+  authFee         String    @default("0")
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  lastSyncedAt    DateTime?
+  lastSyncedBlock BigInt?
   // Block at which this client was created on-chain. Used as the L2 indexer's
   // historical scan lower bound so a fresh DB doesn't replay events from
   // before this client existed. Nullable for clients created before the
@@ -668,31 +678,31 @@ model Client {
   // Once the on-chain CawClient struct carries this field, ChainSyncService
   // populates it from the contract. Until then it's manually seeded or
   // derived from the ClientCreated event block.
-  creationBlock       BigInt?
+  creationBlock   BigInt?
 
   @@index([ownerAddress])
 }
 
 model ChainData {
   key       String   @id // e.g., "caw_eth_price", "gas_price"
-  value     Json     // Flexible storage for different data types
+  value     Json // Flexible storage for different data types
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
 model Report {
-  id            Int          @id @default(autoincrement())
-  reporterId    Int          // The user who submitted the report (tokenId)
-  postId        Int          // The caw being reported
-  postAuthorId  Int          // The author of the reported post
-  reason        ReportReason
-  details       String?      // Optional additional details from reporter
-  status        ReportStatus @default(PENDING)
-  reviewedAt    DateTime?
-  reviewedBy    String?      // Admin who reviewed (could be wallet address)
-  resolution    String?      // Notes from admin review
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  id           Int          @id @default(autoincrement())
+  reporterId   Int // The user who submitted the report (tokenId)
+  postId       Int // The caw being reported
+  postAuthorId Int // The author of the reported post
+  reason       ReportReason
+  details      String? // Optional additional details from reporter
+  status       ReportStatus @default(PENDING)
+  reviewedAt   DateTime?
+  reviewedBy   String? // Admin who reviewed (could be wallet address)
+  resolution   String? // Notes from admin review
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
 
   @@index([status])
   @@index([postId])
@@ -720,20 +730,20 @@ enum ReportStatus {
 }
 
 model BugReport {
-  id          Int       @id @default(autoincrement())
-  type        String    @default("bug") // "bug" or "feature"
-  userId      Int?      // Reporter's tokenId (null if not signed in)
-  username    String?
-  stakedAmount String?  // Staked CAW amount as string
-  description String
-  imageUrls   String?   // Pipe-separated image URLs
-  page        String?   // URL/route where the bug was encountered
-  userAgent   String?
-  status      ReportStatus @default(PENDING)
-  resolution  String?
-  reviewedAt  DateTime?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id           Int          @id @default(autoincrement())
+  type         String       @default("bug") // "bug" or "feature"
+  userId       Int? // Reporter's tokenId (null if not signed in)
+  username     String?
+  stakedAmount String? // Staked CAW amount as string
+  description  String
+  imageUrls    String? // Pipe-separated image URLs
+  page         String? // URL/route where the bug was encountered
+  userAgent    String?
+  status       ReportStatus @default(PENDING)
+  resolution   String?
+  reviewedAt   DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
 
   @@index([status])
   @@index([createdAt])
@@ -741,11 +751,11 @@ model BugReport {
 }
 
 model PriceSnapshot {
-  id         Int      @id @default(autoincrement())
-  token      String   // "caw" or "eth"
-  usdPrice   Float    // Price in USD
-  ethPrice   Float?   // Price in ETH (for CAW only)
-  createdAt  DateTime @default(now())
+  id        Int      @id @default(autoincrement())
+  token     String // "caw" or "eth"
+  usdPrice  Float // Price in USD
+  ethPrice  Float? // Price in ETH (for CAW only)
+  createdAt DateTime @default(now())
 
   @@index([token, createdAt])
   @@index([createdAt])
@@ -753,24 +763,24 @@ model PriceSnapshot {
 
 /// Tracks every validator-submitted transaction for analytics
 model ValidatorTx {
-  id          Int      @id @default(autoincrement())
-  txHash      String   @unique
-  blockNumber BigInt?
-  txType      String   @default("processActions") // processActions | sessionRegister | sessionRevoke
-  actionCount     Int                // Number of actions in the batch (0 for session txs)
-  actionBreakdown Json?              // { CAW: 3, LIKE: 2, FOLLOW: 1, ... }
-  gasUsed     String             // Actual gas used (from receipt)
-  gasPrice    String             // Effective gas price (wei)
-  ethCost     String             // gasUsed * gasPrice in wei
-  tipCaw      String             // Total CAW tip earned from the batch
-  tipEthValue String             // Tip converted to ETH (wei) at submission time
-  profit      String             // tipEthValue - ethCost (can be negative)
-  validatorId Int
-  status      String   @default("confirmed") // confirmed | failed | reverted
-  failReason  String?
-  avgWaitMs   Int?               // Avg time from TxQueue.createdAt to submission
-  sessionUser String?            // Address of user who requested the session (for session txs)
-  createdAt   DateTime @default(now())
+  id              Int      @id @default(autoincrement())
+  txHash          String   @unique
+  blockNumber     BigInt?
+  txType          String   @default("processActions") // processActions | sessionRegister | sessionRevoke
+  actionCount     Int // Number of actions in the batch (0 for session txs)
+  actionBreakdown Json? // { CAW: 3, LIKE: 2, FOLLOW: 1, ... }
+  gasUsed         String // Actual gas used (from receipt)
+  gasPrice        String // Effective gas price (wei)
+  ethCost         String // gasUsed * gasPrice in wei
+  tipCaw          String // Total CAW tip earned from the batch
+  tipEthValue     String // Tip converted to ETH (wei) at submission time
+  profit          String // tipEthValue - ethCost (can be negative)
+  validatorId     Int
+  status          String   @default("confirmed") // confirmed | failed | reverted
+  failReason      String?
+  avgWaitMs       Int? // Avg time from TxQueue.createdAt to submission
+  sessionUser     String? // Address of user who requested the session (for session txs)
+  createdAt       DateTime @default(now())
 
   @@index([createdAt])
   @@index([validatorId, createdAt])
@@ -780,21 +790,21 @@ model ValidatorTx {
 /// Tracks every optimistic replication submission to the L2b archive.
 /// Status transitions: confirmed → challenged → slashed (on fraud).
 model ReplicationTx {
-  id           Int      @id @default(autoincrement())
-  txHash       String   @unique
-  blockNumber  BigInt?
-  clientId     Int
-  checkpointId    Int              // start checkpoint ID
-  endCheckpointId Int?             // end checkpoint ID (for multibatch, null = single)
-  actionCount     Int    @default(256)
-  gasUsed      String
-  gasPrice     String
-  ethCost      String
-  totalCost    String
-  status       String   @default("confirmed")
-  failReason   String?
-  submitter    String?            // L2b address that submitted (lowercase hex)
-  createdAt    DateTime @default(now())
+  id              Int      @id @default(autoincrement())
+  txHash          String   @unique
+  blockNumber     BigInt?
+  clientId        Int
+  checkpointId    Int // start checkpoint ID
+  endCheckpointId Int? // end checkpoint ID (for multibatch, null = single)
+  actionCount     Int      @default(256)
+  gasUsed         String
+  gasPrice        String
+  ethCost         String
+  totalCost       String
+  status          String   @default("confirmed")
+  failReason      String?
+  submitter       String? // L2b address that submitted (lowercase hex)
+  createdAt       DateTime @default(now())
 
   @@index([createdAt])
   @@index([clientId, createdAt])
@@ -817,15 +827,15 @@ model ValidatorSetting {
 model ChallengeLock {
   /// Composite natural key built as "{kind}:{submissionId}:{checkpointId}"
   /// so a single INSERT can claim atomically.
-  key         String   @id
-  kind        String   // e.g. "relay", "resolve", "slashIncoherent"
+  key          String   @id
+  kind         String // e.g. "relay", "resolve", "slashIncoherent"
   submissionId BigInt
-  checkpointId BigInt  // unused for submission-level locks; stored as 0
-  holder      String   // validator address or instance ID
-  claimedAt   DateTime @default(now())
-  expiresAt   DateTime
-  outcome     String?  // "success", "error", null while in-flight
-  txHash      String?
+  checkpointId BigInt // unused for submission-level locks; stored as 0
+  holder       String // validator address or instance ID
+  claimedAt    DateTime @default(now())
+  expiresAt    DateTime
+  outcome      String? // "success", "error", null while in-flight
+  txHash       String?
 
   @@index([kind, submissionId])
   @@index([expiresAt])
@@ -836,28 +846,28 @@ model ChallengeLock {
 // ============================================
 
 model MarketplaceListing {
-  id              Int                  @id @default(autoincrement())
-  listingId       Int                  @unique
-  tokenId         Int
-  seller          String
-  listingType     MarketListingType
-  paymentToken    String               // "ETH", "CAW", "WETH", "USDC", "USDT"
-  paymentAddress  String
-  startPrice      String
-  endPrice        String?
-  startTime       DateTime
-  endTime         DateTime?
-  status          MarketListingStatus  @default(ACTIVE)
-  highestBid      String?
-  highestBidder   String?
-  username        String
-  usernameLength  Int
-  stakedCaw       String?
-  txHash          String?
-  createdAt       DateTime             @default(now())
-  updatedAt       DateTime             @updatedAt
-  bids            MarketplaceBid[]
-  sale            MarketplaceSale?
+  id             Int                 @id @default(autoincrement())
+  listingId      Int                 @unique
+  tokenId        Int
+  seller         String
+  listingType    MarketListingType
+  paymentToken   String // "ETH", "CAW", "WETH", "USDC", "USDT"
+  paymentAddress String
+  startPrice     String
+  endPrice       String?
+  startTime      DateTime
+  endTime        DateTime?
+  status         MarketListingStatus @default(ACTIVE)
+  highestBid     String?
+  highestBidder  String?
+  username       String
+  usernameLength Int
+  stakedCaw      String?
+  txHash         String?
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  bids           MarketplaceBid[]
+  sale           MarketplaceSale?
 
   @@index([status, createdAt])
   @@index([status, usernameLength])
@@ -865,22 +875,22 @@ model MarketplaceListing {
 }
 
 model MarketplaceBid {
-  id          Int                  @id @default(autoincrement())
-  listingId   Int
-  bidder      String
-  amount      String
-  txHash      String?
-  status      BidStatus            @default(ACTIVE)
-  createdAt   DateTime             @default(now())
-  listing     MarketplaceListing   @relation(fields: [listingId], references: [id])
+  id        Int                @id @default(autoincrement())
+  listingId Int
+  bidder    String
+  amount    String
+  txHash    String?
+  status    BidStatus          @default(ACTIVE)
+  createdAt DateTime           @default(now())
+  listing   MarketplaceListing @relation(fields: [listingId], references: [id])
 
   @@index([listingId, status])
   @@index([bidder])
 }
 
 model MarketplaceSale {
-  id           Int                  @id @default(autoincrement())
-  listingId    Int                  @unique
+  id           Int                @id @default(autoincrement())
+  listingId    Int                @unique
   buyer        String
   seller       String
   tokenId      Int
@@ -888,8 +898,8 @@ model MarketplaceSale {
   paymentToken String
   username     String
   txHash       String?
-  createdAt    DateTime             @default(now())
-  listing      MarketplaceListing   @relation(fields: [listingId], references: [id])
+  createdAt    DateTime           @default(now())
+  listing      MarketplaceListing @relation(fields: [listingId], references: [id])
 
   @@index([createdAt])
   @@index([tokenId])
@@ -916,21 +926,21 @@ enum BidStatus {
 }
 
 model MarketplaceOffer {
-  id              Int                  @id @default(autoincrement())
-  offerId         Int                  @unique // on-chain offer ID
-  tokenId         Int
-  offerer         String               // wallet address
-  paymentToken    String               // "ETH", "CAW", "WETH", "USDC", "USDT"
-  paymentAddress  String               // token contract address
-  amount          String               // offer amount in wei
-  expiry          DateTime
-  status          OfferStatus          @default(ACTIVE)
-  username        String
-  txHash          String?
-  createdAt       DateTime             @default(now())
-  updatedAt       DateTime             @updatedAt
-  notifications   Notification[]
-  dismissals      MarketplaceOfferDismissal[]
+  id             Int                         @id @default(autoincrement())
+  offerId        Int                         @unique // on-chain offer ID
+  tokenId        Int
+  offerer        String // wallet address
+  paymentToken   String // "ETH", "CAW", "WETH", "USDC", "USDT"
+  paymentAddress String // token contract address
+  amount         String // offer amount in wei
+  expiry         DateTime
+  status         OfferStatus                 @default(ACTIVE)
+  username       String
+  txHash         String?
+  createdAt      DateTime                    @default(now())
+  updatedAt      DateTime                    @updatedAt
+  notifications  Notification[]
+  dismissals     MarketplaceOfferDismissal[]
 
   @@index([tokenId, status])
   @@index([offerer, status])
@@ -1005,11 +1015,11 @@ model PinnedCaw {
 /// without a live RPC call per action.
 model SessionKey {
   id             Int       @id @default(autoincrement())
-  ownerAddress   String    // lowercase owner (token owner)
-  sessionAddress String    // lowercase session key address
-  expiry         BigInt    // unix seconds, matches contract uint64
-  scopeBitmap    Int       // contract uint8, bit i = action type i allowed
-  spendLimit     String    // bigint as string (whole CAW tokens, not wei)
+  ownerAddress   String // lowercase owner (token owner)
+  sessionAddress String // lowercase session key address
+  expiry         BigInt // unix seconds, matches contract uint64
+  scopeBitmap    Int // contract uint8, bit i = action type i allowed
+  spendLimit     String // bigint as string (whole CAW tokens, not wei)
   spent          String    @default("0") // locally-tracked spend total
   revokedAt      DateTime? // set when SessionRevoked event indexed
   lastSyncedAt   DateTime  @default(now())
@@ -1050,13 +1060,13 @@ model ClientAuth {
 /// Address is stored lowercased — read paths and write paths both
 /// normalize so the unique key behaves like a case-insensitive index.
 model WalletXLink {
-  id                  Int      @id @default(autoincrement())
-  address             String   @unique
-  xUserId             String   @unique
-  xHandle             String
-  xFollowerBucket     Int?
-  linkedAt            DateTime @default(now())
-  followersUpdatedAt  DateTime @default(now())
+  id                 Int      @id @default(autoincrement())
+  address            String   @unique
+  xUserId            String   @unique
+  xHandle            String
+  xFollowerBucket    Int?
+  linkedAt           DateTime @default(now())
+  followersUpdatedAt DateTime @default(now())
 
   @@index([xHandle])
 }

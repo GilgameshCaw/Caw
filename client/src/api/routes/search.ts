@@ -64,6 +64,7 @@ async function searchCawsWithPrisma(query: string, limit: number, offset: number
       hasImage: caw.hasImage,
       videoData: caw.videoData,
       hasVideo: caw.hasVideo,
+      sourceLanguage: caw.sourceLanguage ?? null,
       pending: false
     })),
     hasMore
@@ -134,6 +135,7 @@ async function searchCawsWithES(query: string, limit: number, offset: number) {
       hasImage: caw.hasImage,
       videoData: caw.videoData,
       hasVideo: caw.hasVideo,
+      sourceLanguage: caw.sourceLanguage ?? null,
       pending: false
     })),
     hasMore

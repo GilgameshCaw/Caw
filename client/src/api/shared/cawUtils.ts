@@ -30,6 +30,7 @@ export interface CawRaw {
   hashtags?: Array<{ hashtag: { name: string } }>
   imageData?: string
   hasImage?: boolean
+  sourceLanguage?: string | null
   status?: 'SUCCESS' | 'PENDING' | 'FAILED' | 'HIDDEN'
   reason?: string | null
 }
@@ -97,6 +98,11 @@ export interface ShapedCaw {
   parent?: ShapedCaw | null
   imageData?: string
   hasImage?: boolean
+  /** Detected source language (BCP-47 primary subtag). Null = not yet
+   * detected; the FE falls back to always showing the manual Translate
+   * button. Populated lazily the first time any viewer translates the
+   * caw, so a single user's tap fixes the gating for everyone else. */
+  sourceLanguage?: string | null
   status?: 'SUCCESS' | 'PENDING' | 'FAILED' | 'HIDDEN'
   reason?: string | null
   /** Present when the caw text contains a ::poll:...:: marker and the Poll
@@ -180,6 +186,7 @@ export function shapeCaw(raw: CawRaw | any): ShapedCaw {
     parent: raw.parent ? shapeCaw(raw.parent) : null,
     imageData: raw.imageData,
     hasImage: raw.hasImage,
+    sourceLanguage: raw.sourceLanguage ?? null,
     status: raw.status || 'SUCCESS',
     reason: raw.reason,
     poll,

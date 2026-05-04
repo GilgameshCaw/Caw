@@ -30,7 +30,9 @@ import Pencil from '~/assets/images/pencil.svg?react';
 import Bookmark from '~/assets/images/bookmark.svg?react';
 import Share from '~/assets/images/share.svg?react';
 import { useTokenDataStore } from '~/store/tokenDataStore'
-import { translateText } from '~/utils/translate'
+import { translateTextDetailed } from '~/utils/translate'
+import { useViewerLanguage } from '~/hooks/useViewerLanguage'
+import { languageName } from '~/constants/languages'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import { ShareModal } from './ShareModal'
 import { useModalStore } from '~/store/modalStore'
@@ -216,6 +218,15 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   }, [item.isPinned])
   const [translatedText, setTranslatedText] = useState<string | null>(null)
   const [isTranslating, setIsTranslating] = useState(false)
+  // Tracks the source language we've discovered for this caw — either
+  // from item.sourceLanguage on first render, or from a successful
+  // translate that returned a detected source. Used to label the
+  // "Translated from <name>" header and to avoid POST'ing the same
+  // language back to the server twice. Initialized lazily inside an
+  // effect below to react to feed refetches that surface a freshly-
+  // detected sourceLanguage.
+  const [knownSourceLanguage, setKnownSourceLanguage] = useState<string | null>(null)
+  const viewerLang = useViewerLanguage()
   const [isRetrying, setIsRetrying] = useState(false)
   const [showMuteWordsModal, setShowMuteWordsModal] = useState(false)
   const [showMuteConfirmModal, setShowMuteConfirmModal] = useState(false)
@@ -224,6 +235,11 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
   const menuRef = useRef<HTMLDivElement>(null)
   const optionsMenuRef = useRef<HTMLDivElement>(null)
   const isSubmittingLikeRef = useRef(false) // Prevent duplicate like submissions
+  // Guards the auto-translate effect — without it, every render that
+  // produces a fresh runTranslation closure (or refetch that bumps
+  // useItem) would queue another translate call. We only want one
+  // auto-pass per (caw, viewer language) pair.
+  const autoTranslatedRef = useRef<string | null>(null)
 
   // Determine which item to use (handle recaws)
   let useItem = item;
@@ -741,6 +757,73 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     setShowOptionsMenu(!showOptionsMenu)
   }
 
+  // Mirror useItem.sourceLanguage into local state so a feed refetch that
+  // newly-populates the column (because some other viewer just translated
+  // it) gates the inline button correctly without a remount. This effect
+  // never overwrites a tighter guess we already have from a successful
+  // local translation.
+  useEffect(() => {
+    if (useItem.sourceLanguage && !knownSourceLanguage) {
+      setKnownSourceLanguage(useItem.sourceLanguage)
+    }
+  }, [useItem.sourceLanguage, knownSourceLanguage])
+
+  // Translate the post and (if gtx returned a confident detection) cache
+  // the source language back to the server. The 2nd parameter to
+  // translateTextDetailed is the viewer's preferred language. Errors
+  // are swallowed by the helper itself.
+  const runTranslation = React.useCallback(async () => {
+    if (!useItem.content) return
+    setIsTranslating(true)
+    try {
+      const result = await translateTextDetailed(useItem.content, viewerLang.preferredLanguage)
+      if (!result) return
+      setTranslatedText(result.text)
+      const detected = result.sourceLanguage
+      // gtx returns "auto" when it couldn't decide — only persist real
+      // codes, and only the first time we discover one for this caw.
+      if (detected && detected !== 'auto' && detected !== knownSourceLanguage) {
+        setKnownSourceLanguage(detected)
+        if (!useItem.sourceLanguage) {
+          // Fire-and-forget; server-side updateMany is write-once so a
+          // race between two viewers naturally collapses to one row update.
+          apiFetch(`/api/caws/${useItem.id}/source-language`, {
+            method: 'POST',
+            body: JSON.stringify({ language: detected }),
+          }).catch(() => { /* non-essential, ignore */ })
+        }
+      }
+    } finally {
+      setIsTranslating(false)
+    }
+  }, [useItem.id, useItem.content, useItem.sourceLanguage, viewerLang.preferredLanguage, knownSourceLanguage])
+
+  // Auto-translate when the viewer enabled it AND we know the post's
+  // source differs from the viewer's language. We require knownSourceLanguage
+  // to be set — without it we can't tell whether translation is needed,
+  // and silently translating every post would defeat the whole point of
+  // the source-language cache (it would translate English-to-English etc).
+  useEffect(() => {
+    if (!viewerLang.autoTranslate) return
+    if (!knownSourceLanguage) return
+    if (knownSourceLanguage === viewerLang.preferredLanguage) return
+    if (translatedText || isTranslating) return
+    // Guard against re-running the auto-pass for the same caw if the
+    // closure rebuilds. The key includes the target so a Settings change
+    // does retrigger.
+    const key = `${useItem.id}|${viewerLang.preferredLanguage}`
+    if (autoTranslatedRef.current === key) return
+    autoTranslatedRef.current = key
+    void runTranslation()
+  }, [viewerLang.autoTranslate, viewerLang.preferredLanguage, knownSourceLanguage, translatedText, isTranslating, useItem.id, runTranslation])
+
+  // Show the inline Translate affordance only when it's actually useful:
+  //   - we don't yet know the source language (let the user help us cache it), OR
+  //   - we know it AND it differs from the viewer's language.
+  // Unauthenticated viewers fall back to browser locale via useViewerLanguage.
+  const shouldShowInlineTranslate = !knownSourceLanguage ||
+    knownSourceLanguage !== viewerLang.preferredLanguage
+
   const handleMenuAction = async (action: string) => {
     setShowOptionsMenu(false)
     // Handle different menu actions
@@ -751,13 +834,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           setTranslatedText(null)
           return
         }
-        setIsTranslating(true)
-        try {
-          const result = await translateText(useItem.content || '')
-          if (result) setTranslatedText(result)
-        } finally {
-          setIsTranslating(false)
-        }
+        await runTranslation()
         break
       case 'copy':
         navigator.clipboard.writeText(useItem.content || '')
@@ -1065,12 +1142,17 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               {/* User info */}
               <div className="flex-1">
                 <div>
-                  {/* Inline translate / translated status (same spot) */}
-                  {!isTranslating && useItem.content?.trim() && (
+                  {/* Inline translate / translated status (same spot).
+                      Hidden when we know the source matches the viewer's
+                      language (no value to user); shown otherwise so the
+                      first viewer can populate the source-language cache. */}
+                  {!isTranslating && useItem.content?.trim() && (translatedText || shouldShowInlineTranslate) && (
                     translatedText ? (
                       <div className="mb-1 flex items-center justify-between gap-2 min-w-0">
                         <span className={`min-w-0 truncate text-xs ${isDark ? 'text-gray-500' : 'text-gray-500'}`}>
-                          Translated from original
+                          {knownSourceLanguage && knownSourceLanguage !== 'auto'
+                            ? `Translated from ${languageName(knownSourceLanguage)}`
+                            : 'Translated from original'}
                         </span>
                         <button
                           type="button"
