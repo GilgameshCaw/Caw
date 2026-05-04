@@ -1,6 +1,6 @@
 // src/services/ActionProcessor/domainObjectChecks.ts
 import { findOrCreateUser } from '../UserService'
-import { findCawId } from './actionHandlers'
+import { CawNotFoundError, findCawId } from './actionHandlers'
 import type { PrismaTransactionClient, RawAction, ProcessedAction } from './types'
 
 /**
@@ -76,6 +76,13 @@ async function checkLikeExists(
     return false
   }
 
+  // Only swallow the *expected* "parent caw not indexed locally" case here.
+  // The outer Tx2 wrapper in index.ts already special-cases CawNotFoundError
+  // (warns and skips), so returning false for that case is the equivalent
+  // signal — domain row is uninteresting on this node, don't reprocess.
+  // Any *other* throw (DB read failure, RPC blip via findOrCreateUser, etc.)
+  // must bubble: the caller treats a thrown error as "unknown — retry on
+  // next pass" instead of silently advancing past a stranded Action.
   try {
     const parentCawId = await findCawId(rawAction.receiverCawonce || 0, rawAction.receiverId)
     const existingLike = await tx.like.findUnique({
@@ -83,9 +90,9 @@ async function checkLikeExists(
     })
     // Only skip if like exists AND is not pending (fully processed)
     return existingLike ? !existingLike.pending : false
-  } catch {
-    // If we can't find the parent caw, assume like doesn't exist
-    return false
+  } catch (err) {
+    if (err instanceof CawNotFoundError) return false
+    throw err
   }
 }
 
