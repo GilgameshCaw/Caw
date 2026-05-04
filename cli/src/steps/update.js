@@ -517,6 +517,155 @@ function findInitMigrationName(installDir) {
 }
 
 /**
+ * Parse schema.prisma into { tableName: [scalarColumnName, ...], ... }.
+ *
+ * Rules:
+ * - Each `model Foo { ... }` block becomes a table named `Foo`. No
+ *   @@map in this codebase, so model name == table name; the parser
+ *   throws if someone introduces @@map without updating this verifier.
+ * - Lines that look like `name Type ...` are scalar fields IFF Type
+ *   (after stripping `?` and `[]`) is a primitive or enum. Relation
+ *   fields (Type is another model name, line carries @relation, or
+ *   Type is `Model[]`) have no DB column — skip them.
+ * - We don't try to verify column types or nullability; presence is
+ *   enough for the silent-drift case this exists to catch.
+ */
+function parsePrismaSchemaTables(schemaText) {
+  const PRIMITIVE_TYPES = new Set([
+    'String', 'Int', 'BigInt', 'Boolean', 'DateTime', 'Float',
+    'Json', 'Bytes', 'Decimal',
+  ])
+
+  const modelNames = new Set()
+  for (const m of schemaText.matchAll(/^model\s+(\w+)\s*\{/gm)) modelNames.add(m[1])
+  const enumNames = new Set()
+  for (const m of schemaText.matchAll(/^enum\s+(\w+)\s*\{/gm)) enumNames.add(m[1])
+
+  const tables = {}
+  const blockRe = /^model\s+(\w+)\s*\{([\s\S]*?)^\}/gm
+  for (const m of schemaText.matchAll(blockRe)) {
+    const [, modelName, body] = m
+    if (/@@map\s*\(/.test(body)) {
+      throw new Error(
+        `parsePrismaSchemaTables: model ${modelName} uses @@map — verifier needs an update to honor table-name overrides.`
+      )
+    }
+    const cols = []
+    for (const rawLine of body.split('\n')) {
+      const line = rawLine.replace(/\/\/.*$/, '').trim()
+      if (!line || line.startsWith('@@')) continue
+      const fieldMatch = line.match(/^(\w+)\s+(\w+)(\??)(\[\])?\s*(.*)$/)
+      if (!fieldMatch) continue
+      const [, fieldName, baseType, , isList, rest] = fieldMatch
+      if (isList) continue                       // list of relations
+      if (modelNames.has(baseType)) continue     // 1:1 / 1:N relation
+      if (/@relation\b/.test(rest)) continue     // explicit @relation
+      if (!PRIMITIVE_TYPES.has(baseType) && !enumNames.has(baseType)) continue
+      cols.push(fieldName)
+    }
+    tables[modelName] = cols
+  }
+  return tables
+}
+
+/**
+ * Compare expected schema (schema.prisma) to live schema
+ * (information_schema) and report drift. Run after migrate deploy,
+ * before pm2 restart. Catches the silent-drift case where an operator
+ * marked migrations applied via `prisma migrate resolve` without
+ * actually running their SQL — `_prisma_migrations` says clean but
+ * the columns aren't there.
+ *
+ * Throws on mismatch (caller fails the update before service restart).
+ */
+export async function verifySchema(installDir) {
+  const sp = ora('Verifying database schema matches schema.prisma...').start()
+  const schemaPath = path.join(installDir, 'client', 'prisma', 'schema.prisma')
+  const dbUrl = readDatabaseUrl(installDir)
+  if (!dbUrl) {
+    sp.warn('Skipping schema verification (no DATABASE_URL in client/.env)')
+    return
+  }
+  if (!fs.existsSync(schemaPath)) {
+    sp.warn(`Skipping schema verification (no ${schemaPath})`)
+    return
+  }
+
+  let expected
+  try {
+    expected = parsePrismaSchemaTables(fs.readFileSync(schemaPath, 'utf8'))
+  } catch (e) {
+    sp.fail(`Could not parse schema.prisma: ${e.message}`)
+    throw e
+  }
+
+  let live
+  try {
+    const out = execSync(
+      `psql "${dbUrl}" -t -A -F '|' -c ` +
+      `"select table_name, column_name from information_schema.columns where table_schema='public' order by table_name, column_name"`,
+      { stdio: 'pipe', encoding: 'utf8' },
+    )
+    live = {}
+    for (const line of out.split('\n')) {
+      if (!line.trim()) continue
+      const [table, column] = line.split('|')
+      if (!table || !column) continue
+      ;(live[table] = live[table] || []).push(column)
+    }
+  } catch (e) {
+    sp.fail('Could not read information_schema (psql failed)')
+    const msg = (e.stderr || '') + (e.stdout || '') + (e.message || '')
+    if (msg) for (const line of msg.split('\n').slice(-10)) console.log(dim(`    ${line}`))
+    throw e
+  }
+
+  const missingTables = []
+  const missingColumns = []
+  for (const [table, expectedCols] of Object.entries(expected)) {
+    const liveCols = live[table]
+    if (!liveCols) {
+      missingTables.push(table)
+      continue
+    }
+    const liveSet = new Set(liveCols)
+    for (const col of expectedCols) {
+      if (!liveSet.has(col)) missingColumns.push({ table, column: col })
+    }
+  }
+
+  if (missingTables.length === 0 && missingColumns.length === 0) {
+    sp.succeed(`Schema verified — ${Object.keys(expected).length} tables match prisma`)
+    return
+  }
+
+  sp.fail('Database schema does NOT match schema.prisma')
+  console.log()
+  if (missingTables.length) {
+    console.log(err('  Missing tables:'))
+    for (const t of missingTables) console.log(err(`    - ${t}`))
+  }
+  if (missingColumns.length) {
+    console.log(err('  Missing columns:'))
+    for (const { table, column } of missingColumns) {
+      console.log(err(`    - ${table}.${column}`))
+    }
+  }
+  console.log()
+  console.log(warn('  This usually means a migration was marked applied via'))
+  console.log(warn('  `prisma migrate resolve` without actually running its SQL.'))
+  console.log(dim('  To recover:'))
+  console.log(dim('    1. Identify which migration adds the missing column/table:'))
+  console.log(dim('         grep -lr "<missing-name>" client/prisma/migrations/'))
+  console.log(dim('    2. Apply its SQL by hand (idempotent if it uses IF NOT EXISTS):'))
+  console.log(dim('         psql "$DATABASE_URL" -f client/prisma/migrations/<name>/migration.sql'))
+  console.log(dim('    3. Re-run `caw update` to confirm.'))
+  throw new Error(
+    `Schema verification failed: ${missingTables.length} missing table(s), ${missingColumns.length} missing column(s)`
+  )
+}
+
+/**
  * Phase 5: yarn build for the production frontend. Skipped when the FE
  * didn't change in this update; nginx serves dist/ directly so no
  * service restart is needed for FE-only changes.
@@ -837,6 +986,16 @@ export async function runUpdate(installDir, opts = {}) {
     }
   } else {
     console.log(dim('  No pending migrations.'))
+  }
+
+  // Schema-drift guard. Runs even when no migrations were applied this
+  // pass — drift can predate the current update (e.g. a prior `prisma
+  // migrate resolve` left _prisma_migrations clean while the SQL was
+  // never actually executed).
+  if (!opts.skipVerifySchema) {
+    await verifySchema(installDir)
+  } else {
+    console.log(warn('  Skipping schema verification per --skip-verify-schema.'))
   }
 
   if (codeResult.feChanged) {

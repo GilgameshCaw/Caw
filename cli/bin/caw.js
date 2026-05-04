@@ -392,6 +392,7 @@ program
   .option('--rebuild', 'Re-run yarn install + prisma generate + FE build + restart even if there are no new commits (recovery from a partial previous run)')
   .option('--no-migrations', 'Skip the migration apply phase')
   .option('--no-restart', 'Skip the pm2 restart phase')
+  .option('--skip-verify-schema', 'Skip the schema-drift check (escape hatch — fix and remove ASAP)')
   .action(async (opts) => {
     try {
       const installDir = resolveInstallDir(opts, ROOT_DIR)
@@ -401,6 +402,7 @@ program
         rebuild: opts.rebuild,
         skipMigrations: opts.migrations === false,
         skipRestart: opts.restart === false,
+        skipVerifySchema: opts.skipVerifySchema,
       })
     } catch (e) {
       console.error()
