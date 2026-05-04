@@ -18,7 +18,14 @@ function generateFilename(mimetype: string): string {
   return `${uniqueId}${ext}`
 }
 
-const IMAGE_MAX_BYTES = 5 * 1024 * 1024
+// Images come in pre-compressed from the FE (compressImage.ts targets ~1MB
+// for the 'feed' preset, ~750KB for 'dm'). 2MB is a 2x backstop for edge
+// cases — anything bigger than that is a degenerate input the FE failed
+// to shrink.
+const IMAGE_MAX_BYTES = 2 * 1024 * 1024
+// Videos are passed through unchanged. 25MB ≈ 30s-2min of 1080p H.264;
+// long-form video isn't a fit for this product so we cap rather than
+// transcode in-browser.
 const VIDEO_MAX_BYTES = 25 * 1024 * 1024
 
 const upload = multer({
@@ -40,10 +47,21 @@ router.post('/', upload.array('media', 10), requireAuth({ field: 'tokenId', veri
     if (!files || files.length === 0) return res.status(400).json({ error: 'No files uploaded' })
     if (!tokenId) return res.status(400).json({ error: 'Missing tokenId' })
 
-    const oversized = files.find(f => f.mimetype.startsWith('image/') && f.size > IMAGE_MAX_BYTES)
-    if (oversized) {
+    // Multer's fileSize limit is set to VIDEO_MAX_BYTES (the larger of the
+    // two), so it doesn't reject oversized images on its own. Enforce the
+    // tighter image cap here, and re-check the video cap explicitly so the
+    // route's contract is "videos ≤25MB, images ≤2MB" regardless of how
+    // multer is configured upstream.
+    const oversizedImage = files.find(f => f.mimetype.startsWith('image/') && f.size > IMAGE_MAX_BYTES)
+    if (oversizedImage) {
       return res.status(413).json({
-        error: `Image too large (${(oversized.size / 1024 / 1024).toFixed(1)}MB, max ${IMAGE_MAX_BYTES / 1024 / 1024}MB)`,
+        error: `Image too large (${(oversizedImage.size / 1024 / 1024).toFixed(1)}MB, max ${IMAGE_MAX_BYTES / 1024 / 1024}MB)`,
+      })
+    }
+    const oversizedVideo = files.find(f => f.mimetype.startsWith('video/') && f.size > VIDEO_MAX_BYTES)
+    if (oversizedVideo) {
+      return res.status(413).json({
+        error: `Video too large (${(oversizedVideo.size / 1024 / 1024).toFixed(1)}MB, max ${VIDEO_MAX_BYTES / 1024 / 1024}MB)`,
       })
     }
 

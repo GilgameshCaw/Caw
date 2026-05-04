@@ -8,6 +8,15 @@ import { compressImage } from '~/utils/compressImage'
 // generous headroom for the AES-GCM overhead and any pre-compression GIFs.
 const MAX_ENCRYPTED_SIZE = 5 * 1024 * 1024
 
+// Pre-flight video cap. Videos aren't compressed client-side, so a
+// huge pick would read+encrypt the whole thing only to fail the
+// MAX_ENCRYPTED_SIZE check at the end. Reject upfront with a friendly
+// message that nudges toward Posts (which carry a higher 25MB cap and
+// are visible to more than one person — a better fit for video).
+// 4MB cleartext leaves room for AES-GCM overhead under the 5MB encrypted
+// blob cap.
+const MAX_DM_VIDEO_BYTES = 4 * 1024 * 1024
+
 /** Read an image's natural dimensions without decoding it twice. */
 async function readImageDimensions(file: File): Promise<{ width: number; height: number }> {
   return new Promise((resolve, reject) => {
@@ -51,6 +60,15 @@ export function useDmFileUpload() {
     setUploadProgress('Preparing...')
 
     try {
+      // Pre-flight cap on videos before we read+encrypt the bytes. The
+      // server-side encrypted-blob cap (5MB) would catch oversized DMs
+      // anyway, but failing late means the user spent the time to upload
+      // and encrypt only to be told no. Reject upfront and route them
+      // toward the Post composer where the cap is higher.
+      if (file.type.startsWith('video/') && file.size > MAX_DM_VIDEO_BYTES) {
+        throw new Error(`Video too large for a DM (${(file.size / 1024 / 1024).toFixed(1)}MB, max ${MAX_DM_VIDEO_BYTES / 1024 / 1024}MB). Try posting it instead.`)
+      }
+
       let toUpload: File = file
       let width: number | undefined
       let height: number | undefined

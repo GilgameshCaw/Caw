@@ -8,6 +8,18 @@ export interface UploadImageResponse {
   error?: string
 }
 
+// Mirror the route caps in client/src/api/routes/upload.ts. Keeping these
+// in sync with the server is a manual job — if the server caps change,
+// update both places. Pre-upload validation here gives the user an
+// immediate friendly error instead of waiting through the upload only to
+// see a 413 from the server.
+export const POST_IMAGE_MAX_BYTES = 2 * 1024 * 1024
+export const POST_VIDEO_MAX_BYTES = 25 * 1024 * 1024
+
+function fmtMB(bytes: number): string {
+  return `${(bytes / 1024 / 1024).toFixed(1)}MB`
+}
+
 /**
  * Upload one or more files (images or videos) via multipart /api/upload.
  * Image files are compressed client-side per the chosen preset before upload.
@@ -25,7 +37,27 @@ export async function uploadMedia(
 ): Promise<string[]> {
   if (files.length === 0) return []
 
+  // Pre-flight video size check BEFORE compression so the user sees a
+  // friendly error immediately instead of waiting through a doomed
+  // upload. (Compression doesn't apply to videos anyway.)
+  const oversizedVideo = files.find(f =>
+    f.type.startsWith('video/') && f.size > POST_VIDEO_MAX_BYTES
+  )
+  if (oversizedVideo) {
+    throw new Error(`Video too large (${fmtMB(oversizedVideo.size)}, max ${fmtMB(POST_VIDEO_MAX_BYTES)}). Trim the clip in another app first.`)
+  }
+
   const compressed = await compressImages(files, preset)
+
+  // Post-compression image size check. The compressor targets ~1MB but
+  // can occasionally produce larger files (e.g. high-entropy screenshots
+  // that don't shrink well). 2MB matches the server cap.
+  const oversizedImage = compressed.find(f =>
+    f.type.startsWith('image/') && f.size > POST_IMAGE_MAX_BYTES
+  )
+  if (oversizedImage) {
+    throw new Error(`Image too large after compression (${fmtMB(oversizedImage.size)}, max ${fmtMB(POST_IMAGE_MAX_BYTES)}). Try a smaller source image.`)
+  }
 
   const formData = new FormData()
   compressed.forEach(file => formData.append('media', file))
