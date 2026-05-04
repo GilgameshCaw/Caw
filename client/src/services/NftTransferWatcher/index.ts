@@ -37,15 +37,97 @@ const Config = z.object({
 
 type Config = z.infer<typeof Config>
 
-// ERC-721 standard Transfer event.
+// ERC-721 Transfer event + the CawProfile-specific nextId() view that
+// tells us the highest tokenId that's ever been minted (so we can
+// detect gaps left by Mint events that happened before this watcher
+// started observing).
 const TRANSFER_ABI = [
   'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)',
+  'function nextId() view returns (uint32)',
 ]
+
+// Throttle the historical backfill so we don't blast the L1 RPC. Each
+// missing tokenId is one ownerOf() + one usernameById() call inside
+// findOrCreateUser, so a 100-token gap = ~200 RPC calls. At 10/sec we
+// finish in ~10s — still bounded, doesn't trip free-tier rate limits.
+const BACKFILL_BATCH_SIZE = 10
+const BACKFILL_BATCH_DELAY_MS = 1000
+
+// Re-check for gaps every N poll ticks (in addition to the once-on-start
+// pass). Catches drift from poll failures we didn't notice. With the
+// default 60s poll cadence, 60 ticks = 1 hour.
+const BACKFILL_RECHECK_EVERY_N_POLLS = 60
 
 // Redis key storing the last block we've processed. Interim home until the
 // per-client checkpoint table lands as part of #4 in the scalability plan.
 const checkpointKey = (chainId: number, contract: string) =>
   `nft-transfer-watcher:${chainId}:${contract.toLowerCase()}:last-block`
+
+/**
+ * Find every tokenId in [1..nextId-1] that's missing from the User table
+ * and create the row by calling findOrCreateUser (which reads the L1
+ * metadata via ownerOf + usernameById and inserts).
+ *
+ * Why this exists: the watcher only sees Transfer events from its
+ * checkpoint forward. Any token minted *before* the watcher first
+ * started (or before the checkpoint was set) never had its Mint event
+ * observed and so the User row was never created. The original install
+ * pulled from a chain that already had ~95 historical mints, so the API
+ * returns 202 "ownership not yet indexed" forever for those tokens.
+ *
+ * Idempotent: re-runs are no-ops because rows already exist (cached by
+ * findOrCreateUser). Throttled to BACKFILL_BATCH_SIZE per
+ * BACKFILL_BATCH_DELAY_MS to avoid blasting the L1 RPC.
+ *
+ * Burned tokens (ownerOf reverts) are caught by findOrCreateUser as
+ * StaleTokenError; we log + skip them.
+ */
+async function backfillMissingMints(contract: ethers.Contract): Promise<void> {
+  let nextId: number
+  try {
+    nextId = Number(await contract.nextId())
+  } catch (err: any) {
+    console.warn('[NftTransferWatcher] backfill: nextId() call failed, skipping:', err?.message)
+    return
+  }
+  const maxMintedId = nextId - 1
+  if (maxMintedId < 1) return
+
+  const known = await prisma.user.findMany({
+    where:  { tokenId: { gte: 1, lte: maxMintedId } },
+    select: { tokenId: true },
+  })
+  const knownSet = new Set(known.map(u => u.tokenId))
+  const missing: number[] = []
+  for (let id = 1; id <= maxMintedId; id++) {
+    if (!knownSet.has(id)) missing.push(id)
+  }
+  if (missing.length === 0) return
+
+  console.log(`[NftTransferWatcher] backfill: ${missing.length} missing User row(s) in [1..${maxMintedId}]; filling at ${BACKFILL_BATCH_SIZE}/${BACKFILL_BATCH_DELAY_MS}ms`)
+
+  let filled = 0
+  let burned = 0
+  for (let i = 0; i < missing.length; i += BACKFILL_BATCH_SIZE) {
+    const batch = missing.slice(i, i + BACKFILL_BATCH_SIZE)
+    await Promise.all(batch.map(async tokenId => {
+      try {
+        await findOrCreateUser(tokenId)
+        filled++
+      } catch (err: any) {
+        if (err instanceof StaleTokenError) {
+          burned++  // Burned or never minted on this contract.
+          return
+        }
+        console.warn(`[NftTransferWatcher] backfill tokenId=${tokenId} failed:`, err?.message)
+      }
+    }))
+    if (i + BACKFILL_BATCH_SIZE < missing.length) {
+      await new Promise(r => setTimeout(r, BACKFILL_BATCH_DELAY_MS))
+    }
+  }
+  console.log(`[NftTransferWatcher] backfill: filled ${filled}, skipped ${burned} burned/missing, of ${missing.length} candidates`)
+}
 
 export const nftTransferWatcherService: Service = {
   name: 'NftTransferWatcher',
@@ -96,6 +178,20 @@ export const nftTransferWatcherService: Service = {
       // Set true at the end of a poll if more blocks remain right now (we hit
       // the per-poll cap). Drives the catch-up scheduling in `finally`.
       let behindAfterPoll = false
+
+      // Tick counter so we can run the gap-backfill periodically (every
+      // BACKFILL_RECHECK_EVERY_N_POLLS ticks) in addition to the
+      // once-on-start pass kicked off below.
+      let pollTick = 0
+
+      // Kick off the once-on-start backfill async — don't block the first
+      // poll behind it. The poll loop processes new Transfer events
+      // independently; both writers race to insert the same rows for
+      // tokens minted right around startup, but findOrCreateUser uses
+      // an upsert + per-tokenId cache so both paths are idempotent.
+      backfillMissingMints(contract).catch(err => {
+        console.warn('[NftTransferWatcher] startup backfill failed:', err?.message || err)
+      })
 
       const poll = async () => {
         if (!alive) return
@@ -207,6 +303,17 @@ export const nftTransferWatcherService: Service = {
             await redis.set(cpKey, String(lastBlock))
           }
           ctx.heartbeat('poll')
+
+          // Periodic gap re-check. Cheap when there are no gaps (one
+          // nextId() RPC + one indexed count from the User table); only
+          // does the per-token loop if drift is detected. Fire-and-
+          // forget so a stuck backfill doesn't block the next poll.
+          pollTick++
+          if (pollTick % BACKFILL_RECHECK_EVERY_N_POLLS === 0) {
+            backfillMissingMints(contract).catch(err => {
+              console.warn('[NftTransferWatcher] periodic backfill failed:', err?.message || err)
+            })
+          }
         } catch (err: any) {
           console.error('[NftTransferWatcher] Poll error:', err?.message || err)
         } finally {
