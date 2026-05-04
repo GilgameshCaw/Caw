@@ -13,10 +13,13 @@ const Trending: React.FC = () => {
           ? 'bg-black border-yellow-500/30'
           : 'bg-white border-gray-200'
       }`}>
-        <h2 className={`text-xl font-bold mb-6 transition-all duration-300 ${
-          isDark ? 'text-white' : 'text-black'
-        }`}>Trending</h2>
-        <TrendingHashtags />
+        <TrendingHashtags
+          title={
+            <h2 className={`text-xl font-bold transition-all duration-300 ${
+              isDark ? 'text-white' : 'text-black'
+            }`}>Trending</h2>
+          }
+        />
       </div>
 
       {/* Footer buttons - outside container */}

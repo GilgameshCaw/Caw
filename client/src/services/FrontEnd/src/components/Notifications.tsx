@@ -23,6 +23,7 @@ import Tooltip from '~/components/Tooltip'
 import { useNotificationUnreadStore } from '~/store/notificationUnreadStore'
 import { useSignAndSubmitAction, decompressSignedText, type ActionTypeKey } from '~/api/actions'
 import { useAutoRetryStore } from '~/store/autoRetryStore'
+import { useT } from '~/i18n/I18nProvider'
 import { getUserAvatar } from '~/utils/defaultAvatar'
 import Avatar from '~/components/Avatar'
 import { LoadingSpinner } from '~/components/Skeleton'
@@ -153,6 +154,7 @@ function formatFullDateTime(timestamp: string): string {
 const Notifications: React.FC = () => {
   const navigate = useNavigate()
   const { isDark } = useTheme()
+  const t = useT()
   const activeToken = useActiveToken()
   const signAndSubmit = useSignAndSubmitAction()
   const ethPrice = usePriceStore(s => s.priceMap['ethereum'] ?? 0)
@@ -219,7 +221,7 @@ const Notifications: React.FC = () => {
     } catch (err: any) {
       console.error('Failed to fetch notifications:', err)
       const isAuth = err?.name === 'AuthError' || err?.message?.includes('401')
-      setError(isAuth ? 'auth' : 'Could not load notifications')
+      setError(isAuth ? 'auth' : t('notifications.error.could_not_load'))
     } finally {
       setLoading(false)
     }
@@ -499,17 +501,17 @@ const Notifications: React.FC = () => {
         )
       }
       case 'FOLLOW':
-        return <>{Actor(actorNode)} {Action('followed you')}</>
+        return <>{Actor(actorNode)} {Action(t('notifications.message.followed'))}</>
       case 'LIKE':
-        return <>{Actor(actorNode)} {Action('liked your caw')}</>
+        return <>{Actor(actorNode)} {Action(t('notifications.message.liked'))}</>
       case 'REPLY':
-        return <>{Actor(actorNode)} {Action('replied to your caw')}</>
+        return <>{Actor(actorNode)} {Action(t('notifications.message.replied'))}</>
       case 'REPOST':
-        return <>{Actor(actorNode)} {Action('recawed your caw')}</>
+        return <>{Actor(actorNode)} {Action(t('notifications.message.recawed'))}</>
       case 'QUOTE':
-        return <>{Actor(actorNode)} {Action('quoted your caw')}</>
+        return <>{Actor(actorNode)} {Action(t('notifications.message.quoted'))}</>
       case 'MENTION':
-        return <>{Actor(actorNode)} {Action('mentioned you')}</>
+        return <>{Actor(actorNode)} {Action(t('notifications.message.mentioned'))}</>
       case 'TIP': {
         const tipAmt = notification.actionPayload?.tipAmount
         let tipLabel = ''
@@ -762,7 +764,7 @@ const Notifications: React.FC = () => {
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <h1 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-          Notifications
+          {t('notifications.title')}
         </h1>
         {unreadCount > 0 && (
           <button
@@ -774,7 +776,7 @@ const Notifications: React.FC = () => {
             }`}
           >
             <HiCheck className="w-4 h-4" />
-            <span className="text-sm">Mark all read</span>
+            <span className="text-sm">{t('notifications.mark_all_read')}</span>
           </button>
         )}
       </div>
@@ -793,7 +795,7 @@ const Notifications: React.FC = () => {
                 : 'text-gray-600 hover:text-black hover:bg-gray-100'
           }`}
         >
-          All
+          {t('notifications.tab.all')}
           {unreadCount > 0 && activeTab !== 'all' && (
             <span className="ml-2 px-2 py-0.5 text-xs rounded-full bg-red-500 text-white">
               {unreadCount}
@@ -813,7 +815,7 @@ const Notifications: React.FC = () => {
           }`}
         >
           <HiAtSymbol className="w-4 h-4" />
-          <span>Mentions</span>
+          <span>{t('notifications.tab.mentions')}</span>
         </button>
       </div>
 
@@ -825,13 +827,13 @@ const Notifications: React.FC = () => {
           {error === 'auth' ? (
             <>
               <p className={`mb-3 ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-                Sign in to view your notifications
+                {t('notifications.signin_prompt')}
               </p>
               <button
                 onClick={() => useVerifyWalletStore.getState().show()}
                 className="px-4 py-2 rounded-lg bg-yellow-500 text-black text-sm font-medium hover:bg-yellow-400 cursor-pointer"
               >
-                Verify Wallet
+                {t('notifications.verify_wallet')}
               </button>
             </>
           ) : (
@@ -848,7 +850,7 @@ const Notifications: React.FC = () => {
                   isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-200 text-gray-900 hover:bg-gray-300'
                 }`}
               >
-                Try again
+                {t('common.try_again')}
               </button>
             </div>
           )}
@@ -867,14 +869,14 @@ const Notifications: React.FC = () => {
           <h3 className={`text-lg font-semibold mb-2 transition-colors duration-300 ${
             isDark ? 'text-white' : 'text-black'
           }`}>
-            {activeTab === 'mentions' ? 'No mentions yet' : 'No notifications yet'}
+            {activeTab === 'mentions' ? t('notifications.empty.mentions') : t('notifications.empty.all')}
           </h3>
           <p className={`transition-colors duration-300 ${
             isDark ? 'text-gray-400' : 'text-gray-600'
           }`}>
             {activeTab === 'mentions'
-              ? "When someone mentions you, it'll show up here."
-              : "You're all caught up."}
+              ? t('notifications.empty.mentions_hint')
+              : t('notifications.empty.all_hint')}
           </p>
         </div>
       ) : (

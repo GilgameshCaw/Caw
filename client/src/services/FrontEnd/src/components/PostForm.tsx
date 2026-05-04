@@ -54,6 +54,7 @@ function gifSearchQuery(text: string): string {
   return words.slice(-5).join(' ')
 }
 import HighlightedTextarea from './HighlightedTextarea'
+import { useT } from '~/i18n/I18nProvider'
 
 const POST_CHAR_LIMIT = 420 // bytes — matches the on-chain check `bytes(text).length <= 420`
 
@@ -294,6 +295,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   const hasActiveSession = useHasActiveSession();
   const connections = useConnections();
   const { isDark } = useTheme()
+  const t = useT()
 
   // Auto-focus the textarea when component mounts (e.g., when modal opens)
   useEffect(() => {
@@ -729,7 +731,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         // append media URLs into the scheduled text (same as immediate posts).
         // NOTE: scheduled posts do not support video yet.
         if (selectedMedia.some(m => m.type === 'video')) {
-          setScheduleError('Scheduled posts do not support video yet.')
+          setScheduleError(t('post_form.error.no_video_schedule'))
           return
         }
 
@@ -742,7 +744,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           const imageFiles = offChainImages.map(({ media }: any) => media.file as File)
           const uploadResult = await uploadMedia(imageFiles, 'image', effectiveTokenId)
           if (!uploadResult.success || !uploadResult.urls) {
-            setScheduleError('Failed to upload images for scheduled post.')
+            setScheduleError(t('post_form.error.upload_failed'))
             return
           }
           offChainImages.forEach(({ index }, i) => {
@@ -914,7 +916,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           // apiFetch wraps server messages as "API 400: <detail>" — strip the
           // status prefix before showing it to the user so the inline error
           // reads like a normal sentence, not a developer log line.
-          const raw = error?.message || 'Something went wrong scheduling this post.'
+          const raw = error?.message || t('post_form.error.schedule_failed')
           const cleaned = raw.replace(/^API\s+\d+(?:\s+[A-Za-z ]+)?:\s*/, '')
           setScheduleError(cleaned)
         }
@@ -1491,7 +1493,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
     ? Math.max(2, Math.min(lineCount, 10))
     : hasMedia
       ? Math.max(1, Math.min(lineCount, 5))
-      : Math.max(4, Math.min(lineCount, 12))
+      : Math.max(5, Math.min(lineCount, 12))
   const isOverLimit = false // Thread mode handles overflow by splitting
 
   return (
@@ -1525,7 +1527,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                   replyTo
                     ? `Reply to @${replyTo.user.username}`
                     : (
-                      placeholder ?? (quote ? "Add a comment" : "What's happening?")
+                      placeholder ?? (quote ? t('post_form.placeholder_quote') : t('post_form.placeholder'))
                     )
                 }
                  textareaRef={textareaRef}
@@ -1565,7 +1567,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
               )}
               {(text.length > 0 || selectedMedia.length > 0) && (
                 <span
-                  title="Bytes remaining"
+                  title={t('post_form.bytes_remaining')}
                   className={`text-xs font-medium ${
                     charCount <= 20
                       ? 'text-yellow-500'
@@ -1714,7 +1716,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 // covering for it). If no wallet is connected, the button just
                 // triggers the connect flow and should say "Post".
                 const wrongWallet = isConnected && !isTokenOwner && !hasActiveSession && activeToken?.tokenId
-                const tooltipText = wrongWallet ? 'Please switch to the correct wallet' : ''
+                const tooltipText = wrongWallet ? t('post_form.error.wrong_wallet_tooltip') : ''
                 const threadTooLong = isThreadMode && chunkCount > MAX_THREAD_LENGTH
                 const isDisabled = (!text && selectedMedia.length === 0 && !pollMarker) || isOverLimit || !canPost || isSubmitting || isScheduling || threadTooLong || pollInvalid
                 const btn = (
@@ -1724,7 +1726,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     disabled={isDisabled}
                     onClick={handleSubmit}
                   >
-                    {wrongWallet ? 'Wrong Wallet' : signingProgress ? <>Signing <span ref={signingCountRef1}>1</span>/{signingProgress.total}...</> : isSubmitting ? 'Signing...' : isThreadMode ? `Thread (${chunkCount})` : replyTo ? 'Reply' : 'Post'}
+                    {wrongWallet ? t('post_form.button.wrong_wallet') : signingProgress ? <>{t('post_form.button.signing_progress')} <span ref={signingCountRef1}>1</span>/{signingProgress.total}...</> : isSubmitting ? t('post_form.button.signing') : isThreadMode ? t('post_form.button.thread', { count: chunkCount }) : replyTo ? t('post_form.button.reply') : t('post_form.button.post')}
                   </button>
                 )
                 return tooltipText ? <Tooltip text={tooltipText}>{btn}</Tooltip> : btn
@@ -1751,7 +1753,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             </div>
             {selectedMedia.length > 0 && (
               <div className={`flex items-center gap-3 mt-1 text-xs ${isDark ? 'text-yellow-200' : 'text-yellow-800'}`}>
-                <span>Attach media to:</span>
+                <span>{t('post_form.attach_media_to')}</span>
                 <label className="flex items-center gap-1 cursor-pointer">
                   <input type="radio" name="mediaPosMobile" checked={mediaPosition === 'start'} onChange={() => setMediaPosition('start')} className="accent-yellow-500" />
                   First post
@@ -1884,7 +1886,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
               replyTo
                 ? `Reply to @${replyTo.user.username}`
                 : (
-                  placeholder ?? (quote ? "Add a comment" : "What's happening?")
+                  placeholder ?? (quote ? t('post_form.placeholder_quote') : t('post_form.placeholder'))
                 )
             }
             textareaRef={textareaRef}
@@ -1902,10 +1904,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           {isDragOverTextarea && (
             <div className="top-[-3px] absolute inset-0 flex items-center justify-center bg-yellow-500/10 border-2 border-dashed border-yellow-500 rounded-lg pointer-events-none">
               <div className="text-center">
-                <svg className="mx-auto h-12 w-12 text-yellow-500 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                {/* The icon's path only fills [4..20] of its 24×24 viewBox,
+                    so there's ~4px of invisible bottom padding inside the
+                    SVG. Use a negative top margin on the text to claw that
+                    back; otherwise mb-0 still looks like a 12px gap. */}
+                <svg className="mx-auto h-12 w-12 text-yellow-500 mb-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
                 </svg>
-                <p className="text-lg font-medium text-yellow-600 dark:text-yellow-400">Drop photos or video here</p>
+                <p className="-mt-2 text-lg font-medium text-yellow-600 dark:text-yellow-400">Drop photos or video here</p>
               </div>
             </div>
           )}
@@ -2207,7 +2213,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
               )}
               {(text.length > 0 || selectedMedia.length > 0) && (
                 <span
-                  title="Bytes remaining"
+                  title={t('post_form.bytes_remaining')}
                   className={`text-sm font-medium ${
                     charCount <= 20
                       ? 'text-yellow-500'
@@ -2221,7 +2227,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 
             {(() => {
                 const wrongWallet2 = isConnected && !isTokenOwner && !hasActiveSession && activeToken?.tokenId
-                const tooltipText2 = wrongWallet2 ? 'Please switch to the correct wallet' : ''
+                const tooltipText2 = wrongWallet2 ? t('post_form.error.wrong_wallet_tooltip') : ''
                 const threadTooLong2 = isThreadMode && chunkCount > MAX_THREAD_LENGTH
                 const isDisabled2 = (!text && selectedMedia.length === 0 && !pollMarker) || isOverLimit || !canPost || isSubmitting || isScheduling || threadTooLong2 || pollInvalid
                 const btn2 = (
@@ -2231,7 +2237,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                     disabled={isDisabled2}
                     onClick={handleSubmit}
                   >
-                    {wrongWallet2 ? 'Wrong Wallet' : hasNoToken ? 'Create Account' : signingProgress ? <>Signing <span ref={signingCountRef2}>1</span>/{signingProgress.total}...</> : isSubmitting ? 'Signing...' : isThreadMode ? `Thread (${chunkCount})` : replyTo ? 'Reply' : 'Post'}
+                    {wrongWallet2 ? t('post_form.button.wrong_wallet') : hasNoToken ? t('post_form.button.create_account') : signingProgress ? <>{t('post_form.button.signing_progress')} <span ref={signingCountRef2}>1</span>/{signingProgress.total}...</> : isSubmitting ? t('post_form.button.signing') : isThreadMode ? t('post_form.button.thread', { count: chunkCount }) : replyTo ? t('post_form.button.reply') : t('post_form.button.post')}
                   </button>
                 )
                 return tooltipText2 ? <Tooltip text={tooltipText2}>{btn2}</Tooltip> : btn2
@@ -2259,7 +2265,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
             </div>
             {selectedMedia.length > 0 && (
               <div className={`flex items-center gap-4 mt-2 text-sm ${isDark ? 'text-yellow-200' : 'text-yellow-800'}`}>
-                <span>Attach media to:</span>
+                <span>{t('post_form.attach_media_to')}</span>
                 <label className="flex items-center gap-1.5 cursor-pointer">
                   <input type="radio" name="mediaPosDesktop" checked={mediaPosition === 'start'} onChange={() => setMediaPosition('start')} className="accent-yellow-500" />
                   First post

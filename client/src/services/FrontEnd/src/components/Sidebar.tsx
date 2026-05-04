@@ -192,38 +192,38 @@ const Sidebar: React.FC = () => {
           to="/home"
           onClick={guardClick}
           className={({ isActive }) =>
-            `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+            `relative flex items-center gap-3 px-4 py-3.5 sm:gap-3 sm:px-3 sm:py-3.5 rounded-2xl transition-colors duration-200 min-w-0 ${getNavLinkClasses(isActive)}`
           }>
-            <HiOutlineHome className="w-6 h-6 sm:w-7 sm:h-7" />
-            <span className="font-medium text-base sm:text-lg">{t('nav.home')}</span>
+            <HiOutlineHome className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
+            <span className="font-medium text-base sm:text-lg min-w-0 truncate">{t('nav.home')}</span>
           </NavLink>
 
            <NavLink
              to="/explore"
              className={({ isActive }) =>
-               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-3 sm:px-3 sm:py-3.5 rounded-2xl transition-colors duration-200 min-w-0 ${getNavLinkClasses(isActive)}`
              }
            >
-            <HiOutlineSearch className="w-6 h-6 sm:w-7 sm:h-7" />
-            <span className="font-medium text-base sm:text-lg">{t('nav.explore')}</span>
+            <HiOutlineSearch className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
+            <span className="font-medium text-base sm:text-lg min-w-0 truncate">{t('nav.explore')}</span>
            </NavLink>
 
            <NavLink
              to="/notifications"
              onClick={guardClick}
              className={({ isActive }) =>
-               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-3 sm:px-3 sm:py-3.5 rounded-2xl transition-colors duration-200 min-w-0 ${getNavLinkClasses(isActive)}`
              }
            >
-             <div className="relative">
-              <HiOutlineBell className="w-6 h-6 sm:w-7 sm:h-7" />
+             <div className="relative shrink-0">
+              <HiOutlineBell className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
               {notifUnreadCount > 0 && (
                 <span className={`absolute -top-2 -right-2 min-w-[18px] h-[18px] flex items-center justify-center text-[11px] font-bold rounded-full bg-yellow-500 text-black px-1 border-2 ${isDark ? 'border-black' : 'border-white'}`}>
                   {notifUnreadCount > 99 ? '99+' : notifUnreadCount}
                 </span>
               )}
              </div>
-            <span className="font-medium text-base sm:text-lg">{t('nav.notifications')}</span>
+            <span className="font-medium text-base sm:text-lg min-w-0 truncate">{t('nav.notifications')}</span>
            </NavLink>
 
            <NavLink
@@ -236,11 +236,11 @@ const Sidebar: React.FC = () => {
                }
              }}
              className={({ isActive }) =>
-               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive || location.pathname.startsWith('/messages/'))}`
+               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-3 sm:px-3 sm:py-3.5 rounded-2xl transition-colors duration-200 min-w-0 ${getNavLinkClasses(isActive || location.pathname.startsWith('/messages/'))}`
              }
            >
-             <div className="relative">
-              <HiOutlineChat className="w-6 h-6 sm:w-7 sm:h-7" />
+             <div className="relative shrink-0">
+              <HiOutlineChat className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
               {activeToken && dmEnabled === false && (
                 <span className={`absolute -top-1 -right-1 w-3 h-3 bg-yellow-500 rounded-full border-2 ${isDark ? 'border-black' : 'border-white'}`} />
               )}
@@ -250,79 +250,79 @@ const Sidebar: React.FC = () => {
                 </span>
               )}
              </div>
-            <span className="font-medium text-base sm:text-lg">{t('nav.messages')}</span>
+            <span className="font-medium text-base sm:text-lg min-w-0 truncate">{t('nav.messages')}</span>
            </NavLink>
 
            <NavLink
              to="/bookmarks"
              onClick={guardClick}
              className={({ isActive }) =>
-               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-3 sm:px-3 sm:py-3.5 rounded-2xl transition-colors duration-200 min-w-0 ${getNavLinkClasses(isActive)}`
              }
            >
-            <HiOutlineBookmark className="w-6 h-6 sm:w-7 sm:h-7" />
-            <span className="font-medium text-base sm:text-lg">{t('nav.bookmarks')}</span>
+            <HiOutlineBookmark className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
+            <span className="font-medium text-base sm:text-lg min-w-0 truncate">{t('nav.bookmarks')}</span>
            </NavLink>
 
            <NavLink
              to="/scheduled"
              onClick={guardClick}
              className={({ isActive }) =>
-               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-3 sm:px-3 sm:py-3.5 rounded-2xl transition-colors duration-200 min-w-0 ${getNavLinkClasses(isActive)}`
              }
            >
-            <HiOutlineClock className="w-6 h-6 sm:w-7 sm:h-7" />
-            <span className="font-medium text-base sm:text-lg">{t('nav.scheduled')}</span>
+            <HiOutlineClock className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
+            <span className="font-medium text-base sm:text-lg min-w-0 truncate">{t('nav.scheduled')}</span>
            </NavLink>
 
            <NavLink
              to="/staking"
              onClick={guardClick}
              className={({ isActive }) =>
-               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-3 sm:px-3 sm:py-3.5 rounded-2xl transition-colors duration-200 min-w-0 ${getNavLinkClasses(isActive)}`
              }
            >
-            <HiOutlineCube className="w-6 h-6 sm:w-7 sm:h-7" />
-            <span className="font-medium text-base sm:text-lg">{t('nav.staking')}</span>
+            <HiOutlineCube className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
+            <span className="font-medium text-base sm:text-lg min-w-0 truncate">{t('nav.staking')}</span>
            </NavLink>
 
            <NavLink
              to="/usernames"
              className={({ isActive }) =>
-               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-3 sm:px-3 sm:py-3.5 rounded-2xl transition-colors duration-200 min-w-0 ${getNavLinkClasses(isActive)}`
              }
            >
-             <div className="relative">
-              <HiOutlineColorSwatch className="w-6 h-6 sm:w-7 sm:h-7" />
+             <div className="relative shrink-0">
+              <HiOutlineColorSwatch className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
               {offersUnreadCount > 0 && (
                 <span className={`absolute -top-2 -right-2 min-w-[18px] h-[18px] flex items-center justify-center text-[11px] font-bold rounded-full bg-yellow-500 text-black px-1 border-2 ${isDark ? 'border-black' : 'border-white'}`}>
                   {offersUnreadCount > 99 ? '99+' : offersUnreadCount}
                 </span>
               )}
              </div>
-            <span className="font-medium text-base sm:text-lg">{t('nav.usernames')}</span>
+            <span className="font-medium text-base sm:text-lg min-w-0 truncate">{t('nav.usernames')}</span>
            </NavLink>
 
            <NavLink
              to={activeToken?.username ? `/users/${activeToken.username}` : "/welcome"}
              onClick={guardClick}
              className={({ isActive }) =>
-               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-3 sm:px-3 sm:py-3.5 rounded-2xl transition-colors duration-200 min-w-0 ${getNavLinkClasses(isActive)}`
              }
            >
-            <HiOutlineUser className="w-6 h-6 sm:w-7 sm:h-7" />
-            <span className="font-medium text-base sm:text-lg">{t('nav.profile')}</span>
+            <HiOutlineUser className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
+            <span className="font-medium text-base sm:text-lg min-w-0 truncate">{t('nav.profile')}</span>
            </NavLink>
 
            <NavLink
              to="/settings"
              onClick={guardClick}
              className={({ isActive }) =>
-               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-4 sm:px-5 sm:py-3.5 rounded-2xl transition-colors duration-200 ${getNavLinkClasses(isActive)}`
+               `relative flex items-center gap-3 px-4 py-3.5 sm:gap-3 sm:px-3 sm:py-3.5 rounded-2xl transition-colors duration-200 min-w-0 ${getNavLinkClasses(isActive)}`
              }
            >
-            <HiOutlineCog className="w-6 h-6 sm:w-7 sm:h-7" />
-            <span className="font-medium text-base sm:text-lg">{t('nav.settings')}</span>
+            <HiOutlineCog className="w-5 h-5 sm:w-6 sm:h-6 shrink-0" />
+            <span className="font-medium text-base sm:text-lg min-w-0 truncate">{t('nav.settings')}</span>
            </NavLink>
         </nav>
 

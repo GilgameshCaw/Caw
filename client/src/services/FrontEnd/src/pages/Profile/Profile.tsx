@@ -28,6 +28,7 @@ import { useTokenDataStore } from '~/store/tokenDataStore'
 import InsufficientStakeModal from '~/components/modals/InsufficientStakeModal'
 import AvatarCropperModal from '~/components/modals/AvatarCropperModal'
 import { useFollowButton } from '~/hooks/useFollowButton'
+import { useT } from '~/i18n/I18nProvider'
 import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import TipModal from '~/components/modals/TipModal'
 import { useTransferModalStore } from '~/store/transferModalStore'
@@ -82,6 +83,7 @@ type ProfileData = {
 }
 
 export const Profile: React.FC = () => {
+  const t = useT()
   const { username } = useParams<{ username: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const tabParam = searchParams.get('tab') as ProfileTab | null
@@ -258,7 +260,7 @@ export const Profile: React.FC = () => {
           return
         }
         console.error('Failed to fetch profile:', err)
-        setError('Failed to load profile')
+        setError(t('profile.error.failed_to_load'))
       } finally {
         setLoading(false)
       }
@@ -473,7 +475,7 @@ export const Profile: React.FC = () => {
       calculateUpdateCost()
     } catch (err) {
       console.error('Failed to upload image:', err)
-      setProfileError('Failed to upload image. Please try again.')
+      setProfileError(t('profile.error.upload_image'))
     } finally {
       setIsUploading(false)
     }
@@ -485,13 +487,13 @@ export const Profile: React.FC = () => {
 
     // Validate file type
     if (!file.type.startsWith('image/')) {
-      setProfileError('Please select a valid image file')
+      setProfileError(t('profile.error.invalid_image'))
       return
     }
 
     // Validate file size (max 5MB)
     if (file.size > 5 * 1024 * 1024) {
-      setProfileError('Image size must be less than 5MB')
+      setProfileError(t('profile.error.image_too_big'))
       return
     }
 
@@ -515,7 +517,7 @@ export const Profile: React.FC = () => {
       calculateUpdateCost()
     } catch (err) {
       console.error('Failed to upload image:', err)
-      setProfileError('Failed to upload image. Please try again.')
+      setProfileError(t('profile.error.upload_image'))
     } finally {
       setIsUploading(false)
     }
@@ -577,7 +579,7 @@ export const Profile: React.FC = () => {
   // Handle off-chain profile update — saves to DB only, scoped to this provider
   const handleOffChainUpdate = async () => {
     if (!activeToken) {
-      setProfileError('Please select a token')
+      setProfileError(t('profile.error.select_token'))
       return
     }
 
@@ -590,7 +592,7 @@ export const Profile: React.FC = () => {
     if (coverUrl) changes.coverPhotoUrl = coverUrl
 
     if (Object.keys(changes).length === 0) {
-      setProfileError('No changes to save')
+      setProfileError(t('profile.error.no_changes'))
       return
     }
 
@@ -646,7 +648,7 @@ export const Profile: React.FC = () => {
 
     // Check if user has an active token
     if (!activeToken) {
-      setProfileError('Please select a token')
+      setProfileError(t('profile.error.select_token'))
       return
     }
 
@@ -684,7 +686,7 @@ export const Profile: React.FC = () => {
 
       // If no changes, don't submit
       if (Object.keys(profileUpdateData).length === 0) {
-        setProfileError('No changes to save')
+        setProfileError(t('profile.error.no_changes'))
         setIsSaving(false)
         return
       }
@@ -748,12 +750,12 @@ export const Profile: React.FC = () => {
         updateCost
       })
       // Extract a clean error message
-      let errorMessage = 'Failed to update profile'
+      let errorMessage = t('profile.error.update_failed')
       if (err?.message) {
         if (err.message.includes('User rejected') || err.message.includes('user rejected')) {
-          errorMessage = 'Transaction rejected'
+          errorMessage = t('profile.error.tx_rejected')
         } else if (err.message.includes('chainId should be same')) {
-          errorMessage = 'Please switch to the correct network'
+          errorMessage = t('profile.error.wrong_network')
         } else {
           // Take first line and trim
           errorMessage = err.message.split('\n')[0].slice(0, 100)
@@ -795,10 +797,10 @@ export const Profile: React.FC = () => {
   // define our four tabs with counts
   const tabCount = (n: number | undefined) => n ? ` (${formatStat(n)})` : ''
   const profileTabs: TabItem<ProfileTab>[] = [
-    { id: 'posts',   label: `Posts${tabCount(profileData?.cawCount)}`     },
-    { id: 'replies', label: `Replies${tabCount(profileData?.replyCount)}` },
-    { id: 'media',   label: `Media${tabCount(profileData?.mediaCount)}`   },
-    { id: 'likes',   label: `Likes${tabCount(profileData?.likedCount)}`   },
+    { id: 'posts',   label: `${t('profile.tab.posts')}${tabCount(profileData?.cawCount)}`     },
+    { id: 'replies', label: `${t('profile.tab.replies')}${tabCount(profileData?.replyCount)}` },
+    { id: 'media',   label: `${t('profile.tab.media')}${tabCount(profileData?.mediaCount)}`   },
+    { id: 'likes',   label: `${t('profile.tab.likes')}${tabCount(profileData?.likedCount)}`   },
   ]
 
   // Profile not in our DB — check on-chain availability for better UX
@@ -955,7 +957,7 @@ export const Profile: React.FC = () => {
                 <p className={`text-sm mt-1 transition-all duration-300 ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}>
-                  {profileData?.createdAt ? `Joined ${formatJoinDate(profileData.createdAt)}` : 'Joined recently'}
+                  {profileData?.createdAt ? t('profile.joined', { date: formatJoinDate(profileData.createdAt) }) : t('profile.joined_recently')}
                 </p>
 
                 {/* For Sale banner */}
@@ -1018,7 +1020,7 @@ export const Profile: React.FC = () => {
                             : 'bg-gray-200 hover:bg-gray-300 text-gray-700'
                         }`}
                       >
-                        {isCancelling ? 'Cancelling...' : 'Cancel'}
+                        {isCancelling ? t('common.cancelling') : t('common.cancel')}
                       </button>
                     </div>
                   )
@@ -1037,7 +1039,7 @@ export const Profile: React.FC = () => {
                   <div className={`text-sm transition-all duration-300 ${
                     isDark ? 'text-gray-400' : 'text-gray-600'
                   }`}>
-                    Posts
+                    {t('profile.stats.posts')}
                   </div>
                 </div>
                 <button
@@ -1052,7 +1054,7 @@ export const Profile: React.FC = () => {
                   <div className={`text-sm transition-all duration-300 ${
                     isDark ? 'text-gray-400' : 'text-gray-600'
                   }`}>
-                    Following
+                    {t('profile.stats.following')}
                   </div>
                 </button>
                 <button
@@ -1067,7 +1069,7 @@ export const Profile: React.FC = () => {
                   <div className={`text-sm transition-all duration-300 ${
                     isDark ? 'text-gray-400' : 'text-gray-600'
                   }`}>
-                    Followers
+                    {t('profile.stats.followers')}
                   </div>
                 </button>
               </div>
@@ -1155,12 +1157,12 @@ export const Profile: React.FC = () => {
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                           </svg>
-                          <span className="hidden sm:inline">Updating...</span>
+                          <span className="hidden sm:inline">{t('profile.updating')}</span>
                         </>
                       ) : (
                         <>
                           <HiPencil className="w-4 h-4 inline sm:mr-2" />
-                          <span className="hidden sm:inline">Edit Profile</span>
+                          <span className="hidden sm:inline">{t('profile.edit')}</span>
                         </>
                       )}
                     </button>
@@ -1232,9 +1234,9 @@ export const Profile: React.FC = () => {
                 ) : (
                   <div className="flex flex-col space-y-3">
                     <div className="flex flex-col items-center">
-                      <Tooltip text="Processing on-chain" disabled={!followPending || followSigning}>
+                      <Tooltip text={t('post.processing')} disabled={!followPending || followSigning}>
                       <button
-                        onClick={() => { if (isCaptive) { showSignIn('Create a profile to follow users.'); return } handleFollowClick() }}
+                        onClick={() => { if (isCaptive) { showSignIn(t('profile.signin.follow')); return } handleFollowClick() }}
                         disabled={followPending || followWrongWallet}
                         onMouseEnter={() => setFollowButtonHovered(true)}
                         onMouseLeave={() => setFollowButtonHovered(false)}
@@ -1261,7 +1263,7 @@ export const Profile: React.FC = () => {
                     
                     <div className="flex justify-center space-x-2">
                       <Tooltip text="Tip"><button
-                        onClick={() => { if (isCaptive) { showSignIn('Create a profile to tip users.'); return } setShowTipModal(true) }}
+                        onClick={() => { if (isCaptive) { showSignIn(t('profile.signin.tip')); return } setShowTipModal(true) }}
                         className={`p-2 rounded-full border transition-all duration-200 cursor-pointer hover:bg-yellow-500/10 ${
                           tipPending || hasTipped
                             ? 'border-yellow-500/60 text-yellow-500'
@@ -1283,7 +1285,7 @@ export const Profile: React.FC = () => {
                       </button></Tooltip>
                       {/* Hide offer button if viewing own profile by wallet address */}
                       {!(address && profileData?.address && address.toLowerCase() === profileData.address.toLowerCase()) && (
-                      <Tooltip text="Offer to buy this profile"><button
+                      <Tooltip text={t('profile.tooltip.offer_to_buy')}><button
                         onClick={() => {
                           if (profileData?.tokenId !== undefined && profileData?.username) {
                             useMarketplaceStore.getState().openMakeOffer(profileData.tokenId, profileData.username)
@@ -1300,9 +1302,9 @@ export const Profile: React.FC = () => {
                         </svg>
                       </button></Tooltip>
                       )}
-                      <Tooltip text={peerDmEnabled === false ? "This user hasn't enabled DMs yet" : "Send Message"}><button
+                      <Tooltip text={peerDmEnabled === false ? t('profile.tooltip.dm_disabled') : t('profile.tooltip.send_message')}><button
                         onClick={() => {
-                          if (isCaptive) { showSignIn('Create a profile to send messages.'); return }
+                          if (isCaptive) { showSignIn(t('profile.signin.dm')); return }
                           navigate(`/messages/${profileData?.username || displayUsername}`)
                         }}
                         disabled={peerDmEnabled === false}
@@ -1320,7 +1322,7 @@ export const Profile: React.FC = () => {
                       </button></Tooltip>
                       
                       <div className="relative">
-                        <Tooltip text="More options"><button
+                        <Tooltip text={t('post.more_options')}><button
                           onClick={() => setShowOptionsMenu(!showOptionsMenu)}
                           className={`p-2 rounded-full border transition-all duration-200 cursor-pointer hover:bg-white/10 ${
                             isDark
@@ -1385,9 +1387,9 @@ export const Profile: React.FC = () => {
               <div className="flex items-center space-x-3">
                 <HiOutlineLockClosed className={`w-5 h-5 ${isDark ? 'text-yellow-400' : 'text-yellow-600'}`} />
                 <div>
-                  <p className={`font-medium ${isDark ? 'text-white' : 'text-black'}`}>Enable Direct Messages</p>
+                  <p className={`font-medium ${isDark ? 'text-white' : 'text-black'}`}>{t('profile.dm.enable_title')}</p>
                   <p className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-                    {dmEnableError || 'Sign once to start receiving encrypted DMs from other users.'}
+                    {dmEnableError || t('profile.dm.enable_description')}
                   </p>
                 </div>
               </div>
@@ -1396,7 +1398,7 @@ export const Profile: React.FC = () => {
                 disabled={dmEnabling}
                 className={`px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-black font-semibold rounded-full transition-all duration-200 text-sm whitespace-nowrap ${dmEnabling ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
               >
-                {dmEnabling ? 'Enabling...' : 'Enable DMs'}
+                {dmEnabling ? t('profile.dm.enabling') : t('profile.dm.enable_button')}
               </button>
             </div>
           </div>
@@ -1446,7 +1448,7 @@ export const Profile: React.FC = () => {
                 <h2 className={`text-xl font-bold transition-colors duration-300 ${
                   isDark ? 'text-white' : 'text-black'
                 }`}>
-                  Edit Profile
+                  {t('profile.edit')}
                 </h2>
               </div>
               <button
@@ -1471,7 +1473,7 @@ export const Profile: React.FC = () => {
                   setIsEditModalOpen(false)
                 }}
                 onSkip={() => { setIsEditModalOpen(false); setProfileError(null) }}
-                skipLabel="Cancel"
+                skipLabel={t('common.cancel')}
               />
             </div>
           </div>

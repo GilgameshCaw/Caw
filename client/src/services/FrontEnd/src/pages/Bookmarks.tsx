@@ -6,8 +6,10 @@ import FeedItem from '~/components/FeedItem'
 import type { CawItem } from '~/types'
 import { apiFetch } from '~/api/client'
 import { useTokenDataStore } from '~/store/tokenDataStore'
+import { useT } from '~/i18n/I18nProvider'
 
 const BookmarksPage: React.FC = () => {
+  const t = useT()
   const { isDark } = useTheme()
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const [searchQuery, setSearchQuery] = useState('')
@@ -77,13 +79,13 @@ const BookmarksPage: React.FC = () => {
           <h1 className={`text-2xl font-bold transition-colors duration-300 ${
             isDark ? 'text-white' : 'text-black'
           }`}>
-            Bookmarks
+            {t('bookmarks.title')}
           </h1>
           <div className={`flex items-center gap-2 mt-2 text-sm ${
             isDark ? 'text-gray-400' : 'text-gray-500'
           }`}>
             <HiOutlineInformationCircle className="w-4 h-4" />
-            <span>Bookmarks are saved to your account on this client.</span>
+            <span>{t('bookmarks.subtitle')}</span>
           </div>
         </div>
 
@@ -95,7 +97,7 @@ const BookmarksPage: React.FC = () => {
             }`} />
             <input
               type="text"
-              placeholder="Search bookmarks"
+              placeholder={t('bookmarks.search')}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className={`w-full pl-10 pr-4 py-3 rounded-full border transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-gray-500/30 ${
@@ -139,7 +141,7 @@ const BookmarksPage: React.FC = () => {
                 isDark ? 'bg-white/10 hover:bg-white/20 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-900'
               } disabled:opacity-50`}
             >
-              {loadingMore ? 'Loading...' : 'Load more'}
+              {loadingMore ? t('common.loading') : t('common.load_more')}
             </button>
           </div>
         )}
@@ -153,17 +155,17 @@ const BookmarksPage: React.FC = () => {
             <h3 className={`text-lg font-semibold mb-2 transition-colors duration-300 ${
               isDark ? 'text-white' : 'text-black'
             }`}>
-              No bookmarks yet
+              {t('bookmarks.empty.title')}
             </h3>
             <p className={`transition-colors duration-300 ${
               isDark ? 'text-gray-400' : 'text-gray-600'
             }`}>
-              Save posts you want to read later by clicking the bookmark icon.
+              {t('bookmarks.empty.hint')}
             </p>
             <p className={`text-sm mt-2 transition-colors duration-300 ${
               isDark ? 'text-gray-500' : 'text-gray-400'
             }`}>
-              Bookmarks are tied to your account on this client.
+              {t('bookmarks.empty.note')}
             </p>
           </div>
         )}

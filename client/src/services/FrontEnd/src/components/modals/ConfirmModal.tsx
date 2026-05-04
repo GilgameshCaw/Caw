@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import ModalWrapper from './ModalWrapper'
 import { useTheme } from '~/hooks/useTheme'
+import { useT } from '~/i18n/I18nProvider'
 
 interface ConfirmModalProps {
   isOpen: boolean
@@ -50,13 +51,16 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
   onConfirm,
   title,
   message,
-  confirmText = 'Confirm',
-  cancelText = 'Cancel',
+  confirmText,
+  cancelText,
   destructive = false,
   rememberKey,
 }) => {
   const { isDark } = useTheme()
+  const t = useT()
   const [dontShowAgain, setDontShowAgain] = useState(false)
+  const effectiveConfirmText = confirmText ?? t('common.confirm')
+  const effectiveCancelText  = cancelText  ?? t('common.cancel')
 
   const handleConfirm = () => {
     if (rememberKey && dontShowAgain) {
@@ -105,7 +109,7 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
                 </svg>
               )}
             </button>
-            Don't show this again
+            {t('common.dont_show_again')}
           </label>
         )}
         <div className="flex gap-3">
@@ -117,7 +121,7 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
             }`}
           >
-            {cancelText}
+            {effectiveCancelText}
           </button>
           <button
             onClick={handleConfirm}
@@ -127,7 +131,7 @@ const ConfirmModal: React.FC<ConfirmModalProps> = ({
                 : 'bg-yellow-500 text-black hover:bg-yellow-400'
             }`}
           >
-            {confirmText}
+            {effectiveConfirmText}
           </button>
         </div>
       </div>

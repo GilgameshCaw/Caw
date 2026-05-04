@@ -259,8 +259,8 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     const isCurrentUser = currentUserId && (userId == currentUserId);
 
     const recawWho = isCurrentUser
-      ? 'Recawed by you'
-      : 'Recawed by ' + (item.user.displayName || item.user.username);
+      ? t('post.recawed_by_you')
+      : t('post.recawed_by', { name: item.user.displayName || item.user.username });
     headline = item.timestamp
       ? `${recawWho} · ${formatTimeAgo(item.timestamp)}`
       : recawWho;
@@ -398,7 +398,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     event.preventDefault()
     event.stopPropagation()
 
-    if (isCaptive) { useSignInModalStore.getState().show('Create a profile to like posts.'); return }
+    if (isCaptive) { useSignInModalStore.getState().show(t('post.signin.like')); return }
 
     // Don't allow interactions with pending or failed caws
     if (item.status === 'FAILED') {
@@ -543,7 +543,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     event.preventDefault()
     event.stopPropagation()
 
-    if (isCaptive) { useSignInModalStore.getState().show('Create a profile to repost.'); return }
+    if (isCaptive) { useSignInModalStore.getState().show(t('post.signin.repost')); return }
 
     // Don't allow interactions with pending or failed caws
     if (item.status === 'FAILED') {
@@ -625,7 +625,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     e.preventDefault()
     e.stopPropagation()
 
-    if (isCaptive) { useSignInModalStore.getState().show('Create a profile to reply.'); return }
+    if (isCaptive) { useSignInModalStore.getState().show(t('post.signin.reply')); return }
 
     // Don't allow interactions with pending or failed caws
     if (item.status === 'FAILED') {
@@ -974,7 +974,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           {item.parent && !isRecaw && !isQuote && item.parent.user && !hideParentPreview && (
             item.parent.status === 'HIDDEN' ? (
               <div className={`block text-xs mb-3 italic ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-                Replying to a post that has been removed by the poster
+                {t('post.replying_to_removed')}
               </div>
             ) : (() => {
               // Strip the poll marker out of the snippet so the user doesn't
@@ -1035,7 +1035,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 <Link to={`/caws/${item.parent.id}`} className={`block text-xs transition-all duration-300 mb-3 ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}>
-                  <span className="truncate md:truncate-none">Replying to <span className="underline">@{item.parent.user.username}</span></span>
+                  <span className="truncate md:truncate-none">{t('post.replying_to')} <span className="underline">@{item.parent.user.username}</span></span>
                   {(parentBody || parentThumb || item.parent.poll) && (
                     <span className="flex items-start gap-2 mt-1">
                       {parentThumb && (() => {
@@ -1212,10 +1212,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       <>
                         <span className="relative group">
                           <span className="px-2 py-0.5 text-xs bg-red-500/20 text-red-600 dark:text-red-400 rounded-full cursor-help">
-                            Failed
+                            {t('post.failed')}
                           </span>
                           <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 text-xs rounded-lg whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 z-50 bg-white text-black dark:bg-white dark:text-black">
-                            Something went wrong
+                            {t('post.failed_tooltip')}
                             <span className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-white"></span>
                           </span>
                         </span>
@@ -1225,7 +1225,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                         className="ml-2 px-2 py-0.5 text-xs bg-blue-500/20 text-blue-600 dark:text-blue-400 rounded-full hover:bg-blue-500/30 transition-colors flex items-center gap-1 cursor-pointer"
                       >
                         <HiOutlineRefresh className={`w-3 h-3 ${isRetrying ? 'animate-spin' : ''}`} />
-                        {isRetrying ? 'Retrying...' : 'Retry'}
+                        {isRetrying ? t('post.retrying') : t('post.retry')}
                       </button>
                       <button
                         onClick={(e) => {
@@ -1237,7 +1237,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                         className="ml-1 px-2 py-0.5 text-xs bg-gray-500/20 text-gray-500 dark:text-gray-400 rounded-full hover:bg-gray-500/30 transition-colors flex items-center gap-1 cursor-pointer"
                       >
                         <HiOutlineX className="w-3 h-3" />
-                        Hide
+                        {t('post.hide')}
                       </button>
                     </>
                     )}
@@ -1248,7 +1248,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
             {/* Three dots menu */}
             <div className="relative" ref={optionsMenuRef}>
-              <Tooltip text="More options"><button
+              <Tooltip text={t('post.more_options')}><button
                 onClick={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
@@ -1576,7 +1576,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
           <div className="flex items-center justify-between" onClick={(e) => e.stopPropagation()}>
             <div className={`flex items-center ${uiDensity === 'compact' ? 'gap-4' : 'space-x-6'}`}>
               {/* Comments/Replies */}
-              <Tooltip text={replyPending ? "Processing on-chain" : "Reply"} disabled={item.status === 'FAILED'}><button
+              <Tooltip text={replyPending ? t('post.processing') : t('post.reply')} disabled={item.status === 'FAILED'}><button
                 className={`flex items-center space-x-2 transition-colors duration-300 ${
                   (item.status === 'FAILED')
                     ? 'cursor-not-allowed opacity-50'
@@ -1597,7 +1597,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
               {/* Retweets */}
               <div className="relative">
-                <Tooltip text={recawPending ? "Processing on-chain" : "ReCaw"} disabled={item.status === 'FAILED'}><button
+                <Tooltip text={recawPending ? t('post.processing') : t('post.recaw')} disabled={item.status === 'FAILED'}><button
                   className={`group flex items-center space-x-2 transition-colors duration-300 ${
                     (item.status === 'FAILED')
                       ? 'cursor-not-allowed opacity-50'
@@ -1674,7 +1674,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                           }
                         }}
                       >
-                        <Recaw className="w-5 h-5 translate-y-0.5" /> Undo Repost
+                        <Recaw className="w-5 h-5 translate-y-0.5" /> {t('post.undo_repost')}
                       </button>
                     ) : (
                       <button
@@ -1685,7 +1685,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       >
                         <Recaw className={`w-5 h-5 translate-y-0.5 transition-all duration-300 ${
                           isDark ? 'text-white' : 'text-gray-600'
-                        }`} /> Repost
+                        }`} /> {t('post.repost')}
                       </button>
                     )}
                     <button
@@ -1702,14 +1702,14 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     >
                       <Pencil className={`w-5 h-5 transition-all duration-300 ${
                         isDark ? 'fill-white' : 'fill-gray-600'
-                      }`}/> Quote
+                      }`}/> {t('post.quote')}
                     </button>
                   </div>
                 )}
               </div>
 
               {/* Likes */}
-              <Tooltip text={(likePending || stateSource.likePending) ? "Processing on-chain" : "Like"} disabled={item.status === 'FAILED'}><button
+              <Tooltip text={(likePending || stateSource.likePending) ? t('post.processing') : t('post.like')} disabled={item.status === 'FAILED'}><button
                 className={`flex items-center space-x-2 transition-colors duration-300 ${
                   (item.status === 'FAILED')
                     ? 'cursor-not-allowed opacity-50'
@@ -1734,7 +1734,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               </button></Tooltip>
 
               {/* Views */}
-              <Tooltip text="Views"><button
+              <Tooltip text={t('post.views')}><button
                 className={`flex items-center space-x-2 transition-colors duration-300 cursor-pointer ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}
@@ -1746,7 +1746,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
 
             <div className={`flex items-center ${uiDensity === 'compact' ? 'gap-3' : 'space-x-4'}`}>
               {/* Bookmark */}
-              <Tooltip text={isBookmarked ? "Remove bookmark" : "Save"} disabled={item.status === 'FAILED'}><button
+              <Tooltip text={isBookmarked ? t('post.remove_bookmark') : t('post.save')} disabled={item.status === 'FAILED'}><button
                 onClick={handleBookmark}
                 disabled={item.status === 'FAILED'}
                 className={`flex items-center gap-1 transition-colors duration-300 ${
@@ -1770,7 +1770,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               </button></Tooltip>
 
               {/* Tip */}
-              <Tooltip text={tipPending ? 'Processing on-chain' : useItem.totalTipAmount ? `${(useItem.totalTipAmount).toLocaleString()} CAW tipped` : 'Tip'} disabled={item.status === 'FAILED'}><button
+              <Tooltip text={tipPending ? t('post.processing') : useItem.totalTipAmount ? t('post.tipped', { amount: (useItem.totalTipAmount).toLocaleString() }) : t('post.tip')} disabled={item.status === 'FAILED'}><button
                 onClick={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
@@ -1794,7 +1794,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               </button></Tooltip>
 
               {/* Share */}
-              <Tooltip text="Share" disabled={item.status === 'FAILED'}><button
+              <Tooltip text={t('post.share')} disabled={item.status === 'FAILED'}><button
                 onClick={(e) => {
                   e.preventDefault()
                   e.stopPropagation()
@@ -1908,12 +1908,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 {textCopied ? (
                   <>
                     <HiOutlineCheck className="w-5 h-5 text-green-500" />
-                    <span className="text-green-500">Copied!</span>
+                    <span className="text-green-500">{t('post.copied')}</span>
                   </>
                 ) : (
                   <>
                     <HiOutlineClipboard className="w-5 h-5" />
-                    Copy post text
+                    {t('post.copy_text')}
                   </>
                 )}
               </button>
@@ -1933,7 +1933,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 }`}
               >
                 <HiOutlineVolumeOff className="w-5 h-5" />
-                Mute thread
+                {t('post.menu.mute_thread')}
               </button>
 
               <button
@@ -1947,7 +1947,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 }`}
               >
                 <HiOutlineFilter className="w-5 h-5" />
-                Mute words and tags
+                {t('post.menu.mute_words')}
               </button>
               
               <button
@@ -1961,7 +1961,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 }`}
               >
                 <HiOutlineEyeOff className="w-5 h-5" />
-                Hide post for me
+                {t('post.menu.hide_post')}
               </button>
 
               <div className={`border-t my-1 ${
@@ -1979,7 +1979,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 }`}
               >
                 <HiOutlineVolumeOff className="w-5 h-5" />
-                Mute this account
+                {t('post.menu.mute_account')}
               </button>
 
               <button
@@ -1993,7 +1993,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 }`}
               >
                 <HiOutlineUserRemove className="w-5 h-5" />
-                Block account
+                {t('post.menu.block_account')}
               </button>
 
               <button
@@ -2007,7 +2007,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 }`}
               >
                 <HiOutlineExclamation className="w-5 h-5" />
-                Report post
+                {t('post.menu.report')}
               </button>
 
               {/* Owner-only actions: pin and delete. Top-level posts only
@@ -2045,7 +2045,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                       >
                         <ThumbtackIcon className="w-5 h-5" />
                         <span className="flex-1">
-                          {isThisPinned ? 'Unpin from profile' : 'Pin to profile'}
+                          {isThisPinned ? t('post.menu.unpin') : t('post.menu.pin')}
                         </span>
                         {!isThisPinned && (
                           <span className={`text-xs ${atCap ? '' : isDark ? 'text-white/40' : 'text-gray-400'}`}>
@@ -2067,7 +2067,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     }`}
                   >
                     <HiOutlineTrash className="w-5 h-5" />
-                    Delete post
+                    {t('post.menu.delete')}
                   </button>
                 </>
               )}
@@ -2209,9 +2209,9 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       <ConfirmModal
         isOpen={showDeleteConfirm}
         onClose={() => setShowDeleteConfirm(false)}
-        title="Delete post"
-        message={"This post will be hidden for everyone, but the content of this post already exists on chain forever and can not be removed.\n\nHiding this post will also be recorded on-chain and cannot be undone."}
-        confirmText="Delete"
+        title={t('post.delete_confirm.title')}
+        message={t('post.delete_confirm.message')}
+        confirmText={t('post.delete_confirm.confirm')}
         destructive
         onConfirm={async () => {
           const effectiveTokenId = activeTokenId || activeToken?.tokenId
@@ -2250,12 +2250,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
       >
         <div className="p-5">
           <h3 className={`text-lg font-semibold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-            Pin to profile
+            {t('post.pin_choice.title')}
           </h3>
           <p className={`text-sm mb-4 ${isDark ? 'text-white/70' : 'text-gray-600'}`}>
-            Pinning on chain makes your choice public and verifiable by any
-            client or indexer. Off-chain only stores it on this server —
-            faster and free, but only this app shows it.
+            {t('post.pin_choice.description')}
           </p>
           <div className="flex flex-col gap-2">
             <button
@@ -2265,7 +2263,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
               }}
               className="w-full py-2 rounded-lg bg-yellow-500 hover:bg-yellow-600 text-black font-semibold text-sm cursor-pointer"
             >
-              Pin on chain
+              {t('post.pin_choice.on_chain')}
             </button>
             <button
               onClick={() => {
@@ -2276,7 +2274,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 isDark ? 'bg-white/10 hover:bg-white/15 text-white' : 'bg-gray-100 hover:bg-gray-200 text-black'
               }`}
             >
-              Pin off chain only
+              {t('post.pin_choice.off_chain')}
             </button>
             <button
               onClick={() => setShowPinChoice(false)}
@@ -2284,7 +2282,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 isDark ? 'text-white/50 hover:text-white/70' : 'text-gray-500 hover:text-gray-700'
               }`}
             >
-              Cancel
+              {t('common.cancel')}
             </button>
           </div>
         </div>

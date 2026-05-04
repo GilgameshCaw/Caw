@@ -7,13 +7,13 @@ import { useTheme } from '~/hooks/useTheme';
 import { useSearchParams } from 'react-router-dom';
 import { useTokenDataStore } from '~/store/tokenDataStore';
 import { useUserByUsername } from '~/hooks/useUserData';
+import { useT } from '~/i18n/I18nProvider';
 
 type MainTab = 'following' | 'foryou'
 
-const TAB_LABELS: Record<MainTab, string> = {
-  'following': 'Following',
-  'foryou': 'For You'
-}
+// TAB_LABELS now derived inside the component so they reflect the
+// active locale. TAB_TO_FILTER stays static — its values are lookup
+// keys consumed by Feed's prop, never rendered to users.
 
 const TAB_TO_FILTER: Record<MainTab, 'Following' | 'For you'> = {
   'following': 'Following',
@@ -21,6 +21,7 @@ const TAB_TO_FILTER: Record<MainTab, 'Following' | 'For you'> = {
 }
 
 export const Main: React.FC = () => {
+  const t = useT()
   const [searchParams, setSearchParams] = useSearchParams()
   const tabParam = searchParams.get('tab') as MainTab | null
   const activeToken = useTokenDataStore(s => {
@@ -61,8 +62,8 @@ export const Main: React.FC = () => {
   const feedRef = useRef<FeedRef>(null)
 
   const mainTabs: TabItem<MainTab>[] = [
-    { id: 'following', label: TAB_LABELS['following'] },
-    { id: 'foryou', label: TAB_LABELS['foryou'] },
+    { id: 'following', label: t('feed.tab.following') },
+    { id: 'foryou', label: t('feed.tab.for_you') },
   ]
 
   return (

@@ -23,6 +23,7 @@ import { CAW_NAME_MARKETPLACE_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAME_QUOTER_ADDRES
 import { cawProfileMarketplaceAbi, cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { chains } from '~/config/chains'
 import UsernameSvg from '~/components/UsernameSvg'
+import { useT } from '~/i18n/I18nProvider'
 import { useOffersUnreadStore } from '~/store/offersUnreadStore'
 import { useSalesUnreadStore } from '~/store/salesUnreadStore'
 
@@ -40,6 +41,7 @@ function formatBurned(raw: string): string {
 const VALID_TABS: Tab[] = ['listings', 'sales', 'mine', 'offers']
 
 const Marketplace: React.FC = () => {
+  const t = useT()
   const { isDark } = useTheme()
   const [searchParams, setSearchParams] = useSearchParams()
   const location = useLocation() as any
@@ -123,13 +125,13 @@ const Marketplace: React.FC = () => {
           <h1 className={`text-2xl font-bold transition-colors duration-300 ${
             isDark ? 'text-white' : 'text-black'
           }`}>
-            Usernames
+            {t('marketplace.title')}
           </h1>
           <div className={`flex items-center gap-2 mt-2 text-sm ${
             isDark ? 'text-gray-400' : 'text-gray-500'
           }`}>
             <HiOutlineInformationCircle className="w-4 h-4 flex-shrink-0" />
-            <span>Your username is an NFT — create one, or buy and sell on the feeless marketplace.</span>
+            <span>{t('marketplace.subtitle')}</span>
           </div>
 
           {/* Stats row. On mobile we'd otherwise show 2-on-row-1 + 1-orphan
@@ -138,10 +140,10 @@ const Marketplace: React.FC = () => {
               all three fit in one row. */}
           {stats && (
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 mt-5">
-              <StatCard label="Profiles Created" value={stats.totalUsers.toLocaleString()} isDark={isDark} />
-              <StatCard label="For Sale" value={stats.activeListings.toLocaleString()} isDark={isDark} />
+              <StatCard label={t('marketplace.stats.profiles_created')} value={stats.totalUsers.toLocaleString()} isDark={isDark} />
+              <StatCard label={t('marketplace.stats.for_sale')} value={stats.activeListings.toLocaleString()} isDark={isDark} />
               <div className="col-span-2 sm:col-span-1">
-                <StatCard label="CAW Burned" value={formatBurned(stats.totalCawBurned)} isDark={isDark} />
+                <StatCard label={t('marketplace.stats.caw_burned')} value={formatBurned(stats.totalCawBurned)} isDark={isDark} />
               </div>
             </div>
           )}
@@ -152,7 +154,7 @@ const Marketplace: React.FC = () => {
               onClick={() => navigate('/usernames/new')}
               className="px-8 py-3 rounded-xl text-base font-semibold bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer"
             >
-              Create New Profile
+              {t('marketplace.create_button')}
             </button>
           </div>
         </div>

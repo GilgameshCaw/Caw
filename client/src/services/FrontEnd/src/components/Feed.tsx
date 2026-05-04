@@ -13,6 +13,7 @@ import { useBlockedUsersStore } from '~/store/blockedUsersStore'
 import { useHiddenCawsStore } from '~/store/hiddenCawsStore'
 import SuggestedUsers from './SuggestedUsers'
 import { useHostVerification } from '~/hooks/useHostVerification'
+import { useT } from '~/i18n/I18nProvider'
 import { LoadingSpinner } from './Skeleton'
 import { useUserByUsername } from '~/hooks/useUserData'
 import { useQueryClient } from '@tanstack/react-query'
@@ -61,10 +62,11 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const activeToken = useTokenDataStore(s => {
     const tokens = Object.values(s.tokensByAddress).flat()
-    return tokens.find(t => t.tokenId === s.activeTokenId) || tokens[0]
+    return tokens.find(tk => tk.tokenId === s.activeTokenId) || tokens[0]
   })
   const pendingPosts = usePendingPostsStore(s => s.pendingPosts)
   const { isDark } = useTheme()
+  const t = useT()
   const { preferences } = useMutePreferences()
   const blockedUsers = useBlockedUsersStore(s => s.blockedUsers)
   const hiddenCawonces = useHiddenCawsStore(s => s.hiddenCawonces)
@@ -328,7 +330,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
         setHasMore(finalHasMore)
       } catch (err: any) {
         console.error('Custom feed load error', err)
-        setError('Failed to load feed')
+        setError(t('feed.error.failed_to_load'))
       } finally {
         loadingRef.current = false; setLoading(false)
       }
@@ -386,7 +388,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
       }
     } catch (e) {
       console.error(e)
-      setError('Could not load feed')
+      setError(t('feed.error.could_not_load'))
     } finally {
       loadingRef.current = false
       setLoading(false)
@@ -638,9 +640,9 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
         </div>
       )
     }
-    return <div className="text-gray-400 text-center py-8">No posts yet.</div>
+    return <div className="text-gray-400 text-center py-8">{t('feed.empty.no_posts')}</div>
   }
-  if (filteredItems.length === 0 && !hasPending) return <div className="text-gray-400 text-center py-8">No posts to show (some may be hidden by your settings).</div>
+  if (filteredItems.length === 0 && !hasPending) return <div className="text-gray-400 text-center py-8">{t('feed.empty.all_filtered')}</div>
 
   return (
     <div>
@@ -830,7 +832,7 @@ const Feed = forwardRef<FeedRef, Props>(({ filter, username, apiEndpoint, title 
         )
       })(authoredPinVersion)}
 
-      {loading && <div className="py-4 text-center text-gray-400">Loading more…</div>}
+      {loading && <div className="py-4 text-center text-gray-400">{t('feed.loading_more')}</div>}
       {!hasMore && <div className="py-4 text-center text-gray-500">You've reached the end.</div>}
     </div>
   )

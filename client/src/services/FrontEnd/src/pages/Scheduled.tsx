@@ -12,6 +12,7 @@ import { useAuthStore } from '~/store/authStore'
 import { useVerifyWallet } from '~/hooks/useVerifyWallet'
 import { formatDistanceToNow, format, isPast } from 'date-fns'
 import ContentWithHashtags from '~/components/ContentWithHashtags'
+import { useT } from '~/i18n/I18nProvider'
 
 interface ScheduledCaw {
   id: number
@@ -144,6 +145,7 @@ function groupIntoRows(items: ScheduledCaw[]): Row[] {
 }
 
 const ScheduledPage: React.FC = () => {
+  const t = useT()
   const { isDark } = useTheme()
   const [activeTab, setActiveTab] = useState<'pending' | 'published' | 'failed'>('pending')
   const [expandedThreads, setExpandedThreads] = useState<Set<string>>(new Set())
@@ -195,9 +197,9 @@ const ScheduledPage: React.FC = () => {
   })
 
   const tabs = [
-    { id: 'pending' as const, label: 'Scheduled', count: 0 },
-    { id: 'published' as const, label: 'Published', count: 0 },
-    { id: 'failed' as const, label: 'Failed', count: 0 },
+    { id: 'pending' as const, label: t('scheduled.tab.pending'), count: 0 },
+    { id: 'published' as const, label: t('scheduled.tab.published'), count: 0 },
+    { id: 'failed' as const, label: t('scheduled.tab.failed'), count: 0 },
   ]
 
   const getStatusIcon = (status: string) => {
@@ -219,15 +221,15 @@ const ScheduledPage: React.FC = () => {
     switch (item.status) {
       case 'pending':
         if (isPast(scheduledDate)) {
-          return 'Processing...'
+          return t('scheduled.status.processing')
         }
-        return `Scheduled for ${format(scheduledDate, 'MMM d, yyyy h:mm a')}`
+        return t('scheduled.status.scheduled_for', { date: format(scheduledDate, 'MMM d, yyyy h:mm a') })
       case 'published':
-        return `Published ${formatDistanceToNow(scheduledDate, { addSuffix: true })}`
+        return t('scheduled.status.published_ago', { ago: formatDistanceToNow(scheduledDate, { addSuffix: true }) })
       case 'failed':
-        return 'Failed to publish'
+        return t('scheduled.status.failed')
       case 'cancelled':
-        return 'Cancelled'
+        return t('scheduled.status.cancelled')
       default:
         return ''
     }
@@ -243,14 +245,14 @@ const ScheduledPage: React.FC = () => {
           <div className={`text-center py-16 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
             <HiOutlineClock className="w-16 h-16 mx-auto mb-4 opacity-50" />
             <h2 className={`text-xl font-semibold mb-2 ${isDark ? 'text-white' : 'text-black'}`}>
-              Scheduled Posts
+              {t('scheduled.title')}
             </h2>
-            <p className="mb-4">Sign in to view your scheduled posts.</p>
+            <p className="mb-4">{t('scheduled.signin_prompt')}</p>
             <button
               onClick={openConnectModal}
               className="px-6 py-2 bg-yellow-500 hover:bg-yellow-400 text-black font-medium rounded-full transition-colors cursor-pointer"
             >
-              Sign In
+              {t('common.sign_in')}
             </button>
           </div>
         </div>
@@ -265,9 +267,9 @@ const ScheduledPage: React.FC = () => {
           <div className={`text-center py-16 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
             <HiOutlineClock className="w-16 h-16 mx-auto mb-4 opacity-50" />
             <h2 className={`text-xl font-semibold mb-2 ${isDark ? 'text-white' : 'text-black'}`}>
-              Verify your address
+              {t('scheduled.verify.title')}
             </h2>
-            <p className="mb-4">You must verify your address to view scheduled posts.</p>
+            <p className="mb-4">{t('scheduled.verify.description')}</p>
             {verifyError && (
               <p className="mb-4 text-red-500 text-sm">{verifyError}</p>
             )}
@@ -278,7 +280,7 @@ const ScheduledPage: React.FC = () => {
                 isVerifying ? 'opacity-50 cursor-not-allowed' : ''
               }`}
             >
-              {isVerifying ? 'Signing...' : 'Verify Address'}
+              {isVerifying ? t('messages.signin.signing') : t('scheduled.verify.button')}
             </button>
           </div>
         </div>
@@ -294,13 +296,13 @@ const ScheduledPage: React.FC = () => {
           <h1 className={`text-2xl font-bold transition-colors duration-300 ${
             isDark ? 'text-white' : 'text-black'
           }`}>
-            Scheduled Posts
+            {t('scheduled.title')}
           </h1>
           <div className={`flex items-center gap-2 mt-2 text-sm ${
             isDark ? 'text-gray-400' : 'text-gray-500'
           }`}>
             <HiOutlineInformationCircle className="w-4 h-4 flex-shrink-0" />
-            <span>Manage your scheduled and past posts</span>
+            <span>{t('scheduled.subtitle')}</span>
           </div>
         </div>
 
@@ -327,7 +329,7 @@ const ScheduledPage: React.FC = () => {
         {/* Content */}
         {isLoading ? (
           <div className={`text-center py-8 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
-            Loading...
+            {t('common.loading')}
           </div>
         ) : !scheduledData?.items?.length ? (
           <div className="text-center py-12">
@@ -337,16 +339,16 @@ const ScheduledPage: React.FC = () => {
             <h3 className={`text-lg font-semibold mb-2 transition-colors duration-300 ${
               isDark ? 'text-white' : 'text-black'
             }`}>
-              {activeTab === 'pending' && 'No scheduled posts yet'}
-              {activeTab === 'published' && 'No published posts yet'}
-              {activeTab === 'failed' && 'No failed posts'}
+              {activeTab === 'pending' && t('scheduled.empty.pending')}
+              {activeTab === 'published' && t('scheduled.empty.published')}
+              {activeTab === 'failed' && t('scheduled.empty.failed')}
             </h3>
             <p className={`transition-colors duration-300 ${
               isDark ? 'text-gray-400' : 'text-gray-600'
             }`}>
-              {activeTab === 'pending' && 'Schedule a post to see it here.'}
-              {activeTab === 'published' && 'Scheduled posts that have been sent will appear here.'}
-              {activeTab === 'failed' && "Scheduled posts that didn't publish will appear here."}
+              {activeTab === 'pending' && t('scheduled.empty.pending_hint')}
+              {activeTab === 'published' && t('scheduled.empty.published_hint')}
+              {activeTab === 'failed' && t('scheduled.empty.failed_hint')}
             </p>
           </div>
         ) : (

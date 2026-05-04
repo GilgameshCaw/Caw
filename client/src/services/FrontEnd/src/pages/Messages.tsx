@@ -50,6 +50,7 @@ import ConfirmModal, { wasAcknowledged } from '~/components/modals/ConfirmModal'
 import ReportUserModal from '~/components/modals/ReportUserModal'
 import { translateText } from '~/utils/translate'
 import { FollowButton } from '~/components/FollowButton'
+import { useT } from '~/i18n/I18nProvider'
 import {
   MessageReactionStrip,
   MessageReactionsBar,
@@ -60,6 +61,7 @@ import {
 
 const MessagesPage: React.FC = () => {
   const { isDark } = useTheme()
+  const t = useT()
   const ensureWallet = useEnsureWallet()
   const activeToken = useActiveToken()
   const currentUser = activeToken ? { id: activeToken.tokenId, username: activeToken.username } : null
@@ -1086,7 +1088,7 @@ const MessagesPage: React.FC = () => {
                       isDark ? 'text-white' : 'text-black'
                     }`}
                   >
-                    {currentView === 'inbox' ? 'Messages' : currentView === 'setup' ? 'Enable DMs' : 'Chat'}
+                    {currentView === 'inbox' ? t('messages.title.inbox') : currentView === 'setup' ? t('messages.title.setup') : t('messages.title.chat')}
                   </h1>
                 )}
                 {currentView === 'inbox' && (
@@ -1228,14 +1230,14 @@ const MessagesPage: React.FC = () => {
                 <div className="w-11 h-11" style={{ backgroundColor: '#eab308', maskImage: 'url(/icons/crow-2.svg)', maskSize: 'contain', maskRepeat: 'no-repeat', maskPosition: 'center', WebkitMaskImage: 'url(/icons/crow-2.svg)', WebkitMaskSize: 'contain', WebkitMaskRepeat: 'no-repeat', WebkitMaskPosition: 'center' }} />
               </div>
               <h2 className={`text-xl font-bold mb-3 ${isDark ? 'text-white' : 'text-black'}`}>
-                {isWrongWallet ? 'Wrong Wallet Connected' : 'Log In to Access Messages'}
+                {isWrongWallet ? t('messages.signin.wrong_wallet') : t('messages.signin.log_in')}
               </h2>
               <p className={`mb-6 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
                 {!address
-                  ? 'Connect your wallet to get started.'
+                  ? t('messages.signin.connect_wallet')
                   : isWrongWallet
-                  ? `Please switch wallets to the owner of @${activeToken?.username || 'this profile'}.`
-                  : 'Sign a free message to verify you own this wallet.'}
+                  ? t('messages.signin.switch_wallet', { username: activeToken?.username || t('messages.signin.this_profile') })
+                  : t('messages.signin.verify')}
               </p>
               {verifyError && (
                 <div className="mb-4 p-3 rounded-lg bg-red-500/20 border border-red-500">
@@ -1250,7 +1252,7 @@ const MessagesPage: React.FC = () => {
                   disabled={isVerifying || isWrongWallet}
                   className={`px-6 py-3 rounded-full font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-all duration-300 cursor-pointer ${isVerifying || isWrongWallet ? 'opacity-50 cursor-not-allowed' : ''}`}
                 >
-                  {isVerifying ? 'Signing...' : 'Sign to Log In'}
+                  {isVerifying ? t('messages.signin.signing') : t('messages.signin.button')}
                 </button>
               )}
             </div>
@@ -1314,7 +1316,7 @@ const MessagesPage: React.FC = () => {
                       disabled={identityLoading}
                       className="px-6 py-3 rounded-full font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-all duration-300 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      {identityLoading ? 'Enabling...' : 'Enable DMs'}
+                      {identityLoading ? t('profile.dm.enabling') : t('profile.dm.enable_button')}
                     </button>
                   )
                 })()}
@@ -1329,7 +1331,7 @@ const MessagesPage: React.FC = () => {
             isDark ? 'bg-yellow-500/10 border-b border-yellow-500/30' : 'bg-yellow-50 border-b border-yellow-200'
           }`}>
             <p className={`text-sm ${isDark ? 'text-yellow-200' : 'text-yellow-800'}`}>
-              {!address ? 'Connect your wallet to read messages' : 'Sign to unlock your encrypted messages'}
+              {!address ? t('messages.unlock.connect_wallet') : t('messages.unlock.sign_to_unlock')}
             </p>
             {!address ? (
               <ConnectButton />
@@ -1339,7 +1341,7 @@ const MessagesPage: React.FC = () => {
                 disabled={identityLoading}
                 className="px-4 py-1.5 rounded-full text-sm font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-all cursor-pointer disabled:opacity-50"
               >
-                {identityLoading ? 'Signing...' : 'Unlock'}
+                {identityLoading ? t('messages.signin.signing') : t('messages.unlock.button')}
               </button>
             )}
           </div>
@@ -1420,7 +1422,7 @@ const MessagesPage: React.FC = () => {
                           }`}>
                             {conversation.lastMessagePreview
                               ? (conversation.lastMessageSenderId === currentUser?.id ? 'You: ' : '') + conversation.lastMessagePreview
-                              : conversation.lastMessageAt ? 'Encrypted message' : 'Start a conversation'}
+                              : conversation.lastMessageAt ? t('messages.preview.encrypted') : t('messages.preview.start')}
                           </p>
                         </div>
                         {isConversationMuted(conversation.id) && (
@@ -2189,7 +2191,7 @@ const MessagesPage: React.FC = () => {
                   isDark ? 'bg-yellow-500/10 border-yellow-500/30' : 'bg-yellow-50 border-yellow-200'
                 }`}>
                   <p className={`text-sm ${isDark ? 'text-yellow-200' : 'text-yellow-800'}`}>
-                    {!address ? 'Connect your wallet to read messages' : 'Sign to unlock your encrypted messages'}
+                    {!address ? t('messages.unlock.connect_wallet') : t('messages.unlock.sign_to_unlock')}
                   </p>
                   {!address ? (
                     <ConnectButton />
@@ -2199,7 +2201,7 @@ const MessagesPage: React.FC = () => {
                       disabled={identityLoading}
                       className="px-4 py-1.5 rounded-full text-sm font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-all cursor-pointer disabled:opacity-50"
                     >
-                      {identityLoading ? 'Signing...' : 'Unlock'}
+                      {identityLoading ? t('messages.signin.signing') : t('messages.unlock.button')}
                     </button>
                   )}
                 </div>
@@ -2408,7 +2410,7 @@ const MessagesPage: React.FC = () => {
                 <textarea
                   ref={composerTextareaRef}
                   data-dm-composer
-                  placeholder="Start a new message"
+                  placeholder={t('messages.search.start_new')}
                   value={newMessageContent}
                   onChange={(e) => {
                     handleInputChange(e.target.value)
@@ -2543,7 +2545,7 @@ const MessagesPage: React.FC = () => {
                 </button>
               )}
               <h2 className={`text-xl font-bold ${isDark ? 'text-white' : 'text-black'}`}>
-                {modalStep === 'select' ? 'New Message' : 'Send Message'}
+                {modalStep === 'select' ? t('messages.modal.new_message') : t('messages.modal.send_message')}
               </h2>
               <button
                 onClick={closeModal}
@@ -2565,7 +2567,7 @@ const MessagesPage: React.FC = () => {
                     }`} />
                     <input
                       type="text"
-                      placeholder="Search people..."
+                      placeholder={t('messages.search.people')}
                       value={newMessageSearch}
                       onChange={(e) => setNewMessageSearch(e.target.value)}
                       className={`w-full pl-10 pr-4 py-2 rounded-full border transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-yellow-500/30 ${
@@ -2696,7 +2698,7 @@ const MessagesPage: React.FC = () => {
                   <textarea
                     value={messageText}
                     onChange={(e) => setMessageText(e.target.value)}
-                    placeholder="Type your message..."
+                    placeholder={t('messages.composer.placeholder')}
                     className={`w-full h-32 px-4 py-3 rounded-lg border resize-none transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-yellow-500/30 ${
                       isDark
                         ? 'bg-black border-gray-600 text-white placeholder-gray-500'
