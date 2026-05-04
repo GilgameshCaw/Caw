@@ -25,6 +25,7 @@
 // MEDIA_PUBLIC_URL_BASE config which can change.
 
 import Redis from 'ioredis'
+import { mediaStorage, type MediaKind } from './mediaStorage'
 
 const redis = process.env.REDIS_URL
   ? new Redis(process.env.REDIS_URL)
@@ -40,6 +41,10 @@ const GRACE_MS = 7 * 24 * 60 * 60 * 1000
  *
  * Returns null for URLs we don't recognize (external URLs, default
  * avatars, gravatar, etc.) — those aren't ours to delete.
+ *
+ * Delegates the prefix to MediaStorage.bucketKeyFor so the key here
+ * matches exactly what put() wrote. Computing the prefix locally would
+ * drift the moment FilebaseMediaStorage's resolution changes.
  */
 export function urlToBucketKey(url: string | null | undefined): string | null {
   if (!url || typeof url !== 'string') return null
@@ -48,13 +53,9 @@ export function urlToBucketKey(url: string | null | undefined): string | null {
   // We only own /uploads/<images|videos|encrypted>/<filename> paths.
   const match = url.match(/\/uploads\/(images|videos|encrypted)\/([^?#]+)$/)
   if (!match) return null
-  const kind = match[1] as 'images' | 'videos' | 'encrypted'
+  const kind = match[1] as MediaKind
   const filename = match[2]
-  // Per-install bucket prefix. Mirror what FilebaseMediaStorage does in
-  // mediaStorage.ts so the key here matches the key the upload wrote.
-  // SHORTURL_DOMAIN is set in client/.env at install time.
-  const prefix = (process.env.FILEBASE_KEY_PREFIX || hostnameOf(process.env.SHORTURL_DOMAIN) || '').replace(/^\/+|\/+$/g, '')
-  return prefix ? `${prefix}/${kind}/${filename}` : `${kind}/${filename}`
+  return mediaStorage().bucketKeyFor(kind, filename)
 }
 
 /**
@@ -135,17 +136,7 @@ export async function sweep(opts: { dryRun?: boolean } = {}): Promise<{ deleted:
   const expired = await redis.zrangebyscore(ZSET_KEY, 0, now, 'LIMIT', 0, batchSize)
   if (expired.length === 0) return { deleted, failed, skipped }
 
-  // Lazy-load the storage backend. orphanedMedia.ts must NOT import
-  // mediaStorage at module load — circular if ever invoked from upload
-  // path, and we want this file usable from background jobs that don't
-  // need the full multer pipeline.
-  const { mediaStorage } = await import('./mediaStorage')
-  const storage = mediaStorage() as any
-  if (typeof storage.delete !== 'function') {
-    // LocalMediaStorage doesn't expose delete (yet). Skip silently —
-    // local-disk orphans are an OS-level concern, not a Filebase one.
-    return { deleted, failed, skipped: expired.length }
-  }
+  const storage = mediaStorage()
 
   for (const fullKey of expired) {
     // The bucket key is stored verbatim. Reverse-engineer kind +
@@ -187,9 +178,4 @@ export async function sweep(opts: { dryRun?: boolean } = {}): Promise<{ deleted:
 /** Read-only inspection helper for ops + tests. */
 export async function pendingCount(): Promise<number> {
   return redis.zcard(ZSET_KEY)
-}
-
-function hostnameOf(url: string | null | undefined): string | null {
-  if (!url) return null
-  try { return new URL(url).hostname } catch { return null }
 }

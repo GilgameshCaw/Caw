@@ -15,6 +15,12 @@ export interface MediaStorage {
    *  because local-disk cleanup is an OS-level concern, not part of
    *  the bucket-storage budget the GC manages. */
   delete(kind: MediaKind, filename: string): Promise<void>
+  /** Bucket-side key the upload was written under. Single source of
+   *  truth for `<prefix>/<kind>/<filename>` so orphanedMedia.ts can
+   *  enqueue keys that match exactly what put() wrote — recomputing
+   *  the prefix elsewhere drifts (FILEBASE_KEY_PREFIX vs publicUrl()
+   *  vs SHORTURL_DOMAIN) and silently breaks delete(). */
+  bucketKeyFor(kind: MediaKind, filename: string): string
 }
 
 const FILEBASE_ENDPOINT = 'https://s3.filebase.io'
@@ -55,6 +61,11 @@ class LocalMediaStorage implements MediaStorage {
     // No-op for local — see interface comment.
   }
 
+  bucketKeyFor(kind: MediaKind, filename: string): string {
+    // Local has no bucket prefix; the URL path IS the on-disk path.
+    return `${kind}/${filename}`
+  }
+
   publicUrlFor(kind: MediaKind, filename: string): string {
     return `${publicUrl()}/uploads/${kind}/${filename}`
   }
@@ -88,14 +99,14 @@ class FilebaseMediaStorage implements MediaStorage {
     this.prefix = (process.env.FILEBASE_KEY_PREFIX || hostnameOf(publicUrl())).replace(/^\/+|\/+$/g, '')
   }
 
-  private keyFor(kind: MediaKind, filename: string): string {
+  bucketKeyFor(kind: MediaKind, filename: string): string {
     return this.prefix ? `${this.prefix}/${kind}/${filename}` : `${kind}/${filename}`
   }
 
   async put(kind: MediaKind, filename: string, body: Buffer, contentType: string): Promise<string> {
     await this.s3.send(new PutObjectCommand({
       Bucket: this.bucket,
-      Key: this.keyFor(kind, filename),
+      Key: this.bucketKeyFor(kind, filename),
       Body: body,
       ContentType: contentType,
       CacheControl: 'public, max-age=31536000, immutable',
@@ -109,7 +120,7 @@ class FilebaseMediaStorage implements MediaStorage {
 
   async baseExists(kind: MediaKind, filename: string): Promise<boolean> {
     try {
-      await this.s3.send(new HeadObjectCommand({ Bucket: this.bucket, Key: this.keyFor(kind, filename) }))
+      await this.s3.send(new HeadObjectCommand({ Bucket: this.bucket, Key: this.bucketKeyFor(kind, filename) }))
       return true
     } catch { return false }
   }
@@ -119,7 +130,7 @@ class FilebaseMediaStorage implements MediaStorage {
   }
 
   async delete(kind: MediaKind, filename: string): Promise<void> {
-    await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: this.keyFor(kind, filename) }))
+    await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: this.bucketKeyFor(kind, filename) }))
   }
 }
 
