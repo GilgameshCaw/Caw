@@ -112,15 +112,6 @@ function ownershipOf(s: RuntimeState, tokenId: number): bigint {
   return s.ownership.get(tokenId) ?? 0n
 }
 
-interface PerUserDelta {
-  /** Net balance delta in CAW wei (positive = inflow). */
-  delta: bigint
-  /** Final ownership AFTER all touches in this action. */
-  finalOwnership: bigint
-  /** Final balance AFTER all touches. */
-  finalBalance: bigint
-}
-
 interface RecordParams {
   rawAction: RawAction
   validatorId: number
@@ -162,22 +153,40 @@ export async function recordAction(
   const { rawAction, validatorId, blockNumber, blockTimestamp, txHash, logIndex, actionIndex } = params
   const senderId = Number(rawAction.senderId)
   const receiverId = rawAction.receiverId ? Number(rawAction.receiverId) : 0
-  const actionTypeName = ACTION_TYPE_NUM_TO_NAME[Number(rawAction.actionType) as keyof typeof ACTION_TYPE_NUM_TO_NAME]
+  const rawTypeName = ACTION_TYPE_NUM_TO_NAME[Number(rawAction.actionType) as keyof typeof ACTION_TYPE_NUM_TO_NAME]
+  // Resolve OTHER:tip into a TIP actionType so the chart can stack tips
+  // separately from the catch-all OTHER bucket. Other OTHER subtypes
+  // (poll vote, hide, etc.) stay as OTHER.
+  const isOtherTip = rawTypeName === 'OTHER' && typeof rawAction.text === 'string' && rawAction.text.startsWith('tip:')
+  const displayActionType = isOtherTip ? 'TIP' : rawTypeName
 
-  // Per-user delta accumulator for this action. We collapse every touch
-  // in step 1 + step 2 into one ledger row per touched user.
-  const deltas = new Map<number, PerUserDelta>()
-  const startingBalances = new Map<number, bigint>()
-  const touch = (tokenId: number, finalOwnership: bigint, finalBalance: bigint) => {
-    if (!startingBalances.has(tokenId)) {
-      const startingOwn = ownershipOf(s, tokenId)
-      startingBalances.set(tokenId, balanceOf(startingOwn, s.multiplier))
-    }
-    deltas.set(tokenId, {
-      delta: finalBalance - (startingBalances.get(tokenId) ?? 0n),
-      finalOwnership,
-      finalBalance,
-    })
+  // One row per individual touch component. Distinct from the previous
+  // model (one row per touched user) so the chart can stack by reason
+  // independently for incoming and outgoing.
+  type TouchReason =
+    | 'ACTION_SPEND_BASE'           // sender pays the type-specific cost
+    | 'ACTION_SPEND_TIP'            // sender pays a tip to another user (OTHER:tip)
+    | 'ACTION_SPEND_VALIDATOR_TIP'  // sender pays the validator fee (every action)
+    | 'ACTION_RECIPIENT'            // user received a type credit or a tip
+    | 'ACTION_VALIDATOR'            // user received a validator-fee credit
+  interface TouchRow {
+    tokenId: number
+    delta: bigint
+    finalOwnership: bigint
+    finalBalance: bigint
+    reason: TouchReason
+    counterpartyTokenId: number | null
+  }
+  const touches: TouchRow[] = []
+  const pushTouch = (
+    tokenId: number,
+    delta: bigint,
+    finalOwnership: bigint,
+    finalBalance: bigint,
+    reason: TouchReason,
+    counterpartyTokenId: number | null,
+  ) => {
+    touches.push({ tokenId, delta, finalOwnership, finalBalance, reason, counterpartyTokenId })
   }
 
   // RewardMultiplierSnapshot writes accumulate here so we can batch them
@@ -189,13 +198,14 @@ export async function recordAction(
   // STEP 1: type-specific
   // -------------------------
   if (
-    actionTypeName === 'CAW' ||
-    actionTypeName === 'LIKE' ||
-    actionTypeName === 'RECAW' ||
-    actionTypeName === 'FOLLOW'
+    rawTypeName === 'CAW' ||
+    rawTypeName === 'LIKE' ||
+    rawTypeName === 'RECAW' ||
+    rawTypeName === 'FOLLOW'
   ) {
-    const cost = ACTION_COST[actionTypeName as FixedCostActionType]
+    const cost = ACTION_COST[rawTypeName as FixedCostActionType]
     const senderOwn = ownershipOf(s, senderId)
+    const senderBalBefore = balanceOf(senderOwn, s.multiplier)
     const r = spendAndDistribute(senderOwn, s, cost.spend * PRECISION, cost.communal * PRECISION)
     if (r.communalDistributed > 0n) {
       multiplierEvents.push({
@@ -207,16 +217,33 @@ export async function recordAction(
     }
     s.multiplier = r.multiplier
     s.ownership.set(senderId, r.senderOwnership)
-    touch(senderId, r.senderOwnership, r.senderBalance)
+    pushTouch(
+      senderId,
+      r.senderBalance - senderBalBefore, // negative
+      r.senderOwnership,
+      r.senderBalance,
+      'ACTION_SPEND_BASE',
+      receiverId || null,
+    )
 
     if (cost.receive > 0n && receiverId !== 0) {
       const recvOwn = ownershipOf(s, receiverId)
+      const recvBalBefore = balanceOf(recvOwn, s.multiplier)
       const recv = addToBalance(recvOwn, s.multiplier, cost.receive * PRECISION)
       s.ownership.set(receiverId, recv.ownership)
-      touch(receiverId, recv.ownership, recv.balance)
+      pushTouch(
+        receiverId,
+        recv.balance - recvBalBefore,
+        recv.ownership,
+        recv.balance,
+        'ACTION_RECIPIENT',
+        senderId,
+      )
     }
-  } else if (actionTypeName === 'WITHDRAW') {
+  } else if (rawTypeName === 'WITHDRAW') {
     // CawProfileL2.withdraw(): debits sender, decrements totalCaw.
+    // Modelled as ACTION_SPEND_BASE so the chart's outgoing stack
+    // surfaces it the same way as other type-specific costs.
     const amount = (BigInt(rawAction.amounts?.[0] ?? 0)) * PRECISION
     const senderOwn = ownershipOf(s, senderId)
     const senderBal = balanceOf(senderOwn, s.multiplier)
@@ -229,10 +256,14 @@ export async function recordAction(
     const newOwn = ownershipFromBalance(newBal, s.multiplier)
     s.ownership.set(senderId, newOwn)
     s.totalCaw -= amount
-    touch(senderId, newOwn, newBal)
+    pushTouch(senderId, -amount, newOwn, newBal, 'ACTION_SPEND_BASE', null)
   }
   // UNLIKE / UNFOLLOW / OTHER (excluding tip side effects via amounts):
   // no type-specific contract action. Step 2 handles validator tip/recipients.
+
+  // OTHER:tip — sender pays the recipient + validator tip via step 2;
+  // we re-tag the spend rows below with reason=ACTION_SPEND_TIP so the
+  // outgoing chart segments out tips from base costs.
 
   // -------------------------
   // STEP 2: _distributeAmountsMem
@@ -242,18 +273,27 @@ export async function recordAction(
   if (amounts.length > 0) {
     const numAmounts = amounts.length
     const numRecipients = recipients.length
-    const isWithdraw = actionTypeName === 'WITHDRAW'
+    const isWithdraw = rawTypeName === 'WITHDRAW'
     const startIndex = isWithdraw ? 1 : 0
 
-    // Per-recipient addToBalance.
+    // Per-recipient addToBalance — these are the tip-recipient credits
+    // for OTHER:tip, or extra-recipient payouts on other action types.
     let amountTotal = 0n
     for (let i = startIndex; i < numRecipients; i++) {
       const recipientTokenId = Number(recipients[i])
       const amountWei = BigInt(amounts[i] ?? 0) * PRECISION
       const recvOwn = ownershipOf(s, recipientTokenId)
+      const recvBalBefore = balanceOf(recvOwn, s.multiplier)
       const recv = addToBalance(recvOwn, s.multiplier, amountWei)
       s.ownership.set(recipientTokenId, recv.ownership)
-      touch(recipientTokenId, recv.ownership, recv.balance)
+      pushTouch(
+        recipientTokenId,
+        recv.balance - recvBalBefore,
+        recv.ownership,
+        recv.balance,
+        'ACTION_RECIPIENT',
+        senderId,
+      )
       amountTotal += amountWei
     }
     // Validator tip is the LAST element of `amounts`. Always counted in
@@ -261,22 +301,67 @@ export async function recordAction(
     const validatorTipWei = BigInt(amounts[numAmounts - 1] ?? 0) * PRECISION
     amountTotal += validatorTipWei
 
-    // Sender pays amountTotal with 0 communal.
+    // Sender pays amountTotal with 0 communal. Split into two rows:
+    // one for the tip portion (recipients), one for the validator-tip
+    // portion. This is what makes the outgoing chart legend usable.
+    const recipientPortion = amountTotal - validatorTipWei
     if (amountTotal > 0n) {
       const senderOwn = ownershipOf(s, senderId)
+      const senderBalBefore = balanceOf(senderOwn, s.multiplier)
       const r = spendAndDistribute(senderOwn, s, amountTotal, 0n)
-      // No multiplier change here (communal is 0); skip multiplierEvents.
       s.multiplier = r.multiplier // unchanged but assign for clarity
       s.ownership.set(senderId, r.senderOwnership)
-      touch(senderId, r.senderOwnership, r.senderBalance)
+      // recipientPortion: tagged ACTION_SPEND_TIP (the user's outgoing
+      // tip spend). For non-tip actions this segment is normally 0;
+      // it shows up only when amounts has a payee beyond the validator.
+      if (recipientPortion > 0n) {
+        // Synthesize an intermediate balance for this row (the actual
+        // post-recipient-portion balance). The contract did one
+        // spendAndDistribute call; we split the row but recompute the
+        // intermediate balance for accurate per-row final-balance.
+        const balAfterRecipient = senderBalBefore - recipientPortion
+        const ownAfterRecipient = ownershipFromBalance(balAfterRecipient, s.multiplier)
+        pushTouch(
+          senderId,
+          -recipientPortion,
+          ownAfterRecipient,
+          balAfterRecipient,
+          'ACTION_SPEND_TIP',
+          // Tip target: prefer the receiverId from the action header
+          // (used by tip:userId:cawonce text protocol) and fall back to
+          // the first recipient in amounts[].
+          receiverId || (numRecipients > 0 ? Number(recipients[0]) : null),
+        )
+      }
+      if (validatorTipWei > 0n) {
+        // Validator tip from the sender's perspective. Distinct reason
+        // so the outgoing-spend chart can stack "Validator fees" as its
+        // own segment.
+        pushTouch(
+          senderId,
+          -validatorTipWei,
+          r.senderOwnership,
+          r.senderBalance,
+          'ACTION_SPEND_VALIDATOR_TIP',
+          validatorId || null,
+        )
+      }
     }
 
     // Validator receives the tip via addToBalance.
     if (validatorTipWei > 0n) {
       const valOwn = ownershipOf(s, validatorId)
+      const valBalBefore = balanceOf(valOwn, s.multiplier)
       const val = addToBalance(valOwn, s.multiplier, validatorTipWei)
       s.ownership.set(validatorId, val.ownership)
-      touch(validatorId, val.ownership, val.balance)
+      pushTouch(
+        validatorId,
+        val.balance - valBalBefore,
+        val.ownership,
+        val.balance,
+        'ACTION_VALIDATOR',
+        senderId,
+      )
     }
   }
 
@@ -299,42 +384,37 @@ export async function recordAction(
     })
   }
 
-  if (deltas.size > 0) {
-    const reasonFor = (tokenId: number): string => {
-      if (tokenId === senderId) return 'ACTION_SENDER'
-      if (tokenId === validatorId) return 'ACTION_VALIDATOR'
-      return 'ACTION_RECIPIENT'
-    }
-    const counterpartyFor = (tokenId: number): number | null => {
-      if (tokenId === senderId) return receiverId || null
-      return senderId
-    }
+  if (touches.length > 0) {
     await tx.cawOwnershipSnapshot.createMany({
-      data: Array.from(deltas.entries()).map(([tokenId, d]) => ({
-        tokenId,
+      data: touches.map(t => ({
+        tokenId: t.tokenId,
         blockNumber,
         blockTimestamp,
         txHash,
         logIndex,
         actionIndex,
-        ownership: d.finalOwnership.toString(),
+        ownership: t.finalOwnership.toString(),
         multiplier: s.multiplier.toString(),
-        balance: d.finalBalance.toString(),
-        delta: d.delta.toString(),
-        reason: reasonFor(tokenId),
-        actionType: actionTypeName,
-        counterpartyTokenId: counterpartyFor(tokenId),
+        balance: t.finalBalance.toString(),
+        delta: t.delta.toString(),
+        reason: t.reason,
+        actionType: displayActionType,
+        counterpartyTokenId: t.counterpartyTokenId,
       })),
     })
 
-    // Mirror CawOwnershipCurrent so the daily reconciler has a cheap
-    // target. Upserts in parallel are safe (different primary keys).
+    // CawOwnershipCurrent mirrors the latest cawOwnership[tokenId] for
+    // the daily reconciler. Multiple touches for the same user in one
+    // action collapse into one upsert per tokenId, taking the LAST
+    // recorded ownership (which is the post-action contract state).
+    const finalByToken = new Map<number, bigint>()
+    for (const t of touches) finalByToken.set(t.tokenId, t.finalOwnership)
     await Promise.all(
-      Array.from(deltas.entries()).map(([tokenId, d]) =>
+      Array.from(finalByToken.entries()).map(([tokenId, ownership]) =>
         tx.cawOwnershipCurrent.upsert({
           where: { tokenId },
-          create: { tokenId, ownership: d.finalOwnership.toString() },
-          update: { ownership: d.finalOwnership.toString(), updatedAt: new Date() },
+          create: { tokenId, ownership: ownership.toString() },
+          update: { ownership: ownership.toString(), updatedAt: new Date() },
         }),
       ),
     )

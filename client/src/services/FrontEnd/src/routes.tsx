@@ -109,6 +109,10 @@ export default [
     component: <Profile />,
   },
   {
+    path: "/users/:username/activity",
+    component: <CawActivity />,
+  },
+  {
     path: "/address/:address",
     component: <AddressTokens />,
   },

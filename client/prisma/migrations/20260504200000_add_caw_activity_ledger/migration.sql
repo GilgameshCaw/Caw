@@ -17,10 +17,10 @@ CREATE TABLE IF NOT EXISTS "CawOwnershipSnapshot" (
   "txHash"              TEXT NOT NULL,
   "logIndex"            INTEGER NOT NULL,
   "actionIndex"         INTEGER,
-  "ownership"           NUMERIC(78, 0) NOT NULL,
-  "multiplier"          NUMERIC(78, 0) NOT NULL,
-  "balance"             NUMERIC(78, 0) NOT NULL,
-  "delta"               NUMERIC(78, 0) NOT NULL,
+  "ownership"           TEXT NOT NULL,
+  "multiplier"          TEXT NOT NULL,
+  "balance"             TEXT NOT NULL,
+  "delta"               TEXT NOT NULL,
   "reason"              TEXT NOT NULL,
   "actionType"          TEXT,
   "counterpartyTokenId" INTEGER,
@@ -43,9 +43,9 @@ CREATE TABLE IF NOT EXISTS "RewardMultiplierSnapshot" (
   "logIndex"         INTEGER NOT NULL,
   "actionIndex"      INTEGER NOT NULL,
   "blockTimestamp"   TIMESTAMP NOT NULL,
-  "multiplierBefore" NUMERIC(78, 0) NOT NULL,
-  "multiplierAfter"  NUMERIC(78, 0) NOT NULL,
-  "communalAmount"   NUMERIC(78, 0) NOT NULL,
+  "multiplierBefore" TEXT NOT NULL,
+  "multiplierAfter"  TEXT NOT NULL,
+  "communalAmount"   TEXT NOT NULL,
   PRIMARY KEY ("blockNumber", "logIndex", "actionIndex")
 );
 
@@ -56,8 +56,8 @@ CREATE INDEX IF NOT EXISTS "RewardMultiplierSnapshot_blockTimestamp_idx"
 -- so a process restart can resume without replaying from genesis.
 CREATE TABLE IF NOT EXISTS "StakeLedgerState" (
   "clientId"     INTEGER PRIMARY KEY,
-  "totalCaw"     NUMERIC(78, 0) NOT NULL,
-  "multiplier"   NUMERIC(78, 0) NOT NULL,
+  "totalCaw"     TEXT NOT NULL,
+  "multiplier"   TEXT NOT NULL,
   "lastBlock"    BIGINT NOT NULL,
   "lastLogIndex" INTEGER NOT NULL,
   "updatedAt"    TIMESTAMP NOT NULL DEFAULT NOW()
@@ -69,6 +69,6 @@ CREATE TABLE IF NOT EXISTS "StakeLedgerState" (
 -- equality with on-chain cawOwnership(tokenId).
 CREATE TABLE IF NOT EXISTS "CawOwnershipCurrent" (
   "tokenId"   INTEGER PRIMARY KEY,
-  "ownership" NUMERIC(78, 0) NOT NULL,
+  "ownership" TEXT NOT NULL,
   "updatedAt" TIMESTAMP NOT NULL DEFAULT NOW()
 );
