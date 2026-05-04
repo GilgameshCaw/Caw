@@ -10,6 +10,11 @@ export interface MediaStorage {
   putVariant(baseFilename: string, variantFilename: string, body: Buffer, contentType: string): Promise<string>
   baseExists(kind: MediaKind, filename: string): Promise<boolean>
   publicUrlFor(kind: MediaKind, filename: string): string
+  /** Delete a stored object. Used by the orphan-GC sweep — see
+   *  orphanedMedia.ts. LocalMediaStorage's implementation is a no-op
+   *  because local-disk cleanup is an OS-level concern, not part of
+   *  the bucket-storage budget the GC manages. */
+  delete(kind: MediaKind, filename: string): Promise<void>
 }
 
 const FILEBASE_ENDPOINT = 'https://s3.filebase.io'
@@ -44,6 +49,10 @@ class LocalMediaStorage implements MediaStorage {
 
   async baseExists(kind: MediaKind, filename: string): Promise<boolean> {
     try { await access(path.join(this.root, kind, filename)); return true } catch { return false }
+  }
+
+  async delete(_kind: MediaKind, _filename: string): Promise<void> {
+    // No-op for local — see interface comment.
   }
 
   publicUrlFor(kind: MediaKind, filename: string): string {

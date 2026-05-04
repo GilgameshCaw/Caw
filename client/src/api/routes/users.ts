@@ -13,6 +13,7 @@ import { ActionType } from '@prisma/client'
 //   straight from the DB. The Contract/provider plumbing is gone.
 import { getBlockedUserIds } from '../shared/blockUtils'
 import { requireAuth } from '../middleware/auth'
+import { markOrphan, markOrphanWithVariants } from '../util/orphanedMedia'
 
 // Validation limits for profile fields (must match ActionProcessor)
 const PROFILE_FIELD_LIMITS: Record<string, number> = {
@@ -763,6 +764,21 @@ router.patch(
         return res.status(400).json({ error: 'No profile fields provided' })
       }
 
+      // Capture the OLD avatar/cover URLs so we can mark them as orphans
+      // after the update succeeds. Replacing avatarUrl/coverPhotoUrl is
+      // a destructive write — the previous file is no longer referenced.
+      // Avatars also have a thumbnail variant that should expire in lockstep.
+      let priorAvatarUrl: string | null = null
+      let priorCoverUrl: string | null = null
+      if (updateData.avatarUrl !== undefined || updateData.coverPhotoUrl !== undefined) {
+        const prior = await prisma.user.findUnique({
+          where: { tokenId },
+          select: { avatarUrl: true, coverPhotoUrl: true },
+        })
+        priorAvatarUrl = prior?.avatarUrl ?? null
+        priorCoverUrl = prior?.coverPhotoUrl ?? null
+      }
+
       const updated = await prisma.user.update({
         where: { tokenId },
         data: { ...updateData, profileSource: 'offchain' },
@@ -780,6 +796,20 @@ router.patch(
           profileUpdatePending: true,
         },
       })
+
+      // Mark the old assets for delayed deletion. Only when the URL
+      // actually changed — re-saving the same URL shouldn't enqueue it
+      // for deletion. Fire-and-forget; Redis errors don't fail the API.
+      if (priorAvatarUrl && priorAvatarUrl !== updated.avatarUrl) {
+        markOrphanWithVariants(priorAvatarUrl).catch(e =>
+          console.warn('[users.profile] markOrphan(avatar) failed:', e)
+        )
+      }
+      if (priorCoverUrl && priorCoverUrl !== updated.coverPhotoUrl) {
+        markOrphan(priorCoverUrl).catch(e =>
+          console.warn('[users.profile] markOrphan(cover) failed:', e)
+        )
+      }
 
       return res.json({ user: updated })
     } catch (err: any) {

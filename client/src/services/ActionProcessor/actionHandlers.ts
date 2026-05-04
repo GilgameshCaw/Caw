@@ -6,6 +6,7 @@ import { NotificationService } from '../NotificationService'
 import { elasticsearchService } from '../ElasticsearchService'
 import { countManager } from '../CountManager'
 import { parsePoll, parseVoteText, resolvePollImageUrl } from '../../tools/pollMarker'
+import { markOrphansInImageData } from '../../api/util/orphanedMedia'
 import type { PrismaTransactionClient } from './types'
 
 /** Sentinel thrown by findCawId so callers (and the top-level
@@ -1127,6 +1128,14 @@ async function handleHideAction(
       return
     }
 
+    // Read imageData BEFORE flipping status so we know which URLs were
+    // attached to the post. These get queued for delayed deletion (7-day
+    // grace, see orphanedMedia.ts) so revertable hides don't lose data.
+    const target = await tx.caw.findFirst({
+      where:  { userId: senderId, cawonce, status: 'SUCCESS' },
+      select: { imageData: true },
+    })
+
     const result = await tx.caw.updateMany({
       where: { userId: senderId, cawonce, status: 'SUCCESS' },
       data: { status: 'HIDDEN' }
@@ -1134,6 +1143,10 @@ async function handleHideAction(
 
     if (result.count > 0) {
       console.log(`[handleHideAction] Hidden caw: user=${senderId} cawonce=${cawonce}`)
+      // Best-effort, fire-and-forget — Redis errors don't fail the hide.
+      markOrphansInImageData(target?.imageData).catch(e =>
+        console.warn('[handleHideAction] markOrphansInImageData failed:', e)
+      )
     } else {
       console.warn(`[handleHideAction] No matching caw found: user=${senderId} cawonce=${cawonce}`)
     }

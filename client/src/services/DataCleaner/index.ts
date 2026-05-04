@@ -3,6 +3,7 @@ import { JsonRpcProvider, WebSocketProvider, Contract } from 'ethers'
 import { makeJsonRpcProvider, makeWebSocketProvider, getL2HttpRpcUrl } from '../../utils/rpcProvider'
 import { dataCleanerLogger as logger } from '../../utils/dataCleanerLogger'
 import { markTxQueueFailed, createActionFailedNotification } from '../../utils/txQueueFailure'
+import { sweep as sweepOrphanedMedia, pendingCount as orphanedMediaPendingCount } from '../../api/util/orphanedMedia'
 import { cawProfileL2Abi } from '../../abi/generated'
 import { CAW_NAMES_L2_ADDRESS } from '../../abi/addresses'
 
@@ -969,7 +970,28 @@ async function runDataCleanup() {
   // /api/users/by-token can read the cached value instead of hitting L2 RPC.
   await refreshOnChainStakeForPendingDeposits()
 
+  // Sweep orphaned media (assets queued for deletion past their grace
+  // period). See orphanedMedia.ts for the queueing model. Cheap when
+  // there's nothing to do (single ZRANGEBYSCORE).
+  await sweepOrphanedMediaTask()
+
   logger.log('All cleanup tasks completed')
+}
+
+async function sweepOrphanedMediaTask() {
+  try {
+    const before = await orphanedMediaPendingCount()
+    if (before === 0) return
+    const result = await sweepOrphanedMedia()
+    if (result.deleted > 0 || result.failed > 0) {
+      logger.log(
+        `Orphan media sweep: deleted=${result.deleted} failed=${result.failed} ` +
+        `skipped=${result.skipped} (queue had ${before} pending)`
+      )
+    }
+  } catch (e: any) {
+    logger.log(`Orphan media sweep failed: ${e?.message || e}`)
+  }
 }
 
 
