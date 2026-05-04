@@ -4,6 +4,7 @@ import { HiSearch, HiX } from 'react-icons/hi'
 import { HiTrendingUp, HiHashtag, HiUser } from 'react-icons/hi'
 import { apiFetch } from '~/api/client'
 import { useTheme } from '~/hooks/useTheme'
+import { useT } from '~/i18n/I18nProvider'
 
 interface SearchSuggestion {
   type: 'user' | 'hashtag' | 'trending'
@@ -24,6 +25,7 @@ function debounce<T extends (...args: any[]) => any>(func: T, wait: number): T {
 }
 
 const SearchBar: React.FC = () => {
+  const t = useT()
   const navigate = useNavigate()
   const { isDark } = useTheme()
   const [query, setQuery] = useState('')
@@ -154,7 +156,7 @@ const SearchBar: React.FC = () => {
           onChange={(e) => setQuery(e.target.value)}
           onFocus={() => setShowSuggestions(true)}
           onKeyDown={handleKeyDown}
-          placeholder="Search"
+          placeholder={t('search.placeholder')}
           className={`w-full rounded-full py-3 pl-12 pr-10 transition-all duration-300 focus:outline-none ${
             isDark
               ? 'bg-black border-yellow-500/30 text-white placeholder-white/50 focus:border-yellow-500/50 focus:bg-black'
@@ -179,7 +181,7 @@ const SearchBar: React.FC = () => {
           } border overflow-hidden z-50`}
         >
           {isLoading ? (
-            <div className={`px-4 py-3 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>Searching...</div>
+            <div className={`px-4 py-3 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>{t('search.searching')}</div>
           ) : (
             suggestions.map((suggestion, index) => (
               <button
@@ -206,7 +208,7 @@ const SearchBar: React.FC = () => {
                   </div>
                   {suggestion.count && (
                     <div className={`text-xs ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-                      {suggestion.count} caws
+                      {t('search.caws_count', { count: suggestion.count })}
                     </div>
                   )}
                 </div>

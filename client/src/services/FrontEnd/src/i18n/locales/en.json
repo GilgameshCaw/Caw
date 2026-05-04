@@ -347,6 +347,32 @@
   "report.success.title": "Thank you for submitting",
   "report.success.body": "This will be reviewed by an admin. The post has been hidden from your feed.",
 
+  "suggested.title": "Suggested users to follow",
+
+  "search.placeholder": "Search",
+  "search.searching": "Searching...",
+  "search.caws_count_one": "{{count}} caw",
+  "search.caws_count_other": "{{count}} caws",
+
+  "community.active_users": "Active Users",
+  "community.posts_today": "Posts Today",
+  "community.new_members": "New Members",
+  "community.total_posts": "Total Posts",
+
+  "hashtag.trending": "Trending Hashtags",
+
+  "search_results.title": "Search Results",
+  "search_results.results_for": "Results for \"{{query}}\"",
+  "search_results.error": "Failed to search. Please try again.",
+  "search_results.empty_query": "Enter a search query to get started",
+  "search_results.tab.all": "All",
+  "search_results.tab.caws": "Caws",
+  "search_results.tab.users": "Users",
+  "search_results.tab.hashtags": "Hashtags",
+  "search_results.section.users": "Users",
+  "search_results.section.caws": "Caws",
+  "search_results.section.hashtags": "Hashtags",
+
   "profile.tab.posts": "Posts",
   "profile.tab.replies": "Replies",
   "profile.tab.media": "Media",

@@ -6,6 +6,7 @@ import Feed from '~/components/Feed'
 import { useTheme } from '~/hooks/useTheme'
 import { useQuery } from '@tanstack/react-query'
 import { HiArrowLeft, HiTrendingUp, HiHashtag } from 'react-icons/hi'
+import { useT } from '~/i18n/I18nProvider'
 
 interface TrendingHashtag {
   name: string
@@ -13,6 +14,7 @@ interface TrendingHashtag {
 }
 
 export const HashtagPage: React.FC = () => {
+  const t = useT()
   const { hashtag } = useParams<{ hashtag: string }>()
   const navigate = useNavigate()
   const { isDark } = useTheme()
@@ -55,7 +57,7 @@ export const HashtagPage: React.FC = () => {
             <div className="flex items-center mb-3">
               <HiTrendingUp className="h-5 w-5 text-orange-500 mr-2" />
               <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                Trending Hashtags
+                {t('hashtag.trending')}
               </h3>
             </div>
             <div className="flex flex-wrap gap-2">

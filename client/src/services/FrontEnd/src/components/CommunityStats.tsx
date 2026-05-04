@@ -1,6 +1,7 @@
 import React from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useTheme } from '~/hooks/useTheme'
+import { useT } from '~/i18n/I18nProvider'
 
 interface StatsData {
   totalUsers: number
@@ -22,6 +23,7 @@ const formatNumber = (num: number): string => {
 
 const CommunityStats: React.FC = () => {
   const { isDark } = useTheme()
+  const t = useT()
 
   const { data: stats, isLoading } = useQuery<StatsData>({
     queryKey: ['communityStats'],
@@ -36,7 +38,7 @@ const CommunityStats: React.FC = () => {
 
   const statItems = [
     {
-      label: 'Active Users',
+      label: t('community.active_users'),
       value: stats?.activeUsersThisWeek ?? 0,
       icon: (
         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -45,7 +47,7 @@ const CommunityStats: React.FC = () => {
       )
     },
     {
-      label: 'Posts Today',
+      label: t('community.posts_today'),
       value: stats?.postsToday ?? 0,
       icon: (
         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -54,7 +56,7 @@ const CommunityStats: React.FC = () => {
       )
     },
     {
-      label: 'New Members',
+      label: t('community.new_members'),
       value: stats?.newMembersThisWeek ?? 0,
       icon: (
         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -63,7 +65,7 @@ const CommunityStats: React.FC = () => {
       )
     },
     {
-      label: 'Total Posts',
+      label: t('community.total_posts'),
       value: stats?.totalPosts ?? 0,
       icon: (
         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">

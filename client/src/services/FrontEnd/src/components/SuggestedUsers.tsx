@@ -4,6 +4,7 @@ import { apiFetch } from '~/api/client'
 import { useTokenDataStore } from '~/store/tokenDataStore'
 import UserCard from '~/components/UserCard'
 import { LoadingSpinner } from '~/components/Skeleton'
+import { useT } from '~/i18n/I18nProvider'
 
 
 const DISMISSED_KEY = 'caw-dismissed-suggestions'
@@ -44,6 +45,7 @@ interface SuggestedUsersProps {
 }
 
 const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
+  const t = useT()
   const { isDark } = useTheme()
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const hasCachedData = cachedUsers !== null && cacheTokenId === activeTokenId
@@ -126,7 +128,7 @@ const SuggestedUsers: React.FC<SuggestedUsersProps> = ({ onFollowChange }) => {
       isDark ? 'bg-black' : 'bg-transparent'
     }`}>
       <h2 className={`text-lg font-semibold mb-4 ml-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-        Suggested users to follow
+        {t('suggested.title')}
       </h2>
       <div className={`flex gap-3 overflow-x-auto overflow-y-visible pb-[20px] transition-all duration-500 ${visibleUsers.length <= 3 ? 'justify-center' : ''}`}>
         {visibleUsers.map((user, idx) => (

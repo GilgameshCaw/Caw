@@ -8,6 +8,7 @@ import { HiUsers, HiHashtag, HiCollection } from 'react-icons/hi'
 import { useMutePreferences } from '~/hooks/useMutePreferences'
 import { getUserAvatar } from '~/utils/defaultAvatar'
 import Avatar from '~/components/Avatar'
+import { useT } from '~/i18n/I18nProvider'
 
 interface SearchResults {
   caws: any[]
@@ -23,6 +24,7 @@ interface SearchResultsPageProps {
 }
 
 const SearchResultsPage: React.FC<SearchResultsPageProps> = ({ defaultTab = 'all' }) => {
+  const t = useT()
   const [searchParams] = useSearchParams()
   const query = searchParams.get('q') || ''
   const { isDark } = useTheme()
@@ -81,7 +83,7 @@ const SearchResultsPage: React.FC<SearchResultsPageProps> = ({ defaultTab = 'all
         setResults(normalizedData)
       } catch (err) {
         console.error('Search failed:', err)
-        setError('Failed to search. Please try again.')
+        setError(t('search_results.error'))
       } finally {
         setLoading(false)
       }
@@ -95,7 +97,7 @@ const SearchResultsPage: React.FC<SearchResultsPageProps> = ({ defaultTab = 'all
       <MainLayout>
         <div className="max-w-2xl mx-auto px-6 py-4">
           <div className={`text-center py-8 ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-            Enter a search query to get started
+            {t('search_results.empty_query')}
           </div>
         </div>
       </MainLayout>
@@ -107,20 +109,20 @@ const SearchResultsPage: React.FC<SearchResultsPageProps> = ({ defaultTab = 'all
       <div className="max-w-2xl mx-auto px-6 py-4">
       <div className="mb-6">
         <h1 className={`text-2xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-          Search Results
+          {t('search_results.title')}
         </h1>
         <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-          Results for "{query}"
+          {t('search_results.results_for', { query })}
         </p>
       </div>
 
       {/* Tab Navigation */}
       <div className={`flex space-x-1 mb-6 border-b ${isDark ? 'border-white/20' : 'border-gray-200'}`}>
         {[
-          { id: 'all' as const, label: 'All', icon: HiCollection },
-          { id: 'caws' as const, label: 'Caws', icon: HiCollection },
-          { id: 'users' as const, label: 'Users', icon: HiUsers },
-          { id: 'hashtags' as const, label: 'Hashtags', icon: HiHashtag }
+          { id: 'all' as const, label: t('search_results.tab.all'), icon: HiCollection },
+          { id: 'caws' as const, label: t('search_results.tab.caws'), icon: HiCollection },
+          { id: 'users' as const, label: t('search_results.tab.users'), icon: HiUsers },
+          { id: 'hashtags' as const, label: t('search_results.tab.hashtags'), icon: HiHashtag }
         ].map(tab => (
           <button
             key={tab.id}
@@ -165,7 +167,7 @@ const SearchResultsPage: React.FC<SearchResultsPageProps> = ({ defaultTab = 'all
                 <div className="flex items-center justify-between mb-3">
                   <h2 className={`text-lg font-semibold ${
                     isDark ? 'text-white' : 'text-gray-900'
-                  }`}>Users</h2>
+                  }`}>{t('search_results.section.users')}</h2>
                   {results?.hasMoreUsers && (
                     <button
                       onClick={() => {
@@ -232,7 +234,7 @@ const SearchResultsPage: React.FC<SearchResultsPageProps> = ({ defaultTab = 'all
                 <div className="flex items-center justify-between mb-3">
                   <h2 className={`text-lg font-semibold ${
                     isDark ? 'text-white' : 'text-gray-900'
-                  }`}>Hashtags</h2>
+                  }`}>{t('search_results.section.hashtags')}</h2>
                   {results.hasMoreHashtags && (
                     <button
                       onClick={() => {
@@ -291,7 +293,7 @@ const SearchResultsPage: React.FC<SearchResultsPageProps> = ({ defaultTab = 'all
                 <div className="flex items-center justify-between mb-3">
                   <h2 className={`text-lg font-semibold ${
                     isDark ? 'text-white' : 'text-gray-900'
-                  }`}>Caws</h2>
+                  }`}>{t('search_results.section.caws')}</h2>
                   {results?.hasMoreCaws && (
                     <button
                       onClick={() => {
