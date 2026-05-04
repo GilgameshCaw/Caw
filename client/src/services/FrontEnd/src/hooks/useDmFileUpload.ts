@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react'
 import { encryptBinary } from '~/services/DmCryptoService'
 import { getAuthHeaders } from '~/api/client'
 import { compressImage } from '~/utils/compressImage'
+import { compressVideo } from '~/utils/compressVideo'
 
 // Max ENCRYPTED blob size accepted server-side. Cleartext is compressed
 // client-side via the 'dm' preset (~750KB max), so 5MB encrypted leaves
@@ -58,18 +59,26 @@ export function useDmFileUpload() {
     setUploadProgress('Preparing...')
 
     try {
-      // Pre-flight cap on videos before we read+encrypt the bytes. The
-      // server-side encrypted-blob cap (5MB) would catch oversized DMs
-      // anyway, but failing late means the user spent the time to upload
-      // and encrypt only to be told no. Reject upfront and route them
-      // toward the Post composer where the cap is higher.
-      if (file.type.startsWith('video/') && file.size > MAX_DM_VIDEO_BYTES) {
-        throw new Error(`Video too large for a DM (${(file.size / 1024 / 1024).toFixed(1)}MB, max ${MAX_DM_VIDEO_BYTES / 1024 / 1024}MB). Try posting it instead.`)
-      }
-
       let toUpload: File = file
       let width: number | undefined
       let height: number | undefined
+
+      // Transcode oversized videos. DM cap is tighter than posts (1:1
+      // channel — long-form video isn't a fit), and the dm preset's
+      // bitrate target reflects that.
+      if (file.type.startsWith('video/') && file.size > MAX_DM_VIDEO_BYTES) {
+        setUploadProgress('Compressing video…')
+        try {
+          const result = await compressVideo(file, 'dm')
+          if (result.file.size > MAX_DM_VIDEO_BYTES) {
+            throw new Error(`Video still too large after compression (${(result.file.size / 1024 / 1024).toFixed(1)}MB, max ${MAX_DM_VIDEO_BYTES / 1024 / 1024}MB). Try a shorter clip — or post it instead.`)
+          }
+          toUpload = result.file
+        } catch (err) {
+          if (err instanceof Error) throw err
+          throw new Error('Video compression failed. Try a shorter clip.')
+        }
+      }
 
       // Compress images via the shared helper. Must happen BEFORE encryption —
       // server can't recompress an opaque encrypted blob.

@@ -1,5 +1,6 @@
 import { apiFetch, getAuthHeaders } from './client'
 import { compressImage, compressImages, cropToSquare, type CompressionPreset } from '~/utils/compressImage'
+import { compressVideo } from '~/utils/compressVideo'
 
 export interface UploadImageResponse {
   success: boolean
@@ -34,20 +35,32 @@ export async function uploadMedia(
   files: File[],
   tokenId: number,
   preset: CompressionPreset = 'feed',
+  onProgress?: (msg: string) => void,
 ): Promise<string[]> {
   if (files.length === 0) return []
 
-  // Pre-flight video size check BEFORE compression so the user sees a
-  // friendly error immediately instead of waiting through a doomed
-  // upload. (Compression doesn't apply to videos anyway.)
-  const oversizedVideo = files.find(f =>
-    f.type.startsWith('video/') && f.size > POST_VIDEO_MAX_BYTES
-  )
-  if (oversizedVideo) {
-    throw new Error(`Video too large (${fmtMB(oversizedVideo.size)}, max ${fmtMB(POST_VIDEO_MAX_BYTES)}). Trim the clip in another app first.`)
+  // Transcode oversized videos client-side before giving up. compressVideo
+  // is a no-op for inputs already under the cap and for non-videos.
+  const transcoded: File[] = []
+  for (const f of files) {
+    if (f.type.startsWith('video/') && f.size > POST_VIDEO_MAX_BYTES) {
+      onProgress?.('Compressing video…')
+      try {
+        const result = await compressVideo(f, 'feed')
+        if (result.file.size > POST_VIDEO_MAX_BYTES) {
+          throw new Error(`Video still too large after compression (${fmtMB(result.file.size)}, max ${fmtMB(POST_VIDEO_MAX_BYTES)}). Try a shorter clip.`)
+        }
+        transcoded.push(result.file)
+      } catch (err) {
+        if (err instanceof Error) throw err
+        throw new Error('Video compression failed. Try a shorter clip.')
+      }
+    } else {
+      transcoded.push(f)
+    }
   }
 
-  const compressed = await compressImages(files, preset)
+  const compressed = await compressImages(transcoded, preset)
 
   // Post-compression image size check. The compressor targets ~1MB but
   // can occasionally produce larger files (e.g. high-entropy screenshots
