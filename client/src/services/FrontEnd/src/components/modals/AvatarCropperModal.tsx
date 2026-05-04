@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import ModalWrapper from './ModalWrapper'
 import { useTheme } from '~/hooks/useTheme'
+import { useT } from '~/i18n/I18nProvider'
 
 interface AvatarCropperModalProps {
   isOpen: boolean
@@ -28,6 +29,7 @@ const MAX_ZOOM = 4
  */
 const AvatarCropperModal: React.FC<AvatarCropperModalProps> = ({ isOpen, file, onCrop, onClose }) => {
   const { isDark } = useTheme()
+  const t = useT()
   const [imgUrl, setImgUrl] = useState<string | null>(null)
   const [img, setImg] = useState<HTMLImageElement | null>(null)
   const [zoom, setZoom] = useState(1)
@@ -126,7 +128,7 @@ const AvatarCropperModal: React.FC<AvatarCropperModalProps> = ({ isOpen, file, o
     <ModalWrapper isOpen={isOpen} onClose={onClose} maxWidth="max-w-sm" closeOnClickOutside={false}>
       <div className="p-5 space-y-4">
         <h3 className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-black'}`}>
-          Crop your avatar
+          {t('avatar_cropper.title')}
         </h3>
 
         <div
@@ -158,7 +160,7 @@ const AvatarCropperModal: React.FC<AvatarCropperModalProps> = ({ isOpen, file, o
         </div>
 
         <div className="flex items-center gap-3">
-          <span className={`text-xs ${isDark ? 'text-white/50' : 'text-gray-500'}`}>Zoom</span>
+          <span className={`text-xs ${isDark ? 'text-white/50' : 'text-gray-500'}`}>{t('avatar_cropper.zoom')}</span>
           <input
             type="range"
             min={MIN_ZOOM}
@@ -178,7 +180,7 @@ const AvatarCropperModal: React.FC<AvatarCropperModalProps> = ({ isOpen, file, o
               isDark ? 'text-white/80 hover:bg-white/10' : 'text-gray-700 hover:bg-gray-100'
             }`}
           >
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             type="button"
@@ -186,7 +188,7 @@ const AvatarCropperModal: React.FC<AvatarCropperModalProps> = ({ isOpen, file, o
             disabled={!img}
             className="px-4 py-2 rounded-full text-sm font-semibold bg-yellow-500 text-black hover:bg-yellow-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
           >
-            Save
+            {t('avatar_cropper.btn.save')}
           </button>
         </div>
       </div>

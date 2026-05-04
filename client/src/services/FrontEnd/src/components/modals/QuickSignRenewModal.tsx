@@ -3,6 +3,7 @@ import { useAccount, useChainId, useSwitchChain } from 'wagmi'
 import ModalWrapper from './ModalWrapper'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { useTheme } from '~/hooks/useTheme'
+import { useT } from '~/i18n/I18nProvider'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useCreateSession, getDefaultSpendLimit, getDefaultTipCeiling, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
@@ -34,6 +35,7 @@ export const useQuickSignRenewStore = create<QuickSignRenewState>((set) => ({
 
 const QuickSignRenewModal: React.FC = () => {
   const { isDark } = useTheme()
+  const t = useT()
   const { isOpen, reason, onRetry, close } = useQuickSignRenewStore()
   const setEnabled = useSessionKeyStore(s => s.setEnabled)
   const createSession = useCreateSession()
@@ -69,7 +71,7 @@ const QuickSignRenewModal: React.FC = () => {
       console.error('[QuickSign] Renewal failed:', err)
       const msg = err?.message || ''
       const isUserRejection = msg.includes('rejected') || msg.includes('denied') || msg.includes('cancelled') || err?.code === 4001
-      setError(isUserRejection ? 'Signature was cancelled.' : (msg.includes('Please') || msg.includes('try again') ? msg : 'Something went wrong. Please try again.'))
+      setError(isUserRejection ? t('quick_sign.error.cancelled') : (msg.includes('Please') || msg.includes('try again') ? msg : t('quick_sign.error.generic')))
     } finally {
       setLoading(false)
       setStatus('')
@@ -101,16 +103,16 @@ const QuickSignRenewModal: React.FC = () => {
   const signManuallyNote = wrongWallet
     ? null // Handled by the dedicated wrong wallet message above buttons
     : wrongChain
-      ? 'Switch to the correct network first'
+      ? t('quick_sign_renew.switch_network_first')
       : null
 
   const title = reason === 'expired'
-    ? 'Quick Sign Has Expired'
-    : 'Quick Sign Spending Limit Reached'
+    ? t('quick_sign_renew.title_expired')
+    : t('quick_sign_renew.title_limit')
 
   const description = reason === 'expired'
-    ? 'Your Quick Sign session has expired. Re-sign to continue using Quick Sign, or sign this action manually with your wallet.'
-    : 'Your Quick Sign session has reached its spending limit. Re-sign with a new session to continue, or sign this action manually with your wallet.'
+    ? t('quick_sign_renew.desc_expired')
+    : t('quick_sign_renew.desc_limit')
 
   return (
     <ModalWrapper isOpen={isOpen} onClose={close} usePortal maxWidth="max-w-[493px]">
@@ -151,7 +153,7 @@ const QuickSignRenewModal: React.FC = () => {
 
         {wrongWallet && (
           <p className={`text-center text-xs mb-3 text-red-400`}>
-            Please connect to the wallet that owns @{activeToken?.username}
+            {t('quick_sign_renew.connect_correct_wallet', { username: activeToken?.username || '' })}
           </p>
         )}
 
@@ -163,10 +165,10 @@ const QuickSignRenewModal: React.FC = () => {
                 disabled={loading || !!wrongWallet}
                 className="w-full px-4 py-3 rounded-full font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-colors disabled:opacity-50 disabled:hover:bg-yellow-500 cursor-pointer disabled:cursor-not-allowed"
               >
-                {loading ? (status || 'Activating...') : 'Re-enable Quick Sign'}
+                {loading ? (status || t('quick_sign.btn.activating')) : t('quick_sign_renew.btn.reenable')}
               </button>
             )
-            return <div className="flex-1">{wrongWallet ? <Tooltip text={`Connect to the wallet that owns @${activeToken?.username}`}>{renewBtn}</Tooltip> : renewBtn}</div>
+            return <div className="flex-1">{wrongWallet ? <Tooltip text={t('quick_sign_renew.connect_correct_wallet', { username: activeToken?.username || '' })}>{renewBtn}</Tooltip> : renewBtn}</div>
           })()}
           {(() => {
             const manualBtn = (
@@ -179,10 +181,10 @@ const QuickSignRenewModal: React.FC = () => {
                     : 'bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:hover:bg-gray-100 cursor-pointer'
                 }`}
               >
-                Sign Manually
+                {t('quick_sign.btn.sign_manually')}
               </button>
             )
-            return <div className="flex-1">{wrongWallet ? <Tooltip text={`Connect to the wallet that owns @${activeToken?.username}`}>{manualBtn}</Tooltip> : manualBtn}</div>
+            return <div className="flex-1">{wrongWallet ? <Tooltip text={t('quick_sign_renew.connect_correct_wallet', { username: activeToken?.username || '' })}>{manualBtn}</Tooltip> : manualBtn}</div>
           })()}
         </div>
         {signManuallyNote && !wrongWallet && (

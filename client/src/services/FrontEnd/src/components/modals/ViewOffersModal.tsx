@@ -7,6 +7,7 @@ import { formatEther, formatUnits } from 'viem'
 import { formatAddress } from '~/utils'
 import ModalWrapper from './ModalWrapper'
 import { useTheme } from '~/hooks/useTheme'
+import { useT } from '~/i18n/I18nProvider'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { themeTextMuted, themeBgSubtle, themeBorder } from '~/utils/theme'
 import { useMarketplaceStore, MarketplaceOffer } from '~/store/marketplaceStore'
@@ -32,6 +33,7 @@ function fmtPrice(raw: string, token: string): string {
 
 const ViewOffersModal: React.FC = () => {
   const { isDark } = useTheme()
+  const t = useT()
   const isOpen = useMarketplaceStore(s => s.viewOffersModal.isOpen)
   const tokenId = useMarketplaceStore(s => s.viewOffersModal.tokenId)
   const username = useMarketplaceStore(s => s.viewOffersModal.username)
@@ -236,7 +238,7 @@ const ViewOffersModal: React.FC = () => {
         </div>
 
         <h2 className={`text-xl font-bold text-center ${isDark ? 'text-white' : 'text-gray-900'}`}>
-          Offers for @{username}
+          {t('view_offers.title', { username: username || '' })}
         </h2>
 
         {/* Username SVG */}
@@ -249,7 +251,7 @@ const ViewOffersModal: React.FC = () => {
         {/* LZ fee info */}
         {lzFee > 0n && (
           <div className={`mb-3 text-xs ${themeTextMuted(isDark)}`}>
-            Cross-chain sync fee: ~{parseFloat(formatEther(lzFee)).toFixed(5)} ETH (paid when accepting)
+            {t('view_offers.lz_fee', { eth: parseFloat(formatEther(lzFee)).toFixed(5) })}
           </div>
         )}
 
@@ -257,16 +259,16 @@ const ViewOffersModal: React.FC = () => {
         {(actionError || approveError) && (
           <div className="mb-4 p-3 rounded-lg bg-red-500/10 text-red-500 text-sm text-center">
             {(actionError || approveError)?.message?.includes('User rejected')
-              ? 'Transaction rejected'
-              : 'Transaction failed. Please try again.'}
+              ? t('view_offers.tx_rejected')
+              : t('view_offers.tx_failed')}
           </div>
         )}
 
         {/* Offers list */}
         {loading ? (
-          <div className={`text-center py-8 ${themeTextMuted(isDark)}`}>Loading offers...</div>
+          <div className={`text-center py-8 ${themeTextMuted(isDark)}`}>{t('view_offers.loading')}</div>
         ) : offers.length === 0 ? (
-          <div className={`text-center py-8 ${themeTextMuted(isDark)}`}>No active offers</div>
+          <div className={`text-center py-8 ${themeTextMuted(isDark)}`}>{t('view_offers.no_active')}</div>
         ) : (
           <div className="space-y-3 max-h-[400px] overflow-y-auto">
             {offers.map(offer => {
@@ -305,7 +307,7 @@ const ViewOffersModal: React.FC = () => {
                         )
                       })()}
                       <div className={`text-xs mt-1 ${themeTextMuted(isDark)}`}>
-                        from{' '}
+                        {t('view_offers.from')}{' '}
                         <Link
                           to={`/address/${offer.offerer.toLowerCase()}`}
                           onClick={e => e.stopPropagation()}
@@ -338,11 +340,11 @@ const ViewOffersModal: React.FC = () => {
                         disabled={isActing || isSwitchingChain || isApproving || isApproveConfirming}
                         className="px-3 py-1.5 rounded-lg text-xs font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50"
                       >
-                        {!isConnected ? 'Connect'
-                          : needsChainSwitch ? 'Switch Network'
-                          : isApproving || isApproveConfirming ? 'Approving...'
-                          : isActing && actionType === 'accept' ? 'Accepting...'
-                          : 'Accept'}
+                        {!isConnected ? t('view_offers.btn.connect')
+                          : needsChainSwitch ? t('view_offers.btn.switch_network')
+                          : isApproving || isApproveConfirming ? t('view_offers.btn.approving')
+                          : isActing && actionType === 'accept' ? t('view_offers.btn.accepting')
+                          : t('view_offers.btn.accept')}
                       </button>
 
                       {/* Deny — hides the offer notification server-side */}
@@ -352,7 +354,7 @@ const ViewOffersModal: React.FC = () => {
                           isDark ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
                         }`}
                       >
-                        Deny
+                        {t('view_offers.btn.deny')}
                       </button>
                     </div>
                   </div>

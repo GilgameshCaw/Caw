@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { create } from 'zustand'
 import ModalWrapper from './ModalWrapper'
 import { useTheme } from '~/hooks/useTheme'
+import { useT } from '~/i18n/I18nProvider'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { usePriceStore } from '~/store/tokenDataStore'
 import { useCreateSession, getDefaultSpendLimit, getDefaultTipCeiling, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
@@ -46,6 +47,7 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
   const isOpen = props.isOpen ?? prompt.isOpen
   const onClose = props.onClose ?? prompt.close
   const { isDark } = useTheme()
+  const t = useT()
   const setEnabled = useSessionKeyStore(s => s.setEnabled)
   const createSession = useCreateSession()
   const setHasSeenPrompt = useSessionKeyStore(s => s.setHasSeenPrompt)
@@ -88,7 +90,7 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
       // Show user-friendly message; raw error already logged by the hook
       const msg = err?.message || ''
       const isUserRejection = msg.includes('rejected') || msg.includes('denied') || msg.includes('cancelled') || err?.code === 4001
-      setError(isUserRejection ? 'Signature was cancelled.' : (msg.includes('Please') || msg.includes('try again') ? msg : 'Something went wrong. Please try again.'))
+      setError(isUserRejection ? t('quick_sign.error.cancelled') : (msg.includes('Please') || msg.includes('try again') ? msg : t('quick_sign.error.generic')))
       setEnabled(false)
     } finally {
       setLoading(false)
@@ -116,24 +118,23 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
             <HiLightningBolt className="w-6 h-6 text-yellow-500" />
           </div>
           <h2 className={`text-lg font-bold ${isDark ? 'text-white' : 'text-black'}`}>
-            Enable Quick Sign?
+            {t('quick_sign.prompt.title')}
           </h2>
         </div>
 
         <p className={`text-sm ${isDark ? 'text-gray-300' : 'text-gray-600'}`} style={{ marginBottom: 15 }}>
-          You're ready to start posting! Quick Sign lets you interact without a wallet
-          popup every time — your browser handles signing automatically.
+          {t('quick_sign.prompt.intro')}
         </p>
 
         <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-3 mb-4 text-sm">
           <p className={`${isDark ? 'text-gray-300' : 'text-gray-600'}`} style={{ marginBottom: 10 }}>
-            This creates a temporary key in your browser that can act on your behalf.
+            {t('quick_sign.prompt.info1')}
           </p>
           <p className={`${isDark ? 'text-gray-300' : 'text-gray-600'}`} style={{ marginBottom: 10 }}>
-            It <strong>cannot withdraw tokens or transfer your name</strong>.
+            {t('quick_sign.prompt.info2_before')}<strong>{t('quick_sign.prompt.info2_strong')}</strong>{t('quick_sign.prompt.info2_after')}
           </p>
           <p className={`${isDark ? 'text-gray-300' : 'text-gray-600'}`}>
-            You can revoke it anytime in Settings.
+            {t('quick_sign.prompt.info3')}
           </p>
         </div>
 
@@ -181,7 +182,7 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
               </svg>
             )}
           </button>
-          Don't show this again
+          {t('common.dont_show_again')}
         </label>
 
         <div className="flex gap-3">
@@ -190,7 +191,7 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
             disabled={loading}
             className="flex-1 py-3 rounded-full font-semibold bg-yellow-500 hover:bg-yellow-600 text-black transition-colors disabled:opacity-50 cursor-pointer"
           >
-            {loading ? (status || 'Activating...') : 'Enable Quick Sign'}
+            {loading ? (status || t('quick_sign.btn.activating')) : t('quick_sign.btn.enable')}
           </button>
           <button
             onClick={handleSkip}
@@ -201,12 +202,12 @@ const QuickSignModal: React.FC<QuickSignModalProps> = (props) => {
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
             }`}
           >
-            Sign Manually
+            {t('quick_sign.btn.sign_manually')}
           </button>
         </div>
 
         <p className={`text-xs text-center mt-3 ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
-          You can manage Quick Sign anytime in Settings
+          {t('quick_sign.manage_note')}
         </p>
       </div>
     </ModalWrapper>

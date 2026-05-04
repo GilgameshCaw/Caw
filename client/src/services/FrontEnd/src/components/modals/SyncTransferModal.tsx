@@ -6,6 +6,7 @@ import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import ModalWrapper from './ModalWrapper'
 import ModalHeader from './ModalHeader'
 import { useTheme } from '~/hooks/useTheme'
+import { useT } from '~/i18n/I18nProvider'
 import { themeTextSecondary, themeTextMuted, themeBgSubtle, themeSecondaryButton } from '~/utils/theme'
 import { useSyncTransferStore } from '~/store/syncTransferStore'
 import { chains } from '~/config/chains'
@@ -16,6 +17,7 @@ import { usePriceStore } from '~/store/tokenDataStore'
 
 const SyncTransferModal: React.FC = () => {
   const { isDark } = useTheme()
+  const t = useT()
   const { isOpen, tokenId, username, close } = useSyncTransferStore()
   const { isConnected } = useAccount()
   const ensureWallet = useEnsureWallet()
@@ -85,12 +87,12 @@ const SyncTransferModal: React.FC = () => {
   }
 
   const getButtonText = () => {
-    if (needsChainSwitch) return isSwitchingChain ? 'Switching...' : 'Switch to Sepolia'
-    if (isQuoting) return 'Estimating fee...'
-    if (isSubmitting) return 'Confirm in wallet...'
-    if (isConfirming) return 'Syncing...'
-    if (isSuccess) return 'Synced!'
-    return 'Sync Ownership'
+    if (needsChainSwitch) return isSwitchingChain ? t('sync_transfer.btn.switching') : t('sync_transfer.btn.switch_network')
+    if (isQuoting) return t('sync_transfer.btn.estimating_fee')
+    if (isSubmitting) return t('sync_transfer.btn.confirm_in_wallet')
+    if (isConfirming) return t('sync_transfer.btn.syncing')
+    if (isSuccess) return t('sync_transfer.btn.synced')
+    return t('sync_transfer.btn.sync')
   }
 
   const isButtonDisabled = isSubmitting || isConfirming || isSuccess || isSwitchingChain || isQuoting
@@ -99,7 +101,7 @@ const SyncTransferModal: React.FC = () => {
     <ModalWrapper isOpen={isOpen} onClose={handleClose} maxWidth="max-w-md" usePortal zIndex={9999}>
       <div className="p-6">
         <ModalHeader
-          title="Sync Ownership"
+          title={t('sync_transfer.title')}
           onClose={handleClose}
           icon={
             <svg className="w-5 h-5 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -112,34 +114,33 @@ const SyncTransferModal: React.FC = () => {
         />
 
         <p className={`text-sm mb-4 ${themeTextSecondary(isDark)}`}>
-          <span className="font-semibold">@{username}</span> (Token #{tokenId}) was transferred to your wallet,
-          but the L2 network hasn't been updated yet. To use this account, you need to sync ownership.
+          <span className="font-semibold">@{username}</span>{t('sync_transfer.intro_token', { tokenId: tokenId ?? '' })}
         </p>
 
         <p className={`text-xs mb-5 ${themeTextMuted(isDark)}`}>
-          This sends a cross-chain message to update your ownership on L2. It requires a small ETH transaction on Sepolia.
+          {t('sync_transfer.note')}
         </p>
 
         {/* Show LZ fee estimate */}
         {lzFee !== null && lzFee > 0n && (
           <div className={`mb-4 p-3 rounded-lg text-xs ${themeBgSubtle(isDark)} ${themeTextMuted(isDark)}`}>
-            Sync fee: ~{formatEther(lzFee)} ETH{ethPrice > 0 && ` (~$${(Number(formatEther(lzFee)) * ethPrice).toFixed(2)})`}
+            {t('sync_transfer.fee_label')}: ~{formatEther(lzFee)} ETH{ethPrice > 0 && ` (~$${(Number(formatEther(lzFee)) * ethPrice).toFixed(2)})`}
           </div>
         )}
 
         {writeError && (
           <div className="mb-4 p-3 rounded-lg bg-red-500/10 text-red-500 text-sm">
             {writeError.message?.includes('User rejected')
-              ? 'Transaction rejected'
+              ? t('sync_transfer.error.tx_rejected')
               : writeError.message?.includes('no pending transfers')
-                ? 'No pending transfers to sync'
-                : 'Transaction failed. Please try again.'}
+                ? t('sync_transfer.error.no_pending')
+                : t('sync_transfer.error.tx_failed')}
           </div>
         )}
 
         {isSuccess && (
           <div className={`mb-4 p-3 rounded-lg text-sm ${isDark ? 'bg-green-500/10 text-green-400' : 'bg-green-50 text-green-700'}`}>
-            Ownership synced! You can now use @{username} on L2.
+            {t('sync_transfer.success', { username: username || '' })}
           </div>
         )}
 
@@ -148,7 +149,7 @@ const SyncTransferModal: React.FC = () => {
             onClick={handleClose}
             className={`px-4 py-2 rounded-lg text-sm transition cursor-pointer ${themeSecondaryButton(isDark)}`}
           >
-            {isSuccess ? 'Close' : 'Later'}
+            {isSuccess ? t('sync_transfer.btn.close') : t('sync_transfer.btn.later')}
           </button>
           {!isSuccess && (
             <button

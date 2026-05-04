@@ -4,6 +4,7 @@ import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { formatEther, formatUnits, parseEther, parseUnits, erc20Abi, maxUint256 } from 'viem'
 import ModalWrapper from './ModalWrapper'
 import { useTheme } from '~/hooks/useTheme'
+import { useT } from '~/i18n/I18nProvider'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { themeTextMuted, themeBgSubtle } from '~/utils/theme'
 import { useMarketplaceStore } from '~/store/marketplaceStore'
@@ -23,16 +24,17 @@ const PAYMENT_OPTIONS = [
 ]
 
 const DURATION_OPTIONS = [
-  { label: '5 min', seconds: 300 },
-  { label: '1 day', seconds: 86400 },
-  { label: '3 days', seconds: 259200 },
-  { label: '7 days', seconds: 604800 },
-  { label: '14 days', seconds: 1209600 },
-  { label: '30 days', seconds: 2592000 },
+  { labelKey: 'make_offer.duration.5min', seconds: 300 },
+  { labelKey: 'make_offer.duration.1day', seconds: 86400 },
+  { labelKey: 'make_offer.duration.3days', seconds: 259200 },
+  { labelKey: 'make_offer.duration.7days', seconds: 604800 },
+  { labelKey: 'make_offer.duration.14days', seconds: 1209600 },
+  { labelKey: 'make_offer.duration.30days', seconds: 2592000 },
 ]
 
 const MakeOfferModal: React.FC = () => {
   const { isDark } = useTheme()
+  const t = useT()
   const isOpen = useMarketplaceStore(s => s.makeOfferModal.isOpen)
   const tokenId = useMarketplaceStore(s => s.makeOfferModal.tokenId)
   const username = useMarketplaceStore(s => s.makeOfferModal.username)
@@ -202,16 +204,15 @@ const MakeOfferModal: React.FC = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
             </div>
-            <h2 className={`text-xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>Offer Submitted!</h2>
+            <h2 className={`text-xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>{t('make_offer.success.title')}</h2>
             <p className={`text-sm mb-6 ${themeTextMuted(isDark)}`}>
-              Your offer of {amount} {selectedToken.label} for <span className="font-semibold">@{username}</span> has been submitted.
-              The owner will be notified.
+              {t('make_offer.success.line_before')}{amount} {selectedToken.label}{t('make_offer.success.line_middle')}<span className="font-semibold">@{username}</span>{t('make_offer.success.line_after')}
             </p>
             <button
               onClick={handleClose}
               className="px-6 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer"
             >
-              Done
+              {t('make_offer.done')}
             </button>
           </div>
         ) : (
@@ -230,10 +231,10 @@ const MakeOfferModal: React.FC = () => {
             </div>
 
             <h2 className={`text-xl font-bold text-center ${isDark ? 'text-white' : 'text-gray-900'}`}>
-              Make an Offer
+              {t('make_offer.title')}
             </h2>
             <p className={`text-sm text-center mb-4 ${themeTextMuted(isDark)}`}>
-              Offer to buy this username.<br />Funds are escrowed until accepted or cancelled.
+              {t('make_offer.subtitle_line1')}<br />{t('make_offer.subtitle_line2')}
             </p>
 
             {/* Username SVG */}
@@ -246,7 +247,7 @@ const MakeOfferModal: React.FC = () => {
             {/* Duration selector */}
             <div className="mb-4">
               <label className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-white' : 'text-gray-700'}`}>
-                Offer Duration
+                {t('make_offer.duration_label')}
               </label>
               <div className="flex gap-2 flex-wrap">
                 {DURATION_OPTIONS.map(opt => (
@@ -261,7 +262,7 @@ const MakeOfferModal: React.FC = () => {
                           : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                     }`}
                   >
-                    {opt.label}
+                    {t(opt.labelKey)}
                   </button>
                 ))}
               </div>
@@ -270,7 +271,7 @@ const MakeOfferModal: React.FC = () => {
             {/* Payment token selector */}
             <div className="mb-4">
               <label className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-white' : 'text-gray-700'}`}>
-                Payment Token
+                {t('make_offer.payment_token_label')}
               </label>
               <div className="flex gap-2 flex-wrap">
                 {PAYMENT_OPTIONS.map(opt => (
@@ -294,7 +295,7 @@ const MakeOfferModal: React.FC = () => {
             {/* Amount input */}
             <div className="mb-4">
               <label className={`block text-sm font-medium mb-1.5 ${isDark ? 'text-white' : 'text-gray-700'}`}>
-                Offer Amount
+                {t('make_offer.amount_label')}
               </label>
               <div className="relative">
                 <input
@@ -323,7 +324,7 @@ const MakeOfferModal: React.FC = () => {
             {isConnected && (
               <div className={`p-3 rounded-xl ${themeBgSubtle(isDark)} text-sm mb-4`}>
                 <div className="flex justify-between">
-                  <span className={themeTextMuted(isDark)}>Your Balance</span>
+                  <span className={themeTextMuted(isDark)}>{t('make_offer.your_balance')}</span>
                   <span className={insufficientBalance ? (isDark ? 'text-red-400' : 'text-red-500') : (isDark ? 'text-white' : 'text-gray-900')}>
                     {fmtBalance(userBalance, selectedToken.decimals)} {selectedToken.label}
                   </span>
@@ -333,7 +334,7 @@ const MakeOfferModal: React.FC = () => {
 
             {insufficientBalance && (
               <div className={`text-xs mb-4 p-3 rounded-lg text-center ${isDark ? 'bg-red-500/10 text-red-400' : 'bg-red-50 text-red-500'}`}>
-                Insufficient balance.
+                {t('make_offer.insufficient_balance')}
               </div>
             )}
 
@@ -341,8 +342,8 @@ const MakeOfferModal: React.FC = () => {
             {(approveError || writeError) && (
               <div className="mb-4 p-3 rounded-lg bg-red-500/10 text-red-500 text-sm text-center">
                 {(approveError || writeError)?.message?.includes('User rejected')
-                  ? 'Transaction rejected'
-                  : 'Transaction failed. Please try again.'}
+                  ? t('make_offer.tx_rejected')
+                  : t('make_offer.tx_failed')}
               </div>
             )}
 
@@ -353,10 +354,10 @@ const MakeOfferModal: React.FC = () => {
                 disabled={isApproving || isApproveConfirming || isSwitchingChain}
                 className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed mb-2"
               >
-                {needsChainSwitch ? (isSwitchingChain ? 'Switching...' : 'Switch Network')
-                  : isApproving ? 'Confirm in wallet...'
-                  : isApproveConfirming ? 'Approving...'
-                  : `Approve ${selectedToken.label}`}
+                {needsChainSwitch ? (isSwitchingChain ? t('make_offer.btn.switching') : t('make_offer.btn.switch_network'))
+                  : isApproving ? t('make_offer.btn.confirm_in_wallet')
+                  : isApproveConfirming ? t('make_offer.btn.approving')
+                  : t('make_offer.btn.approve_token', { token: selectedToken.label })}
               </button>
             )}
 
@@ -367,10 +368,10 @@ const MakeOfferModal: React.FC = () => {
                 disabled={isSubmitting || isWaitingForReceipt || isSwitchingChain || insufficientBalance || amountWei === 0n}
                 className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-yellow-500"
               >
-                {needsChainSwitch ? (isSwitchingChain ? 'Switching...' : 'Switch Network')
-                  : isSubmitting ? 'Confirm in wallet...'
-                  : isWaitingForReceipt ? 'Submitting offer...'
-                  : 'Submit Offer'}
+                {needsChainSwitch ? (isSwitchingChain ? t('make_offer.btn.switching') : t('make_offer.btn.switch_network'))
+                  : isSubmitting ? t('make_offer.btn.confirm_in_wallet')
+                  : isWaitingForReceipt ? t('make_offer.btn.submitting')
+                  : t('make_offer.btn.submit_offer')}
               </button>
             )}
           </>

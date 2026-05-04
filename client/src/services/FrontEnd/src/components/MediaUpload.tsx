@@ -8,6 +8,7 @@ import {
   HiOutlinePlay,
 } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
+import { useT } from '~/i18n/I18nProvider'
 
 export type MediaType = 'image' | 'video' | 'gif'
 export type StorageType = 'off-chain'
@@ -214,6 +215,7 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
   onClose
 }) => {
   const { isDark } = useTheme()
+  const t = useT()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [isDragOver, setIsDragOver] = useState(false)
   const [isProcessing, setIsProcessing] = useState(false)
@@ -271,29 +273,29 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
         const isVideo = file.type.startsWith('video/')
 
         if (!isImage && !isVideo) {
-          setError('Please select only image or video files')
+          setError(t('media_upload.error.invalid_type'))
           continue
         }
 
         // Check limits
         if (isImage && existingImages + newMedia.filter(m => m.type === 'image').length >= maxImages) {
-          setError(`Maximum ${maxImages} images allowed`)
+          setError(t('media_upload.error.max_images', { count: maxImages }))
           continue
         }
 
         if (isVideo && existingVideos + newMedia.filter(m => m.type === 'video').length >= maxVideos) {
-          setError(`Maximum ${maxVideos} video allowed`)
+          setError(t('media_upload.error.max_videos', { count: maxVideos }))
           continue
         }
 
         // Reject large images
         if (isImage && file.size > SIZE_LIMITS.IMAGE_MAX) {
-          setError('Image file too large (max 10MB)')
+          setError(t('media_upload.error.image_too_large'))
           continue
         }
 
         if (isVideo && file.size > SIZE_LIMITS.VIDEO_MAX) {
-          setError('Video file too large (max 100MB)')
+          setError(t('media_upload.error.video_too_large'))
           continue
         }
 
@@ -341,7 +343,7 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
       }
 
     } catch (err) {
-      setError('Failed to process files')
+      setError(t('media_upload.error.process_failed'))
     } finally {
       setIsProcessing(false)
       if (fileInputRef.current) {
@@ -477,19 +479,19 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
                 <p className={`text-lg font-medium mb-2 ${
                   isDark ? 'text-white' : 'text-gray-900'
                 }`}>
-                  {isProcessing ? 'Processing...' : 'Drop photos or video here'}
+                  {isProcessing ? t('media_upload.processing') : t('media_upload.drop_here')}
                 </p>
 
                 <p className={`text-sm ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}>
-                  or click to select
+                  {t('media_upload.or_click')}
                 </p>
 
                 <p className={`text-xs mt-3 ${
                   isDark ? 'text-gray-500' : 'text-gray-500'
                 }`}>
-                  Images: up to {maxImages} files, 10MB each • Video: {maxVideos} file, 100MB max
+                  {t('media_upload.limits', { maxImages, maxVideos })}
                 </p>
               </div>
             )}
@@ -506,9 +508,9 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
             {selectedMedia.length > 0 && (
               <div className="space-y-3">
                 <h4 className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  Selected Media ({selectedMedia.length})
+                  {t('media_upload.selected_count', { count: selectedMedia.length })}
                   {selectedMedia.length > 1 && (
-                    <span className="ml-2 text-xs font-normal text-yellow-500">• Drag to reorder</span>
+                    <span className="ml-2 text-xs font-normal text-yellow-500">{t('media_upload.drag_reorder')}</span>
                   )}
                 </h4>
                 <div className="grid grid-cols-2 gap-3">
@@ -607,10 +609,12 @@ const MediaUpload: React.FC<MediaUploadProps> = ({
         <p className={`text-xs ${
           isDark ? 'text-gray-500' : 'text-gray-500'
         }`}>
-          {selectedMedia.filter(m => m.type === 'image' || m.type === 'gif').length}/4 images •
-          {selectedMedia.filter(m => m.type === 'video').length}/1 video
+          {t('media_upload.inline_count', {
+            images: selectedMedia.filter(m => m.type === 'image' || m.type === 'gif').length,
+            videos: selectedMedia.filter(m => m.type === 'video').length,
+          })}
           {selectedMedia.length > 1 && (
-            <span className="ml-2 text-yellow-600 dark:text-yellow-400">• Drag to reorder</span>
+            <span className="ml-2 text-yellow-600 dark:text-yellow-400">{t('media_upload.drag_reorder')}</span>
           )}
         </p>
       )}

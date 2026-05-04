@@ -4,6 +4,7 @@ import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { parseEther, parseUnits, formatEther, formatUnits, erc20Abi, maxUint256 } from 'viem'
 import ModalWrapper from './ModalWrapper'
 import { useTheme } from '~/hooks/useTheme'
+import { useT } from '~/i18n/I18nProvider'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { themeTextSecondary, themeTextMuted, themeBgSubtle, themeInput, themeBorder } from '~/utils/theme'
 import { useMarketplaceStore, MarketplaceListing, MarketplaceBid } from '~/store/marketplaceStore'
@@ -16,15 +17,15 @@ import LiveCountdown from '~/components/marketplace/LiveCountdown'
 
 const DECIMALS: Record<string, number> = { USDC: 6, USDT: 6 }
 
-function timeAgo(dateStr: string): string {
+function timeAgo(dateStr: string, t: (k: string, vars?: Record<string, any>) => string): string {
   const ms = Date.now() - new Date(dateStr).getTime()
   const mins = Math.floor(ms / 60000)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m ago`
+  if (mins < 1) return t('bid_modal.time.just_now')
+  if (mins < 60) return t('bid_modal.time.minutes', { count: mins })
   const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}h ago`
+  if (hours < 24) return t('bid_modal.time.hours', { count: hours })
   const days = Math.floor(hours / 24)
-  return `${days}d ago`
+  return t('bid_modal.time.days', { count: days })
 }
 
 function fmtPrice(raw: string, token: string): string {
@@ -42,6 +43,7 @@ function parsePriceNum(raw: string, token: string): number {
 
 const PlaceBidModal: React.FC = () => {
   const { isDark } = useTheme()
+  const t = useT()
   const isOpen = useMarketplaceStore(s => s.bidModal.isOpen)
   const listing = useMarketplaceStore(s => s.bidModal.listing)
   const close = useMarketplaceStore(s => s.closeBidModal)
@@ -224,15 +226,15 @@ const PlaceBidModal: React.FC = () => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
               </svg>
             </div>
-            <h2 className={`text-xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>Bid Placed!</h2>
+            <h2 className={`text-xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>{t('bid_modal.success.title')}</h2>
             <p className={`text-sm mb-6 ${themeTextMuted(isDark)}`}>
-              Your bid on <span className="font-semibold">@{listing.username}</span> has been submitted.<br />If you win, you'll need to settle the auction after it ends.
+              {t('bid_modal.success.line1_before')}<span className="font-semibold">@{listing.username}</span>{t('bid_modal.success.line1_after')}<br />{t('bid_modal.success.line2')}
             </p>
             <button
               onClick={handleClose}
               className="px-6 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer"
             >
-              Done
+              {t('bid_modal.done')}
             </button>
           </div>
         ) : (
@@ -250,10 +252,10 @@ const PlaceBidModal: React.FC = () => {
               </button>
             </div>
             <h2 className={`text-xl font-bold text-center ${isDark ? 'text-white' : 'text-gray-900'}`}>
-              Bid on @{listing.username}
+              {t('bid_modal.title', { username: listing.username })}
             </h2>
             <p className={`text-sm text-center mb-4 ${themeTextMuted(isDark)}`}>
-              English auction — highest bid wins at deadline
+              {t('bid_modal.subtitle')}
             </p>
 
             {/* Time remaining */}
@@ -267,23 +269,23 @@ const PlaceBidModal: React.FC = () => {
             <div className={`p-4 rounded-xl ${themeBgSubtle(isDark)} space-y-2 text-sm mb-4`}>
               {listing.highestBid && listing.highestBid !== '0' && (
                 <div className="flex justify-between">
-                  <span className={themeTextMuted(isDark)}>Current Bid</span>
+                  <span className={themeTextMuted(isDark)}>{t('bid_modal.current_bid')}</span>
                   <span className={`font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
                     {fmtPrice(listing.highestBid, listing.paymentToken)} {listing.paymentToken}
                   </span>
                 </div>
               )}
               <div className="flex justify-between">
-                <span className={themeTextMuted(isDark)}>Minimum Bid</span>
+                <span className={themeTextMuted(isDark)}>{t('bid_modal.minimum_bid')}</span>
                 <div className="text-right">
                   <span className={themeTextSecondary(isDark)}>{minBidDisplay} {listing.paymentToken}</span>
                   {listing.highestBid && listing.highestBid !== '0' && (
-                    <div className={`text-xs ${themeTextMuted(isDark)}`}>5% above current bid</div>
+                    <div className={`text-xs ${themeTextMuted(isDark)}`}>{t('bid_modal.five_pct_above')}</div>
                   )}
                 </div>
               </div>
               <div className="flex justify-between">
-                <span className={themeTextMuted(isDark)}>Fee</span>
+                <span className={themeTextMuted(isDark)}>{t('bid_modal.fee')}</span>
                 <span className={isDark ? 'text-green-400' : 'text-green-600'}>0%</span>
               </div>
             </div>
@@ -292,7 +294,7 @@ const PlaceBidModal: React.FC = () => {
             {bidHistory.length > 0 && (
               <div className="mb-4">
                 <h3 className={`text-xs font-medium mb-2 ${themeTextMuted(isDark)}`}>
-                  Bid History ({bidHistory.length})
+                  {t('bid_modal.history_title', { count: bidHistory.length })}
                 </h3>
                 <div className={`rounded-xl overflow-hidden border ${isDark ? 'border-white/5' : 'border-gray-100'}`}>
                   {bidHistory.map((bid, i) => (
@@ -308,7 +310,7 @@ const PlaceBidModal: React.FC = () => {
                           {bid.bidder.slice(0, 6)}...{bid.bidder.slice(-4)}
                         </span>
                         <span className={`text-xs ${themeTextMuted(isDark)}`}>
-                          {timeAgo(bid.createdAt)}
+                          {timeAgo(bid.createdAt, t)}
                         </span>
                       </div>
                       <span className={`text-xs font-semibold ${i === 0 ? (isDark ? 'text-yellow-400' : 'text-yellow-600') : (isDark ? 'text-white' : 'text-gray-900')}`}>
@@ -323,13 +325,13 @@ const PlaceBidModal: React.FC = () => {
             {/* Staked CAW warning */}
             {listing.stakedCaw && listing.stakedCaw !== '0' && (
               <div className={`text-xs mb-4 p-3 rounded-lg ${isDark ? 'bg-yellow-500/10 text-yellow-400' : 'bg-yellow-50 text-yellow-700'}`}>
-                This username has {fmtPrice(listing.stakedCaw, 'CAW')} CAW staked. Staked CAW transfers with the NFT, but the seller could withdraw it before the auction settles.
+                {t('bid_modal.staked_caw_warning', { amount: fmtPrice(listing.stakedCaw, 'CAW') })}
               </div>
             )}
 
             {/* Anti-snipe note */}
             <div className={`text-xs mb-4 p-3 rounded-lg text-center ${isDark ? 'bg-blue-500/10 text-blue-400' : 'bg-blue-50 text-blue-700'}`}>
-              If a bid is placed in the last 10 minutes,<br />the auction extends by 10 minutes so others can respond.
+              {t('bid_modal.anti_snipe_line1')}<br />{t('bid_modal.anti_snipe_line2')}
             </div>
 
             {/* Bid input */}
@@ -337,11 +339,11 @@ const PlaceBidModal: React.FC = () => {
               <div className="mb-4">
                 <div className="flex items-end justify-between mb-2">
                   <label className={`text-sm font-medium ${themeTextSecondary(isDark)}`}>
-                    Your Bid ({listing.paymentToken})
+                    {t('bid_modal.your_bid_label', { token: listing.paymentToken })}
                   </label>
                   <div className="flex gap-1.5">
                     {[
-                      { label: 'Min', pct: 0 },
+                      { label: t('bid_modal.preset.min'), pct: 0 },
                       { label: '+5%', pct: 5 },
                       { label: '+10%', pct: 10 },
                       { label: '+15%', pct: 15 },
@@ -384,13 +386,13 @@ const PlaceBidModal: React.FC = () => {
                   </span>
                   {isConnected && (
                     <span className={`text-xs ${insufficientBalance ? (isDark ? 'text-red-400' : 'text-red-500') : themeTextMuted(isDark)}`}>
-                      Balance: {fmtPrice(userBalance.toString(), listing.paymentToken)} {listing.paymentToken}
+                      {t('bid_modal.balance_label')}: {fmtPrice(userBalance.toString(), listing.paymentToken)} {listing.paymentToken}
                     </span>
                   )}
                 </div>
                 {insufficientBalance && (
                   <p className={`text-xs mt-1 ${isDark ? 'text-red-400' : 'text-red-500'}`}>
-                    Insufficient balance
+                    {t('bid_modal.insufficient_balance')}
                   </p>
                 )}
               </div>
@@ -399,7 +401,7 @@ const PlaceBidModal: React.FC = () => {
             {/* Buy more link for ERC20 */}
             {!isEth && (
               <p className={`text-xs text-center mb-4 ${themeTextMuted(isDark)}`}>
-                Need more {listing.paymentToken}?{' '}
+                {t('bid_modal.need_more_token', { token: listing.paymentToken })}{' '}
                 <a
                   href={`https://app.uniswap.org/swap?outputCurrency=${listing.paymentAddress}&chain=sepolia`}
                   target="_blank"
@@ -407,14 +409,14 @@ const PlaceBidModal: React.FC = () => {
                   className={isDark ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-500'}
                   onClick={e => e.stopPropagation()}
                 >
-                  Buy on Uniswap &rarr;
+                  {t('bid_modal.buy_on_uniswap')}
                 </a>
               </p>
             )}
 
             {isEnded && (
               <div className={`text-center mb-4 p-3 rounded-lg ${isDark ? 'bg-red-500/10 text-red-400' : 'bg-red-50 text-red-600'}`}>
-                This auction has ended.
+                {t('bid_modal.auction_ended')}
               </div>
             )}
 
@@ -422,10 +424,10 @@ const PlaceBidModal: React.FC = () => {
             {(approveError || writeError) && (
               <div className="mb-4 p-3 rounded-lg bg-red-500/10 text-red-500 text-sm text-center">
                 {(approveError || writeError)?.message?.includes('User rejected')
-                  ? 'Transaction rejected'
+                  ? t('bid_modal.tx_rejected')
                   : (approveError || writeError)?.message?.includes('Bid too low')
-                    ? 'Bid is too low. Must be at least 5% above current bid.'
-                    : 'Transaction failed. Please try again.'}
+                    ? t('bid_modal.bid_too_low')
+                    : t('bid_modal.tx_failed')}
               </div>
             )}
 
@@ -436,10 +438,10 @@ const PlaceBidModal: React.FC = () => {
                 disabled={isApproving || isApproveConfirming || isSwitchingChain}
                 className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {needsChainSwitch ? (isSwitchingChain ? 'Switching...' : 'Switch Network')
-                  : isApproving ? 'Confirm in wallet...'
-                  : isApproveConfirming ? 'Approving...'
-                  : `Approve ${listing.paymentToken}`}
+                {needsChainSwitch ? (isSwitchingChain ? t('bid_modal.btn.switching') : t('bid_modal.btn.switch_network'))
+                  : isApproving ? t('bid_modal.btn.confirm_in_wallet')
+                  : isApproveConfirming ? t('bid_modal.btn.approving')
+                  : t('bid_modal.btn.approve_token', { token: listing.paymentToken })}
               </button>
             )}
 
@@ -450,10 +452,10 @@ const PlaceBidModal: React.FC = () => {
                 disabled={isSubmitting || isConfirming || isSwitchingChain || !bidAmount || parseFloat(bidAmount) <= 0 || bidWei < BigInt(minBid) || insufficientBalance}
                 className="w-full px-4 py-2.5 rounded-lg text-sm font-medium bg-yellow-500 text-black hover:bg-yellow-400 transition cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {needsChainSwitch ? (isSwitchingChain ? 'Switching...' : 'Switch Network')
-                  : isSubmitting ? 'Confirm in wallet...'
-                  : isConfirming ? 'Confirming...'
-                  : 'Place Bid'}
+                {needsChainSwitch ? (isSwitchingChain ? t('bid_modal.btn.switching') : t('bid_modal.btn.switch_network'))
+                  : isSubmitting ? t('bid_modal.btn.confirm_in_wallet')
+                  : isConfirming ? t('bid_modal.btn.confirming')
+                  : t('bid_modal.btn.place_bid')}
               </button>
             )}
           </>

@@ -3,6 +3,7 @@ import { useWriteContract, useReadContract } from 'wagmi'
 import ModalWrapper from './ModalWrapper'
 import { useClientAuthStore } from '~/store/clientAuthStore'
 import { useTheme } from '~/hooks/useTheme'
+import { useT } from '~/i18n/I18nProvider'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import { CLIENT_ID } from '~/api/actions'
 import { cawProfileAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
@@ -14,6 +15,7 @@ import { usePriceStore } from '~/store/tokenDataStore'
 const ClientAuthModal: React.FC = () => {
   const { isOpen, tokenId, close } = useClientAuthStore()
   const { isDark } = useTheme()
+  const t = useT()
   const ensureWallet = useEnsureWallet()
   const { writeContractAsync } = useWriteContract()
   const [isPending, setIsPending] = useState(false)
@@ -70,9 +72,9 @@ const ClientAuthModal: React.FC = () => {
         if (cb) setTimeout(cb, 3000)
       } catch (err: any) {
         if (err?.name === 'UserRejectedRequestError' || err?.code === 4001) {
-          setError('Transaction rejected')
+          setError(t('client_auth.error.tx_rejected'))
         } else {
-          setError(err?.shortMessage || err?.message || 'Transaction failed')
+          setError(err?.shortMessage || err?.message || t('client_auth.error.tx_failed'))
         }
       } finally {
         setIsPending(false)
@@ -94,12 +96,11 @@ const ClientAuthModal: React.FC = () => {
         </div>
 
         <h2 className={`text-lg font-bold text-center mb-2 ${isDark ? 'text-white' : 'text-black'}`}>
-          Activate Your Account
+          {t('client_auth.title')}
         </h2>
 
         <p className={`text-sm text-center mb-4 ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-          {domainName || 'this client'} requires an authentication fee to participate.
-          This helps offset costs and allows the network to run smoothly.
+          {t('client_auth.body', { domain: domainName || t('client_auth.this_client') })}
         </p>
 
         {totalFee > 0n && (
@@ -107,7 +108,7 @@ const ClientAuthModal: React.FC = () => {
             isDark ? 'bg-white/5' : 'bg-gray-100'
           }`}>
             <div className={`text-xs uppercase tracking-wide mb-1 ${isDark ? 'text-white/40' : 'text-gray-500'}`}>
-              Total cost
+              {t('client_auth.total_cost')}
             </div>
             <div className={`text-2xl font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
               {ethPrice > 0 ? `$${totalUsd.toFixed(2)}` : `${totalEth.toFixed(5)} ETH`}
@@ -118,10 +119,10 @@ const ClientAuthModal: React.FC = () => {
               </div>
             )}
             <span className={`block text-xs mt-2 ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
-              Includes registration fee + network relay.
+              {t('client_auth.fee_breakdown')}
             </span>
             <span className={`block text-xs mt-1 ${isDark ? 'text-yellow-600/70' : 'text-yellow-700/70'}`}>
-              Half of all fees are used to buy and burn CAW.
+              {t('client_auth.burn_note')}
             </span>
           </div>
         )}
@@ -137,7 +138,7 @@ const ClientAuthModal: React.FC = () => {
           disabled={isPending || !totalFee}
           className="w-full py-3 rounded-lg font-medium bg-yellow-500 hover:bg-yellow-600 text-black transition-colors disabled:opacity-50 cursor-pointer"
         >
-          {isPending ? 'Confirming...' : 'Activate'}
+          {isPending ? t('client_auth.btn.confirming') : t('client_auth.btn.activate')}
         </button>
 
         <button
@@ -146,7 +147,7 @@ const ClientAuthModal: React.FC = () => {
             isDark ? 'text-white/40 hover:text-white/60' : 'text-gray-400 hover:text-gray-600'
           }`}
         >
-          Cancel
+          {t('client_auth.btn.cancel')}
         </button>
       </div>
     </ModalWrapper>

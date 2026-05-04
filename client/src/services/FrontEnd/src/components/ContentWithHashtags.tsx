@@ -6,6 +6,7 @@ import Tooltip from '~/components/Tooltip'
 import ImageLightbox from './ImageLightbox'
 import { useCachedFetch } from '~/hooks/useCachedFetch'
 import { useTheme } from '~/hooks/useTheme'
+import { useT } from '~/i18n/I18nProvider'
 import { feedImageLargeUrl } from '~/utils/imageVariants'
 import { TAG_CHAR_CLASS } from '~/../../../tools/hashtagRegex'
 
@@ -203,6 +204,7 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '', postId,
   const navigate = useNavigate()
   const location = useLocation()
   const { isDark } = useTheme()
+  const t = useT()
   const linkClass = isDark
     ? 'text-yellow-400 hover:text-yellow-300'
     : 'text-amber-800 hover:text-amber-900'
@@ -342,7 +344,7 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '', postId,
       // Check if this is an @mention
       if (isFullMention.test(part)) {
         return (
-          <Tooltip key={`${keyPrefix}-${index}`} text={`View ${part}'s profile`} className="inline">
+          <Tooltip key={`${keyPrefix}-${index}`} text={t('content_hashtags.view_profile', { name: part })} className="inline">
             <button
               onClick={(e) => handleMentionClick(part, e)}
               className={`
@@ -360,7 +362,7 @@ const ContentWithHashtags: React.FC<Props> = ({ content, className = '', postId,
       // Check if this is a hashtag or cashtag
       if (isFullTag.test(part)) {
         return (
-          <Tooltip key={`${keyPrefix}-${index}`} text={`View posts with ${part}`} className="inline">
+          <Tooltip key={`${keyPrefix}-${index}`} text={t('content_hashtags.view_posts_with', { tag: part })} className="inline">
             <button
               onClick={(e) => handleHashtagClick(part, e)}
               className={`

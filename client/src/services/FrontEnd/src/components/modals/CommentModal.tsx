@@ -7,6 +7,7 @@ import ContentWithHashtags from '~/components/ContentWithHashtags'
 import PollMiniResults from '~/components/PollMiniResults'
 import Avatar from '~/components/Avatar'
 import { useTheme } from '~/hooks/useTheme'
+import { useT } from '~/i18n/I18nProvider'
 import ModalWrapper from './ModalWrapper'
 import ModalHeader from './ModalHeader'
 import { stripPollMarker } from '~/../../../tools/pollMarker'
@@ -22,6 +23,7 @@ interface CommentModalProps {
 
 export const CommentModal: React.FC<CommentModalProps> = ({ isOpen, caw, onClose, onReplySubmitted }) => {
   const { isDark } = useTheme()
+  const t = useT()
 
   const handleSuccess = () => {
     // Call the onReplySubmitted callback first (to set pending state)
@@ -34,7 +36,7 @@ export const CommentModal: React.FC<CommentModalProps> = ({ isOpen, caw, onClose
 
   return (
     <ModalWrapper isOpen={isOpen} onClose={onClose} maxWidth="max-w-2xl">
-      <ModalHeader title="Reply" onClose={onClose} />
+      <ModalHeader title={t('comment_modal.title')} onClose={onClose} />
 
       {/* Original Caw */}
       <div className={`px-4 pt-4 ${isDark ? 'text-white' : 'text-black'}`}>
@@ -62,7 +64,7 @@ export const CommentModal: React.FC<CommentModalProps> = ({ isOpen, caw, onClose
               </div>
             )}
             <p className={`mt-2 text-sm ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
-              Replying to <span className="text-blue-500">@{caw.user.username}</span>
+              {t('comment_modal.replying_to')} <span className="text-blue-500">@{caw.user.username}</span>
             </p>
           </div>
         </div>

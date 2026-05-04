@@ -5,6 +5,7 @@ import { useQuery, useQueries } from '@tanstack/react-query'
 import { erc20Abi, formatEther, formatUnits } from 'viem'
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
+import { useT } from '~/i18n/I18nProvider'
 import { themeTextMuted, themeBgSubtle, themeBorder } from '~/utils/theme'
 import { chains } from '~/config/chains'
 import { CAW_NAMES_ADDRESS, CAW_ADDRESS } from '~/../../../abi/addresses'
@@ -44,6 +45,7 @@ interface ApiUserByToken {
 
 const AddressTokens: React.FC = () => {
   const { isDark } = useTheme()
+  const t = useT()
   const { address: rawAddress } = useParams<{ address: string }>()
   const address = (rawAddress || '').toLowerCase()
   const valid = ADDRESS_RX.test(address)
@@ -211,10 +213,10 @@ const AddressTokens: React.FC = () => {
       <MainLayout>
         <div className="max-w-2xl mx-auto px-6 py-16 text-center">
           <h2 className={`text-xl font-bold mb-2 ${isDark ? 'text-white' : 'text-black'}`}>
-            Invalid address
+            {t('address_tokens.invalid_title')}
           </h2>
           <p className={themeTextMuted(isDark)}>
-            The URL doesn't look like a valid Ethereum address.
+            {t('address_tokens.invalid_body')}
           </p>
         </div>
       </MainLayout>
@@ -241,7 +243,7 @@ const AddressTokens: React.FC = () => {
               rel="noreferrer"
               className={`text-xs ${themeTextMuted(isDark)} hover:underline`}
             >
-              View on Etherscan ↗
+              {t('address_tokens.view_etherscan')}
             </a>
           </div>
 
@@ -250,20 +252,20 @@ const AddressTokens: React.FC = () => {
               <div className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 {balanceLoading ? '—' : tokenCount}
               </div>
-              <div className={`text-xs ${themeTextMuted(isDark)}`}>Profiles owned</div>
+              <div className={`text-xs ${themeTextMuted(isDark)}`}>{t('address_tokens.profiles_owned')}</div>
             </div>
             <div className="text-center">
               <div className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 {formatNumberCompact(totalStaked, 0, 1)}
               </div>
-              <div className={`text-xs ${themeTextMuted(isDark)}`}>CAW staked</div>
+              <div className={`text-xs ${themeTextMuted(isDark)}`}>{t('address_tokens.caw_staked')}</div>
             </div>
             <div className="text-center">
               <div className={`text-lg font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 {formatNumberCompact(cawL1Number, 0, 1)}
               </div>
               <div className={`text-xs ${themeTextMuted(isDark)}`}>
-                CAW (L1){cawUsd >= 0.01 ? ` · $${cawUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : ''}
+                {t('address_tokens.caw_l1')}{cawUsd >= 0.01 ? ` · $${cawUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : ''}
               </div>
             </div>
           </div>
@@ -271,13 +273,13 @@ const AddressTokens: React.FC = () => {
 
         {/* Profiles owned */}
         <h2 className={`text-lg font-semibold mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-          Profiles owned
+          {t('address_tokens.profiles_owned')}
         </h2>
         {balanceLoading || indicesLoading ? (
           <LoadingSpinner className="py-8" />
         ) : tokenCount === 0 ? (
           <div className={`rounded-xl border ${themeBorder(isDark)} ${themeBgSubtle(isDark)} p-8 text-center ${themeTextMuted(isDark)}`}>
-            This address doesn't own any CAW usernames.
+            {t('address_tokens.no_usernames')}
           </div>
         ) : resolvedUsers.length === 0 ? (
           <LoadingSpinner className="py-8" />
@@ -293,11 +295,11 @@ const AddressTokens: React.FC = () => {
 
         {/* Offers made */}
         <h2 className={`text-lg font-semibold mt-8 mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-          Active offers made
+          {t('address_tokens.active_offers')}
         </h2>
         {offers.length === 0 ? (
           <div className={`rounded-xl border ${themeBorder(isDark)} ${themeBgSubtle(isDark)} p-6 text-center ${themeTextMuted(isDark)}`}>
-            No active offers from this address.
+            {t('address_tokens.no_offers')}
           </div>
         ) : (
           <div className="grid grid-cols-1 min-[520px]:grid-cols-2 gap-4">

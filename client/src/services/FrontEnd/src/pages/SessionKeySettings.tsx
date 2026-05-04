@@ -5,6 +5,7 @@ import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
+import { useT } from '~/i18n/I18nProvider'
 import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
 import { useSessionKeyStore } from '~/store/sessionKeyStore'
 import { useCreateSession, useRevokeSession, getDefaultTipCeiling, DEFAULT_SPEND_LIMIT, DEFAULT_SESSION_DURATION } from '~/hooks/useSessionKey'
@@ -18,6 +19,7 @@ import { chains } from '~/config/chains'
 
 const SessionKeySettings: React.FC = () => {
   const { isDark } = useTheme()
+  const t = useT()
   const ensureWallet = useEnsureWallet()
   const activeToken = useActiveToken()
   const enabled = useSessionKeyStore(s => s.enabled)
@@ -113,7 +115,7 @@ const SessionKeySettings: React.FC = () => {
       const msg = err?.message || ''
       if (msg.toLowerCase().includes('connect your wallet')) return
       const isUserRejection = msg.includes('rejected') || msg.includes('denied') || msg.includes('cancelled') || err?.code === 4001
-      setError(isUserRejection ? 'Signature was cancelled.' : (msg.includes('Please') || msg.includes('try again') ? msg : 'Something went wrong. Please try again.'))
+      setError(isUserRejection ? t('quick_sign.error.cancelled') : (msg.includes('Please') || msg.includes('try again') ? msg : t('quick_sign.error.generic')))
     } finally {
       setLoading(false)
       setStatus('')
@@ -128,7 +130,7 @@ const SessionKeySettings: React.FC = () => {
       await revokeSession()
     } catch (err: any) {
       console.error('[SessionKey] Revoke failed:', err)
-      setError('Something went wrong. Please try again.')
+      setError(t('quick_sign.error.generic'))
     } finally {
       setLoading(false)
     }
@@ -136,19 +138,19 @@ const SessionKeySettings: React.FC = () => {
 
   const formatExpiry = (timestamp: number) => {
     const remaining = timestamp * 1000 - Date.now()
-    if (remaining <= 0) return 'Expired'
+    if (remaining <= 0) return t('session_key.expired')
 
     const days = Math.floor(remaining / (1000 * 60 * 60 * 24))
     const hours = Math.floor((remaining % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60))
-    if (days > 0) return `${days}d ${hours}h remaining`
+    if (days > 0) return t('session_key.days_hours_remaining', { days, hours })
     const minutes = Math.floor((remaining % (1000 * 60 * 60)) / (1000 * 60))
-    return `${hours}h ${minutes}m remaining`
+    return t('session_key.hours_minutes_remaining', { hours, minutes })
   }
 
   const formatSpendLimit = (limit?: string) => {
-    if (!limit) return 'Unknown'
+    if (!limit) return t('session_key.unknown')
     const n = Number(limit)
-    if (n === 0) return 'Unlimited'
+    if (n === 0) return t('session_key.unlimited')
     if (n >= 1_000_000_000) return `${(n / 1_000_000_000).toFixed(n % 1_000_000_000 === 0 ? 0 : 1)}B CAW`
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M CAW`
     if (n >= 1_000) return `${(n / 1_000).toFixed(n % 1_000 === 0 ? 0 : 1)}K CAW`
@@ -177,7 +179,7 @@ const SessionKeySettings: React.FC = () => {
             <HiArrowLeft className="w-5 h-5" />
           </Link>
           <h1 className={`text-xl font-bold ${isDark ? 'text-white' : 'text-black'}`}>
-            Quick Sign
+            {t('session_key.page_title')}
           </h1>
         </div>
 
@@ -187,10 +189,10 @@ const SessionKeySettings: React.FC = () => {
         }`}>
           <div>
             <h3 className={`font-semibold ${isDark ? 'text-white' : 'text-black'}`}>
-              Enable Quick Sign
+              {t('session_key.enable_heading')}
             </h3>
             <p className={`text-sm mt-1 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-              Sign once with your wallet, then post without popups
+              {t('session_key.enable_subtitle')}
             </p>
           </div>
           <button
@@ -222,14 +224,14 @@ const SessionKeySettings: React.FC = () => {
                     <div className="flex items-center gap-2">
                       <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
                       <span className={`font-medium ${isDark ? 'text-green-400' : 'text-green-600'}`}>
-                        Active
+                        {t('session_key.active')}
                       </span>
                     </div>
                     <p className={`text-sm mt-1 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
                       {formatExpiry(session!.expiry)}
                     </p>
                     <p className={`text-sm mt-1 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-                      Spend limit: {formatSpendLimit(session!.spendLimit)}
+                      {t('session_key.spend_limit')}: {formatSpendLimit(session!.spendLimit)}
                       {session!.spendLimit && Number(session!.spendLimit) > 0 && (() => {
                         const usd = cawToUsd(session!.spendLimit)
                         return usd ? (
@@ -244,22 +246,22 @@ const SessionKeySettings: React.FC = () => {
                         const remaining = limit - spent
                         return (
                           <span className={`ml-2 ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
-                            ({formatSpendLimit((remaining > 0n ? remaining : 0n).toString())} remaining)
+                            ({t('session_key.amount_remaining', { amount: formatSpendLimit((remaining > 0n ? remaining : 0n).toString()) })})
                           </span>
                         )
                       })()}
                     </p>
                     {/* Validator tip cap */}
                     <p className={`text-sm mt-1 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-                      Validator tip cap: {(() => {
-                        if (session!.tipCeiling === undefined) return <span className="italic">none (legacy session)</span>
+                      {t('session_key.tip_cap')}: {(() => {
+                        if (session!.tipCeiling === undefined) return <span className="italic">{t('session_key.tip_legacy')}</span>
                         const ceiling = BigInt(session!.tipCeiling || '0')
-                        if (ceiling === 0n) return <span className="text-yellow-500">no tip (opt-out)</span>
+                        if (ceiling === 0n) return <span className="text-yellow-500">{t('session_key.tip_optout')}</span>
                         const usd = cawToUsd(session!.tipCeiling)
                         return (
                           <>
                             {formatSpendLimit(session!.tipCeiling)}
-                            {usd && <span className={`ml-1 ${isDark ? 'text-white/30' : 'text-gray-400'}`}>(≈ {usd}/action)</span>}
+                            {usd && <span className={`ml-1 ${isDark ? 'text-white/30' : 'text-gray-400'}`}>{t('session_key.tip_per_action', { usd })}</span>}
                           </>
                         )
                       })()}
@@ -267,12 +269,12 @@ const SessionKeySettings: React.FC = () => {
                     {/* Wallet-protected indicator */}
                     <p className={`text-sm mt-1 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
                       {session!.encrypted
-                        ? <>Wallet unlock: <span className="text-white">required each session</span></>
-                        : <>Wallet unlock: <span className={isDark ? 'text-white/70' : 'text-gray-700'}>not required</span></>
+                        ? <>{t('session_key.wallet_unlock_label')} <span className="text-white">{t('session_key.wallet_unlock_required')}</span></>
+                        : <>{t('session_key.wallet_unlock_label')} <span className={isDark ? 'text-white/70' : 'text-gray-700'}>{t('session_key.wallet_unlock_not_required')}</span></>
                       }
                     </p>
                     <p className={`text-xs mt-1 font-mono ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
-                      Key: {session!.address.slice(0, 8)}...{session!.address.slice(-6)}
+                      {t('session_key.key_label')}: {session!.address.slice(0, 8)}...{session!.address.slice(-6)}
                     </p>
                   </div>
                   <button
@@ -280,7 +282,7 @@ const SessionKeySettings: React.FC = () => {
                     disabled={loading}
                     className="px-4 py-2 rounded-lg text-sm font-medium text-red-400 hover:text-red-300 hover:bg-red-900/20 transition-colors disabled:opacity-50 cursor-pointer"
                   >
-                    {loading ? 'Revoking...' : 'Revoke'}
+                    {loading ? t('session_key.btn.revoking') : t('session_key.btn.revoke')}
                   </button>
                 </div>
               </div>
@@ -288,7 +290,7 @@ const SessionKeySettings: React.FC = () => {
               <div>
                 {!activeToken?.tokenId ? (
                   <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-                    Connect your wallet and select a profile to activate Quick Sign.
+                    {t('session_key.connect_first')}
                   </p>
                 ) : (
                   <>
@@ -325,11 +327,11 @@ const SessionKeySettings: React.FC = () => {
                               disabled={loading || !!wrongWallet}
                               className="px-6 py-3 rounded-lg font-medium bg-yellow-500 hover:bg-yellow-600 text-black transition-colors disabled:opacity-50 disabled:hover:bg-yellow-500 cursor-pointer"
                             >
-                              {loading ? (status || 'Activating...') : 'Activate Quick Sign'}
+                              {loading ? (status || t('quick_sign.btn.activating')) : t('session_key.btn.activate')}
                             </button>
                             {wrongWallet && (
                               <p className={`text-xs mt-2 ${isDark ? 'text-red-400' : 'text-red-500'}`}>
-                                Wrong wallet — switch to the address that owns this profile.
+                                {t('session_key.wrong_wallet')}
                               </p>
                             )}
                           </>
@@ -340,7 +342,7 @@ const SessionKeySettings: React.FC = () => {
                 )}
                 {session && isExpired && (
                   <p className={`text-sm mt-3 text-center ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-                    Your previous session has expired. Activate a new one above.
+                    {t('session_key.previous_expired')}
                   </p>
                 )}
               </div>

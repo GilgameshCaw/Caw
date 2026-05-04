@@ -609,9 +609,9 @@ console.log("BALANCE:", balance)
           <div className={isCaptive ? 'w-full md:w-[45%] md:sticky md:top-8 md:pr-8' : ''}>
             <div className={isCaptive ? `px-6 py-6 rounded-2xl backdrop-blur-sm ${isDark ? 'bg-white/[0.04] border border-white/10' : 'bg-black/[0.03] border border-black/10'}` : ''}>
               <div className="text-center space-y-3">
-                <h1 className="text-4xl font-bold">Create a Profile</h1>
+                <h1 className="text-4xl font-bold">{t('new_profile.create_profile_heading')}</h1>
                 <p className="text-gray-400 text-sm mx-auto" style={{ width: '85%' }}>
-                  Your username is a tradeable NFT that will be used to access your account and posts. Creating a profile requires CAW tokens to be burnt, fewer characters increase in cost and rarity.
+                  {t('new_profile.create_profile_subtitle')}
                 </p>
               </div>
 
@@ -628,7 +628,7 @@ console.log("BALANCE:", balance)
                   rel="noopener noreferrer"
                   className="text-sm text-yellow-500/70 hover:text-yellow-500 transition-colors cursor-pointer"
                 >
-                  Need more CAW? Click here.
+                  {t('new_profile.need_more_caw')}
                 </a>
 
                 <div className="mt-3">
@@ -640,12 +640,12 @@ console.log("BALANCE:", balance)
                         : 'bg-yellow-100 text-yellow-800 hover:bg-yellow-200'
                     }`}
                   >
-                    Claim more mCAW
+                    {t('new_profile.claim_mcaw')}
                   </Link>
                 </div>
 
                 <Link to="/usernames" className="block mt-2 text-sm text-gray-400 hover:text-gray-300 transition-colors">
-                  Username Marketplace &rarr;
+                  {t('new_profile.marketplace_link')}
                 </Link>
               </div>
             </div>
@@ -655,7 +655,7 @@ console.log("BALANCE:", balance)
           <div className={isCaptive ? 'w-full md:w-[55%] md:min-w-[380px] md:pl-8' : ''}>
             <div className={isCaptive ? `px-6 py-6 rounded-2xl backdrop-blur-sm ${isDark ? 'bg-white/[0.04] border border-white/10' : 'bg-black/[0.03] border border-black/10'}` : ''}>
             {isCaptive && (
-              <h2 className="text-2xl font-bold text-center md:text-left mb-4 mt-2.5">Choose Your Username</h2>
+              <h2 className="text-2xl font-bold text-center md:text-left mb-4 mt-2.5">{t('new_profile.choose_username_heading')}</h2>
             )}
 
         <div className={`${isCaptive ? '' : 'mt-16'} space-y-4`}>

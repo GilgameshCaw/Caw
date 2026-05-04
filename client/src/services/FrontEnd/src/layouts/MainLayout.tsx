@@ -70,7 +70,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
           <Link to="/home" className="caw-logo-lockup flex items-center justify-center w-full">
             <img
               src={cawLogo}
-              alt="CAW Logo"
+              alt={t('main_layout.caw_logo_alt')}
               width={40}
               height={40}
               decoding="sync"
@@ -181,21 +181,21 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
                     : 'border-gray-300 text-gray-700 hover:bg-gray-100'
                 }`}
               >
-                Learn More
+                {t('main_layout.learn_more')}
               </Link>
             ) : !isConnected ? (
               <button
                 onClick={openConnectModal}
                 className="px-6 py-2.5 bg-yellow-500 text-black font-bold text-base rounded-full hover:bg-yellow-400 transition-all shadow-lg cursor-pointer"
               >
-                Sign In
+                {t('common.sign_in')}
               </button>
             ) : (
               <Link
                 to="/usernames/new"
                 className="px-6 py-2.5 bg-yellow-500 text-black font-bold text-base rounded-full hover:bg-yellow-400 transition-all shadow-lg"
               >
-                Create Your Profile
+                {t('main_layout.create_profile')}
               </Link>
             )}
           </div>
@@ -211,7 +211,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
       ) && (
         <button
           onClick={() => openModal('post')}
-          aria-label="Post"
+          aria-label={t('main_layout.post_aria')}
           className="md:hidden fixed right-10 bottom-12 z-[60] w-16 h-16 rounded-full bg-yellow-500 hover:bg-yellow-400 active:bg-yellow-600 text-black flex items-center justify-center shadow-lg shadow-black/30 transition-all cursor-pointer"
         >
           <HiOutlinePencilAlt className="w-8 h-8" />

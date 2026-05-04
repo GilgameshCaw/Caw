@@ -6,6 +6,7 @@ import { useEnsureWallet } from '~/hooks/useEnsureWallet'
 import ModalWrapper from './ModalWrapper'
 import ModalHeader from './ModalHeader'
 import { useTheme } from '~/hooks/useTheme'
+import { useT } from '~/i18n/I18nProvider'
 import { themeTextSecondary, themeTextMuted, themeBgSubtle, themeSecondaryButton } from '~/utils/theme'
 import { useTransferModalStore } from '~/store/transferModalStore'
 import { chains } from '~/config/chains'
@@ -16,6 +17,7 @@ import { usePriceStore } from '~/store/tokenDataStore'
 
 const TransferNFTModal: React.FC = () => {
   const { isDark } = useTheme()
+  const t = useT()
   const { isOpen, tokenId, username, close } = useTransferModalStore()
   const { address, isConnected } = useAccount()
   const ensureWallet = useEnsureWallet()
@@ -78,15 +80,15 @@ const TransferNFTModal: React.FC = () => {
 
   const validateRecipient = (value: string): boolean => {
     if (!value.trim()) {
-      setInputError('Address is required')
+      setInputError(t('transfer_nft.error.address_required'))
       return false
     }
     if (!isAddress(value)) {
-      setInputError('Invalid Ethereum address')
+      setInputError(t('transfer_nft.error.invalid_address'))
       return false
     }
     if (value.toLowerCase() === address?.toLowerCase()) {
-      setInputError('Cannot transfer to yourself')
+      setInputError(t('transfer_nft.error.cannot_self'))
       return false
     }
     setInputError(null)
@@ -111,12 +113,12 @@ const TransferNFTModal: React.FC = () => {
   }
 
   const getButtonText = () => {
-    if (needsChainSwitch) return isSwitchingChain ? 'Switching...' : 'Switch to Sepolia'
-    if (isQuoting) return 'Estimating fee...'
-    if (isSubmitting) return 'Confirm in wallet...'
-    if (isConfirming) return 'Confirming...'
-    if (isSuccess) return 'Transferred!'
-    return 'Transfer'
+    if (needsChainSwitch) return isSwitchingChain ? t('transfer_nft.btn.switching') : t('transfer_nft.btn.switch_network')
+    if (isQuoting) return t('transfer_nft.btn.estimating_fee')
+    if (isSubmitting) return t('transfer_nft.btn.confirm_in_wallet')
+    if (isConfirming) return t('transfer_nft.btn.confirming')
+    if (isSuccess) return t('transfer_nft.btn.transferred')
+    return t('transfer_nft.btn.transfer')
   }
 
   const isButtonDisabled = isSubmitting || isConfirming || isSuccess || isSwitchingChain || isQuoting
@@ -124,19 +126,19 @@ const TransferNFTModal: React.FC = () => {
   return (
     <ModalWrapper isOpen={isOpen} onClose={handleClose} maxWidth="max-w-md" usePortal zIndex={9999}>
       <div className="p-6">
-        <ModalHeader title="Transfer NFT" onClose={handleClose} border={false} size="lg" className="mb-4 px-0" />
+        <ModalHeader title={t('transfer_nft.title')} onClose={handleClose} border={false} size="lg" className="mb-4 px-0" />
 
         <p className={`text-sm mb-1 ${themeTextSecondary(isDark)}`}>
-          Transfer <span className="font-semibold">@{username}</span> (Token #{tokenId}) to another wallet.
+          {t('transfer_nft.intro_before')}<span className="font-semibold">@{username}</span>{t('transfer_nft.intro_token', { tokenId: tokenId ?? '' })}
         </p>
         <p className={`text-xs mb-5 ${isDark ? 'text-yellow-500/80' : 'text-yellow-600'}`}>
-          This is irreversible. You will lose ownership of this account.
+          {t('transfer_nft.warning')}
         </p>
 
         {!isSuccess && (
           <div className="mb-5">
             <label className={`block text-sm font-medium mb-2 ${themeTextSecondary(isDark)}`}>
-              Recipient Address
+              {t('transfer_nft.recipient_label')}
             </label>
             <input
               type="text"
@@ -162,9 +164,9 @@ const TransferNFTModal: React.FC = () => {
         {/* Show LZ fee estimate */}
         {!isSuccess && lzFee !== null && lzFee > 0n && (
           <div className={`mb-4 p-3 rounded-lg text-xs ${themeBgSubtle(isDark)} ${themeTextMuted(isDark)}`}>
-            L2 sync fee: ~{formatEther(lzFee)} ETH{ethPrice > 0 && ` (~$${(Number(formatEther(lzFee)) * ethPrice).toFixed(2)})`}
+            {t('transfer_nft.l2_fee_label')}: ~{formatEther(lzFee)} ETH{ethPrice > 0 && ` (~$${(Number(formatEther(lzFee)) * ethPrice).toFixed(2)})`}
             <span className={`block mt-1 ${themeTextMuted(isDark)}`}>
-              This covers the cross-chain message to update ownership on L2.
+              {t('transfer_nft.l2_fee_note')}
             </span>
           </div>
         )}
@@ -172,16 +174,16 @@ const TransferNFTModal: React.FC = () => {
         {writeError && (
           <div className="mb-4 p-3 rounded-lg bg-red-500/10 text-red-500 text-sm">
             {writeError.message?.includes('User rejected')
-              ? 'Transaction rejected'
+              ? t('transfer_nft.error.tx_rejected')
               : writeError.message?.includes('caller is not the token owner')
-                ? 'You are not the owner of this token'
-                : 'Transaction failed. Please try again.'}
+                ? t('transfer_nft.error.not_owner')
+                : t('transfer_nft.error.tx_failed')}
           </div>
         )}
 
         {isSuccess && (
           <div className={`mb-4 p-3 rounded-lg text-sm ${isDark ? 'bg-green-500/10 text-green-400' : 'bg-green-50 text-green-700'}`}>
-            Transfer successful! @{username} has been transferred and L2 ownership has been synced.
+            {t('transfer_nft.success', { username: username || '' })}
           </div>
         )}
 
@@ -190,7 +192,7 @@ const TransferNFTModal: React.FC = () => {
             onClick={handleClose}
             className={`px-4 py-2 rounded-lg text-sm transition cursor-pointer ${themeSecondaryButton(isDark)}`}
           >
-            {isSuccess ? 'Close' : 'Cancel'}
+            {isSuccess ? t('transfer_nft.btn.close') : t('transfer_nft.btn.cancel')}
           </button>
           {!isSuccess && (
             <button

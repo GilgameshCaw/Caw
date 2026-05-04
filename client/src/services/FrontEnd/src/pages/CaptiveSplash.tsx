@@ -3,24 +3,26 @@ import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useAccount } from 'wagmi'
 import { useActiveToken } from '~/store/tokenDataStore'
 import { useTheme } from '~/hooks/useTheme'
+import { useT } from '~/i18n/I18nProvider'
 import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import BoidsBg from '~/components/BoidsBg'
 
 const CawCoin3D = lazy(() => import('~/components/CawCoin3D'))
 
-const KEYWORDS = [
-  'permissionless',
-  'unstoppable',
-  'censorship-resistant',
-  'on-chain',
-  'decentralized',
-  'trustless',
-  'sovereign',
-  'unbreakable',
+const KEYWORD_KEYS = [
+  'captive_splash.kw.permissionless',
+  'captive_splash.kw.unstoppable',
+  'captive_splash.kw.censorship_resistant',
+  'captive_splash.kw.on_chain',
+  'captive_splash.kw.decentralized',
+  'captive_splash.kw.trustless',
+  'captive_splash.kw.sovereign',
+  'captive_splash.kw.unbreakable',
 ]
 
 export default function CaptiveSplash() {
   const { isDark } = useTheme()
+  const t = useT()
   const { isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
   const activeToken = useActiveToken()
@@ -33,7 +35,7 @@ export default function CaptiveSplash() {
     intervalRef.current = setInterval(() => {
       setIsAnimating(true)
       setTimeout(() => {
-        setKeywordIndex(i => (i + 1) % KEYWORDS.length)
+        setKeywordIndex(i => (i + 1) % KEYWORD_KEYS.length)
         setIsAnimating(false)
       }, 400)
     }, 3000)
@@ -54,7 +56,7 @@ export default function CaptiveSplash() {
 
         {/* Tagline */}
         <h1 className="text-3xl md:text-5xl font-bold text-center mb-4 max-w-3xl leading-tight">
-          The world's first
+          {t('captive_splash.tagline_prefix')}
           <br />
           <span
             className={`text-yellow-500 inline-block text-[2.7rem] md:text-7xl whitespace-nowrap transition-all duration-400 ${
@@ -63,16 +65,16 @@ export default function CaptiveSplash() {
                 : 'opacity-100 translate-y-0'
             }`}
           >
-            {KEYWORDS[keywordIndex]}
+            {t(KEYWORD_KEYS[keywordIndex])}
           </span>
           <br />
-          social network
+          {t('captive_splash.tagline_suffix')}
         </h1>
 
         <p className={`text-center text-lg md:text-xl mb-10 max-w-lg ${
           isDark ? 'text-white/60' : 'text-gray-500'
         }`}>
-          Speak freely. Own your identity. No middlemen, no censorship, no gatekeepers.
+          {t('captive_splash.subtitle')}
         </p>
 
         {/* CTA buttons */}
@@ -82,21 +84,21 @@ export default function CaptiveSplash() {
               onClick={openConnectModal}
               className="px-8 py-3 bg-yellow-500 text-black font-bold text-lg rounded-full hover:bg-yellow-400 transition-all shadow-lg hover:shadow-xl cursor-pointer"
             >
-              Sign In
+              {t('common.sign_in')}
             </button>
           ) : !activeToken?.username ? (
             <Link
               to="/usernames/new"
               className="px-8 py-3 bg-yellow-500 text-black font-bold text-lg rounded-full hover:bg-yellow-400 transition-all shadow-lg hover:shadow-xl"
             >
-              Create Your Profile
+              {t('main_layout.create_profile')}
             </Link>
           ) : (
             <Link
               to="/home"
               className="px-8 py-3 bg-yellow-500 text-black font-bold text-lg rounded-full hover:bg-yellow-400 transition-all shadow-lg hover:shadow-xl"
             >
-              Go to Feed
+              {t('captive_splash.go_to_feed')}
             </Link>
           )}
 
@@ -108,7 +110,7 @@ export default function CaptiveSplash() {
                 : 'border-gray-300 text-gray-700 hover:bg-gray-100'
             }`}
           >
-            Learn More
+            {t('main_layout.learn_more')}
           </Link>
         </div>
 
@@ -122,9 +124,9 @@ export default function CaptiveSplash() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
               </svg>
             </div>
-            <h3 className="font-semibold mb-1">Decentralized</h3>
+            <h3 className="font-semibold mb-1">{t('captive_splash.feature1.title')}</h3>
             <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-              No central authority can silence you
+              {t('captive_splash.feature1.body')}
             </p>
           </div>
 
@@ -136,9 +138,9 @@ export default function CaptiveSplash() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2M15 11h3m-3 4h2" />
               </svg>
             </div>
-            <h3 className="font-semibold mb-1">Own Your Profile</h3>
+            <h3 className="font-semibold mb-1">{t('captive_splash.feature2.title')}</h3>
             <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-              Your profile is an on-chain tradable NFT that you control
+              {t('captive_splash.feature2.body')}
             </p>
           </div>
 
@@ -150,9 +152,9 @@ export default function CaptiveSplash() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
               </svg>
             </div>
-            <h3 className="font-semibold mb-1">Uncensorable</h3>
+            <h3 className="font-semibold mb-1">{t('captive_splash.feature3.title')}</h3>
             <p className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-              Every post is stored on-chain and can never be deleted
+              {t('captive_splash.feature3.body')}
             </p>
           </div>
         </div>
@@ -164,16 +166,16 @@ export default function CaptiveSplash() {
       <footer className={`border-t py-8 px-6 relative z-10 backdrop-blur-[2px] ${isDark ? 'border-white/10 bg-black/10' : 'border-gray-200 bg-white/10'}`}>
         <div className="max-w-2xl mx-auto">
           <div className="flex flex-wrap justify-center gap-x-6 gap-y-3 text-sm">
-            <Link to="/help/faq" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>FAQ</Link>
-            <Link to="/help/manifesto" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>Manifesto</Link>
-            <Link to="/help/history" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>History</Link>
-            <Link to="/help/howto" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>How It Works</Link>
-            <Link to="/help/developers" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>Developers</Link>
-            <Link to="/help/resources" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>Resources</Link>
-            <Link to="/faucet" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>Faucet</Link>
+            <Link to="/help/faq" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>{t('captive_splash.footer.faq')}</Link>
+            <Link to="/help/manifesto" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>{t('captive_splash.footer.manifesto')}</Link>
+            <Link to="/help/history" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>{t('captive_splash.footer.history')}</Link>
+            <Link to="/help/howto" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>{t('captive_splash.footer.how_it_works')}</Link>
+            <Link to="/help/developers" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>{t('captive_splash.footer.developers')}</Link>
+            <Link to="/help/resources" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>{t('captive_splash.footer.resources')}</Link>
+            <Link to="/faucet" className={`transition-colors ${isDark ? 'text-white/50 hover:text-white' : 'text-gray-500 hover:text-gray-800'}`}>{t('captive_splash.footer.faucet')}</Link>
           </div>
           <p className={`text-center text-xs mt-4 ${isDark ? 'text-white/30' : 'text-gray-400'}`}>
-            CAW Protocol &mdash; A trustless and decentralized social clearing-house
+            {t('captive_splash.footer.tagline')}
           </p>
         </div>
       </footer>

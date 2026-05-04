@@ -9,6 +9,7 @@ import {
 } from '~/services/sessionKeyEncryption'
 import { HiLockClosed } from 'react-icons/hi'
 import { useTheme } from '~/hooks/useTheme'
+import { useT } from '~/i18n/I18nProvider'
 
 /**
  * Shown when the active session is encrypted and needs unlocking.
@@ -21,6 +22,7 @@ const QuickSignUnlock: React.FC = () => {
   const { signMessageAsync } = useSignMessage()
   const { isConnected } = useAccount()
   const { isDark } = useTheme()
+  const t = useT()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [triedOtherTabs, setTriedOtherTabs] = useState(false)
@@ -54,9 +56,9 @@ const QuickSignUnlock: React.FC = () => {
     } catch (err: any) {
       const msg = err?.message || ''
       if (msg.includes('rejected') || msg.includes('denied') || err?.code === 4001) {
-        setError('Signature cancelled.')
+        setError(t('quick_sign_unlock.error.cancelled'))
       } else {
-        setError('Failed to decrypt. Try again.')
+        setError(t('quick_sign_unlock.error.decrypt'))
       }
     } finally {
       setLoading(false)
@@ -74,11 +76,11 @@ const QuickSignUnlock: React.FC = () => {
       <div className="flex items-center gap-3 mb-2">
         <HiLockClosed className="w-5 h-5 text-yellow-500 flex-shrink-0" />
         <p className={`text-sm font-medium ${isDark ? 'text-white' : 'text-gray-900'}`}>
-          Quick Sign is locked
+          {t('quick_sign_unlock.title')}
         </p>
       </div>
       <p className={`text-xs mb-3 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
-        Sign with your wallet to unlock Quick Sign for this session.
+        {t('quick_sign_unlock.body')}
       </p>
       {error && (
         <p className="text-xs text-red-400 mb-2">{error}</p>
@@ -88,7 +90,7 @@ const QuickSignUnlock: React.FC = () => {
         disabled={loading}
         className="w-full py-2 rounded-lg text-sm font-medium bg-yellow-500 hover:bg-yellow-600 text-black transition-colors disabled:opacity-50 cursor-pointer"
       >
-        {loading ? 'Signing...' : 'Unlock'}
+        {loading ? t('quick_sign_unlock.btn.signing') : t('quick_sign_unlock.btn.unlock')}
       </button>
     </div>
   )
