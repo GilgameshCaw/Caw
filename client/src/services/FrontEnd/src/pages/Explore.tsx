@@ -8,19 +8,17 @@ import CommunityStats from '~/components/CommunityStats'
 import DiscussionHashtags from '~/components/DiscussionHashtags'
 import SearchBar from '~/components/SearchBar'
 import { useSearchParams } from 'react-router-dom'
+import { useT } from '~/i18n/I18nProvider'
 
 type ExploreTab = 'foryou' | 'discover' | 'updates' | 'community'
 
-const TAB_LABELS: Record<ExploreTab, string> = {
-  'foryou': 'For you',
-  'discover': 'Discover',
-  'updates': 'Updates',
-  'community': 'Community'
-}
+// TAB_LABELS removed — derived inside the component so labels reflect the
+// active locale.
 
 const VALID_TABS: ExploreTab[] = ['foryou', 'discover', 'updates', 'community']
 
 const ExplorePage: React.FC = () => {
+  const t = useT()
   const [searchParams, setSearchParams] = useSearchParams()
   const tabParam = searchParams.get('tab') as ExploreTab | null
   const [activeTab, setActiveTab] = useState<ExploreTab>(
@@ -43,16 +41,16 @@ const ExplorePage: React.FC = () => {
 
   // Mobile tabs - only For You and Community
   const mobileTabs: TabItem<ExploreTab>[] = [
-    { id: 'foryou', label: TAB_LABELS['foryou'] },
-    { id: 'community', label: TAB_LABELS['community'] },
+    { id: 'foryou', label: t('feed.tab.for_you') },
+    { id: 'community', label: t('explore.tab.community') },
   ]
 
   // Desktop tabs - all 4 tabs
   const desktopTabs: TabItem<ExploreTab>[] = [
-    { id: 'foryou', label: TAB_LABELS['foryou'] },
-    { id: 'discover', label: TAB_LABELS['discover'] },
-    { id: 'updates', label: TAB_LABELS['updates'] },
-    { id: 'community', label: TAB_LABELS['community'] },
+    { id: 'foryou', label: t('feed.tab.for_you') },
+    { id: 'discover', label: t('explore.tab.discover') },
+    { id: 'updates', label: t('explore.tab.updates') },
+    { id: 'community', label: t('explore.tab.community') },
   ]
 
   return (
@@ -63,7 +61,7 @@ const ExplorePage: React.FC = () => {
           <h1 className={`text-2xl font-bold transition-colors duration-300 ${
             isDark ? 'text-white' : 'text-black'
           }`}>
-            Explore
+            {t('explore.title')}
           </h1>
         </div>
 
@@ -101,7 +99,7 @@ const ExplorePage: React.FC = () => {
                 <h2 className={`text-lg font-semibold mb-4 transition-colors duration-300 ${
                   isDark ? 'text-white' : 'text-black'
                 }`}>
-                  Recommended for you
+                  {t('explore.recommended')}
                 </h2>
               } />
             </div>
@@ -110,12 +108,15 @@ const ExplorePage: React.FC = () => {
           {activeTab === 'discover' && (
             <div className="space-y-6">
               <div className="space-y-4">
-                <h2 className={`text-lg font-semibold transition-colors duration-300 ${
-                  isDark ? 'text-white' : 'text-black'
-                }`}>
-                  What's trending
-                </h2>
-                <TrendingHashtags />
+                <TrendingHashtags
+                  title={
+                    <h2 className={`text-lg font-semibold transition-colors duration-300 ${
+                      isDark ? 'text-white' : 'text-black'
+                    }`}>
+                      What's trending
+                    </h2>
+                  }
+                />
               </div>
 
               <div className={`border-t transition-colors duration-300 ${
@@ -127,7 +128,7 @@ const ExplorePage: React.FC = () => {
                   <h2 className={`text-lg font-semibold mb-4 transition-colors duration-300 ${
                     isDark ? 'text-white' : 'text-black'
                   }`}>
-                    Discover more
+                    {t('explore.discover_more')}
                   </h2>
                 } />
               </div>
@@ -140,7 +141,7 @@ const ExplorePage: React.FC = () => {
                 <h2 className={`text-lg font-semibold transition-colors duration-300 ${
                   isDark ? 'text-white' : 'text-black'
                 }`}>
-                  Latest posts
+                  {t('explore.latest')}
                 </h2>
                 <Feed filter="latest" />
               </div>
@@ -154,7 +155,7 @@ const ExplorePage: React.FC = () => {
                 <h2 className={`text-lg font-semibold transition-colors duration-300 ${
                   isDark ? 'text-white' : 'text-black'
                 }`}>
-                  Community overview
+                  {t('explore.community_overview')}
                 </h2>
                 <CommunityStats />
               </div>
@@ -168,7 +169,7 @@ const ExplorePage: React.FC = () => {
                 <h2 className={`text-lg font-semibold transition-colors duration-300 ${
                   isDark ? 'text-white' : 'text-black'
                 }`}>
-                  Discussion topics
+                  {t('explore.discussion_topics')}
                 </h2>
                 <DiscussionHashtags />
               </div>
@@ -183,7 +184,7 @@ const ExplorePage: React.FC = () => {
                   <h2 className={`text-lg font-semibold mb-4 transition-colors duration-300 ${
                     isDark ? 'text-white' : 'text-black'
                   }`}>
-                    Community highlights
+                    {t('explore.highlights')}
                   </h2>
                 } />
               </div>

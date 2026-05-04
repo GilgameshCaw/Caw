@@ -8,6 +8,7 @@ import { apiFetch } from '~/api/client'
 import { CawItem } from '~/types'
 import ContentWithHashtags from '~/components/ContentWithHashtags'
 import { useTokenDataStore } from '~/store/tokenDataStore'
+import { useT } from '~/i18n/I18nProvider'
 
 interface HiddenPostData {
   id: string
@@ -44,6 +45,7 @@ interface MutedThreadData {
 }
 
 const MutedContentPage: React.FC = () => {
+  const t = useT()
   const { isDark } = useTheme()
   const {
     preferences,
@@ -230,10 +232,10 @@ const MutedContentPage: React.FC = () => {
           </Link>
           <div>
             <h1 className={`text-2xl font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-              Muted Content
+              {t('muted.title')}
             </h1>
             <p className={`text-sm ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
-              Manage what you don't want to see
+              {t('muted.subtitle')}
             </p>
           </div>
         </div>
@@ -242,14 +244,14 @@ const MutedContentPage: React.FC = () => {
         <div className={`mb-6 px-4 py-3 rounded-lg text-sm ${
           isDark ? 'bg-white/5 text-white/60' : 'bg-gray-50 text-gray-600'
         }`}>
-          These preferences are stored in this browser only and will apply to all accounts you access on this device.
+          {t('muted.storage_notice')}
         </div>
 
         {/* Clear All */}
         {totalMutes > 0 && (
           <button
             onClick={() => {
-              if (confirm('Are you sure you want to clear all mutes and blocks? This cannot be undone.')) {
+              if (confirm(t('muted.clear_all_confirm'))) {
                 clearAllMutes()
               }
             }}
@@ -260,7 +262,7 @@ const MutedContentPage: React.FC = () => {
             }`}
           >
             <HiTrash className="w-4 h-4" />
-            Clear All ({totalMutes})
+            {t('muted.clear_all')} ({totalMutes})
           </button>
         )}
 
@@ -268,14 +270,14 @@ const MutedContentPage: React.FC = () => {
         <section className="mb-8">
           <div className={`flex items-center gap-2 mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
             <HiFilter className="w-5 h-5" />
-            <h2 className="font-semibold">Muted Words & Tags</h2>
+            <h2 className="font-semibold">{t('muted.section.words')}</h2>
             <span className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
               ({preferences.mutedWords.length})
             </span>
           </div>
           {preferences.mutedWords.length === 0 ? (
             <p className={`text-sm py-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-              No muted words. Posts containing muted words won't appear in your feed.
+              {t('muted.empty.words')}
             </p>
           ) : (
             <div className="flex flex-wrap gap-2">
@@ -307,14 +309,14 @@ const MutedContentPage: React.FC = () => {
         <section className="mb-8">
           <div className={`flex items-center gap-2 mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
             <HiVolumeOff className="w-5 h-5" />
-            <h2 className="font-semibold">Muted Threads</h2>
+            <h2 className="font-semibold">{t('muted.section.threads')}</h2>
             <span className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
               ({preferences.mutedThreads.length})
             </span>
           </div>
           {preferences.mutedThreads.length === 0 ? (
             <p className={`text-sm py-4 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-              No muted threads. You won't receive notifications from muted threads.
+              {t('muted.empty.threads')}
             </p>
           ) : (
             <div className="space-y-2">
@@ -378,7 +380,7 @@ const MutedContentPage: React.FC = () => {
         <section className="mb-8">
           <div className={`flex items-center gap-2 mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
             <HiEyeOff className="w-5 h-5" />
-            <h2 className="font-semibold">Hidden Posts</h2>
+            <h2 className="font-semibold">{t('muted.section.hidden_posts')}</h2>
             <span className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
               ({preferences.hiddenPosts.length})
             </span>
@@ -615,7 +617,7 @@ const MutedContentPage: React.FC = () => {
         <section className="mb-8">
           <div className={`flex items-center gap-2 mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
             <HiVolumeOff className="w-5 h-5" />
-            <h2 className="font-semibold">Muted Accounts</h2>
+            <h2 className="font-semibold">{t('muted.section.accounts')}</h2>
             <span className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
               ({preferences.mutedAccounts.length})
             </span>
@@ -675,7 +677,7 @@ const MutedContentPage: React.FC = () => {
         <section className="mb-8">
           <div className={`flex items-center gap-2 mb-3 ${isDark ? 'text-white' : 'text-gray-900'}`}>
             <HiUserRemove className="w-5 h-5" />
-            <h2 className="font-semibold">Blocked Accounts</h2>
+            <h2 className="font-semibold">{t('muted.section.blocked')}</h2>
             <span className={`text-sm ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
               ({preferences.blockedAccounts.length})
             </span>

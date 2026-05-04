@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { formatUnitsCompact } from '~/utils'
 import { useTokenDataStore }   from '~/store/tokenDataStore'
 import { apiFetch }            from '../api/client'
+import { useT } from '~/i18n/I18nProvider'
 
 type RawAction = {
   id:            number
@@ -30,6 +31,7 @@ type ApiResponse = {
 }
 
 export const PendingPage: React.FC = () => {
+  const t = useT()
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const [actions, setActions] = useState<RawAction[]>([])
   const [users,   setUsers]   = useState<User[]>([])
@@ -51,19 +53,19 @@ export const PendingPage: React.FC = () => {
       .finally(() => setLoad(false))
   }, [activeTokenId])
 
-  if (loading) return <MainLayout>Loading…</MainLayout>
-  if (!activeTokenId) 
+  if (loading) return <MainLayout>{t('common.loading')}</MainLayout>
+  if (!activeTokenId)
     return <MainLayout>
       <div className="text-center py-12">
-        <h2 className="text-xl font-semibold mb-4">No Active Token</h2>
-        <p className="text-gray-400">Please connect your wallet and select a CawProfile to view pending transactions.</p>
+        <h2 className="text-xl font-semibold mb-4">{t('pending.no_token.title')}</h2>
+        <p className="text-gray-400">{t('pending.no_token.description')}</p>
       </div>
     </MainLayout>
   if (actions.length === 0)
     return <MainLayout>
       <div className="text-center py-12">
-        <h2 className="text-xl font-semibold mb-4">No Pending Transactions</h2>
-        <p className="text-gray-400">You don't have any pending transactions at the moment.</p>
+        <h2 className="text-xl font-semibold mb-4">{t('pending.empty.title')}</h2>
+        <p className="text-gray-400">{t('pending.empty.description')}</p>
       </div>
     </MainLayout>
 
