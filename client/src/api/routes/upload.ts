@@ -3,6 +3,7 @@ import { randomBytes } from 'crypto'
 import multer from 'multer'
 import { requireAuth } from '../middleware/auth'
 import { mediaStorage } from '../util/mediaStorage'
+import { canUpload, recordUsage } from '../util/uploadQuota'
 
 const router = Router()
 
@@ -64,6 +65,19 @@ router.post('/', upload.array('media', 10), requireAuth({ field: 'tokenId', veri
       })
     }
 
+    // Per-user daily POST upload quota (storage cost ceiling against
+    // bots / runaway clients). DM uploads count against a separate,
+    // tighter budget — see /encrypted route.
+    const totalBytes = files.reduce((sum, f) => sum + f.size, 0)
+    const quota = await canUpload('post', Number(tokenId), totalBytes)
+    if (!quota.allowed) {
+      return res.status(429).json({
+        error: `Daily post upload quota exceeded. Used ${(quota.used / 1024 / 1024).toFixed(1)}MB of ${(quota.quota / 1024 / 1024).toFixed(0)}MB. Try again later.`,
+        used: quota.used,
+        quota: quota.quota,
+      })
+    }
+
     const storage = mediaStorage()
     const urls = await Promise.all(files.map(async file => {
       const isVideo = file.mimetype.startsWith('video/')
@@ -71,6 +85,8 @@ router.post('/', upload.array('media', 10), requireAuth({ field: 'tokenId', veri
       const filename = generateFilename(file.mimetype)
       return storage.put(kind, filename, file.buffer, file.mimetype)
     }))
+    // Record AFTER successful uploads — failed uploads shouldn't count.
+    await recordUsage('post', Number(tokenId), totalBytes)
 
     res.json({ success: true, urls, count: files.length })
   } catch (error) {
@@ -166,10 +182,22 @@ router.post('/encrypted', requireAuth({ lookup: async (req) => {
     const rateCheck = checkEncRateLimit(tokenId, data.length)
     if (!rateCheck.allowed) return res.status(429).json({ error: rateCheck.reason })
 
+    // DM-specific daily quota (separate from posts and tighter — DMs
+    // reach 1 person, post storage cost is more justified). The 50-files
+    // / 100MB in-memory limiter above is the spam-protection layer; this
+    // is the storage-cost ceiling.
+    const quota = await canUpload('dm', tokenId, data.length)
+    if (!quota.allowed) {
+      return res.status(429).json({
+        error: `Daily DM upload quota exceeded. Used ${(quota.used / 1024 / 1024).toFixed(1)}MB of ${(quota.quota / 1024 / 1024).toFixed(0)}MB. Posts have a separate, larger budget if you need to share something bigger.`,
+      })
+    }
+
     const filename = `${randomBytes(8).toString('hex')}.enc`
     const url = await mediaStorage().put('encrypted', filename, data, 'application/octet-stream')
 
     recordEncUpload(tokenId, data.length)
+    await recordUsage('dm', tokenId, data.length)
     res.json({ success: true, url })
   } catch (error) {
     console.error('Encrypted upload error:', error)
