@@ -70,40 +70,22 @@ export default defineConfig({
     },
     rollupOptions: {
       output: {
-        // Stable, named vendor chunks. These libraries change rarely
-        // relative to our app code, so pinning them into their own
-        // chunks means a normal app-code deploy doesn't bust the
-        // browser cache for ~600KB of unchanged vendor JS. Without
-        // manualChunks, Rollup may shuffle library bytes between
-        // anonymous index-* chunks on every build, invalidating the
-        // cached copy even when nothing in those libs actually changed.
+        // Pull only @rainbow-me into its own named chunk. It's the
+        // single biggest vendor block (~1.8MB) and its dep graph
+        // (rainbowkit → wagmi/viem → react) is internally consistent,
+        // so Rollup correctly emits modulepreloads in the right order.
         //
-        // Each function-style entry is matched against the resolved
-        // module path. Order matters: more specific matches first.
+        // Tried splitting react / wagmi / tanstack into their own
+        // chunks too — the cache-stability win was real, but Rollup
+        // doesn't always emit dep-order edges across manual chunk
+        // boundaries. tanstack would preload before react, then crash
+        // with "Cannot read properties of undefined (reading
+        // 'createContext')" because React.createContext was undefined
+        // at module-init time. Letting Rollup auto-chunk the rest
+        // keeps the order correct at the cost of a slightly less
+        // cache-friendly entry chunk.
         manualChunks(id) {
-          if (!id.includes('node_modules')) return undefined
-          // Ethers/wagmi/viem stack — biggest single vendor block. Splitting
-          // it from rainbowkit (UI) lets the connection-time chunk load
-          // independently from the auth-time UI chunk.
-          if (id.includes('/wagmi/') || id.includes('/viem/') || id.includes('/@wagmi/')) {
-            return 'vendor-wagmi'
-          }
-          if (id.includes('/@rainbow-me/')) {
-            return 'vendor-rainbowkit'
-          }
-          if (id.includes('/@tanstack/')) {
-            return 'vendor-tanstack'
-          }
-          // React + scheduler + react-dom — pin together because they
-          // version in lockstep and a mismatched copy crashes the app.
-          if (id.includes('/react/') || id.includes('/react-dom/') || id.includes('/scheduler/')) {
-            return 'vendor-react'
-          }
-          if (id.includes('/zod/')) {
-            return 'vendor-zod'
-          }
-          // Everything else in node_modules falls through to Rollup's
-          // automatic chunking, which keeps related deps together.
+          if (id.includes('/@rainbow-me/')) return 'vendor-rainbowkit'
           return undefined
         },
       },
