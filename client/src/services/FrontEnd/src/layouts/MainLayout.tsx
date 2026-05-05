@@ -112,7 +112,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
             }`}
             onClick={(e) => e.stopPropagation()}
           >
-            <Sidebar />
+            <Sidebar onNavigate={() => setIsMobileMenuOpen(false)} />
           </div>
         </div>
       )}

@@ -100,7 +100,14 @@ function CawPriceTicker() {
   )
 }
 
-const Sidebar: React.FC = () => {
+interface SidebarProps {
+  /** Called whenever the user activates a nav link. Used by the mobile
+   *  drawer in MainLayout to close itself after navigation; desktop
+   *  doesn't pass it because there's no drawer to close. */
+  onNavigate?: () => void
+}
+
+const Sidebar: React.FC<SidebarProps> = ({ onNavigate }) => {
   const t = useT()
   const activeTokenId = useTokenDataStore(s => s.activeTokenId)
   const activeToken = useActiveToken()
@@ -115,12 +122,16 @@ const Sidebar: React.FC = () => {
   const openModal = useModalStore(s => s.openModal)
   const isCaptive = !activeToken?.username
 
-  // Intercept nav clicks for captive users — show sign-in modal instead of navigating
+  // Intercept nav clicks for captive users — show sign-in modal instead of navigating.
+  // Always call onNavigate (even when we preventDefault for the sign-in
+  // intercept) — the mobile drawer should close either way; the sign-in
+  // modal renders above everything so the user still sees it.
   const guardClick = (e: React.MouseEvent) => {
     if (isCaptive) {
       e.preventDefault()
       showSignIn()
     }
+    onNavigate?.()
   }
 
   const handlePostClick = () => {
@@ -200,6 +211,7 @@ const Sidebar: React.FC = () => {
 
            <NavLink
              to="/explore"
+             onClick={() => onNavigate?.()}
              className={({ isActive }) =>
                `relative flex items-center gap-3 px-4 py-3.5 sm:gap-3 sm:px-3 sm:py-3.5 rounded-2xl transition-colors duration-200 min-w-0 ${getNavLinkClasses(isActive)}`
              }
@@ -229,11 +241,12 @@ const Sidebar: React.FC = () => {
            <NavLink
              to="/messages"
              onClick={(e) => {
-               if (isCaptive) { e.preventDefault(); showSignIn(); return }
+               if (isCaptive) { e.preventDefault(); showSignIn(); onNavigate?.(); return }
                if (location.pathname.startsWith('/messages')) {
                  e.preventDefault()
                  navigate('/messages')
                }
+               onNavigate?.()
              }}
              className={({ isActive }) =>
                `relative flex items-center gap-3 px-4 py-3.5 sm:gap-3 sm:px-3 sm:py-3.5 rounded-2xl transition-colors duration-200 min-w-0 ${getNavLinkClasses(isActive || location.pathname.startsWith('/messages/'))}`
@@ -288,6 +301,7 @@ const Sidebar: React.FC = () => {
 
            <NavLink
              to="/usernames"
+             onClick={() => onNavigate?.()}
              className={({ isActive }) =>
                `relative flex items-center gap-3 px-4 py-3.5 sm:gap-3 sm:px-3 sm:py-3.5 rounded-2xl transition-colors duration-200 min-w-0 ${getNavLinkClasses(isActive)}`
              }
