@@ -20,6 +20,7 @@ import { BsWallet } from 'react-icons/bs'
 import MediaUpload from './MediaUpload'
 import { useHasActiveSession } from '~/hooks/useHasActiveSession'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
+import { useComposeDraftStore } from '~/store/composeDraftStore'
 import { useUserByUsername } from '~/hooks/useUserData'
 import Tooltip from '~/components/Tooltip'
 import { apiFetch } from '~/api/client'
@@ -307,9 +308,11 @@ interface PostFormProps {
   placeholder?: string;
   /** force the spacious compose layout (used by the mobile compose sheet) */
   composeMode?: boolean;
+  /** when true, publish draft state to the compose store so the mobile bottom nav can hide while typing */
+  trackDraft?: boolean;
 }
 
-const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placeholder, composeMode = false }) => {
+const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placeholder, composeMode = false, trackDraft = false }) => {
   const { isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
   const hasActiveSession = useHasActiveSession();
@@ -340,6 +343,14 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 
   const [text, setText] = useState('')
   const [cursorPosition, setCursorPosition] = useState(0)
+
+  // Publish draft state so MainLayout can hide the mobile bottom nav while typing
+  const setHasInlineDraft = useComposeDraftStore(s => s.setHasInlineDraft)
+  useEffect(() => {
+    if (!trackDraft) return
+    setHasInlineDraft(text.trim().length > 0)
+    return () => setHasInlineDraft(false)
+  }, [trackDraft, text, setHasInlineDraft])
   // User-facing toggle for the shorten-URLs behavior. When on (default), we
   // silently map original URLs to short URLs and use the short form for the
   // byte counter and on-chain submission. When off, URLs pass through
@@ -1538,6 +1549,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
   // For regular posts, keep it roomy when it's text-only, but when media is
   // attached the big empty textarea looks ridiculous.
   const hasMedia = selectedMedia.length > 0
+  const hasInlineFeedDraft = trackDraft && (text.trim().length > 0 || hasMedia)
   const desktopRows = replyTo
     ? Math.max(2, Math.min(lineCount, 10))
     : hasMedia
@@ -2069,9 +2081,11 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
 
         {/* Functionality Icons */}
         <div className={`flex items-center justify-between gap-2 ${replyTo ? 'mt-1.5' : 'mt-4'} ${
-          composeMode && hasMedia
-            ? `sticky -bottom-px pt-3 pb-3 border-t ${isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'}`
-            : ''
+          hasInlineFeedDraft
+            ? `fixed md:static bottom-0 left-0 right-0 z-[60] px-4 py-3 pb-[max(env(safe-area-inset-bottom),0.75rem)] border-t ${isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'}`
+            : composeMode && hasMedia
+              ? `sticky -bottom-px pt-3 pb-3 border-t ${isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'}`
+              : ''
         }`}>
           <div className={`flex items-center min-w-0 ${composeMode ? 'space-x-1' : 'space-x-3'}`}>
             {/* Media Upload */}
