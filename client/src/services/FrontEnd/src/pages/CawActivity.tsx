@@ -3,6 +3,7 @@ import { Link, useParams, useSearchParams } from 'react-router-dom'
 import MainLayout from '~/layouts/MainLayout'
 import { apiFetch } from '~/api/client'
 import { useTheme } from '~/hooks/useTheme'
+import { Tabs, TabItem } from '~/components/Tabs'
 import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
 
 // Wei -> CAW for display
@@ -411,32 +412,27 @@ const CawActivity: React.FC = () => {
           </div>
         </div>
 
-        {/* Tab switcher: My Stats vs All Stats. Only shown to a
-            signed-in viewer of their own page (otherwise "My Stats"
-            wouldn't refer to the visitor — it'd refer to the
-            profile being viewed). For viewers of someone else's
-            profile we hide the switcher and stay on My Stats. */}
+        {/* Tab switcher: My Stats vs All Stats. Uses the shared
+            Tabs component so it matches the For You / Following
+            tabs on the home feed. Only shown when the viewer is
+            looking at their own page — for viewers of someone
+            else's profile, "my" wouldn't be ambiguous-free, so we
+            hide the switcher and stay on My Stats. */}
         {isViewingSelf && (
-          <div className={`inline-flex p-1 rounded-xl mb-4 ${isDark ? 'bg-white/10' : 'bg-gray-200'}`}>
-            {(['my', 'all'] as const).map(t => (
-              <button
-                key={t}
-                type="button"
-                onClick={() => setSearchParams(prev => {
-                  const next = new URLSearchParams(prev)
-                  if (t === 'my') next.delete('tab')
-                  else next.set('tab', t)
-                  return next
-                })}
-                className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-colors cursor-pointer ${
-                  tab === t
-                    ? (isDark ? 'bg-black text-white' : 'bg-white text-black shadow-sm')
-                    : (isDark ? 'text-white/60 hover:text-white' : 'text-gray-600 hover:text-black')
-                }`}
-              >
-                {t === 'my' ? 'My Stats' : 'All Stats'}
-              </button>
-            ))}
+          <div className="-mx-6 mb-4">
+            <Tabs<'my' | 'all'>
+              tabs={[
+                { id: 'my', label: 'My Stats' },
+                { id: 'all', label: 'All Stats' },
+              ] as TabItem<'my' | 'all'>[]}
+              active={tab}
+              onChange={t => setSearchParams(prev => {
+                const next = new URLSearchParams(prev)
+                if (t === 'my') next.delete('tab')
+                else next.set('tab', t)
+                return next
+              })}
+            />
           </div>
         )}
 
@@ -1316,9 +1312,30 @@ interface AllStatsViewProps {
 const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
   const { isDark } = useTheme()
   const cawUsdPrice = usePriceStore(s => s.priceMap['a-hunters-dream'] ?? 0)
+  const [searchParams, setSearchParams] = useSearchParams()
   const [data, setData] = useState<SystemActivityResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  // Toggleable action types — same pattern as My Stats. Disabled
+  // segments are stored in the URL as ?allHide=LIKE,RECAW so a
+  // refresh keeps the user's filter state.
+  const disabledTypes = useMemo(() => {
+    const raw = searchParams.get('allHide')
+    return new Set(raw ? raw.split(',') : [])
+  }, [searchParams])
+  const toggleType = (key: string) => {
+    const next = new Set(disabledTypes)
+    if (next.has(key)) next.delete(key); else next.add(key)
+    setSearchParams(prev => {
+      const out = new URLSearchParams(prev)
+      const arr = Array.from(next).filter(Boolean)
+      if (arr.length === 0) out.delete('allHide')
+      else out.set('allHide', arr.join(','))
+      return out
+    })
+  }
+  const isEnabled = (key: string) => !disabledTypes.has(key)
 
   useEffect(() => {
     let cancelled = false
@@ -1471,20 +1488,140 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
     : ''
   const xLabelEvery = Math.max(1, Math.ceil(data.chart.length / 6))
 
+  // ----- Recompute totals + chart maxes with toggles applied -----
+  // The 4 mini count charts dim when disabled (kept visible for
+  // continuity); the distribution chart hides disabled types from
+  // the stack. Recomputed from `data.chart` on every render.
+  const visibleDistTypes = distTypes.filter(t => isEnabled(t.key))
+  const filteredDistTotalsByBucket = data.chart.map(b =>
+    visibleDistTypes.reduce((s, t) => s + weiToCawNum(b.distributionByType[t.key]), 0),
+  )
+  const filteredDistMax = Math.max(...filteredDistTotalsByBucket, 0)
+  const filteredStakingRewards = data.chart.reduce(
+    (sum, b) => sum + visibleDistTypes.reduce((s, t) => s + weiToCawNum(b.distributionByType[t.key]), 0),
+    0,
+  )
+
+  // Master legend across all four social action types — drives every
+  // toggleable chart on this tab. Posts/Likes/Recaws/Follows match
+  // both count charts and the distribution stack hue families.
+  const legendTypes = [
+    { key: 'CAW',    label: 'Posts',   color: '#5b7a99' },
+    { key: 'LIKE',   label: 'Likes',   color: '#d96d72' },
+    { key: 'RECAW',  label: 'Recaws',  color: '#a373c8' },
+    { key: 'FOLLOW', label: 'Follows', color: '#e08a4a' },
+  ]
+
+  // Format CAW amount as USD for the protocol-balance y-axis. When
+  // price is unavailable we show the CAW number instead so the chart
+  // still works, just less informative.
+  const fmtAxisUsd = (cawAmount: number): string => {
+    const usd = fmtUsd(cawAmount)
+    if (usd) return usd
+    return fmtNumberCaw(cawAmount)
+  }
+
   return (
     <>
-      {/* 5 stat squares — same shape as My Stats. */}
+      {/* Mini count charts AT TOP — answers "what's the network
+          doing right now" before the user even reads the stat
+          squares. Each card respects the legend toggles below the
+          grid. */}
+      <div className="grid grid-cols-2 gap-3 mb-3">
+        {countTypes.map(t => {
+          const enabled = isEnabled(t.key)
+          const counts = data.chart.map(b => {
+            const src = t.source === 'spend' ? b.spendCountsByType : b.rewardsCountsByType
+            return src[t.key] ?? 0
+          })
+          const total = counts.reduce((a, v) => a + v, 0)
+          const max = Math.max(...counts, 1)
+          const MINI_H = 40
+          return (
+            <div
+              key={t.key}
+              className={`${cardClass} ${enabled ? '' : 'opacity-40'} transition-opacity`}
+            >
+              <div className="flex items-baseline justify-between mb-1.5">
+                <div className="text-[10px] uppercase tracking-wide font-semibold" style={{ color: t.color }}>
+                  {t.label}
+                </div>
+                <div className="text-sm font-bold tabular-nums" style={{ color: t.color }}>
+                  {total.toLocaleString()}
+                </div>
+              </div>
+              <div
+                className="flex items-end gap-px"
+                style={{
+                  height: MINI_H,
+                  borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)'}`,
+                }}
+              >
+                {counts.map((v, i) => (
+                  <div
+                    key={i}
+                    className="flex-1"
+                    style={{
+                      height: `${(v / max) * 100}%`,
+                      minHeight: v > 0 ? 1 : 0,
+                      backgroundColor: t.color,
+                      opacity: v > 0 ? 1 : 0,
+                    }}
+                    title={`${v.toLocaleString()} on ${new Date(data.chart[i].bucket).toLocaleDateString()}`}
+                  />
+                ))}
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      {/* Toggle legend: applies to count cards above + distribution
+          chart below. Persisted in URL via ?allHide=. */}
+      <div className={`${cardClass} mb-6`}>
+        <div className={`text-[10px] uppercase tracking-wide font-semibold mb-2 ${isDark ? 'text-white/50' : 'text-gray-500'}`}>
+          Action types
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {legendTypes.map(t => {
+            const enabled = isEnabled(t.key)
+            return (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => toggleType(t.key)}
+                className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-[11px] font-medium transition-all cursor-pointer ${
+                  enabled
+                    ? (isDark ? 'bg-white/10 text-white' : 'bg-gray-100 text-gray-800')
+                    : (isDark ? 'bg-white/5 text-white/30' : 'bg-gray-50 text-gray-400')
+                }`}
+              >
+                <span
+                  className="inline-block w-2.5 h-2.5 rounded-sm transition-opacity"
+                  style={{ backgroundColor: t.color, opacity: enabled ? 1 : 0.3 }}
+                />
+                {t.label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Stat squares. */}
       <div className="grid grid-cols-3 md:grid-cols-3 gap-3 mb-3">
         {renderCawCard('Deposits', deposits, '#7cb958')}
         {renderCawCard('Withdrawals', withdrawals, '#b04f56')}
         {renderCawCard('Net', net, net >= 0 ? '#7cb958' : '#b04f56')}
       </div>
       <div className="grid grid-cols-2 gap-3 mb-6">
-        {renderCawCard('Total staking rewards', totalStakingRewards, '#ebc046')}
+        {renderCawCard('Total staking rewards', filteredStakingRewards, '#ebc046')}
         {renderCawCard('Total CAW staked', currentTotalCaw, '#ebc046', 'CAW currently staked')}
       </div>
 
-      {/* Balance line chart — system totalCaw over time. */}
+      {/* Balance line chart — system totalCaw over time. Y-axis in
+          USD because that's how most viewers will read protocol-
+          scale staking value at a glance. Falls back to CAW when
+          the price hasn't loaded yet. */}
       {hasBalance && (
         <div className={`${cardClass} mb-4`}>
           <div className="flex items-baseline justify-between mb-1">
@@ -1493,9 +1630,11 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
             </h2>
             <div className="flex items-baseline gap-2">
               <span className="text-lg font-bold tabular-nums" style={{ color: '#ebc046' }}>
-                {fmtNumberCaw(currentTotalCaw)}
+                {fmtUsd(currentTotalCaw) ?? fmtNumberCaw(currentTotalCaw)}
               </span>
-              <span className={`text-[10px] ${isDark ? 'text-white/40' : 'text-gray-400'}`}>CAW total</span>
+              <span className={`text-[10px] ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
+                {fmtUsd(currentTotalCaw) ? `${fmtNumberCaw(currentTotalCaw)} CAW` : 'CAW total'}
+              </span>
             </div>
           </div>
           <div className="flex">
@@ -1503,8 +1642,8 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
               className="flex-shrink-0 flex flex-col justify-between text-[10px] tabular-nums select-none"
               style={{ width: 56, height: LINE_H, paddingRight: 8 }}
             >
-              <div className={axisLabelClass} style={{ textAlign: 'right' }}>{fmtNumberCaw(padTop)}</div>
-              <div className={axisLabelClass} style={{ textAlign: 'right' }}>{fmtNumberCaw(padBot)}</div>
+              <div className={axisLabelClass} style={{ textAlign: 'right' }}>{fmtAxisUsd(padTop)}</div>
+              <div className={axisLabelClass} style={{ textAlign: 'right' }}>{fmtAxisUsd(padBot)}</div>
             </div>
             <div className="relative flex-1" style={{ height: LINE_H }}>
               <svg
@@ -1559,54 +1698,8 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
         </div>
       )}
 
-      {/* Mini count charts: system-wide event counts per actionType. */}
-      <div className="grid grid-cols-2 gap-3 mb-4">
-        {countTypes.map(t => {
-          const counts = data.chart.map(b => {
-            const src = t.source === 'spend' ? b.spendCountsByType : b.rewardsCountsByType
-            return src[t.key] ?? 0
-          })
-          const total = counts.reduce((a, v) => a + v, 0)
-          const max = Math.max(...counts, 1)
-          const MINI_H = 40
-          return (
-            <div key={t.key} className={cardClass}>
-              <div className="flex items-baseline justify-between mb-1.5">
-                <div className="text-[10px] uppercase tracking-wide font-semibold" style={{ color: t.color }}>
-                  {t.label}
-                </div>
-                <div className="text-sm font-bold tabular-nums" style={{ color: t.color }}>
-                  {total.toLocaleString()}
-                </div>
-              </div>
-              <div
-                className="flex items-end gap-px"
-                style={{
-                  height: MINI_H,
-                  borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)'}`,
-                }}
-              >
-                {counts.map((v, i) => (
-                  <div
-                    key={i}
-                    className="flex-1"
-                    style={{
-                      height: `${(v / max) * 100}%`,
-                      minHeight: v > 0 ? 1 : 0,
-                      backgroundColor: t.color,
-                      opacity: v > 0 ? 1 : 0,
-                    }}
-                    title={`${v.toLocaleString()} on ${new Date(data.chart[i].bucket).toLocaleDateString()}`}
-                  />
-                ))}
-              </div>
-            </div>
-          )
-        })}
-      </div>
-
-      {/* CAW distributed to stakers — moved here from My Stats. */}
-      {distMax > 0 && (
+      {/* CAW distributed to stakers — respects the same toggles. */}
+      {filteredDistMax > 0 && (
         <div className={`${cardClass} mb-4`}>
           <div className="flex items-baseline justify-between mb-1">
             <h2 className={`text-sm font-semibold ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
@@ -1614,30 +1707,17 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
             </h2>
             <div className="flex items-baseline gap-2">
               <span className="text-lg font-bold tabular-nums" style={{ color: '#ebc046' }}>
-                {fmtNumberCaw(totalStakingRewards)}
+                {fmtNumberCaw(filteredStakingRewards)}
               </span>
               <span className={`text-[10px] ${isDark ? 'text-white/40' : 'text-gray-400'}`}>CAW total</span>
             </div>
-          </div>
-          <div className="flex flex-wrap gap-3 mb-2 text-[10px]">
-            {distTypes.map(t => {
-              const total = data.chart.reduce((s, b) => s + weiToCawNum(b.distributionByType[t.key]), 0)
-              return total > 0 ? (
-                <span key={t.key} className="flex items-center gap-1.5">
-                  <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: t.color }} />
-                  <span className={isDark ? 'text-white/60' : 'text-gray-600'}>
-                    {t.label} <span className={isDark ? 'text-white/40' : 'text-gray-400'}>{fmtNumberCaw(total)}</span>
-                  </span>
-                </span>
-              ) : null
-            })}
           </div>
           <div className="flex">
             <div
               className="flex-shrink-0 flex flex-col justify-between text-[10px] tabular-nums select-none"
               style={{ width: 56, height: 140, paddingRight: 8 }}
             >
-              <div className={axisLabelClass} style={{ textAlign: 'right' }}>{fmtNumberCaw(distMax)}</div>
+              <div className={axisLabelClass} style={{ textAlign: 'right' }}>{fmtNumberCaw(filteredDistMax)}</div>
               <div className={axisLabelClass} style={{ textAlign: 'right' }}>0</div>
             </div>
             <div className="relative flex-1" style={{ height: 140 }}>
@@ -1651,13 +1731,13 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
               />
               <div className="flex items-stretch gap-0.5 absolute inset-0">
                 {data.chart.map((b, i) => {
-                  const segments = distTypes.map(t => ({
+                  const segments = visibleDistTypes.map(t => ({
                     key: t.key,
                     color: t.color,
                     value: weiToCawNum(b.distributionByType[t.key]),
                   }))
                   const sum = segments.reduce((a, s) => a + s.value, 0)
-                  const pct = distMax > 0 ? (sum / distMax) * 94 : 0
+                  const pct = filteredDistMax > 0 ? (sum / filteredDistMax) * 94 : 0
                   return (
                     <div key={i} className="flex-1 flex flex-col">
                       <div style={{ flex: '1 1 auto' }} />
