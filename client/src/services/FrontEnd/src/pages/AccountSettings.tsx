@@ -547,25 +547,79 @@ const AccountSettings: React.FC = () => {
     window.location.reload()
   }
 
-  const handleClearAllData = () => {
-    // Clear Zustand persisted stores
-    useTokenDataStore.getState().removeActiveToken?.()
-    useAuthStore.getState().clearSession()
-    // Clear session key
-    useSessionKeyStore.getState().clearSession()
-    // Clear DM key cache
-    clearKeyCache()
-    // Clear all CAW-related localStorage keys
-    const keysToRemove = [
-      'caw-token-data', 'caw-auth-session', 'caw-session-keys',
-      'mutedThreads', 'mutedWords', 'hiddenPosts', 'mutedAccounts',
-      'caw-blocked-users', 'reportedPosts', 'notificationPreferences',
-      'lastStakeTime', 'hideMuteConfirmModal'
-    ]
-    keysToRemove.forEach(key => localStorage.removeItem(key))
+  const handleClearAllData = async () => {
+    // Touch the in-memory zustand stores so anything subscribed in this
+    // tab unmounts cleanly before we wipe storage out from under it.
+    try { useTokenDataStore.getState().removeActiveToken?.() } catch {}
+    try { useAuthStore.getState().clearSession() } catch {}
+    try { useSessionKeyStore.getState().clearSession() } catch {}
+    try { clearKeyCache() } catch {}
+
+    // Disconnect the wallet at the wagmi layer BEFORE wiping storage. If
+    // we just clear localStorage, wagmi reads its persisted connector
+    // state on next boot and silently auto-reconnects — which is why the
+    // old whitelist-based wipe felt like a no-op. disconnect() also
+    // tells the wallet provider (MetaMask / Rabby) we're done so it
+    // stops broadcasting accountsChanged.
+    try {
+      const { disconnect, getConnections } = await import('@wagmi/core')
+      const { wagmiConfig } = await import('~/config/Web3Provider')
+      for (const connection of getConnections(wagmiConfig)) {
+        await disconnect(wagmiConfig, { connector: connection.connector })
+      }
+    } catch (e) {
+      console.warn('[ClearAllData] wagmi disconnect failed (continuing):', e)
+    }
+
+    // Full wipe: localStorage + sessionStorage + IndexedDB + cookies.
+    // Whitelisting keys silently misses anything new (zustand-persist
+    // adds keys as the codebase grows; wagmi/RainbowKit own multiple of
+    // their own; instance discovery + host trust each have their own
+    // keys). A full clear is what the button name promises.
+    try { localStorage.clear() } catch {}
+    try { sessionStorage.clear() } catch {}
+
+    // IndexedDB — wagmi/RainbowKit cache connection state here on some
+    // browsers, so a localStorage-only wipe leaves the connection
+    // resumable. Best-effort: indexedDB.databases() isn't supported on
+    // older Safari, in which case we fall through silently.
+    try {
+      if (typeof indexedDB !== 'undefined' && (indexedDB as any).databases) {
+        const dbs = await (indexedDB as any).databases()
+        await Promise.all(
+          (dbs as Array<{ name?: string }>)
+            .filter(db => db.name)
+            .map(db => new Promise<void>(resolve => {
+              const req = indexedDB.deleteDatabase(db.name!)
+              req.onsuccess = req.onerror = req.onblocked = () => resolve()
+            }))
+        )
+      }
+    } catch {}
+
+    // Cookies — including the admin HttpOnly cookie, where possible.
+    // document.cookie can't reach HttpOnly cookies (that's the point),
+    // but it can clear the rest. Set every cookie's expiry to the past.
+    try {
+      for (const c of document.cookie.split(';')) {
+        const eq = c.indexOf('=')
+        const name = (eq > -1 ? c.slice(0, eq) : c).trim()
+        if (!name) continue
+        // Try the current path AND the root path, current host AND parent
+        // host (for the admin cookie scoped to .caw.social etc).
+        document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`
+        document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=${window.location.hostname}`
+        const parts = window.location.hostname.split('.')
+        if (parts.length > 2) {
+          document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=.${parts.slice(-2).join('.')}`
+        }
+      }
+    } catch {}
+
     setShowClearDataModal(false)
-    // Reload to reset all in-memory state
-    window.location.reload()
+    // Reload to reset all in-memory state. Goes to the homepage so we
+    // don't immediately re-trigger any auth flow on a settings route.
+    window.location.replace('/')
   }
 
   const copyToClipboard = (text: string, field: string) => {
