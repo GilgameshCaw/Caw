@@ -54,11 +54,18 @@ export async function handleCawAction(
   parentCawId?: number
 ): Promise<void> {
   // Extract image and video URLs from text if present.
-  // Match any /uploads/<kind>/<file> URL regardless of host (works across
-  // mirrors: s.caw.social, test.caw.social, http://localhost:4000, etc.).
-  // Bare URL — no `video:` prefix — because no client (PostForm,
-  // /api/actions, scripts) prepends one. The previous prefix-required
-  // regex silently dropped every video into raw text, leaving hasVideo=false.
+  //
+  // Host-tolerant by design: a caw posted on mirror A may carry an
+  // s.caw.social URL written by mirror B's upload route, and viewers on
+  // mirror C still need to render it. The path shape is what we
+  // validate (matches the upload route's `<8hex>.<ext>` filename
+  // convention) — same approach pollMarker.ts and the poll-image
+  // sanitizer take for the same reason.
+  //
+  // Bare URL on the video side — no `video:` prefix — because no client
+  // (PostForm, /api/actions, scripts) emits one. The previous
+  // prefix-required regex silently dropped every video into raw text,
+  // leaving hasVideo=false on every video post.
   const imageUrlRegex = /(https?:\/\/[^\s]+\/uploads\/images\/[^\s]+\.(jpg|jpeg|png|gif|webp))/gi
   const imageUrls = rawAction.text?.match(imageUrlRegex) || []
 
