@@ -190,14 +190,3 @@ export function useHostVerification(
   }, [posts, activeHost])
 }
 
-/**
- * Returns API hosts sorted by trust score, excluding blacklisted ones.
- */
-export function useRankedHosts(): string[] {
-  const allHosts = useInstanceStore(s => s.getApiHosts())
-  const store = useHostVerificationStore()
-
-  return allHosts
-    .filter(h => !store.isBlacklisted(h))
-    .sort((a, b) => store.getHostScore(a) - store.getHostScore(b))
-}

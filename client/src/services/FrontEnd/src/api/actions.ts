@@ -1124,15 +1124,24 @@ export function useSignAndSubmitAction() {
       }
 
       // Broadcast to other instances as redundancy (fire-and-forget after 2s delay)
-      // Other instances will either accept it or reject as duplicate — both are fine
+      // Other instances will either accept it or reject as duplicate — both are fine.
+      // Filtered through useHostVerificationStore so a peer that's repeatedly
+      // failing or has been blacklisted gets skipped — keeps a misbehaving
+      // node from absorbing every browser's broadcast traffic.
       const actionPayload = JSON.stringify({ data: message, domain, types, signature })
-      setTimeout(() => {
+      setTimeout(async () => {
         try {
+          const { useHostVerificationStore } = await import('~/hooks/useHostVerification')
+          const verify = useHostVerificationStore.getState()
           const allHosts = useInstanceStore.getState().getApiHosts()
           const activeHost = useInstanceStore.getState().activeApiHost || API_HOST || ''
-          const otherHosts = allHosts.filter((h: string) => h !== activeHost && h !== '')
+          const otherHosts = allHosts
+            .filter((h: string) => h !== activeHost && h !== '')
+            .filter((h: string) => !verify.isBlacklisted(h))
+            .sort((a: string, b: string) => verify.getHostScore(a) - verify.getHostScore(b))
           const clientVersion = (typeof __CLIENT_VERSION__ !== 'undefined' && __CLIENT_VERSION__) || 'unknown'
           for (const host of otherHosts) {
+            const startTime = Date.now()
             fetch(`${host}/api/actions`, {
               method: 'POST',
               headers: {
@@ -1140,7 +1149,12 @@ export function useSignAndSubmitAction() {
                 'x-caw-client-version': clientVersion,
               },
               body: actionPayload,
-            }).catch(() => {}) // Silently ignore failures on redundant broadcasts
+            })
+              .then(res => {
+                verify.recordResponseTime(host, Date.now() - startTime)
+                if (!res.ok && res.status >= 500) verify.recordFailure(host)
+              })
+              .catch(() => verify.recordFailure(host))
           }
           if (otherHosts.length > 0) {
             console.log(`[Actions] Broadcast to ${otherHosts.length} redundant instance(s)`)
