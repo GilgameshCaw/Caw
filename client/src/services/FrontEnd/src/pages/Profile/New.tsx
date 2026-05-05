@@ -448,13 +448,24 @@ console.log("BALANCE:", balance)
   // The "creating profile…" fullscreen takeover used to be expressed as
   // <MainLayout hideSidebars>; post-hoist MainLayout lives at the router
   // level and stays mounted, so we flip its hide-chrome flag imperatively
-  // for the transient minting state and clear it on unmount / on exit.
+  // for the transient minting state and clear it on exit.
+  //
+  // Clearing is deferred via setTimeout(0) so that on a successful mint —
+  // which both flips showMintingTakeover false AND fires navigate() to
+  // /welcome/:username in the same React commit — the location update
+  // propagates first. Without the defer, MainLayout re-renders one frame
+  // with hideChromeOverride=false on the still-/usernames/new route AND
+  // a now-non-captive activeToken (the new mint just landed in the
+  // store), briefly flashing the full sidebar/topbar before the route
+  // settles to /welcome and MainLayout unmounts entirely.
   const showMintingTakeover = !hasResetForm && (mintStatus === 'pending' || (mintStatus === 'success' && !mintSuccess))
   const setHideChromeOverride = useLayoutStore(s => s.setHideChromeOverride)
   useEffect(() => {
     if (showMintingTakeover) {
       setHideChromeOverride(true)
-      return () => setHideChromeOverride(false)
+      return () => {
+        setTimeout(() => setHideChromeOverride(false), 0)
+      }
     }
   }, [showMintingTakeover, setHideChromeOverride])
 
