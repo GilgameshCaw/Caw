@@ -159,142 +159,100 @@ export async function apiFetch<T = any>(
 ): Promise<T> {
   const headers = buildHeaders(init)
 
-  // Get ordered list of API hosts, filtered by trust score
-  const { useHostVerificationStore } = await import('~/hooks/useHostVerification')
-  const verificationStore = useHostVerificationStore.getState()
+  // Single-host: apiFetch always targets THIS install's API. The user's
+  // session, auth state, optimistic rows, and per-install settings all
+  // live on the home node — fanning out to peers returns either CORS
+  // failures (peer rejects the cross-origin authenticated read) or the
+  // wrong server's data (peer returns its own state for what looks like
+  // the same path). Cross-instance fan-out only makes sense for
+  // redundancy broadcasts (signAndSubmit) and public-read peer queries
+  // (instance registry); those have their own iteration code paths.
+  //
+  // Precedence: explicit activeApiHost (set after a successful round-trip
+  // — preserves stickiness through transient failures) → VITE_API_HOST →
+  // empty string (relative URL → vite dev proxy in dev, same-origin in
+  // production behind nginx). Per project_multi_instance_apifetch.md the
+  // empty-string default routes to the local proxy when the FE is
+  // localhost without a configured API host.
+  const host =
+    useInstanceStore.getState().activeApiHost ??
+    API_HOST ??
+    ''
 
-  const hosts = useInstanceStore.getState().getApiHosts()
-    .filter((h: string) => !verificationStore.isBlacklisted(h))
-    .sort((a: string, b: string) => verificationStore.getHostScore(a) - verificationStore.getHostScore(b))
+  const url = `${host}${path}`
+  const res = await fetch(url, {
+    credentials: 'include', // admin HttpOnly cookie needs this; session-token header is unaffected
+    ...init,
+    headers,
+  })
 
-  // If no discovered instances, fall back to API_HOST (may be empty for dev proxy)
-  let targets = hosts.length > 0 ? hosts : [API_HOST]
-
-  // Local-dev safety net: when the FE is running on localhost and we
-  // have no VITE_API_HOST set, ALWAYS try the local proxy first
-  // before any discovered remote instances. Without this, a single
-  // remote instance left in localStorage from prod browsing hijacks
-  // every request — and any new local-only routes return HTML 404s
-  // from prod, surfacing as "Unexpected token '<'" parse errors that
-  // look like the API is down. Per project_multi_instance_apifetch.md.
-  if (
-    typeof window !== 'undefined' &&
-    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
-    !API_HOST
-  ) {
-    targets = ['', ...targets.filter(h => h !== '')]
+  // 202 = "still indexing" — the row isn't in the DB yet. The API never
+  // falls back to RPC; the indexer populates asynchronously and the
+  // caller retries. Throw IndexingError so React Query / retryOnIndexing
+  // can back off without us losing the retry hint.
+  if (res.status === 202) {
+    let data: any = {}
+    try { data = await res.json() } catch {}
+    const retryAfterHeader = Number(res.headers.get('Retry-After')) || 0
+    const retryAfter = Number(data?.retryAfterSeconds) || retryAfterHeader || 3
+    throw new IndexingError(data?.error || 'still indexing', retryAfter)
   }
 
-  let lastError: Error | null = null
+  // 409 with cawonce_collision = the TxQueue partial unique index on
+  // (senderId, cawonce) for active rows fired. Two near-simultaneous
+  // signs picked the same chain-nextCawonce; the second one to insert
+  // gets caught here. Throw the typed error so the caller (signAndSubmit)
+  // can invalidate its local watermark, re-read chain, and re-sign.
+  if (res.status === 409) {
+    let data: any = {}
+    try { data = await res.json() } catch {}
+    if (data?.error === 'cawonce_collision') {
+      throw new CawonceCollisionError(
+        data?.message || 'cawonce already in use',
+        data?.senderId,
+        data?.cawonce,
+        typeof data?.suggestedCawonce === 'number' ? data.suggestedCawonce : undefined,
+      )
+    }
+    // Other 409s are different conflict shapes (e.g. retry-already-submitted);
+    // fall through to the generic !res.ok handler below.
+  }
 
-  for (const host of targets) {
-    try {
-      const startTime = Date.now()
-      const url = `${host}${path}`
-      const res = await fetch(url, {
-        credentials: 'include', // admin HttpOnly cookie needs this; session-token header is unaffected
-        ...init,
-        headers,
-      })
-
-      // Track response time for host ranking
-      verificationStore.recordResponseTime(host, Date.now() - startTime)
-
-      // 202 = "still indexing" — the row isn't in the DB yet. The API never
-      // falls back to RPC; the indexer populates asynchronously and the
-      // caller retries. Throw IndexingError so React Query / retryOnIndexing
-      // can back off without us losing the retry hint.
-      if (res.status === 202) {
-        let data: any = {}
-        try { data = await res.json() } catch {}
-        const retryAfterHeader = Number(res.headers.get('Retry-After')) || 0
-        const retryAfter = Number(data?.retryAfterSeconds) || retryAfterHeader || 3
-        throw new IndexingError(data?.error || 'still indexing', retryAfter)
+  if (res.status === 401) {
+    let errorData: any = {}
+    try { errorData = await res.json() } catch {}
+    if (errorData.error === 'AUTH_REQUIRED') {
+      // Session expired or missing server-side — clear stale client state
+      useAuthStore.getState().clearSession()
+    }
+    const method = (init?.method || 'GET').toUpperCase()
+    if (method !== 'GET' && (errorData.error === 'AUTH_REQUIRED' || errorData.error === 'TOKEN_NOT_AUTHORIZED')) {
+      // Don't show verify modal if Quick Sign is active — the next Quick Sign
+      // action will passively establish the HTTP session for this token's owner.
+      const { useSessionKeyStore } = await import('~/store/sessionKeyStore')
+      const sessionStore = useSessionKeyStore.getState()
+      const hasQuickSign = sessionStore.enabled && Object.values(sessionStore.sessions).some(
+        s => s && s.expiry > Date.now() / 1000
+      )
+      if (!hasQuickSign) {
+        handleAuthError(res, errorData)
       }
-
-      // 409 with cawonce_collision = the TxQueue partial unique index on
-      // (senderId, cawonce) for active rows fired. Two near-simultaneous
-      // signs picked the same chain-nextCawonce; the second one to insert
-      // gets caught here. Throw the typed error so the caller (signAndSubmit)
-      // can invalidate its local watermark, re-read chain, and re-sign.
-      // Don't failover — every instance has the same partial index, and
-      // the cawonce really is taken.
-      if (res.status === 409) {
-        let data: any = {}
-        try { data = await res.json() } catch {}
-        if (data?.error === 'cawonce_collision') {
-          throw new CawonceCollisionError(
-            data?.message || 'cawonce already in use',
-            data?.senderId,
-            data?.cawonce,
-            typeof data?.suggestedCawonce === 'number' ? data.suggestedCawonce : undefined,
-          )
-        }
-        // Other 409s are different conflict shapes (e.g. retry-already-submitted);
-        // fall through to the generic !res.ok handler below.
-      }
-
-      // Auth errors are not failover-able — they mean the user needs to re-auth
-      if (res.status === 401) {
-        let errorData: any = {}
-        try { errorData = await res.json() } catch {}
-        if (errorData.error === 'AUTH_REQUIRED') {
-          // Session expired or missing server-side — clear stale client state
-          useAuthStore.getState().clearSession()
-        }
-        const method = (init?.method || 'GET').toUpperCase()
-        if (method !== 'GET' && (errorData.error === 'AUTH_REQUIRED' || errorData.error === 'TOKEN_NOT_AUTHORIZED')) {
-          // Don't show verify modal if Quick Sign is active — the next Quick Sign
-          // action will passively establish the HTTP session for this token's owner.
-          const { useSessionKeyStore } = await import('~/store/sessionKeyStore')
-          const sessionStore = useSessionKeyStore.getState()
-          const hasQuickSign = sessionStore.enabled && Object.values(sessionStore.sessions).some(
-            s => s && s.expiry > Date.now() / 1000
-          )
-          if (!hasQuickSign) {
-            handleAuthError(res, errorData)
-          }
-        }
-      }
-
-      // Client errors (4xx) are not the instance's fault — don't failover
-      // Server errors (5xx) mean this instance is unhealthy — try the next one
-      if (res.status >= 500) {
-        lastError = new Error(`API ${res.status} ${res.statusText}`)
-        continue
-      }
-
-      if (!res.ok) {
-        let detail = ''
-        try {
-          const body = await res.json()
-          detail = body?.error || body?.message || ''
-        } catch {}
-        throw new Error(detail ? `API ${res.status}: ${detail}` : `API ${res.status} ${res.statusText}`)
-      }
-
-      // Track which host we're actively using
-      useInstanceStore.getState().setActiveApiHost(host)
-
-      return res.json()
-    } catch (e: any) {
-      // Network errors (ECONNREFUSED, timeout, etc.) — try next instance
-      if (e instanceof AuthError) throw e
-      // 202 means this instance has authoritative state (its DB just hasn't
-      // caught up yet) — failing over to another instance doesn't help and
-      // would mask the indexing-in-progress signal from the caller.
-      if (e instanceof IndexingError) throw e
-      // 409 cawonce_collision — every instance has the same active-cawonce
-      // unique index, and (more importantly) the cawonce really is taken.
-      // Failover would just re-collide; surface to the caller for re-sign.
-      if (e instanceof CawonceCollisionError) throw e
-      lastError = e
-      if (targets.length > 1) {
-        console.warn(`[apiFetch] Instance ${host} failed, trying next...`, e.message)
-      }
-      continue
     }
   }
 
-  throw lastError ?? new Error('No API instances available')
+  if (!res.ok) {
+    let detail = ''
+    try {
+      const body = await res.json()
+      detail = body?.error || body?.message || ''
+    } catch {}
+    throw new Error(detail ? `API ${res.status}: ${detail}` : `API ${res.status} ${res.statusText}`)
+  }
+
+  // Pin the active host for subsequent calls so the FE stays sticky on the
+  // node that just answered (matters once we add real failover at a higher
+  // layer; today this just preserves the current host across re-renders).
+  useInstanceStore.getState().setActiveApiHost(host)
+
+  return res.json()
 }
