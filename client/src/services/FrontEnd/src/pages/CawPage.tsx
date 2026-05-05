@@ -12,6 +12,7 @@ import { HiArrowLeft, HiChevronRight } from 'react-icons/hi'
 import SignInModal from '~/components/modals/SignInModal'
 import { usePendingPostsStore } from '~/store/pendingPostsStore'
 import { getUserAvatar } from '~/utils/defaultAvatar'
+import { formatTimeAgo } from '~/utils/formatTimeAgo'
 
 type IndicatorUser = {
   tokenId?: number
@@ -445,7 +446,9 @@ export const CawPage: React.FC = () => {
                               <div className={`text-sm font-semibold truncate ${isDark ? 'text-white' : 'text-black'}`}>
                                 {l.user.displayName || l.user.username}
                               </div>
-                              <div className="text-xs truncate text-gray-500">@{l.user.username}</div>
+                              <div className="text-xs truncate text-gray-500">
+                                @{l.user.username} · {formatTimeAgo(l.timestamp)}
+                              </div>
                             </div>
                           </Link>
                         ))}
@@ -456,27 +459,24 @@ export const CawPage: React.FC = () => {
 
                 {activeInteractionsTab === 'comments' && (
                   <div>
-                    {commentIndicators.length === 0 ? (
+                    {/* Render replies as full FeedItems — same render path the
+                        thread uses below. Newest first to match the user's
+                        mental model of "who replied recently". hideParentPreview
+                        because the parent IS this page; rendering it inside
+                        each reply would just be the same post, six times. */}
+                    {comments.filter(c => !isQuoteItem(c)).length === 0 ? (
                       <div className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>{t('caw_page.empty.comments')}</div>
                     ) : (
-                      <div className="space-y-3">
-                        {[...commentIndicators].reverse().map(c => (
-                          <Link
-                            key={`comment-${c.id}`}
-                            to={`/users/${c.user.username}`}
-                            className="flex items-center gap-3 hover:underline"
-                          >
-                            <div className="w-9 h-9 rounded-full overflow-hidden flex-shrink-0 border border-gray-700">
-                              <Avatar src={getUserAvatar(c.user)} alt={t('caw_page.user_avatar_alt', { username: c.user.username })} className="w-full h-full rounded-full" size="small" />
+                      <div className="space-y-0">
+                        {comments
+                          .filter(c => !isQuoteItem(c))
+                          .slice()
+                          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+                          .map(c => (
+                            <div key={`reply-tab-${c.id}`} className="relative">
+                              <FeedItem item={c} isReply={true} hideParentPreview={true} />
                             </div>
-                            <div className="min-w-0">
-                              <div className={`text-sm font-semibold truncate ${isDark ? 'text-white' : 'text-black'}`}>
-                                {c.user.displayName || c.user.username}
-                              </div>
-                              <div className="text-xs truncate text-gray-500">@{c.user.username}</div>
-                            </div>
-                          </Link>
-                        ))}
+                          ))}
                       </div>
                     )}
                   </div>
@@ -501,7 +501,9 @@ export const CawPage: React.FC = () => {
                               <div className={`text-sm font-semibold truncate ${isDark ? 'text-white' : 'text-black'}`}>
                                 {r.user.displayName || r.user.username}
                               </div>
-                              <div className="text-xs truncate text-gray-500">@{r.user.username}</div>
+                              <div className="text-xs truncate text-gray-500">
+                                @{r.user.username} · {formatTimeAgo(r.timestamp)}
+                              </div>
                             </div>
                           </Link>
                         ))}
@@ -512,27 +514,22 @@ export const CawPage: React.FC = () => {
 
                 {activeInteractionsTab === 'quotes' && (
                   <div>
-                    {quoteIndicators.length === 0 ? (
+                    {/* Quotes as FeedItems — they ARE standalone posts, so
+                        rendering them in their full form is the natural read.
+                        hideParentPreview for the same reason as replies: the
+                        parent is this page. */}
+                    {quotes.length === 0 ? (
                       <div className={`text-sm ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>{t('caw_page.empty.quotes')}</div>
                     ) : (
-                      <div className="space-y-3">
-                        {[...quoteIndicators].reverse().map(q => (
-                          <Link
-                            key={`quote-${q.id}`}
-                            to={`/users/${q.user.username}`}
-                            className="flex items-center gap-3 hover:underline"
-                          >
-                            <div className="w-9 h-9 rounded-full overflow-hidden flex-shrink-0 border border-gray-700">
-                              <Avatar src={getUserAvatar(q.user)} alt={t('caw_page.user_avatar_alt', { username: q.user.username })} className="w-full h-full rounded-full" size="small" />
+                      <div className="space-y-0">
+                        {quotes
+                          .slice()
+                          .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+                          .map(q => (
+                            <div key={`quote-tab-${q.id}`} className="relative">
+                              <FeedItem item={q} hideParentPreview={true} />
                             </div>
-                            <div className="min-w-0">
-                              <div className={`text-sm font-semibold truncate ${isDark ? 'text-white' : 'text-black'}`}>
-                                {q.user.displayName || q.user.username}
-                              </div>
-                              <div className="text-xs truncate text-gray-500">@{q.user.username}</div>
-                            </div>
-                          </Link>
-                        ))}
+                          ))}
                       </div>
                     )}
                   </div>
@@ -558,7 +555,7 @@ export const CawPage: React.FC = () => {
                                 {tp.user.displayName || tp.user.username}
                               </div>
                               <div className="text-xs truncate text-gray-500">
-                                {t('caw_page.tip_indicator', { username: tp.user.username, amount: tp.amount.toLocaleString() })}
+                                {t('caw_page.tip_indicator', { username: tp.user.username, amount: tp.amount.toLocaleString() })} · {formatTimeAgo(tp.timestamp)}
                               </div>
                             </div>
                           </Link>
