@@ -1317,7 +1317,15 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                     <div className="grid grid-cols-1 gap-2 w-full">
                       {videoUrls.map((url, index) => (
                         <div key={index} className="relative rounded-lg overflow-hidden border border-gray-200 dark:border-gray-700 bg-black">
+                          {/* src on the element directly — NOT child <source> tags
+                              with hardcoded type="video/mp4" / "video/webm".
+                              Strict browsers (Safari) refuse to play when the
+                              declared MIME doesn't match what the server returns,
+                              and a single URL can't satisfy two declared types
+                              at once. The browser sniffs MIME from the response
+                              correctly when the type isn't asserted. */}
                           <video
+                            src={url}
                             autoPlay
                             controls
                             className="w-full h-auto max-h-[32rem]"
@@ -1332,11 +1340,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                               console.error('Failed to load video from URL:', url)
                               e.currentTarget.style.display = 'none'
                             }}
-                          >
-                            <source src={url} type="video/mp4" />
-                            <source src={url} type="video/webm" />
-                            Your browser does not support the video tag.
-                          </video>
+                          />
                         </div>
                       ))}
                     </div>

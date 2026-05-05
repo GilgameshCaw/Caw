@@ -267,6 +267,20 @@ async function shortenUrlsInText(text: string): Promise<string> {
       body: JSON.stringify({ urls: uniqueUrls })
     }) as { results: Record<string, { shortUrl: string }> }
 
+    // If the response came back without entries for some inputs (e.g.
+    // partial failure inside the route's per-URL loop), surface that —
+    // a partial wrap means the full URL ends up on-chain even though
+    // the user opted into shortening, which silently breaks the post's
+    // text/videoData split downstream (extractor strips the URL from
+    // text → empty content; see actionHandlers.ts handleCawAction).
+    const missing = uniqueUrls.filter(u => !response.results[u])
+    if (missing.length > 0) {
+      console.warn(
+        `[shortenUrlsInText] /api/shorturl/bulk returned no entry for ${missing.length} of ${uniqueUrls.length} URLs — those will post un-shortened:`,
+        missing,
+      )
+    }
+
     let shortenedText = text
     for (const [originalUrl, data] of Object.entries(response.results)) {
       // Replace all occurrences of this URL with the short URL
@@ -275,7 +289,11 @@ async function shortenUrlsInText(text: string): Promise<string> {
 
     return shortenedText
   } catch (error) {
-    // Return original text if shortening fails
+    // Don't fail the post on shortening errors, but log loudly so the
+    // root cause is visible in the console. Without this the bulk call
+    // can fail invisibly and the user sees a post with empty content
+    // (the extractor strips the long URL from text into videoData).
+    console.warn('[shortenUrlsInText] /api/shorturl/bulk failed, posting URLs un-shortened:', error)
     return text
   }
 }
