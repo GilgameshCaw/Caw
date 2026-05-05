@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { useParams, Link, useSearchParams, useNavigate } from 'react-router-dom'
+import { useParams, Link, useSearchParams, useNavigate, useLocation } from 'react-router-dom'
 import { useT } from '~/i18n/I18nProvider'
 import PostForm from "~/components/PostForm";
 import FeedItem from '~/components/FeedItem'
@@ -47,7 +47,17 @@ export const CawPage: React.FC = () => {
   const { id } = useParams<{ id: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
   const navigate = useNavigate()
-  const [caw, setCaw]           = useState<CawItem | null>(null)
+  const location = useLocation()
+  // Pre-seed `caw` from location.state.caw when the user clicked through
+  // from a feed — FeedItem passes the in-memory post so we can render
+  // immediately. Replies/recaws/tips aren't in the seed, so those still
+  // load from the API. The seed only matches when its id equals the
+  // route id (defensive: a stale state from a different post would be
+  // worse than no seed).
+  const seededCaw = (location.state as { caw?: CawItem } | null)?.caw
+  const [caw, setCaw]           = useState<CawItem | null>(
+    seededCaw && String(seededCaw.id) === id ? seededCaw : null,
+  )
   const [comments, setComments] = useState<CawItem[]>([])
   const [recaws, setRecaws]     = useState<RecawIndicator[]>([])
   const [tips, setTips]         = useState<TipIndicator[]>([])
@@ -57,9 +67,12 @@ export const CawPage: React.FC = () => {
   const [likesError, setLikesError] = useState<string | null>(null)
   const [likesAttempted, setLikesAttempted] = useState(false)
   const [activeInteractionsTab, setActiveInteractionsTab] = useState<'likes' | 'comments' | 'reposts' | 'quotes' | 'tips'>('likes')
-  const [loading, setLoading]   = useState(true)
+  // `loading` covers the post itself; `commentsLoading` covers replies/
+  // recaws/tips. When we have a seed, we skip the post-loading state but
+  // still show a small loader below the post for the comments fetch.
+  const [loading, setLoading]   = useState(!seededCaw)
+  const [commentsLoading, setCommentsLoading] = useState(true)
   const [error, setError]       = useState<string | null>(null)
-  const [initialLoadDone, setInitialLoadDone] = useState(false)
   const [hasMoreComments, setHasMoreComments] = useState(false)
   const [commentCursor, setCommentCursor] = useState<number | undefined>(undefined)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -259,18 +272,21 @@ export const CawPage: React.FC = () => {
     }
   }
 
-  // Reset initial load state when navigating to a different caw
+  // Reset initial load state when navigating to a different caw. Only
+  // flip `loading` back on if we DON'T have a fresh seed for the new
+  // route — a click-through from another feed item passes the post in
+  // location state (see FeedItem.handleCardClick) so the post itself
+  // can render synchronously while replies/tips/recaws fetch below.
   useEffect(() => {
-    setInitialLoadDone(false)
-    setLoading(true)
+    const hasSeed = !!(location.state as { caw?: CawItem } | null)?.caw &&
+                    String((location.state as { caw?: CawItem }).caw!.id) === id
+    if (!hasSeed) setLoading(true)
+    setCommentsLoading(true)
   }, [id])
 
   // Load caw and comments - refetch when id or activeTokenId changes
   const loadCaw = async () => {
     try {
-      if (!initialLoadDone) {
-        setLoading(true)
-      }
       setError(null)
 
       const data = await apiFetch<{ caw: CawItem; comments: CawItem[]; recaws?: RecawIndicator[]; tips?: TipIndicator[]; hasMoreComments?: boolean; nextCommentCursor?: number }>(`/api/caws/${id}`)
@@ -280,12 +296,12 @@ export const CawPage: React.FC = () => {
       setTips(data.tips || [])
       setHasMoreComments(!!data.hasMoreComments)
       setCommentCursor(data.nextCommentCursor)
-      setInitialLoadDone(true)
     } catch (err) {
       console.error('Error loading caw:', err)
       setError(t('caw_page.could_not_load_post'))
     } finally {
       setLoading(false)
+      setCommentsLoading(false)
     }
   }
   useEffect(() => {
@@ -311,8 +327,12 @@ export const CawPage: React.FC = () => {
       </div>
   )
 
-  if (loading) return <><div className={`flex items-center justify-center h-64 ${isDark ? 'text-white' : 'text-gray-900'}`}>{t('common.loading')}</div></>
-  if (error) return errorView(error)
+  // Full-page loader only when we have nothing to render — i.e. no
+  // location-state seed AND the API hasn't returned. With a seed the
+  // post itself renders synchronously and the small in-place loader
+  // below the post (gated on commentsLoading) covers the API leg.
+  if (loading && !caw) return <><div className={`flex items-center justify-center h-64 ${isDark ? 'text-white' : 'text-gray-900'}`}>{t('common.loading')}</div></>
+  if (error && !caw) return errorView(error)
   if (!caw) return errorView(t('caw_page.could_not_load_post'))
 
   const viewerTokenId = activeTokenId ?? activeToken?.tokenId
@@ -621,6 +641,16 @@ export const CawPage: React.FC = () => {
             {/* Comments Section */}
             {isAuthenticated ? (
               <div className="space-y-0 relative">
+                {/* In-place loader when we rendered the post synchronously
+                    from a feed-click seed but the API call for replies/
+                    quotes/recaws/tips hasn't returned yet. Only shows
+                    when we have nothing to render — once the API lands
+                    (or pending replies are present), it disappears. */}
+                {commentsLoading && comments.length === 0 && pendingReplies.length === 0 && (
+                  <div className={`py-8 text-center text-sm ${isDark ? 'text-gray-500' : 'text-gray-400'}`}>
+                    {t('common.loading')}
+                  </div>
+                )}
                 {/* Quotes render at the top — they're their own posts, not part
                     of the chronological reply thread below. */}
                 {quotes.map((quote) => (

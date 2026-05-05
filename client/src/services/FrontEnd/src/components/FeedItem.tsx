@@ -637,9 +637,10 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     const replyTarget = (isRecaw && !isQuote) ? useItem : item
 
     // Desktop UX: navigate to the post page to reply inline.
-    // Mobile UX stays modal for now.
+    // Mobile UX stays modal for now. Same in-memory seed as
+    // handleCardClick so the post renders without a full-page spinner.
     if (typeof window !== 'undefined' && window.matchMedia('(min-width: 768px)').matches) {
-      navigate(`/caws/${replyTarget.id}?reply=1`)
+      navigate(`/caws/${replyTarget.id}?reply=1`, { state: { caw: replyTarget } })
       return
     }
 
@@ -940,7 +941,12 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
     if (e.metaKey || e.ctrlKey) {
       window.open(url, '_blank')
     } else {
-      navigate(url)
+      // Pass the post we already have in memory as location state so
+      // CawPage can render it instantly while the API fills in replies/
+      // recaws/tips in the background. Without this seed, every click
+      // through from the feed shows a full-page "Loading…" even though
+      // the post data was sitting right there in the FeedItem prop.
+      navigate(url, { state: { caw: useItem } })
     }
   }
 
@@ -1032,7 +1038,7 @@ const FeedItem: React.FC<{ item: CawItem; isMainPost?: boolean; isReply?: boolea
                 }
               }
               return (
-                <Link to={`/caws/${item.parent.id}`} className={`block text-xs transition-all duration-300 mb-3 ${
+                <Link to={`/caws/${item.parent.id}`} state={{ caw: item.parent }} className={`block text-xs transition-all duration-300 mb-3 ${
                   isDark ? 'text-gray-400' : 'text-gray-600'
                 }`}>
                   <span className="truncate md:truncate-none">{t('post.replying_to')} <span className="underline">@{item.parent.user.username}</span></span>
