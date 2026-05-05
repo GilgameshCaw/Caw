@@ -208,14 +208,20 @@ const Notifications: React.FC = () => {
         notifCache = { items: data.notifications, tokenId: activeToken.tokenId, tab: activeTab, unread: data.unreadCount, ts: Date.now() }
       }
 
-      // Mark notifications as read after displaying them
+      // Mark ALL notifications as read on the initial fetch — the user
+      // landed on the notifications page, so the bell badge should clear
+      // even if there are more unread notifications beyond the first page.
+      // Subsequent pages (loadMore) only mark their own visible IDs.
       if (data.notifications.length > 0) {
-        const unreadIds = data.notifications
-          .filter(n => !n.isRead)
-          .flatMap(n => n.notificationIds)
-
-        if (unreadIds.length > 0) {
-          await markAsRead(unreadIds)
+        if (reset) {
+          await markAsRead()
+        } else {
+          const unreadIds = data.notifications
+            .filter(n => !n.isRead)
+            .flatMap(n => n.notificationIds)
+          if (unreadIds.length > 0) {
+            await markAsRead(unreadIds)
+          }
         }
       }
     } catch (err: any) {
