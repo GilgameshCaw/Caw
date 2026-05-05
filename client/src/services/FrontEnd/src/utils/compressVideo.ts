@@ -25,9 +25,12 @@ const PRESETS = {
    *  server cap with container/audio overhead. 1.5 Mbps video + 96 kbps
    *  audio at 720p is acceptable for short-form social. */
   feed: { targetBytes: 6 * 1024 * 1024, videoBitsPerSecond: 1_500_000, audioBitsPerSecond: 96_000, maxDimension: 1280 },
-  /** DM video — much tighter. 1.5MB target. ~600 kbps video at 480p
-   *  height keeps phone clips watchable while fitting in a DM. */
-  dm:   { targetBytes: 1500 * 1024,    videoBitsPerSecond: 600_000,   audioBitsPerSecond: 64_000, maxDimension: 854 },
+  /** DM video — tighter than feed but with realistic headroom for
+   *  high-bitrate sources (screen recordings typically overshoot).
+   *  2.5MB target leaves room under the 3MB MAX_DM_VIDEO_BYTES cap;
+   *  ~800 kbps video at 480p keeps phone clips watchable while
+   *  landing under the cap on typical short DM lengths. */
+  dm:   { targetBytes: 2500 * 1024,    videoBitsPerSecond: 800_000,   audioBitsPerSecond: 64_000, maxDimension: 854 },
 } as const
 
 export type VideoPreset = keyof typeof PRESETS

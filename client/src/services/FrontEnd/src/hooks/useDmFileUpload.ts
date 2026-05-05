@@ -10,11 +10,11 @@ import { compressVideo } from '~/utils/compressVideo'
 const MAX_ENCRYPTED_SIZE = 5 * 1024 * 1024
 
 // Pre-flight DM video cap (cleartext). DMs are 1:1 — short clips only.
-// 2MB ≈ ~10s of decent quality. Posts carry a higher cap; the error
-// nudges users toward Posts for longer videos. AES-GCM overhead is a
-// few bytes per chunk so 2MB cleartext fits under the 5MB encrypted
-// server cap with plenty of headroom.
-const MAX_DM_VIDEO_BYTES = 2 * 1024 * 1024
+// 3MB cleartext gives the compressor breathing room over its 2.5MB
+// target without bumping into the 5MB encrypted server cap (AES-GCM
+// overhead is ~16 bytes per chunk, negligible). Posts carry a higher
+// cap; the error nudges users toward Posts for longer videos.
+const MAX_DM_VIDEO_BYTES = 3 * 1024 * 1024
 
 /** Read an image's natural dimensions without decoding it twice. */
 async function readImageDimensions(file: File): Promise<{ width: number; height: number }> {
