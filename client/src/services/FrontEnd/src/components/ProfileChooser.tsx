@@ -199,11 +199,24 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
   const setLastAddress = useTokenDataStore(s => s.setLastAddress)
   const setActiveTokenId = useTokenDataStore(state => state.setActiveTokenId);;
   const [isDropdownOpen, setDropdownOpen] = useState(false);
+  // Per-wallet expansion state for "+N more profiles..." rows. Keyed by
+  // owner address (lowercase). When expanded, the wallet group renders
+  // its full sorted list inside a scrollable container instead of the
+  // capped slice. Resets when the dropdown closes (see toggleDropdown).
+  const [expandedAddresses, setExpandedAddresses] = useState<Set<string>>(new Set())
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const selectedToken = activeToken;
 
   const hasHydrated = useTokenDataStore(s => s.hasHydrated);
+
+  // Reset "+N more profiles..." expansion whenever the dropdown closes,
+  // so reopening starts in the compact state. This catches every close
+  // path (toggle, click-outside, profile-select) without sprinkling
+  // setExpandedAddresses calls into each one.
+  useEffect(() => {
+    if (!isDropdownOpen) setExpandedAddresses(new Set())
+  }, [isDropdownOpen])
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -353,9 +366,16 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
   // Step 2: within each chosen wallet, sort by pinned-first (most-recently
   // pinned wins) then follower count desc, and cap to MAX_PROFILES_PER_WALLET.
   // If the active token is in this wallet but outside the cap, swap it into
-  // the visible slice. Track per-wallet hidden count for the "n more profiles..."
-  // hint shown below each truncated wallet group.
+  // the visible slice. Track per-wallet hidden count for the "+N more
+  // profiles..." toggle shown below each truncated wallet group.
+  //
+  // We also keep `fullSortedTokensByAddress` so the expanded-state render
+  // can show the OUT-OF-SLICE tokens without re-sorting. Computing the
+  // hidden tokens as `full \ slice` (rather than `full.slice(slice.length)`)
+  // keeps things correct when the active-token swap pulls a profile from
+  // outside the original slice into the visible group.
   const hiddenCountByAddress: Record<string, number> = {}
+  const hiddenTokensByAddress: Record<string, TokenData[]> = {}
   for (const addrKey of orderedWalletKeys) {
     const full = (visibleTokensByAddress[addrKey as Address] || []).slice()
     full.sort((a, b) => {
@@ -380,6 +400,8 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
     }
     limitedTokensByAddress[addrKey] = slice
     hiddenCountByAddress[addrKey] = Math.max(0, full.length - slice.length)
+    const visibleIds = new Set(slice.map(t => t.tokenId))
+    hiddenTokensByAddress[addrKey] = full.filter(t => !visibleIds.has(t.tokenId))
   }
 
   // --- main render when tokens exist ---
@@ -551,11 +573,77 @@ const ProfileChooser: React.FC<{ compact?: boolean }> = ({ compact = false }) =>
                     </button>
                   </li>
                 ))}
-                {hiddenCountByAddress[ownerAddress] > 0 && (
-                  <li className={`px-4 py-1.5 text-xs italic ${isDark ? 'text-white/40' : 'text-gray-500'}`}>
-                    {hiddenCountByAddress[ownerAddress]} more {hiddenCountByAddress[ownerAddress] === 1 ? 'profile' : 'profiles'}...
-                  </li>
-                )}
+                {hiddenCountByAddress[ownerAddress] > 0 && (() => {
+                  const isExpanded = expandedAddresses.has(ownerAddress)
+                  const hiddenCount = hiddenCountByAddress[ownerAddress]
+                  const hidden = hiddenTokensByAddress[ownerAddress] || []
+                  return (
+                    <>
+                      <li>
+                        <button
+                          type="button"
+                          onClick={() => setExpandedAddresses(prev => {
+                            const next = new Set(prev)
+                            if (next.has(ownerAddress)) next.delete(ownerAddress)
+                            else next.add(ownerAddress)
+                            return next
+                          })}
+                          className={`w-full text-left px-4 py-1.5 text-xs italic transition-colors cursor-pointer ${
+                            isDark
+                              ? 'text-white/40 hover:text-white/70 hover:bg-gray-800'
+                              : 'text-gray-500 hover:text-gray-800 hover:bg-gray-100'
+                          }`}
+                        >
+                          {isExpanded
+                            ? `Hide ${hiddenCount} ${hiddenCount === 1 ? 'profile' : 'profiles'}`
+                            : `+${hiddenCount} more ${hiddenCount === 1 ? 'profile' : 'profiles'}...`}
+                        </button>
+                      </li>
+                      {/* Expanded hidden-tokens list. max-h caps the scroll
+                          area; users with hundreds of profiles can browse
+                          inside the dropdown without it taking over the
+                          screen. Reuses the same row markup as the visible
+                          slice above. */}
+                      {isExpanded && (
+                        <li>
+                          <ul className={`max-h-64 overflow-y-auto custom-scrollbar-alt border-t ${
+                            isDark ? 'border-white/5' : 'border-gray-200'
+                          }`}>
+                            {hidden.map(token => (
+                              <li key={token.tokenId}>
+                                <button
+                                  onClick={() => handleSelectProfile(token)}
+                                  className={`cursor-pointer flex items-center justify-between px-4 py-2 w-full text-left transition-all duration-200 ${
+                                    isDark
+                                      ? 'hover:bg-gray-800 text-white'
+                                      : 'hover:bg-gray-100 text-black'
+                                  }`}
+                                >
+                                  <div className="flex items-center min-w-0">
+                                    <div className="rounded-full overflow-hidden w-8 h-8 mr-3 border border-gray-700 flex-shrink-0">
+                                      <Avatar src={avatars[token.tokenId] || getUserAvatar({ tokenId: token.tokenId })} alt={token.username} size="small" />
+                                    </div>
+                                    <div className="min-w-0">
+                                      <div className="font-bold truncate">{token.username}</div>
+                                      <div className="text-xs text-gray-400">
+                                        {token.stakedAmount > 0n ? convertToText((token.stakedAmount / 10n**18n) * 10n**18n) : "No"} CAW staked
+                                      </div>
+                                    </div>
+                                  </div>
+                                  {pinnedAt[token.tokenId] && (
+                                    <ThumbtackIcon
+                                      className={`w-3.5 h-3.5 flex-shrink-0 ml-2 ${isDark ? 'text-yellow-400/80' : 'text-yellow-600/80'}`}
+                                    />
+                                  )}
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        </li>
+                      )}
+                    </>
+                  )
+                })()}
               </ul>
             </li>
           ))}
