@@ -678,8 +678,15 @@ step "Configuring firewall"
 ufw allow OpenSSH >/dev/null
 ufw allow 80/tcp  >/dev/null
 ufw allow 443/tcp >/dev/null
+# Belt-and-braces: explicitly deny the API port from outside. The API
+# binds 127.0.0.1 since the BIND_HOST default flipped, so this is
+# already unreachable — but a stale install on the same box, an
+# operator-set BIND_HOST=0.0.0.0, or a future regression won't slip
+# past. ufw default is deny, so this is mostly documentation; the
+# explicit rule shows up in `ufw status` to make the intent obvious.
+ufw deny 4000/tcp >/dev/null
 ufw --force enable >/dev/null
-ok "ufw allows 22, 80, 443"
+ok "ufw allows 22, 80, 443; denies 4000"
 
 # ---------- Step 4: Service user ---------------------------------------------
 

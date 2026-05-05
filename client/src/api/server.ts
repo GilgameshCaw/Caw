@@ -252,6 +252,17 @@ export function startApi(port = Number(process.env.API_PORT) || 4000) {
   const app    = createApp()
   const server = http.createServer(app)
 
+  // Bind localhost-only by default. nginx (the production fronting layer)
+  // talks to this via proxy_pass http://127.0.0.1:<port>, which means
+  // there's no reason for the API socket to be reachable from outside the
+  // box. Listening on 0.0.0.0 was the Express default and let the API be
+  // hit directly over plaintext HTTP, bypassing nginx-level rate limits,
+  // CORS, TLS, and any access controls. Operators who genuinely need
+  // a non-localhost bind (multi-host deploys, container networking that
+  // doesn't pass through localhost) set BIND_HOST explicitly.
+  // Reported by Zin.
+  const bindHost = process.env.BIND_HOST || '127.0.0.1'
+
   // Initialize WebSocket server for DMs
   DmWebSocketService.initialize(server)
 
@@ -293,7 +304,7 @@ export function startApi(port = Number(process.env.API_PORT) || 4000) {
       retryTimer = setTimeout(() => {
         retryTimer = null
         ;(server as any).__retryTimer = null
-        server.listen(port)
+        server.listen(port, bindHost)
       }, delayMs)
       ;(server as any).__retryTimer = retryTimer
       return
@@ -301,8 +312,8 @@ export function startApi(port = Number(process.env.API_PORT) || 4000) {
     throw err
   })
 
-  server.listen(port, () =>
-    console.log(`API listening on http://localhost:${port}`)
+  server.listen(port, bindHost, () =>
+    console.log(`API listening on http://${bindHost}:${port}`)
   )
   return server
 }

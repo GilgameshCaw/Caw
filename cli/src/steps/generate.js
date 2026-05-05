@@ -476,6 +476,18 @@ function buildEnvVars(nodeType, config) {
   env.L1_CHAIN_ID = String(net.l1ChainId)
   env.NETWORK = config.network || 'testnet'
 
+  // BIND_HOST controls which interface the API listens on. server.ts
+  // defaults to 127.0.0.1 when this is unset; we make the choice
+  // explicit per nodeType so the .env documents the decision.
+  // - api-only: operator deliberately runs the API as a sibling box
+  //   for one or more frontend-only nodes; needs to be reachable
+  //   from those peers, so 0.0.0.0. They should put nginx + auth in
+  //   front of it (same as the frontend-api node would).
+  // - everything else: nginx on the same host fronts the API; the
+  //   socket has no business being externally reachable. Closing it
+  //   off prevents the bypass-nginx-and-hit-port-4000 footgun.
+  env.BIND_HOST = nodeType === 'api-only' ? '0.0.0.0' : '127.0.0.1'
+
   return env
 }
 

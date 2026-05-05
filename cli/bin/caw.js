@@ -352,6 +352,20 @@ program
       }
       console.log()
 
+      // api-only nodes need port 4000 reachable from their sibling
+      // frontend-only host (BIND_HOST is 0.0.0.0 for this nodeType).
+      // ufw was configured before the wizard knew which nodeType you
+      // picked, so it currently denies 4000. Tell the operator how to
+      // open it. Restrict by source IP so the API isn't world-readable.
+      if (nodeType === 'api-only') {
+        console.log(brand('  ⚠  api-only node — port 4000 needs to be reachable from your FE box'))
+        console.log(dim('     ufw is currently denying it. Allow only your FE host:'))
+        console.log(dim('       sudo ufw allow from <FE-box-IP> to any port 4000 proto tcp'))
+        console.log(dim('     Do NOT `ufw allow 4000/tcp` without a source restriction —'))
+        console.log(dim('     that exposes the API to the whole internet.'))
+        console.log()
+      }
+
       // RPC URL leak warning. The frontend bundles VITE_L1_RPC_URL /
       // VITE_L2_RPC_URL into the built JS — they're visible in any browser's
       // DevTools to anyone who loads the page. Without provider-side
