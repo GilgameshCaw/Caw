@@ -27,6 +27,24 @@ interface HostVerificationState {
 
 const FAILURE_THRESHOLD = 3 // blacklist after 3 verification failures
 
+/**
+ * Returns true if `host` is the origin we're being served from. Self-
+ * blacklisting locks the user out of their own home instance — they
+ * can't reach any other peer either if instance discovery hasn't
+ * populated, so the FE just hangs. Treat self as always trusted; if
+ * our own home server is genuinely fraudulent, the user has bigger
+ * problems than spot-check verification.
+ */
+function isSelfHost(host: string): boolean {
+  if (typeof window === 'undefined' || !host) return false
+  try {
+    const h = new URL(host).origin.toLowerCase()
+    return h === window.location.origin.toLowerCase()
+  } catch {
+    return false
+  }
+}
+
 export const useHostVerificationStore = create<HostVerificationState>()(
   persist(
     (set, get) => ({
@@ -34,17 +52,23 @@ export const useHostVerificationStore = create<HostVerificationState>()(
       blacklistedHosts: [],
       responseTimes: {},
 
-      recordFailure: (host) => set(state => {
-        const count = (state.failureCounts[host] || 0) + 1
-        const shouldBlacklist = count >= FAILURE_THRESHOLD && !state.blacklistedHosts.includes(host)
-        console.warn(`[HostVerification] Failure #${count} for ${host}${shouldBlacklist ? ' — BLACKLISTED' : ''}`)
-        return {
-          failureCounts: { ...state.failureCounts, [host]: count },
-          blacklistedHosts: shouldBlacklist
-            ? [...state.blacklistedHosts, host]
-            : state.blacklistedHosts,
+      recordFailure: (host) => {
+        if (isSelfHost(host)) {
+          console.warn(`[HostVerification] Skipping failure record for self-host ${host}`)
+          return
         }
-      }),
+        set(state => {
+          const count = (state.failureCounts[host] || 0) + 1
+          const shouldBlacklist = count >= FAILURE_THRESHOLD && !state.blacklistedHosts.includes(host)
+          console.warn(`[HostVerification] Failure #${count} for ${host}${shouldBlacklist ? ' — BLACKLISTED' : ''}`)
+          return {
+            failureCounts: { ...state.failureCounts, [host]: count },
+            blacklistedHosts: shouldBlacklist
+              ? [...state.blacklistedHosts, host]
+              : state.blacklistedHosts,
+          }
+        })
+      },
 
       recordResponseTime: (host, ms) => set(state => {
         const prev = state.responseTimes[host] || ms
@@ -53,7 +77,12 @@ export const useHostVerificationStore = create<HostVerificationState>()(
         }
       }),
 
-      isBlacklisted: (host) => get().blacklistedHosts.includes(host),
+      isBlacklisted: (host) => {
+        // Self-host is never blacklisted — even if a stale entry from
+        // before the recordFailure guard landed in persisted state.
+        if (isSelfHost(host)) return false
+        return get().blacklistedHosts.includes(host)
+      },
 
       getHostScore: (host) => {
         const state = get()
@@ -64,7 +93,12 @@ export const useHostVerificationStore = create<HostVerificationState>()(
 
       clearBlacklist: () => set({ blacklistedHosts: [], failureCounts: {} }),
     }),
-    { name: 'caw-host-verification' }
+    // Bump to v2 to wipe persisted state from before the self-host
+    // guards landed. Users whose own home host got blacklisted (or who
+    // accumulated stale failureCounts that drove apiFetch to deprioritize
+    // their home host) need a clean slate. Cheap: lose a few hours of
+    // peer-trust history, gain a working feed.
+    { name: 'caw-host-verification-v2' }
   )
 )
 
@@ -174,6 +208,23 @@ export function useHostVerification(
         post.user.address
       ).then(result => {
         if (!result.valid) {
+          // Distinguish "host couldn't produce the proof" from "host
+          // produced a bad proof". The former is expected in the
+          // decentralized model — posts indexed from chain or relayed
+          // from a peer mirror won't have a local TxQueue row, so
+          // `verify/:userId/:cawonce` returns "No transaction record
+          // found". Penalizing the host for that would blacklist any
+          // honest mirror as soon as the user scrolls past a peer-
+          // authored post. Only signature/content mismatches are
+          // actual fraud signals.
+          const isMissingProof = !result.reason
+            || /no.+(transaction|proof)/i.test(result.reason)
+          if (isMissingProof) {
+            console.warn(
+              `[HostVerification] No local proof for userId=${post.user.tokenId} cawonce=${post.cawonce} on ${activeHost} (reason="${result.reason}") — not penalizing; post may have been authored on a peer mirror.`
+            )
+            return
+          }
           console.error(
             `[HostVerification] UNVERIFIED POST! userId=${post.user.tokenId} cawonce=${post.cawonce} reason="${result.reason}" host=${activeHost}`
           )
