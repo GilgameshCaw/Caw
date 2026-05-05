@@ -347,7 +347,7 @@ const Sidebar: React.FC = () => {
           type="button"
           onClick={toggle}
           aria-label={isDark ? t('theme.switch_to_light') : t('theme.switch_to_dark')}
-          className={`sm:hidden -ml-1 mt-8 mb-4 mr-3 flex items-center gap-2.5 pl-2 pr-3 py-2 rounded-2xl transition-colors duration-200 ${
+          className={`sm:hidden -ml-1 mt-1 mb-4 mr-3 flex items-center gap-2.5 pl-2 pr-3 py-2 rounded-2xl transition-colors duration-200 ${
             isDark ? 'text-gray-300 hover:text-white hover:bg-white/10' : 'text-gray-600 hover:text-black hover:bg-gray-200/50'
           }`}
         >
