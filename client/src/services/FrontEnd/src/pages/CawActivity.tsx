@@ -50,10 +50,14 @@ interface Segment {
 //
 // Inline hex (not Tailwind) so the palette is definitive and theme-
 // stable across Tailwind version bumps.
+// Note: TIP segments are intentionally excluded here — tips operate
+// on a wildly different scale than likes/follows/recaws (a single
+// tip can dwarf a month of action activity), so they get their own
+// dedicated chart below the main flow. Keeping them in this stack
+// flattens everything else into invisibility.
 const SEGMENTS: Segment[] = [
   // INCOMING
   { key: 'in.staking',   label: 'Staking rewards', color: '#ebc046', textColor: '#ebc046', side: 'in' }, // brand gold
-  { key: 'in.TIP',       label: 'Tips received',   color: '#7cb958', textColor: '#7cb958', side: 'in' }, // muted green
   { key: 'in.RECAW',     label: 'Recaws received', color: '#a373c8', textColor: '#a373c8', side: 'in' }, // dusty violet
   { key: 'in.FOLLOW',    label: 'Follows received',color: '#e08a4a', textColor: '#e08a4a', side: 'in' }, // burnt orange
   { key: 'in.LIKE',      label: 'Likes received',  color: '#d96d72', textColor: '#d96d72', side: 'in' }, // washed rose
@@ -63,7 +67,6 @@ const SEGMENTS: Segment[] = [
   { key: 'out.RECAW',    label: 'Recaws given',   color: '#7d5ba6', textColor: '#7d5ba6', side: 'out' }, // deeper violet
   { key: 'out.LIKE',     label: 'Likes given',    color: '#b04f56', textColor: '#b04f56', side: 'out' }, // brick rose
   { key: 'out.FOLLOW',   label: 'Follows given',  color: '#b8743a', textColor: '#b8743a', side: 'out' }, // burnt sienna
-  { key: 'out.TIP',      label: 'Tips given',     color: '#5d9b6c', textColor: '#5d9b6c', side: 'out' }, // forest sage
   { key: 'out.OTHER',    label: 'Other',          color: '#7a7e85', textColor: '#7a7e85', side: 'out' }, // smoke
   { key: 'out.WITHDRAW', label: 'Withdrawals',    color: '#c89149', textColor: '#c89149', side: 'out' }, // amber
   { key: 'out.validator',label: 'Validator fees', color: '#3a8580', textColor: '#3a8580', side: 'out' }, // pine teal
@@ -149,32 +152,37 @@ interface BucketView {
   /** End-of-bucket balance in whole CAW. Null when no ledger rows
    *  landed in this bucket; the line chart carries forward. */
   balance: number | null
+  /** Tips received / given in this bucket, separated out from the
+   *  main flow stack because they operate on a different scale. */
+  tipsIn: number
+  tipsOut: number
 }
 
 function projectBucket(b: BucketIn): BucketView {
+  // Tips broken out for the dedicated tips chart — kept separate
+  // from the main flow stacks because their scale dwarfs everything
+  // else.
+  const tipsIn = weiToCaw(b.rewards.direct['TIP'] ?? '0')
+  const tipsOutBase = weiToCaw(b.spend.base['TIP'] ?? '0')
+  const tipsOutAmounts = weiToCaw(b.spend.tips['TIP'] ?? '0')
+  const tipsOut = tipsOutBase + tipsOutAmounts
+
   const inSegments: Array<{ key: string; value: number }> = []
   // Order matters for stack appearance (bottom to top); match SEGMENTS
-  // ordering on the incoming side.
+  // ordering on the incoming side. TIP intentionally absent — see
+  // SEGMENTS comment above.
   inSegments.push({ key: 'in.staking', value: weiToCaw(b.rewards.stakingRewards) })
-  for (const t of ['LIKE', 'RECAW', 'FOLLOW', 'TIP']) {
+  for (const t of ['LIKE', 'RECAW', 'FOLLOW']) {
     inSegments.push({ key: `in.${t}`, value: weiToCaw(b.rewards.direct[t] ?? '0') })
   }
   inSegments.push({ key: 'in.validator', value: weiToCaw(b.rewards.validatorFees) })
 
   const outSegments: Array<{ key: string; value: number }> = []
-  for (const t of ['CAW', 'LIKE', 'RECAW', 'FOLLOW', 'TIP', 'OTHER', 'WITHDRAW']) {
+  for (const t of ['CAW', 'LIKE', 'RECAW', 'FOLLOW', 'OTHER', 'WITHDRAW']) {
     const base = weiToCaw(b.spend.base[t] ?? '0')
-    const tip = weiToCaw(b.spend.tips[t] ?? '0')
-    if (t === 'TIP') {
-      // Tips paid: prefer the tips bucket (this is the user-tipping-
-      // someone outflow). spend.base is normally 0 for TIP.
-      outSegments.push({ key: 'out.TIP', value: base + tip })
-    } else if (t === 'WITHDRAW') {
+    if (t === 'WITHDRAW') {
       outSegments.push({ key: 'out.WITHDRAW', value: base })
     } else {
-      // For non-TIP non-WITHDRAW, ignore spend.tips (would only happen
-      // for actions that have non-validator recipients in amounts —
-      // currently only OTHER:tip, which we already remap to TIP above).
       outSegments.push({ key: `out.${t}`, value: base })
     }
   }
@@ -187,6 +195,8 @@ function projectBucket(b: BucketIn): BucketView {
     deposits: weiToCaw(b.deposits),
     withdrawals: weiToCaw(b.withdrawals),
     balance: b.balance != null ? weiToCaw(b.balance) : null,
+    tipsIn,
+    tipsOut,
   }
 }
 
@@ -367,7 +377,10 @@ const CawActivity: React.FC = () => {
     if (abs < 1_000) return n.toFixed(0)
     if (abs < 1_000_000) return `${(n / 1_000).toFixed(1)}K`
     if (abs < 1_000_000_000) return `${(n / 1_000_000).toFixed(2)}M`
-    return `${(n / 1_000_000_000).toFixed(2)}B`
+    if (abs < 1_000_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`
+    if (abs < 1_000_000_000_000_000) return `${(n / 1_000_000_000_000).toFixed(2)}T`
+    // Quadrillions and beyond: thousands-group the trillion count.
+    return `${(n / 1_000_000_000_000).toLocaleString(undefined, { maximumFractionDigits: 0 })}T`
   }
 
   // Format a CAW amount as USD (using the shared CAW price). Returns
@@ -383,7 +396,9 @@ const CawActivity: React.FC = () => {
     if (abs < 1_000) return `${sign}$${usd.toFixed(2)}`
     if (abs < 1_000_000) return `${sign}$${(usd / 1_000).toFixed(1)}K`
     if (abs < 1_000_000_000) return `${sign}$${(usd / 1_000_000).toFixed(2)}M`
-    return `${sign}$${(usd / 1_000_000_000).toFixed(2)}B`
+    if (abs < 1_000_000_000_000) return `${sign}$${(usd / 1_000_000_000).toFixed(2)}B`
+    if (abs < 1_000_000_000_000_000) return `${sign}$${(usd / 1_000_000_000_000).toFixed(2)}T`
+    return `${sign}$${(usd / 1_000_000_000_000).toLocaleString(undefined, { maximumFractionDigits: 0 })}T`
   }
 
   // Shared axis label color (hoisted so both the line chart and the bar
@@ -590,7 +605,7 @@ const CawActivity: React.FC = () => {
               <div className={`${cardClass} text-center`}>
                 <div className={`text-[10px] uppercase tracking-wide font-semibold ${isDark ? 'text-white/50' : 'text-gray-500'}`}>Stake share</div>
                 <div className="text-xl font-bold mt-1" style={{ color: '#ebc046' }}>
-                  {(data.summary.stakeShare * 100).toFixed(3)}%
+                  {(data.summary.stakeShare * 100).toFixed(6)}%
                 </div>
                 <div className={`text-[10px] mt-0.5 ${isDark ? 'text-white/40' : 'text-gray-400'}`}>of total CAW staked</div>
               </div>
@@ -1193,6 +1208,131 @@ const CawActivity: React.FC = () => {
         {/* CAW distributed to stakers chart moved to the All Stats
             tab (it's system-wide, not user-scoped). */}
 
+        {/* Tips chart — separated from the main flow chart because
+            tips operate on a much larger scale than the per-action
+            flows (a single tip can dwarf a month of likes). Same
+            stacked layout: received above the midline, given below.
+            Independent y-scales per side. */}
+        {data && buckets.length > 0 && (() => {
+          const TIP_IN_COLOR = '#7cb958'   // muted green
+          const TIP_OUT_COLOR = '#5d9b6c'  // forest sage
+          const maxTipIn = Math.max(...buckets.map(b => b.tipsIn), 0)
+          const maxTipOut = Math.max(...buckets.map(b => b.tipsOut), 0)
+          if (maxTipIn === 0 && maxTipOut === 0) return null
+          const totalTipsIn = buckets.reduce((s, b) => s + b.tipsIn, 0)
+          const totalTipsOut = buckets.reduce((s, b) => s + b.tipsOut, 0)
+          const TIPS_H = 200
+          const TIPS_HALF = TIPS_H / 2
+
+          return (
+            <div className={`${cardClass} mb-4`}>
+              <div className="flex items-baseline justify-between mb-1">
+                <h2 className={`text-sm font-semibold ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
+                  Tips
+                </h2>
+                <div className="flex items-baseline gap-3 text-[11px] tabular-nums">
+                  <span style={{ color: TIP_IN_COLOR }}>
+                    +{fmtUsd(totalTipsIn) ?? `${fmtNumberCaw(totalTipsIn)} CAW`} in
+                  </span>
+                  <span style={{ color: TIP_OUT_COLOR }}>
+                    −{fmtUsd(totalTipsOut) ?? `${fmtNumberCaw(totalTipsOut)} CAW`} out
+                  </span>
+                </div>
+              </div>
+              <div className="flex">
+                {/* Y-axis */}
+                <div
+                  className="flex-shrink-0 flex flex-col text-[10px] tabular-nums select-none"
+                  style={{ width: 56, height: TIPS_H }}
+                >
+                  <div className="relative" style={{ height: TIPS_HALF }}>
+                    {maxTipIn > 0 && (
+                      <div className={`absolute right-2 top-0 ${axisLabelClass}`}>
+                        +{fmtNumberCaw(maxTipIn)}
+                      </div>
+                    )}
+                    <div
+                      className={`absolute left-2 font-bold uppercase tracking-wide text-[10px] ${isDark ? 'text-white' : 'text-black'}`}
+                      style={{ top: '50%', transform: 'translateY(-50%)' }}
+                    >
+                      In
+                    </div>
+                    <div className={`absolute right-2 bottom-0 translate-y-1/2 ${axisLabelClass}`}>0</div>
+                  </div>
+                  <div className="relative" style={{ height: TIPS_HALF }}>
+                    <div
+                      className={`absolute left-2 font-bold uppercase tracking-wide text-[10px] ${isDark ? 'text-white' : 'text-black'}`}
+                      style={{ top: '50%', transform: 'translateY(-50%)' }}
+                    >
+                      Out
+                    </div>
+                    {maxTipOut > 0 && (
+                      <div className={`absolute right-2 bottom-0 ${axisLabelClass}`}>
+                        −{fmtNumberCaw(maxTipOut)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {/* Plot */}
+                <div className="relative flex-1" style={{ height: TIPS_H }}>
+                  {maxTipIn > 0 && (
+                    <div
+                      className="absolute left-0 right-0 h-px pointer-events-none"
+                      style={{ top: 0, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }}
+                    />
+                  )}
+                  {maxTipOut > 0 && (
+                    <div
+                      className="absolute left-0 right-0 h-px pointer-events-none"
+                      style={{ bottom: 0, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)' }}
+                    />
+                  )}
+                  {/* Midline */}
+                  <div
+                    className="absolute left-0 right-0 h-px pointer-events-none"
+                    style={{ top: TIPS_HALF, backgroundColor: isDark ? 'rgba(255,255,255,0.25)' : 'rgba(0,0,0,0.2)' }}
+                  />
+                  <div className="flex items-stretch gap-0.5 absolute inset-0">
+                    {buckets.map((b, i) => {
+                      const inPct = maxTipIn > 0 ? (b.tipsIn / maxTipIn) * 47 : 0
+                      const outPct = maxTipOut > 0 ? (b.tipsOut / maxTipOut) * 47 : 0
+                      return (
+                        <div key={i} className="flex-1 flex flex-col">
+                          <div className="flex flex-col-reverse" style={{ height: '50%' }}>
+                            {b.tipsIn > 0 && (
+                              <div
+                                className="w-full"
+                                style={{
+                                  height: `${inPct * 2}%`,
+                                  minHeight: 1,
+                                  backgroundColor: TIP_IN_COLOR,
+                                }}
+                              />
+                            )}
+                          </div>
+                          <div style={{ height: 0 }} />
+                          <div className="flex flex-col" style={{ height: '50%' }}>
+                            {b.tipsOut > 0 && (
+                              <div
+                                className="w-full"
+                                style={{
+                                  height: `${outPct * 2}%`,
+                                  minHeight: 1,
+                                  backgroundColor: TIP_OUT_COLOR,
+                                }}
+                              />
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )
+        })()}
+
         {/* Legend with toggles */}
         {data && buckets.length > 0 && (
           <div className={`${cardClass} mb-6`}>
@@ -1367,7 +1507,10 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
     if (abs < 1_000) return n.toFixed(0)
     if (abs < 1_000_000) return `${(n / 1_000).toFixed(1)}K`
     if (abs < 1_000_000_000) return `${(n / 1_000_000).toFixed(2)}M`
-    return `${(n / 1_000_000_000).toFixed(2)}B`
+    if (abs < 1_000_000_000_000) return `${(n / 1_000_000_000).toFixed(2)}B`
+    if (abs < 1_000_000_000_000_000) return `${(n / 1_000_000_000_000).toFixed(2)}T`
+    // Quadrillions and beyond: thousands-group the trillion count.
+    return `${(n / 1_000_000_000_000).toLocaleString(undefined, { maximumFractionDigits: 0 })}T`
   }
   const fmtUsd = (cawAmount: number): string | null => {
     if (!cawUsdPrice || cawUsdPrice <= 0) return null
@@ -1378,7 +1521,9 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
     if (abs < 1_000) return `$${usd.toFixed(2)}`
     if (abs < 1_000_000) return `$${(usd / 1_000).toFixed(1)}K`
     if (abs < 1_000_000_000) return `$${(usd / 1_000_000).toFixed(2)}M`
-    return `$${(usd / 1_000_000_000).toFixed(2)}B`
+    if (abs < 1_000_000_000_000) return `$${(usd / 1_000_000_000).toFixed(2)}B`
+    if (abs < 1_000_000_000_000_000) return `$${(usd / 1_000_000_000_000).toFixed(2)}T`
+    return `$${(usd / 1_000_000_000_000).toLocaleString(undefined, { maximumFractionDigits: 0 })}T`
   }
   const axisLabelClass = isDark ? 'text-white/40' : 'text-gray-500'
 
@@ -1432,13 +1577,7 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
   const deposits = weiToCawNum(data.summary.deposits)
   const withdrawals = weiToCawNum(data.summary.withdrawals)
   const net = weiToCawNum(data.summary.net)
-  const totalStakingRewards = weiToCawNum(data.summary.totalStakingRewards)
   const currentTotalCaw = weiToCawNum(data.summary.currentTotalCaw)
-
-  // Balance line — `totalCaw` per bucket. Carry-forward not needed
-  // (server fills every bucket).
-  const balancePoints = data.chart.map(b => weiToCawNum(b.totalCaw))
-  const hasBalance = balancePoints.some(v => v > 0)
 
   // Mini count charts: system-wide.
   const countTypes = [
@@ -1456,12 +1595,33 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
     { key: 'RECAW',  label: 'Recaws',  color: '#a373c8' },
     { key: 'FOLLOW', label: 'Follows', color: '#e08a4a' },
   ]
-  const distTotals = data.chart.map(b =>
-    distTypes.reduce((s, t) => s + weiToCawNum(b.distributionByType[t.key]), 0),
-  )
-  const distMax = Math.max(...distTotals, 0)
 
-  // Balance line chart geometry.
+  // ----- Toggle-aware totals -----
+  // The 4 mini count charts dim when disabled; the distribution
+  // chart and the cumulative-distribution headline line hide
+  // disabled types entirely. Recomputed from `data.chart` on every
+  // render so a toggle click flows through.
+  const visibleDistTypes = distTypes.filter(t => isEnabled(t.key))
+  const filteredDistTotalsByBucket = data.chart.map(b =>
+    visibleDistTypes.reduce((s, t) => s + weiToCawNum(b.distributionByType[t.key]), 0),
+  )
+  const filteredDistMax = Math.max(...filteredDistTotalsByBucket, 0)
+  const filteredStakingRewards = filteredDistTotalsByBucket.reduce((a, v) => a + v, 0)
+
+  // ----- Headline line: cumulative CAW distributed to stakers -----
+  // Replaces the old "totalCaw" balance line. Each bucket adds the
+  // visible-type distribution to the running total — monotonically
+  // increasing, every action contributes. Anchors at 0 on the left
+  // edge so the curve reads as "growth this window."
+  let runningDistribution = 0
+  const balancePoints: number[] = []
+  for (const v of filteredDistTotalsByBucket) {
+    runningDistribution += v
+    balancePoints.push(runningDistribution)
+  }
+  const hasBalance = balancePoints.some(v => v > 0)
+
+  // Line chart geometry.
   const LINE_H = 120
   const minBal = balancePoints.length > 0 ? Math.min(...balancePoints) : 0
   const maxBal = balancePoints.length > 0 ? Math.max(...balancePoints) : 0
@@ -1484,20 +1644,6 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
       ` L ${xFor(balancePoints.length - 1).toFixed(3)} ${LINE_H} Z`
     : ''
   const xLabelEvery = Math.max(1, Math.ceil(data.chart.length / 6))
-
-  // ----- Recompute totals + chart maxes with toggles applied -----
-  // The 4 mini count charts dim when disabled (kept visible for
-  // continuity); the distribution chart hides disabled types from
-  // the stack. Recomputed from `data.chart` on every render.
-  const visibleDistTypes = distTypes.filter(t => isEnabled(t.key))
-  const filteredDistTotalsByBucket = data.chart.map(b =>
-    visibleDistTypes.reduce((s, t) => s + weiToCawNum(b.distributionByType[t.key]), 0),
-  )
-  const filteredDistMax = Math.max(...filteredDistTotalsByBucket, 0)
-  const filteredStakingRewards = data.chart.reduce(
-    (sum, b) => sum + visibleDistTypes.reduce((s, t) => s + weiToCawNum(b.distributionByType[t.key]), 0),
-    0,
-  )
 
   // Master legend across all four social action types — drives every
   // toggleable chart on this tab. Posts/Likes/Recaws/Follows match
@@ -1623,14 +1769,14 @@ const AllStatsView: React.FC<AllStatsViewProps> = ({ range }) => {
         <div className={`${cardClass} mb-4`}>
           <div className="flex items-baseline justify-between mb-1">
             <h2 className={`text-sm font-semibold ${isDark ? 'text-white/60' : 'text-gray-500'}`}>
-              Total CAW staked across the protocol
+              Cumulative CAW distributed to stakers
             </h2>
             <div className="flex items-baseline gap-2">
               <span className="text-lg font-bold tabular-nums" style={{ color: '#ebc046' }}>
-                {fmtUsd(currentTotalCaw) ?? fmtNumberCaw(currentTotalCaw)}
+                {fmtUsd(filteredStakingRewards) ?? fmtNumberCaw(filteredStakingRewards)}
               </span>
               <span className={`text-[10px] ${isDark ? 'text-white/40' : 'text-gray-400'}`}>
-                {fmtUsd(currentTotalCaw) ? `${fmtNumberCaw(currentTotalCaw)} CAW` : 'CAW total'}
+                {fmtUsd(filteredStakingRewards) ? `${fmtNumberCaw(filteredStakingRewards)} CAW` : 'CAW total'}
               </span>
             </div>
           </div>

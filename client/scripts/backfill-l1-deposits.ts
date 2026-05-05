@@ -22,7 +22,6 @@ import { prisma } from '../src/prismaClient'
 import { CAW_NAMES_ADDRESS } from '../src/abi/addresses'
 import { makeJsonRpcProvider, getL1HttpRpcUrl } from '../src/utils/rpcProvider'
 import { scanLogsForward } from '../src/utils/chunkedLogs'
-import { recordDeposit } from '../src/services/StakeLedger'
 
 const args = process.argv.slice(2)
 const argFrom = args.indexOf('--from') >= 0 ? Number(args[args.indexOf('--from') + 1]) : undefined
@@ -126,29 +125,41 @@ async function main() {
     const blockTimestamp = await getTs(log.blockNumber)
 
     try {
-      let didWrite = false
-      await prisma.$transaction(async (tx) => {
-        // recordDeposit's own dedup will skip if the row already
-        // exists; we infer "wrote vs skipped" by counting rows after
-        // the call. Cheaper than re-querying inside the tx.
-        const before = await tx.cawOwnershipSnapshot.count({
-          where: { txHash, logIndex, reason: 'DEPOSIT' },
-        })
-        await recordDeposit(tx, {
+      // Write the DEPOSIT row directly. Bypasses recordDeposit() —
+      // backfill doesn't need the snapshotter's in-memory math (we
+      // can't trust historical multiplier state anyway). We only
+      // care about the per-bucket delta for the chart, which is
+      // exactly what recordDeposit's `delta` field captured.
+      const existing = await prisma.cawOwnershipSnapshot.findFirst({
+        where: { txHash, logIndex, reason: 'DEPOSIT' },
+        select: { id: true },
+      })
+      if (existing) {
+        skipped++
+        continue
+      }
+      await prisma.cawOwnershipSnapshot.create({
+        data: {
           tokenId,
-          amountWei: amount,
           blockNumber,
           blockTimestamp,
           txHash,
           logIndex,
-        })
-        const after = await tx.cawOwnershipSnapshot.count({
-          where: { txHash, logIndex, reason: 'DEPOSIT' },
-        })
-        didWrite = after > before
-      }, { timeout: 15_000 })
-      if (didWrite) written++
-      else skipped++
+          actionIndex: null,
+          // Historical chain ownership/multiplier/balance are
+          // unknowable from event logs alone. The chart reads
+          // `delta` (the bucket aggregate), not these snapshot
+          // fields, so 0 here is honest.
+          ownership: '0',
+          multiplier: '0',
+          balance: '0',
+          delta: amount.toString(),
+          reason: 'DEPOSIT',
+          actionType: null,
+          counterpartyTokenId: null,
+        },
+      })
+      written++
     } catch (err: any) {
       console.warn(`[deposit-backfill] failed tokenId=${tokenId} tx=${txHash}:`, err?.message)
       failed++

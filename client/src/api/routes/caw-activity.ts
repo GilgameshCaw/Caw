@@ -410,8 +410,9 @@ router.get('/:tokenId/caw-activity', limiter, async (req, res): Promise<void> =>
       const own = BigInt(currentRow.ownership)
       const total = BigInt(stateRow.totalCaw)
       if (total > 0n) {
-        const ratioE6 = (own * 1_000_000n) / total
-        stakeShare = Number(ratioE6) / 1_000_000
+        // 8-decimal ratio precision so the FE can show %.toFixed(6).
+        const ratioE8 = (own * 100_000_000n) / total
+        stakeShare = Number(ratioE8) / 100_000_000
       }
     }
 

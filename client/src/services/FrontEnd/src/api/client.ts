@@ -168,7 +168,22 @@ export async function apiFetch<T = any>(
     .sort((a: string, b: string) => verificationStore.getHostScore(a) - verificationStore.getHostScore(b))
 
   // If no discovered instances, fall back to API_HOST (may be empty for dev proxy)
-  const targets = hosts.length > 0 ? hosts : [API_HOST]
+  let targets = hosts.length > 0 ? hosts : [API_HOST]
+
+  // Local-dev safety net: when the FE is running on localhost and we
+  // have no VITE_API_HOST set, ALWAYS try the local proxy first
+  // before any discovered remote instances. Without this, a single
+  // remote instance left in localStorage from prod browsing hijacks
+  // every request — and any new local-only routes return HTML 404s
+  // from prod, surfacing as "Unexpected token '<'" parse errors that
+  // look like the API is down. Per project_multi_instance_apifetch.md.
+  if (
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') &&
+    !API_HOST
+  ) {
+    targets = ['', ...targets.filter(h => h !== '')]
+  }
 
   let lastError: Error | null = null
 
