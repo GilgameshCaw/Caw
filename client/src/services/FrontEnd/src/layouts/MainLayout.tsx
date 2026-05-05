@@ -15,6 +15,7 @@ import { useModalStore } from "~/store";
 import { useDmUnreadStore } from "~/store/dmUnreadStore";
 import { useNotificationUnreadStore } from "~/store/notificationUnreadStore";
 import { useOffersUnreadStore } from "~/store/offersUnreadStore";
+import { useComposeDraftStore } from "~/store/composeDraftStore";
 import { useActiveToken } from "~/store/tokenDataStore";
 import { useLayoutStore } from "~/store/layoutStore";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
@@ -42,6 +43,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
   const dmUnreadCount = useDmUnreadStore(s => s.totalUnread)
   const notifUnreadCount = useNotificationUnreadStore(s => s.unreadCount)
   const offersUnreadCount = useOffersUnreadStore(s => s.unreadCount)
+  const hasInlineDraft = useComposeDraftStore(s => s.hasInlineDraft)
 
   // Bottom-nav transparency while scrolling: solid when idle, translucent
   // while the user actively scrolls so feed content can peek through.
@@ -107,7 +109,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
           <Link
             to="/messages"
             aria-label="Messages"
-            className={`absolute right-4 p-2 rounded-lg transition-colors duration-200 ${
+            className={`absolute right-4 translate-y-[2px] p-2 rounded-lg transition-colors duration-200 ${
               isDark ? 'text-white hover:bg-white/10' : 'text-black hover:bg-gray-100'
             }`}
           >
@@ -258,8 +260,8 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
 
       {/* Mobile bottom nav */}
       {!hideSidebars && !isCaptive && (
-        <nav className={`md:hidden fixed bottom-0 left-0 right-0 z-[55] flex items-center justify-around h-14 pb-[env(safe-area-inset-bottom)] [height:calc(theme(height.14)+env(safe-area-inset-bottom))] border-t transition-opacity duration-200 ${
-          isScrolling ? 'opacity-30' : 'opacity-100'
+        <nav className={`md:hidden fixed bottom-0 left-0 right-0 z-[55] flex items-center justify-around h-14 pb-[env(safe-area-inset-bottom)] [height:calc(theme(height.14)+env(safe-area-inset-bottom))] border-t transition-all duration-200 ${
+          hasInlineDraft ? 'opacity-0 translate-y-full pointer-events-none' : isScrolling ? 'opacity-30' : 'opacity-100'
         } ${
           isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'
         }`}>
@@ -305,7 +307,9 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
         <button
           onClick={() => openModal('post')}
           aria-label={t('main_layout.post_aria')}
-          className="md:hidden fixed right-6 bottom-20 z-[60] w-14 h-14 rounded-full bg-yellow-500 hover:bg-yellow-400 active:bg-yellow-600 text-black flex items-center justify-center shadow-lg shadow-black/30 transition-all cursor-pointer"
+          className={`md:hidden fixed right-6 bottom-20 z-[60] w-14 h-14 rounded-full bg-yellow-500 hover:bg-yellow-400 active:bg-yellow-600 text-black flex items-center justify-center shadow-lg shadow-black/30 transition-all duration-200 cursor-pointer ${
+            hasInlineDraft ? 'opacity-0 translate-y-24 pointer-events-none' : isScrolling ? 'opacity-30' : 'opacity-100'
+          }`}
         >
           <HiOutlinePencilAlt className="w-8 h-8" />
         </button>
