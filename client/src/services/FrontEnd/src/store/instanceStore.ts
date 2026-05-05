@@ -73,6 +73,65 @@ function saveToLocalStorage(clientId: number, instances: Instance[]) {
 }
 
 /**
+ * Drop on-chain instance entries whose apiUrl is unusable from this
+ * browser. The InstanceRegistry is permissionless, so anyone can
+ * register an instance with a localhost / dev-port URL during testing
+ * — and that entry stays on chain forever. Without this filter, every
+ * apiFetch / broadcast / WS connect attempt eventually hits those
+ * URLs and either fails (CORS, network unreachable) or — much worse —
+ * ends up routing prod traffic through a developer's localhost dev
+ * server.
+ *
+ * Rules (all must pass):
+ *   - URL is a syntactically valid http/https URL
+ *   - hostname isn't loopback (localhost / 127.* / ::1 / 0.0.0.0)
+ *   - if the page itself is served over https, the apiUrl must be
+ *     https too (mixed-content would be blocked anyway, but logging
+ *     it makes the reason visible in DevTools)
+ *
+ * Returns the filtered list. Logs the dropped entries once per call
+ * so a misregistered instance is debuggable from the console.
+ */
+function filterUsableInstances(instances: Instance[]): Instance[] {
+  if (typeof window === 'undefined') return instances
+  const pageIsHttps = window.location.protocol === 'https:'
+  const dropped: { reason: string; apiUrl: string; instanceId: number }[] = []
+  const ok: Instance[] = []
+  for (const inst of instances) {
+    let url: URL
+    try {
+      url = new URL(inst.apiUrl)
+    } catch {
+      dropped.push({ reason: 'invalid URL', apiUrl: inst.apiUrl, instanceId: inst.instanceId })
+      continue
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      dropped.push({ reason: `bad protocol ${url.protocol}`, apiUrl: inst.apiUrl, instanceId: inst.instanceId })
+      continue
+    }
+    const host = url.hostname
+    if (
+      host === 'localhost' ||
+      host === '0.0.0.0' ||
+      host === '::1' ||
+      host.startsWith('127.')
+    ) {
+      dropped.push({ reason: 'loopback host', apiUrl: inst.apiUrl, instanceId: inst.instanceId })
+      continue
+    }
+    if (pageIsHttps && url.protocol === 'http:') {
+      dropped.push({ reason: 'mixed content (http apiUrl on https page)', apiUrl: inst.apiUrl, instanceId: inst.instanceId })
+      continue
+    }
+    ok.push(inst)
+  }
+  if (dropped.length > 0) {
+    console.warn(`[InstanceStore] dropped ${dropped.length} unusable instance(s):`, dropped)
+  }
+  return ok
+}
+
+/**
  * Fetch peer list from a CAW node's /api/instances endpoint. Returns
  * null on any failure (network, non-200, malformed body) so the caller
  * can fall through to the next tier without special-casing.
@@ -298,7 +357,7 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
     const ls = loadFromLocalStorage(clientId)
     if (ls && ls.instances.length > 0) {
       set({
-        instances: ls.instances,
+        instances: filterUsableInstances(ls.instances),
         loadedFrom: 'localStorage',
         lastFetchedAt: Date.now() - LS_FRESH_THRESHOLD_MS, // mark stale so the network refresh below proceeds
       })
@@ -312,14 +371,15 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
     const knownHosts = (ls?.instances ?? state.instances).map(i => i.apiUrl).filter(Boolean)
     const fromApi = await fetchFromAnyApi(API_HOST || null, knownHosts, clientId)
     if (fromApi) {
+      const filtered = filterUsableInstances(fromApi)
       set({
-        instances: fromApi,
+        instances: filtered,
         loadedFrom: 'api',
         lastFetchedAt: Date.now(),
         isLoading: false,
         error: null,
       })
-      saveToLocalStorage(clientId, fromApi)
+      saveToLocalStorage(clientId, filtered)
       return
     }
 
@@ -328,14 +388,15 @@ export const useInstanceStore = create<InstanceState>((set, get) => ({
     // scenario for a static-hosted FE on a fresh browser.
     const fromChain = await fetchFromChain(clientId)
     if (fromChain) {
+      const filtered = filterUsableInstances(fromChain)
       set({
-        instances: fromChain,
+        instances: filtered,
         loadedFrom: 'chain',
         lastFetchedAt: Date.now(),
         isLoading: false,
         error: null,
       })
-      saveToLocalStorage(clientId, fromChain)
+      saveToLocalStorage(clientId, filtered)
       return
     }
 
