@@ -27,6 +27,7 @@ import { useT } from '~/i18n/I18nProvider'
 import { getUserAvatar } from '~/utils/defaultAvatar'
 import Avatar from '~/components/Avatar'
 import { LoadingSpinner } from '~/components/Skeleton'
+import UserHoverCard from '~/components/UserHoverCard'
 
 interface Actor {
   tokenId: number
@@ -459,7 +460,8 @@ const Notifications: React.FC = () => {
     const Action = (node: React.ReactNode) => <span className={actionClass}>{node}</span>
 
     const actorLabel = actor.displayName || actor.username
-    const actorLink = (
+    const hasRealUsername = !!actor.username && actor.username !== `#${actor.tokenId}`
+    const actorSpan = (
       <span
         onClick={e => {
           // Actor name sits inside an <a> notification row for most types.
@@ -467,9 +469,7 @@ const Notifications: React.FC = () => {
           // preventDefault or the browser will follow the row href.
           e.preventDefault()
           e.stopPropagation()
-          const uname = actor.username && actor.username !== `#${actor.tokenId}`
-            ? actor.username
-            : (actor.displayName || actor.username)
+          const uname = hasRealUsername ? actor.username : (actor.displayName || actor.username)
           navigate(`/users/${uname}`)
         }}
         className="hover:underline cursor-pointer"
@@ -477,6 +477,9 @@ const Notifications: React.FC = () => {
         {actorLabel}
       </span>
     )
+    const actorLink = hasRealUsername
+      ? <UserHoverCard username={actor.username!}>{actorSpan}</UserHoverCard>
+      : actorSpan
     const grouped = count > 1 && additionalActors && additionalActors.length > 0
     const othersCount = grouped ? count - 1 : 0
     // Use a sentinel marker so we can splice the React <Link> back in after

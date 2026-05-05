@@ -305,9 +305,11 @@ interface PostFormProps {
   /** called after a successful sign+submit */
   onSuccess?: () => void;
   placeholder?: string;
+  /** force the spacious compose layout (used by the mobile compose sheet) */
+  composeMode?: boolean;
 }
 
-const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placeholder }) => {
+const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placeholder, composeMode = false }) => {
   const { isConnected } = useAccount();
   const { openConnectModal } = useConnectModal();
   const hasActiveSession = useHasActiveSession();
@@ -1556,7 +1558,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       />
 
       {/* Mobile Layout - Input + Button */}
-      <div className={`md:hidden flex flex-col ${replyTo ? 'space-y-1' : 'space-y-2'}`}>
+      <div className={`${composeMode ? 'hidden' : 'md:hidden'} flex flex-col ${replyTo ? 'space-y-1' : 'space-y-2'}`}>
           {/* Input and Reply Button Row */}
           <div className="flex items-center space-x-3">
             {/* Input */}
@@ -1643,7 +1645,9 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           )}
 
           {/* Mobile Icons Row */}
-          <div className={`flex items-center justify-between ${replyTo ? 'pt-0.5' : ''}`}>
+          <div className={`flex items-center justify-between mt-4 pb-3 border-b ${
+            isDark ? 'border-white/10' : 'border-gray-200'
+          } ${replyTo ? 'pt-0.5' : ''}`}>
             {/* Left side - media icons */}
             <div className="flex items-center space-x-4">
               {/* Media Upload */}
@@ -1918,7 +1922,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
       </div>
 
       {/* Desktop Layout - Original */}
-      <div className="hidden md:block">
+      <div className={composeMode ? 'block' : 'hidden md:block'}>
         <div className="relative">
           <HighlightedTextarea
             value={text}
@@ -2064,8 +2068,12 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
         )}
 
         {/* Functionality Icons */}
-        <div className={`flex items-center justify-between ${replyTo ? 'mt-1.5' : 'mt-4'}`}>
-          <div className="flex items-center space-x-3">
+        <div className={`flex items-center justify-between gap-2 ${replyTo ? 'mt-1.5' : 'mt-4'} ${
+          composeMode && hasMedia
+            ? `sticky -bottom-px pt-3 pb-3 border-t ${isDark ? 'bg-black border-white/10' : 'bg-white border-gray-200'}`
+            : ''
+        }`}>
+          <div className={`flex items-center min-w-0 ${composeMode ? 'space-x-1' : 'space-x-3'}`}>
             {/* Media Upload */}
             <button
               onClick={() => fileInputRef.current?.click()}
@@ -2251,7 +2259,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
           <div className="flex items-center space-x-3">
             {/* Token ownership and character counter */}
             <div className="flex items-center space-x-3">
-              {isThreadMode && (
+              {isThreadMode && !composeMode && (
                 <span className={`text-sm font-medium px-2 py-0.5 rounded ${
                   isDark ? 'bg-yellow-500/20 text-yellow-400' : 'bg-yellow-100 text-yellow-700'
                 }`}>
@@ -2280,7 +2288,7 @@ const PostForm: React.FC<PostFormProps> = ({ replyTo, quote, onSuccess, placehol
                 const btn2 = (
                   <button
                     ref={submitBtnRef}
-                    className="px-5 py-2 bg-yellow-500 text-black font-semibold text-base rounded-full hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer"
+                    className="px-5 py-2 bg-yellow-500 text-black font-semibold text-base rounded-full hover:bg-yellow-400 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl cursor-pointer flex-shrink-0 whitespace-nowrap"
                     disabled={isDisabled2}
                     onClick={handleSubmit}
                   >

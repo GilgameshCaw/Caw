@@ -217,7 +217,7 @@ const MutedContentPage: React.FC = () => {
     preferences.blockedAccounts.length
 
   return (
-      <div className="max-w-2xl mx-auto px-6 py-4">
+      <div className="max-w-2xl mx-auto px-3 sm:px-6 py-4">
         {/* Header */}
         <div className="flex items-center gap-4 mb-6">
           <Link
