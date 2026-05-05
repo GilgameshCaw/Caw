@@ -63,6 +63,25 @@ function getRedirectUri(): string {
 }
 
 /**
+ * Mobile detection for the X OAuth flow. We use a top-level redirect on
+ * mobile (no popup) because mobile popups are clunky — they open as a
+ * sheet, in-app browsers (Twitter/Discord/Slack/Mastodon) hard-ban
+ * cross-popup window.opener, and popup-blockers fire even on synchronous
+ * opens in some configurations.
+ *
+ * Touch + narrow viewport is sufficient: phones and tablets get the
+ * redirect path; desktops with touchscreens stay on the popup path
+ * (they have the screen real estate for a popup window without it
+ * feeling like a takeover).
+ */
+function isMobileDevice(): boolean {
+  if (typeof window === 'undefined') return false
+  const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0
+  const isNarrow = window.innerWidth < 768
+  return hasTouch && isNarrow
+}
+
+/**
  * "Connected accounts" panel. Currently only X (Twitter) — links a CAW
  * wallet to an X handle and pulls the bucketed follower count once at
  * link time. The Connect button opens the OAuth start endpoint in a popup;
@@ -162,29 +181,81 @@ const ConnectedAccountsSection: React.FC<{ isDark: boolean; tokenId: number }> =
 
   const startOAuth = useCallback(() => {
     // Session token lives in localStorage (not a cookie), so a popup can't
-    // carry it. Two-step: authed POST to /start-popup returns the X auth
-    // URL, then we window.open that URL. The popup hits X, X redirects to
-    // our /callback, which renders a tiny page that postMessages back and
-    // closes itself.
+    // carry it. Authed POST to /start-popup returns the X auth URL.
     //
     // We send redirectUri so the backend doesn't have to assume what host
     // the FE is on — important for decentralized mirrors where the FE
     // and API may not share INSTANCE_API_URL.
+    //
+    // Two paths:
+    //
+    //   Desktop (popup): open a same-origin placeholder popup
+    //     SYNCHRONOUSLY in the click handler so Safari's user-gesture
+    //     check is satisfied, then navigate the popup to the X URL once
+    //     the fetch resolves. The callback page writes the result to
+    //     localStorage and self-closes; the storage event wakes us up.
+    //
+    //   Mobile (top-level redirect): popups on mobile are clunky (sheet
+    //     UI, in-app browser quirks, opener-isolation hard-bans) and
+    //     popup-blockers fire even with synchronous open in some
+    //     configurations. So we send `returnTo` to the backend, which
+    //     stashes it in the OAuth state, and after the callback page
+    //     writes the result to localStorage it window.location.replace's
+    //     us back to where we came from. AccountSettings' mount-time
+    //     localStorage read picks up the result with no storage event
+    //     needed.
     setBusy(true)
     setError(null)
     // Pre-clear any stale result from a previous attempt so the storage
     // listener can't fire on it when this attempt completes.
     try { localStorage.removeItem('caw:xverify:result') } catch {}
+
+    const isMobile = isMobileDevice()
+    let popup: Window | null = null
+
+    if (!isMobile) {
+      // Open the popup synchronously with a placeholder URL. Safari blocks
+      // window.open() that isn't directly inside a user-gesture handler;
+      // by opening *first* and navigating later, we stay inside the gesture.
+      popup = window.open('about:blank', 'caw-xverify', 'width=600,height=700')
+      if (!popup) {
+        setBusy(false)
+        setError('Popup was blocked. Allow popups for this site and try again.')
+        return
+      }
+      // Friendly placeholder so the popup isn't a blank tab during the fetch.
+      try {
+        popup.document.write(
+          '<!doctype html><meta charset="utf-8"><title>Connecting to X…</title>' +
+          '<style>body{font:14px system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#000;color:#fff}</style>' +
+          '<div>Connecting to X…</div>'
+        )
+      } catch { /* cross-origin doc.write can throw in some envs; harmless */ }
+    }
+
     apiFetch<{ url: string }>('/api/verify/x/start-popup', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ tokenId, redirectUri: getRedirectUri() }),
+      body:    JSON.stringify({
+        tokenId,
+        redirectUri: getRedirectUri(),
+        // Only sent on mobile — backend uses presence to decide whether
+        // the callback should redirect (mobile) or self-close (desktop).
+        ...(isMobile ? { returnTo: window.location.href } : {}),
+      }),
     })
       .then((res) => {
-        const w = window.open(res.url, 'caw-xverify', 'width=600,height=700')
-        if (!w) {
+        if (isMobile) {
+          // Top-level redirect — the user leaves this tab entirely. The
+          // callback page will redirect back to returnTo when done.
+          window.location.href = res.url
+          return
+        }
+        // Navigate the already-open popup to the X auth URL.
+        try { popup!.location.href = res.url } catch {
+          // If the popup got closed before the fetch resolved, this throws.
           setBusy(false)
-          setError('Popup was blocked. Allow popups for this site and try again.')
+          setError('Popup was closed before connecting. Please try again.')
           return
         }
         // No w.closed watchdog — modern browsers lie about w.closed when
@@ -205,6 +276,9 @@ const ConnectedAccountsSection: React.FC<{ isDark: boolean; tokenId: number }> =
       })
       .catch((e) => {
         setBusy(false)
+        // Close the placeholder popup so the user isn't left staring at
+        // "Connecting to X…" forever.
+        try { popup?.close() } catch {}
         if (isAuthError(e)) {
           console.warn('[xverify] start-popup auth error, ignoring')
         } else {

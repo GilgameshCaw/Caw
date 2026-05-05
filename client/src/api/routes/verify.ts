@@ -97,6 +97,35 @@ function validateRedirectUri(raw: unknown): string {
 }
 
 /**
+ * Validate a returnTo URL the FE supplies for the mobile redirect path.
+ * On mobile we replace the popup with a top-level redirect; the callback
+ * page navigates back here when done.
+ *
+ * Requirements:
+ *   - https (or http on localhost for dev)
+ *   - parseable URL
+ *
+ * We don't enforce a same-origin / allowlist constraint because CAW is
+ * decentralized — any FE host can talk to any API. The attack a stricter
+ * check would prevent is "use the OAuth flow as an open-redirect to
+ * evil.com" which has no real exploit value here: no state is leaked to
+ * the destination, the user already initiated the click, and they'd
+ * notice ending up on a foreign domain. Keep the bar low; it's a UX
+ * affordance, not a trust boundary.
+ *
+ * Returns the URL string on success; returns null on missing/invalid so
+ * the caller can fall back to the close-page (popup) flow.
+ */
+function validateReturnTo(raw: unknown): string | null {
+  if (typeof raw !== 'string' || !raw) return null
+  let parsed: URL
+  try { parsed = new URL(raw) } catch { return null }
+  const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1'
+  if (parsed.protocol !== 'https:' && !(parsed.protocol === 'http:' && isLocalhost)) return null
+  return parsed.toString()
+}
+
+/**
  * POST /api/verify/x/start-popup
  * Begins the X OAuth 2.0 + PKCE flow. Stores {tokenId, codeVerifier,
  * redirectUri, address} in Redis keyed by an opaque state nonce, then
@@ -124,6 +153,11 @@ router.post('/x/start-popup', requireAuth({ field: 'tokenId', verifyOwnership: t
     }
 
     const redirectUri = validateRedirectUri(req.body?.redirectUri)
+    // Optional. Present on mobile flows that swap the popup for a
+    // top-level redirect; the callback page navigates the user back
+    // here when finished. Falsy → desktop popup flow → callback page
+    // self-closes instead.
+    const returnTo = validateReturnTo(req.body?.returnTo)
 
     // verifyOwnership made requireAuth check that the session is still
     // authorized for this token's CURRENT owner. The middleware also
@@ -139,7 +173,7 @@ router.post('/x/start-popup', requireAuth({ field: 'tokenId', verifyOwnership: t
     await redis.setex(
       STATE_PREFIX + state,
       STATE_TTL_SEC,
-      JSON.stringify({ tokenId, address, codeVerifier: verifier, redirectUri })
+      JSON.stringify({ tokenId, address, codeVerifier: verifier, redirectUri, returnTo })
     )
 
     const params = new URLSearchParams({
@@ -182,11 +216,26 @@ router.get('/x/callback', async (req, res) => {
   const state = req.query.state as string | undefined
   const error = req.query.error as string | undefined
 
+  // For pre-state-lookup error paths we don't yet know if the flow was
+  // mobile (returnTo) or desktop (popup). Default to popup; on mobile the
+  // user lands on a page that says "you can close this window" which is
+  // wrong but recoverable — they can hit back to get to the app. The
+  // happy path always knows the returnTo, so this only matters for
+  // adversarial inputs.
   if (error) {
     return res.send(closePagePostMessage({ ok: false, error: 'cancelled' }))
   }
   if (!code || !state) {
     return res.send(closePagePostMessage({ ok: false, error: 'missing_code' }))
+  }
+
+  // Resolve returnTo BEFORE the try-block so we can use it in catches and
+  // post-state-lookup errors. Only set after the state is read.
+  let returnTo: string | null = null
+  const respond = (payload: Record<string, any>) => {
+    return res.send(returnTo
+      ? redirectPageWithResult(payload, returnTo)
+      : closePagePostMessage(payload))
   }
 
   try {
@@ -201,8 +250,10 @@ router.get('/x/callback', async (req, res) => {
       address:      string
       codeVerifier: string
       redirectUri:  string
+      returnTo?:    string | null
     }
     const { tokenId, address, codeVerifier, redirectUri } = parsed
+    returnTo = parsed.returnTo || null
 
     const clientId     = envOrThrow('X_OAUTH_CLIENT_ID')
     const clientSecret = envOrThrow('X_OAUTH_CLIENT_SECRET')
@@ -228,12 +279,12 @@ router.get('/x/callback', async (req, res) => {
     if (!tokenRes.ok) {
       const text = await tokenRes.text().catch(() => '')
       console.error('[/api/verify/x/callback] token exchange failed:', tokenRes.status, text)
-      return res.send(closePagePostMessage({ ok: false, error: 'token_exchange_failed' }))
+      return respond({ ok: false, error: 'token_exchange_failed' })
     }
     const tokenJson = await tokenRes.json() as { access_token?: string }
     const accessToken = tokenJson.access_token
     if (!accessToken) {
-      return res.send(closePagePostMessage({ ok: false, error: 'no_access_token' }))
+      return respond({ ok: false, error: 'no_access_token' })
     }
 
     // Fetch the linked X account + follower count.
@@ -243,7 +294,7 @@ router.get('/x/callback', async (req, res) => {
     if (!meRes.ok) {
       const text = await meRes.text().catch(() => '')
       console.error('[/api/verify/x/callback] users/me failed:', meRes.status, text)
-      return res.send(closePagePostMessage({ ok: false, error: 'me_fetch_failed' }))
+      return respond({ ok: false, error: 'me_fetch_failed' })
     }
     const meJson = await meRes.json() as {
       data?: { id?: string; username?: string; public_metrics?: { followers_count?: number } }
@@ -252,7 +303,7 @@ router.get('/x/callback', async (req, res) => {
     const xHandle   = meJson.data?.username
     const followers = meJson.data?.public_metrics?.followers_count ?? 0
     if (!xUserId || !xHandle) {
-      return res.send(closePagePostMessage({ ok: false, error: 'malformed_x_response' }))
+      return respond({ ok: false, error: 'malformed_x_response' })
     }
 
     // First-link-wins on xUserId GLOBALLY: if this X account is already
@@ -263,7 +314,7 @@ router.get('/x/callback', async (req, res) => {
       select: { address: true },
     })
     if (existing && existing.address !== address) {
-      return res.send(closePagePostMessage({ ok: false, error: 'x_account_already_linked' }))
+      return respond({ ok: false, error: 'x_account_already_linked' })
     }
 
     const bucket = bucketFollowers(followers)
@@ -311,14 +362,10 @@ router.get('/x/callback', async (req, res) => {
       data:  { xBadgeVisible: true },
     })
 
-    return res.send(closePagePostMessage({
-      ok:       true,
-      xHandle,
-      bucket,
-    }))
+    return respond({ ok: true, xHandle, bucket })
   } catch (err: any) {
     console.error('[/api/verify/x/callback] error:', err?.message || err)
-    return res.send(closePagePostMessage({ ok: false, error: 'internal_error' }))
+    return respond({ ok: false, error: 'internal_error' })
   }
 })
 
@@ -456,6 +503,40 @@ function closePagePostMessage(payload: Record<string, any>): string {
   } catch (e) {}
   window.close();
   setTimeout(function(){ document.body.textContent = 'You can close this window.'; }, 200);
+})();
+</script>`
+}
+
+/**
+ * Mobile redirect variant: writes the result to localStorage (same key the
+ * popup flow uses), then top-level navigates back to the page that started
+ * the OAuth flow. Origin-localStorage is shared with the destination, so
+ * AccountSettings' mount-time read picks up the result with no
+ * cross-window/postMessage choreography needed.
+ *
+ * The returnTo value was validated at /start-popup time
+ * (https/localhost). It's still injected as a JS string literal here so
+ * we JSON-encode it to defang any embedded quotes; the script then
+ * passes it to window.location.replace which is a no-op on anything
+ * that isn't a real URL.
+ */
+function redirectPageWithResult(payload: Record<string, any>, returnTo: string): string {
+  const json     = JSON.stringify(payload).replace(/</g, '\\u003c')
+  const returnJs = JSON.stringify(returnTo).replace(/</g, '\\u003c')
+  return `<!doctype html><meta charset="utf-8"><title>Returning to CAW…</title>
+<style>body{font:14px system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#000;color:#fff}</style>
+<div>Returning to CAW…</div>
+<script>
+(function () {
+  try {
+    var envelope = { source: 'caw-xverify', payload: ${json}, at: Date.now() };
+    localStorage.setItem('caw:xverify:result', JSON.stringify(envelope));
+  } catch (e) {}
+  try {
+    window.location.replace(${returnJs});
+  } catch (e) {
+    document.body.textContent = 'Done. You can return to the app.';
+  }
 })();
 </script>`
 }
