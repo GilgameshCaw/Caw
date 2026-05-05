@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { HiOutlineSearch, HiOutlineInformationCircle, HiOutlineCurrencyDollar, HiOutlineTag } from 'react-icons/hi'
-import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { themeText, themeTextMuted, themeTextSecondary, themeBorder, themeBgSubtle } from '~/utils/theme'
 import { useMarketplaceListings, useMarketplaceSales } from '~/hooks/useMarketplace'
@@ -118,7 +117,6 @@ const Marketplace: React.FC = () => {
   }, [])
 
   return (
-    <MainLayout>
       <div className="max-w-5xl mx-auto px-6 py-4">
         {/* Hero */}
         <div className="mb-8">
@@ -198,7 +196,6 @@ const Marketplace: React.FC = () => {
           {activeTab === 'offers' && <MyOffersTab />}
         </div>
       </div>
-    </MainLayout>
   )
 }
 

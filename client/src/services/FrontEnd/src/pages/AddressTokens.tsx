@@ -3,7 +3,6 @@ import { Link, useParams } from 'react-router-dom'
 import { useReadContract, useReadContracts } from 'wagmi'
 import { useQuery, useQueries } from '@tanstack/react-query'
 import { erc20Abi, formatEther, formatUnits } from 'viem'
-import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { themeTextMuted, themeBgSubtle, themeBorder } from '~/utils/theme'
@@ -210,7 +209,6 @@ const AddressTokens: React.FC = () => {
 
   if (!valid) {
     return (
-      <MainLayout>
         <div className="max-w-2xl mx-auto px-6 py-16 text-center">
           <h2 className={`text-xl font-bold mb-2 ${isDark ? 'text-white' : 'text-black'}`}>
             {t('address_tokens.invalid_title')}
@@ -219,7 +217,6 @@ const AddressTokens: React.FC = () => {
             {t('address_tokens.invalid_body')}
           </p>
         </div>
-      </MainLayout>
     )
   }
 
@@ -228,7 +225,6 @@ const AddressTokens: React.FC = () => {
   void ethPrice // referenced to keep imports stable; not currently surfaced on this page
 
   return (
-    <MainLayout>
       <div className="max-w-2xl mx-auto px-6 py-4">
         {/* Header */}
         <div className={`rounded-xl border ${themeBorder(isDark)} ${themeBgSubtle(isDark)} p-4 mb-4`}>
@@ -348,7 +344,6 @@ const AddressTokens: React.FC = () => {
           </div>
         )}
       </div>
-    </MainLayout>
   )
 }
 

@@ -1,6 +1,5 @@
 import React, { useState, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { useAccount } from "wagmi"
 import { useConnectModal } from "@rainbow-me/rainbowkit"
@@ -240,7 +239,6 @@ const ScheduledPage: React.FC = () => {
   // even if the wallet isn't currently connected — fall through to the page.
   if (!activeToken) {
     return (
-      <MainLayout>
         <div className="max-w-2xl mx-auto px-6 py-4">
           <div className={`text-center py-16 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
             <HiOutlineClock className="w-16 h-16 mx-auto mb-4 opacity-50" />
@@ -256,13 +254,11 @@ const ScheduledPage: React.FC = () => {
             </button>
           </div>
         </div>
-      </MainLayout>
     )
   }
 
   if (!isAuthorized) {
     return (
-      <MainLayout>
         <div className="max-w-2xl mx-auto px-6 py-4">
           <div className={`text-center py-16 ${isDark ? 'text-gray-400' : 'text-gray-600'}`}>
             <HiOutlineClock className="w-16 h-16 mx-auto mb-4 opacity-50" />
@@ -284,12 +280,10 @@ const ScheduledPage: React.FC = () => {
             </button>
           </div>
         </div>
-      </MainLayout>
     )
   }
 
   return (
-    <MainLayout>
       <div className="max-w-2xl mx-auto px-6 py-4">
         {/* Page Header */}
         <div className="mb-6">
@@ -618,7 +612,6 @@ const ScheduledPage: React.FC = () => {
           </div>
         )}
       </div>
-    </MainLayout>
   )
 }
 

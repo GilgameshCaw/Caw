@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react'
-import MainLayout from '~/layouts/MainLayout'
 import { Tabs, TabItem } from '~/components/Tabs'
 import { useTheme } from '~/hooks/useTheme'
 import Feed from '~/components/Feed'
@@ -54,7 +53,6 @@ const ExplorePage: React.FC = () => {
   ]
 
   return (
-    <MainLayout>
       <div className={`max-w-2xl mx-auto px-6 py-4 flex flex-col ${isDark ? 'bg-black' : 'bg-white'}`}>
         {/* Header */}
         <div className="mb-6 flex-shrink-0">
@@ -192,7 +190,6 @@ const ExplorePage: React.FC = () => {
           )}
         </div>
       </div>
-    </MainLayout>
   )
 }
 

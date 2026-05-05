@@ -1,4 +1,3 @@
-import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback } from 'react'
 import { useAccount } from 'wagmi'
@@ -1019,7 +1018,7 @@ const MessagesPage: React.FC = () => {
   }, [contextMenu])
 
   return (
-    <MainLayout>
+    <>
       <div
         data-messages-root
         className={`max-w-2xl mx-auto pt-4 pb-0 flex flex-col relative flex-1 min-h-0 ${
@@ -2954,7 +2953,7 @@ const MessagesPage: React.FC = () => {
           </div>
         )}
       </ModalWrapper>
-    </MainLayout>
+    </>
   )
 }
 

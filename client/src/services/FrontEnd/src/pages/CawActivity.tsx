@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Link, useParams, useSearchParams } from 'react-router-dom'
-import MainLayout from '~/layouts/MainLayout'
 import { apiFetch } from '~/api/client'
 import { useTheme } from '~/hooks/useTheme'
 import { Tabs, TabItem } from '~/components/Tabs'
@@ -392,7 +391,6 @@ const CawActivity: React.FC = () => {
   const axisLabelClass = isDark ? 'text-white/40' : 'text-gray-500'
 
   return (
-    <MainLayout>
       <div className="max-w-3xl mx-auto px-6 py-4">
         <div className="flex items-center justify-between mb-4">
           <div>
@@ -1268,7 +1266,6 @@ const CawActivity: React.FC = () => {
 
         {tab === 'all' && <AllStatsView range={range} />}
       </div>
-    </MainLayout>
   )
 }
 

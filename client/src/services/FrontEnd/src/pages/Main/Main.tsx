@@ -1,5 +1,4 @@
 import { Tabs, TabItem } from '~/components/Tabs'
-import MainLayout from "~/layouts/MainLayout";
 import PostForm from "~/components/PostForm";
 import Feed, { type FeedRef } from "~/components/Feed";
 import React, { useState, useRef, useEffect } from "react";
@@ -67,25 +66,22 @@ export const Main: React.FC = () => {
   ]
 
   return (
-    <MainLayout>
-      <div className="max-w-2xl md:max-w-none lg:max-w-2xl mx-auto px-3 sm:px-6 py-4">
-        <Tabs<MainTab>
-          tabs={mainTabs}
-          active={activeTab}
-          onChange={setActiveTab}
-        />
-        {/* PostForm - Always visible */}
-        <div className={`border-b ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
-          <PostForm onSuccess={() => feedRef.current?.refresh()}/>
-        </div>
-        <div className="w-full">
-          <Feed
-            ref={feedRef}
-            filter={TAB_TO_FILTER[activeTab]}
-          />
-        </div>
+    <div className="max-w-2xl md:max-w-none lg:max-w-2xl mx-auto px-3 sm:px-6 py-4">
+      <Tabs<MainTab>
+        tabs={mainTabs}
+        active={activeTab}
+        onChange={setActiveTab}
+      />
+      {/* PostForm - Always visible */}
+      <div className={`border-b ${isDark ? 'border-white/10' : 'border-gray-200'}`}>
+        <PostForm onSuccess={() => feedRef.current?.refresh()}/>
       </div>
-
-    </MainLayout>
+      <div className="w-full">
+        <Feed
+          ref={feedRef}
+          filter={TAB_TO_FILTER[activeTab]}
+        />
+      </div>
+    </div>
   );
 };

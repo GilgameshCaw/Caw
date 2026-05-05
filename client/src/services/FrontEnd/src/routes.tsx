@@ -51,205 +51,84 @@ const WelcomePage = lazy(() => import("./pages/WelcomePage"));
 const Marketplace = lazy(() => import("./pages/Marketplace"));
 const AddressTokens = lazy(() => import("./pages/AddressTokens"));
 
+// Routes are split into two groups so `<MainLayout>` can be hoisted to a
+// single shared parent route. The layout stays mounted across navigation
+// between layoutRoutes — Sidebar / ProfileChooser / Avatar no longer
+// remount, killing the brief avatar-flash on every nav. Bare routes
+// (captive splash, welcome, admin shell) render outside the layout.
+//
+// `handle.hideSidebars: true` opts a layoutRoute into MainLayout's
+// no-chrome rendering (was a per-page prop pre-hoist). MainLayout reads
+// this via useMatches().
 
+export interface RouteDef {
+  path: string;
+  component: React.ReactNode;
+  handle?: { hideSidebars?: boolean };
+}
 
-export default [
-  {
-    path: "/",
-    component: <Navigate to="/home" replace />,
-  },
-  // Captive splash for unauthenticated users
-  {
-    path: "/welcome",
-    component: <CaptiveSplash />,
-  },
-  // Protected routes — redirect to /welcome if no username
-  {
-    path: "/home",
-    component: <AuthGate><Main /></AuthGate>,
-  },
-  {
-    path: "/explore",
-    component: <AuthGate><ExplorePage /></AuthGate>,
-  },
-  {
-    path: "/pending",
-    component: <AuthGate><PendingPage /></AuthGate>,
-  },
-  {
-    path: "/staking",
-    component: <AuthGate><Staking /></AuthGate>,
-  },
-  {
-    path: "/staking/activity",
-    component: <AuthGate><CawActivity /></AuthGate>,
-  },
-  {
-    path: "/staking/unstake",
-    component: <AuthGate><Staking /></AuthGate>,
-  },
-  {
-    path: "/staking/info",
-    component: <AuthGate><Staking /></AuthGate>,
-  },
-  {
-    path: "/usernames",
-    component: <Marketplace />,
-  },
-  {
-    path: "/usernames/new",
-    component: <NewProfile />,
-  },
-  {
-    path: "/profile",
-    component: <Profile />,
-  },
-  {
-    path: "/users/:username",
-    component: <Profile />,
-  },
-  {
-    path: "/users/:username/activity",
-    component: <CawActivity />,
-  },
-  {
-    path: "/address/:address",
-    component: <AddressTokens />,
-  },
-  {
-    path: "/caws/:id",
-    component: <CawPage />,
-  },
-  {
-    path: "/hashtags/:hashtag",
-    component: <HashtagPage />,
-  },
-  {
-    path: "/notifications",
-    component: <AuthGate><NotificationsPage /></AuthGate>,
-  },
-  {
-    path: "/messages",
-    component: <AuthGate><MessagesPage /></AuthGate>,
-  },
-  {
-    path: "/messages/:username",
-    component: <AuthGate><MessagesPage /></AuthGate>,
-  },
-  {
-    path: "/settings",
-    component: <AuthGate><SettingsPage /></AuthGate>,
-  },
-  {
-    path: "/settings/muted",
-    component: <AuthGate><MutedContentPage /></AuthGate>,
-  },
-  {
-    path: "/settings/notifications",
-    component: <AuthGate><NotificationSettings /></AuthGate>,
-  },
-  {
-    path: "/settings/language",
-    component: <AuthGate><LanguageSettings /></AuthGate>,
-  },
-  {
-    path: "/settings/account",
-    component: <AuthGate><AccountSettings /></AuthGate>,
-  },
-  {
-    path: "/settings/session-keys",
-    component: <AuthGate><SessionKeySettings /></AuthGate>,
-  },
-  {
-    path: "/help",
-    component: <HelpPage />,
-  },
-  {
-    path: "/help/faq",
-    component: <HelpPage defaultTab="faq" />,
-  },
-  {
-    path: "/help/history",
-    component: <HelpPage defaultTab="history" />,
-  },
-  {
-    path: "/help/manifesto",
-    component: <HelpPage defaultTab="manifesto" />,
-  },
-  {
-    path: "/help/howto",
-    component: <HelpPage defaultTab="gettingstarted" />,
-  },
-  {
-    path: "/help/gettingstarted",
-    component: <HelpPage defaultTab="gettingstarted" />,
-  },
-  {
-    path: "/help/developers",
-    component: <HelpPage defaultTab="developers" />,
-  },
-  {
-    path: "/help/resources",
-    component: <HelpPage defaultTab="resources" />,
-  },
-  {
-    path: "/bookmarks",
-    component: <AuthGate><BookmarksPage /></AuthGate>,
-  },
-  {
-    path: "/scheduled",
-    component: <AuthGate><ScheduledPage /></AuthGate>,
-  },
-  // {
-  //   path: "/gamefi",
-  //   component: <GameFiPage />,
-  // },
-  {
-    path: "/search",
-    component: <AuthGate><SearchResultsPage /></AuthGate>,
-  },
-  {
-    path: "/search/caws",
-    component: <AuthGate><SearchResultsPage defaultTab="caws" /></AuthGate>,
-  },
-  {
-    path: "/search/users",
-    component: <AuthGate><SearchResultsPage defaultTab="users" /></AuthGate>,
-  },
-  {
-    path: "/search/hashtags",
-    component: <AuthGate><SearchResultsPage defaultTab="hashtags" /></AuthGate>,
-  },
-  {
-    path: "/faucet",
-    component: <FaucetPage />,
-  },
-  {
-    path: "/admin",
-    component: <AdminGate><Admin /></AdminGate>,
-  },
-  {
-    path: "/admin/bugs",
-    component: <AdminGate><BugReportsAdmin /></AdminGate>,
-  },
-  {
-    path: "/admin/reports",
-    component: <AdminGate><ReportsAdmin /></AdminGate>,
-  },
-  {
-    path: "/admin/validator",
-    component: <AdminGate><ValidatorAnalytics /></AdminGate>,
-  },
-  {
-    path: "/admin/validator/settings",
-    component: <AdminGate><ValidatorSettings /></AdminGate>,
-  },
-  {
-    path: "/admin/database",
-    component: <AdminGate><DatabaseAdmin /></AdminGate>,
-  },
-  {
-    path: "/welcome/:username",
-    component: <WelcomePage />,
-  },
+export const layoutRoutes: RouteDef[] = [
+  { path: "/", component: <Navigate to="/home" replace /> },
+  { path: "/home", component: <AuthGate><Main /></AuthGate> },
+  { path: "/explore", component: <AuthGate><ExplorePage /></AuthGate> },
+  { path: "/pending", component: <AuthGate><PendingPage /></AuthGate> },
+  { path: "/staking", component: <AuthGate><Staking /></AuthGate> },
+  { path: "/staking/activity", component: <AuthGate><CawActivity /></AuthGate> },
+  { path: "/staking/unstake", component: <AuthGate><Staking /></AuthGate> },
+  { path: "/staking/info", component: <AuthGate><Staking /></AuthGate> },
+  { path: "/usernames", component: <Marketplace /> },
+  // /usernames/new doesn't pin handle.hideSidebars — captive users hit
+  // the path-based hideSidebars in MainLayout, and the post-mint
+  // "creating profile…" fullscreen takeover uses useLayoutStore to flip
+  // the chrome off transiently.
+  { path: "/usernames/new", component: <NewProfile /> },
+  { path: "/profile", component: <Profile /> },
+  { path: "/users/:username", component: <Profile /> },
+  { path: "/users/:username/activity", component: <CawActivity /> },
+  { path: "/address/:address", component: <AddressTokens /> },
+  { path: "/caws/:id", component: <CawPage /> },
+  { path: "/hashtags/:hashtag", component: <HashtagPage /> },
+  { path: "/notifications", component: <AuthGate><NotificationsPage /></AuthGate> },
+  { path: "/messages", component: <AuthGate><MessagesPage /></AuthGate> },
+  { path: "/messages/:username", component: <AuthGate><MessagesPage /></AuthGate> },
+  { path: "/settings", component: <AuthGate><SettingsPage /></AuthGate> },
+  { path: "/settings/muted", component: <AuthGate><MutedContentPage /></AuthGate> },
+  { path: "/settings/notifications", component: <AuthGate><NotificationSettings /></AuthGate> },
+  { path: "/settings/language", component: <AuthGate><LanguageSettings /></AuthGate> },
+  { path: "/settings/account", component: <AuthGate><AccountSettings /></AuthGate> },
+  { path: "/settings/session-keys", component: <AuthGate><SessionKeySettings /></AuthGate> },
+  { path: "/help", component: <HelpPage /> },
+  { path: "/help/faq", component: <HelpPage defaultTab="faq" /> },
+  { path: "/help/history", component: <HelpPage defaultTab="history" /> },
+  { path: "/help/manifesto", component: <HelpPage defaultTab="manifesto" /> },
+  { path: "/help/howto", component: <HelpPage defaultTab="gettingstarted" /> },
+  { path: "/help/gettingstarted", component: <HelpPage defaultTab="gettingstarted" /> },
+  { path: "/help/developers", component: <HelpPage defaultTab="developers" /> },
+  { path: "/help/resources", component: <HelpPage defaultTab="resources" /> },
+  { path: "/bookmarks", component: <AuthGate><BookmarksPage /></AuthGate> },
+  { path: "/scheduled", component: <AuthGate><ScheduledPage /></AuthGate> },
+  // { path: "/gamefi", component: <GameFiPage /> },
+  { path: "/search", component: <AuthGate><SearchResultsPage /></AuthGate> },
+  { path: "/search/caws", component: <AuthGate><SearchResultsPage defaultTab="caws" /></AuthGate> },
+  { path: "/search/users", component: <AuthGate><SearchResultsPage defaultTab="users" /></AuthGate> },
+  { path: "/search/hashtags", component: <AuthGate><SearchResultsPage defaultTab="hashtags" /></AuthGate> },
+  { path: "/faucet", component: <FaucetPage /> },
 ];
+
+// Routes that render WITHOUT MainLayout: pre-auth captive splash, the
+// welcome screen, admin shells. These never had MainLayout pre-hoist.
+export const bareRoutes: RouteDef[] = [
+  { path: "/welcome", component: <CaptiveSplash /> },
+  { path: "/welcome/:username", component: <WelcomePage /> },
+  { path: "/admin", component: <AdminGate><Admin /></AdminGate> },
+  { path: "/admin/bugs", component: <AdminGate><BugReportsAdmin /></AdminGate> },
+  { path: "/admin/reports", component: <AdminGate><ReportsAdmin /></AdminGate> },
+  { path: "/admin/validator", component: <AdminGate><ValidatorAnalytics /></AdminGate> },
+  { path: "/admin/validator/settings", component: <AdminGate><ValidatorSettings /></AdminGate> },
+  { path: "/admin/database", component: <AdminGate><DatabaseAdmin /></AdminGate> },
+];
+
+// Back-compat default export — old shape, all routes flat. Kept so any
+// straggling consumer still resolves. New code should import the named
+// groups above.
+export default [...layoutRoutes, ...bareRoutes];

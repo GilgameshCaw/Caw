@@ -1,7 +1,6 @@
 // src/pages/HashtagPage.tsx
 import React from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import MainLayout from '~/layouts/MainLayout'
 import Feed from '~/components/Feed'
 import { useTheme } from '~/hooks/useTheme'
 import { useQuery } from '@tanstack/react-query'
@@ -33,7 +32,6 @@ export const HashtagPage: React.FC = () => {
   })
 
   return (
-    <MainLayout>
       <div className="max-w-2xl mx-auto px-6 py-4">
         {/* Header */}
         <div className="flex items-center mb-6">
@@ -91,7 +89,6 @@ export const HashtagPage: React.FC = () => {
           apiEndpoint={`/api/hashtags/${cleanHashtag}/caws`}
         />
       </div>
-    </MainLayout>
   )
 }
 

@@ -18,7 +18,6 @@ import { useActiveToken, useTokenDataStore, usePriceStore } from "~/store/tokenD
 import { cawProfileAbi, cawProfileL2Abi, cawProfileQuoterAbi } from "~/../../../abi/generated"
 import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_L2_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from "~/../../../abi/addresses"
 import { maxUint256, parseUnits, formatUnits, formatEther, erc20Abi } from "viem";
-import MainLayout from '~/layouts/MainLayout'
 import { chains } from '~/config/chains'
 import { useTheme } from '~/hooks/useTheme'
 import { HiOutlineTrendingUp, HiOutlineTrendingDown, HiOutlineInformationCircle, HiQuestionMarkCircle } from 'react-icons/hi'
@@ -1026,7 +1025,7 @@ const Staking = () => {
   )
 
   return (
-    <MainLayout>
+    <>
       <div className={`max-w-2xl mx-auto px-6 py-4 ${isDark ? 'bg-black' : 'bg-white'}`}>
         {/* Header */}
         <div className="mb-8">
@@ -1224,7 +1223,7 @@ const Staking = () => {
         isOpen={showQuickSignModal}
         onClose={() => setShowQuickSignModal(false)}
       />
-    </MainLayout>
+    </>
   )
 }
 

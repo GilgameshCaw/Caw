@@ -1,9 +1,10 @@
-import { BrowserRouter, Route, Routes, useLocation } from "react-router";
+import { BrowserRouter, Outlet, Route, Routes, useLocation } from "react-router-dom";
 import { lazy, Suspense, useEffect } from 'react'
 import { useCawonceSync } from '~/hooks/useCawonce'
 import { useSessionKeyWalletGuard } from '~/hooks/useSessionKey'
 import { useTxQueueMonitor } from '~/hooks/useTxQueueMonitor'
-import routes from "./routes";
+import { layoutRoutes, bareRoutes } from "./routes";
+import MainLayout from '~/layouts/MainLayout'
 import { useInsufficientStakeStore } from '~/store/insufficientStakeStore'
 import { useSessionSpendSync } from '~/hooks/useSessionSpendSync'
 import { useBadgeSync } from '~/hooks/useBadgeSync'
@@ -52,7 +53,20 @@ function AppRoutes() {
   return (
     <>
       <Routes location={backgroundLocation || location}>
-        {routes.map((route) => (
+        {/* Layout-wrapped routes: MainLayout stays mounted across nav
+            between these, so Sidebar / ProfileChooser / Avatar don't
+            remount and the avatar no longer flashes on every page change.
+            Per-route `handle.hideSidebars` opts a route into the
+            no-chrome rendering — read by MainLayout via useMatches(). */}
+        <Route element={<MainLayout><Outlet /></MainLayout>}>
+          {layoutRoutes.map((route) => (
+            <Route key={route.path} path={route.path} element={route.component} handle={route.handle} />
+          ))}
+        </Route>
+
+        {/* Bare routes: pre-auth captive splash, welcome, admin shells.
+            These render without MainLayout, same as pre-hoist. */}
+        {bareRoutes.map((route) => (
           <Route key={route.path} path={route.path} element={route.component} />
         ))}
       </Routes>

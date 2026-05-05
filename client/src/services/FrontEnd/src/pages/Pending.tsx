@@ -1,4 +1,3 @@
-import MainLayout from '~/layouts/MainLayout'
 import { useState, useEffect } from 'react'
 import { formatUnitsCompact } from '~/utils'
 import { useTokenDataStore }   from '~/store/tokenDataStore'
@@ -53,27 +52,26 @@ export const PendingPage: React.FC = () => {
       .finally(() => setLoad(false))
   }, [activeTokenId])
 
-  if (loading) return <MainLayout>{t('common.loading')}</MainLayout>
+  if (loading) return <>{t('common.loading')}</>
   if (!activeTokenId)
-    return <MainLayout>
+    return (
       <div className="text-center py-12">
         <h2 className="text-xl font-semibold mb-4">{t('pending.no_token.title')}</h2>
         <p className="text-gray-400">{t('pending.no_token.description')}</p>
       </div>
-    </MainLayout>
+    )
   if (actions.length === 0)
-    return <MainLayout>
+    return (
       <div className="text-center py-12">
         <h2 className="text-xl font-semibold mb-4">{t('pending.empty.title')}</h2>
         <p className="text-gray-400">{t('pending.empty.description')}</p>
       </div>
-    </MainLayout>
+    )
 
   // build a lookup for users
   const userById = new Map(users.map(u => [u.id, u]))
 
   return (
-    <MainLayout>
       <ul className="space-y-4 p-3">
         {actions.map(a => {
           const sender = userById.get(a.senderId)
@@ -125,7 +123,6 @@ export const PendingPage: React.FC = () => {
           )
         })}
       </ul>
-    </MainLayout>
   )
 }
 

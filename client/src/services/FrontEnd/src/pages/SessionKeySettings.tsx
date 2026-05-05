@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom'
 import { useReadContract, useAccount, useConnections, useSwitchChain } from 'wagmi'
 import { useConnectModal } from '@rainbow-me/rainbowkit'
 import { useEnsureWallet } from '~/hooks/useEnsureWallet'
-import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { useActiveToken, usePriceStore } from '~/store/tokenDataStore'
@@ -169,7 +168,6 @@ const SessionKeySettings: React.FC = () => {
   }
 
   return (
-    <MainLayout>
       <div className={`max-w-2xl mx-auto px-6 py-4 ${isDark ? 'bg-black' : 'bg-white'}`}>
         {/* Header */}
         <div className="flex items-center gap-4 mb-6">
@@ -350,7 +348,6 @@ const SessionKeySettings: React.FC = () => {
           </div>
         )}
       </div>
-    </MainLayout>
   )
 }
 

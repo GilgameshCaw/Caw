@@ -3,7 +3,6 @@ import Avatar from "~/components/Avatar"
 // src/pages/ProfilePage.tsx
 import React, { useState, useEffect, useRef } from 'react'
 import { Link, useParams, useSearchParams }    from 'react-router-dom'
-import MainLayout       from '~/layouts/MainLayout'
 import { Tabs, TabItem } from '~/components/Tabs'
 import Feed             from '~/components/Feed'
 import { useTheme } from '~/hooks/useTheme'
@@ -806,7 +805,6 @@ export const Profile: React.FC = () => {
   // Profile not in our DB — check on-chain availability for better UX
   if (dbNotFound) {
     return (
-      <MainLayout>
         <div className="max-w-2xl mx-auto px-6 py-16 text-center">
           <div className={`mb-6 w-24 h-24 mx-auto rounded-full flex items-center justify-center ${
             isDark ? 'bg-gray-800' : 'bg-gray-200'
@@ -840,14 +838,12 @@ export const Profile: React.FC = () => {
             </p>
           )}
         </div>
-      </MainLayout>
     )
   }
 
   // If this user is blocked, show blocked state (even if they're selected as active account)
   if (isBlocked && profileData) {
     return (
-      <MainLayout>
         <div className="max-w-2xl mx-auto px-6 py-16 text-center">
           <div className={`mb-6 w-24 h-24 mx-auto rounded-full flex items-center justify-center ${
             isDark ? 'bg-gray-800' : 'bg-gray-200'
@@ -873,12 +869,11 @@ export const Profile: React.FC = () => {
             Unblock
           </button>
         </div>
-      </MainLayout>
     )
   }
 
   return (
-    <MainLayout>
+    <>
       {/* Cover Photo - Full Width */}
       <div className="relative transition-all duration-300">
         <div className="h-48 w-full relative overflow-hidden">
@@ -1592,6 +1587,6 @@ export const Profile: React.FC = () => {
           }}
         />
       )}
-    </MainLayout>
+    </>
   )
 }

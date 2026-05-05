@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
-import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { HiArrowLeft, HiTranslate } from 'react-icons/hi'
 import { LANGUAGES } from '~/constants/languages'
@@ -71,7 +70,6 @@ const LanguageSettings: React.FC = () => {
   )
 
   return (
-    <MainLayout>
       <div className="max-w-2xl mx-auto px-6 py-4">
         <div className="flex items-center gap-4 mb-6">
           <Link
@@ -165,7 +163,6 @@ const LanguageSettings: React.FC = () => {
           {t('language_settings.privacy_notice')}
         </div>
       </div>
-    </MainLayout>
   )
 }
 

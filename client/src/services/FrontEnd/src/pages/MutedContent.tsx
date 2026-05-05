@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { useMutePreferences } from '~/hooks/useMutePreferences'
 import { HiArrowLeft, HiX, HiVolumeOff, HiFilter, HiUserRemove, HiEyeOff, HiTrash, HiChevronDown, HiChevronUp } from 'react-icons/hi'
@@ -218,7 +217,6 @@ const MutedContentPage: React.FC = () => {
     preferences.blockedAccounts.length
 
   return (
-    <MainLayout>
       <div className="max-w-2xl mx-auto px-6 py-4">
         {/* Header */}
         <div className="flex items-center gap-4 mb-6">
@@ -733,7 +731,6 @@ const MutedContentPage: React.FC = () => {
           )}
         </section>
       </div>
-    </MainLayout>
   )
 }
 

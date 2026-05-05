@@ -2,7 +2,6 @@ import React, { useState, useEffect, useMemo } from 'react'
 import { useSearchParams, useNavigate, useLocation } from 'react-router-dom'
 import { apiFetch } from '~/api/client'
 import Feed from '~/components/Feed'
-import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { HiUsers, HiHashtag, HiCollection } from 'react-icons/hi'
 import { useMutePreferences } from '~/hooks/useMutePreferences'
@@ -94,18 +93,15 @@ const SearchResultsPage: React.FC<SearchResultsPageProps> = ({ defaultTab = 'all
 
   if (!query) {
     return (
-      <MainLayout>
         <div className="max-w-2xl mx-auto px-6 py-4">
           <div className={`text-center py-8 ${isDark ? 'text-white/60' : 'text-gray-600'}`}>
             {t('search_results.empty_query')}
           </div>
         </div>
-      </MainLayout>
     )
   }
 
   return (
-    <MainLayout>
       <div className="max-w-2xl mx-auto px-6 py-4">
       <div className="mb-6">
         <h1 className={`text-2xl font-bold mb-2 ${isDark ? 'text-white' : 'text-gray-900'}`}>
@@ -329,7 +325,6 @@ const SearchResultsPage: React.FC<SearchResultsPageProps> = ({ defaultTab = 'all
         </div>
       ) : null}
       </div>
-    </MainLayout>
   )
 }
 

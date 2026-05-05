@@ -10,9 +10,10 @@ import Tooltip from "~/components/Tooltip";
 import { useT } from "~/i18n/I18nProvider";
 import { useState, lazy, Suspense } from "react";
 import { HiOutlineMenu, HiOutlineX, HiOutlinePencilAlt } from "react-icons/hi";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useMatches } from "react-router-dom";
 import { useModalStore } from "~/store";
 import { useActiveToken } from "~/store/tokenDataStore";
+import { useLayoutStore } from "~/store/layoutStore";
 import { useConnectModal } from "@rainbow-me/rainbowkit";
 import { useAccount } from "wagmi";
 import cawLogo from '~/assets/images/caw-logo.png';
@@ -31,6 +32,7 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [showBugReport, setShowBugReport] = useState(false)
   const location = useLocation()
+  const matches = useMatches()
   const activeToken = useActiveToken()
   const { isConnected } = useAccount()
   const { openConnectModal } = useConnectModal()
@@ -38,7 +40,16 @@ const MainLayout = ({ children, hideSidebars: hideSidebarsProp }: MainLayoutProp
 
   // Captive mode: no username and on a public page like /help/*
   const isCaptive = !activeToken?.username
-  const hideSidebars = hideSidebarsProp || (isCaptive && (location.pathname.startsWith('/help') || location.pathname.startsWith('/usernames') || location.pathname.startsWith('/faucet')))
+  // hideSidebars resolution order (any one truthy wins):
+  //   1. Per-route handle metadata (preferred — set in routes.tsx). This
+  //      is how `/usernames/new` opts out of the chrome post-hoist.
+  //   2. The legacy prop (kept for back-compat with any straggling page
+  //      that hasn't moved to handle metadata yet).
+  //   3. Captive + public-page heuristic (unauthenticated user on /help,
+  //      /usernames, or /faucet — show captive banner instead).
+  const hideFromHandle = matches.some(m => (m.handle as { hideSidebars?: boolean } | undefined)?.hideSidebars)
+  const hideChromeOverride = useLayoutStore(s => s.hideChromeOverride)
+  const hideSidebars = hideFromHandle || hideChromeOverride || hideSidebarsProp || (isCaptive && (location.pathname.startsWith('/help') || location.pathname.startsWith('/usernames') || location.pathname.startsWith('/faucet')))
 
   return (
     <>

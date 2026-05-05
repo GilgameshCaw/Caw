@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
-import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { useT } from '~/i18n/I18nProvider'
 import { HiArrowLeft, HiChevronDown, HiChevronUp, HiExternalLink, HiCode, HiDocumentText, HiGlobe, HiCurrencyDollar, HiUserGroup, HiChartBar, HiBeaker } from 'react-icons/hi'
@@ -230,7 +229,6 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
   )
 
   return (
-    <MainLayout>
       <div className={`max-w-2xl mx-auto px-6 py-4 ${isDark ? 'bg-black/80' : 'bg-white/90'} backdrop-blur-sm`}>
         {/* Header */}
         <div className="flex items-center gap-4 mb-6">
@@ -1104,7 +1102,6 @@ const HelpPage: React.FC<HelpPageProps> = ({ defaultTab }) => {
           </div>
         </div>
       </div>
-    </MainLayout>
   )
 }
 

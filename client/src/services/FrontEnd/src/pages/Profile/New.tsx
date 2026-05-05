@@ -4,8 +4,8 @@ import React, { useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import { useReadContract, useAccount, useSwitchChain } from 'wagmi'
 import useAllowance from "~/hooks/useAllowance";
 import { maxUint256, parseUnits, erc20Abi, formatEther } from "viem";
-import MainLayout from '~/layouts/MainLayout'
 import useContractCall, { UseContractCallReturn } from '~/hooks/useContractCall'
+import { useLayoutStore } from '~/store/layoutStore'
 import { CAW_ADDRESS, CAW_NAMES_ADDRESS, CAW_NAMES_MINTER_ADDRESS, CAW_NAME_QUOTER_ADDRESS } from '~/../../../abi/addresses'
 import { cawProfileAbi, cawProfileMinterAbi, cawProfileQuoterAbi } from '~/../../../abi/generated'
 import { useActiveToken, useTokenDataStore, usePriceStore } from "~/store/tokenDataStore";
@@ -445,6 +445,19 @@ console.log("BALANCE:", balance)
 
   const waiting = isApprovePending || Boolean(mintStatus.match(/pending/))
 
+  // The "creating profile…" fullscreen takeover used to be expressed as
+  // <MainLayout hideSidebars>; post-hoist MainLayout lives at the router
+  // level and stays mounted, so we flip its hide-chrome flag imperatively
+  // for the transient minting state and clear it on unmount / on exit.
+  const showMintingTakeover = !hasResetForm && (mintStatus === 'pending' || (mintStatus === 'success' && !mintSuccess))
+  const setHideChromeOverride = useLayoutStore(s => s.setHideChromeOverride)
+  useEffect(() => {
+    if (showMintingTakeover) {
+      setHideChromeOverride(true)
+      return () => setHideChromeOverride(false)
+    }
+  }, [showMintingTakeover, setHideChromeOverride])
+
   console.log('[New] mint disabled conditions:', {
     depositEnabled,
     quote: !!quote,
@@ -548,11 +561,11 @@ console.log("BALANCE:", balance)
     submitText = t('staking.button.insufficient_balance')
   else submitText = depositEnabled && depositAmountWei > 0n ? t('new_profile.create_and_deposit') : t('new_profile.create')
 
-  // Show loading screen while waiting for mint to complete
-  if (!hasResetForm && (mintStatus === 'pending' || (mintStatus === 'success' && !mintSuccess))) {
+  // Show loading screen while waiting for mint to complete. The
+  // useLayoutStore effect above hides MainLayout's chrome for this state.
+  if (showMintingTakeover) {
     return (
-      <MainLayout hideSidebars>
-        <div className="min-h-screen flex items-start justify-center pt-12" ref={el => { if (el) window.scrollTo(0, 0) }}>
+      <div className="min-h-screen flex items-start justify-center pt-12" ref={el => { if (el) window.scrollTo(0, 0) }}>
           <div className={`max-w-xl w-full mx-auto p-8 rounded-2xl backdrop-blur-[2px] ${
             isDark ? 'bg-white/5 border border-white/10' : 'bg-gray-200/50 border-2 border-gray-300/50'
           }`}>
@@ -597,12 +610,10 @@ console.log("BALANCE:", balance)
             </div>
           </div>
         </div>
-      </MainLayout>
     )
   }
 
   return (
-    <MainLayout>
       <div className={`${isCaptive ? 'max-w-4xl' : 'max-w-md'} mx-auto p-6 ${isCaptive ? '' : 'space-y-4 mt-8'}`}>
         <div className={isCaptive ? 'flex flex-col md:flex-row gap-8 md:gap-0 items-start md:divide-x md:divide-white/10 pt-12 md:pt-20' : ''}>
           {/* Left column (captive) or full-width header (normal) */}
@@ -902,7 +913,6 @@ console.log("BALANCE:", balance)
           </div>
         </div>
       </div>
-    </MainLayout>
   )
 }
 

@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import { HiOutlineSearch, HiOutlineInformationCircle, HiOutlineBookmark } from 'react-icons/hi'
 import FeedItem from '~/components/FeedItem'
@@ -72,7 +71,6 @@ const BookmarksPage: React.FC = () => {
     : bookmarkedPosts
 
   return (
-    <MainLayout>
       <div className={`max-w-2xl mx-auto px-6 py-4 ${isDark ? 'bg-black' : 'bg-white'}`}>
         {/* Bookmarks Header */}
         <div className="mb-6">
@@ -170,7 +168,6 @@ const BookmarksPage: React.FC = () => {
           </div>
         )}
       </div>
-    </MainLayout>
   )
 }
 

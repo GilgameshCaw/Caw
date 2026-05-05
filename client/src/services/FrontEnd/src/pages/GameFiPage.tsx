@@ -1,6 +1,5 @@
 // src/pages/GameFiPage.tsx
 import React, { useState } from 'react'
-import MainLayout from '~/layouts/MainLayout'
 import { useTheme } from '~/hooks/useTheme'
 import {
   HiOutlineStar,
@@ -99,7 +98,6 @@ const GameFiPage: React.FC = () => {
   ]
 
   return (
-    <MainLayout>
       <div className="max-w-2xl mx-auto px-6 py-4">
         {/* Header */}
         <div className="mb-6">
@@ -241,7 +239,6 @@ const GameFiPage: React.FC = () => {
         {activeTab === 'tournaments' && <div className={`p-3 ${isDark ? 'text-white' : 'text-black'}`}>Tournaments content...</div>}
         {activeTab === 'leaderboards' && <div className={`p-3 ${isDark ? 'text-white' : 'text-black'}`}>Leaderboards content...</div>}
       </div>
-    </MainLayout>
   )
 }
 

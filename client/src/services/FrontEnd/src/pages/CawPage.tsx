@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { useParams, Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { useT } from '~/i18n/I18nProvider'
 import PostForm from "~/components/PostForm";
-import MainLayout from '~/layouts/MainLayout'
 import FeedItem from '~/components/FeedItem'
 import Avatar from '~/components/Avatar'
 import { apiFetch } from '~/api/client'
@@ -293,7 +292,6 @@ export const CawPage: React.FC = () => {
   }, [id, activeTokenId])
 
   const errorView = (message: string) => (
-    <MainLayout>
       <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
         <div className="w-12 h-12 mb-4 rounded-full bg-red-500/10 flex items-center justify-center">
           <svg className="w-6 h-6 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -310,10 +308,9 @@ export const CawPage: React.FC = () => {
           {t('common.try_again')}
         </button>
       </div>
-    </MainLayout>
   )
 
-  if (loading) return <MainLayout><div className={`flex items-center justify-center h-64 ${isDark ? 'text-white' : 'text-gray-900'}`}>{t('common.loading')}</div></MainLayout>
+  if (loading) return <><div className={`flex items-center justify-center h-64 ${isDark ? 'text-white' : 'text-gray-900'}`}>{t('common.loading')}</div></>
   if (error) return errorView(error)
   if (!caw) return errorView(t('caw_page.could_not_load_post'))
 
@@ -354,7 +351,6 @@ export const CawPage: React.FC = () => {
   ]
 
   return (
-    <MainLayout>
       <div className="max-w-2xl mx-auto px-6 py-4">
         {/* Header with back button and title */}
         <div className="flex items-center space-x-4 mb-6 pb-4 border-b border-white/20">
@@ -707,6 +703,5 @@ export const CawPage: React.FC = () => {
           message={t('caw_page.sign_in_modal_message')}
         />
       </div>
-    </MainLayout>
   )
 }
