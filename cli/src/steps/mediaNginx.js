@@ -129,6 +129,13 @@ ${tlsListen}
     # proxy to Filebase, not to serve a frontend.
     location = / { return 404; }
 
+    # Belt-and-braces: block any dotfile-prefixed segment (.git, .env, etc).
+    # Allow .well-known/ for ACME so cert renewal works on this vhost too.
+    location ~ /\\.(?!well-known/) {
+        deny all;
+        return 404;
+    }
+
     location /uploads/ {
         # Wildcard CORS — the served bytes are either public-by-design
         # (avatars, post images) or end-to-end-encrypted blobs (DMs) where

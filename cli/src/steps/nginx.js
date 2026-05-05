@@ -259,6 +259,18 @@ function renderNginxConf({ domain, apiPort, frontendDist, uploadsDir, tls, nginx
   // index.html so React Router handles the route. /api and /socket.io go to
   // the Node server. Static assets in /assets/ get long cache headers.
   const sharedLocations = `
+    # Block any path that contains a dotfile segment (.git, .env, .htaccess,
+    # .ssh, etc). Without this, requests for things like /.git/config fall
+    # through to the SPA's try_files and return index.html with a 200 — not
+    # a real leak (root is dist/, no .git there) but it looks like one to
+    # security scanners and to humans who curl -I. Allow .well-known/ for
+    # certbot's ACME challenge. Regex location wins over prefix locations
+    # at the same priority, so this matches before /api/ etc.
+    location ~ /\\.(?!well-known/) {
+        deny all;
+        return 404;
+    }
+
     # API and websocket proxy to the local Node process
     location /api/ {
         proxy_pass http://127.0.0.1:${apiPort};
